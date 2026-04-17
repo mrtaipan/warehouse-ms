@@ -45,6 +45,14 @@ async function fetchAllRackLocations() {
   return allRows
 }
 
+async function getCurrentUserEmail() {
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+
+  return user?.email || null
+}
+
 export default function RegistryStoragePage() {
   const [rackLocations, setRackLocations] = useState([])
   const [storageEntries, setStorageEntries] = useState([])
@@ -240,6 +248,7 @@ export default function RegistryStoragePage() {
       size: form.size.trim() || null,
       qty: Number(form.qty || 0),
       notes: form.notes.trim() || null,
+      updated_by: await getCurrentUserEmail(),
     }
 
     const { error: insertError } = await supabase.from('warehouse_storage').insert([payload])

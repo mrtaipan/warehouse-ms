@@ -24,9 +24,9 @@ export default async function SuppliersPage() {
       <p style={styles.subtitle}>List of supplier master data</p>
 
       <div style={{ marginBottom: '16px' }}>
-        <a href="/dashboard/suppliers/new" style={styles.addButton}>
+        <Link href="/dashboard/suppliers/new" style={styles.addButton}>
           + Add Supplier
-        </a>
+        </Link>
       </div>
 
       {error ? (

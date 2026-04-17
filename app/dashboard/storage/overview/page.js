@@ -93,17 +93,33 @@ async function fetchAllWarehouseStorage() {
   return allRows
 }
 
+async function getCurrentUserEmail() {
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+
+  return user?.email || null
+}
+
 export default function StorageOverviewPage() {
   const [rackLocations, setRackLocations] = useState([])
   const [storageEntries, setStorageEntries] = useState([])
   const [loading, setLoading] = useState(true)
   const [taking, setTaking] = useState(false)
+  const [editing, setEditing] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
   const [takeModalEntry, setTakeModalEntry] = useState(null)
+  const [editModalEntry, setEditModalEntry] = useState(null)
   const [takeForm, setTakeForm] = useState({
     takeOutAll: false,
     qty: '',
+  })
+  const [editForm, setEditForm] = useState({
+    itemName: '',
+    size: '',
+    qty: '',
+    notes: '',
   })
   const [filters, setFilters] = useState({
     locationCode: '',
@@ -234,11 +250,33 @@ export default function StorageOverviewPage() {
     setSuccess('')
   }
 
+  function openEditModal(entry) {
+    setEditModalEntry(entry)
+    setEditForm({
+      itemName: entry.item_name || '',
+      size: entry.size || '',
+      qty: String(entry.qty || ''),
+      notes: entry.notes || '',
+    })
+    setError('')
+    setSuccess('')
+  }
+
   function closeTakeModal() {
     setTakeModalEntry(null)
     setTakeForm({
       takeOutAll: false,
       qty: '',
+    })
+  }
+
+  function closeEditModal() {
+    setEditModalEntry(null)
+    setEditForm({
+      itemName: '',
+      size: '',
+      qty: '',
+      notes: '',
     })
   }
 
@@ -258,6 +296,24 @@ export default function StorageOverviewPage() {
     setTakeForm((prev) => ({
       ...prev,
       [name]: numericValue,
+    }))
+  }
+
+  function handleEditFormChange(event) {
+    const { name, value } = event.target
+
+    if (name === 'qty') {
+      const numericValue = value.replace(/\D/g, '')
+      setEditForm((prev) => ({
+        ...prev,
+        qty: numericValue,
+      }))
+      return
+    }
+
+    setEditForm((prev) => ({
+      ...prev,
+      [name]: name === 'itemName' ? value.toUpperCase() : value,
     }))
   }
 
@@ -299,9 +355,14 @@ export default function StorageOverviewPage() {
         return
       }
     } else {
+      const updatedBy = await getCurrentUserEmail()
+
       const { error: updateError } = await supabase
         .from('warehouse_storage')
-        .update({ qty: currentQty - takeQty })
+        .update({
+          qty: currentQty - takeQty,
+          updated_by: updatedBy,
+        })
         .eq('id', takeModalEntry.id)
 
       if (updateError) {
@@ -316,6 +377,58 @@ export default function StorageOverviewPage() {
     setSuccess('Storage quantity updated successfully.')
     setTaking(false)
     closeTakeModal()
+  }
+
+  async function handleEditSubmit(event) {
+    event.preventDefault()
+
+    if (!editModalEntry) {
+      return
+    }
+
+    setEditing(true)
+    setError('')
+    setSuccess('')
+
+    if (!editForm.itemName.trim()) {
+      setError('Item name is required.')
+      setEditing(false)
+      return
+    }
+
+    const nextQty = Number(editForm.qty || 0)
+
+    if (nextQty <= 0) {
+      setError('Quantity must be greater than 0.')
+      setEditing(false)
+      return
+    }
+
+    const updatedBy = await getCurrentUserEmail()
+
+    const { error: updateError } = await supabase
+      .from('warehouse_storage')
+      .update({
+        item_name: editForm.itemName.trim(),
+        size: editForm.size.trim() || null,
+        qty: nextQty,
+        notes: editForm.notes.trim() || null,
+        updated_by: updatedBy,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', editModalEntry.id)
+
+    if (updateError) {
+      setError(updateError.message)
+      setEditing(false)
+      return
+    }
+
+    const refreshedStorage = await fetchAllWarehouseStorage()
+    setStorageEntries(refreshedStorage || [])
+    setSuccess('Storage item updated successfully.')
+    setEditing(false)
+    closeEditModal()
   }
 
   function getLocationLabel(location) {
@@ -436,13 +549,22 @@ export default function StorageOverviewPage() {
                     <td style={styles.td}>{entry.qty}</td>
                     <td style={styles.td}>{entry.notes || '-'}</td>
                     <td style={styles.td}>
-                      <button
-                        type="button"
-                        onClick={() => openTakeModal(entry)}
-                        style={styles.takeButton}
-                      >
-                        Take
-                      </button>
+                      <div style={styles.actionGroup}>
+                        <button
+                          type="button"
+                          onClick={() => openEditModal(entry)}
+                          style={styles.editButton}
+                        >
+                          Edit
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => openTakeModal(entry)}
+                          style={styles.takeButton}
+                        >
+                          Take
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -505,6 +627,77 @@ export default function StorageOverviewPage() {
                 </button>
                 <button type="submit" style={styles.takeButton} disabled={taking}>
                   {taking ? 'Processing...' : 'Take Out'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      ) : null}
+
+      {editModalEntry ? (
+        <div style={styles.modalOverlay}>
+          <div style={styles.modalCard}>
+            <div style={styles.modalHeader}>
+              <h2 style={styles.modalTitle}>Edit Storage Item</h2>
+              <button type="button" onClick={closeEditModal} style={styles.modalCloseButton}>
+                Close
+              </button>
+            </div>
+
+            <p style={styles.modalText}>
+              <strong>Location:</strong> {getLocationLabel(editModalEntry.location)}
+            </p>
+
+            <form onSubmit={handleEditSubmit} style={styles.modalForm}>
+              <div style={styles.field}>
+                <label style={styles.label}>Item Name</label>
+                <input
+                  name="itemName"
+                  value={editForm.itemName}
+                  onChange={handleEditFormChange}
+                  style={styles.input}
+                  required
+                />
+              </div>
+
+              <div style={styles.field}>
+                <label style={styles.label}>Size</label>
+                <input
+                  name="size"
+                  value={editForm.size}
+                  onChange={handleEditFormChange}
+                  style={styles.input}
+                />
+              </div>
+
+              <div style={styles.field}>
+                <label style={styles.label}>Qty</label>
+                <input
+                  name="qty"
+                  value={editForm.qty}
+                  onChange={handleEditFormChange}
+                  style={styles.input}
+                  inputMode="numeric"
+                  required
+                />
+              </div>
+
+              <div style={styles.field}>
+                <label style={styles.label}>Notes</label>
+                <textarea
+                  name="notes"
+                  value={editForm.notes}
+                  onChange={handleEditFormChange}
+                  style={styles.textarea}
+                />
+              </div>
+
+              <div style={styles.modalActions}>
+                <button type="button" onClick={closeEditModal} style={styles.secondaryButton}>
+                  Cancel
+                </button>
+                <button type="submit" style={styles.editButton} disabled={editing}>
+                  {editing ? 'Saving...' : 'Save Changes'}
                 </button>
               </div>
             </form>
@@ -689,6 +882,26 @@ const styles = {
     borderBottom: '1px solid #f3f4f6',
     fontSize: '14px',
     verticalAlign: 'top',
+  },
+  actionGroup: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    flexWrap: 'wrap',
+  },
+  editButton: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    height: '36px',
+    padding: '0 14px',
+    border: 'none',
+    borderRadius: '8px',
+    background: '#2563eb',
+    color: '#fff',
+    fontSize: '13px',
+    fontWeight: '600',
+    cursor: 'pointer',
   },
   takeButton: {
     display: 'inline-flex',
