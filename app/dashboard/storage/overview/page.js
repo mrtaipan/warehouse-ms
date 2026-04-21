@@ -124,6 +124,7 @@ export default function StorageOverviewPage() {
   const [filters, setFilters] = useState({
     locationCode: '',
     subLocation: '',
+    hashtagOnly: false,
   })
   const [kpiDate, setKpiDate] = useState(getTodayDateValue())
 
@@ -194,6 +195,7 @@ export default function StorageOverviewPage() {
 
   const filteredRows = storageRows.filter((entry) => {
     const location = entry.location
+    const itemName = String(entry.item_name || '').trim()
 
     if (
       filters.locationCode &&
@@ -206,6 +208,10 @@ export default function StorageOverviewPage() {
       filters.subLocation &&
       !String(location.sub_location).toUpperCase().includes(filters.subLocation.toUpperCase())
     ) {
+      return false
+    }
+
+    if (filters.hashtagOnly && !itemName.startsWith('#')) {
       return false
     }
 
@@ -225,7 +231,15 @@ export default function StorageOverviewPage() {
   ).size
 
   function handleFilterChange(event) {
-    const { name, value } = event.target
+    const { name, value, type, checked } = event.target
+
+    if (type === 'checkbox') {
+      setFilters((prev) => ({
+        ...prev,
+        [name]: checked,
+      }))
+      return
+    }
 
     setFilters((prev) => ({
       ...prev,
@@ -237,6 +251,7 @@ export default function StorageOverviewPage() {
     setFilters({
       locationCode: '',
       subLocation: '',
+      hashtagOnly: false,
     })
   }
 
@@ -344,13 +359,22 @@ export default function StorageOverviewPage() {
     }
 
     if (takeQty === currentQty) {
-      const { error: deleteError } = await supabase
+      const { data: deletedRows, error: deleteError } = await supabase
         .from('warehouse_storage')
         .delete()
         .eq('id', takeModalEntry.id)
+        .select('id')
 
       if (deleteError) {
         setError(deleteError.message)
+        setTaking(false)
+        return
+      }
+
+      if (!deletedRows || deletedRows.length === 0) {
+        setError(
+          'Take out all could not remove the item. Please check the DELETE policy for warehouse_storage.'
+        )
         setTaking(false)
         return
       }
@@ -362,6 +386,7 @@ export default function StorageOverviewPage() {
         .update({
           qty: currentQty - takeQty,
           updated_by: updatedBy,
+          updated_at: new Date().toISOString(),
         })
         .eq('id', takeModalEntry.id)
 
@@ -512,6 +537,16 @@ export default function StorageOverviewPage() {
             </datalist>
           </div>
         </div>
+
+        <label style={styles.checkboxFilter}>
+          <input
+            type="checkbox"
+            name="hashtagOnly"
+            checked={filters.hashtagOnly}
+            onChange={handleFilterChange}
+          />
+          Show only items starting with #
+        </label>
 
         <div style={styles.toolbar}>
           <p style={styles.summary}>Showing {filteredRows.length} item record(s)</p>
@@ -800,6 +835,14 @@ const styles = {
     display: 'flex',
     flexDirection: 'column',
     gap: '8px',
+  },
+  checkboxFilter: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '8px',
+    fontSize: '14px',
+    fontWeight: '600',
+    color: '#111827',
   },
   label: {
     fontSize: '14px',
