@@ -27,29 +27,29 @@ function createPageHref({ q, page, pageSize }) {
   if (pageSize !== 25) params.set('pageSize', String(pageSize))
 
   const query = params.toString()
-  return query ? `/dashboard/suppliers?${query}` : '/dashboard/suppliers'
+  return query ? `/dashboard/brands?${query}` : '/dashboard/brands'
 }
 
-async function toggleSupplierStatus(formData) {
+async function toggleBrandStatus(formData) {
   'use server'
 
   const supabase = await createClient()
-  const supplierId = formData.get('supplierId')
+  const brandId = formData.get('brandId')
   const nextActiveValue = formData.get('nextActiveValue') === 'true'
 
   const { error } = await supabase
-    .from('suppliers')
+    .from('brands')
     .update({ is_active: nextActiveValue })
-    .eq('id', supplierId)
+    .eq('id', brandId)
 
   if (error) {
     throw new Error(error.message)
   }
 
-  revalidatePath('/dashboard/suppliers')
+  revalidatePath('/dashboard/brands')
 }
 
-export default async function SuppliersPage({ searchParams }) {
+export default async function BrandsPage({ searchParams }) {
   const supabase = await createClient()
 
   const {
@@ -66,34 +66,34 @@ export default async function SuppliersPage({ searchParams }) {
   const from = (currentPage - 1) * pageSize
   const to = from + pageSize - 1
 
-  let suppliersQuery = supabase
-    .from('suppliers')
+  let brandsQuery = supabase
+    .from('brands')
     .select('*', { count: 'exact' })
     .order('id', { ascending: true })
 
   if (query) {
-    suppliersQuery = suppliersQuery.or(
-      `supplier_code.ilike.%${query}%,supplier_name.ilike.%${query}%,contact_person.ilike.%${query}%,phone.ilike.%${query}%`
+    brandsQuery = brandsQuery.or(
+      `brand_code.ilike.%${query}%,brand_name.ilike.%${query}%,description.ilike.%${query}%`
     )
   }
 
-  const { data: suppliers, error, count } = await suppliersQuery.range(from, to)
+  const { data: brands, error, count } = await brandsQuery.range(from, to)
   const totalItems = count || 0
   const totalPages = totalItems > 0 ? Math.ceil(totalItems / pageSize) : 1
   const safeCurrentPage = Math.min(currentPage, totalPages)
   const hasPreviousPage = safeCurrentPage > 1
   const hasNextPage = safeCurrentPage < totalPages
   const showingFrom = totalItems === 0 ? 0 : from + 1
-  const showingTo = totalItems === 0 ? 0 : Math.min(from + (suppliers?.length || 0), totalItems)
+  const showingTo = totalItems === 0 ? 0 : Math.min(from + (brands?.length || 0), totalItems)
 
   return (
     <div>
-      <h1 style={styles.title}>Suppliers</h1>
-      <p style={styles.subtitle}>List of supplier master data</p>
+      <h1 style={styles.title}>Brands</h1>
+      <p style={styles.subtitle}>List of brand master data</p>
 
       <div style={styles.toolbar}>
-        <Link href="/dashboard/suppliers/new" style={styles.addButton}>
-          + Add Supplier
+        <Link href="/dashboard/brands/new" style={styles.addButton}>
+          + Add Brand
         </Link>
 
         <form method="get" style={styles.searchForm}>
@@ -101,7 +101,7 @@ export default async function SuppliersPage({ searchParams }) {
             type="text"
             name="q"
             defaultValue={query}
-            placeholder="Search code, name, contact, or phone"
+            placeholder="Search code, name, or description"
             style={styles.searchInput}
           />
           <select name="pageSize" defaultValue={String(pageSize)} style={styles.pageSizeSelect}>
@@ -120,9 +120,9 @@ export default async function SuppliersPage({ searchParams }) {
 
       {error ? (
         <p style={styles.error}>Error: {error.message}</p>
-      ) : suppliers?.length === 0 ? (
+      ) : brands?.length === 0 ? (
         <div style={styles.emptyBox}>
-          <p style={{ margin: 0 }}>{query ? 'No suppliers match your search.' : 'No suppliers yet.'}</p>
+          <p style={{ margin: 0 }}>{query ? 'No brands match your search.' : 'No brands yet.'}</p>
         </div>
       ) : (
         <>
@@ -141,22 +141,20 @@ export default async function SuppliersPage({ searchParams }) {
                 <tr>
                   <th style={styles.th}>Code</th>
                   <th style={styles.th}>Name</th>
-                  <th style={styles.th}>Contact Person</th>
-                  <th style={styles.th}>Phone</th>
+                  <th style={styles.th}>Description</th>
                   <th style={styles.th}>Active</th>
                   <th style={styles.th}>Action</th>
                 </tr>
               </thead>
               <tbody>
-                {suppliers.map((item) => (
+                {brands.map((item) => (
                   <tr key={item.id}>
-                    <td style={styles.td}>{item.supplier_code}</td>
-                    <td style={styles.td}>{item.supplier_name}</td>
-                    <td style={styles.td}>{item.contact_person || '-'}</td>
-                    <td style={styles.td}>{item.phone || '-'}</td>
+                    <td style={styles.td}>{item.brand_code}</td>
+                    <td style={styles.td}>{item.brand_name}</td>
+                    <td style={styles.td}>{item.description || '-'}</td>
                     <td style={styles.td}>
-                      <form action={toggleSupplierStatus} style={styles.toggleForm}>
-                        <input type="hidden" name="supplierId" value={item.id} />
+                      <form action={toggleBrandStatus} style={styles.toggleForm}>
+                        <input type="hidden" name="brandId" value={item.id} />
                         <input
                           type="hidden"
                           name="nextActiveValue"
@@ -165,8 +163,7 @@ export default async function SuppliersPage({ searchParams }) {
                         <button
                           type="submit"
                           style={styles.toggleButton}
-                          aria-label={item.is_active ? 'Deactivate supplier' : 'Activate supplier'}
-                          title={item.is_active ? 'Active' : 'Inactive'}
+                          aria-label={item.is_active ? 'Deactivate brand' : 'Activate brand'}
                         >
                           <span
                             style={{
@@ -185,7 +182,7 @@ export default async function SuppliersPage({ searchParams }) {
                       </form>
                     </td>
                     <td style={styles.td}>
-                      <Link href={`/dashboard/suppliers/${item.id}`} style={styles.editButton}>
+                      <Link href={`/dashboard/brands/${item.id}`} style={styles.editButton}>
                         Edit
                       </Link>
                     </td>
@@ -353,7 +350,6 @@ const styles = {
     padding: '2px',
     display: 'flex',
     alignItems: 'center',
-    transition: 'background-color 0.2s ease',
   },
   toggleThumb: {
     width: '20px',
