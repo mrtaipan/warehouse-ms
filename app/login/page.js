@@ -1,11 +1,13 @@
 'use client'
 
 import { useState } from 'react'
-import { useRouter } from 'next/navigation'
+import Link from 'next/link'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { createClient } from '@/utils/supabase/browser'
 
 export default function LoginPage() {
   const router = useRouter()
+  const searchParams = useSearchParams()
   const supabase = createClient()
 
   const [email, setEmail] = useState('')
@@ -29,7 +31,8 @@ export default function LoginPage() {
       return
     }
 
-    router.push('/dashboard/storage')
+    const nextPath = searchParams.get('next')
+    router.push(nextPath || '/dashboard/storage')
     router.refresh()
   }
 
@@ -38,6 +41,9 @@ export default function LoginPage() {
       <div style={styles.card}>
         <h1 style={styles.title}>Login</h1>
         <p style={styles.subtitle}>Warehouse Management System</p>
+        <Link href="/take-shortcut" style={styles.shortcutLink}>
+          Shortcut Pengambilan Barang Kosong
+        </Link>
 
         <form onSubmit={handleLogin} style={styles.form}>
           <div style={styles.field}>
@@ -100,9 +106,24 @@ const styles = {
   },
   subtitle: {
     marginTop: '8px',
-    marginBottom: '24px',
+    marginBottom: '16px',
     textAlign: 'center',
     color: '#666',
+  },
+  shortcutLink: {
+    display: 'inline-flex',
+    justifyContent: 'center',
+    alignItems: 'center',
+    width: '100%',
+    minHeight: '44px',
+    marginBottom: '20px',
+    borderRadius: '10px',
+    border: '1px solid #d0d7e2',
+    backgroundColor: '#fff7ed',
+    color: '#9a3412',
+    textDecoration: 'none',
+    fontSize: '14px',
+    fontWeight: '700',
   },
   form: {
     display: 'flex',
