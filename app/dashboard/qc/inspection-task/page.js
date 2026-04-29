@@ -6,6 +6,7 @@ import { createClient } from '@/utils/supabase/browser'
 import { formatSeconds } from '../shared'
 
 const supabase = createClient()
+const BREAK_REASONS = ['TOILET', 'PRAYER', 'SUPERVISOR CALL', 'MATERIAL WAIT', 'OTHER', 'COORDINATOR BREAK']
 
 const styles = {
   wrapper: {
@@ -113,6 +114,44 @@ const styles = {
     textTransform: 'uppercase',
     color: '#6b7280',
   },
+  infoIcon: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '16px',
+    height: '16px',
+    marginLeft: '6px',
+    borderRadius: '999px',
+    border: '1px solid #9ca3af',
+    color: '#6b7280',
+    fontSize: '11px',
+    fontWeight: '700',
+    lineHeight: 1,
+    cursor: 'help',
+    textTransform: 'none',
+  },
+  infoWrap: {
+    position: 'relative',
+    display: 'inline-flex',
+    alignItems: 'center',
+  },
+  infoTooltip: {
+    position: 'absolute',
+    top: 'calc(100% + 8px)',
+    right: 0,
+    width: '220px',
+    padding: '10px 12px',
+    borderRadius: '10px',
+    background: '#111827',
+    color: '#fff',
+    fontSize: '12px',
+    fontWeight: '500',
+    lineHeight: 1.5,
+    textTransform: 'none',
+    letterSpacing: 'normal',
+    zIndex: 20,
+    boxShadow: '0 12px 28px rgba(15, 23, 42, 0.22)',
+  },
   metaValue: {
     fontSize: '18px',
     fontWeight: '700',
@@ -208,16 +247,122 @@ const styles = {
     color: '#16a34a',
     fontWeight: '600',
   },
+  overlay: {
+    position: 'fixed',
+    inset: 0,
+    background: 'rgba(17, 24, 39, 0.4)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: '24px',
+    zIndex: 40,
+  },
+  modal: {
+    width: '100%',
+    maxWidth: '420px',
+    background: '#fff',
+    borderRadius: '16px',
+    padding: '24px',
+    border: '1px solid #e5e7eb',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '16px',
+  },
 }
 
-function getPrimaryObservedItem(task) {
-  const firstObserved = Array.isArray(task.observed_items) ? task.observed_items[0] : null
+function getTaskModelInfo(task) {
+  return {
+    modelName: task.model_name || task.inbound_unload?.model_name || 'UNKNOWN MODEL',
+    modelColor: task.model_color || task.inbound_unload?.model_color || '',
+    photoUrl: task.photo_url || task.inbound_unload?.photo_url || '',
+  }
+}
+
+function getTaskGradeInputs(task, gradeInputs) {
+  if (!task) {
+    return { qty_a: '', qty_b: '', qty_c: '' }
+  }
+
+  const draft = gradeInputs[task.id] || {}
 
   return {
-    modelName: firstObserved?.model_name || task.inbound_unload?.model_name || 'UNKNOWN MODEL',
-    modelColor: firstObserved?.model_color || task.inbound_unload?.model_color || '',
-    photoUrl: firstObserved?.photo_url || task.inbound_unload?.photo_url || '',
+    qty_a: draft.qty_a ?? '',
+    qty_b: draft.qty_b ?? '',
+    qty_c: draft.qty_c ?? '',
   }
+}
+
+function getCompletedQty(task) {
+  return Number(task?.qty_a || 0) + Number(task?.qty_b || 0) + Number(task?.qty_c || 0)
+}
+
+function getLockedQty(task) {
+  return Number(task?.locked_qty || 0)
+}
+
+function getRemainingQty(task) {
+  return Math.max(0, Number(task?.allocated_qty || 0) - getLockedQty(task))
+}
+
+function getSubmittedQty(values) {
+  return Number(values?.qty_a || 0) + Number(values?.qty_b || 0) + Number(values?.qty_c || 0)
+}
+
+async function createPauseLog({ taskId, pausedBy, pauseReason, pausedAt }) {
+  const { error } = await supabase.from('qc_pause_logs').insert([
+    {
+      qc_item_id: taskId,
+      paused_by: pausedBy || null,
+      pause_reason: pauseReason,
+      paused_at: pausedAt,
+    },
+  ])
+
+  return error
+}
+
+async function closeOpenPauseLog({ taskId, resumedBy, resumedAt }) {
+  const { data: openLog, error: openLogError } = await supabase
+    .from('qc_pause_logs')
+    .select('id')
+    .eq('qc_item_id', taskId)
+    .is('resumed_at', null)
+    .order('paused_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+
+  if (openLogError || !openLog) {
+    return openLogError || null
+  }
+
+  const { error: updateError } = await supabase
+    .from('qc_pause_logs')
+    .update({
+      resumed_at: resumedAt,
+      resumed_by: resumedBy || null,
+    })
+    .eq('id', openLog.id)
+
+  return updateError
+}
+
+function InfoHint({ text }) {
+  const [open, setOpen] = useState(false)
+
+  return (
+    <span
+      style={styles.infoWrap}
+      onMouseEnter={() => setOpen(true)}
+      onMouseLeave={() => setOpen(false)}
+      onFocus={() => setOpen(true)}
+      onBlur={() => setOpen(false)}
+    >
+      <button type="button" style={styles.infoIcon} aria-label={text}>
+        i
+      </button>
+      {open ? <span style={styles.infoTooltip}>{text}</span> : null}
+    </span>
+  )
 }
 
 export default function QcInspectionTaskPage() {
@@ -232,6 +377,10 @@ export default function QcInspectionTaskPage() {
   const [clockNow, setClockNow] = useState(() => Date.now())
   const [gradeInputs, setGradeInputs] = useState({})
   const [refreshKey, setRefreshKey] = useState(0)
+  const [interruptReason, setInterruptReason] = useState('TOILET')
+  const [showEmptySubmitModal, setShowEmptySubmitModal] = useState(false)
+  const [showInterruptModal, setShowInterruptModal] = useState(false)
+  const [completeChecks, setCompleteChecks] = useState({})
 
   useEffect(() => {
     let isMounted = true
@@ -308,7 +457,7 @@ export default function QcInspectionTaskPage() {
           )
         `)
         .eq('assigned_to', user.email)
-        .in('status', ['queued', 'in_progress'])
+        .in('status', ['queued', 'in_progress', 'paused'])
         .order('created_at', { ascending: true })
 
       if (!isMounted) {
@@ -378,16 +527,13 @@ export default function QcInspectionTaskPage() {
   }
 
   const activeTask = useMemo(
-    () => tasks.find((task) => task.id === activeTaskId) || tasks.find((task) => task.status === 'in_progress') || null,
+    () =>
+      tasks.find((task) => task.id === activeTaskId) ||
+      tasks.find((task) => task.status === 'in_progress') ||
+      null,
     [activeTaskId, tasks]
   )
-  const activeTaskInputs = activeTask
-    ? gradeInputs[activeTask.id] || {
-        qty_a: String(activeTask.qty_a || ''),
-        qty_b: String(activeTask.qty_b || ''),
-        qty_c: String(activeTask.qty_c || ''),
-      }
-    : { qty_a: '', qty_b: '', qty_c: '' }
+  const activeTaskInputs = getTaskGradeInputs(activeTask, gradeInputs)
   const runningSeconds = useMemo(() => {
     if (!activeTask) {
       return 0
@@ -424,12 +570,34 @@ export default function QcInspectionTaskPage() {
   async function handleStart(task) {
     setError('')
     setSuccess('')
+    setGradeInputs((prev) => ({
+      ...prev,
+      [task.id]: { qty_a: '', qty_b: '', qty_c: '' },
+    }))
+    setCompleteChecks((prev) => ({
+      ...prev,
+      [task.id]: false,
+    }))
 
     const startedAt = new Date().toISOString()
+    const nextStatus = task.status === 'paused' ? 'in_progress' : 'in_progress'
+    if (task.status === 'paused') {
+      const closeLogError = await closeOpenPauseLog({
+        taskId: task.id,
+        resumedBy: userEmail,
+        resumedAt: startedAt,
+      })
+
+      if (closeLogError) {
+        setError(closeLogError.message)
+        return
+      }
+    }
+
     const { data, error: updateError } = await supabase
       .from('qc_items')
       .update({
-        status: 'in_progress',
+        status: nextStatus,
         started_at: startedAt,
         decided_by: userEmail,
       })
@@ -459,36 +627,194 @@ export default function QcInspectionTaskPage() {
     setActiveTaskId(task.id)
   }
 
-  async function handleFinish(task) {
+  async function handleInterrupt(task) {
     setError('')
     setSuccess('')
 
-    const currentInputs = gradeInputs[task.id] || { qty_a: '', qty_b: '', qty_c: '' }
-    const qtyA = Number(currentInputs.qty_a || 0)
-    const qtyB = Number(currentInputs.qty_b || 0)
-    const qtyC = Number(currentInputs.qty_c || 0)
+    if (task.status !== 'in_progress') {
+      setError('Only a running QC task can be interrupted.')
+      return
+    }
 
-    const { error: updateError } = await supabase
+    const pausedAt = new Date().toISOString()
+    const pauseLogError = await createPauseLog({
+      taskId: task.id,
+      pausedBy: userEmail,
+      pauseReason: interruptReason,
+      pausedAt,
+    })
+
+    if (pauseLogError) {
+      setError(pauseLogError.message)
+      return
+    }
+
+    const { data, error: updateError } = await supabase
       .from('qc_items')
       .update({
-        status: 'done',
-        qty_a: qtyA,
-        qty_b: qtyB,
-        qty_c: qtyC,
+        status: 'paused',
         stopwatch_seconds: runningSeconds,
-        finished_at: new Date().toISOString(),
+        pause_reason: interruptReason,
+        paused_at: pausedAt,
+        started_at: null,
         decided_by: userEmail,
       })
       .eq('id', task.id)
+      .select(`
+        *,
+        inbound:inbound_id (
+          id,
+          grn_number
+        ),
+        inbound_unload:inbound_unload_id (
+          id,
+          model_name,
+          model_color,
+          photo_url,
+          koli_sequence
+        )
+      `)
+      .single()
 
     if (updateError) {
       setError(updateError.message)
       return
     }
 
-    setTasks((prev) => prev.filter((item) => item.id !== task.id))
+    setTasks((prev) => prev.map((item) => (item.id === task.id ? data : item)))
+    setSuccess(`QC task interrupted: ${interruptReason}.`)
+    setShowInterruptModal(false)
     setActiveTaskId(null)
-    setSuccess('QC task completed.')
+  }
+
+  async function handleFinish(task) {
+    setError('')
+    setSuccess('')
+
+    const currentInputs = gradeInputs[task.id] || { qty_a: '', qty_b: '', qty_c: '' }
+    if (!currentInputs.qty_a && !currentInputs.qty_b && !currentInputs.qty_c) {
+      setShowEmptySubmitModal(true)
+      return
+    }
+
+    const { data: latestTaskRow, error: latestTaskError } = await supabase
+      .from('qc_items')
+      .select('qty_a, qty_b, qty_c, allocated_qty, locked_qty')
+      .eq('id', task.id)
+      .single()
+
+    if (latestTaskError) {
+      setError(latestTaskError.message)
+      return
+    }
+
+    const remainingBeforeSubmit = Math.max(
+      0,
+      Number(latestTaskRow?.allocated_qty || task.allocated_qty || 0) - Number(latestTaskRow?.locked_qty || 0)
+    )
+    const submittedQty = getSubmittedQty(currentInputs)
+
+    if (submittedQty > remainingBeforeSubmit) {
+      setError(`Submitted qty (${submittedQty}) cannot be greater than remaining qty (${remainingBeforeSubmit}).`)
+      return
+    }
+
+    const qtyA = Number(latestTaskRow?.qty_a || 0) + Number(currentInputs.qty_a || 0)
+    const qtyB = Number(latestTaskRow?.qty_b || 0) + Number(currentInputs.qty_b || 0)
+    const qtyC = Number(latestTaskRow?.qty_c || 0) + Number(currentInputs.qty_c || 0)
+    const nextLockedQty = qtyA + qtyB + qtyC
+    const isMarkedComplete = Boolean(completeChecks[task.id])
+    const isTaskComplete =
+      isMarkedComplete || nextLockedQty >= Number(latestTaskRow?.allocated_qty || task.allocated_qty || 0)
+    const finishedAt = new Date().toISOString()
+
+    if (!isTaskComplete) {
+      const pauseLogError = await createPauseLog({
+        taskId: task.id,
+        pausedBy: userEmail,
+        pauseReason: 'PARTIAL SUBMIT',
+        pausedAt: finishedAt,
+      })
+
+      if (pauseLogError) {
+        setError(pauseLogError.message)
+        return
+      }
+    } else {
+      const closeLogError = await closeOpenPauseLog({
+        taskId: task.id,
+        resumedBy: userEmail,
+        resumedAt: finishedAt,
+      })
+
+      if (closeLogError) {
+        setError(closeLogError.message)
+        return
+      }
+    }
+
+    const { data: updatedTask, error: updateError } = await supabase
+      .from('qc_items')
+      .update({
+        status: isTaskComplete ? 'done' : 'paused',
+        qty_a: qtyA,
+        qty_b: qtyB,
+        qty_c: qtyC,
+        stopwatch_seconds: runningSeconds,
+        finished_at: isTaskComplete ? finishedAt : null,
+        decided_by: userEmail,
+        locked_qty: nextLockedQty,
+        started_at: null,
+        paused_at: isTaskComplete ? null : finishedAt,
+        pause_reason: isTaskComplete ? null : 'PARTIAL SUBMIT',
+      })
+      .eq('id', task.id)
+      .select(`
+        *,
+        inbound:inbound_id (
+          id,
+          grn_number
+        ),
+        inbound_unload:inbound_unload_id (
+          id,
+          model_name,
+          model_color,
+          photo_url,
+          koli_sequence
+        )
+      `)
+      .single()
+
+    if (updateError) {
+      setError(updateError.message)
+      return
+    }
+
+    setTasks((prev) =>
+      isTaskComplete ? prev.filter((item) => item.id !== task.id) : prev.map((item) => (item.id === task.id ? updatedTask : item))
+    )
+    setActiveTaskId(null)
+    setGradeInputs((prev) => {
+      const next = { ...prev }
+      delete next[task.id]
+      return next
+    })
+    setCompleteChecks((prev) => {
+      const next = { ...prev }
+      delete next[task.id]
+      return next
+    })
+    if (isTaskComplete) {
+      const allocationGap = getLockedQty(updatedTask) - Number(updatedTask.allocated_qty || 0)
+      setSuccess(
+        allocationGap !== 0
+          ? `QC task completed with allocation gap ${allocationGap}.`
+          : 'QC task completed.'
+      )
+      return
+    }
+
+    setSuccess(`QC checkpoint saved. ${getRemainingQty(updatedTask)} qty still remaining in this task.`)
   }
 
   if (loading) {
@@ -498,7 +824,7 @@ export default function QcInspectionTaskPage() {
   if (!isRegistered) {
     return (
       <div style={styles.card}>
-        <h1 style={styles.title}>Inspection Task</h1>
+        <h1 style={styles.title}>Grading Task</h1>
         <p style={styles.subtitle}>
           Register this account first so the planner can allocate QC work to you dynamically.
         </p>
@@ -517,10 +843,7 @@ export default function QcInspectionTaskPage() {
     <div style={styles.wrapper}>
       <div style={styles.card}>
         <div>
-          <h1 style={styles.title}>Inspection Task</h1>
-          <p style={styles.subtitle}>
-            Mobile-friendly queue for {userLabel || userEmail}. Open one task, start the timer, then submit Qty A, Qty B, and Qty C when finished.
-          </p>
+          <h1 style={styles.title}>Grading Task</h1>
         </div>
       </div>
 
@@ -539,10 +862,10 @@ export default function QcInspectionTaskPage() {
             <span style={styles.badge}>{activeTask.assigned_to}</span>
           </div>
 
-          {getPrimaryObservedItem(activeTask).photoUrl ? (
+          {getTaskModelInfo(activeTask).photoUrl ? (
             <Image
-              src={getPrimaryObservedItem(activeTask).photoUrl}
-              alt={getPrimaryObservedItem(activeTask).modelName}
+              src={getTaskModelInfo(activeTask).photoUrl}
+              alt={getTaskModelInfo(activeTask).modelName}
               width={640}
               height={220}
               unoptimized
@@ -554,18 +877,29 @@ export default function QcInspectionTaskPage() {
 
           <div style={styles.mobileStack}>
             <div>
-              <div style={styles.bigQty}>{activeTask.allocated_qty}</div>
-              <div style={styles.subtitle}>Allocated Qty</div>
+              <div style={styles.bigQty}>{getRemainingQty(activeTask)}</div>
+              <div style={styles.subtitle}>Remaining Qty</div>
             </div>
 
             <div style={styles.metaGrid}>
               <div style={styles.metaCard}>
                 <span style={styles.metaLabel}>Model</span>
-                <span style={styles.metaValue}>{getPrimaryObservedItem(activeTask).modelName}</span>
+                <span style={styles.metaValue}>{getTaskModelInfo(activeTask).modelName}</span>
               </div>
               <div style={styles.metaCard}>
                 <span style={styles.metaLabel}>Color</span>
-                <span style={styles.metaValue}>{getPrimaryObservedItem(activeTask).modelColor || 'NO COLOR'}</span>
+                <span style={styles.metaValue}>{getTaskModelInfo(activeTask).modelColor || 'NO COLOR'}</span>
+              </div>
+              <div style={styles.metaCard}>
+                <span style={styles.metaLabel}>Allocated</span>
+                <span style={styles.metaValue}>{Number(activeTask.allocated_qty || 0)}</span>
+              </div>
+              <div style={styles.metaCard}>
+                <span style={styles.metaLabel}>
+                  Graded Qty
+                  <InfoHint text="Qty yang sudah di QC oleh Grader." />
+                </span>
+                <span style={styles.metaValue}>{getLockedQty(activeTask)}</span>
               </div>
             </div>
           </div>
@@ -576,9 +910,9 @@ export default function QcInspectionTaskPage() {
               <div style={styles.timerValue}>{formatSeconds(runningSeconds)}</div>
             </div>
 
-            {activeTask.status === 'queued' ? (
+            {activeTask.status === 'queued' || activeTask.status === 'paused' ? (
               <button type="button" onClick={() => handleStart(activeTask)} style={styles.primaryButton}>
-                Start
+                {activeTask.status === 'paused' ? 'Resume' : 'Start'}
               </button>
             ) : (
               <span style={{ fontWeight: '700' }}>Running</span>
@@ -596,7 +930,7 @@ export default function QcInspectionTaskPage() {
                   setGradeInputs((prev) => ({
                     ...prev,
                     [activeTask.id]: {
-                      ...prev[activeTask.id],
+                      ...getTaskGradeInputs(activeTask, prev),
                       qty_a: event.target.value,
                     },
                   }))
@@ -615,7 +949,7 @@ export default function QcInspectionTaskPage() {
                   setGradeInputs((prev) => ({
                     ...prev,
                     [activeTask.id]: {
-                      ...prev[activeTask.id],
+                      ...getTaskGradeInputs(activeTask, prev),
                       qty_b: event.target.value,
                     },
                   }))
@@ -634,7 +968,7 @@ export default function QcInspectionTaskPage() {
                   setGradeInputs((prev) => ({
                     ...prev,
                     [activeTask.id]: {
-                      ...prev[activeTask.id],
+                      ...getTaskGradeInputs(activeTask, prev),
                       qty_c: event.target.value,
                     },
                   }))
@@ -644,7 +978,28 @@ export default function QcInspectionTaskPage() {
             </div>
           </div>
 
+          <label style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '14px', fontWeight: '600', color: '#111827' }}>
+            <input
+              type="checkbox"
+              checked={Boolean(completeChecks[activeTask.id])}
+              onChange={(event) =>
+                setCompleteChecks((prev) => ({
+                  ...prev,
+                  [activeTask.id]: event.target.checked,
+                }))
+              }
+            />
+            QC selesai untuk qty yang benar-benar masuk. Kalau allocated lebih besar dari aktual, task tetap boleh selesai dan gap-nya jadi catatan planner.
+          </label>
+
           <div style={styles.buttonRow}>
+            {activeTask.status === 'in_progress' ? (
+              <>
+                <button type="button" onClick={() => setShowInterruptModal(true)} style={styles.secondaryButton}>
+                  Interrupt
+                </button>
+              </>
+            ) : null}
             <button
               type="button"
               onClick={() => handleFinish(activeTask)}
@@ -654,6 +1009,11 @@ export default function QcInspectionTaskPage() {
               Stop & Submit
             </button>
           </div>
+
+          <p style={styles.subtitle}>
+            Remaining Qty shows allocation gap (`allocated - graded qty`). Jika fisik yang masuk QC memang lebih sedikit,
+            centang `QC selesai` lalu submit. Gap allocation akan tetap tersimpan sebagai catatan mismatch planner.
+          </p>
         </div>
       ) : null}
 
@@ -662,24 +1022,27 @@ export default function QcInspectionTaskPage() {
           {tasks
             .filter((task) => task.id !== activeTask?.id)
             .map((task) => {
-              const primaryObserved = getPrimaryObservedItem(task)
+              const taskModel = getTaskModelInfo(task)
 
               return (
                 <div key={task.id} style={styles.queueCard}>
                   <div style={styles.queueHeader}>
                     <div>
-                      <h2 style={styles.queueTitle}>{primaryObserved.modelName}</h2>
+                      <h2 style={styles.queueTitle}>{taskModel.modelName}</h2>
                       <p style={styles.subtitle}>
                         {task.inbound?.grn_number || '-'} · Koli {task.inbound_unload?.koli_sequence || '-'}
                       </p>
                     </div>
-                    <span style={styles.badge}>{task.status === 'queued' ? 'Queued' : 'Running'}</span>
+                    <span style={styles.badge}>
+                      {task.status === 'queued' ? 'Queued' : task.status === 'paused' ? 'Paused' : 'Running'}
+                    </span>
+                    
                   </div>
 
-                  {primaryObserved.photoUrl ? (
+                  {taskModel.photoUrl ? (
                     <Image
-                      src={primaryObserved.photoUrl}
-                      alt={primaryObserved.modelName}
+                      src={taskModel.photoUrl}
+                      alt={taskModel.modelName}
                       width={640}
                       height={220}
                       unoptimized
@@ -689,12 +1052,15 @@ export default function QcInspectionTaskPage() {
                     <div style={styles.thumbPlaceholder}>NO PHOTO</div>
                   )}
 
-                  <div style={styles.bigQty}>{task.allocated_qty}</div>
-                  <div style={styles.subtitle}>Allocated Qty</div>
+                  <div style={styles.bigQty}>{getRemainingQty(task)}</div>
+                  <div style={styles.subtitle}>Remaining Qty</div>
+                  <p style={styles.subtitle}>
+                    Graded Qty {getLockedQty(task)} / Allocated {Number(task.allocated_qty || 0)}
+                  </p>
 
                   <div style={styles.buttonRow}>
                     <button type="button" onClick={() => handleStart(task)} style={styles.primaryButton}>
-                      Mulai
+                      {task.status === 'paused' ? 'Resume' : 'Mulai'}
                     </button>
                   </div>
                 </div>
@@ -706,6 +1072,48 @@ export default function QcInspectionTaskPage() {
       {!activeTask && !tasks.length ? (
         <div style={styles.emptyState}>
           Tidak ada task QC untuk akun ini sekarang. Kalau kosong, berarti belum ada alokasi yang masuk ke {userLabel || userEmail}.
+        </div>
+      ) : null}
+
+      {showEmptySubmitModal ? (
+        <div style={styles.overlay}>
+          <div style={styles.modal}>
+            <div>
+              <h2 style={styles.queueTitle}>Qty Masih Kosong</h2>
+              <p style={styles.subtitle}>Isi minimal salah satu dari Qty A, Qty B, atau Qty C sebelum submit QC.</p>
+            </div>
+            <div style={{ ...styles.buttonRow, justifyContent: 'flex-end' }}>
+              <button type="button" onClick={() => setShowEmptySubmitModal(false)} style={styles.primaryButton}>
+                OK
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {showInterruptModal && activeTask ? (
+        <div style={styles.overlay}>
+          <div style={styles.modal}>
+            <div>
+              <h2 style={styles.queueTitle}>Interrupt QC?</h2>
+              <p style={styles.subtitle}>Choose the reason first. If you cancel, QC will continue running.</p>
+            </div>
+            <select value={interruptReason} onChange={(event) => setInterruptReason(event.target.value)} style={styles.input}>
+              {BREAK_REASONS.filter((reason) => reason !== 'COORDINATOR BREAK').map((reason) => (
+                <option key={reason} value={reason}>
+                  {reason}
+                </option>
+              ))}
+            </select>
+            <div style={{ ...styles.buttonRow, justifyContent: 'flex-end' }}>
+              <button type="button" onClick={() => setShowInterruptModal(false)} style={styles.secondaryButton}>
+                Cancel
+              </button>
+              <button type="button" onClick={() => handleInterrupt(activeTask)} style={styles.primaryButton}>
+                OK
+              </button>
+            </div>
+          </div>
         </div>
       ) : null}
     </div>

@@ -38,7 +38,7 @@ export default async function ReceivingDetailPage({ params }) {
   ] = await Promise.all([
     supabase
       .from('inbound')
-      .select('*, suppliers(supplier_name)')
+      .select('*, suppliers:dir_suppliers!supplier_id (supplier_name)')
       .eq('id', inboundId)
       .single(),
     supabase

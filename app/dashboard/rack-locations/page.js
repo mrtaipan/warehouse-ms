@@ -11,7 +11,7 @@ async function toggleRackLocationStatus(formData) {
   const nextActiveValue = formData.get('nextActiveValue') === 'true'
 
   const { error } = await supabase
-    .from('rack_locations')
+    .from('dir_rack_locations')
     .update({ is_active: nextActiveValue })
     .eq('id', rackLocationId)
 
@@ -34,7 +34,7 @@ export default async function RackLocationsPage() {
   }
 
   const { data: rackLocations, error } = await supabase
-    .from('rack_locations')
+    .from('dir_rack_locations')
     .select('*')
     .order('location_type', { ascending: true })
     .order('location_id', { ascending: true })

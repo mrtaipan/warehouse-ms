@@ -36,7 +36,7 @@ export default function EditRackLocationPage() {
     async function fetchRackLocation() {
       setPageLoading(true)
       setError('')
-      const { data, error } = await supabase.from('rack_locations').select('id, location_type, location_id, location_code, sub_location, is_active').eq('id', rackLocationId).single()
+      const { data, error } = await supabase.from('dir_rack_locations').select('id, location_type, location_id, location_code, sub_location, is_active').eq('id', rackLocationId).single()
       if (error) {
         setError(error.message)
         setPageLoading(false)
@@ -69,7 +69,7 @@ export default function EditRackLocationPage() {
     setError('')
     setSuccess('')
 
-    const { error } = await supabase.from('rack_locations').update({
+    const { error } = await supabase.from('dir_rack_locations').update({
       location_type: form.location_type.trim() || null,
       location_id: form.location_id.trim() || null,
       location_code: form.location_code.trim() || null,

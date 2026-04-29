@@ -274,7 +274,7 @@ export default function NewInboundPage() {
         { data: supplierRows, error: supplierError },
         { data: roRows, error: roError },
       ] = await Promise.all([
-        supabase.from('suppliers').select('id, supplier_name').eq('is_active', true).order('supplier_name', { ascending: true }),
+        supabase.from('dir_suppliers').select('id, supplier_name').eq('is_active', true).order('supplier_name', { ascending: true }),
         supabase.from('inbound').select('grn_number').order('created_at', { ascending: false }).limit(200),
       ])
 
@@ -414,11 +414,11 @@ export default function NewInboundPage() {
       }
     }
 
-      setSuccess('Receiving saved successfully.')
+    setSuccess('Receiving saved successfully.')
     setLoading(false)
 
     setTimeout(() => {
-      router.push(`/dashboard/inbound/${order.id}/edit`)
+      router.push('/dashboard/inbound/receiving')
       router.refresh()
     }, 600)
   }
@@ -640,7 +640,7 @@ export default function NewInboundPage() {
         {success ? <p style={styles.success}>{success}</p> : null}
 
         <div style={styles.actions}>
-          <button type="button" onClick={() => router.push('/dashboard/inbound')} style={styles.secondaryButton}>Cancel</button>
+          <button type="button" onClick={() => router.push('/dashboard/inbound/receiving')} style={styles.secondaryButton}>Cancel</button>
           <button
             type="submit"
             disabled={loading || loadingOptions || loadingRoNumber}

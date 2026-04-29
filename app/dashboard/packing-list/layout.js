@@ -1,23 +1,17 @@
 import Link from 'next/link'
 
-export default function QcLayout({ children }) {
+export default function PackingListLayout({ children }) {
   return (
     <div style={styles.wrapper}>
       <div style={styles.subnav}>
-        <Link href="/dashboard/qc" style={styles.link}>
+        <Link href="/dashboard/packing-list" style={styles.link}>
           Dashboard
         </Link>
-        <Link href="/dashboard/qc/receiving" style={styles.link}>
+        <Link href="/dashboard/packing-list/receiving" style={styles.link}>
           Receiving
         </Link>
-        <Link href="/dashboard/qc/inspection-task" style={styles.link}>
-          Grading Task
-        </Link>
-        <Link href="/dashboard/qc/confirmation" style={styles.link}>
-          Confirmation
-        </Link>
-        <Link href="/dashboard/qc/retur-report" style={styles.link}>
-          Retur Report
+        <Link href="/dashboard/packing-list/size-breakdown" style={styles.link}>
+          Size Breakdown
         </Link>
       </div>
 

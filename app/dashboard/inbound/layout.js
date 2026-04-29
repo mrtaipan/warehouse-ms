@@ -5,6 +5,9 @@ export default function InboundLayout({ children }) {
     <div style={styles.wrapper}>
       <div style={styles.subnav}>
         <Link href="/dashboard/inbound" style={styles.link}>
+          Dashboard
+        </Link>
+        <Link href="/dashboard/inbound/receiving" style={styles.link}>
           Receiving
         </Link>
         <Link href="/dashboard/inbound/unload" style={styles.link}>

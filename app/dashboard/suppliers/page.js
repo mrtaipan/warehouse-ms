@@ -38,7 +38,7 @@ async function toggleSupplierStatus(formData) {
   const nextActiveValue = formData.get('nextActiveValue') === 'true'
 
   const { error } = await supabase
-    .from('suppliers')
+    .from('dir_suppliers')
     .update({ is_active: nextActiveValue })
     .eq('id', supplierId)
 
@@ -67,7 +67,7 @@ export default async function SuppliersPage({ searchParams }) {
   const to = from + pageSize - 1
 
   let suppliersQuery = supabase
-    .from('suppliers')
+    .from('dir_suppliers')
     .select('*', { count: 'exact' })
     .order('id', { ascending: true })
 

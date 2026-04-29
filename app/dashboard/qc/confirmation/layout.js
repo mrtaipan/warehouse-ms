@@ -1,23 +1,14 @@
 import Link from 'next/link'
 
-export default function QcLayout({ children }) {
+export default function QcConfirmationLayout({ children }) {
   return (
     <div style={styles.wrapper}>
       <div style={styles.subnav}>
-        <Link href="/dashboard/qc" style={styles.link}>
-          Dashboard
+        <Link href="/dashboard/qc/confirmation/next-process" style={styles.link}>
+          Next Process
         </Link>
-        <Link href="/dashboard/qc/receiving" style={styles.link}>
-          Receiving
-        </Link>
-        <Link href="/dashboard/qc/inspection-task" style={styles.link}>
-          Grading Task
-        </Link>
-        <Link href="/dashboard/qc/confirmation" style={styles.link}>
-          Confirmation
-        </Link>
-        <Link href="/dashboard/qc/retur-report" style={styles.link}>
-          Retur Report
+        <Link href="/dashboard/qc/confirmation/rejection" style={styles.link}>
+          Rejection
         </Link>
       </div>
 
@@ -43,7 +34,7 @@ const styles = {
     padding: '10px 14px',
     borderRadius: '10px',
     textDecoration: 'none',
-    background: '#e5e7eb',
+    background: '#f3f4f6',
     color: '#111827',
     fontSize: '14px',
     fontWeight: '600',

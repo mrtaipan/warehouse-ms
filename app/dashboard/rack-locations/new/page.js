@@ -39,7 +39,7 @@ export default function NewRackLocationPage() {
     setError('')
     setSuccess('')
 
-    const { error } = await supabase.from('rack_locations').insert([{
+    const { error } = await supabase.from('dir_rack_locations').insert([{
       location_type: form.location_type.trim() || null,
       location_id: form.location_id.trim() || null,
       location_code: form.location_code.trim() || null,

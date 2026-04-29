@@ -38,7 +38,7 @@ async function toggleBrandStatus(formData) {
   const nextActiveValue = formData.get('nextActiveValue') === 'true'
 
   const { error } = await supabase
-    .from('brands')
+    .from('dir_brands')
     .update({ is_active: nextActiveValue })
     .eq('id', brandId)
 
@@ -67,7 +67,7 @@ export default async function BrandsPage({ searchParams }) {
   const to = from + pageSize - 1
 
   let brandsQuery = supabase
-    .from('brands')
+    .from('dir_brands')
     .select('*', { count: 'exact' })
     .order('id', { ascending: true })
 

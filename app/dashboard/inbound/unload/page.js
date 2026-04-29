@@ -1,7 +1,7 @@
 'use client'
 
 import Image from 'next/image'
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { createClient } from '@/utils/supabase/browser'
 
 const supabase = createClient()
@@ -59,6 +59,11 @@ function readFileAsDataUrl(file) {
 
 function normalizeText(value) {
   return String(value || '').trim().toUpperCase()
+}
+
+function getModelDisplayLabel(modelName, modelColor, variantLabel) {
+  const baseLabel = modelColor ? `${modelName} / ${modelColor}` : modelName || '-'
+  return variantLabel ? `${baseLabel} | Product ID ${variantLabel}` : baseLabel
 }
 
 const styles = {
@@ -513,6 +518,7 @@ export default function UnloadPage() {
   const [brands, setBrands] = useState([])
   const [categories, setCategories] = useState([])
   const [productModels, setProductModels] = useState([])
+  const [productModelVariants, setProductModelVariants] = useState([])
   const [selectedInboundId, setSelectedInboundId] = useState('')
   const [roSearch, setRoSearch] = useState('')
   const [brandSearch, setBrandSearch] = useState('')
@@ -521,10 +527,12 @@ export default function UnloadPage() {
   const [level1Id, setLevel1Id] = useState('')
   const [level2Id, setLevel2Id] = useState('')
   const [selectedModel, setSelectedModel] = useState(null)
+  const [selectedVariantLabel, setSelectedVariantLabel] = useState('')
   const [qty, setQty] = useState('')
   const [picName, setPicName] = useState('')
   const [isSample, setIsSample] = useState(false)
   const [isReturn, setIsReturn] = useState(false)
+  const [currentKoliItems, setCurrentKoliItems] = useState([])
   const [unloadRows, setUnloadRows] = useState([])
   const [returnRows, setReturnRows] = useState([])
   const [showChooseModelModal, setShowChooseModelModal] = useState(false)
@@ -542,6 +550,8 @@ export default function UnloadPage() {
   const [modelModalError, setModelModalError] = useState('')
   const [previewImage, setPreviewImage] = useState(null)
   const [showProcessedTooltip, setShowProcessedTooltip] = useState(false)
+  const [supportsUnloadVariant, setSupportsUnloadVariant] = useState(false)
+  const [supportsReturnVariant, setSupportsReturnVariant] = useState(false)
 
   useEffect(() => {
     async function loadInitialData() {
@@ -553,34 +563,41 @@ export default function UnloadPage() {
         { data: brandRows, error: brandError },
         { data: categoryRows, error: categoryError },
         { data: modelRows, error: modelError },
+        { data: productVariantRows, error: productVariantError },
       ] = await Promise.all([
         supabase
           .from('inbound')
-          .select('id, grn_number, total_claimed_qty, total_received_qty, inbound_date, item_name, suppliers(supplier_name)')
+          .select('id, grn_number, total_claimed_qty, total_received_qty, inbound_date, item_name, suppliers:dir_suppliers!supplier_id (supplier_name)')
           .order('created_at', { ascending: false }),
         supabase
-          .from('brands')
+          .from('dir_brands')
           .select('id, brand_code, brand_name')
           .eq('is_active', true)
           .order('brand_name', { ascending: true }),
         supabase
-          .from('categories')
+          .from('dir_categories')
           .select('id, category_code, category_name, parent_id, level, full_code, full_name')
           .eq('is_active', true)
           .order('full_code', { ascending: true }),
         supabase
-          .from('product_models')
+          .from('dir_product_models')
           .select('id, brand_id, category_id, model_name, model_color, photo_url')
           .eq('is_active', true)
           .order('model_name', { ascending: true }),
+        supabase
+          .from('dir_product_model_variants')
+          .select('*')
+          .eq('is_active', true)
+          .order('variant_label', { ascending: true }),
       ])
 
-      if (inboundError || brandError || categoryError || modelError) {
+      if (inboundError || brandError || categoryError || modelError || productVariantError) {
         setError(
           inboundError?.message ||
             brandError?.message ||
             categoryError?.message ||
             modelError?.message ||
+            productVariantError?.message ||
             'Failed to load unload setup.'
         )
         setLoading(false)
@@ -591,6 +608,15 @@ export default function UnloadPage() {
       setBrands(brandRows || [])
       setCategories(categoryRows || [])
       setProductModels(modelRows || [])
+      setProductModelVariants(productVariantRows || [])
+
+      const [{ error: unloadVariantError }, { error: returnVariantError }] = await Promise.all([
+        supabase.from('inbound_unload').select('variant_label').limit(1),
+        supabase.from('warehouse_returns').select('variant_label').limit(1),
+      ])
+
+      setSupportsUnloadVariant(!unloadVariantError)
+      setSupportsReturnVariant(!returnVariantError)
       setLoading(false)
     }
 
@@ -602,6 +628,7 @@ export default function UnloadPage() {
       if (!selectedInboundId) {
         setUnloadRows([])
         setReturnRows([])
+        setCurrentKoliItems([])
         return
       }
 
@@ -611,14 +638,22 @@ export default function UnloadPage() {
       ] = await Promise.all([
         supabase
           .from('inbound_unload')
-          .select('id, inbound_id, brand_id, category_id, model_name, model_color, qty, pic_name, is_sample, koli_sequence, photo_url')
+          .select(
+            supportsUnloadVariant
+              ? 'id, inbound_id, brand_id, category_id, model_name, model_color, qty, pic_name, is_sample, koli_sequence, photo_url, variant_label'
+              : 'id, inbound_id, brand_id, category_id, model_name, model_color, qty, pic_name, is_sample, koli_sequence, photo_url'
+          )
           .eq('inbound_id', selectedInboundId)
           .order('is_sample', { ascending: true })
           .order('koli_sequence', { ascending: true })
           .order('id', { ascending: true }),
         supabase
-          .from('returns')
-          .select('id, inbound_id, source_phase, brand_id, category_id, model_name, model_color, qty, pic_name, created_at')
+          .from('warehouse_returns')
+          .select(
+            supportsReturnVariant
+              ? 'id, inbound_id, source_phase, brand_id, category_id, model_name, model_color, qty, pic_name, created_at, variant_label'
+              : 'id, inbound_id, source_phase, brand_id, category_id, model_name, model_color, qty, pic_name, created_at'
+          )
           .eq('inbound_id', selectedInboundId)
           .eq('source_phase', 'inbound')
           .order('created_at', { ascending: true }),
@@ -634,7 +669,7 @@ export default function UnloadPage() {
     }
 
     loadUnloadRows()
-  }, [selectedInboundId])
+  }, [selectedInboundId, supportsReturnVariant, supportsUnloadVariant])
 
   const categoryMaps = buildCategoryMaps(categories)
   const level0Options = categoryMaps.roots
@@ -671,7 +706,20 @@ export default function UnloadPage() {
       return aLabel.localeCompare(bLabel)
     })
 
-  const totalKoli = unloadRows.filter((row) => !row.is_sample).length
+  const selectedModelVariants = useMemo(
+    () =>
+      productModelVariants
+        .filter((item) => Number(item.product_model_id || 0) === Number(selectedModel?.id || 0))
+        .sort((a, b) => Number(a.variant_index ?? 0) - Number(b.variant_index ?? 0)),
+    [productModelVariants, selectedModel]
+  )
+
+  const nextKoliSequence =
+    unloadRows.filter((row) => !row.is_sample).reduce(
+      (max, row) => Math.max(max, Number(row.koli_sequence || 0)),
+      0
+    ) + 1
+  const totalKoli = new Set(unloadRows.filter((row) => !row.is_sample).map((row) => Number(row.koli_sequence || 0))).size
   const totalSampleQty = unloadRows
     .filter((row) => row.is_sample)
     .reduce((sum, row) => sum + Number(row.qty || 0), 0)
@@ -684,12 +732,55 @@ export default function UnloadPage() {
     ...unloadRows.map((row) => ({ ...row, rowType: row.is_sample ? 'sample' : 'koli' })),
     ...returnRows.map((row) => ({ ...row, rowType: 'return', is_sample: false, koli_sequence: null })),
   ]
+  const koliGroups = useMemo(() => {
+    const grouped = new Map()
+
+    unloadRows
+      .filter((row) => !row.is_sample && row.koli_sequence != null)
+      .forEach((row) => {
+        const key = Number(row.koli_sequence)
+        const current = grouped.get(key) || {
+          koli_sequence: key,
+          items: [],
+          total_qty: 0,
+          pic_names: new Set(),
+        }
+
+        current.items.push(row)
+        current.total_qty += Number(row.qty || 0)
+        if (row.pic_name) {
+          current.pic_names.add(row.pic_name)
+        }
+        grouped.set(key, current)
+      })
+
+    return Array.from(grouped.values())
+      .sort((a, b) => a.koli_sequence - b.koli_sequence)
+      .map((group) => ({
+        ...group,
+        pic_list: Array.from(group.pic_names),
+      }))
+  }, [unloadRows])
   const summaryMap = new Map()
 
+  function getDefaultVariantLabelForModel(model) {
+    if (!model) return ''
+
+    const variantRows = productModelVariants
+      .filter((item) => Number(item.product_model_id || 0) === Number(model.id || 0))
+      .sort((a, b) => Number(a.variant_index ?? 0) - Number(b.variant_index ?? 0))
+
+    const mainVariant =
+      variantRows.find((item) => item.is_main_variant) ||
+      variantRows.find((item) => Number(item.variant_index ?? 0) === 0) ||
+      variantRows[0] ||
+      null
+
+    return mainVariant?.variant_label || ''
+  }
+
   for (const row of unloadRows) {
-    const label = row.model_color
-      ? `${row.model_name} / ${row.model_color}`
-      : row.model_name
+    const label = getModelDisplayLabel(row.model_name, row.model_color, row.variant_label)
 
     if (!summaryMap.has(label)) {
       summaryMap.set(label, {
@@ -713,6 +804,7 @@ export default function UnloadPage() {
     setRoSearch(value)
     const match = inbounds.find((item) => item.grn_number === value)
     setSelectedInboundId(match ? String(match.id) : '')
+    setCurrentKoliItems([])
     setSuccess('')
   }
 
@@ -729,6 +821,7 @@ export default function UnloadPage() {
     })
     setSelectedBrandId(match ? String(match.id) : '')
     setSelectedModel(null)
+    setSelectedVariantLabel('')
   }
 
   async function handleModelPhotoChange(event) {
@@ -747,17 +840,56 @@ export default function UnloadPage() {
     }
   }
 
-  function resetAddForm() {
+  function resetAddForm({ keepPicName = false } = {}) {
     setBrandSearch('')
     setSelectedBrandId('')
     setLevel0Id('')
     setLevel1Id('')
     setLevel2Id('')
     setSelectedModel(null)
+    setSelectedVariantLabel('')
     setQty('')
-    setPicName('')
+    if (!keepPicName) {
+      setPicName('')
+    }
     setIsSample(false)
     setIsReturn(false)
+  }
+
+  async function refreshUnloadData(inboundId) {
+    const [
+      { data: refreshedUnloadRows, error: refreshUnloadError },
+      { data: refreshedReturnRows, error: refreshReturnError },
+    ] = await Promise.all([
+      supabase
+        .from('inbound_unload')
+        .select(
+          supportsUnloadVariant
+            ? 'id, inbound_id, brand_id, category_id, model_name, model_color, qty, pic_name, is_sample, koli_sequence, photo_url, variant_label'
+            : 'id, inbound_id, brand_id, category_id, model_name, model_color, qty, pic_name, is_sample, koli_sequence, photo_url'
+        )
+        .eq('inbound_id', inboundId)
+        .order('is_sample', { ascending: true })
+        .order('koli_sequence', { ascending: true })
+        .order('id', { ascending: true }),
+      supabase
+        .from('warehouse_returns')
+        .select(
+          supportsReturnVariant
+            ? 'id, inbound_id, source_phase, brand_id, category_id, model_name, model_color, qty, pic_name, created_at, variant_label'
+            : 'id, inbound_id, source_phase, brand_id, category_id, model_name, model_color, qty, pic_name, created_at'
+        )
+        .eq('inbound_id', inboundId)
+        .eq('source_phase', 'inbound')
+        .order('created_at', { ascending: true }),
+    ])
+
+    if (refreshUnloadError || refreshReturnError) {
+      throw new Error(refreshUnloadError?.message || refreshReturnError?.message || 'Failed to refresh unload rows.')
+    }
+
+    setUnloadRows(refreshedUnloadRows || [])
+    setReturnRows(refreshedReturnRows || [])
   }
 
   function openImagePreview({ src, title }) {
@@ -769,15 +901,10 @@ export default function UnloadPage() {
     setPreviewImage(null)
   }
 
-  function handlePrintKoli(row) {
-    if (!selectedInbound || row.is_sample) {
+  function handlePrintKoli(koliGroup) {
+    if (!selectedInbound || !koliGroup) {
       return
     }
-
-    const brand = brands.find((item) => item.id === row.brand_id)
-    const modelLabel = row.model_color
-      ? `${row.model_name} / ${row.model_color}`
-      : row.model_name
 
     const printWindow = window.open('', '_blank', 'width=720,height=820')
 
@@ -785,6 +912,21 @@ export default function UnloadPage() {
       setError('Print window was blocked by the browser.')
       return
     }
+
+    const rowsHtml = koliGroup.items
+      .map((row) => {
+        const brand = brands.find((item) => item.id === row.brand_id)
+        const modelLabel = getModelDisplayLabel(row.model_name, row.model_color, row.variant_label)
+
+        return `
+          <tr>
+            <td>${brand?.brand_name || '-'}</td>
+            <td>${modelLabel || '-'}</td>
+            <td class="qty">${row.qty || 0}</td>
+          </tr>
+        `
+      })
+      .join('')
 
     const printHtml = `<!doctype html>
 <html>
@@ -800,6 +942,10 @@ export default function UnloadPage() {
       .row:last-child { border-bottom: none; }
       .label { font-weight: 700; font-size: 12px; }
       .value { font-weight: 500; font-size: 13px; }
+      table { width: 100%; border-collapse: collapse; margin: 18px 0; }
+      th, td { border: 1px solid #d1d5db; padding: 8px; font-size: 12px; vertical-align: middle; }
+      th { background: #f9fafb; text-align: left; }
+      .qty { text-align: center; font-weight: 800; }
       .qtyBox {
         margin: 18px 0;
         padding: 16px;
@@ -828,14 +974,24 @@ export default function UnloadPage() {
     <div class="card">
       <h1>Inbound Card</h1>
       <div class="row"><div class="label">No GRN</div><div class="value">${selectedInbound.grn_number || '-'}</div></div>
-      <div class="row"><div class="label">No Koli</div><div class="value">Koli ${row.koli_sequence || '-'}</div></div>
-      <div class="row"><div class="label">Brand</div><div class="value">${brand?.brand_name || '-'}</div></div>
-      <div class="row"><div class="label">Model Name</div><div class="value">${modelLabel || '-'}</div></div>
+      <div class="row"><div class="label">No Koli</div><div class="value">Koli ${koliGroup.koli_sequence || '-'}</div></div>
+      <table>
+        <thead>
+          <tr>
+            <th>Brand</th>
+            <th>Model Name</th>
+            <th>Qty</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rowsHtml}
+        </tbody>
+      </table>
       <div class="qtyBox">
-        <div class="qtyLabel">Qty</div>
-        <div class="qtyValue">${row.qty || 0}</div>
+        <div class="qtyLabel">Total Qty</div>
+        <div class="qtyValue">${koliGroup.total_qty || 0}</div>
       </div>
-      <div class="row picRow"><div class="label">PIC</div><div class="value">${row.pic_name || '-'}</div></div>
+      <div class="row picRow"><div class="label">PIC</div><div class="value">${koliGroup.pic_list.join(', ') || '-'}</div></div>
     </div>
     <script>window.onload = function () { window.print(); };</script>
   </body>
@@ -1092,7 +1248,7 @@ export default function UnloadPage() {
       }
 
       const { data: insertedModel, error: insertError } = await supabase
-        .from('product_models')
+      .from('dir_product_models')
         .insert([nextModel])
         .select('id, brand_id, category_id, model_name, model_color, photo_url')
         .single()
@@ -1105,6 +1261,7 @@ export default function UnloadPage() {
 
       setProductModels((prev) => [...prev, insertedModel])
       setSelectedModel(insertedModel)
+      setSelectedVariantLabel('')
       setModelDraft({
         model_name: '',
         model_color: '',
@@ -1158,31 +1315,41 @@ export default function UnloadPage() {
 
     setSaving(true)
 
-    const nextKoli =
-      unloadRows.filter((row) => !row.is_sample).reduce(
-        (max, row) => Math.max(max, Number(row.koli_sequence || 0)),
-        0
-      ) + 1
-
     const payload = {
       inbound_id: selectedInbound.id,
       brand_id: selectedBrandId ? Number(selectedBrandId) : null,
       category_id: selectedCategory?.id || null,
       model_name: selectedModel?.model_name || null,
       model_color: selectedModel?.model_color || null,
+      variant_label: selectedVariantLabel || null,
       qty: Number(qty),
       pic_name: picName.trim().toUpperCase(),
       photo_url: selectedModel?.photo_url || null,
     }
 
+    if (!isReturn && !isSample) {
+      setCurrentKoliItems((prev) => [
+        ...prev,
+        {
+          tempId: `${Date.now()}-${prev.length}`,
+          ...payload,
+        },
+      ])
+      resetAddForm({ keepPicName: true })
+      setSuccess(`Item added to Current Koli ${nextKoliSequence}.`)
+      setSaving(false)
+      return
+    }
+
     const { error: insertError } = isReturn
-      ? await supabase.from('returns').insert([
+      ? await supabase.from('warehouse_returns').insert([
           {
             inbound_id: payload.inbound_id,
             brand_id: payload.brand_id,
             category_id: payload.category_id,
             model_name: payload.model_name,
             model_color: payload.model_color,
+            ...(supportsReturnVariant ? { variant_label: payload.variant_label } : {}),
             qty: payload.qty,
             pic_name: payload.pic_name,
             source_phase: 'inbound',
@@ -1191,8 +1358,9 @@ export default function UnloadPage() {
       : await supabase.from('inbound_unload').insert([
           {
             ...payload,
-            is_sample: isSample,
-            koli_sequence: isSample ? null : nextKoli,
+            ...(supportsUnloadVariant ? { variant_label: payload.variant_label } : {}),
+            is_sample: true,
+            koli_sequence: null,
           },
         ])
 
@@ -1202,42 +1370,73 @@ export default function UnloadPage() {
       return
     }
 
-    const [
-      { data: refreshedUnloadRows, error: refreshUnloadError },
-      { data: refreshedReturnRows, error: refreshReturnError },
-    ] = await Promise.all([
-      supabase
-        .from('inbound_unload')
-        .select('id, inbound_id, brand_id, category_id, model_name, model_color, qty, pic_name, is_sample, koli_sequence, photo_url')
-        .eq('inbound_id', selectedInbound.id)
-        .order('is_sample', { ascending: true })
-        .order('koli_sequence', { ascending: true })
-        .order('id', { ascending: true }),
-      supabase
-        .from('returns')
-        .select('id, inbound_id, source_phase, brand_id, category_id, model_name, model_color, qty, pic_name, created_at')
-        .eq('inbound_id', selectedInbound.id)
-        .eq('source_phase', 'inbound')
-        .order('created_at', { ascending: true }),
-    ])
-
-    if (refreshUnloadError || refreshReturnError) {
-      setError(refreshUnloadError?.message || refreshReturnError?.message || 'Failed to refresh unload rows.')
+    try {
+      await refreshUnloadData(selectedInbound.id)
+    } catch (refreshError) {
+      setError(refreshError.message)
       setSaving(false)
       return
     }
 
-    setUnloadRows(refreshedUnloadRows || [])
-    setReturnRows(refreshedReturnRows || [])
     resetAddForm()
-    setSuccess(
-      isReturn
-        ? 'Return row added successfully.'
-        : isSample
-          ? 'Sample row added successfully.'
-          : 'Unload row added successfully.'
-    )
+    setSuccess(isReturn ? 'Return row added successfully.' : 'Sample row added successfully.')
     setSaving(false)
+  }
+
+  async function handlePostCurrentKoli() {
+    setError('')
+    setSuccess('')
+
+    if (!selectedInbound) {
+      setError('Please choose GRN Number first.')
+      return
+    }
+
+    if (!currentKoliItems.length) {
+      setError('Current Koli does not have any item yet.')
+      return
+    }
+
+    setSaving(true)
+
+    const payload = currentKoliItems.map((item) => ({
+      inbound_id: item.inbound_id,
+      brand_id: item.brand_id,
+      category_id: item.category_id,
+      model_name: item.model_name,
+      model_color: item.model_color,
+      ...(supportsUnloadVariant ? { variant_label: item.variant_label || null } : {}),
+      qty: item.qty,
+      pic_name: item.pic_name,
+      photo_url: item.photo_url,
+      is_sample: false,
+      koli_sequence: nextKoliSequence,
+    }))
+
+    const { error: insertError } = await supabase.from('inbound_unload').insert(payload)
+
+    if (insertError) {
+      setError(insertError.message)
+      setSaving(false)
+      return
+    }
+
+    try {
+      await refreshUnloadData(selectedInbound.id)
+    } catch (refreshError) {
+      setError(refreshError.message)
+      setSaving(false)
+      return
+    }
+
+    setCurrentKoliItems([])
+    resetAddForm()
+    setSuccess(`Current Koli ${nextKoliSequence} posted successfully.`)
+    setSaving(false)
+  }
+
+  function handleRemoveCurrentKoliItem(tempId) {
+    setCurrentKoliItems((prev) => prev.filter((item) => item.tempId !== tempId))
   }
 
   return (
@@ -1312,8 +1511,18 @@ export default function UnloadPage() {
       <div style={styles.card}>
         <div>
           <h2 style={styles.sectionTitle}>Add To Unload</h2>
-          <p style={styles.sectionSubtitle}>Each add creates one koli, unless the row is marked as sample.</p>
+          <p style={styles.sectionSubtitle}>Regular items go into the current koli builder first. Sample and retur stay outside koli and can be added directly.</p>
         </div>
+
+        {!isReturn && !isSample ? (
+          <div style={styles.summaryCard}>
+            <span style={styles.summaryLabel}>Current Koli</span>
+            <strong style={styles.summaryValue}>Koli {nextKoliSequence}</strong>
+            <span style={styles.helperText}>
+              Add multiple items here, then post them together as one koli.
+            </span>
+          </div>
+        ) : null}
 
         <div style={styles.field}>
           <label style={styles.label}>Retur</label>
@@ -1382,6 +1591,7 @@ export default function UnloadPage() {
                 setLevel1Id('')
                 setLevel2Id('')
                 setSelectedModel(null)
+                setSelectedVariantLabel('')
               }}
               style={styles.select}
             >
@@ -1402,6 +1612,7 @@ export default function UnloadPage() {
                 setLevel1Id(event.target.value)
                 setLevel2Id('')
                 setSelectedModel(null)
+                setSelectedVariantLabel('')
               }}
               style={styles.select}
               disabled={!level0Id || level1Options.length === 0}
@@ -1430,6 +1641,7 @@ export default function UnloadPage() {
               onChange={(event) => {
                 setLevel2Id(event.target.value)
                 setSelectedModel(null)
+                setSelectedVariantLabel('')
               }}
               style={styles.select}
               disabled={!level1Id || level2Options.length === 0}
@@ -1454,9 +1666,11 @@ export default function UnloadPage() {
             <div style={styles.inlineRow}>
               <div style={styles.readonlyBox}>
                 {selectedModel
-                  ? selectedModel.model_color
-                    ? `${selectedModel.model_name} / ${selectedModel.model_color}`
-                    : selectedModel.model_name
+                  ? getModelDisplayLabel(
+                      selectedModel.model_name,
+                      selectedModel.model_color,
+                      selectedVariantLabel || ''
+                    )
                   : 'No model selected'}
               </div>
               <button
@@ -1504,6 +1718,32 @@ export default function UnloadPage() {
           </div>
 
           <div style={styles.field}>
+            <label style={styles.label}>Product ID Variant</label>
+            {selectedModel ? (
+              selectedModelVariants.length ? (
+                <select
+                  value={selectedVariantLabel}
+                  onChange={(event) => setSelectedVariantLabel(event.target.value)}
+                  style={styles.select}
+                >
+                  {selectedModelVariants.map((item) => (
+                    <option key={item.id || item.variant_label} value={item.variant_label || ''}>
+                      {item.variant_label || '-'}{item.variant_name ? ` - ${item.variant_name}` : ''}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <div style={styles.readonlyBox}>No saved variant yet for this model</div>
+              )
+            ) : (
+              <div style={styles.readonlyBox}>Choose model first</div>
+            )}
+            <span style={styles.helperText}>
+              Kalau model ini sudah pernah punya variant dari Packing List, tinggal pilih variant yang sesuai.
+            </span>
+          </div>
+
+          <div style={styles.field}>
             <label style={styles.label}>Add Type</label>
             <label style={styles.checkboxWrap}>
               <input
@@ -1529,24 +1769,91 @@ export default function UnloadPage() {
 
         <div style={styles.buttonRow}>
           {error ? <p style={styles.errorText}>{error}</p> : null}
-          {success ? <p style={styles.successText}>{success}</p> : null}
-          <button
-            type="button"
-            onClick={handleAddToUnload}
-            disabled={saving || loading}
-            style={styles.primaryButton}
-          >
-            {saving ? 'Adding...' : 'Add To'}
-          </button>
+            {success ? <p style={styles.successText}>{success}</p> : null}
+            <button
+              type="button"
+              onClick={handleAddToUnload}
+              disabled={saving || loading}
+              style={styles.primaryButton}
+            >
+              {saving ? 'Adding...' : isReturn ? 'Add Return' : isSample ? 'Add Sample' : 'Add Item to Current Koli'}
+            </button>
+          </div>
         </div>
-      </div>
+
+        {!isReturn && !isSample ? (
+          <div style={styles.card}>
+            <div style={styles.header}>
+              <div>
+                <h2 style={styles.sectionTitle}>Current Koli Items</h2>
+                <p style={styles.sectionSubtitle}>These items will be posted together into Koli {nextKoliSequence}.</p>
+              </div>
+              <button
+                type="button"
+                onClick={handlePostCurrentKoli}
+                disabled={saving || !currentKoliItems.length}
+                style={{
+                  ...styles.primaryButton,
+                  ...(saving || !currentKoliItems.length ? { opacity: 0.6, cursor: 'not-allowed' } : {}),
+                }}
+              >
+                {saving ? 'Posting...' : `Post Current Koli ${nextKoliSequence}`}
+              </button>
+            </div>
+
+            {currentKoliItems.length === 0 ? (
+              <p style={styles.emptyText}>No item in the current koli yet.</p>
+            ) : (
+              <div style={styles.tableWrap}>
+                <table style={styles.table}>
+                  <thead>
+                    <tr>
+                      <th style={styles.th}>Brand</th>
+                      <th style={styles.th}>Category</th>
+                      <th style={styles.th}>Model</th>
+                      <th style={styles.th}>Qty</th>
+                      <th style={styles.th}>PIC</th>
+                      <th style={styles.th}>Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {currentKoliItems.map((row) => {
+                      const brand = brands.find((item) => item.id === row.brand_id)
+                      const category = categoryMaps.byId.get(row.category_id)
+                      const modelLabel = getModelDisplayLabel(row.model_name, row.model_color, row.variant_label)
+
+                      return (
+                        <tr key={row.tempId}>
+                          <td style={styles.td}>{brand?.brand_name || '-'}</td>
+                          <td style={styles.td}>{category?.full_name || category?.category_name || '-'}</td>
+                          <td style={styles.td}>{modelLabel || '-'}</td>
+                          <td style={styles.td}>{row.qty || 0}</td>
+                          <td style={styles.td}>{row.pic_name || '-'}</td>
+                          <td style={styles.td}>
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveCurrentKoliItem(row.tempId)}
+                              style={styles.secondaryButton}
+                            >
+                              Remove
+                            </button>
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        ) : null}
 
       <div style={styles.card}>
         <div style={styles.header}>
-        <div>
-          <h2 style={styles.sectionTitle}>Unload Result</h2>
-          <p style={styles.sectionSubtitle}>Each non-sample row becomes one koli. Samples and retur stay outside koli but still count in inbound totals.</p>
-          </div>
+          <div>
+            <h2 style={styles.sectionTitle}>Unload Result</h2>
+            <p style={styles.sectionSubtitle}>Posted koli rows appear here. Samples and retur stay outside koli but still count in inbound totals.</p>
+            </div>
           <button
             type="button"
             onClick={handlePrintUnloadDocument}
@@ -1624,9 +1931,7 @@ export default function UnloadPage() {
                 {resultRows.map((row) => {
                   const brand = brands.find((item) => item.id === row.brand_id)
                   const category = categoryMaps.byId.get(row.category_id)
-                  const modelLabel = row.model_color
-                    ? `${row.model_name} / ${row.model_color}`
-                    : row.model_name
+                  const modelLabel = getModelDisplayLabel(row.model_name, row.model_color, row.variant_label)
 
                   return (
                     <tr key={row.id}>
@@ -1649,7 +1954,7 @@ export default function UnloadPage() {
                           {row.rowType === 'koli' ? (
                             <button
                               type="button"
-                              onClick={() => handlePrintKoli(row)}
+                              onClick={() => handlePrintKoli(koliGroups.find((item) => Number(item.koli_sequence) === Number(row.koli_sequence)))}
                               style={styles.printButton}
                             >
                               Print
@@ -1666,61 +1971,6 @@ export default function UnloadPage() {
         )}
       </div>
 
-      <div style={styles.card}>
-        <div>
-          <h2 style={styles.sectionTitle}>Model Summary</h2>
-          <p style={styles.sectionSubtitle}>Combined quantity by model, including sample rows and excluding retur rows.</p>
-        </div>
-
-        {summaryRows.length === 0 ? (
-          <p style={styles.emptyText}>No model summary yet.</p>
-        ) : (
-          <div style={styles.tableWrap}>
-            <table style={styles.table}>
-              <thead>
-                <tr>
-                  <th style={styles.th}>Photo</th>
-                  <th style={styles.th}>Nama Model</th>
-                  <th style={styles.th}>Qty</th>
-                </tr>
-              </thead>
-              <tbody>
-                {summaryRows.map((row) => (
-                  <tr key={row.modelLabel}>
-                    <td style={{ ...styles.td, ...styles.middleCell }}>
-                      {row.photoUrl ? (
-                        <button
-                          type="button"
-                          onClick={() => openImagePreview({ src: row.photoUrl, title: row.modelLabel })}
-                          style={styles.summaryImageButton}
-                        >
-                          <Image
-                            src={row.photoUrl}
-                            alt={row.modelLabel}
-                            width={72}
-                            height={72}
-                            unoptimized
-                            style={styles.summaryThumb}
-                          />
-                        </button>
-                      ) : (
-                        <div style={styles.summaryThumbEmpty}>NO PHOTO</div>
-                      )}
-                    </td>
-                    <td style={{ ...styles.td, ...styles.middleCell }}>{row.modelLabel}</td>
-                    <td style={{ ...styles.td, ...styles.middleCell }}>{row.modelQty}</td>
-                  </tr>
-                ))}
-                <tr>
-                  <td style={styles.td}></td>
-                  <td style={{ ...styles.td, ...styles.middleCell, fontWeight: '700' }}>Total</td>
-                  <td style={{ ...styles.td, ...styles.middleCell, fontWeight: '700' }}>{totalProcessedQty}</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
 
       {showModelModal ? (
         <div style={styles.overlay}>
@@ -1835,6 +2085,7 @@ export default function UnloadPage() {
                         type="button"
                         onClick={() => {
                           setSelectedModel(item)
+                          setSelectedVariantLabel(getDefaultVariantLabelForModel(item))
                           setShowChooseModelModal(false)
                         }}
                         style={{

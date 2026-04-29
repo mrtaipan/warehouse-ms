@@ -261,7 +261,7 @@ export default function EditReceivingPage() {
       { data: inboundRow, error: inboundError },
       { data: detailRows, error: detailError },
     ] = await Promise.all([
-      supabase.from('suppliers').select('id, supplier_name').eq('is_active', true).order('supplier_name', { ascending: true }),
+      supabase.from('dir_suppliers').select('id, supplier_name').eq('is_active', true).order('supplier_name', { ascending: true }),
       supabase.from('inbound').select('*').eq('id', inboundId).single(),
       supabase.from('inbound_receiving').select('*').eq('inbound_id', inboundId).order('koli_sequence', { ascending: true }),
     ])
@@ -448,7 +448,8 @@ export default function EditReceivingPage() {
     setLoading(false)
 
     setTimeout(() => {
-      window.location.reload()
+      router.push('/dashboard/inbound/receiving')
+      router.refresh()
     }, 300)
   }
 

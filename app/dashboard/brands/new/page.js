@@ -104,7 +104,7 @@ export default function NewBrandPage() {
     setError('')
     setSuccess('')
 
-    const { error } = await supabase.from('brands').insert([{
+    const { error } = await supabase.from('dir_brands').insert([{
       brand_code: form.brand_code,
       brand_name: form.brand_name.trim() || null,
       description: form.description.trim() || null,

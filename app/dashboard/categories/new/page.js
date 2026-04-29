@@ -50,7 +50,7 @@ export default function NewCategoryPage() {
   useEffect(() => {
     async function loadCategories() {
       const { data, error } = await supabase
-        .from('categories')
+        .from('dir_categories')
         .select('id, category_code, category_name, parent_id, level, full_code, full_name')
         .order('id', { ascending: true })
 
@@ -193,7 +193,7 @@ export default function NewCategoryPage() {
     setError('')
     setSuccess('')
 
-    const { error } = await supabase.from('categories').insert([{
+    const { error } = await supabase.from('dir_categories').insert([{
       category_code: form.category_code.trim() || null,
       category_name: form.category_name.trim() || null,
       parent_id: parentId,

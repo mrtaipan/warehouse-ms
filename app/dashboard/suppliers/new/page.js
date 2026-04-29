@@ -120,7 +120,7 @@ export default function NewSupplierPage() {
       setCodeLoading(true)
 
       const { data, error } = await supabase
-        .from('suppliers')
+        .from('dir_suppliers')
         .select('supplier_code')
         .order('supplier_code', { ascending: false })
         .limit(1)
@@ -193,7 +193,7 @@ export default function NewSupplierPage() {
       is_active: true,
     }
 
-    const { error } = await supabase.from('suppliers').insert([payload])
+    const { error } = await supabase.from('dir_suppliers').insert([payload])
 
     if (error) {
       setError(error.message)

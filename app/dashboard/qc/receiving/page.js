@@ -151,6 +151,21 @@ const styles = {
     fontWeight: '600',
     cursor: 'pointer',
   },
+  iconButton: {
+    width: '36px',
+    height: '36px',
+    border: '1px solid #d1d5db',
+    borderRadius: '999px',
+    background: '#fff',
+    color: '#111827',
+    fontSize: '16px',
+    fontWeight: '700',
+    cursor: 'pointer',
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 0,
+  },
   summaryGrid: {
     display: 'grid',
     gridTemplateColumns: 'repeat(4, minmax(0, 1fr))',
@@ -176,15 +191,74 @@ const styles = {
     fontWeight: '800',
     color: '#111827',
   },
-  modelRow: {
-    display: 'grid',
-    gridTemplateColumns: '96px 1.4fr 0.9fr 0.9fr auto',
-    gap: '14px',
+  sourceList: {
+    display: 'flex',
+    flexWrap: 'wrap',
+    gap: '10px',
+  },
+  sourceChip: {
+    minHeight: '38px',
+    padding: '0 14px',
+    borderRadius: '999px',
+    borderWidth: '1px',
+    borderStyle: 'solid',
+    borderColor: '#d1d5db',
+    background: '#fff',
+    color: '#111827',
+    fontSize: '13px',
+    fontWeight: '700',
+    cursor: 'pointer',
+  },
+  sourceChipActive: {
+    background: '#111827',
+    borderColor: '#111827',
+    color: '#fff',
+  },
+  sourceChipDone: {
+    background: '#dcfce7',
+    borderColor: '#86efac',
+    color: '#166534',
+  },
+  sourceChipDoneActive: {
+    background: '#16a34a',
+    borderColor: '#16a34a',
+    color: '#fff',
+  },
+  sourceStatusBanner: {
+    display: 'flex',
+    justifyContent: 'space-between',
     alignItems: 'center',
+    gap: '12px',
+    padding: '14px 16px',
+    borderRadius: '12px',
+    border: '1px solid #86efac',
+    background: '#f0fdf4',
+    color: '#166534',
+    fontSize: '14px',
+    fontWeight: '700',
+    flexWrap: 'wrap',
+  },
+  modelRow: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '14px',
     padding: '14px',
     border: '1px solid #e5e7eb',
     borderRadius: '12px',
     background: '#fff',
+  },
+  modelRowTop: {
+    display: 'grid',
+    gridTemplateColumns: '96px 1.4fr 0.9fr 0.9fr auto',
+    gap: '14px',
+    alignItems: 'center',
+  },
+  allocationWrap: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '8px',
+    paddingTop: '14px',
+    borderTop: '1px solid #e5e7eb',
   },
   thumb: {
     width: '96px',
@@ -241,13 +315,6 @@ const styles = {
     margin: 0,
     color: '#6b7280',
   },
-  checkboxWrap: {
-    display: 'inline-flex',
-    alignItems: 'center',
-    gap: '8px',
-    fontSize: '14px',
-    fontWeight: '600',
-  },
   overlay: {
     position: 'fixed',
     inset: 0,
@@ -287,16 +354,114 @@ const styles = {
   },
 }
 
-function createDefaultObservedRow(expectedRow) {
+function createDefaultModelRow(expectedRow) {
   return {
     id: `expected-${expectedRow.id}`,
+    source_id: expectedRow.id,
     model_id: '',
     model_name: expectedRow.model_name || '',
     model_color: expectedRow.model_color || '',
     qty_in: Number(expectedRow.qty || 0),
     qty_qc: String(expectedRow.qty || 0),
     photo_url: expectedRow.photo_url || '',
+    allocations: [],
   }
+}
+
+function getModelKey(modelName, modelColor) {
+  return `${String(modelName || '').trim().toUpperCase()}::${String(modelColor || '').trim().toUpperCase()}`
+}
+
+function getTaskKey(values) {
+  return `${String(values.assigned_to || values.member_email || '').trim().toLowerCase()}::${getModelKey(
+    values.model_name,
+    values.model_color
+  )}`
+}
+
+function getSourceStatus(source, qcItems) {
+  if (!source?.sourceId) {
+    return 'idle'
+  }
+
+  const sourceTasks = (qcItems || []).filter((item) => Number(item.inbound_unload_id) === Number(source.sourceId))
+
+  if (!sourceTasks.length) {
+    return 'idle'
+  }
+
+  if (sourceTasks.every((item) => item.status === 'done')) {
+    return 'completed'
+  }
+
+  if (sourceTasks.some((item) => item.status !== 'queued')) {
+    return 'started'
+  }
+
+  return 'planned'
+}
+
+function buildModelRowsForSource(source, unloadRows, qcItems) {
+  if (!source) {
+    return []
+  }
+
+  const rowMap = new Map()
+  const expectedRows = source.rows || []
+  const existingPlanRows = (qcItems || []).filter((item) => item.inbound_unload_id === source.sourceId)
+
+  expectedRows.forEach((row) => {
+    const key = getModelKey(row.model_name, row.model_color)
+    const existingRow = rowMap.get(key) || {
+      ...createDefaultModelRow(row),
+      id: `expected-${source.sourceId}-${key}`,
+      qty_in: 0,
+      qty_qc: String(row.qty || 0),
+      allocations: [],
+    }
+
+    existingRow.qty_in += Number(row.qty || 0)
+    existingRow.qty_qc = String(Math.max(Number(existingRow.qty_qc || 0), Number(row.qty || 0)))
+    existingRow.photo_url = existingRow.photo_url || row.photo_url || ''
+    rowMap.set(key, existingRow)
+  })
+
+  existingPlanRows.forEach((planRow) => {
+    const key = getModelKey(planRow.model_name, planRow.model_color)
+    const existingRow =
+      rowMap.get(key) ||
+      {
+        id: `saved-${planRow.id}`,
+        source_id: source.sourceId,
+        model_id: '',
+        model_name: planRow.model_name || '',
+        model_color: planRow.model_color || '',
+        qty_in: 0,
+        qty_qc: String(planRow.qty_in || 0),
+        photo_url: planRow.photo_url || '',
+        allocations: [],
+      }
+
+    existingRow.model_name = existingRow.model_name || planRow.model_name || ''
+    existingRow.model_color = existingRow.model_color || planRow.model_color || ''
+    existingRow.photo_url = existingRow.photo_url || planRow.photo_url || ''
+    existingRow.qty_qc = String(Math.max(Number(existingRow.qty_qc || 0), Number(planRow.qty_in || 0)))
+    existingRow.allocations = [
+      ...(existingRow.allocations || []),
+      {
+        id: `alloc-saved-${planRow.id}`,
+        task_id: planRow.id,
+        member_email: planRow.assigned_to || '',
+        qty: String(planRow.allocated_qty || 0),
+        existing_status: planRow.status || 'queued',
+        locked_qty: Number(planRow.locked_qty || 0),
+      },
+    ]
+
+    rowMap.set(key, existingRow)
+  })
+
+  return Array.from(rowMap.values()).sort((a, b) => getModelKey(a.model_name, a.model_color).localeCompare(getModelKey(b.model_name, b.model_color)))
 }
 
 export default function QcReceivingPage() {
@@ -308,10 +473,8 @@ export default function QcReceivingPage() {
   const [qcMode, setQcMode] = useState('regular')
   const [grnSearch, setGrnSearch] = useState('')
   const [selectedInboundId, setSelectedInboundId] = useState('')
-  const [selectedKoliId, setSelectedKoliId] = useState('')
-  const [isConfirmed, setIsConfirmed] = useState(true)
+  const [selectedSourceKey, setSelectedSourceKey] = useState('')
   const [modelRows, setModelRows] = useState([])
-  const [allocations, setAllocations] = useState({})
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -327,6 +490,7 @@ export default function QcReceivingPage() {
     photo_url: '',
   })
   const [modelPhotoFile, setModelPhotoFile] = useState(null)
+  const [sourceDetailsExpanded, setSourceDetailsExpanded] = useState(true)
 
   useEffect(() => {
     async function loadInitialData() {
@@ -341,10 +505,10 @@ export default function QcReceivingPage() {
       ] = await Promise.all([
         supabase
           .from('inbound')
-          .select('id, grn_number, inbound_date, item_name, suppliers(supplier_name)')
+          .select('id, grn_number, inbound_date, item_name, suppliers:dir_suppliers!supplier_id (supplier_name)')
           .order('created_at', { ascending: false }),
         supabase
-          .from('product_models')
+          .from('dir_product_models')
           .select('id, model_name, model_color, photo_url')
           .eq('is_active', true)
           .order('model_name', { ascending: true }),
@@ -385,7 +549,7 @@ export default function QcReceivingPage() {
     async function loadUnloadRows() {
       if (!selectedInboundId) {
         setUnloadRows([])
-        setSelectedKoliId('')
+        setSelectedSourceKey('')
         return
       }
 
@@ -393,7 +557,6 @@ export default function QcReceivingPage() {
         .from('inbound_unload')
         .select('id, inbound_id, model_name, model_color, qty, pic_name, is_sample, koli_sequence, photo_url')
         .eq('inbound_id', selectedInboundId)
-        .eq('is_sample', false)
         .order('koli_sequence', { ascending: true })
 
       if (unloadError) {
@@ -408,86 +571,99 @@ export default function QcReceivingPage() {
   }, [selectedInboundId])
 
   const selectedInbound = inbounds.find((item) => item.id === Number(selectedInboundId)) || null
-  const selectedKoli = unloadRows.find((item) => item.id === Number(selectedKoliId)) || null
+  const sourceOptions = useMemo(() => {
+    const groupedKoli = new Map()
+    const sampleRows = []
+
+    unloadRows.forEach((row) => {
+      if (row.is_sample) {
+        sampleRows.push(row)
+        return
+      }
+
+      const key = `koli:${row.koli_sequence}`
+      if (!groupedKoli.has(key)) {
+        groupedKoli.set(key, {
+          key,
+          label: `Koli ${row.koli_sequence}`,
+          type: 'koli',
+          sourceId: row.id,
+          rows: [],
+        })
+      }
+
+      groupedKoli.get(key).rows.push(row)
+    })
+
+    const result = Array.from(groupedKoli.values()).sort((a, b) => a.label.localeCompare(b.label, undefined, { numeric: true }))
+
+    if (sampleRows.length) {
+      result.push({
+        key: 'sample',
+        label: 'Sample',
+        type: 'sample',
+        sourceId: sampleRows[0].id,
+        rows: sampleRows,
+      })
+    }
+
+    return result
+  }, [unloadRows])
+  const selectedSource = sourceOptions.find((item) => item.key === selectedSourceKey) || null
+  const selectedSourceRows = selectedSource?.rows || []
+  const selectedSourceId = selectedSource?.sourceId || null
 
   const qcInQty = modelRows.reduce((sum, row) => sum + Number(row.qty_qc || 0), 0)
-  const allocationTotal = Object.values(allocations).reduce((sum, value) => sum + Number(value || 0), 0)
+  const allocationTotal = modelRows.reduce(
+    (sum, row) =>
+      sum +
+      (row.allocations || []).reduce((allocationSum, split) => allocationSum + Number(split.qty || 0), 0),
+    0
+  )
   const modelOptions = productModels.filter((item) => {
     if (!modelSearch.trim()) return true
     const label = item.model_color ? `${item.model_name} / ${item.model_color}` : item.model_name
     return label.toUpperCase().includes(modelSearch.trim().toUpperCase())
   })
-  const currentPlanRows = selectedKoli ? qcItems.filter((item) => item.inbound_unload_id === Number(selectedKoliId)) : []
-  const isPlanLocked = currentPlanRows.some((item) => item.status === 'in_progress' || item.status === 'done')
+  const currentPlanRows = selectedSourceId ? qcItems.filter((item) => item.inbound_unload_id === Number(selectedSourceId)) : []
+  const hasSavedPlan = currentPlanRows.length > 0
+  const selectedSourceStatus = selectedSource ? getSourceStatus(selectedSource, qcItems) : 'idle'
+  const isSelectedSourceStarted = selectedSourceStatus === 'started' || selectedSourceStatus === 'completed'
+  const isSelectedSourceCompleted = selectedSourceStatus === 'completed'
+  const persistedTaskRows = new Map(
+    currentPlanRows.map((item) => [getTaskKey(item), item])
+  )
 
   function handleGrnChange(value) {
     setGrnSearch(value)
     const match = inbounds.find((item) => item.grn_number === value)
     setSelectedInboundId(match ? String(match.id) : '')
-    setSelectedKoliId('')
+    setSelectedSourceKey('')
     setModelRows([])
-    setAllocations({})
     setError('')
     setSuccess('')
   }
 
-  function handleKoliChange(nextKoliId) {
-    setSelectedKoliId(nextKoliId)
+  function handleSourceChange(nextSourceKey) {
+    setSelectedSourceKey(nextSourceKey)
     setError('')
     setSuccess('')
 
-    if (!nextKoliId) {
+    if (!nextSourceKey) {
       setModelRows([])
       return
     }
 
-    const expectedRow = unloadRows.find((item) => item.id === Number(nextKoliId))
+    const nextSource = sourceOptions.find((item) => item.key === nextSourceKey)
 
-    if (!expectedRow) {
+    if (!nextSource) {
       setModelRows([])
+      setSourceDetailsExpanded(true)
       return
     }
 
-    const existingPlanRows = qcItems.filter((item) => item.inbound_unload_id === expectedRow.id)
-    const firstPlan = existingPlanRows[0]
-
-    if (firstPlan) {
-      setIsConfirmed(Boolean(firstPlan.is_confirmed))
-      setModelRows(
-        (firstPlan.observed_items || []).map((row, index) => ({
-          id: `saved-${index}-${Date.now()}`,
-          model_id: '',
-          model_name: row.model_name || '',
-          model_color: row.model_color || '',
-          qty_in: index === 0 ? Number(expectedRow.qty || 0) : 0,
-          qty_qc: String(row.qty || 0),
-          photo_url: row.photo_url || '',
-        }))
-      )
-      setAllocations(
-        qcMembers.reduce((result, member) => {
-          result[member.email] = String(existingPlanRows.find((item) => item.assigned_to === member.email)?.allocated_qty || '')
-          return result
-        }, {})
-      )
-      return
-    }
-
-    setIsConfirmed(true)
-    setModelRows([createDefaultObservedRow(expectedRow)])
-    setAllocations({})
-  }
-
-  function syncRowsWithConfirmation(nextConfirmed) {
-    setIsConfirmed(nextConfirmed)
-
-    if (!selectedKoli) {
-      return
-    }
-
-    if (nextConfirmed) {
-      setModelRows([createDefaultObservedRow(selectedKoli)])
-    }
+    setSourceDetailsExpanded(getSourceStatus(nextSource, qcItems) !== 'completed')
+    setModelRows(buildModelRowsForSource(nextSource, unloadRows, qcItems))
   }
 
   function addModelRow() {
@@ -501,6 +677,7 @@ export default function QcReceivingPage() {
         qty_in: 0,
         qty_qc: '',
         photo_url: '',
+        allocations: [],
       },
     ])
   }
@@ -509,7 +686,62 @@ export default function QcReceivingPage() {
     setModelRows((prev) => prev.map((row) => (row.id === rowId ? { ...row, ...updates } : row)))
   }
 
+  function addAllocationSplit(rowId) {
+    setModelRows((prev) =>
+      prev.map((row) =>
+        row.id === rowId
+          ? (row.allocations || []).length >= qcMembers.length
+            ? row
+            : {
+                ...row,
+                allocations: [
+                  ...(row.allocations || []),
+                  {
+                    id: `alloc-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+                    task_id: null,
+                    member_email: '',
+                    qty: '',
+                    existing_status: 'queued',
+                    locked_qty: 0,
+                  },
+                ],
+              }
+          : row
+      )
+    )
+  }
+
+  function updateAllocationSplit(rowId, splitId, updates) {
+    setModelRows((prev) =>
+      prev.map((row) =>
+        row.id === rowId
+          ? {
+              ...row,
+              allocations: (row.allocations || []).map((split) => (split.id === splitId ? { ...split, ...updates } : split)),
+            }
+          : row
+      )
+    )
+  }
+
+  function removeAllocationSplit(rowId, splitId) {
+    setModelRows((prev) =>
+      prev.map((row) =>
+        row.id === rowId
+          ? {
+              ...row,
+              allocations: (row.allocations || []).filter((split) => split.id !== splitId),
+            }
+          : row
+      )
+    )
+  }
+
   function removeModelRow(rowId) {
+    if (typeof window !== 'undefined') {
+      const confirmed = window.confirm('Remove this model row?')
+      if (!confirmed) return
+    }
     setModelRows((prev) => prev.filter((row) => row.id !== rowId))
   }
 
@@ -561,7 +793,7 @@ export default function QcReceivingPage() {
     }
 
     const { data: insertedModel, error: insertError } = await supabase
-      .from('product_models')
+      .from('dir_product_models')
       .insert([
         {
           model_name: modelDraft.model_name.trim().toUpperCase(),
@@ -604,19 +836,21 @@ export default function QcReceivingPage() {
     setError('')
     setSuccess('')
 
-    if (!selectedInbound || !selectedKoli) {
-      setError('Choose GRN and No Koli first.')
+    if (!selectedInbound || !selectedSourceId) {
+      setError('Choose GRN and Koli/Sample first.')
       return
     }
 
-    if (isPlanLocked) {
-      setError('This QC plan is locked because inspection has already started for this koli.')
-      return
-    }
+    const invalidRow = modelRows.find((row) => {
+      const splitTotal = (row.allocations || []).reduce((sum, split) => sum + Number(split.qty || 0), 0)
+      const hasInvalidSplit = (row.allocations || []).some(
+        (split) => !String(split.member_email || '').trim() || Number(split.qty || 0) <= 0
+      )
 
-    const invalidRow = modelRows.find((row) => !row.model_name.trim() || Number(row.qty_qc || 0) <= 0)
+      return !row.model_name.trim() || Number(row.qty_qc || 0) <= 0 || hasInvalidSplit || splitTotal > Number(row.qty_qc || 0)
+    })
     if (invalidRow) {
-      setError('Every model row must have model and QC qty.')
+      setError('Every model row must have a model and QC qty. Allocated qty cannot be greater than QC In.')
       return
     }
 
@@ -626,65 +860,160 @@ export default function QcReceivingPage() {
     }
 
     if (!qcMembers.length) {
-      setError('No QC user has registered yet. Open Inspection Task and register at least one QC user first.')
-      return
-    }
-
-    if (allocationTotal !== qcInQty) {
-      setError('Total allocated qty must match QC In exactly.')
+      setError('No QC user has registered yet. Open Grading Task and register at least one QC user first.')
       return
     }
 
     setSaving(true)
 
-    const observedItems = modelRows.map((row) => ({
-      model_name: row.model_name.trim(),
-      model_color: row.model_color.trim(),
-      qty: Number(row.qty_qc || 0),
-      photo_url: row.photo_url || '',
-    }))
+    const activeTaskKeys = new Set()
+    const insertPayload = []
+    const updatesForPersistedRows = []
+    let blockingError = ''
+    modelRows.forEach((row) => {
+      ;(row.allocations || []).forEach((split) => {
+        if (blockingError) {
+          return
+        }
+        if (!split.member_email || Number(split.qty || 0) <= 0) {
+          return
+        }
+        const taskKey = getTaskKey({
+          member_email: split.member_email,
+          model_name: row.model_name,
+          model_color: row.model_color,
+        })
+        activeTaskKeys.add(taskKey)
 
-    const queuePayload = qcMembers
-      .filter((member) => Number(allocations[member.email] || 0) > 0)
-      .map((member) => ({
-        inbound_id: selectedInbound.id,
-        inbound_unload_id: selectedKoli.id,
-        assigned_to: member.email,
-        allocated_qty: Number(allocations[member.email] || 0),
-        expected_qty: Number(selectedKoli.qty || 0),
-        is_confirmed: isConfirmed,
-        observed_items: observedItems,
-        status: 'queued',
-      }))
+        const persistedRow = persistedTaskRows.get(taskKey) || null
+        const lockedQty = Number(persistedRow?.locked_qty ?? split.locked_qty ?? 0)
+        const allocatedQty = Number(split.qty || 0)
 
-    const { error: deleteError } = await supabase
-      .from('qc_items')
-      .delete()
-      .eq('inbound_unload_id', selectedKoli.id)
-      .in('status', ['queued', 'in_progress'])
+        if (allocatedQty < lockedQty) {
+          blockingError = `Allocated qty for ${split.member_email} on ${row.model_name} cannot be less than the committed qty (${lockedQty}).`
+          return
+        }
 
-    if (deleteError) {
-      setError(deleteError.message)
+        const basePayload = {
+          inbound_id: selectedInbound.id,
+          inbound_unload_id: selectedSourceId,
+          assigned_to: split.member_email,
+          allocated_qty: allocatedQty,
+          expected_qty: Number(row.qty_in || 0),
+          qty_in: Number(row.qty_qc || 0),
+          model_name: row.model_name.trim(),
+          model_color: row.model_color.trim() || null,
+          photo_url: row.photo_url || null,
+          locked_qty: lockedQty,
+        }
+
+        if (persistedRow) {
+          updatesForPersistedRows.push({
+            id: persistedRow.id,
+            ...basePayload,
+            status: persistedRow.status,
+            finished_at: persistedRow.finished_at,
+            started_at: persistedRow.started_at,
+            paused_at: persistedRow.paused_at,
+            pause_reason: persistedRow.pause_reason,
+          })
+          return
+        }
+
+        insertPayload.push({
+          ...basePayload,
+          is_confirmed: true,
+          status: 'queued',
+        })
+      })
+    })
+
+    if (blockingError) {
+      setError(blockingError)
       setSaving(false)
       return
     }
 
-    const { data: insertedRows, error: insertError } = await supabase
-      .from('qc_items')
-      .insert(queuePayload)
-      .select('*')
+    const queuedRowsToDelete = currentPlanRows.filter(
+      (item) => item.status === 'queued' && !activeTaskKeys.has(getTaskKey(item))
+    )
 
-    if (insertError) {
-      setError(insertError.message)
-      setSaving(false)
-      return
+    if (queuedRowsToDelete.length) {
+      const { error: deleteError } = await supabase
+        .from('qc_items')
+        .delete()
+        .in(
+          'id',
+          queuedRowsToDelete.map((item) => item.id)
+        )
+
+      if (deleteError) {
+        setError(deleteError.message)
+        setSaving(false)
+        return
+      }
     }
 
-    setQcItems((prev) => [
-      ...(insertedRows || []),
-      ...prev.filter((item) => item.inbound_unload_id !== selectedKoli.id),
-    ])
-    setSuccess('QC plan saved. You can choose the same koli again and continue editing this plan.')
+    let insertedRows = []
+    if (insertPayload.length) {
+      const insertResponse = await supabase
+        .from('qc_items')
+        .insert(insertPayload)
+        .select('*')
+
+      if (insertResponse.error) {
+        setError(insertResponse.error.message)
+        setSaving(false)
+        return
+      }
+
+      insertedRows = insertResponse.data || []
+    }
+
+    const updatedRows = []
+    for (const row of updatesForPersistedRows) {
+      const { data: updatedRow, error: updateError } = await supabase
+        .from('qc_items')
+        .update({
+          inbound_id: row.inbound_id,
+          inbound_unload_id: row.inbound_unload_id,
+          assigned_to: row.assigned_to,
+          allocated_qty: row.allocated_qty,
+          expected_qty: row.expected_qty,
+          qty_in: row.qty_in,
+          model_name: row.model_name,
+          model_color: row.model_color,
+          photo_url: row.photo_url,
+          locked_qty: row.locked_qty,
+          status: row.status,
+          finished_at: row.finished_at,
+          started_at: row.started_at,
+          paused_at: row.paused_at,
+          pause_reason: row.pause_reason,
+        })
+        .eq('id', row.id)
+        .select('*')
+        .single()
+
+      if (updateError) {
+        setError(updateError.message)
+        setSaving(false)
+        return
+      }
+
+      updatedRows.push(updatedRow)
+    }
+
+    const deletedIds = new Set(queuedRowsToDelete.map((item) => item.id))
+    const nextQcItems = [
+      ...qcItems.filter((item) => !deletedIds.has(item.id) && !updatedRows.some((updated) => updated.id === item.id)),
+      ...updatedRows,
+      ...insertedRows,
+    ]
+
+    setQcItems(nextQcItems)
+    setModelRows(buildModelRowsForSource(selectedSource, unloadRows, nextQcItems))
+    setSuccess('QC plan saved. You can choose the same Koli/Sample again and continue editing this plan.')
     setSaving(false)
   }
 
@@ -707,7 +1036,7 @@ export default function QcReceivingPage() {
         <div>
           <h2 style={styles.sectionTitle}>Planner</h2>
           <p style={styles.sectionSubtitle}>
-            Choose the GRN and Koli first. If the model or qty is different, correct it here before allocating QC work.
+            Choose the GRN and Koli/Sample first. If the model or qty is different, correct it here before allocating QC work.
           </p>
         </div>
 
@@ -745,11 +1074,6 @@ export default function QcReceivingPage() {
         </div>
 
         {qcMode !== 'regular' ? <p style={styles.emptyText}>Only Reguler flow is enabled for now.</p> : null}
-        {isPlanLocked ? (
-          <p style={styles.errorText}>
-            Allocation for this koli is locked because at least one inspector has already started or completed QC.
-          </p>
-        ) : null}
 
         <div style={styles.grid}>
           <div style={styles.field}>
@@ -769,20 +1093,28 @@ export default function QcReceivingPage() {
           </div>
 
           <div style={styles.field}>
-            <label style={styles.label}>No Koli</label>
-            <select
-              value={selectedKoliId}
-              onChange={(event) => handleKoliChange(event.target.value)}
-              style={styles.select}
-              disabled={!selectedInboundId}
-            >
-              <option value="">{selectedInboundId ? 'Choose No Koli' : 'Choose GRN first'}</option>
-              {unloadRows.map((row) => (
-                <option key={row.id} value={row.id}>
-                  Koli {row.koli_sequence}
-                </option>
-              ))}
-            </select>
+            <label style={styles.label}>Koli / Sample</label>
+              <select
+                value={selectedSourceKey}
+                onChange={(event) => handleSourceChange(event.target.value)}
+                style={styles.select}
+                disabled={!selectedInboundId}
+              >
+                <option value="">{selectedInboundId ? 'Choose Koli / Sample' : 'Choose GRN first'}</option>
+                {sourceOptions.map((row) => (
+                  <option
+                    key={row.key}
+                    value={row.key}
+                    style={
+                      getSourceStatus(row, qcItems) === 'completed'
+                        ? { color: '#166534', backgroundColor: '#f0fdf4', fontWeight: '700' }
+                        : undefined
+                    }
+                  >
+                    {getSourceStatus(row, qcItems) === 'completed' ? `DONE - ${row.label}` : row.label}
+                  </option>
+                ))}
+              </select>
           </div>
 
           <div style={styles.field}>
@@ -791,19 +1123,46 @@ export default function QcReceivingPage() {
           </div>
         </div>
 
-        {selectedKoli ? (
+        {selectedSource ? (
           <>
-            <label style={styles.checkboxWrap}>
-              <input
-                type="checkbox"
-                checked={isConfirmed}
-                onChange={(event) => syncRowsWithConfirmation(event.target.checked)}
-              />
-              Confirm qty and model are already correct
-            </label>
+            <div style={styles.sourceList}>
+              {sourceOptions.map((row) => {
+                const rowStatus = getSourceStatus(row, qcItems)
+                const isActive = row.key === selectedSourceKey
 
-            {modelRows.map((row, index) => (
+                return (
+                  <button
+                    key={row.key}
+                    type="button"
+                    onClick={() => handleSourceChange(row.key)}
+                    style={{
+                      ...styles.sourceChip,
+                      ...(rowStatus === 'completed' ? styles.sourceChipDone : {}),
+                      ...(isActive ? (rowStatus === 'completed' ? styles.sourceChipDoneActive : styles.sourceChipActive) : {}),
+                    }}
+                  >
+                    {row.label}
+                  </button>
+                )
+              })}
+            </div>
+
+            {isSelectedSourceCompleted ? (
+              <div style={styles.sourceStatusBanner}>
+                <span>KOLI SUDAH SELESAI DIQC</span>
+                <button
+                  type="button"
+                  onClick={() => setSourceDetailsExpanded((prev) => !prev)}
+                  style={styles.secondaryButton}
+                >
+                  {sourceDetailsExpanded ? 'Collapse Detail' : 'Expand Detail'}
+                </button>
+              </div>
+            ) : null}
+
+            {sourceDetailsExpanded ? modelRows.map((row) => (
               <div key={row.id} style={styles.modelRow}>
+                <div style={styles.modelRowTop}>
                 {row.photo_url ? (
                   <Image
                     src={row.photo_url}
@@ -820,31 +1179,35 @@ export default function QcReceivingPage() {
                 <div style={styles.modelMeta}>
                   <div style={styles.modelName}>{row.model_name || 'Choose model'}</div>
                   <p style={styles.infoText}>{row.model_color || 'NO COLOR'}</p>
-                  {index > 0 || !isConfirmed ? (
-                    <div style={styles.buttonRow}>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setActiveModelRowId(row.id)
-                          setShowChooseModelModal(true)
-                        }}
-                        style={styles.secondaryButton}
-                        disabled={isPlanLocked}
-                      >
-                        Choose Model
-                      </button>
-                      {index > 0 ? (
-                        <button
-                          type="button"
-                          onClick={() => removeModelRow(row.id)}
-                          style={styles.secondaryButton}
-                          disabled={isPlanLocked}
-                        >
-                          Remove
-                        </button>
-                      ) : null}
-                    </div>
-                  ) : null}
+                  <div style={styles.buttonRow}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setActiveModelRowId(row.id)
+                        setShowChooseModelModal(true)
+                      }}
+                      style={styles.iconButton}
+                      disabled={hasSavedPlan}
+                      title="Choose model"
+                      aria-label="Choose model"
+                    >
+                      +
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => removeModelRow(row.id)}
+                      style={styles.iconButton}
+                      disabled={
+                        hasSavedPlan ||
+                        modelRows.length === 1 ||
+                        (row.allocations || []).some((split) => Number(split.locked_qty || 0) > 0)
+                      }
+                      title="Remove row"
+                      aria-label="Remove row"
+                    >
+                      x
+                    </button>
+                  </div>
                 </div>
 
                 <div style={styles.field}>
@@ -864,88 +1227,157 @@ export default function QcReceivingPage() {
                       })
                     }
                     style={styles.input}
-                    disabled={isPlanLocked || (isConfirmed && index === 0)}
+                    disabled={hasSavedPlan}
                   />
                 </div>
+                </div>
 
-                <div style={styles.field}>
-                  <label style={styles.label}>Action</label>
-                  {isConfirmed && index === 0 ? (
-                    <div style={styles.readonlyBox}>Expected row</div>
-                  ) : (
-                    <div style={styles.readonlyBox}>Editable row</div>
-                  )}
+                <div style={{ ...styles.field, ...styles.allocationWrap }}>
+                  <label style={styles.label}>Allocation</label>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    {(row.allocations || []).map((split) => (
+                      <div key={split.id} style={{ display: 'grid', gridTemplateColumns: '1.3fr 0.8fr auto', gap: '8px', alignItems: 'center' }}>
+                        <select
+                          value={split.member_email || ''}
+                          onChange={(event) => updateAllocationSplit(row.id, split.id, { member_email: event.target.value })}
+                          style={styles.select}
+                          disabled={isSelectedSourceStarted || (split.existing_status && split.existing_status !== 'queued')}
+                        >
+                          <option value="">Choose inspector</option>
+                          {qcMembers
+                            .filter(
+                              (member) =>
+                                member.email === split.member_email ||
+                                !(row.allocations || []).some(
+                                  (allocation) =>
+                                    allocation.id !== split.id && allocation.member_email === member.email
+                                )
+                            )
+                            .map((member) => (
+                              <option key={member.id} value={member.email}>
+                                {member.display_name || member.email}
+                              </option>
+                            ))}
+                        </select>
+                        <input
+                          type="number"
+                          min="0"
+                          value={split.qty || ''}
+                          onFocus={(event) => {
+                            event.target.select()
+                          }}
+                          onChange={(event) =>
+                            updateAllocationSplit(row.id, split.id, {
+                              qty: event.target.value,
+                            })
+                          }
+                          onBlur={(event) => {
+                            const otherTotal = (row.allocations || [])
+                              .filter((item) => item.id !== split.id)
+                              .reduce((sum, item) => sum + Number(item.qty || 0), 0)
+                            const minAllowed = Number(split.locked_qty || 0)
+                            const maxAllowed = Math.max(minAllowed, Number(row.qty_qc || 0) - otherTotal)
+                            const rawValue = event.target.value
+
+                            if (rawValue === '') {
+                              updateAllocationSplit(row.id, split.id, {
+                                qty: minAllowed > 0 ? String(minAllowed) : '',
+                              })
+                              return
+                            }
+
+                            const nextValue = Number(rawValue || 0)
+                            updateAllocationSplit(row.id, split.id, {
+                              qty: String(Math.max(minAllowed, Math.min(nextValue, maxAllowed))),
+                            })
+                          }}
+                          style={styles.input}
+                          disabled={isSelectedSourceStarted || Boolean(split.existing_status && split.existing_status !== 'queued')}
+                          placeholder="Qty"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => removeAllocationSplit(row.id, split.id)}
+                          style={styles.secondaryButton}
+                          disabled={
+                            isSelectedSourceStarted ||
+                            Number(split.locked_qty || 0) > 0 ||
+                            (split.existing_status && split.existing_status !== 'queued')
+                          }
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    ))}
+
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
+                      <span style={styles.helperText}>
+                        Allocated: {(row.allocations || []).reduce((sum, split) => sum + Number(split.qty || 0), 0)} / {Number(row.qty_qc || 0)}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => addAllocationSplit(row.id)}
+                        style={styles.secondaryButton}
+                        disabled={isSelectedSourceStarted || !qcMembers.length || (row.allocations || []).length >= qcMembers.length}
+                      >
+                        Allocate
+                      </button>
+                    </div>
+                  </div>
                 </div>
               </div>
-            ))}
+            )) : null}
 
-            {!isConfirmed ? (
-              <div style={styles.buttonRow}>
-                <button type="button" onClick={addModelRow} style={styles.secondaryButton} disabled={isPlanLocked}>
-                  + Add Model Row
-                </button>
-              </div>
+            {sourceDetailsExpanded ? (
+            <div style={styles.buttonRow}>
+              <button type="button" onClick={addModelRow} style={styles.secondaryButton} disabled={hasSavedPlan}>
+                + Add Model Row
+              </button>
+            </div>
             ) : null}
 
+            {sourceDetailsExpanded ? (
             <div>
-              <h3 style={styles.sectionTitle}>Allocate to QC Team</h3>
+              <h3 style={styles.sectionTitle}>Model Allocation</h3>
               <p style={styles.sectionSubtitle}>
-                `Inbound Qty` is the qty from receiving. `QC In` is the qty that will actually enter QC. The total allocated qty across registered QC users must match `QC In`.
+                Each model row can be allocated to one or more inspectors. Allocated qty may be less than QC In, but it cannot be more.
+              </p>
+              <p style={styles.sectionSubtitle}>
+                After QC has started, allocation stays as the original plan so any allocation gap remains visible for planner KPI.
               </p>
             </div>
-
-            <div style={styles.compactGrid}>
-              {qcMembers.map((member) => (
-                <div key={member.id} style={styles.allocationCard}>
-                  <span style={styles.label}>{member.display_name || member.email}</span>
-                  <input
-                    type="number"
-                    min="0"
-                    max={qcInQty || 0}
-                    value={allocations[member.email] || ''}
-                    onChange={(event) => {
-                      const nextValue = Number(event.target.value || 0)
-                      setAllocations((prev) => ({
-                        ...prev,
-                        [member.email]: nextValue > qcInQty ? String(qcInQty) : event.target.value,
-                      }))
-                    }}
-                    style={styles.input}
-                    placeholder="0"
-                    disabled={isPlanLocked}
-                  />
-                </div>
-              ))}
-            </div>
+            ) : null}
 
             {!qcMembers.length ? (
               <p style={styles.emptyText}>
-                No QC user has registered yet. Open `Inspection Task` and press `Register for QC` first.
+                No QC user has registered yet. Open `Grading Task` and press `Register for QC` first.
               </p>
             ) : null}
 
             <div style={styles.summaryGrid}>
               <div style={styles.summaryCard}>
                 <span style={styles.summaryLabel}>Inbound Qty</span>
-                <strong style={styles.summaryValue}>{Number(selectedKoli.qty || 0)}</strong>
+                <strong style={styles.summaryValue}>
+                  {selectedSourceRows.reduce((sum, row) => sum + Number(row.qty || 0), 0)}
+                </strong>
               </div>
               <div style={styles.summaryCard}>
                 <span style={styles.summaryLabel}>QC In</span>
                 <strong style={styles.summaryValue}>{qcInQty}</strong>
               </div>
               <div style={styles.summaryCard}>
-                <span style={styles.summaryLabel}>QC Allocated Qty</span>
+                <span style={styles.summaryLabel}>QC Assigned Qty</span>
                 <strong style={styles.summaryValue}>{allocationTotal}</strong>
               </div>
-              <div style={styles.summaryCard}>
-                <span style={styles.summaryLabel}>Koli</span>
-                <strong style={styles.summaryValue}>Koli {selectedKoli.koli_sequence}</strong>
+                <div style={styles.summaryCard}>
+                  <span style={styles.summaryLabel}>Selected</span>
+                  <strong style={styles.summaryValue}>{selectedSource?.label || '-'}</strong>
+                </div>
               </div>
-            </div>
-          </>
-        ) : (
-          <p style={styles.emptyText}>Choose GRN and Koli first to start QC planning.</p>
-        )}
+            </>
+          ) : (
+            <p style={styles.emptyText}>Choose GRN and Koli/Sample first to start QC planning.</p>
+          )}
 
         <div style={styles.buttonRow}>
           {error ? <p style={styles.errorText}>{error}</p> : null}
@@ -953,13 +1385,13 @@ export default function QcReceivingPage() {
           <button
             type="button"
             onClick={handleSavePlan}
-            disabled={saving || !selectedKoli || isPlanLocked}
+            disabled={saving || !selectedSource || isSelectedSourceStarted}
             style={{
               ...styles.primaryButton,
-              ...(saving || !selectedKoli || isPlanLocked ? { opacity: 0.6, cursor: 'not-allowed' } : {}),
+              ...(saving || !selectedSource || isSelectedSourceStarted ? { opacity: 0.6, cursor: 'not-allowed' } : {}),
             }}
           >
-            {saving ? 'Saving...' : isPlanLocked ? 'QC Started' : 'Save QC Plan'}
+            {saving ? 'Saving...' : 'Save QC Plan'}
           </button>
         </div>
       </div>
@@ -1093,3 +1525,4 @@ export default function QcReceivingPage() {
     </div>
   )
 }
+

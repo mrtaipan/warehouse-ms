@@ -128,7 +128,7 @@ export default function EditSupplierPage() {
       setError('')
 
       const { data, error } = await supabase
-        .from('suppliers')
+        .from('dir_suppliers')
         .select('id, supplier_code, supplier_name, contact_person, phone, address, notes, is_active')
         .eq('id', supplierId)
         .single()
@@ -198,7 +198,7 @@ export default function EditSupplierPage() {
     }
 
     const { error } = await supabase
-      .from('suppliers')
+      .from('dir_suppliers')
       .update(payload)
       .eq('id', supplierId)
 

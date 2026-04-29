@@ -1,18 +1,7 @@
-import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { createClient } from '@/utils/supabase/server'
 
-function formatDateDisplay(value) {
-  if (!value) return '-'
-
-  return new Intl.DateTimeFormat('en-GB', {
-    day: '2-digit',
-    month: 'short',
-    year: 'numeric',
-  }).format(new Date(value))
-}
-
-export default async function InboundPage() {
+export default async function InboundDashboardPage({ searchParams }) {
   const supabase = await createClient()
 
   const {
@@ -23,103 +12,135 @@ export default async function InboundPage() {
     redirect('/login')
   }
 
-  const { data: orders, error } = await supabase
-    .from('inbound')
-    .select('*, suppliers(supplier_name)')
-    .in('status', ['draft', 'inbound'])
-    .order('created_at', { ascending: false })
+  const params = await searchParams
+  const selectedGrn = params?.grn || ''
+
+  const [{ data: inboundRows, error: inboundError }, { data: unloadRows, error: unloadError }] = await Promise.all([
+    supabase.from('inbound').select('id, grn_number, item_name').order('created_at', { ascending: false }),
+    supabase.from('inbound_unload').select('id, inbound_id, model_name, model_color, qty, is_sample, photo_url').order('created_at', { ascending: false }),
+  ])
+
+  const selectedInbound = (inboundRows || []).find((item) => item.grn_number === selectedGrn) || null
+  const summaryMap = new Map()
+
+  ;(unloadRows || [])
+    .filter((row) => Number(row.inbound_id) === Number(selectedInbound?.id))
+    .forEach((row) => {
+      const label = row.model_color ? `${row.model_name} / ${row.model_color}` : row.model_name
+
+      if (!summaryMap.has(label)) {
+        summaryMap.set(label, {
+          modelLabel: label,
+          modelQty: 0,
+          photoUrl: row.photo_url || '',
+        })
+      }
+
+      const current = summaryMap.get(label)
+      current.modelQty += Number(row.qty || 0)
+
+      if (!current.photoUrl && row.photo_url) {
+        current.photoUrl = row.photo_url
+      }
+    })
+
+  const summaryRows = [...summaryMap.values()].sort((a, b) => a.modelLabel.localeCompare(b.modelLabel))
+  const totalQty = summaryRows.reduce((sum, row) => sum + Number(row.modelQty || 0), 0)
 
   return (
     <div style={styles.wrapper}>
-      <div style={styles.header}>
-        <div>
-          <h1 style={styles.title}>Receiving</h1>
-          <p style={styles.subtitle}>Create and continue receiving records from one place.</p>
-        </div>
-
-        <Link href="/dashboard/inbound/new" style={styles.primaryButton}>
-          + New Receiving
-        </Link>
+      <div>
+        <h1 style={styles.title}>Inbound Dashboard</h1>
+        <p style={styles.subtitle}>Choose a GRN Number first to see model summary from inbound unload.</p>
       </div>
 
-      {error ? (
-        <div style={styles.card}>
-          <p style={styles.errorText}>Error: {error.message}</p>
+      <form method="get" style={styles.card}>
+        <div style={styles.field}>
+          <label style={styles.label}>GRN Number</label>
+          <input
+            name="grn"
+            list="inbound-dashboard-grn-options"
+            defaultValue={selectedGrn}
+            style={styles.input}
+            placeholder="Type or choose GRN Number"
+          />
+          <datalist id="inbound-dashboard-grn-options">
+            {(inboundRows || []).map((item) => (
+              <option key={item.id} value={item.grn_number} />
+            ))}
+          </datalist>
         </div>
-      ) : orders?.length === 0 ? (
+
+        <div style={styles.buttonRow}>
+          <button type="submit" style={styles.primaryButton}>
+            Show Summary
+          </button>
+        </div>
+
+        {inboundError || unloadError ? (
+          <p style={styles.errorText}>Error: {inboundError?.message || unloadError?.message}</p>
+        ) : null}
+      </form>
+
+      {!selectedGrn ? (
         <div style={styles.card}>
-          <p style={styles.emptyText}>No receiving records yet. Create your first receiving entry.</p>
+          <p style={styles.emptyText}>Choose a GRN Number first.</p>
+        </div>
+      ) : !selectedInbound ? (
+        <div style={styles.card}>
+          <p style={styles.emptyText}>GRN Number not found.</p>
         </div>
       ) : (
-        <div style={styles.tableWrap}>
-          <table style={styles.table}>
-            <thead>
-              <tr style={styles.headRow}>
-                <th style={th}>GRN Number</th>
-                <th style={th}>Inbound Date</th>
-                <th style={th}>Supplier</th>
-                <th style={th}>Barang</th>
-                <th style={th}>Pay on Site</th>
-                <th style={th}>Qty Surat Jalan</th>
-                <th style={th}>Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              {orders.map((order) => (
-                <tr key={order.id} style={styles.bodyRow}>
-                  <td style={td}>
-                    <strong>{order.grn_number}</strong>
-                  </td>
-                  <td style={td}>
-                    {formatDateDisplay(order.inbound_date)}
-                  </td>
-                  <td style={td}>{order.suppliers?.supplier_name || '-'}</td>
-                  <td style={td}>{order.item_name || '-'}</td>
-                  <td style={td}>{order.payment_on_site ? 'Yes' : 'No'}</td>
-                  <td style={td}>{order.total_claimed_qty || 0}</td>
-                  <td style={td}>
-                    <div style={styles.actionGroup}>
-                      <Link
-                        href={`/dashboard/inbound/${order.id}`}
-                        style={styles.iconButton}
-                        aria-label={`Preview ${order.grn_number}`}
-                        title="Preview"
-                      >
-                        👁
-                      </Link>
-                      <Link
-                        href={`/dashboard/inbound/${order.id}/edit`}
-                        style={styles.iconButton}
-                        aria-label={`Edit ${order.grn_number}`}
-                        title="Edit"
-                      >
-                        ✎
-                      </Link>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div style={styles.card}>
+          <div style={styles.header}>
+            <div>
+              <h2 style={styles.sectionTitle}>Model Summary</h2>
+              <p style={styles.sectionSubtitle}>
+                Summary for <strong>{selectedInbound.grn_number}</strong>
+                {selectedInbound.item_name ? ` - ${selectedInbound.item_name}` : ''}
+              </p>
+            </div>
+            <div style={styles.totalBox}>
+              <span style={styles.totalLabel}>Total Qty</span>
+              <strong style={styles.totalValue}>{totalQty}</strong>
+            </div>
+          </div>
+
+          {summaryRows.length === 0 ? (
+            <p style={styles.emptyText}>No model summary yet for this GRN.</p>
+          ) : (
+            <div style={styles.tableWrap}>
+              <table style={styles.table}>
+                <thead>
+                  <tr>
+                    <th style={styles.th}>Photo</th>
+                    <th style={styles.th}>Model</th>
+                    <th style={{ ...styles.th, textAlign: 'center' }}>Qty</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {summaryRows.map((row) => (
+                    <tr key={row.modelLabel}>
+                      <td style={{ ...styles.td, textAlign: 'center' }}>
+                        {row.photoUrl ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img src={row.photoUrl} alt={row.modelLabel} style={styles.thumb} />
+                        ) : (
+                          <div style={styles.thumbEmpty}>NO PHOTO</div>
+                        )}
+                      </td>
+                      <td style={styles.td}>{row.modelLabel}</td>
+                      <td style={{ ...styles.td, textAlign: 'center', fontWeight: '700' }}>{row.modelQty}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       )}
     </div>
   )
-}
-
-const th = {
-  padding: '12px 16px',
-  textAlign: 'left',
-  fontSize: '14px',
-  fontWeight: '600',
-  color: '#374151',
-}
-
-const td = {
-  padding: '12px 16px',
-  fontSize: '14px',
-  color: '#111827',
-  verticalAlign: 'top',
 }
 
 const styles = {
@@ -127,13 +148,6 @@ const styles = {
     display: 'flex',
     flexDirection: 'column',
     gap: '24px',
-  },
-  header: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    gap: '16px',
-    flexWrap: 'wrap',
   },
   title: {
     margin: 0,
@@ -143,54 +157,127 @@ const styles = {
     color: '#6b7280',
     margin: '4px 0 0',
   },
-  primaryButton: {
-    padding: '10px 16px',
-    background: '#111827',
-    color: '#fff',
-    borderRadius: '8px',
-    textDecoration: 'none',
-    fontWeight: '600',
-  },
   card: {
     background: '#fff',
     border: '1px solid #e5e7eb',
     borderRadius: '12px',
     padding: '24px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '16px',
+  },
+  field: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '8px',
+  },
+  label: {
+    fontSize: '14px',
+    fontWeight: '600',
+    color: '#111827',
+  },
+  input: {
+    height: '42px',
+    padding: '0 12px',
+    border: '1px solid #d1d5db',
+    borderRadius: '8px',
+    fontSize: '14px',
+    width: '100%',
+  },
+  buttonRow: {
+    display: 'flex',
+    justifyContent: 'flex-end',
+  },
+  primaryButton: {
+    padding: '10px 16px',
+    background: '#111827',
+    color: '#fff',
+    borderRadius: '8px',
+    border: 'none',
+    fontWeight: '600',
+    cursor: 'pointer',
+  },
+  header: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: '16px',
+    flexWrap: 'wrap',
+  },
+  sectionTitle: {
+    margin: 0,
+    fontSize: '20px',
+  },
+  sectionSubtitle: {
+    margin: '4px 0 0',
+    color: '#6b7280',
+  },
+  totalBox: {
+    minWidth: '140px',
+    padding: '14px 16px',
+    borderRadius: '12px',
+    border: '1px solid #e5e7eb',
+    background: '#f9fafb',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '4px',
+    alignItems: 'center',
+  },
+  totalLabel: {
+    fontSize: '12px',
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    color: '#6b7280',
+  },
+  totalValue: {
+    fontSize: '28px',
+    fontWeight: '800',
+    color: '#111827',
   },
   tableWrap: {
-    background: '#fff',
+    overflow: 'hidden',
     border: '1px solid #e5e7eb',
     borderRadius: '12px',
-    overflow: 'hidden',
   },
   table: {
     width: '100%',
     borderCollapse: 'collapse',
   },
-  headRow: {
+  th: {
+    padding: '12px 16px',
+    textAlign: 'left',
+    fontSize: '14px',
+    fontWeight: '600',
+    color: '#374151',
     background: '#f9fafb',
   },
-  bodyRow: {
+  td: {
+    padding: '12px 16px',
+    fontSize: '14px',
+    color: '#111827',
     borderTop: '1px solid #f1f5f9',
+    verticalAlign: 'middle',
   },
-  actionGroup: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '8px',
+  thumb: {
+    width: '56px',
+    height: '56px',
+    objectFit: 'cover',
+    borderRadius: '10px',
+    border: '1px solid #e5e7eb',
+    background: '#fff',
   },
-  iconButton: {
+  thumbEmpty: {
+    width: '56px',
+    height: '56px',
+    borderRadius: '10px',
+    border: '1px solid #e5e7eb',
+    background: '#f9fafb',
     display: 'inline-flex',
     alignItems: 'center',
     justifyContent: 'center',
-    width: '36px',
-    height: '36px',
-    borderRadius: '8px',
-    background: '#ffffff',
-    color: '#111827',
-    border: '1px solid #d1d5db',
-    textDecoration: 'none',
-    fontSize: '16px',
-    fontWeight: '600',
+    color: '#9ca3af',
+    fontSize: '10px',
+    fontWeight: '700',
   },
   emptyText: {
     margin: 0,

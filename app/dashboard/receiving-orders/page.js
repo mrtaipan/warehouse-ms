@@ -15,7 +15,7 @@ export default async function ReceivingOrdersPage() {
 
   const { data: orders, error } = await supabase
     .from('inbound')
-    .select('*, suppliers(supplier_name)')
+    .select('*, suppliers:dir_suppliers!supplier_id (supplier_name)')
     .order('created_at', { ascending: false })
 
   return (

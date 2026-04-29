@@ -48,7 +48,7 @@ export default function CategoriesPage() {
       setError('')
 
       const { data, error } = await supabase
-        .from('categories')
+        .from('dir_categories')
         .select('id, category_code, category_name, parent_id, level, full_code, full_name, is_active')
         .order('id', { ascending: true })
 
@@ -73,7 +73,7 @@ export default function CategoriesPage() {
     setError('')
 
     const { error } = await supabase
-      .from('categories')
+      .from('dir_categories')
       .update({ is_active: nextActiveValue })
       .eq('id', categoryId)
 

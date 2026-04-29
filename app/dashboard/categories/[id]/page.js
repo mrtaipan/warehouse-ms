@@ -57,8 +57,8 @@ export default function EditCategoryPage() {
 
       const [{ data: allCategories, error: allError }, { data: currentCategory, error: currentError }] =
         await Promise.all([
-          supabase.from('categories').select('id, category_code, category_name, parent_id, level, is_active').order('id', { ascending: true }),
-          supabase.from('categories').select('id, category_code, category_name, parent_id, level, is_active').eq('id', categoryId).single(),
+          supabase.from('dir_categories').select('id, category_code, category_name, parent_id, level, is_active').order('id', { ascending: true }),
+          supabase.from('dir_categories').select('id, category_code, category_name, parent_id, level, is_active').eq('id', categoryId).single(),
         ])
 
       if (allError || currentError) {
@@ -189,7 +189,7 @@ export default function EditCategoryPage() {
     setSuccess('')
 
     const { error } = await supabase
-      .from('categories')
+      .from('dir_categories')
       .update({
         category_code: form.category_code.trim() || null,
         category_name: form.category_name.trim() || null,

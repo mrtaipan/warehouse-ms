@@ -33,8 +33,8 @@ async function fetchAllRackLocations() {
   while (true) {
     const to = from + BATCH_SIZE - 1
     const { data, error } = await supabase
-      .from('rack_locations')
-      .select('id, location_type, location_id, location_code, sub_location')
+      .from('dir_rack_locations')
+      .select('id, location_type, location_id, location_code, sub_location, location_name')
       .order('location_type', { ascending: true })
       .order('location_id', { ascending: true })
       .order('location_code', { ascending: true })
@@ -122,7 +122,9 @@ export default function StorageOverviewPage() {
     notes: '',
   })
   const [filters, setFilters] = useState({
+    locationType: '',
     locationCode: '',
+    locationName: '',
     subLocation: '',
     hashtagOnly: false,
   })
@@ -145,6 +147,7 @@ export default function StorageOverviewPage() {
           location_id: typeof item.location_id === 'string' ? item.location_id.trim() : item.location_id,
           location_code: typeof item.location_code === 'string' ? item.location_code.trim() : item.location_code,
           sub_location: typeof item.sub_location === 'string' ? item.sub_location.trim() : item.sub_location,
+          location_name: typeof item.location_name === 'string' ? item.location_name.trim() : item.location_name,
         }))
 
         setRackLocations(normalizedRackLocations)
@@ -175,11 +178,28 @@ export default function StorageOverviewPage() {
     [locationById, storageEntries]
   )
 
+  const locationTypeOptions = Array.from(
+    new Set(rackLocations.map((item) => item.location_type).filter(Boolean))
+  ).sort((left, right) => naturalSort.compare(String(left), String(right)))
+
   const locationCodeOptions = Array.from(
     new Set(
       rackLocations
-        .filter((item) => !filters.subLocation || item.sub_location === filters.subLocation)
+        .filter(
+          (item) =>
+            item.location_type === 'PALLET' &&
+            (!filters.subLocation || item.sub_location === filters.subLocation)
+        )
         .map((item) => item.location_code)
+        .filter(Boolean)
+    )
+  ).sort((left, right) => naturalSort.compare(String(left), String(right)))
+
+  const locationNameOptions = Array.from(
+    new Set(
+      rackLocations
+        .filter((item) => item.location_type === 'SHELVING')
+        .map((item) => item.location_name)
         .filter(Boolean)
     )
   ).sort((left, right) => naturalSort.compare(String(left), String(right)))
@@ -187,7 +207,11 @@ export default function StorageOverviewPage() {
   const subLocationOptions = Array.from(
     new Set(
       rackLocations
-        .filter((item) => !filters.locationCode || item.location_code === filters.locationCode)
+        .filter(
+          (item) =>
+            item.location_type === 'PALLET' &&
+            (!filters.locationCode || item.location_code === filters.locationCode)
+        )
         .map((item) => item.sub_location)
         .filter(Boolean)
     )
@@ -196,6 +220,20 @@ export default function StorageOverviewPage() {
   const filteredRows = storageRows.filter((entry) => {
     const location = entry.location
     const itemName = String(entry.item_name || '').trim()
+
+    if (
+      filters.locationType &&
+      String(location.location_type || '').toUpperCase() !== filters.locationType.toUpperCase()
+    ) {
+      return false
+    }
+
+    if (
+      filters.locationName &&
+      !String(location.location_name || '').toUpperCase().includes(filters.locationName.toUpperCase())
+    ) {
+      return false
+    }
 
     if (
       filters.locationCode &&
@@ -241,6 +279,17 @@ export default function StorageOverviewPage() {
       return
     }
 
+    if (name === 'locationType') {
+      setFilters((prev) => ({
+        ...prev,
+        locationType: value.toUpperCase(),
+        locationCode: '',
+        locationName: '',
+        subLocation: '',
+      }))
+      return
+    }
+
     setFilters((prev) => ({
       ...prev,
       [name]: value.toUpperCase(),
@@ -249,7 +298,9 @@ export default function StorageOverviewPage() {
 
   function clearFilters() {
     setFilters({
+      locationType: '',
       locationCode: '',
+      locationName: '',
       subLocation: '',
       hashtagOnly: false,
     })
@@ -504,38 +555,76 @@ export default function StorageOverviewPage() {
       <div style={styles.card}>
         <div style={styles.filtersGrid}>
           <div style={styles.field}>
-            <label style={styles.label}>Pallet/Shelving Number</label>
-            <input
-              name="locationCode"
-              value={filters.locationCode}
+            <label style={styles.label}>Storage Type</label>
+            <select
+              name="locationType"
+              value={filters.locationType}
               onChange={handleFilterChange}
-              style={styles.input}
-              list="location-code-options"
-              placeholder="Type or select a pallet/shelving number"
-            />
-            <datalist id="location-code-options">
-              {locationCodeOptions.map((option) => (
-                <option key={option} value={option} />
+              style={styles.select}
+            >
+              <option value="">All Types</option>
+              {locationTypeOptions.map((option) => (
+                <option key={option} value={option}>
+                  {option}
+                </option>
               ))}
-            </datalist>
+            </select>
           </div>
 
-          <div style={styles.field}>
-            <label style={styles.label}>Carton Number</label>
-            <input
-              name="subLocation"
-              value={filters.subLocation}
-              onChange={handleFilterChange}
-              style={styles.input}
-              list="sub-location-options"
-              placeholder="Type or select a carton number"
-            />
-            <datalist id="sub-location-options">
-              {subLocationOptions.map((option) => (
-                <option key={option} value={option} />
-              ))}
-            </datalist>
-          </div>
+          {filters.locationType !== 'SHELVING' ? (
+            <div style={styles.field}>
+              <label style={styles.label}>Pallet Number</label>
+              <input
+                name="locationCode"
+                value={filters.locationCode}
+                onChange={handleFilterChange}
+                style={styles.input}
+                list="location-code-options"
+                placeholder="Type or select a pallet number"
+              />
+              <datalist id="location-code-options">
+                {locationCodeOptions.map((option) => (
+                  <option key={option} value={option} />
+                ))}
+              </datalist>
+            </div>
+          ) : (
+            <div style={styles.field}>
+              <label style={styles.label}>Shelving Location Name</label>
+              <input
+                name="locationName"
+                value={filters.locationName}
+                onChange={handleFilterChange}
+                style={styles.input}
+                list="location-name-options"
+                placeholder="Type or select a shelving location name"
+              />
+              <datalist id="location-name-options">
+                {locationNameOptions.map((option) => (
+                  <option key={option} value={option} />
+                ))}
+              </datalist>
+            </div>
+          )}
+
+          {filters.locationType !== 'SHELVING' ? (
+            <div style={styles.field}>
+              <label style={styles.label}>Carton Number</label>
+              <input
+                name="subLocation"
+                value={filters.subLocation}
+                onChange={handleFilterChange}
+                style={styles.input}
+                list="sub-location-options"
+                placeholder="Type or select a carton number"
+              />
+              <datalist id="sub-location-options">
+                {subLocationOptions.map((option) => (
+                  <option key={option} value={option} />
+                ))}
+              </datalist>
+            </div>
+          ) : null}
         </div>
 
         <label style={styles.checkboxFilter}>

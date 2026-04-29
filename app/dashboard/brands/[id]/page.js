@@ -40,7 +40,7 @@ export default function EditBrandPage() {
     async function fetchBrand() {
       setPageLoading(true)
       setError('')
-      const { data, error } = await supabase.from('brands').select('id, brand_code, brand_name, description, is_active').eq('id', brandId).single()
+      const { data, error } = await supabase.from('dir_brands').select('id, brand_code, brand_name, description, is_active').eq('id', brandId).single()
       if (error) {
         setError(error.message)
         setPageLoading(false)
@@ -84,7 +84,7 @@ export default function EditBrandPage() {
     setError('')
     setSuccess('')
 
-    const { error } = await supabase.from('brands').update({
+    const { error } = await supabase.from('dir_brands').update({
       brand_code: form.brand_code.trim() || null,
       brand_name: form.brand_name.trim() || null,
       description: form.description.trim() || null,

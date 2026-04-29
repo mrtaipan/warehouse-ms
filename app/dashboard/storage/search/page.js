@@ -13,7 +13,7 @@ async function fetchAllRackLocations() {
   while (true) {
     const to = from + RACK_LOCATION_BATCH_SIZE - 1
     const { data, error } = await supabase
-      .from('rack_locations')
+      .from('dir_rack_locations')
       .select('id, location_type, location_id, location_code, sub_location')
       .order('location_type', { ascending: true })
       .order('location_id', { ascending: true })
