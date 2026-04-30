@@ -22,7 +22,7 @@ export default async function DashboardLayout({ children }) {
     .maybeSingle()
   const role = isAdminEmail ? 'admin' : profile?.role || 'storage_staff'
   const { data: rolePermissions } = await supabase
-    .from('role_permissions')
+    .from('dir_user_roles')
     .select('permission_code')
     .eq('role', role)
   const permissions = (rolePermissions || []).map((item) => item.permission_code)
@@ -41,7 +41,7 @@ export default async function DashboardLayout({ children }) {
             </Link>
           ) : null}
           {menus.packing ? <Link href="/dashboard/packing-list" style={styles.link}>Packing List</Link> : null}
-          {menus.storage ? <Link href="/dashboard/storage" style={styles.link}>Storage</Link> : null}
+          {menus.storage ? <Link href={menus.storageHref} style={styles.link}>Storage</Link> : null}
 
           {menus.masterData ? (
             <>

@@ -1,47 +1,78 @@
-export default function StoragePage() {
+import { redirect } from 'next/navigation'
+import { createClient } from '@/utils/supabase/server'
+import { ADMIN_EMAIL, getStorageFeatureAccess } from '@/utils/permissions'
+
+export default async function StoragePage() {
+  const supabase = await createClient()
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+
+  if (!user) {
+    redirect('/login')
+  }
+
+  const isAdmin = user.email?.toLowerCase() === ADMIN_EMAIL
+  const { data: profile } = await supabase
+    .from('dir_user_profiles')
+    .select('role')
+    .eq('email', user.email?.toLowerCase())
+    .maybeSingle()
+  const role = isAdmin ? 'admin' : profile?.role || 'storage_staff'
+  const { data: rolePermissions } = await supabase
+    .from('dir_user_roles')
+    .select('permission_code')
+    .eq('role', role)
+  const permissions = (rolePermissions || []).map((item) => item.permission_code)
+  const access = getStorageFeatureAccess(role, permissions, isAdmin)
+
   return (
     <div style={styles.wrapper}>
       <div>
         <h1 style={styles.title}>Storage Menu</h1>
-        <p style={styles.subtitle}>
-          Pilih proses storage yang ingin dibuka, termasuk akses cepat ke halaman mobile picker.
-        </p>
+        <p style={styles.subtitle}>Pilih proses storage yang ingin dibuka.</p>
       </div>
 
       <div style={styles.grid}>
-        <a href="/dashboard/storage/overview" style={styles.card}>
-          <span style={styles.eyebrow}>Storage</span>
-          <strong style={styles.cardTitle}>Storage Overview</strong>
-          <span style={styles.cardText}>Lihat stok dan lakukan take/edit dari tampilan utama.</span>
-        </a>
+        {access.overview ? (
+          <a href="/dashboard/storage/overview" style={styles.card}>
+            <span style={styles.eyebrow}>Storage</span>
+            <strong style={styles.cardTitle}>Storage Overview</strong>
+            <span style={styles.cardText}>Lihat stok dan lakukan take/edit dari tampilan utama.</span>
+          </a>
+        ) : null}
 
-        <a href="/dashboard/storage/registry" style={styles.card}>
-          <span style={styles.eyebrow}>Storage</span>
-          <strong style={styles.cardTitle}>Registry Storage</strong>
-          <span style={styles.cardText}>Input barang masuk ke lokasi rack yang tepat.</span>
-        </a>
+        {access.registry ? (
+          <a href="/dashboard/storage/registry" style={styles.card}>
+            <span style={styles.eyebrow}>Storage</span>
+            <strong style={styles.cardTitle}>Registry Storage</strong>
+            <span style={styles.cardText}>Input barang masuk ke lokasi rack yang tepat.</span>
+          </a>
+        ) : null}
 
-        <a href="/dashboard/storage/search" style={styles.card}>
-          <span style={styles.eyebrow}>Storage</span>
-          <strong style={styles.cardTitle}>Search Storage</strong>
-          <span style={styles.cardText}>Cari lokasi barang berdasarkan nama item.</span>
-        </a>
+        {access.search ? (
+          <a href="/dashboard/storage/search" style={styles.card}>
+            <span style={styles.eyebrow}>Storage</span>
+            <strong style={styles.cardTitle}>Search Storage</strong>
+            <span style={styles.cardText}>Cari lokasi barang berdasarkan nama item.</span>
+          </a>
+        ) : null}
 
-        <a href="/restock-request" style={styles.card}>
-          <span style={styles.eyebrow}>Storage</span>
-          <strong style={styles.cardTitle}>Restock Submit</strong>
-          <span style={styles.cardText}>
-            Buat request pengambilan dari dalam dashboard storage.
-          </span>
-        </a>
+        {access.restockSubmit ? (
+          <a href="/restock-request" style={styles.card}>
+            <span style={styles.eyebrow}>Storage</span>
+            <strong style={styles.cardTitle}>Restock Submit</strong>
+            <span style={styles.cardText}>Buat request pengambilan dari dalam dashboard storage.</span>
+          </a>
+        ) : null}
 
-        <a href="/take-requests" style={styles.mobileCard}>
-          <span style={styles.eyebrow}>Storage</span>
-          <strong style={styles.cardTitle}>Restock Picker</strong>
-          <span style={styles.cardText}>
-            Buka halaman mobile picker untuk melihat request dan proses complete.
-          </span>
-        </a>
+        {access.restockPicker ? (
+          <a href="/take-requests" style={styles.mobileCard}>
+            <span style={styles.eyebrow}>Storage</span>
+            <strong style={styles.cardTitle}>Restock Picker</strong>
+            <span style={styles.cardText}>Buka halaman mobile picker untuk melihat request dan proses complete.</span>
+          </a>
+        ) : null}
       </div>
     </div>
   )

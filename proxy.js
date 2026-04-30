@@ -47,7 +47,7 @@ export async function proxy(request) {
 
   if (user) {
     const { data: rolePermissions } = await supabase
-      .from('role_permissions')
+      .from('dir_user_roles')
       .select('permission_code')
       .eq('role', role)
 

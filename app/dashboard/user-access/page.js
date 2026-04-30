@@ -39,8 +39,8 @@ export default async function UserAccessPage() {
   const [{ data: profiles, error: profilesError }, { data: permissions, error: permissionsError }, { data: rolePermissions, error: rolePermissionsError }] =
     await Promise.all([
         supabase.from('dir_user_profiles').select('id, email, display_name, role, updated_at').order('email', { ascending: true }),
-      supabase.from('permissions').select('code, label, description').order('code', { ascending: true }),
-      supabase.from('role_permissions').select('role, permission_code').order('role', { ascending: true }),
+      supabase.from('dir_user_permissions').select('code, label, description').order('code', { ascending: true }),
+      supabase.from('dir_user_roles').select('role, permission_code').order('role', { ascending: true }),
     ])
 
   const groupedPermissions = groupPermissions(permissions || [])
@@ -85,6 +85,7 @@ export default async function UserAccessPage() {
                   <td style={styles.td}>{profile.email}</td>
                   <td style={styles.td}>
                     <form id={`access-form-${profile.email}`} action={updateUserRole} style={styles.inlineForm}>
+                      <input type="hidden" name="profile_id" value={profile.id || ''} />
                       <input type="hidden" name="email" value={profile.email} />
                       <input
                         name="display_name"
