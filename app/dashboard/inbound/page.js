@@ -1,3 +1,4 @@
+import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { createClient } from '@/utils/supabase/server'
 
@@ -14,6 +15,8 @@ export default async function InboundDashboardPage({ searchParams }) {
 
   const params = await searchParams
   const selectedGrn = params?.grn || ''
+  const selectedPhoto = params?.photo || ''
+  const selectedPhotoTitle = params?.photoTitle || ''
 
   const [{ data: inboundRows, error: inboundError }, { data: unloadRows, error: unloadError }] = await Promise.all([
     supabase.from('inbound').select('id, grn_number, item_name').order('created_at', { ascending: false }),
@@ -123,8 +126,13 @@ export default async function InboundDashboardPage({ searchParams }) {
                     <tr key={row.modelLabel}>
                       <td style={{ ...styles.td, textAlign: 'center' }}>
                         {row.photoUrl ? (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img src={row.photoUrl} alt={row.modelLabel} style={styles.thumb} />
+                          <Link
+                            href={`/dashboard/inbound?grn=${encodeURIComponent(selectedGrn)}&photo=${encodeURIComponent(row.photoUrl)}&photoTitle=${encodeURIComponent(row.modelLabel)}`}
+                            style={styles.thumbLink}
+                          >
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img src={row.photoUrl} alt={row.modelLabel} style={styles.thumb} />
+                          </Link>
                         ) : (
                           <div style={styles.thumbEmpty}>NO PHOTO</div>
                         )}
@@ -139,6 +147,25 @@ export default async function InboundDashboardPage({ searchParams }) {
           )}
         </div>
       )}
+
+      {selectedPhoto ? (
+        <div style={styles.overlay}>
+          <div style={styles.modal}>
+            <div style={styles.header}>
+              <div>
+                <h2 style={styles.sectionTitle}>Photo Preview</h2>
+                <p style={styles.sectionSubtitle}>{selectedPhotoTitle || 'Model Photo'}</p>
+              </div>
+              <Link href={`/dashboard/inbound?grn=${encodeURIComponent(selectedGrn)}`} style={styles.closeButton}>
+                Close
+              </Link>
+            </div>
+
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={selectedPhoto} alt={selectedPhotoTitle || 'Model Photo'} style={styles.previewImage} />
+          </div>
+        </div>
+      ) : null}
     </div>
   )
 }
@@ -266,6 +293,9 @@ const styles = {
     border: '1px solid #e5e7eb',
     background: '#fff',
   },
+  thumbLink: {
+    display: 'inline-flex',
+  },
   thumbEmpty: {
     width: '56px',
     height: '56px',
@@ -286,5 +316,49 @@ const styles = {
   errorText: {
     margin: 0,
     color: '#dc2626',
+  },
+  overlay: {
+    position: 'fixed',
+    inset: 0,
+    background: 'rgba(17, 24, 39, 0.45)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: '24px',
+    zIndex: 50,
+  },
+  modal: {
+    width: '100%',
+    maxWidth: '720px',
+    background: '#fff',
+    borderRadius: '16px',
+    padding: '24px',
+    border: '1px solid #e5e7eb',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '18px',
+    boxShadow: '0 20px 50px rgba(0,0,0,0.15)',
+  },
+  closeButton: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: '38px',
+    padding: '0 14px',
+    borderRadius: '8px',
+    border: '1px solid #d1d5db',
+    background: '#fff',
+    color: '#111827',
+    textDecoration: 'none',
+    fontSize: '14px',
+    fontWeight: '600',
+  },
+  previewImage: {
+    width: '100%',
+    maxHeight: '70vh',
+    objectFit: 'contain',
+    borderRadius: '12px',
+    border: '1px solid #e5e7eb',
+    background: '#fff',
   },
 }

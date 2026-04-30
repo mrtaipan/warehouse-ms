@@ -40,9 +40,6 @@ export default function LoginPage() {
       <div style={styles.card}>
         <h1 style={styles.title}>Login</h1>
         <p style={styles.subtitle}>Warehouse Management System</p>
-        <Link href="/take-shortcut" style={styles.shortcutLink}>
-          Shortcut Pengambilan Barang Kosong
-        </Link>
 
         <form onSubmit={handleLogin} style={styles.form}>
           <div style={styles.field}>
@@ -108,21 +105,6 @@ const styles = {
     marginBottom: '16px',
     textAlign: 'center',
     color: '#666',
-  },
-  shortcutLink: {
-    display: 'inline-flex',
-    justifyContent: 'center',
-    alignItems: 'center',
-    width: '100%',
-    minHeight: '44px',
-    marginBottom: '20px',
-    borderRadius: '10px',
-    border: '1px solid #d0d7e2',
-    backgroundColor: '#fff7ed',
-    color: '#9a3412',
-    textDecoration: 'none',
-    fontSize: '14px',
-    fontWeight: '700',
   },
   form: {
     display: 'flex',

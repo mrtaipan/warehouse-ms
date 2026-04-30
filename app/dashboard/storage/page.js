@@ -27,11 +27,19 @@ export default function StoragePage() {
           <span style={styles.cardText}>Cari lokasi barang berdasarkan nama item.</span>
         </a>
 
-        <a href="/take-requests" style={styles.mobileCard}>
-          <span style={styles.eyebrow}>Mobile Picker</span>
-          <strong style={styles.cardTitle}>Take Requests</strong>
+        <a href="/restock-request" style={styles.card}>
+          <span style={styles.eyebrow}>Storage</span>
+          <strong style={styles.cardTitle}>Restock Submit</strong>
           <span style={styles.cardText}>
-            Buka halaman mobile tanpa sidebar untuk picker complete request.
+            Buat request pengambilan dari dalam dashboard storage.
+          </span>
+        </a>
+
+        <a href="/take-requests" style={styles.mobileCard}>
+          <span style={styles.eyebrow}>Storage</span>
+          <strong style={styles.cardTitle}>Restock Picker</strong>
+          <span style={styles.cardText}>
+            Buka halaman mobile picker untuk melihat request dan proses complete.
           </span>
         </a>
       </div>

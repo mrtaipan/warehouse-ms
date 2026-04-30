@@ -29,6 +29,7 @@ export async function proxy(request) {
   const { pathname } = request.nextUrl
   const isDashboardPath = pathname.startsWith('/dashboard')
   const isTakeRequestsPath = pathname === '/take-requests'
+  const isRestockRequestPath = pathname === '/restock-request'
   const isAdmin = user?.email?.toLowerCase() === ADMIN_EMAIL
   let role = isAdmin ? 'admin' : 'storage_staff'
 
@@ -61,6 +62,10 @@ export async function proxy(request) {
     return NextResponse.redirect(new URL('/login?next=/take-requests', request.url))
   }
 
+  if (!user && isRestockRequestPath) {
+    return NextResponse.redirect(new URL('/login?next=/restock-request', request.url))
+  }
+
   if (user && isDashboardPath && !canAccessPath(pathname, role, permissions, isAdmin)) {
     return NextResponse.redirect(new URL(getLandingPath(role, permissions, isAdmin), request.url))
   }
@@ -73,5 +78,5 @@ export async function proxy(request) {
 }
 
 export const config = {
-  matcher: ['/login', '/dashboard/:path*', '/take-requests'],
+  matcher: ['/login', '/dashboard/:path*', '/take-requests', '/restock-request'],
 }

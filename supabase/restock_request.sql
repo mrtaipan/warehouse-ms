@@ -5,7 +5,7 @@ create table if not exists public.restock_request (
   size text,
   qty integer not null check (qty > 0),
   take_from text not null,
-  storage_id uuid null,
+  storage_id bigint null,
   search_term text not null,
   request_status text not null default 'open' check (request_status in ('open', 'completed')),
   created_at timestamptz not null default timezone('utc', now()),

@@ -34,6 +34,8 @@ export default function TakeRequestsMobile() {
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [completingId, setCompletingId] = useState('')
+  const [selectedRequest, setSelectedRequest] = useState(null)
+  const [actualQty, setActualQty] = useState('')
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
 
@@ -83,16 +85,42 @@ export default function TakeRequestsMobile() {
     return () => window.clearInterval(intervalId)
   }, [])
 
-  async function handleComplete(row) {
-    setCompletingId(row.id)
+  function openCompleteModal(row) {
+    setSelectedRequest(row)
+    setActualQty(String(row.qty || ''))
+    setError('')
+    setSuccess('')
+  }
+
+  function closeCompleteModal() {
+    setSelectedRequest(null)
+    setActualQty('')
+  }
+
+  async function handleComplete(event) {
+    event.preventDefault()
+
+    if (!selectedRequest) {
+      return
+    }
+
+    setCompletingId(selectedRequest.id)
     setError('')
     setSuccess('')
 
-    if (row.storage_id) {
+    const fulfilledQty = Number(actualQty || 0)
+
+    if (fulfilledQty <= 0) {
+      setError('Qty yang diambil harus lebih dari 0.')
+      setCompletingId('')
+      return
+    }
+
+    if (selectedRequest.storage_id) {
       const { data: currentEntry, error: fetchError } = await supabase
         .from('warehouse_storage')
         .select('id, qty')
-        .eq('id', row.storage_id)
+        .eq('id', selectedRequest.storage_id)
         .maybeSingle()
 
       if (fetchError) {
@@ -108,19 +136,18 @@ export default function TakeRequestsMobile() {
       }
 
       const currentQty = Number(currentEntry.qty || 0)
-      const requestQty = Number(row.qty || 0)
 
-      if (currentQty < requestQty) {
-        setError('Qty di storage sudah berubah dan tidak cukup untuk complete request ini.')
+      if (currentQty < fulfilledQty) {
+        setError('Qty di storage sudah berubah dan tidak cukup untuk jumlah ambil ini.')
         setCompletingId('')
         return
       }
 
-      if (currentQty === requestQty) {
+      if (currentQty === fulfilledQty) {
         const { error: deleteError } = await supabase
           .from('warehouse_storage')
           .delete()
-          .eq('id', row.storage_id)
+          .eq('id', selectedRequest.storage_id)
 
         if (deleteError) {
           setError(deleteError.message)
@@ -132,11 +159,11 @@ export default function TakeRequestsMobile() {
         const { error: updateError } = await supabase
           .from('warehouse_storage')
           .update({
-            qty: currentQty - requestQty,
+            qty: currentQty - fulfilledQty,
             updated_by: pickerEmail,
             updated_at: new Date().toISOString(),
           })
-          .eq('id', row.storage_id)
+          .eq('id', selectedRequest.storage_id)
 
         if (updateError) {
           setError(updateError.message)
@@ -150,11 +177,12 @@ export default function TakeRequestsMobile() {
     const { error: requestUpdateError } = await supabase
       .from(TAKE_REQUESTS_TABLE)
       .update({
+        qty: fulfilledQty,
         request_status: 'completed',
         completed_at: new Date().toISOString(),
         completed_by: pickerEmail,
       })
-      .eq('id', row.id)
+      .eq('id', selectedRequest.id)
 
     if (requestUpdateError) {
       setError(requestUpdateError.message)
@@ -163,8 +191,9 @@ export default function TakeRequestsMobile() {
     }
 
     await refreshRequests(false)
-    setSuccess(`Request untuk ${row.requester_name} sudah selesai.`)
+    setSuccess(`Request untuk ${selectedRequest.requester_name} sudah selesai.`)
     setCompletingId('')
+    closeCompleteModal()
   }
 
   if (loading) {
@@ -174,16 +203,26 @@ export default function TakeRequestsMobile() {
   return (
     <div style={styles.page}>
       <div style={styles.shell}>
+        <div style={styles.topBar}>
+          <Link href="/dashboard/storage" style={styles.backIconLink} aria-label="Back to Storage">
+            ←
+          </Link>
+        </div>
+
         <div style={styles.hero}>
           <div>
-            <p style={styles.eyebrow}>Picker Mode</p>
-            <h1 style={styles.title}>Take Requests</h1>
-            <p style={styles.subtitle}>
-              Halaman mobile untuk picker. Complete di sini akan langsung mengurangi stok dan menutup request.
-            </p>
+            <p style={styles.eyebrow}>Barang Kosong</p>
+            <h1 style={styles.title}>Stock Replenishment</h1>
           </div>
+        </div>
 
-          <div style={styles.heroActions}>
+        <div style={styles.summaryCard}>
+          <div style={styles.summaryHeader}>
+            <div>
+              <span style={styles.summaryLabel}>Open Requests</span>
+              <strong style={styles.summaryValue}>{requests.length}</strong>
+            </div>
+
             <button
               type="button"
               onClick={() => refreshRequests(true)}
@@ -192,16 +231,7 @@ export default function TakeRequestsMobile() {
             >
               {refreshing ? 'Refreshing...' : 'Refresh'}
             </button>
-
-            <Link href="/dashboard/storage" style={styles.secondaryLink}>
-              Dashboard
-            </Link>
           </div>
-        </div>
-
-        <div style={styles.summaryCard}>
-          <span style={styles.summaryLabel}>Open Requests</span>
-          <strong style={styles.summaryValue}>{requests.length}</strong>
         </div>
 
         {error ? <p style={styles.error}>{error}</p> : null}
@@ -245,7 +275,7 @@ export default function TakeRequestsMobile() {
 
                 <button
                   type="button"
-                  onClick={() => handleComplete(row)}
+                  onClick={() => openCompleteModal(row)}
                   style={styles.completeButton}
                   disabled={completingId === row.id}
                 >
@@ -255,6 +285,57 @@ export default function TakeRequestsMobile() {
             ))}
           </div>
         )}
+
+        {selectedRequest ? (
+          <div style={styles.modalOverlay}>
+            <div style={styles.modalCard}>
+              <div style={styles.modalHeader}>
+                <h2 style={styles.modalTitle}>Complete Request</h2>
+                <button type="button" onClick={closeCompleteModal} style={styles.modalCloseButton}>
+                  Close
+                </button>
+              </div>
+
+              <p style={styles.modalText}>
+                <strong>Untuk:</strong> {selectedRequest.requester_name}
+              </p>
+              <p style={styles.modalText}>
+                <strong>Barang:</strong> {selectedRequest.item_name}
+              </p>
+              <p style={styles.modalText}>
+                <strong>Size:</strong> {selectedRequest.size || '-'}
+              </p>
+              <p style={styles.modalText}>
+                <strong>Request Qty:</strong> {selectedRequest.qty}
+              </p>
+              <p style={styles.modalText}>
+                <strong>Take from:</strong> {selectedRequest.take_from}
+              </p>
+
+              <form onSubmit={handleComplete} style={styles.modalForm}>
+                <div style={styles.requestCell}>
+                  <label style={styles.requestLabel}>Actual Take Qty</label>
+                  <input
+                    value={actualQty}
+                    onChange={(event) => setActualQty(event.target.value.replace(/\D/g, ''))}
+                    style={styles.modalInput}
+                    inputMode="numeric"
+                    required
+                  />
+                </div>
+
+                <div style={styles.modalActions}>
+                  <button type="button" onClick={closeCompleteModal} style={styles.modalSecondaryButton}>
+                    Cancel
+                  </button>
+                  <button type="submit" style={styles.completeButton} disabled={completingId === selectedRequest.id}>
+                    {completingId === selectedRequest.id ? 'Completing...' : 'Complete'}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        ) : null}
       </div>
     </div>
   )
@@ -274,82 +355,84 @@ const styles = {
     flexDirection: 'column',
     gap: '16px',
   },
+  topBar: {
+    display: 'flex',
+    alignItems: 'center',
+  },
+  backIconLink: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '38px',
+    height: '38px',
+    borderRadius: '999px',
+    border: '1px solid #d1d5db',
+    background: 'rgba(255, 255, 255, 0.92)',
+    color: '#111827',
+    textDecoration: 'none',
+    fontSize: '20px',
+    fontWeight: '700',
+  },
   hero: {
     display: 'flex',
     flexDirection: 'column',
-    gap: '14px',
+    gap: '10px',
   },
   eyebrow: {
     margin: 0,
     color: '#c2410c',
-    fontSize: '12px',
+    fontSize: '11px',
     fontWeight: '700',
     letterSpacing: '0.08em',
     textTransform: 'uppercase',
   },
   title: {
     margin: '6px 0 0',
-    fontSize: '30px',
+    fontSize: '26px',
     lineHeight: 1.1,
     color: '#111827',
   },
-  subtitle: {
-    margin: '10px 0 0',
-    color: '#6b7280',
-    fontSize: '14px',
-    lineHeight: 1.5,
-  },
-  heroActions: {
-    display: 'flex',
-    gap: '10px',
-    flexWrap: 'wrap',
-  },
   secondaryButton: {
-    height: '42px',
-    padding: '0 16px',
+    height: '38px',
+    padding: '0 14px',
     borderRadius: '999px',
     border: '1px solid #d1d5db',
     background: '#fff',
     color: '#111827',
-    fontSize: '14px',
+    fontSize: '12px',
     fontWeight: '700',
     cursor: 'pointer',
   },
-  secondaryLink: {
-    display: 'inline-flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    minHeight: '42px',
-    padding: '0 16px',
-    borderRadius: '999px',
-    border: '1px solid #d1d5db',
-    background: '#fff',
-    color: '#111827',
-    textDecoration: 'none',
-    fontSize: '14px',
-    fontWeight: '700',
-  },
   summaryCard: {
-    padding: '18px 20px',
-    borderRadius: '22px',
+    padding: '14px 16px',
+    borderRadius: '18px',
     background: '#fff',
     border: '1px solid #fdba74',
     display: 'flex',
     flexDirection: 'column',
-    gap: '6px',
+    gap: '4px',
     boxShadow: '0 18px 40px rgba(15, 23, 42, 0.08)',
   },
+  summaryHeader: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: '12px',
+  },
   summaryLabel: {
-    fontSize: '12px',
+    fontSize: '11px',
     fontWeight: '700',
     color: '#c2410c',
     letterSpacing: '0.06em',
     textTransform: 'uppercase',
+    display: 'block',
+    marginBottom: '6px',
   },
   summaryValue: {
-    fontSize: '38px',
+    fontSize: '22px',
     lineHeight: 1,
     color: '#111827',
+    display: 'block',
   },
   requestList: {
     display: 'flex',
@@ -453,5 +536,82 @@ const styles = {
     color: '#9a3412',
     fontSize: '15px',
     fontWeight: '700',
+  },
+  modalOverlay: {
+    position: 'fixed',
+    inset: 0,
+    background: 'rgba(17, 24, 39, 0.45)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: '20px',
+    zIndex: 50,
+  },
+  modalCard: {
+    width: '100%',
+    maxWidth: '520px',
+    background: '#fff',
+    borderRadius: '20px',
+    padding: '20px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '14px',
+    boxShadow: '0 20px 50px rgba(0,0,0,0.15)',
+  },
+  modalHeader: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: '12px',
+  },
+  modalTitle: {
+    margin: 0,
+    fontSize: '22px',
+    color: '#111827',
+  },
+  modalCloseButton: {
+    border: '1px solid #d1d5db',
+    background: '#fff',
+    color: '#111827',
+    borderRadius: '10px',
+    padding: '8px 12px',
+    cursor: 'pointer',
+    fontWeight: '600',
+  },
+  modalText: {
+    margin: 0,
+    color: '#374151',
+    lineHeight: 1.5,
+  },
+  modalForm: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '16px',
+  },
+  modalInput: {
+    height: '46px',
+    borderRadius: '14px',
+    border: '1px solid #fdba74',
+    background: '#fff',
+    padding: '0 14px',
+    fontSize: '14px',
+    color: '#111827',
+    outline: 'none',
+  },
+  modalActions: {
+    display: 'flex',
+    justifyContent: 'flex-end',
+    gap: '12px',
+  },
+  modalSecondaryButton: {
+    height: '46px',
+    padding: '0 16px',
+    borderRadius: '16px',
+    border: '1px solid #d1d5db',
+    background: '#fff',
+    color: '#111827',
+    fontSize: '14px',
+    fontWeight: '700',
+    cursor: 'pointer',
   },
 }

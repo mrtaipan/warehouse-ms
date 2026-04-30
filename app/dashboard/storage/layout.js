@@ -13,6 +13,12 @@ export default function StorageLayout({ children }) {
         <Link href="/dashboard/storage/search" style={styles.link}>
           Search Storage
         </Link>
+        <Link href="/restock-request" style={styles.link}>
+          Restock Submit
+        </Link>
+        <Link href="/take-requests" style={styles.link}>
+          Restock Picker
+        </Link>
       </div>
 
       {children}
