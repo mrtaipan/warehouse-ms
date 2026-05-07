@@ -101,13 +101,15 @@ async function fetchSourceOptions(row) {
   const matchedRows = selectRowsForRequestedSize(data || [], row.size)
   const locationMap = await fetchRackLocationMap()
 
-  return matchedRows
+  const rawOptions = matchedRows
     .filter((entry) => Number(entry.qty || 0) > 0)
     .map((entry) => ({
       storageId: entry.id,
       label: locationMap.get(entry.rack_location_id) || 'Location not found',
       qty: Number(entry.qty || 0),
     }))
+
+  return Array.from(new Map(rawOptions.map((item) => [String(item.storageId), item])).values())
 }
 
 async function getCurrentUserEmail() {
@@ -258,7 +260,7 @@ export default function TakeRequestsMobile() {
         const { error: deleteError } = await supabase
           .from('warehouse_storage')
           .delete()
-          .eq('id', selectedRequest.storage_id)
+          .eq('id', selectedSourceStorageId)
 
         if (deleteError) {
           setError(deleteError.message)
@@ -274,7 +276,7 @@ export default function TakeRequestsMobile() {
             updated_by: pickerEmail,
             updated_at: new Date().toISOString(),
           })
-          .eq('id', selectedRequest.storage_id)
+          .eq('id', selectedSourceStorageId)
 
         if (updateError) {
           setError(updateError.message)
@@ -437,8 +439,8 @@ export default function TakeRequestsMobile() {
                       <div style={styles.sourceLoadingBox}>Loading source options...</div>
                     ) : (
                       <>
-                        {sourceOptions.map((option) => (
-                          <label key={option.storageId} style={styles.sourceOption}>
+                        {sourceOptions.map((option, index) => (
+                          <label key={`${option.storageId}-${index}`} style={styles.sourceOption}>
                             <input
                               type="radio"
                               name="takeSource"
