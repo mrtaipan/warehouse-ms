@@ -1,0 +1,345 @@
+.shell {
+  min-height: 100vh;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 16px;
+  padding: 14px;
+  background:
+    radial-gradient(circle at top left, rgba(255, 255, 255, 0.95) 0%, rgba(242, 246, 252, 0.88) 38%, rgba(234, 240, 248, 0.72) 100%),
+    linear-gradient(180deg, #f8fafc 0%, #edf2f7 100%);
+}
+
+.sidebar {
+  position: sticky;
+  top: 14px;
+  height: calc(100vh - 28px);
+  width: 88px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px 14px;
+  border-radius: 24px;
+  background: rgba(255, 255, 255, 0.56);
+  border: 1px solid rgba(255, 255, 255, 0.62);
+  box-shadow:
+    0 22px 60px rgba(15, 23, 42, 0.1),
+    inset 0 1px 0 rgba(255, 255, 255, 0.7);
+  backdrop-filter: blur(18px);
+  transition: width 220ms ease, box-shadow 220ms ease, background 220ms ease;
+  overflow: hidden;
+}
+
+.sidebar:hover {
+  width: 284px;
+  box-shadow:
+    0 28px 70px rgba(15, 23, 42, 0.14),
+    inset 0 1px 0 rgba(255, 255, 255, 0.78);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-height: 50px;
+}
+
+.brandMark {
+  width: 50px;
+  height: 50px;
+  flex: 0 0 50px;
+  border-radius: 18px;
+  background: linear-gradient(180deg, #111827 0%, #1f2937 100%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 16px 30px rgba(17, 24, 39, 0.16);
+  overflow: hidden;
+}
+
+.brandLogo {
+  width: 40px;
+  height: auto;
+  object-fit: contain;
+  filter: brightness(0) invert(1);
+}
+
+.brandCopy,
+.linkLabel,
+.group,
+.logoutLabel {
+  opacity: 0;
+  transform: translateX(6px);
+  transition: opacity 160ms ease, transform 160ms ease;
+  pointer-events: none;
+}
+
+.sidebar:hover .brandCopy,
+.sidebar:hover .linkLabel,
+.sidebar:hover .group,
+.sidebar:hover .logoutLabel {
+  opacity: 1;
+  transform: translateX(0);
+  pointer-events: auto;
+}
+
+.brandCopy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.brandTitle {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 800;
+  color: #0f172a;
+  white-space: nowrap;
+}
+
+.brandSubtitle {
+  margin: 0;
+  font-size: 12px;
+  color: #64748b;
+  white-space: nowrap;
+}
+
+.nav {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.navLink {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-height: 48px;
+  padding: 0 14px;
+  border-radius: 18px;
+  text-decoration: none;
+  color: #0f172a;
+  transition: background 160ms ease, transform 160ms ease, box-shadow 160ms ease;
+}
+
+.navLink:hover {
+  background: rgba(255, 255, 255, 0.78);
+  box-shadow: inset 0 0 0 1px rgba(203, 213, 225, 0.32);
+  transform: translateY(-1px);
+}
+
+.navIcon {
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
+  border-radius: 12px;
+  background: rgba(15, 23, 42, 0.12);
+  color: #0f172a;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.06);
+}
+
+.navIcon svg {
+  width: 17px;
+  height: 17px;
+  display: block;
+}
+
+.linkLabel {
+  font-size: 14px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.wordmarkLabel {
+  display: inline-flex;
+  align-items: center;
+  line-height: 1;
+  min-height: 24px;
+}
+
+.wordmarkText {
+  display: inline-block;
+  color: #111827;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.13em;
+  line-height: 1;
+  margin-left: 1px;
+}
+
+.group {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.5);
+  border: 1px solid rgba(226, 232, 240, 0.78);
+}
+
+.groupLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #64748b;
+}
+
+.groupIcon {
+  width: 16px;
+  height: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.groupIcon svg {
+  width: 16px;
+  height: 16px;
+  display: block;
+}
+
+.groupLinks {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.subLink {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 16px;
+  text-decoration: none;
+  color: #334155;
+  background: rgba(248, 250, 252, 0.85);
+  font-size: 13px;
+  font-weight: 600;
+  transition: background 160ms ease, color 160ms ease;
+}
+
+.subLink:hover {
+  background: #ffffff;
+  color: #111827;
+}
+
+.spacer {
+  flex: 1;
+}
+
+.footer {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.logoutButton {
+  width: 52px;
+  min-height: 48px;
+  margin-top: 0 !important;
+  padding: 0 !important;
+  gap: 10px !important;
+  justify-content: flex-start;
+  align-self: flex-start;
+  border-radius: 18px !important;
+  background: linear-gradient(180deg, #7f1d1d 0%, #991b1b 100%) !important;
+  box-shadow: 0 14px 24px rgba(127, 29, 29, 0.18);
+  overflow: hidden;
+  transition: width 220ms ease, transform 160ms ease, background-color 160ms ease;
+}
+
+.sidebar:hover .logoutButton {
+  width: 100%;
+}
+
+.logoutButton:hover {
+  transform: translateY(-1px);
+  background: linear-gradient(180deg, #7f1d1d 0%, #991b1b 100%) !important;
+}
+
+.logoutIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  min-width: 48px;
+  height: 48px;
+  border-radius: 18px;
+  background: transparent;
+  box-shadow: none;
+  color: #ffffff;
+  line-height: 1;
+}
+
+.logoutIcon svg {
+  width: 18px;
+  height: 18px;
+  display: block;
+}
+
+.logoutLabel {
+  color: #ffffff;
+  font-size: 14px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.main {
+  min-width: 0;
+  padding: 8px 6px 8px 0;
+}
+
+@media (max-width: 900px) {
+  .shell {
+    grid-template-columns: 1fr;
+    gap: 14px;
+    padding: 12px;
+  }
+
+  .sidebar {
+    position: static;
+    width: 100%;
+    height: auto;
+    border-radius: 24px;
+    padding: 16px;
+  }
+
+  .sidebar:hover {
+    width: 100%;
+  }
+
+  .brandCopy,
+  .linkLabel,
+  .group,
+  .logoutLabel {
+    opacity: 1;
+    transform: none;
+    pointer-events: auto;
+  }
+
+  .nav {
+    gap: 8px;
+  }
+
+  .navLink {
+    min-height: 48px;
+  }
+
+  .logoutButton,
+  .sidebar:hover .logoutButton {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .main {
+    padding: 0;
+  }
+}

@@ -1,6 +1,43 @@
 import { redirect } from 'next/navigation'
+
 import { createClient } from '@/utils/supabase/server'
 import { ADMIN_EMAIL, getStorageFeatureAccess } from '@/utils/permissions'
+import StorageOverviewClient from './storage-overview-client'
+
+const workspaceCards = [
+  {
+    key: 'search',
+    href: '/dashboard/storage/search',
+    number: '01.',
+    kicker: 'Find stock and rack placement fast.',
+    title: 'Search Storage',
+    text: 'Search stored items by product name and jump straight to the rack or pallet where each record is currently placed.',
+  },
+  {
+    key: 'registry',
+    href: '/dashboard/storage/registry',
+    number: '02.',
+    kicker: 'Post inbound stock into exact slots.',
+    title: 'Registry Storage',
+    text: 'Register products into the correct warehouse slot, capture size and quantity, and keep recent storage input visible in one place.',
+  },
+  {
+    key: 'location',
+    href: '/dashboard/storage/overview',
+    number: '03.',
+    kicker: 'Review stored stock by physical area.',
+    title: 'Storage Location',
+    text: 'Monitor stored inventory by pallet or shelving location, filter the live list, and handle take or edit actions from the main storage table.',
+  },
+  {
+    key: 'restockInstruction',
+    href: '/restock-request',
+    number: '04.',
+    kicker: 'Create and work restock flow.',
+    title: 'Restock Instruction',
+    text: 'Open the restock request flow for submission or continue into picker handling when the active role needs to process incoming replenishment instructions.',
+  },
+]
 
 export default async function StoragePage() {
   const supabase = await createClient()
@@ -26,114 +63,19 @@ export default async function StoragePage() {
   const permissions = (rolePermissions || []).map((item) => item.permission_code)
   const access = getStorageFeatureAccess(role, permissions, isAdmin)
 
+  const cards = workspaceCards.filter((item) => {
+    if (item.key === 'search') return access.search
+    if (item.key === 'registry') return access.registry
+    if (item.key === 'location') return access.overview
+    if (item.key === 'restockInstruction') return access.restockSubmit || access.restockPicker
+    return false
+  })
+
   return (
-    <div style={styles.wrapper}>
-      <div>
-        <h1 style={styles.title}>Storage Menu</h1>
-        <p style={styles.subtitle}>Pilih proses storage yang ingin dibuka.</p>
-      </div>
-
-      <div style={styles.grid}>
-        {access.overview ? (
-          <a href="/dashboard/storage/overview" style={styles.card}>
-            <span style={styles.eyebrow}>Storage</span>
-            <strong style={styles.cardTitle}>Storage Overview</strong>
-            <span style={styles.cardText}>Lihat stok dan lakukan take/edit dari tampilan utama.</span>
-          </a>
-        ) : null}
-
-        {access.registry ? (
-          <a href="/dashboard/storage/registry" style={styles.card}>
-            <span style={styles.eyebrow}>Storage</span>
-            <strong style={styles.cardTitle}>Registry Storage</strong>
-            <span style={styles.cardText}>Input barang masuk ke lokasi rack yang tepat.</span>
-          </a>
-        ) : null}
-
-        {access.search ? (
-          <a href="/dashboard/storage/search" style={styles.card}>
-            <span style={styles.eyebrow}>Storage</span>
-            <strong style={styles.cardTitle}>Search Storage</strong>
-            <span style={styles.cardText}>Cari lokasi barang berdasarkan nama item.</span>
-          </a>
-        ) : null}
-
-        {access.restockSubmit ? (
-          <a href="/restock-request" style={styles.card}>
-            <span style={styles.eyebrow}>Storage</span>
-            <strong style={styles.cardTitle}>Restock Submit</strong>
-            <span style={styles.cardText}>Buat request pengambilan dari dalam dashboard storage.</span>
-          </a>
-        ) : null}
-
-        {access.restockPicker ? (
-          <a href="/take-requests" style={styles.mobileCard}>
-            <span style={styles.eyebrow}>Storage</span>
-            <strong style={styles.cardTitle}>Restock Picker</strong>
-            <span style={styles.cardText}>Buka halaman mobile picker untuk melihat request dan proses complete.</span>
-          </a>
-        ) : null}
-      </div>
-    </div>
+    <StorageOverviewClient
+      cards={cards}
+      canRestockSubmit={access.restockSubmit}
+      canRestockPicker={access.restockPicker}
+    />
   )
-}
-
-const styles = {
-  wrapper: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '24px',
-  },
-  title: {
-    margin: 0,
-    fontSize: '30px',
-  },
-  subtitle: {
-    marginTop: '8px',
-    marginBottom: 0,
-    color: '#6b7280',
-  },
-  grid: {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
-    gap: '16px',
-  },
-  card: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '10px',
-    padding: '20px',
-    borderRadius: '18px',
-    background: '#fff',
-    border: '1px solid #e5e7eb',
-    textDecoration: 'none',
-    boxShadow: '0 10px 30px rgba(0,0,0,0.05)',
-  },
-  mobileCard: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '10px',
-    padding: '20px',
-    borderRadius: '18px',
-    background: '#fff7ed',
-    border: '1px solid #fdba74',
-    textDecoration: 'none',
-    boxShadow: '0 10px 30px rgba(0,0,0,0.05)',
-  },
-  eyebrow: {
-    fontSize: '12px',
-    fontWeight: '700',
-    color: '#9a3412',
-    textTransform: 'uppercase',
-    letterSpacing: '0.06em',
-  },
-  cardTitle: {
-    color: '#111827',
-    fontSize: '20px',
-  },
-  cardText: {
-    color: '#6b7280',
-    fontSize: '14px',
-    lineHeight: 1.5,
-  },
 }

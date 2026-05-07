@@ -53,20 +53,18 @@ export function getStorageFeatureAccess(role, permissions = [], isAdmin = false)
 }
 
 export function getLandingPath(role, permissions = [], isAdmin = false) {
-  if (isAdmin || role === 'admin') return '/dashboard/storage'
+  if (isAdmin || role === 'admin') return '/dashboard'
+  if (permissions.length > 0) return '/dashboard'
 
   const storageAccess = getStorageFeatureAccess(role, permissions, isAdmin)
-  if (permissions.includes('qc.inspection.do')) return '/dashboard/qc/inspection-task'
-  if (permissions.some((item) => item.startsWith('qc.'))) return '/dashboard/qc'
-  if (permissions.some((item) => item.startsWith('inbound.'))) return '/dashboard/inbound'
   if (storageAccess.menu) return storageAccess.menuHref
-  if (permissions.includes('packing.view')) return '/dashboard/packing-list'
-  return '/dashboard/storage'
+  return '/dashboard'
 }
 
 export function getAllowedMenus(role, permissions = [], isAdmin = false) {
   if (isAdmin || role === 'admin') {
     return {
+      arkline: true,
       inbound: true,
       qc: true,
       qcInspectorOnly: false,
@@ -81,25 +79,27 @@ export function getAllowedMenus(role, permissions = [], isAdmin = false) {
   const storageAccess = getStorageFeatureAccess(role, permissions, isAdmin)
 
   return {
-    inbound: permissions.some((item) => item.startsWith('inbound.')),
-    qc: permissions.some((item) => item.startsWith('qc.')),
+    arkline: false,
+    inbound: false,
+    qc: false,
     qcInspectorOnly:
       permissions.includes('qc.inspection.do') &&
       !permissions.includes('qc.dashboard.view') &&
       !permissions.includes('qc.receiving.edit') &&
       !permissions.includes('qc.confirmation.edit') &&
       !permissions.includes('qc.retur.view'),
-    packing: permissions.includes('packing.view'),
+    packing: false,
     storage: storageAccess.menu,
     storageHref: storageAccess.menuHref,
-    masterData: permissions.some((item) => item.startsWith('masterdata.')),
-    userAccess: permissions.includes('useraccess.manage'),
+    masterData: false,
+    userAccess: false,
   }
 }
 
 export function canAccessPath(pathname, role, permissions = [], isAdmin = false) {
   if (isAdmin || role === 'admin') return true
   if (pathname === '/dashboard') return true
+  if (pathname.startsWith('/dashboard/profile')) return true
 
   const storageAccess = getStorageFeatureAccess(role, permissions, isAdmin)
 
@@ -107,33 +107,32 @@ export function canAccessPath(pathname, role, permissions = [], isAdmin = false)
   if (pathname.startsWith('/dashboard/storage/overview')) return storageAccess.overview
   if (pathname.startsWith('/dashboard/storage/registry')) return storageAccess.registry
   if (pathname.startsWith('/dashboard/storage/search')) return storageAccess.search
+  if (pathname.startsWith('/dashboard/storage/restock-instruction')) {
+    return storageAccess.restockSubmit || storageAccess.restockPicker
+  }
   if (pathname.startsWith('/dashboard/storage/restock-request')) return storageAccess.restockSubmit
   if (pathname === '/restock-request' || pathname.startsWith('/restock-request?')) return storageAccess.restockSubmit
   if (pathname === '/take-requests' || pathname.startsWith('/take-requests?')) return storageAccess.restockPicker
 
-  if (pathname.startsWith('/dashboard/inbound')) return permissions.includes('inbound.view')
+  if (pathname.startsWith('/dashboard/inbound')) return false
 
-  if (pathname.startsWith('/dashboard/qc/inspection-task')) {
-    return permissions.includes('qc.inspection.do') || permissions.includes('qc.dashboard.view')
-  }
-  if (pathname.startsWith('/dashboard/qc')) {
-    return permissions.some((item) =>
-      ['qc.dashboard.view', 'qc.receiving.edit', 'qc.confirmation.edit', 'qc.retur.view', 'qc.retur.print'].includes(item)
-    )
-  }
+  if (pathname.startsWith('/dashboard/qc/inspection-task')) return false
+  if (pathname.startsWith('/dashboard/qc')) return false
 
-  if (pathname.startsWith('/dashboard/packing-list')) return permissions.includes('packing.view')
+  if (pathname.startsWith('/dashboard/packing-list')) return false
+  if (pathname.startsWith('/dashboard/arkline')) return false
 
   if (
+    pathname.startsWith('/dashboard/settings') ||
     pathname.startsWith('/dashboard/suppliers') ||
     pathname.startsWith('/dashboard/brands') ||
     pathname.startsWith('/dashboard/categories') ||
     pathname.startsWith('/dashboard/skus') ||
     pathname.startsWith('/dashboard/rack-locations')
   ) {
-    return permissions.includes('masterdata.view')
+    return false
   }
 
-  if (pathname.startsWith('/dashboard/user-access')) return permissions.includes('useraccess.manage')
+  if (pathname.startsWith('/dashboard/user-access')) return false
   return false
 }

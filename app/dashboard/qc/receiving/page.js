@@ -6,6 +6,16 @@ import { createClient } from '@/utils/supabase/browser'
 import { readFileAsDataUrl } from '../shared'
 
 const supabase = createClient()
+const ARKLINE_PO_TABLE_CANDIDATES = ['dir_arkline_purchase_orders', 'dir_arkline_po', 'dir_arkline_pos']
+const ARKLINE_PO_ITEM_TABLE_CANDIDATES = ['dir_arkline_purchase_order_items', 'dir_arkline_po_items', 'dir_arkline_pos_items']
+
+function getTodayLocalDate() {
+  const now = new Date()
+  const year = now.getFullYear()
+  const month = String(now.getMonth() + 1).padStart(2, '0')
+  const day = String(now.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
 
 const styles = {
   wrapper: {
@@ -64,7 +74,9 @@ const styles = {
   modeButton: {
     minHeight: '42px',
     padding: '0 16px',
-    border: '1px solid #d1d5db',
+    borderWidth: '1px',
+    borderStyle: 'solid',
+    borderColor: '#d1d5db',
     borderRadius: '8px',
     background: '#fff',
     color: '#111827',
@@ -94,6 +106,45 @@ const styles = {
   helperText: {
     fontSize: '12px',
     color: '#6b7280',
+  },
+  comboBox: {
+    position: 'relative',
+  },
+  comboList: {
+    position: 'absolute',
+    top: 'calc(100% + 8px)',
+    left: 0,
+    right: 0,
+    zIndex: 30,
+    maxHeight: '240px',
+    overflowY: 'auto',
+    border: '1px solid #e5e7eb',
+    borderRadius: '12px',
+    background: '#fff',
+    boxShadow: '0 18px 40px rgba(15, 23, 42, 0.12)',
+    padding: '8px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '6px',
+  },
+  comboOption: {
+    border: '1px solid #e5e7eb',
+    borderRadius: '10px',
+    background: '#fff',
+    color: '#111827',
+    padding: '10px 12px',
+    textAlign: 'left',
+    cursor: 'pointer',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '4px',
+  },
+  comboOptionMeta: {
+    fontSize: '11px',
+    color: '#6b7280',
+    fontWeight: '600',
+    letterSpacing: '0.04em',
+    textTransform: 'uppercase',
   },
   input: {
     height: '42px',
@@ -368,8 +419,159 @@ function createDefaultModelRow(expectedRow) {
   }
 }
 
+function normalizeArklineProduct(row) {
+  if (!row || row.is_active === false) {
+    return null
+  }
+
+  const modelName = row.nama_produk || row.product_name || row.model_name || row.name || row.product_label || ''
+  if (!String(modelName).trim()) {
+    return null
+  }
+
+  return {
+    id: String(row.sku_induk || row.id || row.nama_produk || '').trim().toUpperCase(),
+    model_name: String(modelName).trim().toUpperCase(),
+    model_color: String(row.warna || row.model_color || row.color || row.variant || '').trim().toUpperCase(),
+    photo_url: row.foto_url || row.photo_url || row.image_url || row.image || '',
+    category_name: String(row.kategori_produk || row.category_name || '').trim().toUpperCase(),
+    procurement_category: String(row.kategori_pengadaan || '').trim().toUpperCase(),
+    parent_sku: String(row.sku_induk || '').trim().toUpperCase(),
+  }
+}
+
+function normalizeArklinePo(row) {
+  if (!row) {
+    return null
+  }
+
+  const poNumber = row.po_number || row.po_code || row.code || row.po_name || row.name || ''
+  if (!String(poNumber).trim()) {
+    return null
+  }
+
+  return {
+    id: row.id,
+    po_number: String(poNumber).trim().toUpperCase(),
+  }
+}
+
+function normalizeArklinePoItem(row, productsById, poLabel) {
+  if (!row) {
+    return null
+  }
+
+  const linkedProduct =
+    productsById[String(row.product_id || row.arkline_product_id || row.dir_arkline_product_id || '')] || null
+  const modelName =
+    row.nama_produk ||
+    row.product_name ||
+    row.model_name ||
+    row.name ||
+    linkedProduct?.model_name ||
+    linkedProduct?.name ||
+    ''
+
+  if (!String(modelName).trim()) {
+    return null
+  }
+
+  const quantity =
+    Number(
+      row.qty ??
+        row.quantity ??
+        row.po_qty ??
+        row.ordered_qty ??
+        row.total_qty ??
+        row.request_qty ??
+        0
+    ) || 0
+
+  return {
+    key: `po-item:${row.id}`,
+    id: row.id,
+    model_name: String(modelName).trim().toUpperCase(),
+    model_color: String(linkedProduct?.model_color || linkedProduct?.warna || row.warna || row.model_color || row.color || `PO ${poLabel}` || '')
+      .trim()
+      .toUpperCase(),
+    photo_url: row.foto_url || row.photo_url || linkedProduct?.foto_url || linkedProduct?.photo_url || '',
+    qty_in: quantity,
+    po_label: poLabel,
+  }
+}
+
+function buildModelRowsFromPersisted(baseRows, existingPlanRows) {
+  const rowMap = new Map()
+
+  baseRows.forEach((row) => {
+    rowMap.set(getModelKey(row.model_name, row.model_color), {
+      ...row,
+      allocations: row.allocations || [],
+    })
+  })
+
+  existingPlanRows.forEach((planRow) => {
+    const key = getModelKey(planRow.model_name, planRow.model_color)
+    const existingRow =
+      rowMap.get(key) ||
+      {
+        id: `saved-${planRow.id}`,
+        source_id: null,
+        model_id: '',
+        model_name: planRow.model_name || '',
+        model_color: planRow.model_color || '',
+        qty_in: Number(planRow.expected_qty || 0),
+        qty_qc: String(planRow.qty_in || 0),
+        photo_url: planRow.photo_url || '',
+        allocations: [],
+      }
+
+    existingRow.qty_qc = String(Math.max(Number(existingRow.qty_qc || 0), Number(planRow.qty_in || 0)))
+    existingRow.photo_url = existingRow.photo_url || planRow.photo_url || ''
+    existingRow.allocations = [
+      ...(existingRow.allocations || []),
+      {
+        id: `alloc-saved-${planRow.id}`,
+        task_id: planRow.id,
+        member_email: planRow.assigned_to || '',
+        qty: String(planRow.allocated_qty || 0),
+        existing_status: planRow.status || 'queued',
+        locked_qty: Number(planRow.locked_qty || 0),
+      },
+    ]
+
+    rowMap.set(key, existingRow)
+  })
+
+  return Array.from(rowMap.values()).sort((a, b) => getModelKey(a.model_name, a.model_color).localeCompare(getModelKey(b.model_name, b.model_color)))
+}
+
+async function loadFirstExistingRows(tableNames) {
+  let lastError = null
+
+  for (const tableName of tableNames) {
+    const result = await supabase.from(tableName).select('*')
+
+    if (!result.error) {
+      return { data: result.data || [], tableName }
+    }
+
+    lastError = result.error
+  }
+
+  return { data: [], tableName: null, error: lastError }
+}
+
 function getModelKey(modelName, modelColor) {
   return `${String(modelName || '').trim().toUpperCase()}::${String(modelColor || '').trim().toUpperCase()}`
+}
+
+function getArklineProductLabel(product) {
+  if (!product) {
+    return ''
+  }
+
+  return product.model_name || ''
 }
 
 function getTaskKey(values) {
@@ -468,12 +670,22 @@ export default function QcReceivingPage() {
   const [inbounds, setInbounds] = useState([])
   const [unloadRows, setUnloadRows] = useState([])
   const [productModels, setProductModels] = useState([])
+  const [arklineProducts, setArklineProducts] = useState([])
+  const [arklinePurchaseOrders, setArklinePurchaseOrders] = useState([])
+  const [arklinePoItems, setArklinePoItems] = useState([])
   const [qcItems, setQcItems] = useState([])
   const [qcMembers, setQcMembers] = useState([])
   const [qcMode, setQcMode] = useState('regular')
+  const [arklinePlannerMode, setArklinePlannerMode] = useState('product')
   const [grnSearch, setGrnSearch] = useState('')
   const [selectedInboundId, setSelectedInboundId] = useState('')
   const [selectedSourceKey, setSelectedSourceKey] = useState('')
+  const [selectedArklineProductId, setSelectedArklineProductId] = useState('')
+  const [selectedArklineCategory, setSelectedArklineCategory] = useState('')
+  const [arklineProductSearch, setArklineProductSearch] = useState('')
+  const [showArklineProductOptions, setShowArklineProductOptions] = useState(false)
+  const [selectedArklinePoId, setSelectedArklinePoId] = useState('')
+  const [selectedArklinePoItemKey, setSelectedArklinePoItemKey] = useState('')
   const [modelRows, setModelRows] = useState([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -496,6 +708,13 @@ export default function QcReceivingPage() {
     async function loadInitialData() {
       setLoading(true)
       setError('')
+      const today = getTodayLocalDate()
+
+      const [arklineProductResult, arklinePoResult, arklinePoItemResult] = await Promise.all([
+        supabase.from('dir_arkline_products').select('*'),
+        loadFirstExistingRows(ARKLINE_PO_TABLE_CANDIDATES),
+        loadFirstExistingRows(ARKLINE_PO_ITEM_TABLE_CANDIDATES),
+      ])
 
       const [
         { data: inboundRows, error: inboundError },
@@ -520,6 +739,7 @@ export default function QcReceivingPage() {
           .from('qc_members')
           .select('id, email, display_name')
           .eq('is_active', true)
+          .eq('active_date', today)
           .order('display_name', { ascending: true }),
       ])
 
@@ -539,6 +759,9 @@ export default function QcReceivingPage() {
       setProductModels(modelRows || [])
       setQcItems(qcRows || [])
       setQcMembers(memberRows || [])
+      setArklineProducts((arklineProductResult.data || []).map(normalizeArklineProduct).filter(Boolean))
+      setArklinePurchaseOrders((arklinePoResult.data || []).map(normalizeArklinePo).filter(Boolean))
+      setArklinePoItems(arklinePoItemResult.data || [])
       setLoading(false)
     }
 
@@ -612,6 +835,80 @@ export default function QcReceivingPage() {
   const selectedSource = sourceOptions.find((item) => item.key === selectedSourceKey) || null
   const selectedSourceRows = selectedSource?.rows || []
   const selectedSourceId = selectedSource?.sourceId || null
+  const arklineProductsById = useMemo(
+    () =>
+      arklineProducts.reduce((result, item) => {
+        result[String(item.id)] = item
+        return result
+      }, {}),
+    [arklineProducts]
+  )
+  const arklineProductCategories = useMemo(
+    () =>
+      Array.from(new Set(arklineProducts.map((item) => item.category_name).filter(Boolean))).sort((a, b) =>
+        a.localeCompare(b, undefined, { numeric: true })
+      ),
+    [arklineProducts]
+  )
+  const arklineFilteredProducts = useMemo(() => {
+    const keyword = arklineProductSearch.trim().toUpperCase()
+
+    return arklineProducts.filter((item) => {
+      const matchesCategory = !selectedArklineCategory || item.category_name === selectedArklineCategory
+      if (!matchesCategory) {
+        return false
+      }
+
+      if (!keyword) {
+        return true
+      }
+
+      const haystack = [
+        item.model_name,
+        item.category_name,
+        item.procurement_category,
+        item.parent_sku,
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .toUpperCase()
+
+      return haystack.includes(keyword)
+    })
+  }, [arklineProductSearch, arklineProducts, selectedArklineCategory])
+  const selectedArklineProduct =
+    arklineProducts.find((item) => String(item.id) === String(selectedArklineProductId)) || null
+  const selectedArklinePo =
+    arklinePurchaseOrders.find((item) => String(item.id) === String(selectedArklinePoId)) || null
+  const arklinePoOptions = useMemo(
+    () => [...arklinePurchaseOrders].sort((a, b) => a.po_number.localeCompare(b.po_number, undefined, { numeric: true })),
+    [arklinePurchaseOrders]
+  )
+  const arklinePoItemOptions = useMemo(() => {
+    if (!selectedArklinePo) {
+      return []
+    }
+
+    const poId = String(selectedArklinePo.id)
+
+    return arklinePoItems
+      .filter((row) => {
+        const candidatePoId = String(row.po_id || row.arkline_po_id || row.purchase_order_id || row.dir_arkline_po_id || '')
+        return candidatePoId === poId
+      })
+      .map((row) => normalizeArklinePoItem(row, arklineProductsById, selectedArklinePo.po_number))
+      .filter(Boolean)
+      .sort((a, b) => a.model_name.localeCompare(b.model_name))
+  }, [arklinePoItems, arklineProductsById, selectedArklinePo])
+  const selectedArklinePoItem =
+    arklinePoItemOptions.find((item) => item.key === selectedArklinePoItemKey) || null
+  const isArklineMode = qcMode === 'arkline'
+  const selectedArklineProductModelKey = selectedArklineProduct
+    ? getModelKey(selectedArklineProduct.model_name, selectedArklineProduct.model_color || 'ARKLINE PRODUCT')
+    : ''
+  const selectedArklinePoItemModelKey = selectedArklinePoItem
+    ? getModelKey(selectedArklinePoItem.model_name, selectedArklinePoItem.model_color)
+    : ''
 
   const qcInQty = modelRows.reduce((sum, row) => sum + Number(row.qty_qc || 0), 0)
   const allocationTotal = modelRows.reduce(
@@ -625,9 +922,35 @@ export default function QcReceivingPage() {
     const label = item.model_color ? `${item.model_name} / ${item.model_color}` : item.model_name
     return label.toUpperCase().includes(modelSearch.trim().toUpperCase())
   })
-  const currentPlanRows = selectedSourceId ? qcItems.filter((item) => item.inbound_unload_id === Number(selectedSourceId)) : []
+  const currentPlanRows = isArklineMode
+    ? arklinePlannerMode === 'product' && selectedArklineProduct
+      ? qcItems.filter(
+          (item) =>
+            !item.inbound_unload_id &&
+            getModelKey(item.model_name, item.model_color) === selectedArklineProductModelKey
+        )
+      : arklinePlannerMode === 'po' && selectedArklinePoItem
+        ? qcItems.filter(
+            (item) =>
+              !item.inbound_unload_id &&
+              getModelKey(item.model_name, item.model_color) === selectedArklinePoItemModelKey
+          )
+        : []
+    : selectedSourceId
+      ? qcItems.filter((item) => item.inbound_unload_id === Number(selectedSourceId))
+      : []
   const hasSavedPlan = currentPlanRows.length > 0
-  const selectedSourceStatus = selectedSource ? getSourceStatus(selectedSource, qcItems) : 'idle'
+  const selectedSourceStatus = isArklineMode
+    ? !currentPlanRows.length
+      ? 'idle'
+      : currentPlanRows.every((item) => item.status === 'done')
+        ? 'completed'
+        : currentPlanRows.some((item) => item.status !== 'queued')
+          ? 'started'
+          : 'planned'
+    : selectedSource
+      ? getSourceStatus(selectedSource, qcItems)
+      : 'idle'
   const isSelectedSourceStarted = selectedSourceStatus === 'started' || selectedSourceStatus === 'completed'
   const isSelectedSourceCompleted = selectedSourceStatus === 'completed'
   const persistedTaskRows = new Map(
@@ -642,6 +965,20 @@ export default function QcReceivingPage() {
     setModelRows([])
     setError('')
     setSuccess('')
+  }
+
+  function handleQcModeChange(nextMode) {
+    setQcMode(nextMode)
+    setError('')
+    setSuccess('')
+    setModelRows([])
+    setSelectedSourceKey('')
+    setSelectedArklineProductId('')
+    setSelectedArklineCategory('')
+    setArklineProductSearch('')
+    setShowArklineProductOptions(false)
+    setSelectedArklinePoId('')
+    setSelectedArklinePoItemKey('')
   }
 
   function handleSourceChange(nextSourceKey) {
@@ -666,6 +1003,149 @@ export default function QcReceivingPage() {
     setModelRows(buildModelRowsForSource(nextSource, unloadRows, qcItems))
   }
 
+  function handleArklinePlannerModeChange(nextMode) {
+    setArklinePlannerMode(nextMode)
+    setError('')
+    setSuccess('')
+    setModelRows([])
+    setSelectedArklineProductId('')
+    setSelectedArklineCategory('')
+    setArklineProductSearch('')
+    setShowArklineProductOptions(false)
+    setSelectedArklinePoId('')
+    setSelectedArklinePoItemKey('')
+  }
+
+  function handleArklineCategoryChange(nextCategory) {
+    setSelectedArklineCategory(nextCategory)
+    setSelectedArklineProductId('')
+    setArklineProductSearch('')
+    setShowArklineProductOptions(false)
+    setModelRows([])
+    setError('')
+    setSuccess('')
+  }
+
+  function handleArklineProductSearchChange(nextValue) {
+    setArklineProductSearch(nextValue)
+    setShowArklineProductOptions(true)
+    setError('')
+    setSuccess('')
+
+    const normalizedValue = nextValue.trim().toUpperCase()
+    const exactMatch = arklineFilteredProducts.find((item) => getArklineProductLabel(item) === normalizedValue)
+
+    if (exactMatch) {
+      handleArklineProductChange(String(exactMatch.id))
+      return
+    }
+
+    if (!nextValue.trim()) {
+      setSelectedArklineProductId('')
+      setModelRows([])
+      return
+    }
+
+    if (selectedArklineProduct && getArklineProductLabel(selectedArklineProduct) !== normalizedValue) {
+      setSelectedArklineProductId('')
+      setModelRows([])
+    }
+  }
+
+  function handleArklineProductFieldClick() {
+    if (selectedArklineProductId || arklineProductSearch) {
+      setSelectedArklineProductId('')
+      setArklineProductSearch('')
+      setModelRows([])
+    }
+
+    setShowArklineProductOptions(true)
+    setError('')
+    setSuccess('')
+  }
+
+  function handleArklineProductChange(productId) {
+    setSelectedArklineProductId(productId)
+    const product = arklineProducts.find((item) => String(item.id) === String(productId))
+    setArklineProductSearch(product ? getArklineProductLabel(product) : '')
+    setShowArklineProductOptions(false)
+    setSelectedArklinePoId('')
+    setSelectedArklinePoItemKey('')
+    setError('')
+    setSuccess('')
+
+    if (!product) {
+      setModelRows([])
+      return
+    }
+
+    const matchingPlanRows = qcItems.filter(
+      (item) =>
+        !item.inbound_unload_id &&
+        getModelKey(item.model_name, item.model_color) ===
+          getModelKey(product.model_name, product.model_color || 'ARKLINE PRODUCT')
+    )
+
+    const baseRows = [
+      {
+        id: `arkline-product-${product.id}`,
+        source_id: null,
+        model_id: String(product.id),
+        model_name: product.model_name,
+        model_color: product.model_color || 'ARKLINE PRODUCT',
+        qty_in: 0,
+        qty_qc: '',
+        photo_url: product.photo_url || '',
+        allocations: [],
+      },
+    ]
+
+    setModelRows(buildModelRowsFromPersisted(baseRows, matchingPlanRows))
+  }
+
+  function handleArklinePoChange(poId) {
+    setSelectedArklinePoId(poId)
+    setSelectedArklinePoItemKey('')
+    setModelRows([])
+    setError('')
+    setSuccess('')
+  }
+
+  function handleArklinePoItemChange(itemKey) {
+    setSelectedArklinePoItemKey(itemKey)
+    setError('')
+    setSuccess('')
+
+    const item = arklinePoItemOptions.find((entry) => entry.key === itemKey)
+    if (!item) {
+      setModelRows([])
+      return
+    }
+
+    const matchingPlanRows = qcItems.filter(
+      (planItem) =>
+        !planItem.inbound_unload_id &&
+        getModelKey(planItem.model_name, planItem.model_color) ===
+          getModelKey(item.model_name, item.model_color || `PO ${item.po_label}`)
+    )
+
+    const baseRows = [
+      {
+        id: `arkline-po-${item.id}`,
+        source_id: null,
+        model_id: '',
+        model_name: item.model_name,
+        model_color: item.model_color || `PO ${item.po_label}`,
+        qty_in: Number(item.qty_in || 0),
+        qty_qc: String(item.qty_in || 0),
+        photo_url: item.photo_url || '',
+        allocations: [],
+      },
+    ]
+
+    setModelRows(buildModelRowsFromPersisted(baseRows, matchingPlanRows))
+  }
+
   function addModelRow() {
     setModelRows((prev) => [
       ...prev,
@@ -687,6 +1167,23 @@ export default function QcReceivingPage() {
   }
 
   function addAllocationSplit(rowId) {
+    if (isSelectedSourceStarted) {
+      setError('Allocation is locked because QC for this source has already started.')
+      return
+    }
+
+    if (!qcMembers.length) {
+      setError('No QC user has registered yet. Open `Grading Task` and press `Register for QC` first.')
+      return
+    }
+
+    const targetRow = modelRows.find((row) => row.id === rowId)
+    if (targetRow && (targetRow.allocations || []).length >= qcMembers.length) {
+      setError('All active inspectors have already been used for this model.')
+      return
+    }
+
+    setError('')
     setModelRows((prev) =>
       prev.map((row) =>
         row.id === rowId
@@ -835,6 +1332,236 @@ export default function QcReceivingPage() {
   async function handleSavePlan() {
     setError('')
     setSuccess('')
+
+    if (qcMode === 'arkline') {
+      if (!modelRows.length) {
+        setError('Choose Arkline product or PO item first.')
+        return
+      }
+
+      const invalidRow = modelRows.find((row) => {
+        const splitTotal = (row.allocations || []).reduce((sum, split) => sum + Number(split.qty || 0), 0)
+        const hasInvalidSplit = (row.allocations || []).some(
+          (split) => !String(split.member_email || '').trim() || Number(split.qty || 0) <= 0
+        )
+
+        return !row.model_name.trim() || Number(row.qty_qc || 0) <= 0 || hasInvalidSplit || splitTotal > Number(row.qty_qc || 0)
+      })
+
+      if (invalidRow) {
+        setError('Every Arkline row must have a product and QC qty. Allocated qty cannot be greater than QC In.')
+        return
+      }
+
+      if (!qcMembers.length) {
+        setError('No QC user has registered yet. Open Grading Task and register at least one QC user first.')
+        return
+      }
+
+      setSaving(true)
+
+      const activeTaskKeys = new Set()
+      const insertPayload = []
+      const updatesForPersistedRows = []
+      let blockingError = ''
+
+      modelRows.forEach((row) => {
+        ;(row.allocations || []).forEach((split) => {
+          if (blockingError) return
+          if (!split.member_email || Number(split.qty || 0) <= 0) return
+
+          const taskKey = getTaskKey({
+            member_email: split.member_email,
+            model_name: row.model_name,
+            model_color: row.model_color,
+          })
+
+          activeTaskKeys.add(taskKey)
+
+          const persistedRow = persistedTaskRows.get(taskKey) || null
+          const lockedQty = Number(persistedRow?.locked_qty ?? split.locked_qty ?? 0)
+          const allocatedQty = Number(split.qty || 0)
+
+          if (allocatedQty < lockedQty) {
+            blockingError = `Allocated qty for ${split.member_email} on ${row.model_name} cannot be less than the committed qty (${lockedQty}).`
+            return
+          }
+
+          const basePayload = {
+            inbound_id: null,
+            inbound_unload_id: null,
+            assigned_to: split.member_email,
+            allocated_qty: allocatedQty,
+            expected_qty: Number(row.qty_in || 0),
+            qty_in: Number(row.qty_qc || 0),
+            model_name: row.model_name.trim(),
+            model_color: row.model_color.trim() || null,
+            photo_url: row.photo_url || null,
+            locked_qty: lockedQty,
+          }
+
+          if (persistedRow) {
+            updatesForPersistedRows.push({
+              id: persistedRow.id,
+              ...basePayload,
+              status: persistedRow.status,
+              finished_at: persistedRow.finished_at,
+            })
+          } else {
+            insertPayload.push({
+              ...basePayload,
+              status: 'queued',
+              is_confirmed: true,
+              qty_a: 0,
+              qty_b: 0,
+              qty_c: 0,
+              stopwatch_seconds: 0,
+            })
+          }
+        })
+      })
+
+      if (blockingError) {
+        setError(blockingError)
+        setSaving(false)
+        return
+      }
+
+      const queuedRowsToDelete = currentPlanRows.filter(
+        (item) => item.status === 'queued' && !activeTaskKeys.has(getTaskKey(item))
+      )
+
+      if (queuedRowsToDelete.length) {
+        const { error: deleteError } = await supabase
+          .from('qc_items')
+          .delete()
+          .in(
+            'id',
+            queuedRowsToDelete.map((item) => item.id)
+          )
+
+        if (deleteError) {
+          setError(deleteError.message)
+          setSaving(false)
+          return
+        }
+      }
+
+      for (const updateRow of updatesForPersistedRows) {
+        const { error: updateError } = await supabase
+          .from('qc_items')
+          .update(updateRow)
+          .eq('id', updateRow.id)
+
+        if (updateError) {
+          setError(updateError.message)
+          setSaving(false)
+          return
+        }
+      }
+
+      if (insertPayload.length) {
+        const { error: insertError } = await supabase.from('qc_items').insert(insertPayload)
+
+        if (insertError) {
+          setError(insertError.message)
+          setSaving(false)
+          return
+        }
+      }
+
+      const { data: nextQcItems, error: refreshError } = await supabase
+        .from('qc_items')
+        .select('*')
+        .order('created_at', { ascending: false })
+
+      if (refreshError) {
+        setError(refreshError.message)
+        setSaving(false)
+        return
+      }
+
+      setQcItems(nextQcItems || [])
+
+      if (arklinePlannerMode === 'product' && selectedArklineProduct) {
+        const matchingPlanRows = (nextQcItems || []).filter(
+          (item) =>
+            !item.inbound_unload_id &&
+            getModelKey(item.model_name, item.model_color) ===
+              getModelKey(selectedArklineProduct.model_name, selectedArklineProduct.model_color || 'ARKLINE PRODUCT')
+        )
+
+    setModelRows(
+      buildModelRowsFromPersisted(
+            [
+              {
+                id: `arkline-product-${selectedArklineProduct.id}`,
+                source_id: null,
+                model_id: String(selectedArklineProduct.id),
+                model_name: selectedArklineProduct.model_name,
+                model_color: selectedArklineProduct.model_color || 'ARKLINE PRODUCT',
+                qty_in: 0,
+                qty_qc: modelRows[0]?.qty_qc || '',
+                photo_url: selectedArklineProduct.photo_url || '',
+                allocations: [],
+              },
+            ],
+            matchingPlanRows
+      )
+    )
+  }
+
+  function resetRegularPlanner() {
+    setGrnSearch('')
+    setSelectedInboundId('')
+    setSelectedSourceKey('')
+    setUnloadRows([])
+    setModelRows([])
+  }
+
+  function resetArklinePlanner() {
+    setSelectedArklineProductId('')
+    setSelectedArklineCategory('')
+    setArklineProductSearch('')
+    setShowArklineProductOptions(false)
+    setSelectedArklinePoId('')
+    setSelectedArklinePoItemKey('')
+    setModelRows([])
+  }
+
+      if (arklinePlannerMode === 'po' && selectedArklinePoItem) {
+        const matchingPlanRows = (nextQcItems || []).filter(
+          (item) =>
+            !item.inbound_unload_id &&
+            getModelKey(item.model_name, item.model_color) ===
+              getModelKey(selectedArklinePoItem.model_name, selectedArklinePoItem.model_color)
+        )
+
+        setModelRows(
+          buildModelRowsFromPersisted(
+            [
+              {
+                id: `arkline-po-${selectedArklinePoItem.id}`,
+                source_id: null,
+                model_id: '',
+                model_name: selectedArklinePoItem.model_name,
+                model_color: selectedArklinePoItem.model_color,
+                qty_in: Number(selectedArklinePoItem.qty_in || 0),
+                qty_qc: String(selectedArklinePoItem.qty_in || 0),
+                photo_url: selectedArklinePoItem.photo_url || '',
+                allocations: [],
+              },
+            ],
+            matchingPlanRows
+          )
+        )
+      }
+
+      resetArklinePlanner()
+      setSuccess('Arkline QC plan saved.')
+      setSaving(false)
+      return
+    }
 
     if (!selectedInbound || !selectedSourceId) {
       setError('Choose GRN and Koli/Sample first.')
@@ -1012,8 +1739,8 @@ export default function QcReceivingPage() {
     ]
 
     setQcItems(nextQcItems)
-    setModelRows(buildModelRowsForSource(selectedSource, unloadRows, nextQcItems))
-    setSuccess('QC plan saved. You can choose the same Koli/Sample again and continue editing this plan.')
+    resetRegularPlanner()
+    setSuccess('QC plan saved.')
     setSaving(false)
   }
 
@@ -1043,7 +1770,7 @@ export default function QcReceivingPage() {
         <div style={styles.modeRow}>
           <button
             type="button"
-            onClick={() => setQcMode('regular')}
+            onClick={() => handleQcModeChange('regular')}
             style={{
               ...styles.modeButton,
               ...(qcMode === 'regular' ? styles.modeButtonActive : {}),
@@ -1063,18 +1790,316 @@ export default function QcReceivingPage() {
           </button>
           <button
             type="button"
-            disabled
+            onClick={() => handleQcModeChange('arkline')}
             style={{
               ...styles.modeButton,
-              ...styles.modeButtonDisabled,
+              ...(qcMode === 'arkline' ? styles.modeButtonActive : {}),
             }}
           >
             QC Arkline
           </button>
         </div>
 
-        {qcMode !== 'regular' ? <p style={styles.emptyText}>Only Reguler flow is enabled for now.</p> : null}
+        {qcMode === 'arkline' ? (
+          <>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '16px' }}>
+              <button
+                type="button"
+                onClick={() => handleArklinePlannerModeChange('product')}
+                style={{
+                  border: '1px solid #d1d5db',
+                  borderRadius: '16px',
+                  background: arklinePlannerMode === 'product' ? '#111827' : '#fff',
+                  color: arklinePlannerMode === 'product' ? '#fff' : '#111827',
+                  padding: '18px',
+                  textAlign: 'left',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '8px',
+                }}
+              >
+                <strong style={{ fontSize: '18px' }}>QC Produk</strong>
+                <span style={{ color: arklinePlannerMode === 'product' ? 'rgba(255,255,255,0.78)' : '#6b7280', fontSize: '14px', lineHeight: 1.6 }}>
+                  Pilih langsung produk Arkline yang mau di-QC, lalu alokasikan qty-nya ke inspector.
+                </span>
+              </button>
 
+              <button
+                type="button"
+                onClick={() => handleArklinePlannerModeChange('po')}
+                style={{
+                  border: '1px solid #d1d5db',
+                  borderRadius: '16px',
+                  background: arklinePlannerMode === 'po' ? '#111827' : '#fff',
+                  color: arklinePlannerMode === 'po' ? '#fff' : '#111827',
+                  padding: '18px',
+                  textAlign: 'left',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '8px',
+                }}
+              >
+                <strong style={{ fontSize: '18px' }}>QC PO Baru</strong>
+                <span style={{ color: arklinePlannerMode === 'po' ? 'rgba(255,255,255,0.78)' : '#6b7280', fontSize: '14px', lineHeight: 1.6 }}>
+                  Pilih PO dulu, lalu pilih produk di dalam PO itu sebelum dialokasikan ke inspector.
+                </span>
+              </button>
+            </div>
+
+            {arklinePlannerMode === 'product' ? (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '16px' }}>
+                <div style={styles.field}>
+                  <label style={styles.label}>Kategori Produk</label>
+                  <select
+                    value={selectedArklineCategory}
+                    onChange={(event) => handleArklineCategoryChange(event.target.value)}
+                    style={styles.select}
+                  >
+                    <option value="">{arklineProductCategories.length ? 'All categories' : 'No category found'}</option>
+                    {arklineProductCategories.map((item) => (
+                      <option key={item} value={item}>
+                        {item}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div style={styles.field}>
+                  <label style={styles.label}>Produk Arkline</label>
+                  <div style={styles.comboBox}>
+                    <input
+                      value={arklineProductSearch}
+                      onChange={(event) => handleArklineProductSearchChange(event.target.value)}
+                      onFocus={() => setShowArklineProductOptions(true)}
+                      onClick={handleArklineProductFieldClick}
+                      style={styles.input}
+                      placeholder={
+                        arklineFilteredProducts.length
+                          ? 'Type product name'
+                          : arklineProducts.length
+                            ? 'No product in this category'
+                            : 'No Arkline product found'
+                      }
+                    />
+                    {showArklineProductOptions && arklineFilteredProducts.length ? (
+                      <div style={styles.comboList}>
+                        {arklineFilteredProducts.map((item) => (
+                          <button
+                            key={`${item.id}-${getArklineProductLabel(item)}`}
+                            type="button"
+                            onMouseDown={(event) => {
+                              event.preventDefault()
+                              handleArklineProductChange(String(item.id))
+                            }}
+                            style={styles.comboOption}
+                          >
+                            <strong>{getArklineProductLabel(item)}</strong>
+                            <span style={styles.comboOptionMeta}>
+                              {item.category_name || 'NO CATEGORY'}
+                              {item.parent_sku ? ` · ${item.parent_sku}` : ''}
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+                  <span style={styles.helperText}>
+                    {selectedArklineCategory ? `Filtered by ${selectedArklineCategory}` : 'Type nama_produk untuk memilih produk.'}
+                  </span>
+                </div>
+              </div>
+            ) : (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '16px' }}>
+                <div style={styles.field}>
+                  <label style={styles.label}>PO</label>
+                  <select value={selectedArklinePoId} onChange={(event) => handleArklinePoChange(event.target.value)} style={styles.select}>
+                    <option value="">{arklinePoOptions.length ? 'Choose PO' : 'No Arkline PO found'}</option>
+                    {arklinePoOptions.map((item) => (
+                      <option key={item.id} value={item.id}>
+                        {item.po_number}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div style={styles.field}>
+                  <label style={styles.label}>Produk dalam PO</label>
+                  <select
+                    value={selectedArklinePoItemKey}
+                    onChange={(event) => handleArklinePoItemChange(event.target.value)}
+                    style={styles.select}
+                    disabled={!selectedArklinePoId}
+                  >
+                    <option value="">{selectedArklinePoId ? 'Choose product in PO' : 'Choose PO first'}</option>
+                    {arklinePoItemOptions.map((item) => (
+                      <option key={item.key} value={item.key}>
+                        {item.model_color ? `${item.model_name} / ${item.model_color}` : item.model_name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            )}
+
+            {modelRows.length ? (
+              <>
+                {modelRows.map((row) => (
+                  <div key={row.id} style={styles.modelRow}>
+                    <div style={{ ...styles.modelRowTop, gridTemplateColumns: '96px 1.5fr 1fr' }}>
+                      {row.photo_url ? (
+                        <Image src={row.photo_url} alt={row.model_name || 'Arkline model'} width={96} height={96} unoptimized style={styles.thumb} />
+                      ) : (
+                        <div style={styles.thumbEmpty}>NO PHOTO</div>
+                      )}
+
+                      <div style={styles.modelMeta}>
+                        <div style={styles.modelName}>{row.model_name || 'Choose product'}</div>
+                        <p style={styles.infoText}>{row.model_color || 'ARKLINE PRODUCT'}</p>
+                      </div>
+
+                      <div style={styles.field}>
+                        <label style={styles.label}>QC In</label>
+                        <input
+                          type="number"
+                          min="0"
+                          value={row.qty_qc}
+                          onChange={(event) =>
+                            updateModelRow(row.id, {
+                              qty_qc: event.target.value,
+                            })
+                          }
+                          style={styles.input}
+                          disabled={hasSavedPlan}
+                        />
+                      </div>
+
+                    </div>
+
+                    <div style={{ ...styles.field, ...styles.allocationWrap }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+                        <label style={styles.label}>Allocation</label>
+                        <button
+                          type="button"
+                          onClick={() => addAllocationSplit(row.id)}
+                          style={styles.secondaryButton}
+                        >
+                          Allocate
+                        </button>
+                      </div>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                        {(row.allocations || []).map((split) => (
+                          <div key={split.id} style={{ display: 'grid', gridTemplateColumns: '1.3fr 0.8fr auto', gap: '8px', alignItems: 'center' }}>
+                            <select
+                              value={split.member_email || ''}
+                              onChange={(event) => updateAllocationSplit(row.id, split.id, { member_email: event.target.value })}
+                              style={styles.select}
+                              disabled={isSelectedSourceStarted || (split.existing_status && split.existing_status !== 'queued')}
+                            >
+                              <option value="">Choose inspector</option>
+                              {qcMembers
+                                .filter(
+                                  (member) =>
+                                    member.email === split.member_email ||
+                                    !(row.allocations || []).some(
+                                      (allocation) => allocation.id !== split.id && allocation.member_email === member.email
+                                    )
+                                )
+                                .map((member) => (
+                                  <option key={member.id} value={member.email}>
+                                    {member.display_name || member.email}
+                                  </option>
+                                ))}
+                            </select>
+                            <input
+                              type="number"
+                              min="0"
+                              value={split.qty || ''}
+                              onFocus={(event) => {
+                                event.target.select()
+                              }}
+                              onChange={(event) => updateAllocationSplit(row.id, split.id, { qty: event.target.value })}
+                              onBlur={(event) => {
+                                const otherTotal = (row.allocations || [])
+                                  .filter((item) => item.id !== split.id)
+                                  .reduce((sum, item) => sum + Number(item.qty || 0), 0)
+                                const minAllowed = Number(split.locked_qty || 0)
+                                const maxAllowed = Math.max(minAllowed, Number(row.qty_qc || 0) - otherTotal)
+                                const rawValue = event.target.value
+
+                                if (rawValue === '') {
+                                  updateAllocationSplit(row.id, split.id, {
+                                    qty: minAllowed > 0 ? String(minAllowed) : '',
+                                  })
+                                  return
+                                }
+
+                                const nextValue = Number(rawValue || 0)
+                                updateAllocationSplit(row.id, split.id, {
+                                  qty: String(Math.max(minAllowed, Math.min(nextValue, maxAllowed))),
+                                })
+                              }}
+                              style={styles.input}
+                              disabled={isSelectedSourceStarted || Boolean(split.existing_status && split.existing_status !== 'queued')}
+                              placeholder="Qty"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => removeAllocationSplit(row.id, split.id)}
+                              style={styles.secondaryButton}
+                              disabled={
+                                isSelectedSourceStarted ||
+                                Number(split.locked_qty || 0) > 0 ||
+                                (split.existing_status && split.existing_status !== 'queued')
+                              }
+                            >
+                              Remove
+                            </button>
+                          </div>
+                        ))}
+
+                        <span style={styles.helperText}>
+                          Allocated: {(row.allocations || []).reduce((sum, split) => sum + Number(split.qty || 0), 0)} / {Number(row.qty_qc || 0)}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+
+                {!qcMembers.length ? (
+                  <p style={styles.emptyText}>No QC user has registered yet. Open `Grading Task` and press `Register for QC` first.</p>
+                ) : null}
+
+                <div style={{ ...styles.summaryGrid, gridTemplateColumns: 'repeat(3, minmax(0, 1fr))' }}>
+                  <div style={styles.summaryCard}>
+                    <span style={styles.summaryLabel}>QC In</span>
+                    <strong style={styles.summaryValue}>{qcInQty}</strong>
+                  </div>
+                  <div style={styles.summaryCard}>
+                    <span style={styles.summaryLabel}>QC Assigned Qty</span>
+                    <strong style={styles.summaryValue}>{allocationTotal}</strong>
+                  </div>
+                  <div style={styles.summaryCard}>
+                    <span style={styles.summaryLabel}>Selected</span>
+                    <strong style={styles.summaryValue}>
+                      {arklinePlannerMode === 'product'
+                        ? selectedArklineProduct?.model_name || '-'
+                        : selectedArklinePo?.po_number || selectedArklinePoItem?.model_name || '-'}
+                    </strong>
+                  </div>
+                </div>
+              </>
+            ) : (
+              <p style={styles.emptyText}>
+                {arklinePlannerMode === 'product'
+                  ? 'Choose Arkline product first to start QC planning.'
+                  : 'Choose PO and product in that PO first to start QC planning.'}
+              </p>
+            )}
+          </>
+        ) : (
+        <>
         <div style={styles.grid}>
           <div style={styles.field}>
             <label style={styles.label}>GRN Number</label>
@@ -1318,7 +2343,6 @@ export default function QcReceivingPage() {
                         type="button"
                         onClick={() => addAllocationSplit(row.id)}
                         style={styles.secondaryButton}
-                        disabled={isSelectedSourceStarted || !qcMembers.length || (row.allocations || []).length >= qcMembers.length}
                       >
                         Allocate
                       </button>
@@ -1378,6 +2402,8 @@ export default function QcReceivingPage() {
           ) : (
             <p style={styles.emptyText}>Choose GRN and Koli/Sample first to start QC planning.</p>
           )}
+        </>
+        )}
 
         <div style={styles.buttonRow}>
           {error ? <p style={styles.errorText}>{error}</p> : null}
@@ -1385,10 +2411,22 @@ export default function QcReceivingPage() {
           <button
             type="button"
             onClick={handleSavePlan}
-            disabled={saving || !selectedSource || isSelectedSourceStarted}
+            disabled={
+              saving ||
+              (qcMode === 'arkline'
+                ? !modelRows.length || isSelectedSourceStarted
+                : !selectedSource || isSelectedSourceStarted)
+            }
             style={{
               ...styles.primaryButton,
-              ...(saving || !selectedSource || isSelectedSourceStarted ? { opacity: 0.6, cursor: 'not-allowed' } : {}),
+              ...(
+                saving ||
+                (qcMode === 'arkline'
+                  ? !modelRows.length || isSelectedSourceStarted
+                  : !selectedSource || isSelectedSourceStarted)
+                  ? { opacity: 0.6, cursor: 'not-allowed' }
+                  : {}
+              ),
             }}
           >
             {saving ? 'Saving...' : 'Save QC Plan'}

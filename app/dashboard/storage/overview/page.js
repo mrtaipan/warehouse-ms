@@ -268,6 +268,20 @@ export default function StorageOverviewPage() {
       .filter(Boolean)
   ).size
 
+  const totalQty = storageRows.reduce((sum, entry) => sum + Number(entry.qty || 0), 0)
+
+  const palletQty = storageRows
+    .filter((entry) => String(entry.location?.location_type || '').toUpperCase() === 'PALLET')
+    .reduce((sum, entry) => sum + Number(entry.qty || 0), 0)
+
+  const shelvingQty = storageRows
+    .filter((entry) => String(entry.location?.location_type || '').toUpperCase() === 'SHELVING')
+    .reduce((sum, entry) => sum + Number(entry.qty || 0), 0)
+
+  const recordedQtyForKpiDate = storageRows
+    .filter((entry) => entry.created_at && getLocalDateValue(entry.created_at) === kpiDate)
+    .reduce((sum, entry) => sum + Number(entry.qty || 0), 0)
+
   function handleFilterChange(event) {
     const { name, value, type, checked } = event.target
 
@@ -518,18 +532,18 @@ export default function StorageOverviewPage() {
   return (
     <div style={styles.wrapper}>
       <div>
-        <h1 style={styles.title}>Storage Overview</h1>
+        <h1 style={styles.title}>Storage Location</h1>
         <p style={styles.subtitle}>
-          View all items stored in the warehouse and filter by pallet or carton location.
+          View all items stored in the warehouse and filter by pallet, carton, or shelving location.
         </p>
       </div>
 
       <div style={styles.kpiCard}>
         <div style={styles.kpiHeader}>
           <div>
-            <h2 style={styles.kpiTitle}>Daily Pallet KPI</h2>
+            <h2 style={styles.kpiTitle}>Storage Quantity Snapshot</h2>
             <p style={styles.kpiText}>
-              Unique pallet/shelving numbers with storage records on the selected date.
+              Quick quantity view across all storage records and the selected activity date.
             </p>
           </div>
 
@@ -546,8 +560,21 @@ export default function StorageOverviewPage() {
 
         <div style={styles.kpiValueRow}>
           <div style={styles.kpiValueCard}>
-            <span style={styles.kpiValueLabel}>Pallets Recorded</span>
-            <strong style={styles.kpiValue}>{palletCountForKpiDate}</strong>
+            <span style={styles.kpiValueLabel}>Total Qty</span>
+            <strong style={styles.kpiValue}>{totalQty}</strong>
+          </div>
+          <div style={styles.kpiValueCard}>
+            <span style={styles.kpiValueLabel}>Pallet Qty</span>
+            <strong style={styles.kpiValue}>{palletQty}</strong>
+          </div>
+          <div style={styles.kpiValueCard}>
+            <span style={styles.kpiValueLabel}>Shelving Qty</span>
+            <strong style={styles.kpiValue}>{shelvingQty}</strong>
+          </div>
+          <div style={styles.kpiValueCard}>
+            <span style={styles.kpiValueLabel}>Recorded on Date</span>
+            <strong style={styles.kpiValue}>{recordedQtyForKpiDate}</strong>
+            <span style={styles.kpiFootnote}>{palletCountForKpiDate} location(s) recorded</span>
           </div>
         </div>
       </div>
@@ -895,6 +922,7 @@ const styles = {
   },
   kpiValueCard: {
     minWidth: '220px',
+    flex: '1 1 220px',
     padding: '18px 20px',
     borderRadius: '14px',
     background: '#eff6ff',
@@ -914,6 +942,11 @@ const styles = {
     fontSize: '34px',
     lineHeight: 1,
     color: '#1e3a8a',
+  },
+  kpiFootnote: {
+    fontSize: '12px',
+    color: '#476089',
+    fontWeight: '600',
   },
   filtersGrid: {
     display: 'grid',

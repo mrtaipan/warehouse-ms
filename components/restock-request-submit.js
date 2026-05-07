@@ -70,15 +70,20 @@ function matchesRequestedSize(entrySize, requestedSize) {
   return normalizeText(entrySize) === normalizeText(requestedSize)
 }
 
+function getSizeTokens(value) {
+  return normalizeText(value)
+    .split(/[\s,/|;-]+/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+}
+
 function containsRequestedSize(entrySize, requestedSize) {
   if (!requestedSize) {
     return true
   }
 
-  const normalizedEntrySize = normalizeText(entrySize)
   const normalizedRequestedSize = normalizeText(requestedSize)
-
-  return normalizedEntrySize.includes(normalizedRequestedSize)
+  return getSizeTokens(entrySize).includes(normalizedRequestedSize)
 }
 
 function selectRowsForRequestedSize(rows, requestedSize) {
@@ -135,66 +140,43 @@ function rankMatches(rows, searchTerm, size) {
 }
 
 function buildRequestRows(matches, rackLocations, form, requesterName) {
-  const normalizedSize = normalizeText(form.size)
   const requestedQty = Number(form.qty || 0)
   const locationById = new Map(rackLocations.map((item) => [item.id, item]))
-  const rankedMatches = rankMatches(matches, form.searchTerm, normalizedSize)
-  const rows = []
-  let remainingQty = requestedQty
+  const rankedMatches = rankMatches(matches, form.searchTerm, form.size)
+  const availableRows = rankedMatches.filter((entry) => Number(entry.qty || 0) > 0)
+  const uniqueLocations = []
+  const seenLocations = new Set()
 
-  rankedMatches.forEach((entry) => {
-    if (remainingQty <= 0) {
-      return
-    }
-
-    const availableQty = Number(entry.qty || 0)
-
-    if (availableQty <= 0) {
-      return
-    }
-
-    const takeQty = Math.min(availableQty, remainingQty)
+  availableRows.forEach((entry) => {
     const location = locationById.get(entry.rack_location_id) || null
+    const label = getLocationLabel(location)
 
-    rows.push({
-      requester_name: requesterName.trim(),
-      item_name: entry.item_name || form.searchTerm.trim(),
-      size: entry.size || form.size.trim() || '-',
-      qty: takeQty,
-      take_from: getLocationLabel(location),
-      storage_id: entry.id,
-      search_term: form.searchTerm.trim(),
-      request_status: 'open',
-    })
-
-    remainingQty -= takeQty
+    if (!seenLocations.has(label)) {
+      seenLocations.add(label)
+      uniqueLocations.push(label)
+    }
   })
 
-  if (rows.length === 0) {
-    rows.push({
-      requester_name: requesterName.trim(),
-      item_name: form.searchTerm.trim(),
-      size: form.size.trim() || '-',
-      qty: requestedQty,
-      take_from: 'Stock not found',
-      storage_id: null,
-      search_term: form.searchTerm.trim(),
-      request_status: 'open',
-    })
-  } else if (remainingQty > 0) {
-    rows.push({
-      requester_name: requesterName.trim(),
-      item_name: form.searchTerm.trim(),
-      size: form.size.trim() || '-',
-      qty: remainingQty,
-      take_from: 'Remaining stock not found',
-      storage_id: null,
-      search_term: form.searchTerm.trim(),
-      request_status: 'open',
-    })
-  }
+  const locationCount = uniqueLocations.length
+  const takeFromSummary =
+    locationCount > 0
+      ? `${locationCount} lokasi tercatat${uniqueLocations.length > 0 ? ` • ${uniqueLocations.slice(0, 2).join(', ')}` : ''}${
+          uniqueLocations.length > 2 ? ' ...' : ''
+        }`
+      : 'Lokasi belum terdata'
 
-  return rows
+  return [
+    {
+      requester_name: requesterName.trim(),
+      item_name: availableRows[0]?.item_name || form.searchTerm.trim(),
+      size: availableRows[0]?.size || form.size.trim() || '-',
+      qty: requestedQty,
+      take_from: takeFromSummary,
+      storage_id: null,
+      search_term: form.searchTerm.trim(),
+      request_status: 'open',
+    },
+  ]
 }
 
 async function fetchOpenRequests() {

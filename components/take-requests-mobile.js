@@ -10,7 +10,7 @@ const TAKE_REQUESTS_TABLE = 'restock_request'
 async function fetchOpenRequests() {
   const { data, error } = await supabase
     .from(TAKE_REQUESTS_TABLE)
-    .select('id, requester_name, item_name, size, qty, take_from, storage_id, created_at')
+    .select('id, requester_name, item_name, size, qty, take_from, storage_id, search_term, created_at')
     .eq('request_status', 'open')
     .order('created_at', { ascending: false })
 
@@ -19,6 +19,95 @@ async function fetchOpenRequests() {
   }
 
   return data || []
+}
+
+function normalizeText(value) {
+  return String(value || '').trim().toUpperCase()
+}
+
+function matchesRequestedSize(entrySize, requestedSize) {
+  if (!requestedSize) {
+    return true
+  }
+
+  return normalizeText(entrySize) === normalizeText(requestedSize)
+}
+
+function getSizeTokens(value) {
+  return normalizeText(value)
+    .split(/[\s,/|;-]+/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+}
+
+function containsRequestedSize(entrySize, requestedSize) {
+  if (!requestedSize) {
+    return true
+  }
+
+  return getSizeTokens(entrySize).includes(normalizeText(requestedSize))
+}
+
+function selectRowsForRequestedSize(rows, requestedSize) {
+  if (!requestedSize) {
+    return rows
+  }
+
+  const exactSizeRows = rows.filter((entry) => matchesRequestedSize(entry.size, requestedSize))
+  if (exactSizeRows.length > 0) {
+    return exactSizeRows
+  }
+
+  const partialSizeRows = rows.filter((entry) => containsRequestedSize(entry.size, requestedSize))
+  if (partialSizeRows.length > 0) {
+    return partialSizeRows
+  }
+
+  return []
+}
+
+async function fetchRackLocationMap() {
+  const { data, error } = await supabase
+    .from('dir_rack_locations')
+    .select('id, location_type, location_id, location_code, sub_location')
+
+  if (error) {
+    throw error
+  }
+
+  return new Map(
+    (data || []).map((item) => [
+      item.id,
+      [item.location_type, item.location_id, item.location_code, item.sub_location]
+        .filter(Boolean)
+        .join(' / '),
+    ])
+  )
+}
+
+async function fetchSourceOptions(row) {
+  const searchTerm = row.search_term || row.item_name
+  const { data, error } = await supabase
+    .from('warehouse_storage')
+    .select('id, rack_location_id, item_name, size, qty')
+    .ilike('item_name', `%${searchTerm}%`)
+    .order('qty', { ascending: false })
+    .limit(50)
+
+  if (error) {
+    throw error
+  }
+
+  const matchedRows = selectRowsForRequestedSize(data || [], row.size)
+  const locationMap = await fetchRackLocationMap()
+
+  return matchedRows
+    .filter((entry) => Number(entry.qty || 0) > 0)
+    .map((entry) => ({
+      storageId: entry.id,
+      label: locationMap.get(entry.rack_location_id) || 'Location not found',
+      qty: Number(entry.qty || 0),
+    }))
 }
 
 async function getCurrentUserEmail() {
@@ -36,6 +125,9 @@ export default function TakeRequestsMobile() {
   const [completingId, setCompletingId] = useState('')
   const [selectedRequest, setSelectedRequest] = useState(null)
   const [actualQty, setActualQty] = useState('')
+  const [sourceOptions, setSourceOptions] = useState([])
+  const [selectedSourceValue, setSelectedSourceValue] = useState('unrecorded')
+  const [loadingSourceOptions, setLoadingSourceOptions] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
 
@@ -85,16 +177,32 @@ export default function TakeRequestsMobile() {
     return () => window.clearInterval(intervalId)
   }, [])
 
-  function openCompleteModal(row) {
+  async function openCompleteModal(row) {
     setSelectedRequest(row)
     setActualQty(String(row.qty || ''))
+    setSourceOptions([])
+    setSelectedSourceValue('unrecorded')
+    setLoadingSourceOptions(true)
     setError('')
     setSuccess('')
+
+    try {
+      const options = await fetchSourceOptions(row)
+      setSourceOptions(options)
+      setSelectedSourceValue(options[0]?.storageId ? String(options[0].storageId) : 'unrecorded')
+    } catch (loadError) {
+      setError(loadError.message || 'Failed to load source options.')
+    } finally {
+      setLoadingSourceOptions(false)
+    }
   }
 
   function closeCompleteModal() {
     setSelectedRequest(null)
     setActualQty('')
+    setSourceOptions([])
+    setSelectedSourceValue('unrecorded')
+    setLoadingSourceOptions(false)
   }
 
   async function handleComplete(event) {
@@ -116,11 +224,14 @@ export default function TakeRequestsMobile() {
       return
     }
 
-    if (selectedRequest.storage_id) {
+    const selectedSourceStorageId =
+      selectedSourceValue && selectedSourceValue !== 'unrecorded' ? Number(selectedSourceValue) : null
+
+    if (selectedSourceStorageId) {
       const { data: currentEntry, error: fetchError } = await supabase
         .from('warehouse_storage')
         .select('id, qty')
-        .eq('id', selectedRequest.storage_id)
+        .eq('id', selectedSourceStorageId)
         .maybeSingle()
 
       if (fetchError) {
@@ -174,10 +285,16 @@ export default function TakeRequestsMobile() {
     }
 
     const pickerEmail = await getCurrentUserEmail()
+    const selectedSourceLabel =
+      selectedSourceValue === 'unrecorded'
+        ? 'Lokasi belum terdata'
+        : sourceOptions.find((item) => String(item.storageId) === selectedSourceValue)?.label || selectedRequest.take_from
     const { error: requestUpdateError } = await supabase
       .from(TAKE_REQUESTS_TABLE)
       .update({
         qty: fulfilledQty,
+        take_from: selectedSourceLabel,
+        storage_id: selectedSourceStorageId,
         request_status: 'completed',
         completed_at: new Date().toISOString(),
         completed_by: pickerEmail,
@@ -309,10 +426,47 @@ export default function TakeRequestsMobile() {
                 <strong>Request Qty:</strong> {selectedRequest.qty}
               </p>
               <p style={styles.modalText}>
-                <strong>Take from:</strong> {selectedRequest.take_from}
+                <strong>Lokasi tercatat:</strong> {selectedRequest.take_from}
               </p>
 
               <form onSubmit={handleComplete} style={styles.modalForm}>
+                <div style={styles.requestCell}>
+                  <label style={styles.requestLabel}>Ambil dari mana</label>
+                  <div style={styles.sourceOptionList}>
+                    {loadingSourceOptions ? (
+                      <div style={styles.sourceLoadingBox}>Loading source options...</div>
+                    ) : (
+                      <>
+                        {sourceOptions.map((option) => (
+                          <label key={option.storageId} style={styles.sourceOption}>
+                            <input
+                              type="radio"
+                              name="takeSource"
+                              value={String(option.storageId)}
+                              checked={selectedSourceValue === String(option.storageId)}
+                              onChange={(event) => setSelectedSourceValue(event.target.value)}
+                            />
+                            <span style={styles.sourceOptionText}>
+                              {option.label} ({option.qty})
+                            </span>
+                          </label>
+                        ))}
+
+                        <label style={styles.sourceOption}>
+                          <input
+                            type="radio"
+                            name="takeSource"
+                            value="unrecorded"
+                            checked={selectedSourceValue === 'unrecorded'}
+                            onChange={(event) => setSelectedSourceValue(event.target.value)}
+                          />
+                          <span style={styles.sourceOptionText}>Lokasi belum terdata</span>
+                        </label>
+                      </>
+                    )}
+                  </div>
+                </div>
+
                 <div style={styles.requestCell}>
                   <label style={styles.requestLabel}>Actual Take Qty</label>
                   <input
@@ -495,6 +649,32 @@ const styles = {
     color: '#111827',
     fontSize: '15px',
     lineHeight: 1.45,
+  },
+  sourceOptionList: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '10px',
+    padding: '12px',
+    borderRadius: '14px',
+    border: '1px solid #fed7aa',
+    background: '#fffaf5',
+  },
+  sourceLoadingBox: {
+    color: '#6b7280',
+    fontSize: '13px',
+    lineHeight: 1.5,
+  },
+  sourceOption: {
+    display: 'flex',
+    alignItems: 'flex-start',
+    gap: '10px',
+    color: '#111827',
+    fontSize: '14px',
+    lineHeight: 1.5,
+  },
+  sourceOptionText: {
+    display: 'inline-flex',
+    flexWrap: 'wrap',
   },
   completeButton: {
     height: '46px',

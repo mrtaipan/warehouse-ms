@@ -1,7 +1,7 @@
-import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { createClient } from '@/utils/supabase/server'
 import { ADMIN_EMAIL, getStorageFeatureAccess } from '@/utils/permissions'
+import DashboardSubnav from '@/components/dashboardsubnav'
 
 export default async function StorageLayout({ children }) {
   const supabase = await createClient()
@@ -26,62 +26,15 @@ export default async function StorageLayout({ children }) {
     .eq('role', role)
   const permissions = (rolePermissions || []).map((item) => item.permission_code)
   const access = getStorageFeatureAccess(role, permissions, isAdmin)
+  const items = [
+    access.overview ? { href: '/dashboard/storage', label: 'Overview', exact: true } : null,
+    access.search ? { href: '/dashboard/storage/search', label: 'Search Storage', exact: true } : null,
+    access.registry ? { href: '/dashboard/storage/registry', label: 'Registry Storage', exact: true } : null,
+    access.overview ? { href: '/dashboard/storage/overview', label: 'Storage Location', exact: true } : null,
+    access.restockSubmit || access.restockPicker
+      ? { href: '/dashboard/storage/restock-instruction', label: 'Restock Instruction', exact: true }
+      : null,
+  ].filter(Boolean)
 
-  return (
-    <div style={styles.wrapper}>
-      <div style={styles.subnav}>
-        {access.overview ? (
-          <Link href="/dashboard/storage/overview" style={styles.link}>
-            Storage Overview
-          </Link>
-        ) : null}
-        {access.registry ? (
-          <Link href="/dashboard/storage/registry" style={styles.link}>
-            Registry Storage
-          </Link>
-        ) : null}
-        {access.search ? (
-          <Link href="/dashboard/storage/search" style={styles.link}>
-            Search Storage
-          </Link>
-        ) : null}
-        {access.restockSubmit ? (
-          <Link href="/restock-request" style={styles.link}>
-            Restock Submit
-          </Link>
-        ) : null}
-        {access.restockPicker ? (
-          <Link href="/take-requests" style={styles.link}>
-            Restock Picker
-          </Link>
-        ) : null}
-      </div>
-
-      {children}
-    </div>
-  )
-}
-
-const styles = {
-  wrapper: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '20px',
-  },
-  subnav: {
-    display: 'flex',
-    flexWrap: 'wrap',
-    gap: '12px',
-  },
-  link: {
-    display: 'inline-flex',
-    alignItems: 'center',
-    padding: '10px 14px',
-    borderRadius: '10px',
-    textDecoration: 'none',
-    background: '#e5e7eb',
-    color: '#111827',
-    fontSize: '14px',
-    fontWeight: '600',
-  },
+  return <DashboardSubnav items={items}>{children}</DashboardSubnav>
 }

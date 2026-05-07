@@ -8,6 +8,30 @@ import { formatSeconds } from '../shared'
 const supabase = createClient()
 const BREAK_REASONS = ['TOILET', 'PRAYER', 'SUPERVISOR CALL', 'MATERIAL WAIT', 'OTHER', 'COORDINATOR BREAK']
 
+function getTodayLocalDate() {
+  const now = new Date()
+  const year = now.getFullYear()
+  const month = String(now.getMonth() + 1).padStart(2, '0')
+  const day = String(now.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+function getTaskSourceLabel(task) {
+  if (task?.inbound?.grn_number && task?.inbound_unload?.koli_sequence) {
+    return `${task.inbound.grn_number} · Koli ${task.inbound_unload.koli_sequence}`
+  }
+
+  if (task?.inbound?.grn_number) {
+    return task.inbound.grn_number
+  }
+
+  if (task?.model_color && String(task.model_color).startsWith('PO ')) {
+    return `Arkline ${task.model_color}`
+  }
+
+  return 'Arkline Product'
+}
+
 const styles = {
   wrapper: {
     display: 'flex',
@@ -388,6 +412,7 @@ export default function QcInspectionTaskPage() {
     async function loadTasks() {
       setLoading(true)
       setError('')
+      const today = getTodayLocalDate()
 
       const {
         data: { user },
@@ -418,6 +443,7 @@ export default function QcInspectionTaskPage() {
         .select('id, email, display_name')
         .eq('email', user.email)
         .eq('is_active', true)
+        .eq('active_date', today)
         .maybeSingle()
 
       if (!isMounted) {
@@ -484,6 +510,7 @@ export default function QcInspectionTaskPage() {
   async function handleRegister() {
     setError('')
     setSuccess('')
+    const today = getTodayLocalDate()
 
     const {
       data: { user },
@@ -509,6 +536,7 @@ export default function QcInspectionTaskPage() {
             email: user.email,
             display_name: displayLabel,
             is_active: true,
+            active_date: today,
           },
         ],
         { onConflict: 'email' }
@@ -856,7 +884,7 @@ export default function QcInspectionTaskPage() {
             <div>
               <h2 style={styles.queueTitle}>Now Inspecting</h2>
               <p style={styles.subtitle}>
-                {activeTask.inbound?.grn_number || '-'} · Koli {activeTask.inbound_unload?.koli_sequence || '-'}
+                {getTaskSourceLabel(activeTask)}
               </p>
             </div>
             <span style={styles.badge}>{activeTask.assigned_to}</span>
@@ -1030,7 +1058,7 @@ export default function QcInspectionTaskPage() {
                     <div>
                       <h2 style={styles.queueTitle}>{taskModel.modelName}</h2>
                       <p style={styles.subtitle}>
-                        {task.inbound?.grn_number || '-'} · Koli {task.inbound_unload?.koli_sequence || '-'}
+                        {getTaskSourceLabel(task)}
                       </p>
                     </div>
                     <span style={styles.badge}>

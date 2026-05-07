@@ -1,45 +1,11 @@
-import Link from 'next/link'
+import DashboardSubnav from '@/components/dashboardsubnav'
+
+const items = [
+  { href: '/dashboard/packing-list', label: 'Dashboard', exact: true },
+  { href: '/dashboard/packing-list/receiving', label: 'Receiving' },
+  { href: '/dashboard/packing-list/size-breakdown', label: 'Size Breakdown' },
+]
 
 export default function PackingListLayout({ children }) {
-  return (
-    <div style={styles.wrapper}>
-      <div style={styles.subnav}>
-        <Link href="/dashboard/packing-list" style={styles.link}>
-          Dashboard
-        </Link>
-        <Link href="/dashboard/packing-list/receiving" style={styles.link}>
-          Receiving
-        </Link>
-        <Link href="/dashboard/packing-list/size-breakdown" style={styles.link}>
-          Size Breakdown
-        </Link>
-      </div>
-
-      {children}
-    </div>
-  )
-}
-
-const styles = {
-  wrapper: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '20px',
-  },
-  subnav: {
-    display: 'flex',
-    flexWrap: 'wrap',
-    gap: '12px',
-  },
-  link: {
-    display: 'inline-flex',
-    alignItems: 'center',
-    padding: '10px 14px',
-    borderRadius: '10px',
-    textDecoration: 'none',
-    background: '#e5e7eb',
-    color: '#111827',
-    fontSize: '14px',
-    fontWeight: '600',
-  },
+  return <DashboardSubnav items={items}>{children}</DashboardSubnav>
 }

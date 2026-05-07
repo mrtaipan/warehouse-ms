@@ -1,8 +1,94 @@
 import Link from 'next/link'
+import Image from 'next/image'
 import { redirect } from 'next/navigation'
 import { createClient } from '@/utils/supabase/server'
 import LogoutButton from '@/components/logoutbutton'
 import { ADMIN_EMAIL, getAllowedMenus } from '@/utils/permissions'
+import styles from './layout.module.css'
+
+function NavIcon({ kind }) {
+  const commonProps = {
+    viewBox: '0 0 24 24',
+    fill: 'none',
+    stroke: 'currentColor',
+    strokeWidth: '1.9',
+    strokeLinecap: 'round',
+    strokeLinejoin: 'round',
+    'aria-hidden': 'true',
+  }
+
+  switch (kind) {
+    case 'inbound':
+      return (
+        <svg {...commonProps}>
+          <path d="M3 7.5h11v7H3z" />
+          <path d="M14 10h3.5l2.5 2.5v2H14z" />
+          <circle cx="7.5" cy="17.5" r="1.5" />
+          <circle cx="17.5" cy="17.5" r="1.5" />
+          <path d="M9 17.5h7" />
+        </svg>
+      )
+    case 'qc':
+      return (
+        <svg {...commonProps}>
+          <circle cx="11" cy="11" r="6" />
+          <path d="m20 20-4.2-4.2" />
+        </svg>
+      )
+    case 'packing':
+      return (
+        <svg {...commonProps}>
+          <path d="M7 3.5h7l3 3V20.5H7z" />
+          <path d="M14 3.5v4h3" />
+          <path d="M9.5 12h5" />
+          <path d="M9.5 15.5h5" />
+        </svg>
+      )
+    case 'storage':
+      return (
+        <svg {...commonProps}>
+          <path d="M4 20V6.5h16V20" />
+          <path d="M2.5 20h19" />
+          <path d="M4 10.5h16" />
+          <path d="M8 6.5V20" />
+          <path d="M16 6.5V20" />
+        </svg>
+      )
+    case 'arkline':
+      return (
+        <svg {...commonProps}>
+          <path d="M8 6.5 5.5 9l1.7 2.2 1.8-1V19.5h6v-9.3l1.8 1 1.7-2.2L16 6.5l-2 1.2a4.7 4.7 0 0 1-4 0z" />
+          <path d="M10 7.2 12 10l2-2.8" />
+        </svg>
+      )
+    case 'dashboard':
+    default:
+      return (
+        <svg {...commonProps}>
+          <path d="M3.5 10.5 12 4l8.5 6.5" />
+          <path d="M5.5 9.5v10h13v-10" />
+          <path d="M10 19.5v-5h4v5" />
+        </svg>
+      )
+  }
+}
+
+function GearIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.9"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <circle cx="12" cy="12" r="3.2" />
+      <path d="M19.4 15a1 1 0 0 0 .2 1.1l.1.1a1.9 1.9 0 0 1 0 2.7 1.9 1.9 0 0 1-2.7 0l-.1-.1a1 1 0 0 0-1.1-.2 1 1 0 0 0-.6.9V20a1.9 1.9 0 0 1-1.9 1.9 1.9 1.9 0 0 1-1.9-1.9v-.2a1 1 0 0 0-.6-.9 1 1 0 0 0-1.1.2l-.1.1a1.9 1.9 0 0 1-2.7 0 1.9 1.9 0 0 1 0-2.7l.1-.1a1 1 0 0 0 .2-1.1 1 1 0 0 0-.9-.6H4a1.9 1.9 0 0 1-1.9-1.9A1.9 1.9 0 0 1 4 11h.2a1 1 0 0 0 .9-.6 1 1 0 0 0-.2-1.1l-.1-.1a1.9 1.9 0 0 1 0-2.7 1.9 1.9 0 0 1 2.7 0l.1.1a1 1 0 0 0 1.1.2h.1a1 1 0 0 0 .6-.9V4A1.9 1.9 0 0 1 12 2.1 1.9 1.9 0 0 1 13.9 4v.2a1 1 0 0 0 .6.9h.1a1 1 0 0 0 1.1-.2l.1-.1a1.9 1.9 0 0 1 2.7 0 1.9 1.9 0 0 1 0 2.7l-.1.1a1 1 0 0 0-.2 1.1v.1a1 1 0 0 0 .9.6H20A1.9 1.9 0 0 1 21.9 12 1.9 1.9 0 0 1 20 13.9h-.2a1 1 0 0 0-.9.6z" />
+    </svg>
+  )
+}
 
 export default async function DashboardLayout({ children }) {
   const supabase = await createClient()
@@ -17,130 +103,82 @@ export default async function DashboardLayout({ children }) {
   const isAdminEmail = user.email?.toLowerCase() === ADMIN_EMAIL
   const { data: profile } = await supabase
     .from('dir_user_profiles')
-    .select('role')
+    .select('role, display_name')
     .eq('email', user.email?.toLowerCase())
     .maybeSingle()
+
   const role = isAdminEmail ? 'admin' : profile?.role || 'storage_staff'
   const { data: rolePermissions } = await supabase
     .from('dir_user_roles')
     .select('permission_code')
     .eq('role', role)
+
   const permissions = (rolePermissions || []).map((item) => item.permission_code)
   const menus = getAllowedMenus(role, permissions, isAdminEmail)
+  const navItems = [
+    { href: '/dashboard', label: 'Dashboard', icon: 'dashboard', show: true },
+    { href: '/dashboard/inbound', label: 'Inbound', icon: 'inbound', show: menus.inbound },
+    {
+      href: menus.qcInspectorOnly ? '/dashboard/qc/inspection-task' : '/dashboard/qc',
+      label: menus.qcInspectorOnly ? 'Inspection Task' : 'Quality Control',
+      icon: 'qc',
+      show: menus.qc,
+    },
+    { href: '/dashboard/packing-list', label: 'Packing List', icon: 'packing', show: menus.packing },
+    { href: menus.storageHref, label: 'Storage', icon: 'storage', show: menus.storage },
+    { href: '/dashboard/arkline', label: 'ARKLINE', icon: 'arkline', show: menus.arkline, isWordmark: true },
+  ].filter((item) => item.show)
+
+  const settingHref = menus.masterData || menus.userAccess ? '/dashboard/settings' : null
 
   return (
-    <div style={styles.wrapper}>
-      <aside style={styles.sidebar}>
-        <h2 style={styles.logo}>Warehouse MS</h2>
+    <div className={styles.shell}>
+      <aside className={styles.sidebar}>
+        <div className={styles.brand}>
+          <div className={styles.brandMark}>
+            <Image src="/mob-text-logo.png" alt="MOB" width={40} height={18} className={styles.brandLogo} priority />
+          </div>
 
-        <nav style={styles.nav}>
-          {menus.inbound ? <Link href="/dashboard/inbound" style={styles.link}>Inbound</Link> : null}
-          {menus.qc ? (
-            <Link href={menus.qcInspectorOnly ? '/dashboard/qc/inspection-task' : '/dashboard/qc'} style={styles.link}>
-              QC
+          <div className={styles.brandCopy}>
+            <h2 className={styles.brandTitle}>Warehouse</h2>
+            <p className={styles.brandSubtitle}>Management System</p>
+          </div>
+        </div>
+
+        <nav className={styles.nav}>
+          {navItems.map((item) => (
+            <Link key={item.href} href={item.href} className={styles.navLink} title={item.label}>
+              <span className={styles.navIcon}>
+                <NavIcon kind={item.icon} />
+              </span>
+              {item.isWordmark ? (
+                <span className={`${styles.linkLabel} ${styles.wordmarkLabel}`}>
+                  <span className={styles.wordmarkText}>ARKLINE</span>
+                </span>
+              ) : (
+                <span className={styles.linkLabel}>{item.label}</span>
+              )}
             </Link>
-          ) : null}
-          {menus.packing ? <Link href="/dashboard/packing-list" style={styles.link}>Packing List</Link> : null}
-          {menus.storage ? <Link href={menus.storageHref} style={styles.link}>Storage</Link> : null}
+          ))}
 
-          {menus.masterData ? (
-            <>
-              <div style={styles.group}>
-                <span style={styles.groupLabel}>Master Data Directory</span>
-
-                <div style={styles.groupLinks}>
-                  <Link href="/dashboard/suppliers" style={styles.subLink}>Suppliers</Link>
-                  <Link href="/dashboard/brands" style={styles.subLink}>Brands</Link>
-                  <Link href="/dashboard/categories" style={styles.subLink}>Categories</Link>
-                  <Link href="/dashboard/skus" style={styles.subLink}>SKUs</Link>
-                  <Link href="/dashboard/rack-locations" style={styles.subLink}>Rack Locations</Link>
-                  {menus.userAccess ? <Link href="/dashboard/user-access" style={styles.subLink}>User Access</Link> : null}
-                </div>
-              </div>
-            </>
+          {settingHref ? (
+            <Link href={settingHref} className={styles.navLink} title="Setting">
+              <span className={styles.navIcon}>
+                <GearIcon />
+              </span>
+              <span className={styles.linkLabel}>Setting</span>
+            </Link>
           ) : null}
         </nav>
 
-        <div style={{ marginTop: 'auto' }}>
-          <p style={styles.user}>{user.email}</p>
-          <LogoutButton />
+        <div className={styles.spacer} />
+
+        <div className={styles.footer}>
+          <LogoutButton className={styles.logoutButton} iconClassName={styles.logoutIcon} labelClassName={styles.logoutLabel} />
         </div>
       </aside>
 
-      <main style={styles.main}>
-        {children}
-      </main>
+      <main className={styles.main}>{children}</main>
     </div>
   )
-}
-
-const styles = {
-  wrapper: {
-    display: 'flex',
-    minHeight: '100vh',
-    backgroundColor: '#f5f7fb',
-  },
-  sidebar: {
-    width: '260px',
-    backgroundColor: '#111827',
-    color: '#fff',
-    padding: '24px',
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '24px',
-  },
-  logo: {
-    margin: 0,
-    fontSize: '22px',
-    fontWeight: '700',
-  },
-  nav: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '12px',
-  },
-  group: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '10px',
-    marginTop: '4px',
-  },
-  groupLabel: {
-    fontSize: '12px',
-    fontWeight: '700',
-    letterSpacing: '0.06em',
-    textTransform: 'uppercase',
-    color: '#9ca3af',
-    padding: '0 12px',
-  },
-  groupLinks: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '8px',
-  },
-  link: {
-    color: '#e5e7eb',
-    textDecoration: 'none',
-    padding: '10px 12px',
-    borderRadius: '8px',
-    backgroundColor: 'transparent',
-  },
-  subLink: {
-    color: '#d1d5db',
-    textDecoration: 'none',
-    padding: '10px 12px 10px 24px',
-    borderRadius: '8px',
-    backgroundColor: 'rgba(255, 255, 255, 0.04)',
-    fontSize: '14px',
-  },
-  user: {
-    fontSize: '14px',
-    color: '#d1d5db',
-    marginBottom: '12px',
-    wordBreak: 'break-word',
-  },
-  main: {
-    flex: 1,
-    padding: '32px',
-  },
 }
