@@ -62,6 +62,10 @@ function normalizeText(value) {
   return String(value || '').trim().toUpperCase()
 }
 
+function normalizeSearchTermInput(value) {
+  return String(value || '').toUpperCase()
+}
+
 function normalizeSizeValue(value) {
   return normalizeText(value).replace(/\s+/g, '')
 }
@@ -330,9 +334,11 @@ export default function RestockRequestSubmit({
     setForm((prev) => ({
       ...prev,
       [name]:
-        name === 'size' || name === 'searchTerm'
+        name === 'size'
           ? normalizeSizeValue(value)
-          : value,
+          : name === 'searchTerm'
+            ? normalizeSearchTermInput(value)
+            : value,
     }))
   }
 
