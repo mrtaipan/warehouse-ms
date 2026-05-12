@@ -62,28 +62,38 @@ function normalizeText(value) {
   return String(value || '').trim().toUpperCase()
 }
 
+function normalizeSizeValue(value) {
+  return normalizeText(value).replace(/\s+/g, '')
+}
+
 function matchesRequestedSize(entrySize, requestedSize) {
   if (!requestedSize) {
     return true
   }
 
-  return normalizeText(entrySize) === normalizeText(requestedSize)
+  return normalizeSizeValue(entrySize) === normalizeSizeValue(requestedSize)
 }
 
 function getSizeTokens(value) {
-  return normalizeText(value)
+  return normalizeSizeValue(value)
     .split(/[\s,/|;-]+/)
     .map((item) => item.trim())
     .filter(Boolean)
 }
 
-function containsRequestedSize(entrySize, requestedSize) {
+function sharesRequestedSizeToken(entrySize, requestedSize) {
   if (!requestedSize) {
     return true
   }
 
-  const normalizedRequestedSize = normalizeText(requestedSize)
-  return getSizeTokens(entrySize).includes(normalizedRequestedSize)
+  const requestedTokens = getSizeTokens(requestedSize)
+  const entryTokens = getSizeTokens(entrySize)
+
+  if (requestedTokens.length === 0 || entryTokens.length === 0) {
+    return false
+  }
+
+  return requestedTokens.some((token) => entryTokens.includes(token))
 }
 
 function selectRowsForRequestedSize(rows, requestedSize) {
@@ -100,7 +110,7 @@ function selectRowsForRequestedSize(rows, requestedSize) {
   }
 
   const partialSizeRows = rows.filter((entry) =>
-    containsRequestedSize(entry.size, requestedSize)
+    sharesRequestedSizeToken(entry.size, requestedSize)
   )
 
   if (partialSizeRows.length > 0) {
@@ -112,13 +122,13 @@ function selectRowsForRequestedSize(rows, requestedSize) {
 
 function rankMatches(rows, searchTerm, size) {
   const normalizedSearchTerm = normalizeText(searchTerm)
-  const normalizedSize = normalizeText(size)
+  const normalizedSize = normalizeSizeValue(size)
 
   return [...rows].sort((left, right) => {
     const leftName = normalizeText(left.item_name)
     const rightName = normalizeText(right.item_name)
-    const leftSize = normalizeText(left.size)
-    const rightSize = normalizeText(right.size)
+    const leftSize = normalizeSizeValue(left.size)
+    const rightSize = normalizeSizeValue(right.size)
     const leftExactName = leftName === normalizedSearchTerm ? 1 : 0
     const rightExactName = rightName === normalizedSearchTerm ? 1 : 0
 
@@ -141,6 +151,7 @@ function rankMatches(rows, searchTerm, size) {
 
 function buildRequestRows(matches, rackLocations, form, requesterName) {
   const requestedQty = Number(form.qty || 0)
+  const submittedNote = String(form.note || '').trim()
   const locationById = new Map(rackLocations.map((item) => [item.id, item]))
   const rankedMatches = rankMatches(matches, form.searchTerm, form.size)
   const availableRows = rankedMatches.filter((entry) => Number(entry.qty || 0) > 0)
@@ -169,11 +180,12 @@ function buildRequestRows(matches, rackLocations, form, requesterName) {
     {
       requester_name: requesterName.trim(),
       item_name: availableRows[0]?.item_name || form.searchTerm.trim(),
-      size: availableRows[0]?.size || form.size.trim() || '-',
+      size: normalizeSizeValue(availableRows[0]?.size || form.size) || '-',
       qty: requestedQty,
       take_from: takeFromSummary,
       storage_id: null,
       search_term: form.searchTerm.trim(),
+      note: submittedNote || null,
       request_status: 'open',
     },
   ]
@@ -182,7 +194,7 @@ function buildRequestRows(matches, rackLocations, form, requesterName) {
 async function fetchOpenRequests() {
   const { data, error } = await supabase
     .from(TAKE_REQUESTS_TABLE)
-    .select('id, requester_name, item_name, size, qty, take_from, storage_id, search_term, created_at')
+    .select('id, requester_name, item_name, size, qty, take_from, storage_id, search_term, note, created_at')
     .eq('request_status', 'open')
     .order('created_at', { ascending: false })
 
@@ -213,6 +225,7 @@ export default function RestockRequestSubmit({
     size: '',
     qty: '1',
     searchTerm: '',
+    note: '',
   })
 
   async function fetchRequesterName() {
@@ -318,7 +331,7 @@ export default function RestockRequestSubmit({
       ...prev,
       [name]:
         name === 'size' || name === 'searchTerm'
-          ? value.toUpperCase()
+          ? normalizeSizeValue(value)
           : value,
     }))
   }
@@ -388,6 +401,7 @@ export default function RestockRequestSubmit({
       size: '',
       qty: '1',
       searchTerm: '',
+      note: '',
     }))
     setSuccess('Submit berhasil')
     setSubmitting(false)
@@ -465,6 +479,18 @@ export default function RestockRequestSubmit({
             </div>
           </div>
 
+          <div style={styles.field}>
+            <label style={styles.label}>Notes</label>
+            <textarea
+              name="note"
+              value={form.note}
+              onChange={handleInputChange}
+              style={styles.textarea}
+              placeholder="Catatan untuk picker, kalau ada instruksi tambahan"
+              rows={3}
+            />
+          </div>
+
           {error ? <p style={styles.error}>{error}</p> : null}
           {success ? <p style={styles.success}>{success}</p> : null}
 
@@ -526,6 +552,13 @@ export default function RestockRequestSubmit({
                       <strong style={styles.requestValue}>{row.take_from}</strong>
                     </div>
                   </div>
+
+                  {row.note ? (
+                    <div style={styles.noteBox}>
+                      <span style={styles.noteLabel}>Notes</span>
+                      <strong style={styles.noteValue}>{row.note}</strong>
+                    </div>
+                  ) : null}
 
                 </div>
               ))}
@@ -666,6 +699,18 @@ const styles = {
     color: '#111827',
     outline: 'none',
   },
+  textarea: {
+    minHeight: '88px',
+    borderRadius: '12px',
+    border: '1px solid #fdba74',
+    background: '#fff',
+    padding: '10px 12px',
+    fontSize: '13px',
+    color: '#111827',
+    outline: 'none',
+    resize: 'vertical',
+    fontFamily: 'inherit',
+  },
   primaryButton: {
     height: '46px',
     border: 'none',
@@ -726,6 +771,28 @@ const styles = {
     display: 'flex',
     flexDirection: 'column',
     gap: '12px',
+  },
+  noteBox: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '6px',
+    padding: '10px 12px',
+    borderRadius: '12px',
+    background: '#fff7ed',
+    border: '1px solid #fdba74',
+  },
+  noteLabel: {
+    fontSize: '10px',
+    fontWeight: '700',
+    color: '#9a3412',
+    letterSpacing: '0.06em',
+    textTransform: 'uppercase',
+  },
+  noteValue: {
+    color: '#7c2d12',
+    fontSize: '13px',
+    lineHeight: 1.5,
+    whiteSpace: 'pre-wrap',
   },
   requestOwner: {
     display: 'flex',

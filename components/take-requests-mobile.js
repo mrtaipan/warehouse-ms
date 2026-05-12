@@ -10,7 +10,7 @@ const TAKE_REQUESTS_TABLE = 'restock_request'
 async function fetchOpenRequests() {
   const { data, error } = await supabase
     .from(TAKE_REQUESTS_TABLE)
-    .select('id, requester_name, item_name, size, qty, take_from, storage_id, search_term, created_at')
+    .select('id, requester_name, item_name, size, qty, take_from, storage_id, search_term, note, created_at')
     .eq('request_status', 'open')
     .order('created_at', { ascending: false })
 
@@ -25,27 +25,38 @@ function normalizeText(value) {
   return String(value || '').trim().toUpperCase()
 }
 
+function normalizeSizeValue(value) {
+  return normalizeText(value).replace(/\s+/g, '')
+}
+
 function matchesRequestedSize(entrySize, requestedSize) {
   if (!requestedSize) {
     return true
   }
 
-  return normalizeText(entrySize) === normalizeText(requestedSize)
+  return normalizeSizeValue(entrySize) === normalizeSizeValue(requestedSize)
 }
 
 function getSizeTokens(value) {
-  return normalizeText(value)
+  return normalizeSizeValue(value)
     .split(/[\s,/|;-]+/)
     .map((item) => item.trim())
     .filter(Boolean)
 }
 
-function containsRequestedSize(entrySize, requestedSize) {
+function sharesRequestedSizeToken(entrySize, requestedSize) {
   if (!requestedSize) {
     return true
   }
 
-  return getSizeTokens(entrySize).includes(normalizeText(requestedSize))
+  const requestedTokens = getSizeTokens(requestedSize)
+  const entryTokens = getSizeTokens(entrySize)
+
+  if (requestedTokens.length === 0 || entryTokens.length === 0) {
+    return false
+  }
+
+  return requestedTokens.some((token) => entryTokens.includes(token))
 }
 
 function selectRowsForRequestedSize(rows, requestedSize) {
@@ -58,7 +69,7 @@ function selectRowsForRequestedSize(rows, requestedSize) {
     return exactSizeRows
   }
 
-  const partialSizeRows = rows.filter((entry) => containsRequestedSize(entry.size, requestedSize))
+  const partialSizeRows = rows.filter((entry) => sharesRequestedSizeToken(entry.size, requestedSize))
   if (partialSizeRows.length > 0) {
     return partialSizeRows
   }
@@ -392,6 +403,13 @@ export default function TakeRequestsMobile() {
                   <strong style={styles.requestValue}>{row.take_from}</strong>
                 </div>
 
+                {row.note ? (
+                  <div style={styles.noteBox}>
+                    <span style={styles.noteLabel}>Notes</span>
+                    <strong style={styles.noteValue}>{row.note}</strong>
+                  </div>
+                ) : null}
+
                 <button
                   type="button"
                   onClick={() => openCompleteModal(row)}
@@ -430,6 +448,12 @@ export default function TakeRequestsMobile() {
               <p style={styles.modalText}>
                 <strong>Lokasi tercatat:</strong> {selectedRequest.take_from}
               </p>
+              {selectedRequest.note ? (
+                <div style={styles.modalNoteBox}>
+                  <span style={styles.noteLabel}>Notes</span>
+                  <strong style={styles.noteValue}>{selectedRequest.note}</strong>
+                </div>
+              ) : null}
 
               <form onSubmit={handleComplete} style={styles.modalForm}>
                 <div style={styles.requestCell}>
@@ -652,6 +676,28 @@ const styles = {
     fontSize: '15px',
     lineHeight: 1.45,
   },
+  noteBox: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '6px',
+    padding: '12px 14px',
+    borderRadius: '16px',
+    background: '#fff7ed',
+    border: '1px solid #fdba74',
+  },
+  noteLabel: {
+    fontSize: '11px',
+    fontWeight: '700',
+    color: '#9a3412',
+    letterSpacing: '0.06em',
+    textTransform: 'uppercase',
+  },
+  noteValue: {
+    color: '#7c2d12',
+    fontSize: '14px',
+    lineHeight: 1.5,
+    whiteSpace: 'pre-wrap',
+  },
   sourceOptionList: {
     display: 'flex',
     flexDirection: 'column',
@@ -764,6 +810,15 @@ const styles = {
     margin: 0,
     color: '#374151',
     lineHeight: 1.5,
+  },
+  modalNoteBox: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '6px',
+    padding: '12px 14px',
+    borderRadius: '14px',
+    background: '#fff7ed',
+    border: '1px solid #fdba74',
   },
   modalForm: {
     display: 'flex',
