@@ -110,6 +110,7 @@ export default function EditSupplierPage() {
   const [form, setForm] = useState({
     supplier_code: '',
     supplier_name: '',
+    group: '',
     contact_person: '',
     phone: '',
     address: '',
@@ -129,7 +130,7 @@ export default function EditSupplierPage() {
 
       const { data, error } = await supabase
         .from('dir_suppliers')
-        .select('id, supplier_code, supplier_name, contact_person, phone, address, notes, is_active')
+        .select('id, supplier_code, supplier_name, group, contact_person, phone, address, notes, is_active')
         .eq('id', supplierId)
         .single()
 
@@ -142,6 +143,7 @@ export default function EditSupplierPage() {
       setForm({
         supplier_code: data.supplier_code || '',
         supplier_name: data.supplier_name || '',
+        group: data.group || '',
         contact_person: data.contact_person || '',
         phone: data.phone || '',
         address: data.address || '',
@@ -190,6 +192,7 @@ export default function EditSupplierPage() {
 
     const payload = {
       supplier_name: form.supplier_name.trim() || null,
+      group: form.group.trim() || null,
       contact_person: form.contact_person.trim() || null,
       phone: form.phone.trim() || null,
       address: form.address.trim() || null,
@@ -245,6 +248,16 @@ export default function EditSupplierPage() {
               value={form.supplier_name}
               onChange={handleChange}
               required
+              style={styles.input}
+            />
+          </div>
+
+          <div style={styles.field}>
+            <label style={styles.label}>Group</label>
+            <input
+              name="group"
+              value={form.group}
+              onChange={handleChange}
               style={styles.input}
             />
           </div>

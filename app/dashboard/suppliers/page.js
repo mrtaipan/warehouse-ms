@@ -73,7 +73,7 @@ export default async function SuppliersPage({ searchParams }) {
 
   if (query) {
     suppliersQuery = suppliersQuery.or(
-      `supplier_code.ilike.%${query}%,supplier_name.ilike.%${query}%,contact_person.ilike.%${query}%,phone.ilike.%${query}%`
+      `supplier_code.ilike.%${query}%,supplier_name.ilike.%${query}%,group.ilike.%${query}%,contact_person.ilike.%${query}%,phone.ilike.%${query}%`
     )
   }
 
@@ -141,6 +141,7 @@ export default async function SuppliersPage({ searchParams }) {
                 <tr>
                   <th style={styles.th}>Code</th>
                   <th style={styles.th}>Name</th>
+                  <th style={styles.th}>Group</th>
                   <th style={styles.th}>Contact Person</th>
                   <th style={styles.th}>Phone</th>
                   <th style={styles.th}>Active</th>
@@ -152,6 +153,7 @@ export default async function SuppliersPage({ searchParams }) {
                   <tr key={item.id}>
                     <td style={styles.td}>{item.supplier_code}</td>
                     <td style={styles.td}>{item.supplier_name}</td>
+                    <td style={styles.td}>{item.group || '-'}</td>
                     <td style={styles.td}>{item.contact_person || '-'}</td>
                     <td style={styles.td}>{item.phone || '-'}</td>
                     <td style={styles.td}>

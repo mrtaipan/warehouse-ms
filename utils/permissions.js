@@ -6,12 +6,58 @@ export const ROLE_OPTIONS = [
   { value: 'storage_coordinator', label: 'Storage Coordinator' },
   { value: 'inbound_staff', label: 'Inbound Staff' },
   { value: 'qc_coordinator', label: 'QC Coordinator' },
+  { value: 'qc_staff', label: 'QC Staff' },
   { value: 'qc_inspector', label: 'QC Inspector' },
   { value: 'packing_staff', label: 'Packing Staff' },
 ]
 
 function hasAnyPermission(permissions, codes) {
   return codes.some((code) => permissions.includes(code))
+}
+
+export function getQcFeatureAccess(permissions = [], isAdmin = false, role = '') {
+  if (isAdmin || role === 'admin') {
+    return {
+      menu: true,
+      menuHref: '/dashboard/qc',
+      dashboard: true,
+      receiving: true,
+      inspectionTask: true,
+      confirmation: true,
+      retur: true,
+      inspectionTaskOnly: false,
+    }
+  }
+
+  const dashboard = permissions.includes('qc.dashboard.view')
+  const receiving = permissions.includes('qc.receiving.edit')
+  const inspectionTask = permissions.includes('qc.inspection.do')
+  const confirmation = permissions.includes('qc.confirmation.edit')
+  const retur = permissions.includes('qc.retur.view')
+  const menu = dashboard || receiving || inspectionTask || confirmation || retur
+  const inspectionTaskOnly = inspectionTask && !dashboard && !receiving && !confirmation && !retur
+
+  let menuHref = '/dashboard/qc'
+  if (!dashboard && receiving) {
+    menuHref = '/dashboard/qc/receiving'
+  } else if (!dashboard && !receiving && confirmation) {
+    menuHref = '/dashboard/qc/confirmation'
+  } else if (!dashboard && !receiving && !confirmation && retur) {
+    menuHref = '/dashboard/qc/retur-report'
+  } else if (!dashboard && !receiving && !confirmation && !retur && inspectionTask) {
+    menuHref = '/mobile/qc/inspection-task'
+  }
+
+  return {
+    menu,
+    menuHref,
+    dashboard,
+    receiving,
+    inspectionTask,
+    confirmation,
+    retur,
+    inspectionTaskOnly,
+  }
 }
 
 export function getStorageFeatureAccess(role, permissions = [], isAdmin = false) {
@@ -54,8 +100,9 @@ export function getStorageFeatureAccess(role, permissions = [], isAdmin = false)
 
 export function getLandingPath(role, permissions = [], isAdmin = false) {
   if (isAdmin || role === 'admin') return '/dashboard'
-  if (permissions.length > 0) return '/dashboard'
 
+  const qcAccess = getQcFeatureAccess(permissions, isAdmin, role)
+  if (qcAccess.menu) return qcAccess.menuHref
   const storageAccess = getStorageFeatureAccess(role, permissions, isAdmin)
   if (storageAccess.menu) return storageAccess.menuHref
   return '/dashboard'
@@ -67,6 +114,7 @@ export function getAllowedMenus(role, permissions = [], isAdmin = false) {
       arkline: true,
       inbound: true,
       qc: true,
+      qcHref: '/dashboard/qc',
       qcInspectorOnly: false,
       packing: true,
       storage: true,
@@ -77,17 +125,14 @@ export function getAllowedMenus(role, permissions = [], isAdmin = false) {
   }
 
   const storageAccess = getStorageFeatureAccess(role, permissions, isAdmin)
+  const qcAccess = getQcFeatureAccess(permissions, isAdmin, role)
 
   return {
     arkline: false,
     inbound: false,
-    qc: false,
-    qcInspectorOnly:
-      permissions.includes('qc.inspection.do') &&
-      !permissions.includes('qc.dashboard.view') &&
-      !permissions.includes('qc.receiving.edit') &&
-      !permissions.includes('qc.confirmation.edit') &&
-      !permissions.includes('qc.retur.view'),
+    qc: qcAccess.menu,
+    qcHref: qcAccess.menuHref,
+    qcInspectorOnly: qcAccess.inspectionTaskOnly,
     packing: false,
     storage: storageAccess.menu,
     storageHref: storageAccess.menuHref,
@@ -97,11 +142,20 @@ export function getAllowedMenus(role, permissions = [], isAdmin = false) {
 }
 
 export function canAccessPath(pathname, role, permissions = [], isAdmin = false) {
+  if (pathname.startsWith('/mobile/qc/receiving')) {
+    return canAccessPath('/dashboard/qc/receiving', role, permissions, isAdmin)
+  }
+
+  if (pathname.startsWith('/mobile/qc/inspection-task')) {
+    return canAccessPath('/dashboard/qc/inspection-task', role, permissions, isAdmin)
+  }
+
   if (isAdmin || role === 'admin') return true
   if (pathname === '/dashboard') return true
   if (pathname.startsWith('/dashboard/profile')) return true
 
   const storageAccess = getStorageFeatureAccess(role, permissions, isAdmin)
+  const qcAccess = getQcFeatureAccess(permissions, isAdmin, role)
 
   if (pathname === '/dashboard/storage' || pathname.startsWith('/dashboard/storage?')) return storageAccess.menu
   if (pathname.startsWith('/dashboard/storage/overview')) return storageAccess.overview
@@ -116,8 +170,12 @@ export function canAccessPath(pathname, role, permissions = [], isAdmin = false)
 
   if (pathname.startsWith('/dashboard/inbound')) return false
 
-  if (pathname.startsWith('/dashboard/qc/inspection-task')) return false
-  if (pathname.startsWith('/dashboard/qc')) return false
+  if (pathname === '/dashboard/qc' || pathname.startsWith('/dashboard/qc?')) return qcAccess.dashboard
+  if (pathname.startsWith('/dashboard/qc/receiving')) return qcAccess.receiving
+  if (pathname.startsWith('/dashboard/qc/inspection-task')) return qcAccess.inspectionTask
+  if (pathname.startsWith('/dashboard/qc/confirmation')) return qcAccess.confirmation
+  if (pathname.startsWith('/dashboard/qc/retur-report')) return qcAccess.retur
+  if (pathname.startsWith('/dashboard/qc')) return qcAccess.menu
 
   if (pathname.startsWith('/dashboard/packing-list')) return false
   if (pathname.startsWith('/dashboard/arkline')) return false

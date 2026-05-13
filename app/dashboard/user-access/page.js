@@ -38,7 +38,7 @@ export default async function UserAccessPage() {
 
   const [{ data: profiles, error: profilesError }, { data: permissions, error: permissionsError }, { data: rolePermissions, error: rolePermissionsError }] =
     await Promise.all([
-        supabase.from('dir_user_profiles').select('id, email, display_name, role, updated_at').order('email', { ascending: true }),
+        supabase.from('dir_user_profiles').select('id, email, display_name, role, is_qc_active, qc_active_date, updated_at').order('email', { ascending: true }),
       supabase.from('dir_user_permissions').select('code, label, description').order('code', { ascending: true }),
       supabase.from('dir_user_roles').select('role, permission_code').order('role', { ascending: true }),
     ])
@@ -76,6 +76,7 @@ export default async function UserAccessPage() {
                 <th style={styles.th}>Email</th>
                 <th style={styles.th}>Display Name</th>
                 <th style={styles.th}>Role</th>
+                <th style={styles.th}>QC Active</th>
                 <th style={styles.th}>Action</th>
               </tr>
             </thead>
@@ -108,6 +109,17 @@ export default async function UserAccessPage() {
                         </option>
                       ))}
                     </select>
+                  </td>
+                  <td style={styles.td}>
+                    <label style={styles.checkboxRow}>
+                      <input
+                        type="checkbox"
+                        name="is_qc_active"
+                        form={`access-form-${profile.email}`}
+                        defaultChecked={Boolean(profile.is_qc_active)}
+                      />
+                      <span>Active for QC task today{profile.qc_active_date ? ` (${profile.qc_active_date})` : ''}</span>
+                    </label>
                   </td>
                   <td style={styles.td}>
                     <button type="submit" form={`access-form-${profile.email}`} style={styles.primaryButton}>
@@ -270,6 +282,14 @@ const styles = {
     border: 'none',
     fontWeight: '600',
     cursor: 'pointer',
+  },
+  checkboxRow: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '8px',
+    color: '#374151',
+    fontSize: '13px',
+    fontWeight: '600',
   },
   roleGrid: {
     display: 'grid',

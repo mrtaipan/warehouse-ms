@@ -9,7 +9,7 @@ function ArklineSubnav() {
   const items = [
     { href: '/dashboard/arkline', label: 'Overview', segment: null },
     { href: '/dashboard/arkline/directory', label: 'Product Directory', segment: 'directory' },
-    { href: '/dashboard/arkline/progress-overview', label: 'Progress Overview', segment: 'progress-overview' },
+    { href: '/dashboard/arkline/progress-overview', label: 'Progress Snapshot', segment: 'progress-overview' },
     { href: '/dashboard/arkline/production-planning', label: 'Production Planning', segment: 'production-planning' },
     { href: '/dashboard/arkline/material-fulfillment', label: 'Material Fulfillment', segment: 'material-fulfillment' },
   ]

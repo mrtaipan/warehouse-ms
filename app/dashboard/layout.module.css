@@ -29,6 +29,14 @@
   overflow: hidden;
 }
 
+.sidebarInner {
+  min-height: 0;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 14px;
+}
+
 .sidebar:hover {
   width: 284px;
   box-shadow:
@@ -41,6 +49,14 @@
   align-items: center;
   gap: 14px;
   min-height: 50px;
+}
+
+.mobileSidebarHeader {
+  display: contents;
+}
+
+.mobileToggle {
+  display: none;
 }
 
 .brandMark {
@@ -309,11 +325,44 @@
     width: 100%;
     height: auto;
     border-radius: 24px;
-    padding: 16px;
+    padding: 14px 16px;
   }
 
   .sidebar:hover {
     width: 100%;
+  }
+
+  .mobileSidebarHeader {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .mobileToggle {
+    display: inline-flex;
+    width: 40px;
+    height: 40px;
+    border-radius: 999px;
+    border: 1px solid rgba(203, 213, 225, 0.9);
+    background: rgba(255, 255, 255, 0.82);
+    color: #0f172a;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    box-shadow: 0 10px 20px rgba(15, 23, 42, 0.08);
+  }
+
+  .mobileToggleIcon {
+    width: 18px;
+    height: 18px;
+    display: block;
+    transition: transform 180ms ease;
+  }
+
+  .mobileToggleIconOpen {
+    transform: rotate(180deg);
   }
 
   .brandCopy,
@@ -323,6 +372,15 @@
     opacity: 1;
     transform: none;
     pointer-events: auto;
+  }
+
+  .sidebarMobileCollapsed .sidebarInner {
+    display: none;
+  }
+
+  .sidebarMobileExpanded .sidebarInner {
+    display: flex;
+    margin-top: 14px;
   }
 
   .nav {

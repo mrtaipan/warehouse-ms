@@ -104,6 +104,7 @@ export default function NewSupplierPage() {
   const [form, setForm] = useState({
     supplier_code: '',
     supplier_name: '',
+    group: '',
     contact_person: '',
     phone: '',
     address: '',
@@ -186,6 +187,7 @@ export default function NewSupplierPage() {
     const payload = {
       supplier_code: form.supplier_code,
       supplier_name: form.supplier_name.trim() || null,
+      group: form.group.trim() || null,
       contact_person: form.contact_person.trim() || null,
       phone: form.phone.trim() || null,
       address: form.address.trim() || null,
@@ -236,6 +238,17 @@ export default function NewSupplierPage() {
               required
               style={styles.input}
               placeholder="SUPPLIER NAME"
+            />
+          </div>
+
+          <div style={styles.field}>
+            <label style={styles.label}>Group</label>
+            <input
+              name="group"
+              value={form.group}
+              onChange={handleChange}
+              style={styles.input}
+              placeholder="SUPPLIER GROUP"
             />
           </div>
 

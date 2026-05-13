@@ -1,36 +1,44 @@
 'use client'
 
 import Image from 'next/image'
+import { usePathname } from 'next/navigation'
 import { useEffect, useMemo, useState } from 'react'
 import { createClient } from '@/utils/supabase/browser'
 import { readFileAsDataUrl } from '../shared'
 
 const supabase = createClient()
-const ARKLINE_PO_TABLE_CANDIDATES = ['dir_arkline_purchase_orders', 'dir_arkline_po', 'dir_arkline_pos']
-const ARKLINE_PO_ITEM_TABLE_CANDIDATES = ['dir_arkline_purchase_order_items', 'dir_arkline_po_items', 'dir_arkline_pos_items']
+const ARKLINE_PO_TABLE_CANDIDATES = ['arkline_pos', 'dir_arkline_purchase_orders', 'dir_arkline_po', 'dir_arkline_pos']
+const ARKLINE_PO_ITEM_TABLE_CANDIDATES = ['arkline_po_items', 'dir_arkline_purchase_order_items', 'dir_arkline_po_items', 'dir_arkline_pos_items']
 
 function getTodayLocalDate() {
-  const now = new Date()
-  const year = now.getFullYear()
-  const month = String(now.getMonth() + 1).padStart(2, '0')
-  const day = String(now.getDate()).padStart(2, '0')
-  return `${year}-${month}-${day}`
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Jakarta',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(new Date())
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]))
+  return `${values.year}-${values.month}-${values.day}`
+}
+
+function getDateOnly(value) {
+  return String(value || '').slice(0, 10)
 }
 
 const styles = {
   wrapper: {
     display: 'flex',
     flexDirection: 'column',
-    gap: '20px',
+    gap: '16px',
   },
   card: {
     background: '#fff',
     border: '1px solid #e5e7eb',
-    borderRadius: '14px',
-    padding: '24px',
+    borderRadius: '18px',
+    padding: '18px',
     display: 'flex',
     flexDirection: 'column',
-    gap: '18px',
+    gap: '16px',
   },
   header: {
     display: 'flex',
@@ -41,20 +49,25 @@ const styles = {
   },
   title: {
     margin: 0,
-    fontSize: '28px',
+    fontSize: '24px',
+    fontWeight: '800',
   },
   subtitle: {
     margin: '6px 0 0',
     color: '#6b7280',
+    fontSize: '13px',
+    lineHeight: 1.6,
   },
   sectionTitle: {
     margin: 0,
-    fontSize: '20px',
+    fontSize: '18px',
+    fontWeight: '800',
   },
   sectionSubtitle: {
     margin: '4px 0 0',
     color: '#6b7280',
-    fontSize: '14px',
+    fontSize: '13px',
+    lineHeight: 1.6,
   },
   grid: {
     display: 'grid',
@@ -72,15 +85,15 @@ const styles = {
     flexWrap: 'wrap',
   },
   modeButton: {
-    minHeight: '42px',
-    padding: '0 16px',
+    minHeight: '40px',
+    padding: '0 14px',
     borderWidth: '1px',
     borderStyle: 'solid',
     borderColor: '#d1d5db',
-    borderRadius: '8px',
+    borderRadius: '999px',
     background: '#fff',
     color: '#111827',
-    fontSize: '14px',
+    fontSize: '13px',
     fontWeight: '700',
     cursor: 'pointer',
   },
@@ -147,29 +160,45 @@ const styles = {
     textTransform: 'uppercase',
   },
   input: {
-    height: '42px',
+    height: '40px',
     padding: '0 12px',
-    border: '1px solid #d1d5db',
-    borderRadius: '8px',
-    fontSize: '14px',
+    borderWidth: '1px',
+    borderStyle: 'solid',
+    borderColor: '#d1d5db',
+    borderRadius: '10px',
+    fontSize: '13px',
     width: '100%',
   },
+  inputDisabled: {
+    background: '#f3f4f6',
+    borderColor: '#e5e7eb',
+    color: '#9ca3af',
+    cursor: 'not-allowed',
+  },
   select: {
-    height: '42px',
+    height: '40px',
     padding: '0 12px',
-    border: '1px solid #d1d5db',
-    borderRadius: '8px',
-    fontSize: '14px',
+    borderWidth: '1px',
+    borderStyle: 'solid',
+    borderColor: '#d1d5db',
+    borderRadius: '10px',
+    fontSize: '13px',
     background: '#fff',
     width: '100%',
   },
+  selectDisabled: {
+    background: '#f3f4f6',
+    borderColor: '#e5e7eb',
+    color: '#9ca3af',
+    cursor: 'not-allowed',
+  },
   readonlyBox: {
-    minHeight: '42px',
+    minHeight: '40px',
     padding: '10px 12px',
     border: '1px solid #e5e7eb',
-    borderRadius: '8px',
+    borderRadius: '10px',
     background: '#f9fafb',
-    fontSize: '14px',
+    fontSize: '13px',
     display: 'flex',
     alignItems: 'center',
   },
@@ -181,31 +210,43 @@ const styles = {
     alignItems: 'center',
   },
   primaryButton: {
-    height: '42px',
+    height: '40px',
     padding: '0 16px',
-    border: 'none',
-    borderRadius: '8px',
+    borderWidth: '1px',
+    borderStyle: 'solid',
+    borderColor: 'transparent',
+    borderRadius: '10px',
     background: '#111827',
     color: '#fff',
-    fontSize: '14px',
+    fontSize: '13px',
     fontWeight: '600',
     cursor: 'pointer',
   },
   secondaryButton: {
-    height: '42px',
+    height: '40px',
     padding: '0 16px',
-    border: '1px solid #d1d5db',
-    borderRadius: '8px',
+    borderWidth: '1px',
+    borderStyle: 'solid',
+    borderColor: '#d1d5db',
+    borderRadius: '10px',
     background: '#fff',
     color: '#111827',
-    fontSize: '14px',
+    fontSize: '13px',
     fontWeight: '600',
     cursor: 'pointer',
   },
+  buttonDisabled: {
+    background: '#e5e7eb',
+    borderColor: '#e5e7eb',
+    color: '#9ca3af',
+    cursor: 'not-allowed',
+  },
   iconButton: {
-    width: '36px',
-    height: '36px',
-    border: '1px solid #d1d5db',
+    width: '34px',
+    height: '34px',
+    borderWidth: '1px',
+    borderStyle: 'solid',
+    borderColor: '#d1d5db',
     borderRadius: '999px',
     background: '#fff',
     color: '#111827',
@@ -217,19 +258,25 @@ const styles = {
     justifyContent: 'center',
     padding: 0,
   },
+  iconButtonDisabled: {
+    background: '#f3f4f6',
+    borderColor: '#e5e7eb',
+    color: '#9ca3af',
+    cursor: 'not-allowed',
+  },
   summaryGrid: {
     display: 'grid',
-    gridTemplateColumns: 'repeat(4, minmax(0, 1fr))',
-    gap: '16px',
+    gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+    gap: '10px',
   },
   summaryCard: {
     background: '#f9fafb',
     border: '1px solid #e5e7eb',
-    borderRadius: '12px',
-    padding: '16px',
+    borderRadius: '14px',
+    padding: '14px',
     display: 'flex',
     flexDirection: 'column',
-    gap: '6px',
+    gap: '4px',
   },
   summaryLabel: {
     fontSize: '12px',
@@ -238,25 +285,25 @@ const styles = {
     color: '#6b7280',
   },
   summaryValue: {
-    fontSize: '24px',
+    fontSize: '20px',
     fontWeight: '800',
     color: '#111827',
   },
   sourceList: {
     display: 'flex',
     flexWrap: 'wrap',
-    gap: '10px',
+    gap: '8px',
   },
   sourceChip: {
-    minHeight: '38px',
-    padding: '0 14px',
+    minHeight: '34px',
+    padding: '0 12px',
     borderRadius: '999px',
     borderWidth: '1px',
     borderStyle: 'solid',
     borderColor: '#d1d5db',
     background: '#fff',
     color: '#111827',
-    fontSize: '13px',
+    fontSize: '12px',
     fontWeight: '700',
     cursor: 'pointer',
   },
@@ -275,33 +322,39 @@ const styles = {
     borderColor: '#16a34a',
     color: '#fff',
   },
+  sourceChipDisabled: {
+    background: '#f3f4f6',
+    borderColor: '#e5e7eb',
+    color: '#9ca3af',
+    cursor: 'not-allowed',
+  },
   sourceStatusBanner: {
     display: 'flex',
     justifyContent: 'space-between',
     alignItems: 'center',
     gap: '12px',
-    padding: '14px 16px',
-    borderRadius: '12px',
+    padding: '12px 14px',
+    borderRadius: '14px',
     border: '1px solid #86efac',
     background: '#f0fdf4',
     color: '#166534',
-    fontSize: '14px',
+    fontSize: '13px',
     fontWeight: '700',
     flexWrap: 'wrap',
   },
   modelRow: {
     display: 'flex',
     flexDirection: 'column',
-    gap: '14px',
-    padding: '14px',
+    gap: '12px',
+    padding: '12px',
     border: '1px solid #e5e7eb',
-    borderRadius: '12px',
+    borderRadius: '16px',
     background: '#fff',
   },
   modelRowTop: {
     display: 'grid',
     gridTemplateColumns: '96px 1.4fr 0.9fr 0.9fr auto',
-    gap: '14px',
+    gap: '12px',
     alignItems: 'center',
   },
   allocationWrap: {
@@ -312,17 +365,17 @@ const styles = {
     borderTop: '1px solid #e5e7eb',
   },
   thumb: {
-    width: '96px',
-    height: '96px',
+    width: '84px',
+    height: '84px',
     objectFit: 'cover',
-    borderRadius: '12px',
+    borderRadius: '14px',
     border: '1px solid #e5e7eb',
     background: '#fff',
   },
   thumbEmpty: {
-    width: '96px',
-    height: '96px',
-    borderRadius: '12px',
+    width: '84px',
+    height: '84px',
+    borderRadius: '14px',
     border: '1px solid #e5e7eb',
     background: '#f9fafb',
     display: 'flex',
@@ -340,10 +393,12 @@ const styles = {
   modelName: {
     fontWeight: '700',
     color: '#111827',
+    fontSize: '15px',
   },
   infoText: {
     margin: 0,
     color: '#6b7280',
+    fontSize: '12px',
   },
   allocationCard: {
     border: '1px solid #e5e7eb',
@@ -378,14 +433,14 @@ const styles = {
   },
   modal: {
     width: '100%',
-    maxWidth: '760px',
+    maxWidth: '720px',
     background: '#fff',
-    borderRadius: '16px',
-    padding: '24px',
+    borderRadius: '18px',
+    padding: '18px',
     border: '1px solid #e5e7eb',
     display: 'flex',
     flexDirection: 'column',
-    gap: '18px',
+    gap: '16px',
   },
   modalGrid: {
     display: 'grid',
@@ -445,13 +500,13 @@ function normalizeArklinePo(row) {
     return null
   }
 
-  const poNumber = row.po_number || row.po_code || row.code || row.po_name || row.name || ''
+  const poNumber = row.po_id || row.po_number || row.po_code || row.code || row.po_name || row.name || ''
   if (!String(poNumber).trim()) {
     return null
   }
 
   return {
-    id: row.id,
+    id: String(row.po_id || row.id || poNumber).trim().toUpperCase(),
     po_number: String(poNumber).trim().toUpperCase(),
   }
 }
@@ -462,7 +517,11 @@ function normalizeArklinePoItem(row, productsById, poLabel) {
   }
 
   const linkedProduct =
-    productsById[String(row.product_id || row.arkline_product_id || row.dir_arkline_product_id || '')] || null
+    productsById[
+      String(row.sku_induk || row.product_id || row.arkline_product_id || row.dir_arkline_product_id || '')
+        .trim()
+        .toUpperCase()
+    ] || null
   const modelName =
     row.nama_produk ||
     row.product_name ||
@@ -490,6 +549,8 @@ function normalizeArklinePoItem(row, productsById, poLabel) {
   return {
     key: `po-item:${row.id}`,
     id: row.id,
+    po_id: String(row.po_id || '').trim().toUpperCase(),
+    sku_induk: String(row.sku_induk || linkedProduct?.parent_sku || '').trim().toUpperCase(),
     model_name: String(modelName).trim().toUpperCase(),
     model_color: String(linkedProduct?.model_color || linkedProduct?.warna || row.warna || row.model_color || row.color || `PO ${poLabel}` || '')
       .trim()
@@ -581,6 +642,22 @@ function getTaskKey(values) {
   )}`
 }
 
+function getArklineTaskKey(values) {
+  return [
+    String(values.assigned_to || values.member_email || '').trim().toLowerCase(),
+    String(values.po_id || '').trim().toUpperCase(),
+    String(values.arkline_po_item_id || '').trim(),
+    String(values.sku_induk || '').trim().toUpperCase(),
+  ].join('::')
+}
+
+function hydrateArklinePlanRows(rows, fallbackColor) {
+  return (rows || []).map((item) => ({
+    ...item,
+    model_color: String(item.model_color || fallbackColor || '').trim().toUpperCase(),
+  }))
+}
+
 function getSourceStatus(source, qcItems) {
   if (!source?.sourceId) {
     return 'idle'
@@ -667,12 +744,15 @@ function buildModelRowsForSource(source, unloadRows, qcItems) {
 }
 
 export default function QcReceivingPage() {
+  const pathname = usePathname()
+  const [viewportWidth, setViewportWidth] = useState(1280)
   const [inbounds, setInbounds] = useState([])
   const [unloadRows, setUnloadRows] = useState([])
   const [productModels, setProductModels] = useState([])
   const [arklineProducts, setArklineProducts] = useState([])
   const [arklinePurchaseOrders, setArklinePurchaseOrders] = useState([])
   const [arklinePoItems, setArklinePoItems] = useState([])
+  const [arklineQcItems, setArklineQcItems] = useState([])
   const [qcItems, setQcItems] = useState([])
   const [qcMembers, setQcMembers] = useState([])
   const [qcMode, setQcMode] = useState('regular')
@@ -705,13 +785,24 @@ export default function QcReceivingPage() {
   const [sourceDetailsExpanded, setSourceDetailsExpanded] = useState(true)
 
   useEffect(() => {
+    function updateViewport() {
+      setViewportWidth(window.innerWidth)
+    }
+
+    updateViewport()
+    window.addEventListener('resize', updateViewport)
+
+    return () => window.removeEventListener('resize', updateViewport)
+  }, [])
+
+  useEffect(() => {
     async function loadInitialData() {
       setLoading(true)
       setError('')
       const today = getTodayLocalDate()
 
       const [arklineProductResult, arklinePoResult, arklinePoItemResult] = await Promise.all([
-        supabase.from('dir_arkline_products').select('*'),
+        supabase.from('arkline_dir_products').select('*'),
         loadFirstExistingRows(ARKLINE_PO_TABLE_CANDIDATES),
         loadFirstExistingRows(ARKLINE_PO_ITEM_TABLE_CANDIDATES),
       ])
@@ -720,7 +811,9 @@ export default function QcReceivingPage() {
         { data: inboundRows, error: inboundError },
         { data: modelRows, error: modelError },
         { data: qcRows, error: qcError },
+        { data: arklineQcRows, error: arklineQcError },
         { data: memberRows, error: memberError },
+        { data: rolePermissionRows, error: rolePermissionError },
       ] = await Promise.all([
         supabase
           .from('inbound')
@@ -736,29 +829,44 @@ export default function QcReceivingPage() {
           .select('*')
           .order('created_at', { ascending: false }),
         supabase
-          .from('qc_members')
-          .select('id, email, display_name')
-          .eq('is_active', true)
-          .eq('active_date', today)
+          .from('arkline_qc')
+          .select('*')
+          .order('created_at', { ascending: false }),
+        supabase
+          .from('dir_user_profiles')
+          .select('id, email, display_name, role, is_qc_active, qc_active_date')
+          .eq('is_qc_active', true)
           .order('display_name', { ascending: true }),
+        supabase.from('dir_user_roles').select('role, permission_code').eq('permission_code', 'qc.inspection.do'),
       ])
 
-      if (inboundError || modelError || qcError || memberError) {
+      if (inboundError || modelError || qcError || arklineQcError || memberError || rolePermissionError) {
         setError(
           inboundError?.message ||
             modelError?.message ||
             qcError?.message ||
+            arklineQcError?.message ||
             memberError?.message ||
+            rolePermissionError?.message ||
             'Failed to load QC receiving setup.'
         )
         setLoading(false)
         return
       }
 
+      const allowedRoles = new Set((rolePermissionRows || []).map((item) => item.role))
+      const eligibleMembers = (memberRows || []).filter(
+        (item) =>
+          allowedRoles.has(item.role) &&
+          item.is_qc_active === true &&
+          getDateOnly(item.qc_active_date) === today
+      )
+
       setInbounds(inboundRows || [])
       setProductModels(modelRows || [])
       setQcItems(qcRows || [])
-      setQcMembers(memberRows || [])
+      setArklineQcItems(arklineQcRows || [])
+      setQcMembers(eligibleMembers)
       setArklineProducts((arklineProductResult.data || []).map(normalizeArklineProduct).filter(Boolean))
       setArklinePurchaseOrders((arklinePoResult.data || []).map(normalizeArklinePo).filter(Boolean))
       setArklinePoItems(arklinePoItemResult.data || [])
@@ -792,6 +900,76 @@ export default function QcReceivingPage() {
 
     loadUnloadRows()
   }, [selectedInboundId])
+
+  const isMobileApp = pathname?.startsWith('/mobile/')
+  const isMobileLayout = isMobileApp || viewportWidth <= 820
+  const isTabletLayout = isMobileApp || viewportWidth <= 1120
+  const shellCardStyle = isMobileLayout ? { ...styles.card, padding: '14px', borderRadius: '16px' } : styles.card
+  const headerStyle = isMobileLayout
+    ? { ...styles.header, flexDirection: 'column', alignItems: 'stretch', gap: '12px' }
+    : styles.header
+  const plannerGridStyle = isMobileLayout
+    ? { display: 'grid', gridTemplateColumns: '1fr', gap: '12px' }
+    : isTabletLayout
+      ? { display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '12px' }
+      : styles.grid
+  const arklineChoiceGridStyle = isMobileLayout
+    ? { display: 'grid', gridTemplateColumns: '1fr', gap: '12px' }
+    : { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '16px' }
+  const modeCardStyle = isMobileLayout
+    ? {
+        border: '1px solid #d1d5db',
+        borderRadius: '16px',
+        padding: '14px',
+        textAlign: 'left',
+        cursor: 'pointer',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '6px',
+      }
+    : {
+        border: '1px solid #d1d5db',
+        borderRadius: '16px',
+        padding: '18px',
+        textAlign: 'left',
+        cursor: 'pointer',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '8px',
+      }
+  const rowTopGridStyle = isMobileLayout
+    ? { ...styles.modelRowTop, gridTemplateColumns: '72px 1fr', alignItems: 'start' }
+    : isTabletLayout
+      ? { ...styles.modelRowTop, gridTemplateColumns: '84px 1.3fr 1fr' }
+      : styles.modelRowTop
+  const arklineRowTopGridStyle = isMobileLayout
+    ? { ...styles.modelRowTop, gridTemplateColumns: '72px 1fr', alignItems: 'start' }
+    : isTabletLayout
+      ? { ...styles.modelRowTop, gridTemplateColumns: '84px 1.35fr 1fr' }
+      : { ...styles.modelRowTop, gridTemplateColumns: '84px 1.5fr 1fr' }
+  const allocationGridStyle = isMobileLayout
+    ? { display: 'grid', gridTemplateColumns: '1fr', gap: '8px', alignItems: 'stretch' }
+    : { display: 'grid', gridTemplateColumns: '1.3fr 0.8fr auto', gap: '8px', alignItems: 'center' }
+  const summaryGridStyle = isMobileLayout
+    ? { ...styles.summaryGrid, gridTemplateColumns: 'repeat(2, minmax(0, 1fr))' }
+    : styles.summaryGrid
+  const arklineSummaryGridStyle = isMobileLayout
+    ? { ...styles.summaryGrid, gridTemplateColumns: 'repeat(2, minmax(0, 1fr))' }
+    : { ...styles.summaryGrid, gridTemplateColumns: 'repeat(3, minmax(0, 1fr))' }
+  const bottomBarStyle = isMobileLayout
+    ? {
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '10px',
+        position: 'sticky',
+        bottom: '10px',
+        padding: '12px',
+        border: '1px solid #e5e7eb',
+        borderRadius: '16px',
+        background: 'rgba(255,255,255,0.96)',
+        backdropFilter: 'blur(10px)',
+      }
+    : styles.buttonRow
 
   const selectedInbound = inbounds.find((item) => item.id === Number(selectedInboundId)) || null
   const sourceOptions = useMemo(() => {
@@ -838,7 +1016,10 @@ export default function QcReceivingPage() {
   const arklineProductsById = useMemo(
     () =>
       arklineProducts.reduce((result, item) => {
-        result[String(item.id)] = item
+        const keys = [item.id, item.parent_sku].filter(Boolean)
+        keys.forEach((key) => {
+          result[String(key).trim().toUpperCase()] = item
+        })
         return result
       }, {}),
     [arklineProducts]
@@ -889,11 +1070,15 @@ export default function QcReceivingPage() {
       return []
     }
 
-    const poId = String(selectedArklinePo.id)
+    const poId = String(selectedArklinePo.id).trim().toUpperCase()
 
     return arklinePoItems
       .filter((row) => {
-        const candidatePoId = String(row.po_id || row.arkline_po_id || row.purchase_order_id || row.dir_arkline_po_id || '')
+        const candidatePoId = String(
+          row.po_id || row.arkline_po_id || row.purchase_order_id || row.dir_arkline_po_id || ''
+        )
+          .trim()
+          .toUpperCase()
         return candidatePoId === poId
       })
       .map((row) => normalizeArklinePoItem(row, arklineProductsById, selectedArklinePo.po_number))
@@ -903,12 +1088,11 @@ export default function QcReceivingPage() {
   const selectedArklinePoItem =
     arklinePoItemOptions.find((item) => item.key === selectedArklinePoItemKey) || null
   const isArklineMode = qcMode === 'arkline'
-  const selectedArklineProductModelKey = selectedArklineProduct
-    ? getModelKey(selectedArklineProduct.model_name, selectedArklineProduct.model_color || 'ARKLINE PRODUCT')
-    : ''
-  const selectedArklinePoItemModelKey = selectedArklinePoItem
-    ? getModelKey(selectedArklinePoItem.model_name, selectedArklinePoItem.model_color)
-    : ''
+  const selectedArklineProductSku = String(selectedArklineProduct?.parent_sku || selectedArklineProduct?.id || '')
+    .trim()
+    .toUpperCase()
+  const selectedArklinePoCode = String(selectedArklinePo?.id || '').trim().toUpperCase()
+  const selectedArklinePoItemId = String(selectedArklinePoItem?.id || '').trim()
 
   const qcInQty = modelRows.reduce((sum, row) => sum + Number(row.qty_qc || 0), 0)
   const allocationTotal = modelRows.reduce(
@@ -924,16 +1108,16 @@ export default function QcReceivingPage() {
   })
   const currentPlanRows = isArklineMode
     ? arklinePlannerMode === 'product' && selectedArklineProduct
-      ? qcItems.filter(
+      ? arklineQcItems.filter(
           (item) =>
-            !item.inbound_unload_id &&
-            getModelKey(item.model_name, item.model_color) === selectedArklineProductModelKey
+            !item.po_id &&
+            String(item.sku_induk || '').trim().toUpperCase() === selectedArklineProductSku
         )
       : arklinePlannerMode === 'po' && selectedArklinePoItem
-        ? qcItems.filter(
-            (item) =>
-              !item.inbound_unload_id &&
-              getModelKey(item.model_name, item.model_color) === selectedArklinePoItemModelKey
+        ? arklineQcItems.filter(
+          (item) =>
+              String(item.po_id || '').trim().toUpperCase() === selectedArklinePoCode &&
+              String(item.arkline_po_item_id || '').trim() === selectedArklinePoItemId
           )
         : []
     : selectedSourceId
@@ -954,7 +1138,7 @@ export default function QcReceivingPage() {
   const isSelectedSourceStarted = selectedSourceStatus === 'started' || selectedSourceStatus === 'completed'
   const isSelectedSourceCompleted = selectedSourceStatus === 'completed'
   const persistedTaskRows = new Map(
-    currentPlanRows.map((item) => [getTaskKey(item), item])
+    currentPlanRows.map((item) => [isArklineMode ? getArklineTaskKey(item) : getTaskKey(item), item])
   )
 
   function handleGrnChange(value) {
@@ -1079,12 +1263,11 @@ export default function QcReceivingPage() {
       return
     }
 
-    const matchingPlanRows = qcItems.filter(
-      (item) =>
-        !item.inbound_unload_id &&
-        getModelKey(item.model_name, item.model_color) ===
-          getModelKey(product.model_name, product.model_color || 'ARKLINE PRODUCT')
+    const productSku = String(product.parent_sku || product.id || '').trim().toUpperCase()
+    const matchingPlanRows = arklineQcItems.filter(
+      (item) => !item.po_id && String(item.sku_induk || '').trim().toUpperCase() === productSku
     )
+    const hydratedPlanRows = hydrateArklinePlanRows(matchingPlanRows, product.model_color || 'ARKLINE PRODUCT')
 
     const baseRows = [
       {
@@ -1100,7 +1283,7 @@ export default function QcReceivingPage() {
       },
     ]
 
-    setModelRows(buildModelRowsFromPersisted(baseRows, matchingPlanRows))
+    setModelRows(buildModelRowsFromPersisted(baseRows, hydratedPlanRows))
   }
 
   function handleArklinePoChange(poId) {
@@ -1122,12 +1305,12 @@ export default function QcReceivingPage() {
       return
     }
 
-    const matchingPlanRows = qcItems.filter(
+    const matchingPlanRows = arklineQcItems.filter(
       (planItem) =>
-        !planItem.inbound_unload_id &&
-        getModelKey(planItem.model_name, planItem.model_color) ===
-          getModelKey(item.model_name, item.model_color || `PO ${item.po_label}`)
+        String(planItem.po_id || '').trim().toUpperCase() === String(selectedArklinePo?.id || '').trim().toUpperCase() &&
+        String(planItem.arkline_po_item_id || '').trim() === String(item.id)
     )
+    const hydratedPlanRows = hydrateArklinePlanRows(matchingPlanRows, item.model_color || `PO ${item.po_label}`)
 
     const baseRows = [
       {
@@ -1143,7 +1326,7 @@ export default function QcReceivingPage() {
       },
     ]
 
-    setModelRows(buildModelRowsFromPersisted(baseRows, matchingPlanRows))
+    setModelRows(buildModelRowsFromPersisted(baseRows, hydratedPlanRows))
   }
 
   function addModelRow() {
@@ -1173,7 +1356,7 @@ export default function QcReceivingPage() {
     }
 
     if (!qcMembers.length) {
-      setError('No QC user has registered yet. Open `Grading Task` and press `Register for QC` first.')
+      setError('No active QC user found with permission `qc.inspection.do` for today. Activate QC task from Grading Task or User Access.')
       return
     }
 
@@ -1329,6 +1512,24 @@ export default function QcReceivingPage() {
     setSuccess('Model added successfully.')
   }
 
+  function resetRegularPlanner() {
+    setGrnSearch('')
+    setSelectedInboundId('')
+    setSelectedSourceKey('')
+    setUnloadRows([])
+    setModelRows([])
+  }
+
+  function resetArklinePlanner() {
+    setSelectedArklineProductId('')
+    setSelectedArklineCategory('')
+    setArklineProductSearch('')
+    setShowArklineProductOptions(false)
+    setSelectedArklinePoId('')
+    setSelectedArklinePoItemKey('')
+    setModelRows([])
+  }
+
   async function handleSavePlan() {
     setError('')
     setSuccess('')
@@ -1354,7 +1555,7 @@ export default function QcReceivingPage() {
       }
 
       if (!qcMembers.length) {
-        setError('No QC user has registered yet. Open Grading Task and register at least one QC user first.')
+        setError('No active QC user found with permission `qc.inspection.do` for today. Activate QC task from Grading Task or User Access.')
         return
       }
 
@@ -1370,10 +1571,14 @@ export default function QcReceivingPage() {
           if (blockingError) return
           if (!split.member_email || Number(split.qty || 0) <= 0) return
 
-          const taskKey = getTaskKey({
+          const taskKey = getArklineTaskKey({
             member_email: split.member_email,
-            model_name: row.model_name,
-            model_color: row.model_color,
+            po_id: arklinePlannerMode === 'po' ? String(selectedArklinePo?.id || '').trim().toUpperCase() || null : null,
+            arkline_po_item_id: arklinePlannerMode === 'po' ? row.source_id || selectedArklinePoItem?.id || null : null,
+            sku_induk:
+              arklinePlannerMode === 'po'
+                ? String(selectedArklinePoItem?.sku_induk || '').trim().toUpperCase() || null
+                : String(selectedArklineProduct?.parent_sku || selectedArklineProduct?.id || '').trim().toUpperCase() || null,
           })
 
           activeTaskKeys.add(taskKey)
@@ -1388,14 +1593,16 @@ export default function QcReceivingPage() {
           }
 
           const basePayload = {
-            inbound_id: null,
-            inbound_unload_id: null,
-            assigned_to: split.member_email,
+            po_id: arklinePlannerMode === 'po' ? String(selectedArklinePo?.id || '').trim().toUpperCase() || null : null,
+            arkline_po_item_id: arklinePlannerMode === 'po' ? row.source_id || selectedArklinePoItem?.id || null : null,
+            sku_induk:
+              arklinePlannerMode === 'po'
+                ? String(selectedArklinePoItem?.sku_induk || '').trim().toUpperCase() || null
+                : String(selectedArklineProduct?.parent_sku || selectedArklineProduct?.id || '').trim().toUpperCase() || null,
+            assigned_to: String(split.member_email || '').trim().toLowerCase(),
             allocated_qty: allocatedQty,
-            expected_qty: Number(row.qty_in || 0),
             qty_in: Number(row.qty_qc || 0),
             model_name: row.model_name.trim(),
-            model_color: row.model_color.trim() || null,
             photo_url: row.photo_url || null,
             locked_qty: lockedQty,
           }
@@ -1411,7 +1618,6 @@ export default function QcReceivingPage() {
             insertPayload.push({
               ...basePayload,
               status: 'queued',
-              is_confirmed: true,
               qty_a: 0,
               qty_b: 0,
               qty_c: 0,
@@ -1428,12 +1634,12 @@ export default function QcReceivingPage() {
       }
 
       const queuedRowsToDelete = currentPlanRows.filter(
-        (item) => item.status === 'queued' && !activeTaskKeys.has(getTaskKey(item))
+        (item) => item.status === 'queued' && !activeTaskKeys.has(getArklineTaskKey(item))
       )
 
       if (queuedRowsToDelete.length) {
         const { error: deleteError } = await supabase
-          .from('qc_items')
+          .from('arkline_qc')
           .delete()
           .in(
             'id',
@@ -1449,7 +1655,7 @@ export default function QcReceivingPage() {
 
       for (const updateRow of updatesForPersistedRows) {
         const { error: updateError } = await supabase
-          .from('qc_items')
+          .from('arkline_qc')
           .update(updateRow)
           .eq('id', updateRow.id)
 
@@ -1461,7 +1667,7 @@ export default function QcReceivingPage() {
       }
 
       if (insertPayload.length) {
-        const { error: insertError } = await supabase.from('qc_items').insert(insertPayload)
+        const { error: insertError } = await supabase.from('arkline_qc').insert(insertPayload)
 
         if (insertError) {
           setError(insertError.message)
@@ -1471,9 +1677,9 @@ export default function QcReceivingPage() {
       }
 
       const { data: nextQcItems, error: refreshError } = await supabase
-        .from('qc_items')
-        .select('*')
-        .order('created_at', { ascending: false })
+        .from('arkline_qc')
+          .select('*')
+          .order('created_at', { ascending: false })
 
       if (refreshError) {
         setError(refreshError.message)
@@ -1481,18 +1687,20 @@ export default function QcReceivingPage() {
         return
       }
 
-      setQcItems(nextQcItems || [])
+      setArklineQcItems(nextQcItems || [])
 
       if (arklinePlannerMode === 'product' && selectedArklineProduct) {
-        const matchingPlanRows = (nextQcItems || []).filter(
+        const matchingPlanRows = hydrateArklinePlanRows(
+          (nextQcItems || []).filter(
           (item) =>
-            !item.inbound_unload_id &&
-            getModelKey(item.model_name, item.model_color) ===
-              getModelKey(selectedArklineProduct.model_name, selectedArklineProduct.model_color || 'ARKLINE PRODUCT')
+            !item.po_id &&
+              String(item.sku_induk || '').trim().toUpperCase() === selectedArklineProductSku
+          ),
+          selectedArklineProduct.model_color || 'ARKLINE PRODUCT'
         )
 
-    setModelRows(
-      buildModelRowsFromPersisted(
+        setModelRows(
+          buildModelRowsFromPersisted(
             [
               {
                 id: `arkline-product-${selectedArklineProduct.id}`,
@@ -1507,34 +1715,18 @@ export default function QcReceivingPage() {
               },
             ],
             matchingPlanRows
-      )
-    )
-  }
-
-  function resetRegularPlanner() {
-    setGrnSearch('')
-    setSelectedInboundId('')
-    setSelectedSourceKey('')
-    setUnloadRows([])
-    setModelRows([])
-  }
-
-  function resetArklinePlanner() {
-    setSelectedArklineProductId('')
-    setSelectedArklineCategory('')
-    setArklineProductSearch('')
-    setShowArklineProductOptions(false)
-    setSelectedArklinePoId('')
-    setSelectedArklinePoItemKey('')
-    setModelRows([])
-  }
+          )
+        )
+      }
 
       if (arklinePlannerMode === 'po' && selectedArklinePoItem) {
-        const matchingPlanRows = (nextQcItems || []).filter(
-          (item) =>
-            !item.inbound_unload_id &&
-            getModelKey(item.model_name, item.model_color) ===
-              getModelKey(selectedArklinePoItem.model_name, selectedArklinePoItem.model_color)
+        const matchingPlanRows = hydrateArklinePlanRows(
+          (nextQcItems || []).filter(
+            (item) =>
+              String(item.po_id || '').trim().toUpperCase() === String(selectedArklinePo?.id || '').trim().toUpperCase() &&
+              String(item.arkline_po_item_id || '').trim() === String(selectedArklinePoItem.id)
+          ),
+          selectedArklinePoItem.model_color || `PO ${selectedArklinePoItem.po_label}`
         )
 
         setModelRows(
@@ -1542,7 +1734,7 @@ export default function QcReceivingPage() {
             [
               {
                 id: `arkline-po-${selectedArklinePoItem.id}`,
-                source_id: null,
+                source_id: selectedArklinePoItem.id,
                 model_id: '',
                 model_name: selectedArklinePoItem.model_name,
                 model_color: selectedArklinePoItem.model_color,
@@ -1587,7 +1779,7 @@ export default function QcReceivingPage() {
     }
 
     if (!qcMembers.length) {
-      setError('No QC user has registered yet. Open Grading Task and register at least one QC user first.')
+      setError('No active QC user found with permission `qc.inspection.do` for today. Activate QC task from Grading Task or User Access.')
       return
     }
 
@@ -1624,7 +1816,7 @@ export default function QcReceivingPage() {
         const basePayload = {
           inbound_id: selectedInbound.id,
           inbound_unload_id: selectedSourceId,
-          assigned_to: split.member_email,
+          assigned_to: String(split.member_email || '').trim().toLowerCase(),
           allocated_qty: allocatedQty,
           expected_qty: Number(row.qty_in || 0),
           qty_in: Number(row.qty_qc || 0),
@@ -1749,34 +1941,23 @@ export default function QcReceivingPage() {
   }
 
   return (
-    <div style={styles.wrapper}>
-      <div style={styles.header}>
+    <div style={{ ...styles.wrapper, paddingBottom: isMobileLayout ? '20px' : 0 }}>
+      <div style={shellCardStyle}>
         <div>
-          <h1 style={styles.title}>QC Receiving</h1>
-          <p style={styles.subtitle}>
-            Check whether model and qty from receiving are correct, then send QC work into operator tasks.
-          </p>
-        </div>
-      </div>
-
-      <div style={styles.card}>
-        <div>
-          <h2 style={styles.sectionTitle}>Planner</h2>
-          <p style={styles.sectionSubtitle}>
-            Choose the GRN and Koli/Sample first. If the model or qty is different, correct it here before allocating QC work.
-          </p>
+          <h2 style={styles.sectionTitle}>QC Receiving & Allocation</h2>
         </div>
 
-        <div style={styles.modeRow}>
+        <div style={{ ...styles.modeRow, width: isMobileLayout ? '100%' : 'auto' }}>
           <button
             type="button"
             onClick={() => handleQcModeChange('regular')}
             style={{
               ...styles.modeButton,
               ...(qcMode === 'regular' ? styles.modeButtonActive : {}),
+              ...(isMobileLayout ? { flex: 1 } : {}),
             }}
           >
-            Reguler
+            QC Reguler
           </button>
           <button
             type="button"
@@ -1784,9 +1965,10 @@ export default function QcReceivingPage() {
             style={{
               ...styles.modeButton,
               ...styles.modeButtonDisabled,
+              ...(isMobileLayout ? { flex: 1 } : {}),
             }}
           >
-            QC Ulang
+            Re-QC
           </button>
           <button
             type="button"
@@ -1794,6 +1976,7 @@ export default function QcReceivingPage() {
             style={{
               ...styles.modeButton,
               ...(qcMode === 'arkline' ? styles.modeButtonActive : {}),
+              ...(isMobileLayout ? { flex: 1 } : {}),
             }}
           >
             QC Arkline
@@ -1802,56 +1985,36 @@ export default function QcReceivingPage() {
 
         {qcMode === 'arkline' ? (
           <>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '16px' }}>
+            <div style={arklineChoiceGridStyle}>
               <button
                 type="button"
                 onClick={() => handleArklinePlannerModeChange('product')}
                 style={{
-                  border: '1px solid #d1d5db',
-                  borderRadius: '16px',
+                  ...modeCardStyle,
                   background: arklinePlannerMode === 'product' ? '#111827' : '#fff',
                   color: arklinePlannerMode === 'product' ? '#fff' : '#111827',
-                  padding: '18px',
-                  textAlign: 'left',
-                  cursor: 'pointer',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: '8px',
                 }}
               >
-                <strong style={{ fontSize: '18px' }}>QC Produk</strong>
-                <span style={{ color: arklinePlannerMode === 'product' ? 'rgba(255,255,255,0.78)' : '#6b7280', fontSize: '14px', lineHeight: 1.6 }}>
-                  Pilih langsung produk Arkline yang mau di-QC, lalu alokasikan qty-nya ke inspector.
-                </span>
+                <strong style={{ fontSize: isMobileLayout ? '16px' : '18px' }}>QC Product</strong>
               </button>
 
               <button
                 type="button"
                 onClick={() => handleArklinePlannerModeChange('po')}
                 style={{
-                  border: '1px solid #d1d5db',
-                  borderRadius: '16px',
+                  ...modeCardStyle,
                   background: arklinePlannerMode === 'po' ? '#111827' : '#fff',
                   color: arklinePlannerMode === 'po' ? '#fff' : '#111827',
-                  padding: '18px',
-                  textAlign: 'left',
-                  cursor: 'pointer',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: '8px',
                 }}
               >
-                <strong style={{ fontSize: '18px' }}>QC PO Baru</strong>
-                <span style={{ color: arklinePlannerMode === 'po' ? 'rgba(255,255,255,0.78)' : '#6b7280', fontSize: '14px', lineHeight: 1.6 }}>
-                  Pilih PO dulu, lalu pilih produk di dalam PO itu sebelum dialokasikan ke inspector.
-                </span>
+                <strong style={{ fontSize: isMobileLayout ? '16px' : '18px' }}>QC PO</strong>
               </button>
             </div>
 
             {arklinePlannerMode === 'product' ? (
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '16px' }}>
+              <div style={arklineChoiceGridStyle}>
                 <div style={styles.field}>
-                  <label style={styles.label}>Kategori Produk</label>
+                  <label style={styles.label}>Product Category</label>
                   <select
                     value={selectedArklineCategory}
                     onChange={(event) => handleArklineCategoryChange(event.target.value)}
@@ -1867,7 +2030,7 @@ export default function QcReceivingPage() {
                 </div>
 
                 <div style={styles.field}>
-                  <label style={styles.label}>Produk Arkline</label>
+                  <label style={styles.label}>Product</label>
                   <div style={styles.comboBox}>
                     <input
                       value={arklineProductSearch}
@@ -1911,7 +2074,7 @@ export default function QcReceivingPage() {
                 </div>
               </div>
             ) : (
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '16px' }}>
+              <div style={arklineChoiceGridStyle}>
                 <div style={styles.field}>
                   <label style={styles.label}>PO</label>
                   <select value={selectedArklinePoId} onChange={(event) => handleArklinePoChange(event.target.value)} style={styles.select}>
@@ -1925,11 +2088,11 @@ export default function QcReceivingPage() {
                 </div>
 
                 <div style={styles.field}>
-                  <label style={styles.label}>Produk dalam PO</label>
+                  <label style={styles.label}>Product in PO</label>
                   <select
                     value={selectedArklinePoItemKey}
                     onChange={(event) => handleArklinePoItemChange(event.target.value)}
-                    style={styles.select}
+                    style={{ ...styles.select, ...(!selectedArklinePoId ? styles.selectDisabled : {}) }}
                     disabled={!selectedArklinePoId}
                   >
                     <option value="">{selectedArklinePoId ? 'Choose product in PO' : 'Choose PO first'}</option>
@@ -1947,19 +2110,19 @@ export default function QcReceivingPage() {
               <>
                 {modelRows.map((row) => (
                   <div key={row.id} style={styles.modelRow}>
-                    <div style={{ ...styles.modelRowTop, gridTemplateColumns: '96px 1.5fr 1fr' }}>
+                    <div style={arklineRowTopGridStyle}>
                       {row.photo_url ? (
-                        <Image src={row.photo_url} alt={row.model_name || 'Arkline model'} width={96} height={96} unoptimized style={styles.thumb} />
+                        <Image src={row.photo_url} alt={row.model_name || 'Arkline model'} width={84} height={84} unoptimized style={styles.thumb} />
                       ) : (
                         <div style={styles.thumbEmpty}>NO PHOTO</div>
                       )}
 
-                      <div style={styles.modelMeta}>
+                      <div style={{ ...styles.modelMeta, ...(isMobileLayout ? { gridColumn: '2 / -1' } : {}) }}>
                         <div style={styles.modelName}>{row.model_name || 'Choose product'}</div>
                         <p style={styles.infoText}>{row.model_color || 'ARKLINE PRODUCT'}</p>
                       </div>
 
-                      <div style={styles.field}>
+                      <div style={{ ...styles.field, ...(isMobileLayout ? { gridColumn: '1 / -1' } : {}) }}>
                         <label style={styles.label}>QC In</label>
                         <input
                           type="number"
@@ -1970,7 +2133,7 @@ export default function QcReceivingPage() {
                               qty_qc: event.target.value,
                             })
                           }
-                          style={styles.input}
+                          style={{ ...styles.input, ...(hasSavedPlan ? styles.inputDisabled : {}) }}
                           disabled={hasSavedPlan}
                         />
                       </div>
@@ -1983,18 +2146,22 @@ export default function QcReceivingPage() {
                         <button
                           type="button"
                           onClick={() => addAllocationSplit(row.id)}
-                          style={styles.secondaryButton}
+                          style={{ ...styles.secondaryButton, ...(isSelectedSourceStarted ? styles.buttonDisabled : {}) }}
+                          disabled={isSelectedSourceStarted}
                         >
                           Allocate
                         </button>
                       </div>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                         {(row.allocations || []).map((split) => (
-                          <div key={split.id} style={{ display: 'grid', gridTemplateColumns: '1.3fr 0.8fr auto', gap: '8px', alignItems: 'center' }}>
+                          <div key={split.id} style={allocationGridStyle}>
                             <select
                               value={split.member_email || ''}
                               onChange={(event) => updateAllocationSplit(row.id, split.id, { member_email: event.target.value })}
-                              style={styles.select}
+                              style={{
+                                ...styles.select,
+                                ...(isSelectedSourceStarted || (split.existing_status && split.existing_status !== 'queued') ? styles.selectDisabled : {}),
+                              }}
                               disabled={isSelectedSourceStarted || (split.existing_status && split.existing_status !== 'queued')}
                             >
                               <option value="">Choose inspector</option>
@@ -2040,14 +2207,25 @@ export default function QcReceivingPage() {
                                   qty: String(Math.max(minAllowed, Math.min(nextValue, maxAllowed))),
                                 })
                               }}
-                              style={styles.input}
+                              style={{
+                                ...styles.input,
+                                ...(isSelectedSourceStarted || Boolean(split.existing_status && split.existing_status !== 'queued') ? styles.inputDisabled : {}),
+                              }}
                               disabled={isSelectedSourceStarted || Boolean(split.existing_status && split.existing_status !== 'queued')}
                               placeholder="Qty"
                             />
                             <button
                               type="button"
                               onClick={() => removeAllocationSplit(row.id, split.id)}
-                              style={styles.secondaryButton}
+                              style={{
+                                ...styles.secondaryButton,
+                                ...(isMobileLayout ? { width: '100%' } : {}),
+                                ...(isSelectedSourceStarted ||
+                                Number(split.locked_qty || 0) > 0 ||
+                                (split.existing_status && split.existing_status !== 'queued')
+                                  ? styles.buttonDisabled
+                                  : {}),
+                              }}
                               disabled={
                                 isSelectedSourceStarted ||
                                 Number(split.locked_qty || 0) > 0 ||
@@ -2068,10 +2246,10 @@ export default function QcReceivingPage() {
                 ))}
 
                 {!qcMembers.length ? (
-                  <p style={styles.emptyText}>No QC user has registered yet. Open `Grading Task` and press `Register for QC` first.</p>
+                  <p style={styles.emptyText}>No active QC user found with permission `qc.inspection.do` for today. Activate QC task from Grading Task or User Access.</p>
                 ) : null}
 
-                <div style={{ ...styles.summaryGrid, gridTemplateColumns: 'repeat(3, minmax(0, 1fr))' }}>
+                <div style={arklineSummaryGridStyle}>
                   <div style={styles.summaryCard}>
                     <span style={styles.summaryLabel}>QC In</span>
                     <strong style={styles.summaryValue}>{qcInQty}</strong>
@@ -2100,7 +2278,7 @@ export default function QcReceivingPage() {
           </>
         ) : (
         <>
-        <div style={styles.grid}>
+        <div style={plannerGridStyle}>
           <div style={styles.field}>
             <label style={styles.label}>GRN Number</label>
             <input
@@ -2122,7 +2300,7 @@ export default function QcReceivingPage() {
               <select
                 value={selectedSourceKey}
                 onChange={(event) => handleSourceChange(event.target.value)}
-                style={styles.select}
+                style={{ ...styles.select, ...(!selectedInboundId ? styles.selectDisabled : {}) }}
                 disabled={!selectedInboundId}
               >
                 <option value="">{selectedInboundId ? 'Choose Koli / Sample' : 'Choose GRN first'}</option>
@@ -2162,9 +2340,11 @@ export default function QcReceivingPage() {
                     onClick={() => handleSourceChange(row.key)}
                     style={{
                       ...styles.sourceChip,
+                      ...(!selectedInboundId ? styles.sourceChipDisabled : {}),
                       ...(rowStatus === 'completed' ? styles.sourceChipDone : {}),
                       ...(isActive ? (rowStatus === 'completed' ? styles.sourceChipDoneActive : styles.sourceChipActive) : {}),
                     }}
+                    disabled={!selectedInboundId}
                   >
                     {row.label}
                   </button>
@@ -2187,13 +2367,13 @@ export default function QcReceivingPage() {
 
             {sourceDetailsExpanded ? modelRows.map((row) => (
               <div key={row.id} style={styles.modelRow}>
-                <div style={styles.modelRowTop}>
+                <div style={rowTopGridStyle}>
                 {row.photo_url ? (
                   <Image
                     src={row.photo_url}
                     alt={row.model_name || 'QC model'}
-                    width={96}
-                    height={96}
+                    width={84}
+                    height={84}
                     unoptimized
                     style={styles.thumb}
                   />
@@ -2201,7 +2381,7 @@ export default function QcReceivingPage() {
                   <div style={styles.thumbEmpty}>NO PHOTO</div>
                 )}
 
-                <div style={styles.modelMeta}>
+                <div style={{ ...styles.modelMeta, ...(isMobileLayout ? { gridColumn: '2 / -1' } : {}) }}>
                   <div style={styles.modelName}>{row.model_name || 'Choose model'}</div>
                   <p style={styles.infoText}>{row.model_color || 'NO COLOR'}</p>
                   <div style={styles.buttonRow}>
@@ -2211,7 +2391,7 @@ export default function QcReceivingPage() {
                         setActiveModelRowId(row.id)
                         setShowChooseModelModal(true)
                       }}
-                      style={styles.iconButton}
+                      style={{ ...styles.iconButton, ...(hasSavedPlan ? styles.iconButtonDisabled : {}) }}
                       disabled={hasSavedPlan}
                       title="Choose model"
                       aria-label="Choose model"
@@ -2221,7 +2401,14 @@ export default function QcReceivingPage() {
                     <button
                       type="button"
                       onClick={() => removeModelRow(row.id)}
-                      style={styles.iconButton}
+                      style={{
+                        ...styles.iconButton,
+                        ...(hasSavedPlan ||
+                        modelRows.length === 1 ||
+                        (row.allocations || []).some((split) => Number(split.locked_qty || 0) > 0)
+                          ? styles.iconButtonDisabled
+                          : {}),
+                      }}
                       disabled={
                         hasSavedPlan ||
                         modelRows.length === 1 ||
@@ -2235,12 +2422,12 @@ export default function QcReceivingPage() {
                   </div>
                 </div>
 
-                <div style={styles.field}>
+                <div style={{ ...styles.field, ...(isMobileLayout ? { gridColumn: '1 / -1' } : {}) }}>
                   <label style={styles.label}>Inbound Qty</label>
                   <div style={styles.readonlyBox}>{row.qty_in || 0}</div>
                 </div>
 
-                <div style={styles.field}>
+                <div style={{ ...styles.field, ...(isMobileLayout ? { gridColumn: '1 / -1' } : {}) }}>
                   <label style={styles.label}>QC In</label>
                   <input
                     type="number"
@@ -2251,7 +2438,7 @@ export default function QcReceivingPage() {
                         qty_qc: event.target.value,
                       })
                     }
-                    style={styles.input}
+                    style={{ ...styles.input, ...(hasSavedPlan ? styles.inputDisabled : {}) }}
                     disabled={hasSavedPlan}
                   />
                 </div>
@@ -2261,11 +2448,14 @@ export default function QcReceivingPage() {
                   <label style={styles.label}>Allocation</label>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                     {(row.allocations || []).map((split) => (
-                      <div key={split.id} style={{ display: 'grid', gridTemplateColumns: '1.3fr 0.8fr auto', gap: '8px', alignItems: 'center' }}>
+                      <div key={split.id} style={allocationGridStyle}>
                         <select
                           value={split.member_email || ''}
                           onChange={(event) => updateAllocationSplit(row.id, split.id, { member_email: event.target.value })}
-                          style={styles.select}
+                          style={{
+                            ...styles.select,
+                            ...(isSelectedSourceStarted || (split.existing_status && split.existing_status !== 'queued') ? styles.selectDisabled : {}),
+                          }}
                           disabled={isSelectedSourceStarted || (split.existing_status && split.existing_status !== 'queued')}
                         >
                           <option value="">Choose inspector</option>
@@ -2316,14 +2506,25 @@ export default function QcReceivingPage() {
                               qty: String(Math.max(minAllowed, Math.min(nextValue, maxAllowed))),
                             })
                           }}
-                          style={styles.input}
+                          style={{
+                            ...styles.input,
+                            ...(isSelectedSourceStarted || Boolean(split.existing_status && split.existing_status !== 'queued') ? styles.inputDisabled : {}),
+                          }}
                           disabled={isSelectedSourceStarted || Boolean(split.existing_status && split.existing_status !== 'queued')}
                           placeholder="Qty"
                         />
                         <button
                           type="button"
                           onClick={() => removeAllocationSplit(row.id, split.id)}
-                          style={styles.secondaryButton}
+                          style={{
+                            ...styles.secondaryButton,
+                            ...(isMobileLayout ? { width: '100%' } : {}),
+                            ...(isSelectedSourceStarted ||
+                            Number(split.locked_qty || 0) > 0 ||
+                            (split.existing_status && split.existing_status !== 'queued')
+                              ? styles.buttonDisabled
+                              : {}),
+                          }}
                           disabled={
                             isSelectedSourceStarted ||
                             Number(split.locked_qty || 0) > 0 ||
@@ -2342,7 +2543,8 @@ export default function QcReceivingPage() {
                       <button
                         type="button"
                         onClick={() => addAllocationSplit(row.id)}
-                        style={styles.secondaryButton}
+                        style={{ ...styles.secondaryButton, ...(isSelectedSourceStarted ? styles.buttonDisabled : {}) }}
+                        disabled={isSelectedSourceStarted}
                       >
                         Allocate
                       </button>
@@ -2354,7 +2556,12 @@ export default function QcReceivingPage() {
 
             {sourceDetailsExpanded ? (
             <div style={styles.buttonRow}>
-              <button type="button" onClick={addModelRow} style={styles.secondaryButton} disabled={hasSavedPlan}>
+              <button
+                type="button"
+                onClick={addModelRow}
+                style={{ ...styles.secondaryButton, ...(hasSavedPlan ? styles.buttonDisabled : {}) }}
+                disabled={hasSavedPlan}
+              >
                 + Add Model Row
               </button>
             </div>
@@ -2374,11 +2581,11 @@ export default function QcReceivingPage() {
 
             {!qcMembers.length ? (
               <p style={styles.emptyText}>
-                No QC user has registered yet. Open `Grading Task` and press `Register for QC` first.
+                No active QC user found with permission `qc.inspection.do` for today. Activate QC task from Grading Task or User Access.
               </p>
             ) : null}
 
-            <div style={styles.summaryGrid}>
+            <div style={summaryGridStyle}>
               <div style={styles.summaryCard}>
                 <span style={styles.summaryLabel}>Inbound Qty</span>
                 <strong style={styles.summaryValue}>
@@ -2405,7 +2612,7 @@ export default function QcReceivingPage() {
         </>
         )}
 
-        <div style={styles.buttonRow}>
+        <div style={bottomBarStyle}>
           {error ? <p style={styles.errorText}>{error}</p> : null}
           {success ? <p style={styles.successText}>{success}</p> : null}
           <button
@@ -2419,12 +2626,13 @@ export default function QcReceivingPage() {
             }
             style={{
               ...styles.primaryButton,
+              ...(isMobileLayout ? { width: '100%' } : {}),
               ...(
                 saving ||
                 (qcMode === 'arkline'
                   ? !modelRows.length || isSelectedSourceStarted
                   : !selectedSource || isSelectedSourceStarted)
-                  ? { opacity: 0.6, cursor: 'not-allowed' }
+                  ? styles.buttonDisabled
                   : {}
               ),
             }}

@@ -44,7 +44,7 @@ export default function ArklineDirectoryPage() {
       setError('')
 
       const { data, error: fetchError } = await supabase
-        .from('dir_arkline_products')
+        .from('arkline_dir_products')
         .select('sku_induk, kategori_pengadaan, kategori_produk, nama_produk, is_active')
         .order('nama_produk', { ascending: true })
 
@@ -125,7 +125,7 @@ export default function ArklineDirectoryPage() {
 
     if (isEditing) {
       const { data, error: updateError } = await supabase
-        .from('dir_arkline_products')
+        .from('arkline_dir_products')
         .update({
           kategori_pengadaan: draft.kategori_pengadaan || null,
           kategori_produk: draft.kategori_produk || null,
@@ -154,7 +154,7 @@ export default function ArklineDirectoryPage() {
     }
 
     const { data, error: insertError } = await supabase
-      .from('dir_arkline_products')
+      .from('arkline_dir_products')
       .insert({
         sku_induk: draft.sku_induk,
         kategori_pengadaan: draft.kategori_pengadaan || null,
@@ -184,6 +184,7 @@ export default function ArklineDirectoryPage() {
       <section className={styles.directorySection}>
         <div className={styles.sectionHeader}>
           <div>
+            <p className={styles.eyebrow}>Arkline</p>
             <h1 className={styles.sectionTitle}>Product Directory</h1>
           </div>
 

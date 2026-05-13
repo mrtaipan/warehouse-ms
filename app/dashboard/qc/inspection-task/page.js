@@ -9,14 +9,25 @@ const supabase = createClient()
 const BREAK_REASONS = ['TOILET', 'PRAYER', 'SUPERVISOR CALL', 'MATERIAL WAIT', 'OTHER', 'COORDINATOR BREAK']
 
 function getTodayLocalDate() {
-  const now = new Date()
-  const year = now.getFullYear()
-  const month = String(now.getMonth() + 1).padStart(2, '0')
-  const day = String(now.getDate()).padStart(2, '0')
-  return `${year}-${month}-${day}`
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Jakarta',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(new Date())
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]))
+  return `${values.year}-${values.month}-${values.day}`
 }
 
 function getTaskSourceLabel(task) {
+  if (task?.source_type === 'arkline') {
+    if (task?.po_id) {
+      return `Arkline ${String(task.po_id).trim().toUpperCase()}`
+    }
+
+    return 'Arkline Product'
+  }
+
   if (task?.inbound?.grn_number && task?.inbound_unload?.koli_sequence) {
     return `${task.inbound.grn_number} · Koli ${task.inbound_unload.koli_sequence}`
   }
@@ -302,6 +313,10 @@ function getTaskModelInfo(task) {
   }
 }
 
+function getTaskTableName(task) {
+  return task?.source_type === 'arkline' ? 'arkline_qc' : 'qc_items'
+}
+
 function getTaskGradeInputs(task, gradeInputs) {
   if (!task) {
     return { qty_a: '', qty_b: '', qty_c: '' }
@@ -330,6 +345,14 @@ function getRemainingQty(task) {
 
 function getSubmittedQty(values) {
   return Number(values?.qty_a || 0) + Number(values?.qty_b || 0) + Number(values?.qty_c || 0)
+}
+
+function normalizeEmail(value) {
+  return String(value || '').trim().toLowerCase()
+}
+
+function getDateOnly(value) {
+  return String(value || '').slice(0, 10)
 }
 
 async function createPauseLog({ taskId, pausedBy, pauseReason, pausedAt }) {
@@ -393,6 +416,8 @@ export default function QcInspectionTaskPage() {
   const [userEmail, setUserEmail] = useState('')
   const [userLabel, setUserLabel] = useState('')
   const [isRegistered, setIsRegistered] = useState(false)
+  const [profileRole, setProfileRole] = useState('')
+  const [canActivateQcTask, setCanActivateQcTask] = useState(false)
   const [tasks, setTasks] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -426,6 +451,7 @@ export default function QcInspectionTaskPage() {
         }
         return
       }
+      const normalizedEmail = normalizeEmail(user.email)
 
       const displayLabel =
         user.user_metadata?.full_name ||
@@ -434,31 +460,50 @@ export default function QcInspectionTaskPage() {
         ''
 
       if (isMounted) {
-        setUserEmail(user.email || '')
+        setUserEmail(normalizedEmail)
         setUserLabel(displayLabel)
       }
 
-      const { data: memberRow, error: memberError } = await supabase
-        .from('qc_members')
-        .select('id, email, display_name')
-        .eq('email', user.email)
-        .eq('is_active', true)
-        .eq('active_date', today)
+      const { data: profileRow, error: profileError } = await supabase
+        .from('dir_user_profiles')
+        .select('id, email, display_name, role, is_qc_active, qc_active_date')
+        .ilike('email', normalizedEmail)
         .maybeSingle()
 
       if (!isMounted) {
         return
       }
 
-      if (memberError) {
-        setError(memberError.message)
+      if (profileError) {
+        setError(profileError.message)
         setLoading(false)
         return
       }
 
-      setIsRegistered(Boolean(memberRow))
+      const { data: rolePermissionRows, error: rolePermissionError } = profileRow?.role
+        ? await supabase
+            .from('dir_user_roles')
+            .select('permission_code')
+            .eq('role', profileRow.role)
+        : { data: [], error: null }
 
-      if (!memberRow) {
+      if (rolePermissionError) {
+        setError(rolePermissionError.message)
+        setLoading(false)
+        return
+      }
+
+      const permissionCodes = (rolePermissionRows || []).map((item) => item.permission_code)
+      const canDoQcInspection = permissionCodes.includes('qc.inspection.do')
+      const isActiveInspector =
+        canDoQcInspection &&
+        Boolean(profileRow?.is_qc_active) &&
+        getDateOnly(profileRow?.qc_active_date) === today
+      setProfileRole(profileRow?.role || '')
+      setCanActivateQcTask(canDoQcInspection)
+      setIsRegistered(isActiveInspector)
+
+      if (!isActiveInspector) {
         setTasks([])
         if (isMounted) {
           setLoading(false)
@@ -466,37 +511,62 @@ export default function QcInspectionTaskPage() {
         return
       }
 
-      const { data, error: taskError } = await supabase
-        .from('qc_items')
-        .select(`
-          *,
-          inbound:inbound_id (
-            id,
-            grn_number
-          ),
-          inbound_unload:inbound_unload_id (
-            id,
-            model_name,
-            model_color,
-            photo_url,
-            koli_sequence
-          )
-        `)
-        .eq('assigned_to', user.email)
-        .in('status', ['queued', 'in_progress', 'paused'])
-        .order('created_at', { ascending: true })
+      const [regularTaskResult, arklineTaskResult] = await Promise.all([
+        supabase
+          .from('qc_items')
+          .select(`
+            *,
+            inbound:inbound_id (
+              id,
+              grn_number
+            ),
+            inbound_unload:inbound_unload_id (
+              id,
+              model_name,
+              model_color,
+              photo_url,
+              koli_sequence
+            )
+          `)
+          .ilike('assigned_to', `%${normalizedEmail}%`)
+          .in('status', ['queued', 'in_progress', 'paused'])
+          .order('created_at', { ascending: true }),
+        supabase
+          .from('arkline_qc')
+          .select('*')
+          .ilike('assigned_to', `%${normalizedEmail}%`)
+          .in('status', ['queued', 'in_progress', 'paused'])
+          .order('created_at', { ascending: true }),
+      ])
 
       if (!isMounted) {
         return
       }
 
-      if (taskError) {
-        setError(taskError.message)
+      if (regularTaskResult.error || arklineTaskResult.error) {
+        setError(regularTaskResult.error?.message || arklineTaskResult.error?.message || 'Failed to load QC tasks.')
         setLoading(false)
         return
       }
 
-      setTasks(data || [])
+      const normalizedRegularTasks = (regularTaskResult.data || [])
+        .filter((item) => normalizeEmail(item.assigned_to) === normalizedEmail)
+        .map((item) => ({
+          ...item,
+          source_type: 'regular',
+        }))
+      const normalizedArklineTasks = (arklineTaskResult.data || [])
+        .filter((item) => normalizeEmail(item.assigned_to) === normalizedEmail)
+        .map((item) => ({
+          ...item,
+          source_type: 'arkline',
+        }))
+
+      setTasks(
+        [...normalizedRegularTasks, ...normalizedArklineTasks].sort(
+          (a, b) => new Date(a.created_at || 0).getTime() - new Date(b.created_at || 0).getTime()
+        )
+      )
       setLoading(false)
     }
 
@@ -521,36 +591,54 @@ export default function QcInspectionTaskPage() {
       setError(authError?.message || 'Unable to read the logged-in user.')
       return
     }
+    const normalizedEmail = normalizeEmail(user.email)
 
-    const displayLabel =
-      user.user_metadata?.full_name ||
-      user.user_metadata?.name ||
-      String(user.email || '').split('@')[0] ||
-      ''
+    const { data: profileRow, error: profileError } = await supabase
+      .from('dir_user_profiles')
+      .select('id, role, display_name')
+      .ilike('email', normalizedEmail)
+      .maybeSingle()
 
-    const { error: insertError } = await supabase
-      .from('qc_members')
-      .upsert(
-        [
-          {
-            email: user.email,
-            display_name: displayLabel,
-            is_active: true,
-            active_date: today,
-          },
-        ],
-        { onConflict: 'email' }
-      )
+    if (profileError || !profileRow) {
+      setError(profileError?.message || 'User profile not found. Ask admin to create this profile first.')
+      return
+    }
 
-    if (insertError) {
-      setError(insertError.message)
+    const { data: rolePermissionRows, error: rolePermissionError } = profileRow?.role
+      ? await supabase
+          .from('dir_user_roles')
+          .select('permission_code')
+          .eq('role', profileRow.role)
+      : { data: [], error: null }
+
+    if (rolePermissionError) {
+      setError(rolePermissionError.message)
+      return
+    }
+
+    if (!(rolePermissionRows || []).some((item) => item.permission_code === 'qc.inspection.do')) {
+      setError('This role does not have permission `qc.inspection.do`, so it cannot activate grading task.')
+      setProfileRole(profileRow.role || '')
+      setCanActivateQcTask(false)
+      return
+    }
+
+    const { error: updateError } = await supabase
+      .from('dir_user_profiles')
+      .update({ is_qc_active: true, qc_active_date: today })
+      .eq('id', profileRow.id)
+
+    if (updateError) {
+      setError(updateError.message)
       return
     }
 
     setIsRegistered(true)
-    setUserEmail(user.email || '')
-    setUserLabel(displayLabel)
-    setSuccess('You are now registered for QC.')
+    setProfileRole(profileRow.role || '')
+    setCanActivateQcTask(true)
+    setUserEmail(normalizedEmail)
+    setUserLabel(profileRow.display_name || user.user_metadata?.full_name || user.user_metadata?.name || String(user.email || '').split('@')[0] || '')
+    setSuccess('You are now active for QC task.')
     setRefreshKey((prev) => prev + 1)
   }
 
@@ -609,7 +697,7 @@ export default function QcInspectionTaskPage() {
 
     const startedAt = new Date().toISOString()
     const nextStatus = task.status === 'paused' ? 'in_progress' : 'in_progress'
-    if (task.status === 'paused') {
+    if (task.status === 'paused' && task.source_type !== 'arkline') {
       const closeLogError = await closeOpenPauseLog({
         taskId: task.id,
         resumedBy: userEmail,
@@ -623,14 +711,13 @@ export default function QcInspectionTaskPage() {
     }
 
     const { data, error: updateError } = await supabase
-      .from('qc_items')
+      .from(getTaskTableName(task))
       .update({
         status: nextStatus,
         started_at: startedAt,
-        decided_by: userEmail,
       })
       .eq('id', task.id)
-      .select(`
+      .select(task.source_type === 'arkline' ? '*' : `
         *,
         inbound:inbound_id (
           id,
@@ -651,7 +738,11 @@ export default function QcInspectionTaskPage() {
       return
     }
 
-    setTasks((prev) => prev.map((item) => (item.id === task.id ? data : item)))
+    setTasks((prev) =>
+      prev.map((item) =>
+        item.id === task.id ? { ...data, source_type: task.source_type } : item
+      )
+    )
     setActiveTaskId(task.id)
   }
 
@@ -665,30 +756,31 @@ export default function QcInspectionTaskPage() {
     }
 
     const pausedAt = new Date().toISOString()
-    const pauseLogError = await createPauseLog({
-      taskId: task.id,
-      pausedBy: userEmail,
-      pauseReason: interruptReason,
-      pausedAt,
-    })
+    if (task.source_type !== 'arkline') {
+      const pauseLogError = await createPauseLog({
+        taskId: task.id,
+        pausedBy: userEmail,
+        pauseReason: interruptReason,
+        pausedAt,
+      })
 
-    if (pauseLogError) {
-      setError(pauseLogError.message)
-      return
+      if (pauseLogError) {
+        setError(pauseLogError.message)
+        return
+      }
     }
 
     const { data, error: updateError } = await supabase
-      .from('qc_items')
+      .from(getTaskTableName(task))
       .update({
         status: 'paused',
         stopwatch_seconds: runningSeconds,
         pause_reason: interruptReason,
         paused_at: pausedAt,
         started_at: null,
-        decided_by: userEmail,
       })
       .eq('id', task.id)
-      .select(`
+      .select(task.source_type === 'arkline' ? '*' : `
         *,
         inbound:inbound_id (
           id,
@@ -709,7 +801,11 @@ export default function QcInspectionTaskPage() {
       return
     }
 
-    setTasks((prev) => prev.map((item) => (item.id === task.id ? data : item)))
+    setTasks((prev) =>
+      prev.map((item) =>
+        item.id === task.id ? { ...data, source_type: task.source_type } : item
+      )
+    )
     setSuccess(`QC task interrupted: ${interruptReason}.`)
     setShowInterruptModal(false)
     setActiveTaskId(null)
@@ -726,7 +822,7 @@ export default function QcInspectionTaskPage() {
     }
 
     const { data: latestTaskRow, error: latestTaskError } = await supabase
-      .from('qc_items')
+      .from(getTaskTableName(task))
       .select('qty_a, qty_b, qty_c, allocated_qty, locked_qty')
       .eq('id', task.id)
       .single()
@@ -757,32 +853,36 @@ export default function QcInspectionTaskPage() {
     const finishedAt = new Date().toISOString()
 
     if (!isTaskComplete) {
-      const pauseLogError = await createPauseLog({
-        taskId: task.id,
-        pausedBy: userEmail,
-        pauseReason: 'PARTIAL SUBMIT',
-        pausedAt: finishedAt,
-      })
+      if (task.source_type !== 'arkline') {
+        const pauseLogError = await createPauseLog({
+          taskId: task.id,
+          pausedBy: userEmail,
+          pauseReason: 'PARTIAL SUBMIT',
+          pausedAt: finishedAt,
+        })
 
-      if (pauseLogError) {
-        setError(pauseLogError.message)
-        return
+        if (pauseLogError) {
+          setError(pauseLogError.message)
+          return
+        }
       }
     } else {
-      const closeLogError = await closeOpenPauseLog({
-        taskId: task.id,
-        resumedBy: userEmail,
-        resumedAt: finishedAt,
-      })
+      if (task.source_type !== 'arkline') {
+        const closeLogError = await closeOpenPauseLog({
+          taskId: task.id,
+          resumedBy: userEmail,
+          resumedAt: finishedAt,
+        })
 
-      if (closeLogError) {
-        setError(closeLogError.message)
-        return
+        if (closeLogError) {
+          setError(closeLogError.message)
+          return
+        }
       }
     }
 
     const { data: updatedTask, error: updateError } = await supabase
-      .from('qc_items')
+      .from(getTaskTableName(task))
       .update({
         status: isTaskComplete ? 'done' : 'paused',
         qty_a: qtyA,
@@ -790,14 +890,13 @@ export default function QcInspectionTaskPage() {
         qty_c: qtyC,
         stopwatch_seconds: runningSeconds,
         finished_at: isTaskComplete ? finishedAt : null,
-        decided_by: userEmail,
         locked_qty: nextLockedQty,
         started_at: null,
         paused_at: isTaskComplete ? null : finishedAt,
         pause_reason: isTaskComplete ? null : 'PARTIAL SUBMIT',
       })
       .eq('id', task.id)
-      .select(`
+      .select(task.source_type === 'arkline' ? '*' : `
         *,
         inbound:inbound_id (
           id,
@@ -819,7 +918,9 @@ export default function QcInspectionTaskPage() {
     }
 
     setTasks((prev) =>
-      isTaskComplete ? prev.filter((item) => item.id !== task.id) : prev.map((item) => (item.id === task.id ? updatedTask : item))
+      isTaskComplete
+        ? prev.filter((item) => item.id !== task.id)
+        : prev.map((item) => (item.id === task.id ? { ...updatedTask, source_type: task.source_type } : item))
     )
     setActiveTaskId(null)
     setGradeInputs((prev) => {
@@ -854,13 +955,20 @@ export default function QcInspectionTaskPage() {
       <div style={styles.card}>
         <h1 style={styles.title}>Grading Task</h1>
         <p style={styles.subtitle}>
-          Register this account first so the planner can allocate QC work to you dynamically.
+          {canActivateQcTask
+            ? 'Activate this account for QC task so the planner can allocate QC work to you.'
+            : 'This account needs role permission `qc.inspection.do` before it can receive grading tasks.'}
         </p>
         {error ? <p style={styles.errorText}>{error}</p> : null}
         {success ? <p style={styles.successText}>{success}</p> : null}
         <div style={styles.buttonRow}>
-          <button type="button" onClick={handleRegister} style={styles.primaryButton}>
-            Register for QC
+          <button
+            type="button"
+            onClick={handleRegister}
+            style={{ ...styles.primaryButton, ...(!canActivateQcTask ? styles.disabledButton : {}) }}
+            disabled={!canActivateQcTask}
+          >
+            Activate QC Task
           </button>
         </div>
       </div>
@@ -1099,7 +1207,7 @@ export default function QcInspectionTaskPage() {
 
       {!activeTask && !tasks.length ? (
         <div style={styles.emptyState}>
-          Tidak ada task QC untuk akun ini sekarang. Kalau kosong, berarti belum ada alokasi yang masuk ke {userLabel || userEmail}.
+          Tidak ada task QC untuk akun ini sekarang. Kalau kosong, berarti belum ada alokasi yang masuk ke {userLabel || userEmail}. Halaman ini akan refresh otomatis setiap 10 detik.
         </div>
       ) : null}
 

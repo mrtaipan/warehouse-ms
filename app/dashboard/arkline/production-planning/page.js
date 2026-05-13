@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 
 import { createClient } from '@/utils/supabase/browser'
 
@@ -26,11 +26,49 @@ function createEmptyLineDraft() {
     skuInduk: '',
     namaProdukSnapshot: '',
     kategoriProdukSnapshot: '',
+    kategoriPengadaanSnapshot: '',
     allowancePct: '3',
+    hpp: '',
     status: 'Initiated',
     notes: '',
     qtyBySize: createEmptySizeQuantities(),
   }
+}
+
+function createProductSearchLabel(product) {
+  return String(product?.namaProduk || '').trim().toUpperCase()
+}
+
+function extractPoNumberInfo(poId) {
+  const normalized = String(poId || '').trim().toUpperCase()
+  const match = normalized.match(/^PO-([A-Z0-9]+)-?(.*)$/)
+
+  if (!match) {
+    return null
+  }
+
+  const numericValue = /^\d+$/.test(match[1]) ? Number(match[1]) : null
+
+  return {
+    numberText: match[1],
+    numberValue: numericValue,
+    suffix: match[2] || '',
+  }
+}
+
+function getPoPrefix(poId) {
+  const info = extractPoNumberInfo(poId)
+  return info ? `PO-${info.numberText}-` : ''
+}
+
+function getPoSuffix(poId) {
+  const info = extractPoNumberInfo(poId)
+  return info ? info.suffix : String(poId || '').trim().toUpperCase()
+}
+
+function isEditablePoSuffix(poId) {
+  const normalized = String(poId || '').trim().toUpperCase()
+  return /^PO-\d+-TEMPORER$/.test(normalized)
 }
 
 function createInitialHeader() {
@@ -39,8 +77,6 @@ function createInitialHeader() {
     supplierId: '',
     supplierName: '',
     requestDeliveryDate: '',
-    updatedDeliveryDate: '',
-    completionDate: '',
     status: 'Initiated',
     notes: '',
   }
@@ -60,7 +96,7 @@ function normalizeSupplier(row, source) {
   return {
     id: String(row?.id || '').trim(),
     supplierName: String(row?.supplier_name || row?.nama_supplier || '').trim().toUpperCase(),
-    supplierCode: String(row?.supplier_code || '').trim().toUpperCase(),
+    supplierGroup: String(row?.group || '').trim().toUpperCase(),
     isActive: row?.is_active !== false,
     source,
   }
@@ -73,7 +109,7 @@ function normalizePo(row) {
     method: String(row?.method || 'FOB').trim().toUpperCase(),
     status: String(row?.status || 'Draft').trim(),
     requestDeliveryDate: String(row?.request_delivery_date || '').slice(0, 10),
-    supplierNameSnapshot: String(row?.supplier_name_snapshot || '').trim().toUpperCase(),
+    supplierName: String(row?.supplier_name || '').trim().toUpperCase(),
     createdAt: String(row?.created_at || ''),
   }
 }
@@ -82,11 +118,12 @@ function normalizeBomLine(row) {
   return {
     id: row?.id || null,
     skuInduk: String(row?.sku_induk || '').trim().toUpperCase(),
-    kategoriProduk: String(row?.kategori_produk || '').trim().toUpperCase(),
-    materialCode: String(row?.material_code || row?.bahan_id || '').trim().toUpperCase(),
-    materialName: String(row?.material_name || row?.material_name_snapshot || row?.nama_bahan || '').trim().toUpperCase(),
-    unit: String(row?.unit || row?.satuan || 'PCS').trim().toUpperCase(),
-    size: String(row?.size || row?.size_label || '').trim().toUpperCase(),
+    kategoriPengadaan: String(row?.kategori_pengadaan || '').trim().toUpperCase(),
+    materialId: String(row?.material_id || row?.material?.id || '').trim(),
+    materialName: String(row?.material_name || row?.material?.material_name || '').trim().toUpperCase(),
+    unit: String(row?.unit || row?.material?.unit || 'PCS').trim().toUpperCase(),
+    sizeVariant: String(row?.size_variant || '').trim().toUpperCase(),
+    colorVariant: String(row?.color_variant || '').trim().toUpperCase(),
     qtyPer1: Number(row?.qty_per_1 || row?.qty_per_unit || 0) || 0,
     wastePct: Number(row?.waste_pct || 0) || 0,
     isActive: row?.is_active !== false,
@@ -95,14 +132,26 @@ function normalizeBomLine(row) {
 
 function normalizeMaterialLine(row) {
   return {
-    materialCode: String(row?.material_code || '').trim().toUpperCase(),
+    materialId: String(row?.material_id || '').trim(),
     materialNameSnapshot: String(row?.material_name_snapshot || '').trim().toUpperCase(),
     unit: String(row?.unit || 'PCS').trim().toUpperCase(),
-    size: String(row?.size || '').trim().toUpperCase(),
+    sizeVariant: String(row?.size_variant || '').trim().toUpperCase(),
+    colorVariant: String(row?.color_variant || '').trim().toUpperCase(),
     generatedQty: Number(row?.generated_qty || 0) || 0,
     finalQty: Number(row?.final_qty || 0) || 0,
     sourceSku: String(row?.source_sku_induk || '').trim().toUpperCase(),
   }
+}
+
+function buildMaterialLabel(line) {
+  return String(line?.materialNameSnapshot || line?.materialName || '').trim().toUpperCase()
+}
+
+function isBomLineMatchingSize(line, size) {
+  const variant = String(line?.sizeVariant || '').trim().toUpperCase()
+  const requestedSize = String(size || '').trim().toUpperCase()
+  if (!variant) return true
+  return variant === requestedSize
 }
 
 function toNumber(value) {
@@ -123,14 +172,40 @@ function formatQuantity(value) {
   return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(2)
 }
 
-function buildNextPoId(records) {
-  const maxNumber = records.reduce((highest, item) => {
-    const match = String(item?.poId || '').match(/(\d+)(?!.*\d)/)
-    if (!match) return highest
-    return Math.max(highest, Number(match[1]))
-  }, 0)
+function formatNumberInput(value) {
+  const normalized = String(value || '').replace(/,/g, '').trim()
+  if (!normalized) return ''
 
-  return `ARK-PO-${String(maxNumber + 1).padStart(5, '0')}`
+  const [integerPartRaw, decimalPart] = normalized.split('.')
+  const integerPart = integerPartRaw.replace(/\D/g, '')
+
+  if (!integerPart) {
+    return decimalPart != null ? `0.${decimalPart.replace(/\D/g, '')}` : ''
+  }
+
+  const withSeparator = integerPart.replace(/\B(?=(\d{3})+(?!\d))/g, ',')
+  const normalizedDecimal = decimalPart?.replace(/\D/g, '') || ''
+
+  return decimalPart != null ? `${withSeparator}.${normalizedDecimal}` : withSeparator
+}
+
+function buildNextPoId(records) {
+  const { maxNumber, width } = records.reduce(
+    (accumulator, item) => {
+      const info = extractPoNumberInfo(item?.poId)
+      if (!info || !Number.isFinite(info.numberValue)) {
+        return accumulator
+      }
+
+      return {
+        maxNumber: Math.max(accumulator.maxNumber, info.numberValue),
+        width: Math.max(accumulator.width, info.numberText.length),
+      }
+    },
+    { maxNumber: 0, width: 3 }
+  )
+
+  return `PO-${String(maxNumber + 1).padStart(width, '0')}-`
 }
 
 function getLineTotalQty(line) {
@@ -140,297 +215,173 @@ function getLineTotalQty(line) {
 function cloneLine(line) {
   return {
     ...line,
+    hpp: String(line?.hpp || ''),
     qtyBySize: { ...line.qtyBySize },
   }
 }
 
-function buildSnapshot(header, items, method) {
-  return {
-    header: {
-      poId: header.poId,
-      supplierId: header.supplierId,
-      supplierName: header.supplierName,
-      requestDeliveryDate: header.requestDeliveryDate,
-      updatedDeliveryDate: header.updatedDeliveryDate,
-      completionDate: header.completionDate,
-      status: header.status,
-      notes: header.notes,
-      method,
-    },
-    items: items
-      .map((item) => ({
-        skuInduk: item.skuInduk,
-        allowancePct: String(item.allowancePct || ''),
-        status: item.status,
-        notes: item.notes,
-        totalQty: getLineTotalQty(item),
-        qtyBySize: { ...item.qtyBySize },
-      }))
-      .sort((left, right) => left.skuInduk.localeCompare(right.skuInduk)),
-  }
-}
+function addPdfTable(doc, config) {
+  const { title, headers, rows, startY } = config
+  const pageWidth = doc.internal.pageSize.getWidth()
+  const pageHeight = doc.internal.pageSize.getHeight()
+  const marginX = 14
+  const tableWidth = pageWidth - marginX * 2
+  const colWidths = headers.map((header) => tableWidth * header.width)
+  let y = startY
 
-function buildHistoryEntries(previousSnapshot, nextSnapshot, poDbId, userEmail) {
-  const entries = []
-  const timestamp = new Date().toISOString()
-
-  if (!previousSnapshot) {
-    entries.push({
-      arkline_po_id: poDbId,
-      arkline_po_item_id: null,
-      change_type: 'create_po',
-      field_name: 'po_id',
-      old_value: null,
-      new_value: nextSnapshot.header.poId,
-      created_by: userEmail,
-      created_at: timestamp,
-    })
-
-    nextSnapshot.items.forEach((item) => {
-      entries.push({
-        arkline_po_id: poDbId,
-        arkline_po_item_id: null,
-        change_type: 'create_item',
-        field_name: item.skuInduk,
-        old_value: null,
-        new_value: JSON.stringify(item),
-        created_by: userEmail,
-        created_at: timestamp,
-      })
-    })
-
-    return entries
+  const ensureSpace = (heightNeeded) => {
+    if (y + heightNeeded <= pageHeight - 16) return
+    doc.addPage()
+    y = 18
   }
 
-  const watchedHeaderFields = [
-    'supplierId',
-    'supplierName',
-    'requestDeliveryDate',
-    'updatedDeliveryDate',
-    'completionDate',
-    'status',
-    'notes',
-    'method',
-  ]
+  ensureSpace(16)
+  doc.setFont('helvetica', 'bold')
+  doc.setFontSize(12)
+  doc.text(title, marginX, y)
+  y += 6
 
-  watchedHeaderFields.forEach((fieldName) => {
-    if ((previousSnapshot.header[fieldName] || '') === (nextSnapshot.header[fieldName] || '')) {
-      return
-    }
+  const renderRow = (values, options = {}) => {
+    const fontStyle = options.header ? 'bold' : 'normal'
+    const bgColor = options.header ? [248, 250, 252] : null
+    const lines = values.map((value, index) =>
+      doc.splitTextToSize(String(value || '-'), Math.max(colWidths[index] - 4, 12))
+    )
+    const rowHeight = Math.max(8, Math.max(...lines.map((line) => line.length)) * 4 + 2)
 
-    entries.push({
-      arkline_po_id: poDbId,
-      arkline_po_item_id: null,
-      change_type: 'update_header',
-      field_name: fieldName,
-      old_value: String(previousSnapshot.header[fieldName] || ''),
-      new_value: String(nextSnapshot.header[fieldName] || ''),
-      created_by: userEmail,
-      created_at: timestamp,
+    ensureSpace(rowHeight + 2)
+
+    let x = marginX
+    lines.forEach((line, index) => {
+      if (bgColor) {
+        doc.setFillColor(...bgColor)
+        doc.rect(x, y, colWidths[index], rowHeight, 'F')
+      }
+      doc.setDrawColor(209, 213, 219)
+      doc.rect(x, y, colWidths[index], rowHeight)
+      doc.setFont('helvetica', fontStyle)
+      doc.setFontSize(options.header ? 9 : 8)
+      doc.text(line, x + 2, y + 5)
+      x += colWidths[index]
     })
-  })
 
-  const previousItems = new Map(previousSnapshot.items.map((item) => [item.skuInduk, item]))
-  const nextItems = new Map(nextSnapshot.items.map((item) => [item.skuInduk, item]))
+    y += rowHeight
+  }
 
-  nextItems.forEach((item, skuInduk) => {
-    const previous = previousItems.get(skuInduk)
-
-    if (!previous) {
-      entries.push({
-        arkline_po_id: poDbId,
-        arkline_po_item_id: null,
-        change_type: 'add_item',
-        field_name: skuInduk,
-        old_value: null,
-        new_value: JSON.stringify(item),
-        created_by: userEmail,
-        created_at: timestamp,
-      })
-      return
-    }
-
-    if (JSON.stringify(previous) === JSON.stringify(item)) {
-      return
-    }
-
-    entries.push({
-      arkline_po_id: poDbId,
-      arkline_po_item_id: null,
-      change_type: 'update_item',
-      field_name: skuInduk,
-      old_value: JSON.stringify(previous),
-      new_value: JSON.stringify(item),
-      created_by: userEmail,
-      created_at: timestamp,
-    })
-  })
-
-  previousItems.forEach((item, skuInduk) => {
-    if (nextItems.has(skuInduk)) return
-
-    entries.push({
-      arkline_po_id: poDbId,
-      arkline_po_item_id: null,
-      change_type: 'remove_item',
-      field_name: skuInduk,
-      old_value: JSON.stringify(item),
-      new_value: null,
-      created_by: userEmail,
-      created_at: timestamp,
-    })
-  })
-
-  return entries
+  renderRow(headers.map((header) => header.label), { header: true })
+  rows.forEach((row) => renderRow(row))
+  return y + 8
 }
 
-function createPrintHtml(bundle) {
-  const itemRows = bundle.items
-    .map((item) => {
-      const sizePairs = SIZE_OPTIONS.map((size) => {
+async function createPrintPdfBlob(bundle) {
+  const { jsPDF } = await import('jspdf')
+  const doc = new jsPDF({
+    orientation: 'portrait',
+    unit: 'mm',
+    format: 'a4',
+  })
+
+  doc.setFont('helvetica', 'bold')
+  doc.setFontSize(18)
+  doc.text('Arkline Production Planning', 14, 18)
+
+  doc.setFont('helvetica', 'normal')
+  doc.setFontSize(10)
+  doc.text(`PO ID: ${bundle.poId}`, 14, 26)
+  doc.text(`Method: ${bundle.method}`, 80, 26)
+  doc.text(`Supplier: ${bundle.header.supplierName || '-'}`, 14, 32)
+  doc.text(`Status: ${bundle.header.status || '-'}`, 80, 32)
+  doc.text(`Request Delivery: ${bundle.header.requestDeliveryDate || '-'}`, 14, 38)
+
+  let currentY = 46
+
+  const itemRows = bundle.items.map((item) => {
+    const sizeBreakdown =
+      SIZE_OPTIONS.map((size) => {
         const value = toNumber(item.qtyBySize[size])
-        return value > 0 ? `<span><strong>${size}</strong>: ${formatQuantity(value)}</span>` : ''
+        return value > 0 ? `${size}:${formatQuantity(value)}` : ''
       })
         .filter(Boolean)
-        .join(' &nbsp; ')
+        .join(', ') || '-'
 
-      return `
-        <tr>
-          <td>${item.skuInduk}</td>
-          <td>${item.namaProdukSnapshot}</td>
-          <td>${item.kategoriProdukSnapshot || '-'}</td>
-          <td>${formatQuantity(getLineTotalQty(item))}</td>
-          <td>${item.allowancePct || '0'}%</td>
-          <td>${item.status}</td>
-          <td>${sizePairs || '-'}</td>
-        </tr>
-      `
+    return [
+      item.skuInduk,
+      item.namaProdukSnapshot || '-',
+      formatQuantity(getLineTotalQty(item)),
+      bundle.method === 'FOB' ? formatQuantity(toNumber(item.hpp)) : '-',
+      sizeBreakdown,
+    ]
+  })
+
+  currentY = addPdfTable(doc, {
+    title: 'Planned Items',
+    startY: currentY,
+    headers: [
+      { label: 'SKU', width: 0.2 },
+      { label: 'Product', width: 0.34 },
+      { label: 'Qty', width: 0.12 },
+      { label: 'HPP', width: 0.12 },
+      { label: 'Size Breakdown', width: 0.22 },
+    ],
+    rows: itemRows,
+  })
+
+  if (bundle.method === 'CMT' && bundle.materials.length) {
+    const materialRows = bundle.materials.map((line) => [
+      buildMaterialLabel(line) || '-',
+      line.sizeVariant || '-',
+      line.colorVariant || '-',
+      line.unit || '-',
+      formatQuantity(line.generatedQty),
+      formatQuantity(line.finalQty),
+    ])
+
+    currentY = addPdfTable(doc, {
+      title: 'Generated Materials',
+      startY: currentY,
+      headers: [
+        { label: 'Material', width: 0.3 },
+        { label: 'Size', width: 0.12 },
+        { label: 'Color', width: 0.14 },
+        { label: 'Unit', width: 0.1 },
+        { label: 'Generated', width: 0.18 },
+        { label: 'Final', width: 0.18 },
+      ],
+      rows: materialRows,
     })
-    .join('')
+  }
 
-  const materialRows =
-    bundle.method === 'CMT'
-      ? bundle.materials
-          .map(
-            (line) => `
-            <tr>
-              <td>${line.materialCode || '-'}</td>
-              <td>${line.materialNameSnapshot || '-'}</td>
-              <td>${line.size || '-'}</td>
-              <td>${line.unit || '-'}</td>
-              <td>${formatQuantity(line.generatedQty)}</td>
-              <td>${formatQuantity(line.finalQty)}</td>
-              <td>${line.sourceSku || '-'}</td>
-            </tr>
-          `
-          )
-          .join('')
-      : ''
+  const noteLines = doc.splitTextToSize(`Notes: ${bundle.header.notes || '-'}`, 180)
+  if (currentY + noteLines.length * 5 > doc.internal.pageSize.getHeight() - 16) {
+    doc.addPage()
+    currentY = 18
+  }
+  doc.setFont('helvetica', 'normal')
+  doc.setFontSize(10)
+  doc.text(noteLines, 14, currentY)
 
-  return `
-    <!doctype html>
-    <html>
-      <head>
-        <meta charset="utf-8" />
-        <title>${bundle.poId} - Arkline Production Planning</title>
-        <style>
-          body { font-family: Arial, sans-serif; color: #111827; margin: 32px; }
-          h1 { margin: 0 0 8px; font-size: 28px; }
-          h2 { margin: 24px 0 10px; font-size: 18px; }
-          .meta { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 24px; margin: 18px 0 22px; }
-          .meta div { font-size: 13px; }
-          .meta strong { display: block; color: #475569; margin-bottom: 4px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; }
-          table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-          th, td { border: 1px solid #d1d5db; padding: 10px; vertical-align: top; font-size: 12px; text-align: left; }
-          th { background: #f8fafc; }
-          .noteBox { margin-top: 18px; padding: 14px; border: 1px solid #d1d5db; border-radius: 12px; font-size: 12px; background: #fbfdff; }
-        </style>
-      </head>
-      <body>
-        <h1>Arkline Production Planning</h1>
-        <div class="meta">
-          <div><strong>PO ID</strong>${bundle.poId}</div>
-          <div><strong>Method</strong>${bundle.method}</div>
-          <div><strong>Supplier</strong>${bundle.header.supplierName || '-'}</div>
-          <div><strong>Status</strong>${bundle.header.status || '-'}</div>
-          <div><strong>Request Delivery</strong>${bundle.header.requestDeliveryDate || '-'}</div>
-          <div><strong>Updated Delivery</strong>${bundle.header.updatedDeliveryDate || '-'}</div>
-        </div>
-
-        <h2>Planned Items</h2>
-        <table>
-          <thead>
-            <tr>
-              <th>SKU</th>
-              <th>Product</th>
-              <th>Category</th>
-              <th>Total Qty</th>
-              <th>Allowance</th>
-              <th>Status</th>
-              <th>Qty by Size</th>
-            </tr>
-          </thead>
-          <tbody>${itemRows}</tbody>
-        </table>
-
-        ${
-          bundle.method === 'CMT'
-            ? `
-              <h2>Generated Materials</h2>
-              <table>
-                <thead>
-                  <tr>
-                    <th>Material Code</th>
-                    <th>Material Name</th>
-                    <th>Size</th>
-                    <th>Unit</th>
-                    <th>Generated Qty</th>
-                    <th>Final Qty</th>
-                    <th>Source SKU</th>
-                  </tr>
-                </thead>
-                <tbody>${materialRows || '<tr><td colspan="7">No material lines.</td></tr>'}</tbody>
-              </table>
-            `
-            : ''
-        }
-
-        <div class="noteBox"><strong>Notes:</strong><br />${bundle.header.notes || '-'}</div>
-        <script>window.onload = function(){ window.print(); }</script>
-      </body>
-    </html>
-  `
+  return doc.output('blob')
 }
 
 async function loadSuppliers() {
-  const arklineResponse = await supabase
-    .from('dir_arkline_suppliers')
-    .select('id, supplier_name, supplier_code, is_active')
-    .order('supplier_name', { ascending: true })
-
-  if (!arklineResponse.error) {
-    return (arklineResponse.data || [])
-      .map((item) => normalizeSupplier(item, 'arkline'))
-      .filter((item) => item.isActive && item.supplierName)
-  }
-
-  const fallbackResponse = await supabase
+  const { data, error } = await supabase
     .from('dir_suppliers')
-    .select('id, supplier_name, supplier_code, is_active')
+    .select('id, supplier_name, supplier_code, "group", is_active')
+    .eq('group', 'ARKLINE')
     .order('supplier_name', { ascending: true })
 
-  if (fallbackResponse.error) {
-    throw new Error(fallbackResponse.error.message)
+  if (error) {
+    throw new Error(error.message)
   }
 
-  return (fallbackResponse.data || [])
+  return (data || [])
     .map((item) => normalizeSupplier(item, 'regular'))
     .filter((item) => item.isActive && item.supplierName)
 }
 
 async function loadProducts() {
   const { data, error } = await supabase
-    .from('dir_arkline_products')
+    .from('arkline_dir_products')
     .select('sku_induk, kategori_pengadaan, kategori_produk, nama_produk, is_active')
     .order('nama_produk', { ascending: true })
 
@@ -444,49 +395,94 @@ async function loadProducts() {
 async function loadExistingPos() {
   const { data, error } = await supabase
     .from('arkline_pos')
-    .select('id, po_id, method, status, request_delivery_date, supplier_name_snapshot, created_at')
-    .order('created_at', { ascending: false })
+    .select('id, po_id, method, status, request_delivery_date, supplier_name, created_at')
+    .not('po_id', 'is', null)
+    .order('po_id', { ascending: true })
 
   if (error) {
     throw new Error(error.message)
   }
 
-  return (data || []).map(normalizePo)
+  return (data || [])
+    .map(normalizePo)
+    .filter((item) => item.poId && item.status.toUpperCase() !== 'COMPLETED')
+    .sort((left, right) => {
+      const leftInfo = extractPoNumberInfo(left.poId)
+      const rightInfo = extractPoNumberInfo(right.poId)
+
+      if (leftInfo?.numberValue != null && rightInfo?.numberValue != null && leftInfo.numberValue !== rightInfo.numberValue) {
+        return leftInfo.numberValue - rightInfo.numberValue
+      }
+
+      return left.poId.localeCompare(right.poId, undefined, { numeric: true })
+    })
 }
 
 async function loadBomLinesForProduct(product) {
-  const directResponse = await supabase
-    .from('dir_arkline_bom_lines')
-    .select(
-      'id, sku_induk, kategori_produk, material_code, material_name, unit, size, qty_per_1, waste_pct, is_active'
-    )
-    .eq('is_active', true)
-    .eq('sku_induk', product.skuInduk)
+  const normalizedSku = String(product?.skuInduk || '').trim().toUpperCase()
+  const normalizedKategoriPengadaan = String(product?.kategoriPengadaan || '').trim().toUpperCase()
 
-  if (directResponse.error && directResponse.error.code !== 'PGRST116') {
-    throw new Error(directResponse.error.message)
+  const categoryResponse = normalizedKategoriPengadaan
+    ? await supabase
+        .from('arkline_dir_bom')
+        .select('id, kategori_pengadaan, sku_induk, material_id, size_variant, color_variant, qty_per_1, waste_pct, is_active')
+        .eq('is_active', true)
+        .is('sku_induk', null)
+        .eq('kategori_pengadaan', normalizedKategoriPengadaan)
+    : { data: [], error: null }
+
+  if (categoryResponse.error && categoryResponse.error.code !== 'PGRST116') {
+    throw new Error(categoryResponse.error.message)
   }
 
-  let lines = (directResponse.data || []).map(normalizeBomLine)
+  const skuResponse = normalizedSku
+    ? await supabase
+        .from('arkline_dir_bom')
+        .select('id, kategori_pengadaan, sku_induk, material_id, size_variant, color_variant, qty_per_1, waste_pct, is_active')
+        .eq('is_active', true)
+        .eq('sku_induk', normalizedSku)
+    : { data: [], error: null }
 
-  if (!lines.length && product.kategoriProduk) {
-    const categoryResponse = await supabase
-      .from('dir_arkline_bom_lines')
-      .select(
-        'id, sku_induk, kategori_produk, material_code, material_name, unit, size, qty_per_1, waste_pct, is_active'
-      )
+  if (skuResponse.error && skuResponse.error.code !== 'PGRST116') {
+    throw new Error(skuResponse.error.message)
+  }
+
+  const bomRows = [...(categoryResponse.data || []), ...(skuResponse.data || [])]
+  const materialIds = Array.from(
+    new Set(
+      bomRows
+        .map((line) => String(line?.material_id || '').trim())
+        .filter(Boolean)
+    )
+  )
+
+  let materialsById = {}
+
+  if (materialIds.length) {
+    const { data: materialRows, error: materialError } = await supabase
+      .from('arkline_dir_materials')
+      .select('id, material_name, unit, is_active')
+      .in('id', materialIds)
       .eq('is_active', true)
-      .is('sku_induk', null)
-      .eq('kategori_produk', product.kategoriProduk)
 
-    if (categoryResponse.error && categoryResponse.error.code !== 'PGRST116') {
-      throw new Error(categoryResponse.error.message)
+    if (materialError && materialError.code !== 'PGRST116') {
+      throw new Error(materialError.message)
     }
 
-    lines = (categoryResponse.data || []).map(normalizeBomLine)
+    materialsById = (materialRows || []).reduce((accumulator, item) => {
+      accumulator[String(item.id || '').trim()] = item
+      return accumulator
+    }, {})
   }
 
-  return lines
+  return bomRows
+    .map((row) =>
+      normalizeBomLine({
+        ...row,
+        material: materialsById[String(row?.material_id || '').trim()] || null,
+      })
+    )
+    .filter((line) => line.materialId && line.materialName)
 }
 
 async function fetchPoBundle(poId) {
@@ -507,7 +503,7 @@ async function fetchPoBundle(poId) {
   const { data: itemRows, error: itemError } = await supabase
     .from('arkline_po_items')
     .select('*')
-    .eq('arkline_po_id', poRow.id)
+    .eq('po_id', poRow.po_id)
     .order('created_at', { ascending: true })
 
   if (itemError) {
@@ -530,16 +526,7 @@ async function fetchPoBundle(poId) {
     throw new Error(sizeError.message)
   }
 
-  const { data: materialRows, error: materialError } = await supabase
-    .from('arkline_po_material_lines')
-    .select('*')
-    .eq('arkline_po_id', poRow.id)
-    .order('material_name_snapshot', { ascending: true })
-    .order('size', { ascending: true })
-
-  if (materialError) {
-    throw new Error(materialError.message)
-  }
+  const materialRows = []
 
   const sizeRowsByItem = (sizeRows || []).reduce((accumulator, row) => {
     const key = String(row.arkline_po_item_id || '')
@@ -561,9 +548,11 @@ async function fetchPoBundle(poId) {
       localId: `loaded-${item.id}`,
       dbId: item.id,
       skuInduk: String(item.sku_induk || '').trim().toUpperCase(),
-      namaProdukSnapshot: String(item.nama_produk_snapshot || '').trim().toUpperCase(),
-      kategoriProdukSnapshot: String(item.kategori_produk_snapshot || '').trim().toUpperCase(),
+      namaProdukSnapshot: String(item.nama_produk || '').trim().toUpperCase(),
+      kategoriProdukSnapshot: String(item.kategori_produk || '').trim().toUpperCase(),
+      kategoriPengadaanSnapshot: String(item.kategori_pengadaan || '').trim().toUpperCase(),
       allowancePct: String(item.allowance_pct ?? '0'),
+      hpp: String(item.hpp ?? ''),
       status: String(item.status || 'Initiated'),
       notes: String(item.notes || ''),
       actualQty: Number(item.actual_qty || 0) || 0,
@@ -574,7 +563,7 @@ async function fetchPoBundle(poId) {
   return {
     po: poRow,
     items: normalizedItems,
-    materials: (materialRows || []).map(normalizeMaterialLine),
+    materials: materialRows.map(normalizeMaterialLine),
   }
 }
 
@@ -584,7 +573,15 @@ export default function ArklineProductionPlanningPage() {
   const [generatingMaterials, setGeneratingMaterials] = useState(false)
   const [printing, setPrinting] = useState(false)
   const [error, setError] = useState('')
+  const [lineError, setLineError] = useState('')
   const [success, setSuccess] = useState('')
+  const [isPlanningDirty, setIsPlanningDirty] = useState(false)
+  const [showLeaveConfirm, setShowLeaveConfirm] = useState(false)
+  const [pendingNavigationHref, setPendingNavigationHref] = useState('')
+  const [isEditingExistingPoSuffix, setIsEditingExistingPoSuffix] = useState(false)
+  const [showExistingPoPicker, setShowExistingPoPicker] = useState(false)
+  const pendingNavigationHrefRef = useRef('')
+  const plannedLinesSectionRef = useRef(null)
 
   const [suppliers, setSuppliers] = useState([])
   const [products, setProducts] = useState([])
@@ -597,12 +594,12 @@ export default function ArklineProductionPlanningPage() {
 
   const [header, setHeader] = useState(createInitialHeader())
   const [categoryFilter, setCategoryFilter] = useState('')
+  const [productSearch, setProductSearch] = useState('')
+  const [showProductOptions, setShowProductOptions] = useState(false)
   const [lineDraft, setLineDraft] = useState(createEmptyLineDraft())
   const [poItems, setPoItems] = useState([])
   const [materialPreview, setMaterialPreview] = useState([])
   const [materialWarnings, setMaterialWarnings] = useState([])
-  const [loadedSnapshot, setLoadedSnapshot] = useState(null)
-
   useEffect(() => {
     async function loadPageData() {
       setLoading(true)
@@ -614,9 +611,9 @@ export default function ArklineProductionPlanningPage() {
         setSuppliers(supplierRows)
         setProducts(productRows)
         setExistingPos(poRows)
-        setHeader((prev) => ({
-          ...prev,
-          poId: prev.poId || buildNextPoId(poRows),
+      setHeader((prev) => ({
+        ...prev,
+        poId: prev.poId || buildNextPoId(poRows),
         }))
       } catch (loadError) {
         setError(loadError.message || 'Failed to load Arkline planning master data.')
@@ -642,32 +639,133 @@ export default function ArklineProductionPlanningPage() {
     [products]
   )
 
+  const nextPoPrefix = useMemo(() => buildNextPoId(existingPos), [existingPos])
+  const currentPoPrefix = mode === 'new' ? getPoPrefix(header.poId) || nextPoPrefix : getPoPrefix(header.poId)
+  const currentPoSuffix = mode === 'new' ? getPoSuffix(header.poId) : ''
+  const filteredExistingPos = useMemo(
+    () => existingPos.filter((item) => String(item.method || '').trim().toUpperCase() === method),
+    [existingPos, method]
+  )
+
+  useEffect(() => {
+    if (!selectedExistingPoId) {
+      return
+    }
+
+    const stillExists = filteredExistingPos.some((item) => item.poId === selectedExistingPoId)
+    if (!stillExists) {
+      setSelectedExistingPoId('')
+    }
+  }, [filteredExistingPos, selectedExistingPoId])
+
   const filteredProducts = useMemo(() => {
-    if (!categoryFilter) return products
-    return products.filter((item) => item.kategoriProduk === categoryFilter)
-  }, [categoryFilter, products])
+    const keyword = productSearch.trim().toUpperCase()
+
+    return products.filter((item) => {
+      const matchesCategory = !categoryFilter || item.kategoriProduk === categoryFilter
+      const matchesKeyword =
+        !keyword ||
+        [item.skuInduk, item.namaProduk, item.kategoriProduk, item.kategoriPengadaan]
+          .filter(Boolean)
+          .join(' ')
+          .includes(keyword)
+
+      return matchesCategory && matchesKeyword
+    })
+  }, [categoryFilter, productSearch, products])
 
   const selectedDraftProduct = lineDraft.skuInduk ? productBySku[lineDraft.skuInduk] || null : null
+  const resolveLineProductDisplay = (line) => {
+    const currentProduct = productBySku[line.skuInduk] || null
+
+    return {
+      namaProduk: currentProduct?.namaProduk || line.namaProdukSnapshot || line.skuInduk,
+      kategoriProduk: currentProduct?.kategoriProduk || line.kategoriProdukSnapshot || '',
+    }
+  }
 
   const totalPlannedQty = useMemo(
     () => poItems.reduce((sum, item) => sum + getLineTotalQty(item), 0),
     [poItems]
   )
+  const isExistingModeLocked = mode === 'existing' && !selectedExistingPoId
+  const isEditingLine = Boolean(lineDraft.localId || lineDraft.dbId)
+  const isHppDisabled = method === 'CMT' || isExistingModeLocked
 
   const totalMaterialLines = materialPreview.length
   const totalMaterialFinalQty = materialPreview.reduce((sum, item) => sum + Number(item.finalQty || 0), 0)
 
-  function resetLineDraft(nextDraft = createEmptyLineDraft()) {
-    setLineDraft(nextDraft)
-    if (nextDraft.kategoriProdukSnapshot) {
-      setCategoryFilter(nextDraft.kategoriProdukSnapshot)
+  useEffect(() => {
+    if (!isPlanningDirty) {
+      return undefined
     }
+
+    const handleBeforeUnload = (event) => {
+      event.preventDefault()
+      event.returnValue = ''
+    }
+
+    const handleDocumentClick = (event) => {
+      const link = event.target instanceof Element ? event.target.closest('a[href]') : null
+      if (!link) return
+
+      const href = link.getAttribute('href') || ''
+      if (!href || href.startsWith('#')) return
+      if (link.target && link.target !== '_self') return
+
+      const nextUrl = new URL(href, window.location.href)
+      const currentUrl = new URL(window.location.href)
+
+      if (nextUrl.href === currentUrl.href) {
+        return
+      }
+
+      event.preventDefault()
+      pendingNavigationHrefRef.current = nextUrl.href
+      setPendingNavigationHref(nextUrl.href)
+      setShowLeaveConfirm(true)
+    }
+
+    window.addEventListener('beforeunload', handleBeforeUnload)
+    document.addEventListener('click', handleDocumentClick, true)
+
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload)
+      document.removeEventListener('click', handleDocumentClick, true)
+    }
+  }, [isPlanningDirty])
+
+  function resetLineDraft(nextDraft = createEmptyLineDraft()) {
+    const nextProductLabel =
+      nextDraft?.skuInduk && productBySku[nextDraft.skuInduk]
+        ? createProductSearchLabel(productBySku[nextDraft.skuInduk])
+        : String(nextDraft?.namaProdukSnapshot || '').trim().toUpperCase()
+    const nextCategory =
+      nextDraft?.skuInduk && productBySku[nextDraft.skuInduk]?.kategoriProduk
+        ? productBySku[nextDraft.skuInduk].kategoriProduk
+        : nextDraft?.kategoriProdukSnapshot || ''
+
+    setLineDraft({
+      ...createEmptyLineDraft(),
+      ...nextDraft,
+      hpp: String(nextDraft?.hpp || ''),
+      qtyBySize: {
+        ...createEmptySizeQuantities(),
+        ...(nextDraft?.qtyBySize || {}),
+      },
+    })
+    setProductSearch(nextProductLabel)
+    setShowProductOptions(false)
+    setLineError('')
+    setCategoryFilter(nextCategory)
   }
 
   function resetPlanningState(nextMode = 'new', poRows = existingPos) {
     setMode(nextMode)
     setMethod('FOB')
     setSelectedExistingPoId('')
+    setIsEditingExistingPoSuffix(false)
+    setShowExistingPoPicker(nextMode === 'existing')
     setCurrentPoDbId(null)
     setHeader({
       ...createInitialHeader(),
@@ -677,9 +775,10 @@ export default function ArklineProductionPlanningPage() {
     setPoItems([])
     setMaterialPreview([])
     setMaterialWarnings([])
-    setLoadedSnapshot(null)
     resetLineDraft()
+    setIsPlanningDirty(false)
     setError('')
+    setLineError('')
     setSuccess('')
   }
 
@@ -706,7 +805,7 @@ export default function ArklineProductionPlanningPage() {
       for (const item of nextItems) {
         const product = productBySku[item.skuInduk] || {
           skuInduk: item.skuInduk,
-          kategoriProduk: item.kategoriProdukSnapshot,
+          kategoriPengadaan: String(item.kategoriPengadaanSnapshot || item.kategoriProdukSnapshot || '').trim().toUpperCase(),
         }
 
         const bomLines = await loadBomLinesForProduct(product)
@@ -722,7 +821,7 @@ export default function ArklineProductionPlanningPage() {
           const requestedQty = toNumber(item.qtyBySize[size])
           if (requestedQty <= 0) return
 
-          const matchingLines = bomLines.filter((line) => !line.size || line.size === 'ALL' || line.size === size)
+          const matchingLines = bomLines.filter((line) => isBomLineMatchingSize(line, size))
 
           if (!matchingLines.length) {
             warnings.push(`No BOM line matches ${item.namaProdukSnapshot || item.skuInduk} size ${size}.`)
@@ -732,15 +831,16 @@ export default function ArklineProductionPlanningPage() {
           matchingLines.forEach((line) => {
             const generatedQty = roundQuantity(requestedQty * toNumber(line.qtyPer1))
             const finalQty = roundQuantity(generatedQty * (1 + (allowancePct + toNumber(line.wastePct)) / 100))
-            const key = [line.materialCode, line.materialName, line.unit, line.size || size, item.skuInduk].join('|')
+            const key = [line.materialId, line.materialName, line.unit, line.sizeVariant || size, line.colorVariant || '', item.skuInduk].join('|')
             const existing = aggregate.get(key)
 
             if (!existing) {
               aggregate.set(key, {
-                materialCode: line.materialCode,
+                materialId: line.materialId,
                 materialNameSnapshot: line.materialName,
                 unit: line.unit,
-                size: line.size || size,
+                sizeVariant: line.sizeVariant || size,
+                colorVariant: line.colorVariant || '',
                 generatedQty,
                 finalQty,
                 sourceSku: item.skuInduk,
@@ -756,7 +856,9 @@ export default function ArklineProductionPlanningPage() {
 
       setMaterialPreview(
         Array.from(aggregate.values()).sort((left, right) =>
-          `${left.materialNameSnapshot}-${left.size}`.localeCompare(`${right.materialNameSnapshot}-${right.size}`)
+          `${buildMaterialLabel(left)}-${left.sizeVariant}-${left.colorVariant}`.localeCompare(
+            `${buildMaterialLabel(right)}-${right.sizeVariant}-${right.colorVariant}`
+          )
         )
       )
       setMaterialWarnings(warnings)
@@ -776,8 +878,10 @@ export default function ArklineProductionPlanningPage() {
 
   function handleMethodChange(nextMethod) {
     setMethod(nextMethod)
+    setIsPlanningDirty(true)
     setSuccess('')
     setError('')
+    setLineError('')
 
     if (nextMethod === 'FOB') {
       setMaterialPreview([])
@@ -791,6 +895,16 @@ export default function ArklineProductionPlanningPage() {
   function handleHeaderChange(event) {
     const { name, value } = event.target
 
+    if (name === 'poSuffix') {
+      setHeader((prev) => ({
+        ...prev,
+        poId: `${(mode === 'new' ? getPoPrefix(prev.poId) || nextPoPrefix : getPoPrefix(prev.poId)) || nextPoPrefix}${value.toUpperCase()}`,
+      }))
+      setIsPlanningDirty(true)
+      setError('')
+      return
+    }
+
     if (name === 'supplierId') {
       const selected = suppliers.find((item) => item.id === value)
       setHeader((prev) => ({
@@ -798,6 +912,8 @@ export default function ArklineProductionPlanningPage() {
         supplierId: value,
         supplierName: selected?.supplierName || '',
       }))
+      setIsPlanningDirty(true)
+      setError('')
       return
     }
 
@@ -805,6 +921,8 @@ export default function ArklineProductionPlanningPage() {
       ...prev,
       [name]: value,
     }))
+    setIsPlanningDirty(true)
+    setError('')
   }
 
   function handleDraftSizeChange(size, rawValue) {
@@ -816,6 +934,8 @@ export default function ArklineProductionPlanningPage() {
         [size]: numericValue,
       },
     }))
+    setIsPlanningDirty(true)
+    setLineError('')
   }
 
   function handleDraftChange(event) {
@@ -827,6 +947,52 @@ export default function ArklineProductionPlanningPage() {
         ...prev,
         allowancePct: numericValue,
       }))
+      setIsPlanningDirty(true)
+      return
+    }
+
+    if (name === 'hpp') {
+      const numericValue = value.replace(/,/g, '').replace(/[^\d.]/g, '')
+      setLineDraft((prev) => ({
+        ...prev,
+        hpp: numericValue,
+      }))
+      setIsPlanningDirty(true)
+      setLineError('')
+      return
+    }
+
+    if (name === 'productSearch') {
+      const normalizedValue = value.toUpperCase()
+      setProductSearch(normalizedValue)
+      setShowProductOptions(true)
+      setIsPlanningDirty(true)
+      setError('')
+      setLineError('')
+      setSuccess('')
+
+      const selected = filteredProducts.find((item) => createProductSearchLabel(item) === normalizedValue)
+
+      if (selected) {
+        setLineDraft((prev) => ({
+          ...prev,
+          skuInduk: selected.skuInduk,
+          namaProdukSnapshot: selected.namaProduk,
+          kategoriProdukSnapshot: selected.kategoriProduk,
+          kategoriPengadaanSnapshot: selected.kategoriPengadaan,
+        }))
+        setProductSearch('')
+        setShowProductOptions(false)
+        return
+      }
+
+      setLineDraft((prev) => ({
+        ...prev,
+        skuInduk: '',
+        namaProdukSnapshot: '',
+        kategoriProdukSnapshot: '',
+        kategoriPengadaanSnapshot: '',
+      }))
       return
     }
 
@@ -837,7 +1003,10 @@ export default function ArklineProductionPlanningPage() {
         skuInduk: value,
         namaProdukSnapshot: selected?.namaProduk || '',
         kategoriProdukSnapshot: selected?.kategoriProduk || '',
+        kategoriPengadaanSnapshot: selected?.kategoriPengadaan || '',
       }))
+      setIsPlanningDirty(true)
+      setProductSearch('')
       return
     }
 
@@ -845,23 +1014,67 @@ export default function ArklineProductionPlanningPage() {
       ...prev,
       [name]: value,
     }))
+    setIsPlanningDirty(true)
+    setLineError('')
+  }
+
+  function handleProductFieldClick() {
+    if (lineDraft.skuInduk || productSearch) {
+      setLineDraft((prev) => ({
+        ...prev,
+        skuInduk: '',
+        namaProdukSnapshot: '',
+        kategoriProdukSnapshot: '',
+        kategoriPengadaanSnapshot: '',
+      }))
+      setProductSearch('')
+    }
+
+    setShowProductOptions(true)
+    setIsPlanningDirty(true)
+    setError('')
+    setLineError('')
+    setSuccess('')
+  }
+
+  function handleProductChange(skuInduk) {
+    const product = productBySku[skuInduk] || null
+
+    setLineDraft((prev) => ({
+      ...prev,
+      skuInduk: product?.skuInduk || '',
+      namaProdukSnapshot: product?.namaProduk || '',
+      kategoriProdukSnapshot: product?.kategoriProduk || '',
+      kategoriPengadaanSnapshot: product?.kategoriPengadaan || '',
+    }))
+    setIsPlanningDirty(true)
+    setProductSearch(product ? createProductSearchLabel(product) : '')
+    setShowProductOptions(false)
+    setError('')
+    setLineError('')
+    setSuccess('')
   }
 
   function validateLineDraft() {
     if (!lineDraft.skuInduk) {
-      setError('Choose an Arkline product first.')
+      setLineError('Choose an Arkline product first.')
       return null
     }
 
     const product = productBySku[lineDraft.skuInduk]
     if (!product) {
-      setError('Selected product is no longer available.')
+      setLineError('Selected product is no longer available.')
       return null
     }
 
     const totalQty = getLineTotalQty(lineDraft)
     if (totalQty <= 0) {
-      setError('Enter at least one size quantity before adding the line.')
+      setLineError('Enter at least one size quantity before adding the line.')
+      return null
+    }
+
+    if (method === 'FOB' && toNumber(lineDraft.hpp) <= 0) {
+      setLineError('Enter HPP for FOB product lines.')
       return null
     }
 
@@ -870,12 +1083,14 @@ export default function ArklineProductionPlanningPage() {
       localId: lineDraft.localId || `draft-${Date.now()}`,
       namaProdukSnapshot: product.namaProduk,
       kategoriProdukSnapshot: product.kategoriProduk,
-      allowancePct: method === 'CMT' ? String(lineDraft.allowancePct || '0') : '0',
+      kategoriPengadaanSnapshot: product.kategoriPengadaan,
+      allowancePct: String(lineDraft.allowancePct || '0'),
+      hpp: method === 'FOB' ? String(lineDraft.hpp || '') : '',
     }
   }
 
   function handleAddOrUpdateLine() {
-    setError('')
+    setLineError('')
     setSuccess('')
 
     const prepared = validateLineDraft()
@@ -883,7 +1098,7 @@ export default function ArklineProductionPlanningPage() {
 
     const duplicate = poItems.find((item) => item.skuInduk === prepared.skuInduk && item.localId !== prepared.localId)
     if (duplicate) {
-      setError('This SKU already exists in the current PO. Edit the existing line instead of adding a duplicate.')
+      setLineError('This SKU already exists in the current PO. Edit the existing line instead of adding a duplicate.')
       return
     }
 
@@ -892,7 +1107,10 @@ export default function ArklineProductionPlanningPage() {
       : [...poItems, prepared]
 
     setPoItems(nextItems)
+    setCategoryFilter('')
+    setIsPlanningDirty(true)
     resetLineDraft()
+    setLineError('')
     setSuccess(prepared.dbId ? 'PO line updated in draft.' : 'PO line added to draft.')
 
     if (method === 'CMT') {
@@ -904,13 +1122,18 @@ export default function ArklineProductionPlanningPage() {
     const target = poItems.find((item) => item.localId === localId)
     if (!target) return
     resetLineDraft(cloneLine(target))
-    setError('')
+    setLineError('')
     setSuccess('')
+    plannedLinesSectionRef.current?.scrollIntoView({
+      behavior: 'smooth',
+      block: 'start',
+    })
   }
 
   function handleRemoveLine(localId) {
     const nextItems = poItems.filter((item) => item.localId !== localId)
     setPoItems(nextItems)
+    setIsPlanningDirty(true)
 
     if (lineDraft.localId === localId) {
       resetLineDraft()
@@ -932,10 +1155,8 @@ export default function ArklineProductionPlanningPage() {
       const normalizedHeader = {
         poId: String(bundle.po.po_id || '').trim().toUpperCase(),
         supplierId: bundle.po.supplier_id != null ? String(bundle.po.supplier_id) : '',
-        supplierName: String(bundle.po.supplier_name_snapshot || '').trim().toUpperCase(),
+        supplierName: String(bundle.po.supplier_name || '').trim().toUpperCase(),
         requestDeliveryDate: String(bundle.po.request_delivery_date || '').slice(0, 10),
-        updatedDeliveryDate: String(bundle.po.updated_delivery_date || '').slice(0, 10),
-        completionDate: String(bundle.po.completion_date || '').slice(0, 10),
         status: String(bundle.po.status || 'Draft'),
         notes: String(bundle.po.notes || ''),
       }
@@ -943,6 +1164,8 @@ export default function ArklineProductionPlanningPage() {
       setMode('existing')
       setMethod(String(bundle.po.method || 'FOB').trim().toUpperCase())
       setSelectedExistingPoId(normalizedHeader.poId)
+      setShowExistingPoPicker(false)
+      setIsEditingExistingPoSuffix(false)
       setCurrentPoDbId(bundle.po.id)
       setHeader(normalizedHeader)
       setCategoryFilter('')
@@ -950,7 +1173,7 @@ export default function ArklineProductionPlanningPage() {
       setMaterialPreview(bundle.materials)
       setMaterialWarnings([])
       resetLineDraft()
-      setLoadedSnapshot(buildSnapshot(normalizedHeader, bundle.items, String(bundle.po.method || 'FOB').trim().toUpperCase()))
+      setIsPlanningDirty(false)
     } catch (loadError) {
       setError(loadError.message || 'Failed to load existing PO.')
     } finally {
@@ -981,6 +1204,10 @@ export default function ArklineProductionPlanningPage() {
         throw new Error('PO ID is required.')
       }
 
+      if (mode === 'new' && !getPoSuffix(header.poId)) {
+        throw new Error('Isi bagian nomor PO setelah prefix otomatis.')
+      }
+
       if (!header.supplierId) {
         throw new Error('Choose a supplier first.')
       }
@@ -997,23 +1224,16 @@ export default function ArklineProductionPlanningPage() {
         if (materialWarnings.length) {
           throw new Error('Resolve missing BOM lines before saving this CMT PO.')
         }
-
-        if (!materialPreview.length) {
-          throw new Error('Generate material preview first for CMT PO.')
-        }
       }
 
       let poDbId = currentPoDbId
 
       const headerPayload = {
         po_id: header.poId.trim().toUpperCase(),
-        mode,
         method,
         supplier_id: header.supplierId ? Number(header.supplierId) || header.supplierId : null,
-        supplier_name_snapshot: header.supplierName || null,
+        supplier_name: header.supplierName || null,
         request_delivery_date: header.requestDeliveryDate || null,
-        updated_delivery_date: header.updatedDeliveryDate || null,
-        completion_date: header.completionDate || null,
         status: header.status || 'Draft',
         notes: header.notes.trim() || null,
         updated_by: userEmail,
@@ -1044,7 +1264,7 @@ export default function ArklineProductionPlanningPage() {
         const { data: existingItemIds, error: fetchExistingItemError } = await supabase
           .from('arkline_po_items')
           .select('id')
-          .eq('arkline_po_id', poDbId)
+          .eq('po_id', header.poId.trim().toUpperCase())
 
         if (fetchExistingItemError) {
           throw new Error(fetchExistingItemError.message)
@@ -1060,13 +1280,10 @@ export default function ArklineProductionPlanningPage() {
           }
         }
 
-        const { error: deleteMaterialError } = await supabase.from('arkline_po_material_lines').delete().eq('arkline_po_id', poDbId)
-
-        if (deleteMaterialError) {
-          throw new Error(deleteMaterialError.message)
-        }
-
-        const { error: deleteItemError } = await supabase.from('arkline_po_items').delete().eq('arkline_po_id', poDbId)
+        const { error: deleteItemError } = await supabase
+          .from('arkline_po_items')
+          .delete()
+          .eq('po_id', header.poId.trim().toUpperCase())
 
         if (deleteItemError) {
           throw new Error(deleteItemError.message)
@@ -1074,15 +1291,17 @@ export default function ArklineProductionPlanningPage() {
       }
 
       const itemPayload = poItems.map((item) => ({
-        arkline_po_id: poDbId,
+        po_id: header.poId.trim().toUpperCase(),
         sku_induk: item.skuInduk,
-        nama_produk_snapshot: item.namaProdukSnapshot,
-        kategori_produk_snapshot: item.kategoriProdukSnapshot || null,
-        allowance_pct: method === 'CMT' ? toNumber(item.allowancePct) : 0,
+        nama_produk: item.namaProdukSnapshot,
+        kategori_produk: item.kategoriProdukSnapshot || null,
+        allowance_pct: toNumber(item.allowancePct),
         total_qty: getLineTotalQty(item),
-        actual_qty: getLineTotalQty(item),
+        actual_qty: 0,
+        hpp: method === 'FOB' ? toNumber(item.hpp) : null,
         status: item.status || 'Initiated',
         notes: item.notes.trim() || null,
+        kategori_pengadaan: item.kategoriPengadaanSnapshot || productBySku[item.skuInduk]?.kategoriPengadaan || null,
       }))
 
       const { data: insertedItems, error: insertItemError } = await supabase
@@ -1123,52 +1342,10 @@ export default function ArklineProductionPlanningPage() {
         }
       }
 
-      if (method === 'CMT' && materialPreview.length) {
-        const materialPayload = materialPreview.map((line) => ({
-          arkline_po_id: poDbId,
-          arkline_po_item_id: insertedBySku[line.sourceSku]?.id || null,
-          material_code: line.materialCode || null,
-          material_name_snapshot: line.materialNameSnapshot || null,
-          size: line.size || null,
-          generated_qty: roundQuantity(line.generatedQty),
-          final_qty: roundQuantity(line.finalQty),
-          unit: line.unit || 'PCS',
-          source_sku_induk: line.sourceSku || null,
-        }))
-
-        const { error: insertMaterialError } = await supabase.from('arkline_po_material_lines').insert(materialPayload)
-        if (insertMaterialError) {
-          throw new Error(insertMaterialError.message)
-        }
-      }
-
-      const nextSnapshot = buildSnapshot(header, poItems, method)
-      const historyEntries = buildHistoryEntries(loadedSnapshot, nextSnapshot, poDbId, userEmail)
-      if (historyEntries.length) {
-        const { error: historyError } = await supabase.from('arkline_po_history').insert(historyEntries)
-        if (historyError) {
-          throw new Error(historyError.message)
-        }
-      }
-
       const refreshedPos = await refreshPoListAndKeepSelection(header.poId)
-      setCurrentPoDbId(poDbId)
-      setMode('existing')
-      setSelectedExistingPoId(header.poId)
-      setLoadedSnapshot(nextSnapshot)
-      resetLineDraft()
+      resetPlanningState('new', refreshedPos)
+      setExistingPos(refreshedPos)
       setSuccess(`PO ${header.poId} saved successfully.`)
-
-      if (!currentPoDbId) {
-        setHeader((prev) => ({
-          ...prev,
-          poId: prev.poId,
-        }))
-      }
-
-      if (mode === 'new') {
-        setExistingPos(refreshedPos)
-      }
     } catch (saveError) {
       setError(saveError.message || 'Failed to save Arkline production planning.')
     } finally {
@@ -1186,30 +1363,87 @@ export default function ArklineProductionPlanningPage() {
     }
 
     setPrinting(true)
+    const previewWindow = window.open('', '_blank')
 
     try {
-      const bundle = await fetchPoBundle(header.poId)
-      const printWindow = window.open('', '_blank', 'noopener,noreferrer,width=1100,height=800')
-
-      if (!printWindow) {
-        throw new Error('Popup blocked. Please allow popups to print the PO.')
+      if (!previewWindow) {
+        throw new Error('Popup blocked. Please allow popups to preview the PDF.')
       }
 
-      printWindow.document.open()
-      printWindow.document.write(
-        createPrintHtml({
-          poId: header.poId,
-          method,
-          header,
-          items: bundle.items,
-          materials: bundle.materials,
-        })
-      )
-      printWindow.document.close()
+      previewWindow.document.write('<html><body style="font-family: Arial, sans-serif; padding: 24px;">Preparing PDF preview...</body></html>')
+      previewWindow.document.close()
+
+      const bundle = await fetchPoBundle(header.poId)
+      const printableItems = bundle.items.map((item) => {
+        const currentProduct = productBySku[item.skuInduk] || null
+        return {
+          ...item,
+          namaProdukSnapshot: currentProduct?.namaProduk || item.namaProdukSnapshot,
+          kategoriProdukSnapshot: currentProduct?.kategoriProduk || item.kategoriProdukSnapshot,
+        }
+      })
+      const pdfBlob = await createPrintPdfBlob({
+        poId: header.poId,
+        method,
+        header,
+        items: printableItems,
+        materials: bundle.materials,
+      })
+      const pdfUrl = URL.createObjectURL(pdfBlob)
+      previewWindow.location.href = pdfUrl
+      window.setTimeout(() => URL.revokeObjectURL(pdfUrl), 60000)
     } catch (printError) {
+      previewWindow?.close()
       setError(printError.message || 'Failed to prepare print view.')
     } finally {
       setPrinting(false)
+    }
+  }
+
+  function handleCancelUpdateLine() {
+    resetLineDraft({ ...createEmptyLineDraft(), allowancePct: method === 'CMT' ? '3' : '0' })
+    setLineError('')
+    setSuccess('')
+  }
+
+  function handleEnableExistingPoSuffixEdit() {
+    if (!selectedExistingPoId) return
+    setIsEditingExistingPoSuffix(true)
+    setIsPlanningDirty(true)
+  }
+
+  function handleChangeExistingPoSelection() {
+    setShowExistingPoPicker(true)
+    setIsEditingExistingPoSuffix(false)
+    setSelectedExistingPoId('')
+    setCurrentPoDbId(null)
+    setHeader((prev) => ({
+      ...prev,
+      poId: '',
+    }))
+    setPoItems([])
+    setMaterialPreview([])
+    setMaterialWarnings([])
+    resetLineDraft()
+    setError('')
+    setSuccess('')
+  }
+
+  function handleStayOnPlanning() {
+    pendingNavigationHrefRef.current = ''
+    setPendingNavigationHref('')
+    setShowLeaveConfirm(false)
+  }
+
+  function handleLeaveWithoutSaving() {
+    const nextHref = pendingNavigationHrefRef.current || pendingNavigationHref
+    setIsPlanningDirty(false)
+    setShowLeaveConfirm(false)
+    setPendingNavigationHref('')
+    pendingNavigationHrefRef.current = ''
+
+    if (nextHref) {
+      window.location.href = nextHref
     }
   }
 
@@ -1224,7 +1458,24 @@ export default function ArklineProductionPlanningPage() {
             <h1 className={styles.title}>Production Planning</h1>
             <p className={styles.subtitle}>PO planning, size allocation, material generation, save, and print.</p>
           </div>
+          <div className={styles.headerActions}>
+            <button type="button" className={styles.secondaryButton} onClick={() => resetPlanningState('new')}>
+              Reset Planning
+            </button>
+            <button type="button" className={styles.printButton} onClick={handlePrint} disabled={printing || !header.poId}>
+              {printing ? 'Preparing Print...' : 'Print PO'}
+            </button>
+            <button type="button" className={styles.primaryButton} onClick={handleSavePo} disabled={saving || loading}>
+              {saving ? 'Saving...' : 'Save Planning'}
+            </button>
+          </div>
         </div>
+        {(error || success) && (
+          <div className={styles.feedbackStrip}>
+            {error ? <p className={styles.errorText}>{error}</p> : null}
+            {success ? <p className={styles.successText}>{success}</p> : null}
+          </div>
+        )}
 
         <div className={styles.planningColumns}>
         <section className={`${styles.sectionCard} ${styles.poPlanningCard}`.trim()}>
@@ -1277,16 +1528,31 @@ export default function ArklineProductionPlanningPage() {
             </div>
 
             <div className={styles.field}>
-              <label className={styles.label}>PO ID</label>
+              <div className={styles.labelRow}>
+                <label className={styles.label}>PO ID</label>
+                {mode === 'existing' && selectedExistingPoId && !showExistingPoPicker && isEditablePoSuffix(header.poId) ? (
+                  <button
+                    type="button"
+                    className={`${styles.iconButton} ${isEditingExistingPoSuffix ? styles.iconButtonActive : ''}`.trim()}
+                    onClick={handleEnableExistingPoSuffixEdit}
+                    aria-label="Edit PO suffix"
+                    title="Edit PO suffix"
+                  >
+                    ✎
+                  </button>
+                ) : null}
+              </div>
               {mode === 'new' ? (
-                <input
-                  className={styles.input}
-                  name="poId"
-                  value={header.poId}
-                  onChange={handleHeaderChange}
-                  placeholder="ARK-PO-00001"
-                />
-              ) : (
+                <div className={styles.inlineFieldRow}>
+                  <input className={styles.inputReadonly} value={currentPoPrefix} readOnly />
+                  <input
+                    className={styles.input}
+                    name="poSuffix"
+                    value={currentPoSuffix}
+                    onChange={handleHeaderChange}
+                  />
+                </div>
+              ) : showExistingPoPicker || !selectedExistingPoId || (!isEditablePoSuffix(header.poId) && !isEditingExistingPoSuffix) ? (
                 <select
                   className={styles.select}
                   value={selectedExistingPoId}
@@ -1296,23 +1562,44 @@ export default function ArklineProductionPlanningPage() {
                   }}
                 >
                   <option value="">Select existing PO</option>
-                  {existingPos.map((item) => (
+                  {filteredExistingPos.map((item) => (
                     <option key={item.poId} value={item.poId}>
-                      {item.poId} · {item.method} · {item.status}
+                      {item.poId}
                     </option>
                   ))}
                 </select>
+              ) : (
+                <div className={styles.poIdExistingWrap}>
+                  <div className={styles.inlineFieldRow}>
+                    <input className={styles.inputReadonly} value={getPoPrefix(header.poId)} readOnly />
+                    <input
+                      className={styles.input}
+                      name="poSuffix"
+                      value={getPoSuffix(header.poId)}
+                      onChange={handleHeaderChange}
+                      disabled={!isEditingExistingPoSuffix}
+                    />
+                  </div>
+                  <button type="button" className={styles.ghostButton} onClick={handleChangeExistingPoSelection}>
+                    Change PO
+                  </button>
+                </div>
               )}
             </div>
 
             <div className={styles.field}>
               <label className={styles.label}>Supplier</label>
-              <select className={styles.select} name="supplierId" value={header.supplierId} onChange={handleHeaderChange}>
+              <select
+                className={styles.select}
+                name="supplierId"
+                value={header.supplierId}
+                onChange={handleHeaderChange}
+                disabled={isExistingModeLocked}
+              >
                 <option value="">Select supplier</option>
                 {suppliers.map((supplier) => (
                   <option key={`${supplier.source}-${supplier.id}`} value={supplier.id}>
                     {supplier.supplierName}
-                    {supplier.supplierCode ? ` · ${supplier.supplierCode}` : ''}
                   </option>
                 ))}
               </select>
@@ -1326,17 +1613,7 @@ export default function ArklineProductionPlanningPage() {
                 name="requestDeliveryDate"
                 value={header.requestDeliveryDate}
                 onChange={handleHeaderChange}
-              />
-            </div>
-
-            <div className={styles.field}>
-              <label className={styles.label}>Updated Delivery</label>
-              <input
-                className={styles.input}
-                type="date"
-                name="updatedDeliveryDate"
-                value={header.updatedDeliveryDate}
-                onChange={handleHeaderChange}
+                disabled={isExistingModeLocked}
               />
             </div>
 
@@ -1348,6 +1625,7 @@ export default function ArklineProductionPlanningPage() {
                 value={header.notes}
                 onChange={handleHeaderChange}
                 placeholder="Optional planning notes"
+                disabled={isExistingModeLocked}
               />
             </div>
 
@@ -1369,7 +1647,7 @@ export default function ArklineProductionPlanningPage() {
               <h3 className={styles.sizeTitle}>Qty by Size</h3>
               <p className={styles.sizeMeta}>
                 {selectedDraftProduct
-                  ? `${selectedDraftProduct.namaProduk} · ${selectedDraftProduct.kategoriProduk || 'NO CATEGORY'}`
+                  ? selectedDraftProduct.namaProduk
                   : 'Choose a product to start filling the size matrix.'}
               </p>
               </div>
@@ -1402,6 +1680,7 @@ export default function ArklineProductionPlanningPage() {
             >
               Clear Line
             </button>
+            {lineError ? <p className={styles.inlineErrorText}>{lineError}</p> : null}
             {method === 'CMT' ? (
               <button
                 type="button"
@@ -1415,22 +1694,20 @@ export default function ArklineProductionPlanningPage() {
           </div>
         </section>
 
-        <section className={`${styles.sectionCard} ${styles.plannedLinesCard}`.trim()}>
+        <section ref={plannedLinesSectionRef} className={`${styles.sectionCard} ${styles.plannedLinesCard}`.trim()}>
           <div className={styles.sectionHeader}>
             <div>
               <h2 className={styles.sectionTitle}>Planned Product Lines</h2>
-              <p className={styles.sectionCopy}>
-                Choose the product details, add the size split, then review all planned lines before saving.
-              </p>
             </div>
           </div>
 
           <div className={styles.formGrid}>
-            <div className={styles.field}>
+            <div className={`${styles.field} ${styles.categoryField}`.trim()}>
               <label className={styles.label}>Category</label>
               <select
                 className={styles.select}
                 value={categoryFilter}
+                disabled={isExistingModeLocked}
                 onChange={(event) => {
                   const nextCategory = event.target.value
                   setCategoryFilter(nextCategory)
@@ -1452,27 +1729,75 @@ export default function ArklineProductionPlanningPage() {
               </select>
             </div>
 
-            <div className={styles.field}>
+            <div className={`${styles.field} ${styles.productField}`.trim()}>
               <label className={styles.label}>Product</label>
-              <select className={styles.select} name="skuInduk" value={lineDraft.skuInduk} onChange={handleDraftChange}>
-                <option value="">Select product</option>
-                {filteredProducts.map((item) => (
-                  <option key={item.skuInduk} value={item.skuInduk}>
-                    {item.namaProduk}
-                  </option>
-                ))}
-              </select>
+              <div className={styles.comboBox}>
+                <input
+                  className={styles.input}
+                  name="productSearch"
+                  value={productSearch}
+                  disabled={isExistingModeLocked}
+                  onChange={handleDraftChange}
+                  onFocus={() => setShowProductOptions(true)}
+                  onClick={handleProductFieldClick}
+                  onBlur={() => {
+                    window.setTimeout(() => {
+                      setShowProductOptions(false)
+                    }, 120)
+                  }}
+                  placeholder={
+                    filteredProducts.length
+                      ? 'Type product name'
+                      : products.length
+                        ? 'No product in this category'
+                        : 'No Arkline product found'
+                  }
+                />
+                {showProductOptions && filteredProducts.length ? (
+                  <div className={styles.comboList}>
+                    {filteredProducts.map((item) => (
+                      <button
+                        key={`${item.skuInduk}-${createProductSearchLabel(item)}`}
+                        type="button"
+                        onMouseDown={(event) => {
+                          event.preventDefault()
+                          handleProductChange(item.skuInduk)
+                        }}
+                        className={styles.comboOption}
+                      >
+                        <strong>{createProductSearchLabel(item)}</strong>
+                        <span className={styles.comboOptionMeta}>
+                          {item.kategoriProduk || 'NO CATEGORY'}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
             </div>
 
-            <div className={styles.field}>
+            <div className={`${styles.field} ${styles.allowanceField}`.trim()}>
               <label className={styles.label}>Allowance %</label>
               <input
                 className={styles.input}
                 name="allowancePct"
-                value={method === 'CMT' ? lineDraft.allowancePct : '0'}
+                value={lineDraft.allowancePct}
                 onChange={handleDraftChange}
-                disabled={method !== 'CMT'}
                 placeholder="3"
+                disabled={isExistingModeLocked}
+              />
+            </div>
+
+            <div className={`${styles.field} ${styles.hppField}`.trim()}>
+              <label className={styles.label}>HPP</label>
+              <input
+                className={styles.input}
+                name="hpp"
+                inputMode="decimal"
+                value={method === 'FOB' ? formatNumberInput(lineDraft.hpp ?? '') : ''}
+                onChange={handleDraftChange}
+                disabled={isHppDisabled}
+                placeholder="0"
               />
             </div>
 
@@ -1483,7 +1808,7 @@ export default function ArklineProductionPlanningPage() {
               <h3 className={styles.sizeTitle}>Qty by Size</h3>
               <p className={styles.sizeMeta}>
                 {selectedDraftProduct
-                  ? `${selectedDraftProduct.namaProduk} Â· ${selectedDraftProduct.kategoriProduk || 'NO CATEGORY'}`
+                  ? selectedDraftProduct.namaProduk
                   : 'Choose a product to start filling the size matrix.'}
               </p>
               <div className={styles.draftQtyInline}>Draft Qty: <strong>{formatQuantity(lineTotalQty)}</strong></div>
@@ -1499,6 +1824,7 @@ export default function ArklineProductionPlanningPage() {
                     value={lineDraft.qtyBySize[size]}
                     onChange={(event) => handleDraftSizeChange(size, event.target.value)}
                     placeholder="0"
+                    disabled={isExistingModeLocked}
                   />
                 </label>
               ))}
@@ -1514,18 +1840,30 @@ export default function ArklineProductionPlanningPage() {
                 value={lineDraft.notes}
                 onChange={handleDraftChange}
                 placeholder="Optional notes for this product line"
+                disabled={isExistingModeLocked}
               />
             </div>
           </div>
 
           <div className={styles.inlineActions}>
-            <button type="button" className={styles.primaryButton} onClick={handleAddOrUpdateLine}>
-              {lineDraft.dbId || lineDraft.localId ? 'Update Line' : 'Add Line'}
+            <button type="button" className={styles.primaryButton} onClick={handleAddOrUpdateLine} disabled={isExistingModeLocked}>
+              {isEditingLine ? 'Update Line' : 'Add Line'}
             </button>
+            {isEditingLine ? (
+              <button
+                type="button"
+                className={styles.cancelButton}
+                onClick={handleCancelUpdateLine}
+                disabled={isExistingModeLocked}
+              >
+                Cancel Update
+              </button>
+            ) : null}
             <button
               type="button"
               className={styles.secondaryButton}
               onClick={() => resetLineDraft({ ...createEmptyLineDraft(), allowancePct: method === 'CMT' ? '3' : '0' })}
+              disabled={isExistingModeLocked}
             >
               Clear Line
             </button>
@@ -1534,7 +1872,7 @@ export default function ArklineProductionPlanningPage() {
                 type="button"
                 className={styles.ghostButton}
                 onClick={() => void rebuildMaterialPreview(poItems, method)}
-                disabled={!poItems.length || generatingMaterials}
+                disabled={isExistingModeLocked || !poItems.length || generatingMaterials}
               >
                 {generatingMaterials ? 'Generating...' : 'Generate Materials'}
               </button>
@@ -1559,48 +1897,62 @@ export default function ArklineProductionPlanningPage() {
                 <thead>
                   <tr>
                     <th>Product</th>
-                    <th>Category</th>
                     <th>Total Qty</th>
-                    <th>Allowance</th>
-                    <th>Size Split</th>
+                    <th>HPP</th>
+                    <th>Size Breakdown</th>
                     <th>Action</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {poItems.map((item) => (
-                    <tr key={item.localId}>
-                      <td>
-                        <strong>{item.namaProdukSnapshot}</strong>
-                        <div className={styles.cellSubtext}>{item.skuInduk}</div>
-                      </td>
-                      <td>{item.kategoriProdukSnapshot || '-'}</td>
-                      <td>{formatQuantity(getLineTotalQty(item))}</td>
-                      <td>{method === 'CMT' ? `${item.allowancePct || '0'}%` : '-'}</td>
-                      <td>
-                        <div className={styles.sizeTagRow}>
-                          {SIZE_OPTIONS.map((size) => {
-                            const qty = toNumber(item.qtyBySize[size])
-                            if (qty <= 0) return null
-                            return (
-                              <span key={size} className={styles.sizeTag}>
-                                {size}: {formatQuantity(qty)}
-                              </span>
-                            )
-                          })}
-                        </div>
-                      </td>
-                      <td>
-                        <div className={styles.actionRow}>
-                          <button type="button" className={styles.secondaryButton} onClick={() => handleEditLine(item.localId)}>
-                            Edit
-                          </button>
-                          <button type="button" className={styles.ghostButton} onClick={() => handleRemoveLine(item.localId)}>
-                            Remove
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
+                  {poItems.map((item) => {
+                    const productDisplay = resolveLineProductDisplay(item)
+
+                    return (
+                      <tr key={item.localId}>
+                        <td>
+                          <strong>{productDisplay.namaProduk}</strong>
+                          <div className={styles.cellSubtext}>{item.skuInduk}</div>
+                        </td>
+                        <td>{formatQuantity(getLineTotalQty(item))}</td>
+                        <td>{method === 'FOB' ? formatQuantity(toNumber(item.hpp)) : '-'}</td>
+                        <td className={styles.sizeBreakdownCell}>
+                          <div className={styles.sizeTagRow}>
+                            {SIZE_OPTIONS.map((size) => {
+                              const qty = toNumber(item.qtyBySize[size])
+                              if (qty <= 0) return null
+                              return (
+                                <span key={size} className={styles.sizeTag}>
+                                  {size}: {formatQuantity(qty)}
+                                </span>
+                              )
+                            })}
+                          </div>
+                        </td>
+                        <td>
+                          <div className={styles.actionRow}>
+                            <button
+                              type="button"
+                              className={styles.iconOnlyButton}
+                              onClick={() => handleEditLine(item.localId)}
+                              aria-label="Edit line"
+                              title="Edit line"
+                            >
+                              ✎
+                            </button>
+                            <button
+                              type="button"
+                              className={`${styles.iconOnlyButton} ${styles.iconOnlyDangerButton}`.trim()}
+                              onClick={() => handleRemoveLine(item.localId)}
+                              aria-label="Remove line"
+                              title="Remove line"
+                            >
+                              X
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    )
+                  })}
                 </tbody>
               </table>
             </div>
@@ -1646,9 +1998,9 @@ export default function ArklineProductionPlanningPage() {
                 <table className={styles.table}>
                   <thead>
                     <tr>
-                      <th>Material Code</th>
                       <th>Material</th>
-                      <th>Size</th>
+                      <th>Size Variant</th>
+                      <th>Color Variant</th>
                       <th>Unit</th>
                       <th>Generated Qty</th>
                       <th>Final Qty</th>
@@ -1657,10 +2009,10 @@ export default function ArklineProductionPlanningPage() {
                   </thead>
                   <tbody>
                     {materialPreview.map((line) => (
-                      <tr key={`${line.materialCode}-${line.size}-${line.sourceSku}`}>
-                        <td>{line.materialCode || '-'}</td>
-                        <td>{line.materialNameSnapshot || '-'}</td>
-                        <td>{line.size || '-'}</td>
+                      <tr key={`${line.materialId}-${line.sizeVariant}-${line.colorVariant}-${line.sourceSku}`}>
+                        <td>{buildMaterialLabel(line) || '-'}</td>
+                        <td>{line.sizeVariant || '-'}</td>
+                        <td>{line.colorVariant || '-'}</td>
                         <td>{line.unit || '-'}</td>
                         <td>{formatQuantity(line.generatedQty)}</td>
                         <td>{formatQuantity(line.finalQty)}</td>
@@ -1674,25 +2026,26 @@ export default function ArklineProductionPlanningPage() {
           </section>
         ) : null}
 
-        {(error || success) && (
-          <div className={styles.feedbackStrip}>
-            {error ? <p className={styles.errorText}>{error}</p> : null}
-            {success ? <p className={styles.successText}>{success}</p> : null}
-          </div>
-        )}
-
-        <div className={styles.footerActions}>
-          <button type="button" className={styles.secondaryButton} onClick={() => resetPlanningState('new')}>
-            Reset Planning
-          </button>
-          <button type="button" className={styles.ghostButton} onClick={handlePrint} disabled={printing || !header.poId}>
-            {printing ? 'Preparing Print...' : 'Print PO'}
-          </button>
-          <button type="button" className={styles.primaryButton} onClick={handleSavePo} disabled={saving || loading}>
-            {saving ? 'Saving...' : 'Save Planning'}
-          </button>
-        </div>
       </section>
+
+      {showLeaveConfirm ? (
+        <div className={styles.modalOverlay}>
+          <div className={styles.modalCard}>
+            <h3 className={styles.modalTitle}>Unsaved Planning Changes</h3>
+            <p className={styles.modalCopy}>
+              Product line changes are still in draft. `Update Line` belum menyimpan ke database sebelum `Save Planning`.
+            </p>
+            <div className={styles.modalActions}>
+              <button type="button" className={styles.secondaryButton} onClick={handleStayOnPlanning}>
+                Stay Here
+              </button>
+              <button type="button" className={styles.primaryButton} onClick={handleLeaveWithoutSaving}>
+                Leave Without Saving
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   )
 }

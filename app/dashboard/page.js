@@ -109,12 +109,12 @@ export default async function DashboardPage() {
       : null,
     menus.qc
       ? {
-          href: menus.qcInspectorOnly ? '/dashboard/qc/inspection-task' : '/dashboard/qc',
+          href: menus.qcHref,
           title: menus.qcInspectorOnly ? 'Inspection Task' : 'Quality Control',
           eyebrow: 'Quality',
           description: menus.qcInspectorOnly
             ? 'See your active queue and continue inspection tasks.'
-            : 'Open quality control dashboard, planning, confirmation, and return flow.',
+            : 'Open quality control receiving, inspection, confirmation, and return flow.',
           accent: 'ink',
         }
       : null,

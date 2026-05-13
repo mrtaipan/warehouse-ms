@@ -1,0 +1,53 @@
+.shell {
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at 18% 8%, rgba(255, 255, 255, 0.95) 0%, rgba(226, 232, 240, 0.68) 36%, transparent 62%),
+    linear-gradient(160deg, #f8fafc 0%, #e8edf3 45%, #dfe6ee 100%);
+  color: #111827;
+}
+
+.viewport {
+  width: 100%;
+  max-width: 520px;
+  min-height: 100vh;
+  margin: 0 auto;
+  padding: max(14px, env(safe-area-inset-top)) 12px max(24px, env(safe-area-inset-bottom));
+}
+
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  justify-content: flex-start;
+  padding: 0 0 12px;
+  background: linear-gradient(180deg, rgba(248, 250, 252, 0.96) 0%, rgba(248, 250, 252, 0.82) 72%, rgba(248, 250, 252, 0) 100%);
+  backdrop-filter: blur(12px);
+}
+
+.backLink {
+  min-height: 40px;
+  padding: 0 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(203, 213, 225, 0.9);
+  background: rgba(255, 255, 255, 0.88);
+  color: #111827;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  text-decoration: none;
+  font-size: 13px;
+  font-weight: 800;
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.08);
+}
+
+.backIcon {
+  font-size: 17px;
+  line-height: 1;
+}
+
+@media (min-width: 720px) {
+  .viewport {
+    padding: 24px 14px 32px;
+  }
+}

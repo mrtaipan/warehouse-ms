@@ -4,6 +4,17 @@ import { revalidatePath } from 'next/cache'
 import { createClient } from '@/utils/supabase/server'
 import { ADMIN_EMAIL } from '@/utils/permissions'
 
+function getTodayJakartaDate() {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Jakarta',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(new Date())
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]))
+  return `${values.year}-${values.month}-${values.day}`
+}
+
 export async function updateUserRole(formData) {
   const supabase = await createClient()
   const {
@@ -18,6 +29,7 @@ export async function updateUserRole(formData) {
   const email = String(formData.get('email') || '').trim().toLowerCase()
   const role = String(formData.get('role') || '').trim()
   const displayName = String(formData.get('display_name') || '').trim()
+  const isQcActive = formData.get('is_qc_active') === 'on'
 
   if (!profileId || !email || !role) {
     throw new Error('Profile id, email, and role are required.')
@@ -26,6 +38,8 @@ export async function updateUserRole(formData) {
   const payload = {
     role,
     display_name: displayName || email.split('@')[0],
+    is_qc_active: isQcActive,
+    qc_active_date: isQcActive ? getTodayJakartaDate() : null,
   }
 
   const { data, error } = await supabase

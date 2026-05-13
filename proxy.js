@@ -28,6 +28,7 @@ export async function proxy(request) {
 
   const { pathname } = request.nextUrl
   const isDashboardPath = pathname.startsWith('/dashboard')
+  const isMobilePath = pathname.startsWith('/mobile')
   const isTakeRequestsPath = pathname === '/take-requests'
   const isRestockRequestPath = pathname === '/restock-request'
   const isAdmin = user?.email?.toLowerCase() === ADMIN_EMAIL
@@ -54,7 +55,7 @@ export async function proxy(request) {
     permissions = (rolePermissions || []).map((item) => item.permission_code)
   }
 
-  if (!user && isDashboardPath) {
+  if (!user && (isDashboardPath || isMobilePath)) {
     return NextResponse.redirect(new URL('/login', request.url))
   }
 
@@ -66,7 +67,7 @@ export async function proxy(request) {
     return NextResponse.redirect(new URL('/login?next=/restock-request', request.url))
   }
 
-  if (user && isDashboardPath && !canAccessPath(pathname, role, permissions, isAdmin)) {
+  if (user && (isDashboardPath || isMobilePath) && !canAccessPath(pathname, role, permissions, isAdmin)) {
     return NextResponse.redirect(new URL(getLandingPath(role, permissions, isAdmin), request.url))
   }
 
@@ -78,5 +79,5 @@ export async function proxy(request) {
 }
 
 export const config = {
-  matcher: ['/login', '/dashboard/:path*', '/take-requests', '/restock-request'],
+  matcher: ['/login', '/dashboard/:path*', '/mobile/:path*', '/take-requests', '/restock-request'],
 }

@@ -10,6 +10,14 @@ const naturalSort = new Intl.Collator(undefined, {
   sensitivity: 'base',
 })
 
+function normalizeText(value) {
+  return String(value || '').trim().toUpperCase()
+}
+
+function normalizeSizeValue(value) {
+  return normalizeText(value).replace(/\s+/g, '')
+}
+
 async function fetchAllRackLocations() {
   const allRows = []
   let from = 0
@@ -151,6 +159,10 @@ export default function RegistryStoragePage() {
   const selectedRackLocation = subLocationOptions.find(
     (item) => item.sub_location === form.subLocation
   )
+  const isLocationIdDisabled = !form.locationType
+  const isLocationCodeDisabled = !form.locationId
+  const isSubLocationDisabled = !form.locationCode
+  const isSaveDisabled = saving || rackLocations.length === 0
 
   function handleSelectChange(event) {
     const { name, value } = event.target
@@ -205,7 +217,12 @@ export default function RegistryStoragePage() {
 
     setForm((prev) => ({
       ...prev,
-      [name]: name === 'itemName' ? value.toUpperCase() : value,
+      [name]:
+        name === 'itemName'
+          ? value.toUpperCase()
+          : name === 'size'
+            ? normalizeSizeValue(value)
+            : value,
     }))
   }
 
@@ -245,7 +262,7 @@ export default function RegistryStoragePage() {
     const payload = {
       rack_location_id: selectedRackLocation.id,
       item_name: form.itemName.trim(),
-      size: form.size.trim() || null,
+      size: normalizeSizeValue(form.size) || null,
       qty: Number(form.qty || 0),
       notes: form.notes.trim() || null,
       updated_by: await getCurrentUserEmail(),
@@ -328,9 +345,9 @@ export default function RegistryStoragePage() {
                 name="locationId"
                 value={form.locationId}
                 onChange={handleSelectChange}
-                style={styles.select}
+                style={isLocationIdDisabled ? { ...styles.select, ...styles.controlDisabled } : styles.select}
                 required
-                disabled={!form.locationType}
+                disabled={isLocationIdDisabled}
               >
                 <option value="">Select location id</option>
                 {locationIdOptions.map((option) => (
@@ -347,9 +364,9 @@ export default function RegistryStoragePage() {
                 name="locationCode"
                 value={form.locationCode}
                 onChange={handleSelectChange}
-                style={styles.select}
+                style={isLocationCodeDisabled ? { ...styles.select, ...styles.controlDisabled } : styles.select}
                 required
-                disabled={!form.locationId}
+                disabled={isLocationCodeDisabled}
               >
                 <option value="">Select location code</option>
                 {locationCodeOptions.map((option) => (
@@ -366,9 +383,9 @@ export default function RegistryStoragePage() {
                 name="subLocation"
                 value={form.subLocation}
                 onChange={handleSelectChange}
-                style={styles.select}
+                style={isSubLocationDisabled ? { ...styles.select, ...styles.controlDisabled } : styles.select}
                 required
-                disabled={!form.locationCode}
+                disabled={isSubLocationDisabled}
               >
                 <option value="">Select sub location</option>
                 {subLocationOptions.map((option) => (
@@ -447,7 +464,11 @@ export default function RegistryStoragePage() {
           {success ? <p style={styles.success}>{success}</p> : null}
 
           <div style={styles.actions}>
-            <button type="submit" disabled={saving || rackLocations.length === 0} style={styles.button}>
+            <button
+              type="submit"
+              disabled={isSaveDisabled}
+              style={isSaveDisabled ? { ...styles.button, ...styles.buttonDisabled } : styles.button}
+            >
               {saving ? 'Saving...' : 'Save to Storage'}
             </button>
           </div>
@@ -564,22 +585,34 @@ const styles = {
   input: {
     height: '44px',
     borderRadius: '10px',
-    border: '1px solid #d1d5db',
+    borderWidth: '1px',
+    borderStyle: 'solid',
+    borderColor: '#d1d5db',
     padding: '0 12px',
     fontSize: '14px',
   },
   select: {
     height: '44px',
     borderRadius: '10px',
-    border: '1px solid #d1d5db',
+    borderWidth: '1px',
+    borderStyle: 'solid',
+    borderColor: '#d1d5db',
     padding: '0 12px',
     fontSize: '14px',
     background: '#fff',
   },
+  controlDisabled: {
+    background: '#f1f5f9',
+    borderColor: '#e2e8f0',
+    color: '#94a3b8',
+    cursor: 'not-allowed',
+  },
   textarea: {
     minHeight: '100px',
     borderRadius: '10px',
-    border: '1px solid #d1d5db',
+    borderWidth: '1px',
+    borderStyle: 'solid',
+    borderColor: '#d1d5db',
     padding: '12px',
     fontSize: '14px',
     resize: 'vertical',
@@ -617,6 +650,11 @@ const styles = {
     fontSize: '14px',
     fontWeight: '600',
     cursor: 'pointer',
+  },
+  buttonDisabled: {
+    background: '#e2e8f0',
+    color: '#94a3b8',
+    cursor: 'not-allowed',
   },
   error: {
     margin: 0,
