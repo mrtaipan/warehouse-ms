@@ -32,13 +32,16 @@ create table if not exists public.arkline_qc_reject_adjustments (
   sku_induk text null,
   model_name text not null,
   adjustment_type text not null,
-  qty integer not null default 0 check (qty >= 0),
+  qty integer not null default 0,
   notes text null,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   constraint arkline_qc_reject_adjustments_type_check
     check (adjustment_type in ('bc_to_a', 'inspector_data_error'))
 );
+
+alter table if exists public.arkline_qc_reject_adjustments
+  drop constraint if exists arkline_qc_reject_adjustments_qty_check;
 
 create index if not exists arkline_qc_reject_details_qc_idx
   on public.arkline_qc_reject_details (arkline_qc_id);

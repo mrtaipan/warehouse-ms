@@ -295,10 +295,20 @@
   gap: 4px;
 }
 
-.boardCardTop strong {
+.poLinkButton {
+  padding: 0;
+  border: 0;
+  background: transparent;
   color: #0f172a;
   font-size: 11px;
+  font-weight: 800;
   line-height: 1.2;
+  text-align: left;
+  cursor: pointer;
+}
+
+.poLinkButton:hover {
+  text-decoration: underline;
 }
 
 .boardSupplierLine {
@@ -514,13 +524,13 @@
 }
 
 .calendarCell {
-  min-height: 194px;
-  padding: 12px;
+  min-height: 156px;
+  padding: 10px;
   border-right: 1px solid #edf2f7;
   border-bottom: 1px solid #edf2f7;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
 }
 
 .calendarCell:nth-child(7n) {
@@ -536,13 +546,13 @@
 
 .calendarCellHeader strong {
   color: #0f172a;
-  font-size: 20px;
+  font-size: 17px;
   line-height: 1;
 }
 
 .calendarWeekday {
   color: #94a3b8;
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 800;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -551,15 +561,15 @@
 .calendarEvents {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
 }
 
 .eventCard {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 10px 11px;
-  border-radius: 14px;
+  gap: 4px;
+  padding: 8px 9px;
+  border-radius: 12px;
   border: 1px solid transparent;
 }
 
@@ -580,7 +590,7 @@
 
 .eventTitle {
   color: #0f172a;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 900;
   line-height: 1.3;
 }
@@ -588,8 +598,124 @@
 .eventText {
   margin: 0;
   color: #475569;
-  font-size: 11px;
+  font-size: 10px;
   line-height: 1.5;
+}
+
+.eventMetaText {
+  margin: 0;
+  color: #64748b;
+  font-size: 9px;
+  line-height: 1.4;
+}
+
+.modalOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: rgba(15, 23, 42, 0.42);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.modalCard {
+  width: min(720px, 100%);
+  max-height: calc(100vh - 48px);
+  overflow: auto;
+  border-radius: 18px;
+  border: 1px solid #dbe4f0;
+  background: #ffffff;
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  box-shadow: 0 24px 54px rgba(15, 23, 42, 0.18);
+}
+
+.modalHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.modalTitle {
+  margin: 4px 0 0;
+  color: #0f172a;
+  font-size: 20px;
+  font-weight: 900;
+}
+
+.modalGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.modalMetric {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px;
+  border-radius: 14px;
+  border: 1px solid #e2e8f0;
+  background: #f8fafc;
+}
+
+.modalMetric span {
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.modalMetric strong {
+  color: #0f172a;
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.modalSection {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.modalSectionTitle {
+  margin: 0;
+  color: #0f172a;
+  font-size: 15px;
+  font-weight: 800;
+}
+
+.modalList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.modalListRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid #e2e8f0;
+  background: #ffffff;
+}
+
+.modalListRow strong {
+  color: #0f172a;
+  font-size: 13px;
+}
+
+.modalListRow span {
+  color: #475569;
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .eventMeta {
@@ -624,14 +750,14 @@
 .lineHeader,
 .lineRow {
   display: grid;
-  grid-template-columns: minmax(260px, 0.42fr) minmax(620px, 1fr);
+  grid-template-columns: minmax(220px, 0.36fr) minmax(620px, 1fr);
 }
 
 .lineInfoColumn {
-  padding: 14px 16px;
+  padding: 12px 14px;
   border-right: 1px solid #edf2f7;
   color: #64748b;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 800;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -639,15 +765,15 @@
 
 .lineMonthGrid {
   display: grid;
-  grid-template-columns: repeat(31, minmax(26px, 1fr));
+  grid-template-columns: repeat(31, minmax(22px, 1fr));
   gap: 0;
 }
 
 .lineMonthGrid span {
-  padding: 14px 0;
+  padding: 12px 0;
   text-align: center;
   color: #94a3b8;
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 800;
   border-right: 1px solid #f1f5f9;
 }
@@ -658,39 +784,44 @@
 }
 
 .lineRow {
-  min-height: 84px;
+  min-height: 72px;
   border-top: 1px solid #edf2f7;
 }
 
 .lineInfo {
   display: flex;
   flex-direction: column;
-  gap: 5px;
-  padding: 14px 16px;
+  gap: 4px;
+  padding: 12px 14px;
   border-right: 1px solid #edf2f7;
 }
 
 .lineInfo strong {
   color: #0f172a;
-  font-size: 13px;
+  font-size: 12px;
   line-height: 1.3;
 }
 
 .lineInfo p {
   margin: 0;
   color: #64748b;
-  font-size: 12px;
+  font-size: 10px;
   line-height: 1.5;
+}
+
+.lineDateMeta {
+  color: #94a3b8;
+  font-size: 9px;
 }
 
 .lineTrack {
   position: relative;
-  padding: 16px 0;
+  padding: 12px 0;
 }
 
 .lineTrackGrid {
   display: grid;
-  grid-template-columns: repeat(31, minmax(26px, 1fr));
+  grid-template-columns: repeat(31, minmax(22px, 1fr));
   height: 100%;
 }
 
@@ -700,14 +831,14 @@
 
 .lineBar {
   position: absolute;
-  top: 22px;
-  height: 34px;
+  top: 18px;
+  height: 28px;
   border-radius: 999px;
   display: inline-flex;
   align-items: center;
-  padding: 0 14px;
+  padding: 0 10px;
   color: #0f172a;
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 900;
   white-space: nowrap;
   overflow: hidden;
@@ -775,5 +906,9 @@
   .legendMeta {
     margin-left: 0;
     width: 100%;
+  }
+
+  .modalGrid {
+    grid-template-columns: 1fr;
   }
 }

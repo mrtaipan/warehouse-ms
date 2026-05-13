@@ -246,6 +246,46 @@ const styles = {
   wideModal: {
     maxWidth: '1080px',
   },
+  rejectDetailGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(5, minmax(0, 1fr))',
+    gap: '10px',
+  },
+  compactSummaryCard: {
+    padding: '12px',
+    gap: '4px',
+  },
+  compactSummaryValue: {
+    fontSize: '20px',
+  },
+  inspectorModal: {
+    maxWidth: '1160px',
+    maxHeight: 'none',
+    padding: '14px',
+    gap: '12px',
+    overflow: 'visible',
+  },
+  inspectorModalHeader: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '4px',
+    flexShrink: 0,
+  },
+  inspectorModalContent: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '12px',
+    minHeight: 'auto',
+    overflow: 'visible',
+  },
+  inspectorModalFooter: {
+    display: 'flex',
+    justifyContent: 'flex-end',
+    gap: '12px',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    flexShrink: 0,
+  },
   modalGrid: {
     display: 'grid',
     gridTemplateColumns: 'repeat(4, minmax(0, 1fr))',
@@ -253,15 +293,37 @@ const styles = {
   },
   rejectRowGrid: {
     display: 'grid',
-    gridTemplateColumns: '96px minmax(180px, 1.4fr) 96px 96px 44px',
+    gridTemplateColumns: '96px minmax(180px, 1.4fr) 96px 96px 86px',
     gap: '10px',
     alignItems: 'end',
   },
   rejectRowHeader: {
     display: 'grid',
-    gridTemplateColumns: '96px minmax(180px, 1.4fr) 96px 96px 44px',
+    gridTemplateColumns: '96px minmax(180px, 1.4fr) 96px 96px 86px',
     gap: '10px',
     alignItems: 'center',
+  },
+  iconSmallButton: {
+    width: '34px',
+    height: '34px',
+    border: '1px solid #d1d5db',
+    borderRadius: '8px',
+    background: '#fff',
+    color: '#111827',
+    fontSize: '18px',
+    fontWeight: '700',
+    cursor: 'pointer',
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    lineHeight: 1,
+  },
+  iconButtonRow: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: '8px',
+    minHeight: '42px',
   },
   adjustmentGrid: {
     display: 'grid',
@@ -310,6 +372,27 @@ const styles = {
     fontSize: '13px',
     lineHeight: 1.5,
   },
+  smallNote: {
+    margin: 0,
+    fontSize: '12px',
+    lineHeight: 1.6,
+    color: '#6b7280',
+    whiteSpace: 'pre-line',
+  },
+  noteGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+    gap: '12px',
+  },
+  noteCard: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '6px',
+    padding: '10px 12px',
+    border: '1px solid #e5e7eb',
+    borderRadius: '10px',
+    background: '#f9fafb',
+  },
   previewImage: {
     width: '100%',
     height: 'auto',
@@ -325,12 +408,64 @@ const styles = {
     border: '1px solid #e5e7eb',
     borderRadius: '12px',
   },
+  inspectorSection: {
+    border: '1px solid #e5e7eb',
+    borderRadius: '12px',
+    overflow: 'hidden',
+    background: '#fff',
+  },
+  inspectorSectionHeader: {
+    width: '100%',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: '12px',
+    padding: '12px 14px',
+    border: 'none',
+    background: '#f9fafb',
+    cursor: 'pointer',
+    textAlign: 'left',
+  },
+  inspectorSectionTitle: {
+    margin: 0,
+    fontSize: '16px',
+    fontWeight: '800',
+    color: '#111827',
+  },
+  inspectorSectionMeta: {
+    fontSize: '12px',
+    color: '#6b7280',
+    fontWeight: '600',
+  },
+  inspectorSectionBody: {
+    padding: '10px 12px 12px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '8px',
+  },
+  inspectorTableWrap: {
+    maxHeight: 'none',
+    overflow: 'visible',
+    border: '1px solid #e5e7eb',
+    borderRadius: '10px',
+  },
+  inspectorTh: {
+    fontSize: '12px',
+    padding: '10px 12px',
+  },
+  inspectorTd: {
+    fontSize: '13px',
+    padding: '10px 12px',
+  },
 }
 
-function sameDay(dateString, selectedDate) {
-  if (!selectedDate) return true
+function isWithinDateRange(dateString, dateFrom, dateTo) {
   if (!dateString) return false
-  return String(dateString).slice(0, 10) === selectedDate
+
+  const dateOnly = String(dateString).slice(0, 10)
+  if (dateFrom && dateOnly < dateFrom) return false
+  if (dateTo && dateOnly > dateTo) return false
+  return true
 }
 
 function getTodayLocalDate() {
@@ -406,8 +541,39 @@ function getPauseDurationSeconds(item) {
   return Math.max(0, Math.floor((endMs - pausedAtMs) / 1000))
 }
 
-function formatHours(seconds) {
-  return Math.round((Number(seconds || 0) / 3600) * 100) / 100
+function getPauseLogAssignedTo(item) {
+  return item.qc_item?.assigned_to || item.arkline_qc?.assigned_to || item.paused_by || '-'
+}
+
+function getPauseLogArklinePoLabel(item) {
+  return String(item.arkline_qc?.po_id || 'NO PO').trim().toUpperCase() || 'NO PO'
+}
+
+function getPauseLogArklineCategoryLabel(item) {
+  return String(item.arkline_qc?.sku_induk || 'NO SKU').trim().toUpperCase() || 'NO SKU'
+}
+
+function getPauseLogArklineProductLabel(item) {
+  const sku = getPauseLogArklineCategoryLabel(item)
+  const model = String(item.arkline_qc?.model_name || '').trim().toUpperCase()
+  return model ? `${sku} - ${model}` : sku
+}
+
+function formatMinutes(seconds) {
+  return Math.round((Number(seconds || 0) / 60) * 100) / 100
+}
+
+function formatDisplayDate(value) {
+  if (!value) return '-'
+
+  return new Intl.DateTimeFormat('en-GB', {
+    day: '2-digit',
+    month: 'long',
+    year: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(new Date(value))
 }
 
 function getCheckedQty(item) {
@@ -425,6 +591,59 @@ function hasQcResult(item) {
 function getArklineTaskLabel(item, memberNameMap = {}) {
   const inspector = memberNameMap[item.assigned_to] || item.assigned_to || 'Unassigned'
   return `${inspector} | B ${Number(item.qty_b || 0)} / C ${Number(item.qty_c || 0)} | ${item.status || '-'}`
+}
+
+function getSummaryTaskKeyParts(summary) {
+  return {
+    brand: String(summary?.brand || '').trim().toUpperCase(),
+    category: String(summary?.category || '').trim().toUpperCase(),
+    model: String(summary?.model || '').trim().toUpperCase(),
+  }
+}
+
+function isTaskInSummary(item, summary) {
+  const summaryParts = getSummaryTaskKeyParts(summary)
+  const itemBrand = getArklinePoLabel(item)
+  const itemCategory = getArklineCategoryLabel(item)
+  const itemModel = String(getTaskModelInfo(item).model || '').trim().toUpperCase()
+
+  return itemBrand === summaryParts.brand && itemCategory === summaryParts.category && itemModel === summaryParts.model
+}
+
+function compareApparelSize(a, b) {
+  const order = ['XS', 'S', 'M', 'L', 'XL', 'XXL']
+  const normalizedA = String(a || '').trim().toUpperCase()
+  const normalizedB = String(b || '').trim().toUpperCase()
+  const indexA = order.indexOf(normalizedA)
+  const indexB = order.indexOf(normalizedB)
+
+  if (indexA !== -1 && indexB !== -1) return indexA - indexB
+  if (indexA !== -1) return -1
+  if (indexB !== -1) return 1
+  return normalizedA.localeCompare(normalizedB, undefined, { numeric: true })
+}
+
+function applyInspectorErrorToRejectTotals(qtyB, qtyC, inspectorErrorQty) {
+  let nextQtyB = Number(qtyB || 0)
+  let nextQtyC = Number(qtyC || 0)
+  const signedQty = Number(inspectorErrorQty || 0)
+
+  if (!signedQty) {
+    return { qtyB: nextQtyB, qtyC: nextQtyC }
+  }
+
+  if (signedQty > 0) {
+    let remaining = signedQty
+    const qtyCAdjustment = Math.min(nextQtyC, remaining)
+    nextQtyC -= qtyCAdjustment
+    remaining -= qtyCAdjustment
+    const qtyBAdjustment = Math.min(nextQtyB, remaining)
+    nextQtyB -= qtyBAdjustment
+    return { qtyB: nextQtyB, qtyC: nextQtyC }
+  }
+
+  nextQtyC += Math.abs(signedQty)
+  return { qtyB: nextQtyB, qtyC: nextQtyC }
 }
 
 function createRejectDraftRow(overrides = {}) {
@@ -447,6 +666,13 @@ function getAdjustmentSummaryKey(item) {
   const po = String(item.po_id || 'NO PO').trim().toUpperCase() || 'NO PO'
   const sku = String(item.sku_induk || 'NO SKU').trim().toUpperCase() || 'NO SKU'
   const model = String(item.model_name || 'UNKNOWN MODEL').trim() || 'UNKNOWN MODEL'
+  return `${po}|||${sku}|||${model}`
+}
+
+function getRejectDetailSummaryKey(item) {
+  const po = String(item?.po_id || 'NO PO').trim().toUpperCase() || 'NO PO'
+  const sku = String(item?.sku_induk || 'NO SKU').trim().toUpperCase() || 'NO SKU'
+  const model = String(item?.model_name || 'UNKNOWN MODEL').trim() || 'UNKNOWN MODEL'
   return `${po}|||${sku}|||${model}`
 }
 
@@ -494,8 +720,14 @@ export default function QcDashboardPage() {
   const [arklineProductFilter, setArklineProductFilter] = useState('')
   const [brandFilter, setBrandFilter] = useState('')
   const [categoryFilter, setCategoryFilter] = useState('')
-  const [selectedDate, setSelectedDate] = useState('')
+  const [dateFrom, setDateFrom] = useState('')
+  const [dateTo, setDateTo] = useState('')
   const [pauseDetailInspector, setPauseDetailInspector] = useState('')
+  const [inspectorDetailSections, setInspectorDetailSections] = useState({
+    nonProductive: false,
+    finished: false,
+    active: false,
+  })
   const [rejectDetailSummary, setRejectDetailSummary] = useState(null)
   const [rejectDraftRows, setRejectDraftRows] = useState([])
   const [rejectAdjustmentDraft, setRejectAdjustmentDraft] = useState({
@@ -617,6 +849,7 @@ export default function QcDashboardPage() {
           .select(`
             id,
             qc_item_id,
+            arkline_qc_id,
             paused_by,
             pause_reason,
             paused_at,
@@ -644,6 +877,13 @@ export default function QcDashboardPage() {
                   full_name
                 )
               )
+            ),
+            arkline_qc:arkline_qc_id (
+              id,
+              assigned_to,
+              po_id,
+              sku_induk,
+              model_name
             )
           `)
           .order('paused_at', { ascending: false }),
@@ -761,28 +1001,29 @@ export default function QcDashboardPage() {
     () => Array.from(new Set(qcItems.map((item) => getCategoryLabel(item)).filter(Boolean))).sort((a, b) => a.localeCompare(b)),
     [qcItems]
   )
+  const hasInvalidDateRange = Boolean(dateFrom && dateTo && dateFrom > dateTo)
 
   const filteredItems = useMemo(
     () =>
       qcItems.filter((item) => {
-        const matchesDate = sameDay(item.finished_at || item.created_at, selectedDate)
+        const matchesDate = hasInvalidDateRange ? true : isWithinDateRange(item.finished_at || item.created_at, dateFrom, dateTo)
         const matchesGrn = !grnFilter || item.inbound?.grn_number === grnFilter
         const matchesBrand = !brandFilter || getBrandLabel(item) === brandFilter
         const matchesCategory = !categoryFilter || getCategoryLabel(item) === categoryFilter
         return matchesDate && matchesGrn && matchesBrand && matchesCategory
       }),
-    [brandFilter, categoryFilter, grnFilter, qcItems, selectedDate]
+    [brandFilter, categoryFilter, dateFrom, dateTo, grnFilter, hasInvalidDateRange, qcItems]
   )
 
   const filteredArklineItems = useMemo(
     () =>
       arklineQcItems.filter((item) => {
-        const matchesDate = sameDay(item.finished_at || item.created_at, selectedDate)
+        const matchesDate = hasInvalidDateRange ? true : isWithinDateRange(item.finished_at || item.created_at, dateFrom, dateTo)
         const matchesPo = !poFilter || getArklinePoLabel(item) === poFilter
         const matchesProduct = !arklineProductFilter || getArklineProductLabel(item) === arklineProductFilter
         return matchesDate && matchesPo && matchesProduct
       }),
-    [arklineProductFilter, arklineQcItems, poFilter, selectedDate]
+    [arklineProductFilter, arklineQcItems, dateFrom, dateTo, hasInvalidDateRange, poFilter]
   )
 
   const filteredAdjustmentRows = useMemo(
@@ -792,13 +1033,13 @@ export default function QcDashboardPage() {
           return false
         }
 
-        const matchesDate = sameDay(item.created_at, selectedDate)
+        const matchesDate = hasInvalidDateRange ? true : isWithinDateRange(item.created_at, dateFrom, dateTo)
         const matchesGrn = !grnFilter || item.inbound?.grn_number === grnFilter
         const matchesBrand = !brandFilter || getConfirmBrandLabel(item) === brandFilter
         const matchesCategory = !categoryFilter || getConfirmCategoryLabel(item) === categoryFilter
         return matchesDate && matchesGrn && matchesBrand && matchesCategory
       }),
-    [brandFilter, categoryFilter, grnFilter, qcConfirmRows, selectedDate]
+    [brandFilter, categoryFilter, dateFrom, dateTo, grnFilter, hasInvalidDateRange, qcConfirmRows]
   )
 
   const filteredReturnAdjustmentRows = useMemo(
@@ -808,25 +1049,36 @@ export default function QcDashboardPage() {
           return false
         }
 
-        const matchesDate = sameDay(item.created_at, selectedDate)
+        const matchesDate = hasInvalidDateRange ? true : isWithinDateRange(item.created_at, dateFrom, dateTo)
         const matchesGrn = !grnFilter || item.inbound?.grn_number === grnFilter
         const matchesBrand = !brandFilter || getReturnBrandLabel(item) === brandFilter
         const matchesCategory = !categoryFilter || getReturnCategoryLabel(item) === categoryFilter
         return matchesDate && matchesGrn && matchesBrand && matchesCategory
       }),
-    [brandFilter, categoryFilter, grnFilter, returnRows, selectedDate]
+    [brandFilter, categoryFilter, dateFrom, dateTo, grnFilter, hasInvalidDateRange, returnRows]
   )
 
-  const filteredPauseLogs = useMemo(
+  const filteredRegularPauseLogs = useMemo(
     () =>
       pauseLogs.filter((item) => {
-        const matchesDate = sameDay(item.paused_at, selectedDate)
+        const matchesDate = hasInvalidDateRange ? true : isWithinDateRange(item.paused_at, dateFrom, dateTo)
         const matchesGrn = !grnFilter || item.qc_item?.inbound?.grn_number === grnFilter
         const matchesBrand = !brandFilter || getBrandLabel(item.qc_item || {}) === brandFilter
         const matchesCategory = !categoryFilter || getCategoryLabel(item.qc_item || {}) === categoryFilter
-        return matchesDate && matchesGrn && matchesBrand && matchesCategory
+        return Boolean(item.qc_item_id) && matchesDate && matchesGrn && matchesBrand && matchesCategory
       }),
-    [brandFilter, categoryFilter, grnFilter, pauseLogs, selectedDate]
+    [brandFilter, categoryFilter, dateFrom, dateTo, grnFilter, hasInvalidDateRange, pauseLogs]
+  )
+
+  const filteredArklinePauseLogs = useMemo(
+    () =>
+      pauseLogs.filter((item) => {
+        const matchesDate = hasInvalidDateRange ? true : isWithinDateRange(item.paused_at, dateFrom, dateTo)
+        const matchesPo = !poFilter || getPauseLogArklinePoLabel(item) === poFilter
+        const matchesProduct = !arklineProductFilter || getPauseLogArklineProductLabel(item) === arklineProductFilter
+        return Boolean(item.arkline_qc_id) && matchesDate && matchesPo && matchesProduct
+      }),
+    [arklineProductFilter, dateFrom, dateTo, hasInvalidDateRange, pauseLogs, poFilter]
   )
 
   const activeItems = useMemo(
@@ -834,14 +1086,14 @@ export default function QcDashboardPage() {
     [filteredArklineItems, filteredItems, qcMode]
   )
   const activePauseLogs = useMemo(
-    () => (qcMode === 'arkline' ? [] : filteredPauseLogs),
-    [filteredPauseLogs, qcMode]
+    () => (qcMode === 'arkline' ? filteredArklinePauseLogs : filteredRegularPauseLogs),
+    [filteredArklinePauseLogs, filteredRegularPauseLogs, qcMode]
   )
 
   const memberNameMap = useMemo(
     () =>
       qcProfiles.reduce((result, item) => {
-        result[item.email] = item.display_name || ''
+        result[String(item.email || '').trim().toLowerCase()] = item.display_name || ''
         return result
       }, {}),
     [qcProfiles]
@@ -909,12 +1161,9 @@ export default function QcDashboardPage() {
         const adjustment = arklineAdjustmentBySummaryKey.get(key) || { bcToAQty: 0, inspectorErrorQty: 0 }
         current.qtyA += adjustment.bcToAQty
         if (!current.hasRejectDetails) {
-          let remainingErrorQty = adjustment.inspectorErrorQty
-          const qtyCAdjustment = Math.min(current.qtyC, remainingErrorQty)
-          current.qtyC -= qtyCAdjustment
-          remainingErrorQty -= qtyCAdjustment
-          const qtyBAdjustment = Math.min(current.qtyB, remainingErrorQty)
-          current.qtyB -= qtyBAdjustment
+          const adjustedRejectTotals = applyInspectorErrorToRejectTotals(current.qtyB, current.qtyC, adjustment.inspectorErrorQty)
+          current.qtyB = adjustedRejectTotals.qtyB
+          current.qtyC = adjustedRejectTotals.qtyC
         }
         current.checked = current.qtyA + current.qtyB + current.qtyC
       })
@@ -985,55 +1234,142 @@ export default function QcDashboardPage() {
     return grouped
   }, [arklineRejectDetails, qcResultSummary])
 
+  const selectedRejectTaskRows = useMemo(
+    () => (rejectDetailSummary ? activeItems.filter((item) => isTaskInSummary(item, rejectDetailSummary)) : []),
+    [activeItems, rejectDetailSummary]
+  )
   const selectedRejectTaskIds = useMemo(
-    () => new Set((rejectDetailSummary?.taskRows || []).map((item) => item.id)),
+    () => new Set(selectedRejectTaskRows.map((item) => item.id)),
+    [selectedRejectTaskRows]
+  )
+  const selectedRejectSummaryKey = useMemo(
+    () => (rejectDetailSummary ? getSummaryRejectKey(rejectDetailSummary) : ''),
     [rejectDetailSummary]
   )
   const selectedRejectExistingDetails = useMemo(
-    () => arklineRejectDetails.filter((item) => selectedRejectTaskIds.has(item.arkline_qc_id)),
-    [arklineRejectDetails, selectedRejectTaskIds]
+    () =>
+      arklineRejectDetails.filter(
+        (item) => selectedRejectTaskIds.has(item.arkline_qc_id) || getRejectDetailSummaryKey(item) === selectedRejectSummaryKey
+      ),
+    [arklineRejectDetails, selectedRejectSummaryKey, selectedRejectTaskIds]
   )
+  const selectedRejectReasonOptions = useMemo(() => {
+    const grouped = new Map()
+
+    arklineRejectReasons.forEach((item) => {
+      grouped.set(item.id, item)
+    })
+
+    selectedRejectExistingDetails.forEach((item) => {
+      if (item.reject_reason_id && item.reason?.reason_name) {
+        grouped.set(item.reject_reason_id, {
+          id: item.reject_reason_id,
+          reason_name: item.reason.reason_name,
+          is_active: true,
+        })
+      }
+    })
+
+    return Array.from(grouped.values()).sort((a, b) => a.reason_name.localeCompare(b.reason_name))
+  }, [arklineRejectReasons, selectedRejectExistingDetails])
   const selectedRejectTargetQty = Number(rejectDetailSummary?.rejectTargetQty ?? getRejectQty(rejectDetailSummary || {}))
   const selectedRejectDetailQty = rejectDraftRows.reduce((sum, item) => sum + Number(item.qty || 0), 0)
   const selectedRejectAdjustmentQty =
     Number(rejectAdjustmentDraft.bcToAQty || 0) + Number(rejectAdjustmentDraft.inspectorErrorQty || 0)
   const selectedRejectGap = selectedRejectTargetQty - selectedRejectDetailQty - selectedRejectAdjustmentQty
+  const selectedRejectPreviewSummary = useMemo(() => {
+    const baseQtyA = Number(rejectDetailSummary?.qtyA || 0)
+    const baseQtyB = Number(rejectDetailSummary?.qtyB || 0)
+    const baseQtyC = Number(rejectDetailSummary?.qtyC || 0)
+    const bcToAQty = Number(rejectAdjustmentDraft.bcToAQty || 0)
+
+    let previewQtyB = 0
+    let previewQtyC = 0
+    let hasDraftRejectQty = false
+
+    rejectDraftRows.forEach((row) => {
+      const grade = String(row.grade || '').toUpperCase()
+      const qty = Number(row.qty || 0)
+      if (!qty) return
+      if (grade === 'B') {
+        previewQtyB += qty
+        hasDraftRejectQty = true
+      }
+      if (grade === 'C') {
+        previewQtyC += qty
+        hasDraftRejectQty = true
+      }
+    })
+
+    return {
+      qtyA: baseQtyA + bcToAQty,
+      qtyB: hasDraftRejectQty ? previewQtyB : baseQtyB,
+      qtyC: hasDraftRejectQty ? previewQtyC : baseQtyC,
+    }
+  }, [rejectAdjustmentDraft.bcToAQty, rejectDetailSummary, rejectDraftRows])
+  const selectedRejectPreviewChecked =
+    selectedRejectPreviewSummary.qtyA + selectedRejectPreviewSummary.qtyB + selectedRejectPreviewSummary.qtyC
   const selectedRejectSizeOptions = useMemo(() => {
-    const poItemIds = new Set((rejectDetailSummary?.taskRows || []).map((item) => item.arkline_po_item_id).filter(Boolean))
+    const poItemIds = new Set(selectedRejectTaskRows.map((item) => item.arkline_po_item_id).filter(Boolean))
     const sizes = arklinePoItemSizes
       .filter((item) => poItemIds.has(item.arkline_po_item_id))
       .map((item) => String(item.size || '').trim())
       .filter(Boolean)
 
-    return Array.from(new Set(sizes)).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
-  }, [arklinePoItemSizes, rejectDetailSummary])
+    return Array.from(new Set(sizes)).sort(compareApparelSize)
+  }, [arklinePoItemSizes, selectedRejectTaskRows])
+  const selectedRejectInspectorRows = useMemo(() => {
+    const grouped = new Map()
+
+    selectedRejectTaskRows.forEach((item) => {
+      const inspectorKey = String(item.assigned_to || '-').trim().toLowerCase() || '-'
+      const current = grouped.get(inspectorKey) || {
+        inspectorKey,
+        inspector: memberNameMap[inspectorKey] || (inspectorKey === '-' ? 'Unassigned' : String(item.assigned_to || inspectorKey)),
+        qtyA: 0,
+        qtyB: 0,
+        qtyC: 0,
+        checked: 0,
+      }
+
+      current.qtyA += Number(item.qty_a || 0)
+      current.qtyB += Number(item.qty_b || 0)
+      current.qtyC += Number(item.qty_c || 0)
+      current.checked += getCheckedQty(item)
+      grouped.set(inspectorKey, current)
+    })
+
+    return Array.from(grouped.values()).sort((a, b) => a.inspector.localeCompare(b.inspector))
+  }, [memberNameMap, selectedRejectTaskRows])
   const inspectorPerformance = useMemo(() => {
     const grouped = new Map()
 
-    activeItems
-      .filter((item) => item.status === 'done' || hasQcResult(item))
-      .forEach((item) => {
-        const key = item.assigned_to || '-'
-        const totalPcs = getCheckedQty(item)
-        const minutes = Number(item.stopwatch_seconds || 0) / 60
-        const workDate = String(item.finished_at || item.created_at || '').slice(0, 10)
-        const current =
-          grouped.get(key) || {
-            inspector: key,
-            totalPcs: 0,
-            totalMinutes: 0,
-            daySet: new Set(),
-            avgPerDay: 0,
-            rate: 0,
-            nonProductiveSeconds: 0,
-            pauseLogs: [],
-            taskRows: [],
-          }
+    activeItems.forEach((item) => {
+      const key = item.assigned_to || '-'
+      const totalPcs = getCheckedQty(item)
+      const minutes = Number(item.stopwatch_seconds || 0) / 60
+      const workDate = String(item.finished_at || item.created_at || '').slice(0, 10)
+      const current =
+        grouped.get(key) || {
+          inspector: key,
+          totalPcs: 0,
+          totalMinutes: 0,
+          daySet: new Set(),
+          avgPerDay: 0,
+          rate: 0,
+          nonProductiveSeconds: 0,
+          pauseLogs: [],
+          completedTaskRows: [],
+          activeTaskRows: [],
+          activeTaskCount: 0,
+          activeAllocatedQty: 0,
+        }
 
+      if (item.status === 'done' || hasQcResult(item)) {
         current.totalPcs += totalPcs
         current.totalMinutes += minutes
         if (workDate) current.daySet.add(workDate)
-        current.taskRows.push({
+        current.completedTaskRows.push({
           id: item.id,
           source: qcMode === 'arkline' ? getArklinePoLabel(item) : item.inbound?.grn_number || '-',
           category: qcMode === 'arkline' ? getArklineCategoryLabel(item) : getCategoryLabel(item),
@@ -1047,11 +1383,28 @@ export default function QcDashboardPage() {
           status: item.status || '-',
           finishedAt: item.finished_at || item.updated_at || item.created_at || '',
         })
-        grouped.set(key, current)
-      })
+      }
+
+      if (item.status !== 'done') {
+        current.activeTaskCount += 1
+        current.activeAllocatedQty += Number(item.allocated_qty || 0)
+        current.activeTaskRows.push({
+          id: item.id,
+          source: qcMode === 'arkline' ? getArklinePoLabel(item) : item.inbound?.grn_number || '-',
+          category: qcMode === 'arkline' ? getArklineCategoryLabel(item) : getCategoryLabel(item),
+          model: getTaskModelInfo(item).model,
+          allocatedQty: Number(item.allocated_qty || 0),
+          checkedQty: totalPcs,
+          remainingQty: Math.max(0, Number(item.allocated_qty || 0) - Number(item.locked_qty || 0)),
+          status: item.status || '-',
+        })
+      }
+
+      grouped.set(key, current)
+    })
 
     activePauseLogs.forEach((item) => {
-      const key = item.qc_item?.assigned_to || item.paused_by || '-'
+      const key = getPauseLogAssignedTo(item)
       const current =
         grouped.get(key) || {
           inspector: key,
@@ -1078,12 +1431,17 @@ export default function QcDashboardPage() {
         inspectorKey: item.inspector,
         totalPcs: item.totalPcs,
         avgPerDay: Math.round((item.totalPcs / dayCount) * 100) / 100,
-        rate: item.totalMinutes > 0 ? Math.round((item.totalPcs / item.totalMinutes) * 100) / 100 : 0,
-        nonProductiveHours: formatHours(item.nonProductiveSeconds),
-        pauseLogs: [...(item.pauseLogs || [])].sort((a, b) => new Date(b.paused_at || 0).getTime() - new Date(a.paused_at || 0).getTime()),
-        taskRows: [...(item.taskRows || [])].sort((a, b) => new Date(b.finishedAt || 0).getTime() - new Date(a.finishedAt || 0).getTime()),
-      }
-    })
+          rate: item.totalMinutes > 0 ? Math.round((item.totalPcs / item.totalMinutes) * 100) / 100 : 0,
+          nonProductiveHours: formatMinutes(item.nonProductiveSeconds),
+          pauseLogs: [...(item.pauseLogs || [])].sort((a, b) => new Date(b.paused_at || 0).getTime() - new Date(a.paused_at || 0).getTime()),
+          completedTaskRows: [...(item.completedTaskRows || [])].sort(
+            (a, b) => new Date(b.finishedAt || 0).getTime() - new Date(a.finishedAt || 0).getTime()
+          ),
+          activeTaskRows: [...(item.activeTaskRows || [])].sort((a, b) => String(a.status || '').localeCompare(String(b.status || ''))),
+          activeTaskCount: item.activeTaskCount,
+          activeAllocatedQty: item.activeAllocatedQty,
+        }
+      })
   }, [activeItems, activePauseLogs, memberNameMap, qcMode])
 
   const categoryTimes = useMemo(() => {
@@ -1117,15 +1475,21 @@ export default function QcDashboardPage() {
   const totalGradeC = qcResultSummary.reduce((sum, item) => sum + Number(item.qtyC || 0), 0)
   const selectedInspectorPerformance = inspectorPerformance.find((item) => item.inspectorKey === pauseDetailInspector)
   const selectedInspectorPauseLogs = selectedInspectorPerformance?.pauseLogs || []
-  const selectedInspectorTaskRows = selectedInspectorPerformance?.taskRows || []
+  const selectedInspectorCompletedTaskRows = selectedInspectorPerformance?.completedTaskRows || []
+  const selectedInspectorActiveTaskRows = selectedInspectorPerformance?.activeTaskRows || []
+  const selectedInspectorCheckedQty = selectedInspectorCompletedTaskRows.reduce((sum, item) => sum + Number(item.checkedQty || 0), 0)
   const totalRemaining = activeItems.reduce(
     (sum, item) => sum + (Number(item.locked_qty || 0) - Number(item.allocated_qty || 0)),
     0
   )
 
   function openRejectDetailModal(summary) {
-    const taskIds = new Set((summary.taskRows || []).map((item) => item.id))
-    const existingDetails = arklineRejectDetails.filter((item) => taskIds.has(item.arkline_qc_id))
+    const summaryTaskRows = activeItems.filter((item) => isTaskInSummary(item, summary))
+    const taskIds = new Set(summaryTaskRows.map((item) => item.id))
+    const summaryKey = getSummaryRejectKey(summary)
+    const existingDetails = arklineRejectDetails.filter(
+      (item) => taskIds.has(item.arkline_qc_id) || getRejectDetailSummaryKey(item) === summaryKey
+    )
     const existingAdjustments = arklineRejectAdjustments.filter((item) => {
       const samePo = String(item.po_id || 'NO PO').trim().toUpperCase() === summary.brand
       const sameSku = String(item.sku_induk || 'NO SKU').trim().toUpperCase() === summary.category
@@ -1161,6 +1525,13 @@ export default function QcDashboardPage() {
       inspectorErrorQty: inspectorErrorAdjustment?.qty ? String(inspectorErrorAdjustment.qty) : '',
       inspectorErrorNotes: inspectorErrorAdjustment?.notes || '',
     })
+  }
+
+  function toggleInspectorDetailSection(sectionKey) {
+    setInspectorDetailSections((prev) => ({
+      ...prev,
+      [sectionKey]: !prev[sectionKey],
+    }))
   }
 
   function updateRejectDraftRow(rowId, field, value) {
@@ -1228,6 +1599,10 @@ export default function QcDashboardPage() {
     setSavingRejectDetail(true)
 
     try {
+      if (!rejectDraftRows.length) {
+        throw new Error('Tambahkan minimal satu baris reject detail.')
+      }
+
       const validRows = rejectDraftRows.filter((row) => Number(row.qty || 0) > 0)
 
       if (!validRows.length && selectedRejectTargetQty > 0) {
@@ -1256,8 +1631,8 @@ export default function QcDashboardPage() {
       }
 
       const taskRowsByGrade = {
-        B: (rejectDetailSummary.taskRows || []).map((item) => ({ ...item, remainingRejectQty: Number(item.qty_b || 0) })),
-        C: (rejectDetailSummary.taskRows || []).map((item) => ({ ...item, remainingRejectQty: Number(item.qty_c || 0) })),
+        B: selectedRejectTaskRows.map((item) => ({ ...item, remainingRejectQty: Number(item.qty_b || 0) })),
+        C: selectedRejectTaskRows.map((item) => ({ ...item, remainingRejectQty: Number(item.qty_c || 0) })),
       }
       const detailPayload = []
 
@@ -1284,12 +1659,28 @@ export default function QcDashboardPage() {
           remaining -= qty
         })
 
-        if (remaining > 0 && selectedRejectTargetQty > 0) {
-          throw new Error(`Qty Grade ${grade} melebihi total Grade ${grade} awal.`)
+        if (remaining > 0 && selectedRejectTaskRows.length) {
+          const fallbackTask = selectedRejectTaskRows[0]
+          detailPayload.push({
+            arkline_qc_id: fallbackTask.id,
+            po_id: fallbackTask.po_id || null,
+            arkline_po_item_id: fallbackTask.arkline_po_item_id || null,
+            sku_induk: fallbackTask.sku_induk || null,
+            model_name: fallbackTask.model_name || rejectDetailSummary.model,
+            grade,
+            size: String(row.size || '').trim(),
+            reject_reason_id: row.rejectReasonId,
+            qty: remaining,
+          })
+          remaining = 0
+        }
+
+        if (remaining > 0) {
+          throw new Error('Reject detail belum bisa disimpan karena task summary tidak ditemukan.')
         }
       })
 
-      const taskIds = (rejectDetailSummary.taskRows || []).map((item) => item.id)
+      const taskIds = selectedRejectTaskRows.map((item) => item.id)
       if (taskIds.length) {
         const { error: deleteDetailError } = await supabase.from('arkline_qc_reject_details').delete().in('arkline_qc_id', taskIds)
         if (deleteDetailError) throw new Error(deleteDetailError.message)
@@ -1326,11 +1717,11 @@ export default function QcDashboardPage() {
           notes: rejectAdjustmentDraft.inspectorErrorNotes.trim() || null,
         },
       ]
-        .filter((item) => item.qty > 0)
+        .filter((item) => item.qty !== 0)
         .map((item) => ({
           ...item,
           po_id: poId,
-          arkline_po_item_id: rejectDetailSummary.taskRows?.[0]?.arkline_po_item_id || null,
+          arkline_po_item_id: selectedRejectTaskRows[0]?.arkline_po_item_id || null,
           sku_induk: skuInduk,
           model_name: rejectDetailSummary.model,
         }))
@@ -1408,7 +1799,17 @@ export default function QcDashboardPage() {
         : baseSeconds
       const pausedAt = new Date().toISOString()
 
-      return supabase
+      const pauseLogPayload = {
+        qc_item_id: item.qc_table === 'qc_items' ? item.id : null,
+        arkline_qc_id: item.qc_table === 'arkline_qc' ? item.id : null,
+        paused_by: item.assigned_to || null,
+        pause_reason: 'COORDINATOR BREAK',
+        paused_at: pausedAt,
+      }
+
+      const [{ error: pauseLogError }, updateResult] = await Promise.all([
+        supabase.from('qc_pause_logs').insert(pauseLogPayload),
+        supabase
         .from(item.qc_table)
         .update({
           status: 'paused',
@@ -1417,7 +1818,10 @@ export default function QcDashboardPage() {
           paused_at: pausedAt,
           started_at: null,
         })
-        .eq('id', item.id)
+        .eq('id', item.id),
+      ])
+
+      return { error: pauseLogError || updateResult.error }
     })
 
     const results = await Promise.all(updates)
@@ -1512,32 +1916,13 @@ export default function QcDashboardPage() {
 
         <div style={styles.filters}>
           <div style={styles.field}>
-            <label style={styles.label}>View Mode</label>
-            <select
-              value={selectedDate ? 'daily' : 'total'}
-              onChange={(event) => {
-                if (event.target.value === 'total') {
-                  setSelectedDate('')
-                } else if (!selectedDate) {
-                  setSelectedDate(today)
-                }
-              }}
-              style={styles.select}
-            >
-              <option value="total">Total</option>
-              <option value="daily">Per Day</option>
-            </select>
+            <label style={styles.label}>Date From</label>
+            <input type="date" value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} style={styles.input} />
           </div>
 
           <div style={styles.field}>
-            <label style={styles.label}>Date</label>
-            <input
-              type="date"
-              value={selectedDate}
-              onChange={(event) => setSelectedDate(event.target.value)}
-              style={styles.input}
-              disabled={!selectedDate && false}
-            />
+            <label style={styles.label}>Date To</label>
+            <input type="date" value={dateTo} onChange={(event) => setDateTo(event.target.value)} style={styles.input} />
           </div>
 
           {qcMode === 'arkline' ? (
@@ -1630,6 +2015,8 @@ export default function QcDashboardPage() {
           )}
         </div>
 
+        {hasInvalidDateRange ? <p style={{ color: '#dc2626', margin: 0 }}>Date From cannot be later than Date To.</p> : null}
+
         {error ? <p style={{ color: '#dc2626', margin: 0 }}>{error}</p> : null}
         {success ? <p style={{ color: '#16a34a', margin: 0 }}>{success}</p> : null}
 
@@ -1693,7 +2080,7 @@ export default function QcDashboardPage() {
                 <th style={{ ...styles.th, ...styles.thCenter }}>Qty B</th>
                 <th style={{ ...styles.th, ...styles.thCenter }}>Qty C</th>
                 <th style={{ ...styles.th, ...styles.thCenter }}>Total Checked</th>
-                {qcMode === 'arkline' ? <th style={{ ...styles.th, ...styles.thCenter }}>Reject Detail</th> : null}
+                {qcMode === 'arkline' ? <th style={{ ...styles.th, ...styles.thCenter }}>Detail</th> : null}
               </tr>
             </thead>
             <tbody>
@@ -1759,7 +2146,7 @@ export default function QcDashboardPage() {
                 <th style={styles.th}>Total PCS</th>
                 <th style={styles.th}>Average PCS / Day</th>
                 <th style={styles.th}>QC Rate PCS / Minute</th>
-                <th style={styles.th}>Non-Productive Hours</th>
+                <th style={styles.th}>Non-Productive Minutes</th>
                 <th style={styles.th}>Detail</th>
               </tr>
             </thead>
@@ -1777,7 +2164,7 @@ export default function QcDashboardPage() {
                         type="button"
                         style={styles.detailButton}
                         onClick={() => setPauseDetailInspector(item.inspectorKey)}
-                        disabled={qcMode === 'arkline' ? !item.taskRows.length : !item.pauseLogs.length}
+                        disabled={!item.pauseLogs.length && !item.completedTaskRows.length && !item.activeTaskRows.length}
                       >
                         Detail
                       </button>
@@ -1864,44 +2251,98 @@ export default function QcDashboardPage() {
       {rejectDetailSummary ? (
         <div style={styles.overlay}>
           <div style={{ ...styles.modal, ...styles.wideModal }}>
-            <div>
-              <h2 style={styles.sectionTitle}>Arkline Reject Detail</h2>
-              <p style={styles.subtitle}>
-                {rejectDetailSummary.brand} / {rejectDetailSummary.category} / {rejectDetailSummary.model}
-              </p>
+            <div style={styles.headerRow}>
+              <div>
+                <h2 style={styles.sectionTitle}>Detail</h2>
+                <p style={styles.subtitle}>
+                  {rejectDetailSummary.brand} / {rejectDetailSummary.category} / {rejectDetailSummary.model}
+                </p>
+              </div>
+              <div style={styles.buttonRow}>
+                <button type="button" onClick={() => setRejectDetailSummary(null)} style={styles.secondaryButton}>
+                  Close
+                </button>
+                <button type="button" onClick={handleSaveRejectDetail} disabled={savingRejectDetail} style={styles.primaryButton}>
+                  {savingRejectDetail ? 'Saving...' : 'Save Detail'}
+                </button>
+              </div>
             </div>
 
-            <div style={styles.modalGrid}>
-              <div style={styles.summaryCard}>
+            {error ? <p style={{ color: '#dc2626', margin: 0 }}>{error}</p> : null}
+            {success ? <p style={{ color: '#16a34a', margin: 0 }}>{success}</p> : null}
+
+            <div style={styles.rejectDetailGrid}>
+              <div style={{ ...styles.summaryCard, ...styles.compactSummaryCard }}>
+                <span style={styles.summaryLabel}>Grade A</span>
+                <strong style={{ ...styles.summaryValue, ...styles.compactSummaryValue }}>{selectedRejectPreviewSummary.qtyA}</strong>
+              </div>
+              <div style={{ ...styles.summaryCard, ...styles.compactSummaryCard }}>
                 <span style={styles.summaryLabel}>Grade B</span>
-                <strong style={styles.summaryValue}>{rejectDetailSummary.qtyB}</strong>
+                <strong style={{ ...styles.summaryValue, ...styles.compactSummaryValue }}>{selectedRejectPreviewSummary.qtyB}</strong>
               </div>
-              <div style={styles.summaryCard}>
+              <div style={{ ...styles.summaryCard, ...styles.compactSummaryCard }}>
                 <span style={styles.summaryLabel}>Grade C</span>
-                <strong style={styles.summaryValue}>{rejectDetailSummary.qtyC}</strong>
+                <strong style={{ ...styles.summaryValue, ...styles.compactSummaryValue }}>{selectedRejectPreviewSummary.qtyC}</strong>
               </div>
-              <div style={styles.summaryCard}>
-                <span style={styles.summaryLabel}>Detail + Adjustment</span>
-                <strong style={styles.summaryValue}>{selectedRejectDetailQty + selectedRejectAdjustmentQty}</strong>
+              <div style={{ ...styles.summaryCard, ...styles.compactSummaryCard }}>
+                <span style={styles.summaryLabel}>Checked Preview</span>
+                <strong style={{ ...styles.summaryValue, ...styles.compactSummaryValue }}>{selectedRejectPreviewChecked}</strong>
               </div>
-              <div style={styles.summaryCard}>
+              <div style={{ ...styles.summaryCard, ...styles.compactSummaryCard }}>
                 <span style={styles.summaryLabel}>Gap</span>
-                <strong style={{ ...styles.summaryValue, color: selectedRejectGap === 0 ? '#111827' : '#dc2626' }}>
+                <strong style={{ ...styles.summaryValue, ...styles.compactSummaryValue, color: selectedRejectGap === 0 ? '#111827' : '#dc2626' }}>
                   {selectedRejectGap > 0 ? '+' : ''}
                   {selectedRejectGap}
                 </strong>
               </div>
             </div>
 
+            <div style={styles.inspectorSection}>
+              <button type="button" style={{ ...styles.inspectorSectionHeader, cursor: 'default' }}>
+                <span style={styles.inspectorSectionTitle}>Detail Summary</span>
+                <span style={styles.inspectorSectionMeta}>{selectedRejectInspectorRows.length} inspectors</span>
+              </button>
+              <div style={styles.inspectorSectionBody}>
+                <div style={styles.inspectorTableWrap}>
+                  <table style={styles.table}>
+                    <thead>
+                      <tr>
+                        <th style={{ ...styles.th, ...styles.inspectorTh }}>Inspector</th>
+                        <th style={{ ...styles.th, ...styles.thCenter, ...styles.inspectorTh }}>Grade A</th>
+                        <th style={{ ...styles.th, ...styles.thCenter, ...styles.inspectorTh }}>Grade B</th>
+                        <th style={{ ...styles.th, ...styles.thCenter, ...styles.inspectorTh }}>Grade C</th>
+                        <th style={{ ...styles.th, ...styles.thCenter, ...styles.inspectorTh }}>Checked</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {selectedRejectInspectorRows.length ? (
+                        selectedRejectInspectorRows.map((item) => (
+                          <tr key={item.inspectorKey}>
+                            <td style={{ ...styles.td, ...styles.inspectorTd }}>{item.inspector}</td>
+                            <td style={{ ...styles.td, ...styles.tdCenter, ...styles.inspectorTd }}>{item.qtyA}</td>
+                            <td style={{ ...styles.td, ...styles.tdCenter, ...styles.inspectorTd }}>{item.qtyB}</td>
+                            <td style={{ ...styles.td, ...styles.tdCenter, ...styles.inspectorTd }}>{item.qtyC}</td>
+                            <td style={{ ...styles.td, ...styles.tdCenter, ...styles.inspectorTd }}>{item.checked}</td>
+                          </tr>
+                        ))
+                      ) : (
+                        <tr>
+                          <td style={{ ...styles.td, ...styles.inspectorTd }} colSpan={5}>
+                            No inspector summary found for this detail.
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+
             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
               <div style={styles.headerRow}>
                 <div>
-                  <h3 style={{ ...styles.sectionTitle, fontSize: '16px' }}>Reject Rows</h3>
-                  <p style={styles.subtitle}>Pilih grade, reason, qty, dan size untuk setiap kelompok reject.</p>
+                  <h3 style={{ ...styles.sectionTitle, fontSize: '16px' }}>Arkline Reject Detail</h3>
                 </div>
-                <button type="button" style={styles.smallButton} onClick={() => setRejectDraftRows((rows) => [...rows, createRejectDraftRow()])}>
-                  Add Row
-                </button>
               </div>
 
               <datalist id="arkline-reject-size-options">
@@ -1915,10 +2356,10 @@ export default function QcDashboardPage() {
                 <span style={styles.label}>Reason</span>
                 <span style={styles.label}>Qty</span>
                 <span style={styles.label}>Size</span>
-                <span />
+                <span style={{ ...styles.label, textAlign: 'right' }}>Action</span>
               </div>
 
-              {rejectDraftRows.map((row) => (
+              {rejectDraftRows.map((row, index) => (
                 <div key={row.id} style={styles.rejectRowGrid}>
                   <div style={styles.field}>
                     <select value={row.grade} onChange={(event) => updateRejectDraftRow(row.id, 'grade', event.target.value)} style={styles.select}>
@@ -1929,7 +2370,7 @@ export default function QcDashboardPage() {
                   <div style={styles.field}>
                     <select value={row.rejectReasonId} onChange={(event) => updateRejectDraftRow(row.id, 'rejectReasonId', event.target.value)} style={styles.select}>
                       <option value="">Choose reason</option>
-                      {arklineRejectReasons.map((reason) => (
+                      {selectedRejectReasonOptions.map((reason) => (
                         <option key={reason.id} value={reason.id}>
                           {reason.reason_name}
                         </option>
@@ -1963,9 +2404,22 @@ export default function QcDashboardPage() {
                       placeholder={selectedRejectSizeOptions.length ? 'Choose size' : 'Size'}
                     />
                   </div>
-                  <button type="button" style={styles.smallButton} onClick={() => removeRejectDraftRow(row.id)} title="Remove row">
-                    X
-                  </button>
+                  <div style={styles.iconButtonRow}>
+                    <button
+                      type="button"
+                      style={styles.iconSmallButton}
+                      onClick={() => setRejectDraftRows((rows) => [...rows, createRejectDraftRow()])}
+                      title="Add row"
+                      aria-label="Add row"
+                    >
+                      +
+                    </button>
+                    {index > 0 ? (
+                      <button type="button" style={styles.iconSmallButton} onClick={() => removeRejectDraftRow(row.id)} title="Remove row" aria-label="Remove row">
+                        X
+                      </button>
+                    ) : null}
+                  </div>
                 </div>
               ))}
             </div>
@@ -1973,19 +2427,33 @@ export default function QcDashboardPage() {
             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
               <div>
                 <h3 style={{ ...styles.sectionTitle, fontSize: '16px' }}>Adjustment</h3>
-                <p style={styles.subtitle}>Isi hanya kalau total detail reject tidak sama dengan Qty Grade B/C awal.</p>
+                <div style={styles.noteGrid}>
+                  <div style={styles.noteCard}>
+                    <p style={styles.smallNote}>
+                      <strong>Jika data &gt; aktual,</strong>
+                    </p>
+                    <p style={styles.smallNote}>Isi kolom &apos;Pindah ke Grade A&apos; , jika produk yang awalnya reject dianggap masih ok.</p>
+                    <p style={styles.smallNote}>Isi kolom &apos;Salah data QC Inspector&apos; , jika terdapat kesalahan input oleh Inspector pada data awal.</p>
+                  </div>
+                  <div style={styles.noteCard}>
+                    <p style={styles.smallNote}>
+                      <strong>Jika data &lt; aktual,</strong>
+                    </p>
+                    <p style={styles.smallNote}>Isi kolom &apos;Pindah ke Grade A&apos; dengan minus (-), jika ada salah input Grade A.</p>
+                    <p style={styles.smallNote}>Isi kolom &apos;Salah data QC Inspector&apos; dengan minus (-), jika ada kekurangan input oleh Inspector pada data awal.</p>
+                  </div>
+                </div>
               </div>
               {selectedRejectGap !== 0 ? (
                 <div style={styles.warningBox}>
-                  Gap masih {selectedRejectGap}. Pakai adjustment untuk barang yang pindah dari Grade B/C ke Grade A, atau untuk salah input data QC inspector.
+                  Gap masih {selectedRejectGap}. Reject detail adalah hasil akhir Grade B/C aktual. Adjustment dipakai untuk rekonsiliasi angka QC awal sampai gap menjadi 0.
                 </div>
               ) : null}
               <div style={styles.adjustmentGrid}>
                 <div style={styles.summaryCard}>
-                  <label style={styles.label}>B/C pindah ke Grade A</label>
+                  <label style={styles.label}>Pindah ke Grade A</label>
                   <input
                     type="number"
-                    min="0"
                     value={rejectAdjustmentDraft.bcToAQty}
                     onChange={(event) => setRejectAdjustmentDraft((draft) => ({ ...draft, bcToAQty: event.target.value }))}
                     style={styles.input}
@@ -2002,7 +2470,6 @@ export default function QcDashboardPage() {
                   <label style={styles.label}>Salah data QC inspector</label>
                   <input
                     type="number"
-                    min="0"
                     value={rejectAdjustmentDraft.inspectorErrorQty}
                     onChange={(event) => setRejectAdjustmentDraft((draft) => ({ ...draft, inspectorErrorQty: event.target.value }))}
                     style={styles.input}
@@ -2049,109 +2516,200 @@ export default function QcDashboardPage() {
               </table>
             </div>
 
-            <div style={styles.buttonRow}>
-              <button type="button" onClick={() => setRejectDetailSummary(null)} style={styles.secondaryButton}>
-                Close
-              </button>
-              <button type="button" onClick={handleSaveRejectDetail} disabled={savingRejectDetail} style={styles.primaryButton}>
-                {savingRejectDetail ? 'Saving...' : 'Save Reject Detail'}
-              </button>
-            </div>
           </div>
         </div>
       ) : null}
 
       {pauseDetailInspector ? (
         <div style={styles.overlay}>
-          <div style={{ ...styles.modal, maxWidth: '760px' }}>
-            <div>
-              <h2 style={styles.sectionTitle}>
-                {qcMode === 'arkline' ? 'Arkline Inspector Detail' : 'Non-Productive Detail'} -{' '}
-                {memberNameMap[pauseDetailInspector] || (pauseDetailInspector === '-' ? 'Unassigned' : 'Unknown Inspector')}
-              </h2>
-              <p style={styles.subtitle}>
-                {qcMode === 'arkline'
-                  ? 'Detail hasil QC Arkline yang tercatat untuk inspector ini.'
-                  : 'Detail kegiatan non-produktif yang tercatat dari pause log inspector ini.'}
-              </p>
+          <div style={{ ...styles.modal, ...styles.wideModal, ...styles.inspectorModal }}>
+            <div style={styles.inspectorModalHeader}>
+              <div style={styles.headerRow}>
+                <h2 style={styles.sectionTitle}>
+                  Inspector Detail -{' '}
+                  {memberNameMap[pauseDetailInspector] || (pauseDetailInspector === '-' ? 'Unassigned' : 'Unknown Inspector')}
+                </h2>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPauseDetailInspector('')
+                    setInspectorDetailSections({
+                      nonProductive: false,
+                      finished: false,
+                      active: false,
+                    })
+                  }}
+                  style={{ height: '42px', padding: '0 16px', border: '1px solid #d1d5db', borderRadius: '8px', background: '#fff', color: '#111827', fontSize: '14px', fontWeight: '700', cursor: 'pointer' }}
+                >
+                  Close
+                </button>
+              </div>
             </div>
-            <div style={styles.modalTableWrap}>
-              {qcMode === 'arkline' ? (
-                <table style={styles.table}>
-                  <thead>
-                    <tr>
-                      <th style={styles.th}>PO</th>
-                      <th style={styles.th}>SKU</th>
-                      <th style={styles.th}>Model</th>
-                      <th style={styles.th}>A</th>
-                      <th style={styles.th}>B</th>
-                      <th style={styles.th}>C</th>
-                      <th style={styles.th}>Total</th>
-                      <th style={styles.th}>Minutes</th>
-                      <th style={styles.th}>Rate</th>
-                      <th style={styles.th}>Status</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {selectedInspectorTaskRows.length ? (
-                      selectedInspectorTaskRows.map((item) => (
-                        <tr key={item.id}>
-                          <td style={styles.td}>{item.source}</td>
-                          <td style={styles.td}>{item.category}</td>
-                          <td style={styles.td}>{item.model}</td>
-                          <td style={styles.td}>{item.qtyA}</td>
-                          <td style={styles.td}>{item.qtyB}</td>
-                          <td style={styles.td}>{item.qtyC}</td>
-                          <td style={styles.td}>{item.checkedQty}</td>
-                          <td style={styles.td}>{Math.round((Number(item.seconds || 0) / 60) * 100) / 100}</td>
-                          <td style={styles.td}>{item.rate}</td>
-                          <td style={styles.td}>{item.status}</td>
-                        </tr>
-                      ))
-                    ) : (
-                      <tr>
-                        <td style={styles.td} colSpan={10}>
-                          No Arkline QC detail found.
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              ) : (
-                <table style={styles.table}>
-                  <thead>
-                    <tr>
-                      <th style={styles.th}>Reason</th>
-                      <th style={styles.th}>Paused At</th>
-                      <th style={styles.th}>Resumed At</th>
-                      <th style={styles.th}>Hours</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {selectedInspectorPauseLogs.length ? (
-                      selectedInspectorPauseLogs.map((item) => (
-                        <tr key={item.id}>
-                          <td style={styles.td}>{item.pause_reason || '-'}</td>
-                          <td style={styles.td}>{item.paused_at ? new Date(item.paused_at).toLocaleString() : '-'}</td>
-                          <td style={styles.td}>{item.resumed_at ? new Date(item.resumed_at).toLocaleString() : '-'}</td>
-                          <td style={styles.td}>{formatHours(getPauseDurationSeconds(item))}</td>
-                        </tr>
-                      ))
-                    ) : (
-                      <tr>
-                        <td style={styles.td} colSpan={4}>
-                          No non-productive activity detail found.
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              )}
-            </div>
-            <div style={styles.buttonRow}>
-              <button type="button" onClick={() => setPauseDetailInspector('')} style={{ height: '42px', padding: '0 16px', border: '1px solid #d1d5db', borderRadius: '8px', background: '#fff', color: '#111827', fontSize: '14px', fontWeight: '700', cursor: 'pointer' }}>
-                Close
-              </button>
+
+            <div style={styles.inspectorModalContent}>
+              <div style={styles.modalGrid}>
+                <div style={styles.summaryCard}>
+                <span style={styles.summaryLabel}>Non-Productive Minutes</span>
+                  <strong style={styles.summaryValue}>{selectedInspectorPerformance?.nonProductiveHours || 0}</strong>
+                </div>
+                <div style={styles.summaryCard}>
+                  <span style={styles.summaryLabel}>Qty Checked</span>
+                  <strong style={styles.summaryValue}>{selectedInspectorCheckedQty}</strong>
+                </div>
+                <div style={styles.summaryCard}>
+                  <span style={styles.summaryLabel}>Active Tasks</span>
+                  <strong style={styles.summaryValue}>{selectedInspectorPerformance?.activeTaskCount || 0}</strong>
+                </div>
+                <div style={styles.summaryCard}>
+                  <span style={styles.summaryLabel}>Active Allocated Qty</span>
+                  <strong style={styles.summaryValue}>{selectedInspectorPerformance?.activeAllocatedQty || 0}</strong>
+                </div>
+              </div>
+
+              <div style={styles.inspectorSection}>
+                <button type="button" style={styles.inspectorSectionHeader} onClick={() => toggleInspectorDetailSection('nonProductive')}>
+                  <span style={styles.inspectorSectionTitle}>Non-Productive Detail</span>
+                  <span style={styles.inspectorSectionMeta}>
+                    {selectedInspectorPauseLogs.length} rows {inspectorDetailSections.nonProductive ? '▲' : '▼'}
+                  </span>
+                </button>
+                {inspectorDetailSections.nonProductive ? (
+                  <div style={styles.inspectorSectionBody}>
+                    <div style={styles.inspectorTableWrap}>
+                      <table style={styles.table}>
+                        <thead>
+                          <tr>
+                            <th style={{ ...styles.th, ...styles.inspectorTh }}>Reason</th>
+                            <th style={{ ...styles.th, ...styles.inspectorTh }}>Paused At</th>
+                            <th style={{ ...styles.th, ...styles.inspectorTh }}>Resumed At</th>
+                            <th style={{ ...styles.th, ...styles.inspectorTh }}>Minutes</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {selectedInspectorPauseLogs.length ? (
+                            selectedInspectorPauseLogs.map((item) => (
+                              <tr key={item.id}>
+                                <td style={{ ...styles.td, ...styles.inspectorTd }}>{item.pause_reason || '-'}</td>
+                                <td style={{ ...styles.td, ...styles.inspectorTd }}>{formatDisplayDate(item.paused_at)}</td>
+                                <td style={{ ...styles.td, ...styles.inspectorTd }}>{formatDisplayDate(item.resumed_at)}</td>
+                                <td style={{ ...styles.td, ...styles.inspectorTd }}>{formatMinutes(getPauseDurationSeconds(item))}</td>
+                              </tr>
+                            ))
+                          ) : (
+                            <tr>
+                              <td style={{ ...styles.td, ...styles.inspectorTd }} colSpan={4}>
+                                No non-productive activity detail found.
+                              </td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+
+              <div style={styles.inspectorSection}>
+                <button type="button" style={styles.inspectorSectionHeader} onClick={() => toggleInspectorDetailSection('finished')}>
+                  <span style={styles.inspectorSectionTitle}>Qty Checked</span>
+                  <span style={styles.inspectorSectionMeta}>
+                    {selectedInspectorCompletedTaskRows.length} rows {inspectorDetailSections.finished ? '▲' : '▼'}
+                  </span>
+                </button>
+                {inspectorDetailSections.finished ? (
+                  <div style={styles.inspectorSectionBody}>
+                    <div style={styles.inspectorTableWrap}>
+                      <table style={styles.table}>
+                        <thead>
+                          <tr>
+                            <th style={{ ...styles.th, ...styles.inspectorTh }}>{qcMode === 'arkline' ? 'PO' : 'GRN'}</th>
+                            <th style={{ ...styles.th, ...styles.inspectorTh }}>{qcMode === 'arkline' ? 'SKU' : 'Category'}</th>
+                            <th style={{ ...styles.th, ...styles.inspectorTh }}>Model</th>
+                            <th style={{ ...styles.th, ...styles.thCenter, ...styles.inspectorTh }}>A</th>
+                            <th style={{ ...styles.th, ...styles.thCenter, ...styles.inspectorTh }}>B</th>
+                            <th style={{ ...styles.th, ...styles.thCenter, ...styles.inspectorTh }}>C</th>
+                            <th style={{ ...styles.th, ...styles.thCenter, ...styles.inspectorTh }}>Checked</th>
+                            <th style={{ ...styles.th, ...styles.thCenter, ...styles.inspectorTh }}>Rate</th>
+                            <th style={{ ...styles.th, ...styles.inspectorTh }}>Finished At</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {selectedInspectorCompletedTaskRows.length ? (
+                            selectedInspectorCompletedTaskRows.map((item) => (
+                              <tr key={item.id}>
+                                <td style={{ ...styles.td, ...styles.inspectorTd }}>{item.source}</td>
+                                <td style={{ ...styles.td, ...styles.inspectorTd }}>{item.category}</td>
+                                <td style={{ ...styles.td, ...styles.inspectorTd }}>{item.model}</td>
+                                <td style={{ ...styles.td, ...styles.tdCenter, ...styles.inspectorTd }}>{item.qtyA}</td>
+                                <td style={{ ...styles.td, ...styles.tdCenter, ...styles.inspectorTd }}>{item.qtyB}</td>
+                                <td style={{ ...styles.td, ...styles.tdCenter, ...styles.inspectorTd }}>{item.qtyC}</td>
+                                <td style={{ ...styles.td, ...styles.tdCenter, ...styles.inspectorTd }}>{item.checkedQty}</td>
+                                <td style={{ ...styles.td, ...styles.tdCenter, ...styles.inspectorTd }}>{item.rate}</td>
+                                <td style={{ ...styles.td, ...styles.inspectorTd }}>{formatDisplayDate(item.finishedAt)}</td>
+                              </tr>
+                            ))
+                          ) : (
+                            <tr>
+                              <td style={{ ...styles.td, ...styles.inspectorTd }} colSpan={9}>
+                                No finished QC found for this inspector.
+                              </td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+
+              <div style={styles.inspectorSection}>
+                <button type="button" style={styles.inspectorSectionHeader} onClick={() => toggleInspectorDetailSection('active')}>
+                  <span style={styles.inspectorSectionTitle}>Active Allocation</span>
+                  <span style={styles.inspectorSectionMeta}>
+                    {selectedInspectorActiveTaskRows.length} rows {inspectorDetailSections.active ? '▲' : '▼'}
+                  </span>
+                </button>
+                {inspectorDetailSections.active ? (
+                  <div style={styles.inspectorSectionBody}>
+                    <div style={styles.inspectorTableWrap}>
+                      <table style={styles.table}>
+                        <thead>
+                          <tr>
+                            <th style={{ ...styles.th, ...styles.inspectorTh }}>{qcMode === 'arkline' ? 'PO' : 'GRN'}</th>
+                            <th style={{ ...styles.th, ...styles.inspectorTh }}>{qcMode === 'arkline' ? 'SKU' : 'Category'}</th>
+                            <th style={{ ...styles.th, ...styles.inspectorTh }}>Model</th>
+                            <th style={{ ...styles.th, ...styles.thCenter, ...styles.inspectorTh }}>Allocated</th>
+                            <th style={{ ...styles.th, ...styles.thCenter, ...styles.inspectorTh }}>Checked</th>
+                            <th style={{ ...styles.th, ...styles.thCenter, ...styles.inspectorTh }}>Remaining</th>
+                            <th style={{ ...styles.th, ...styles.inspectorTh }}>Status</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {selectedInspectorActiveTaskRows.length ? (
+                            selectedInspectorActiveTaskRows.map((item) => (
+                              <tr key={item.id}>
+                                <td style={{ ...styles.td, ...styles.inspectorTd }}>{item.source}</td>
+                                <td style={{ ...styles.td, ...styles.inspectorTd }}>{item.category}</td>
+                                <td style={{ ...styles.td, ...styles.inspectorTd }}>{item.model}</td>
+                                <td style={{ ...styles.td, ...styles.tdCenter, ...styles.inspectorTd }}>{item.allocatedQty}</td>
+                                <td style={{ ...styles.td, ...styles.tdCenter, ...styles.inspectorTd }}>{item.checkedQty}</td>
+                                <td style={{ ...styles.td, ...styles.tdCenter, ...styles.inspectorTd }}>{item.remainingQty}</td>
+                                <td style={{ ...styles.td, ...styles.inspectorTd }}>{item.status}</td>
+                              </tr>
+                            ))
+                          ) : (
+                            <tr>
+                              <td style={{ ...styles.td, ...styles.inspectorTd }} colSpan={7}>
+                                No active allocation found for this inspector.
+                              </td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                ) : null}
+              </div>
             </div>
           </div>
         </div>

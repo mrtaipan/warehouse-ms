@@ -90,7 +90,7 @@ const styles = {
     borderWidth: '1px',
     borderStyle: 'solid',
     borderColor: '#d1d5db',
-    borderRadius: '999px',
+    borderRadius: '12px',
     background: '#fff',
     color: '#111827',
     fontSize: '13px',
@@ -242,8 +242,8 @@ const styles = {
     cursor: 'not-allowed',
   },
   iconButton: {
-    width: '34px',
-    height: '34px',
+    width: '30px',
+    height: '30px',
     borderWidth: '1px',
     borderStyle: 'solid',
     borderColor: '#d1d5db',
@@ -263,6 +263,20 @@ const styles = {
     borderColor: '#e5e7eb',
     color: '#9ca3af',
     cursor: 'not-allowed',
+  },
+  compactAllocationSelect: {
+    height: '32px',
+    fontSize: '11px',
+    padding: '0 8px',
+    width: '100%',
+    minWidth: 0,
+  },
+  compactAllocationInput: {
+    height: '32px',
+    fontSize: '11px',
+    padding: '0 8px',
+    width: '100%',
+    minWidth: 0,
   },
   summaryGrid: {
     display: 'grid',
@@ -767,6 +781,7 @@ export default function QcReceivingPage() {
   const [selectedArklinePoId, setSelectedArklinePoId] = useState('')
   const [selectedArklinePoItemKey, setSelectedArklinePoItemKey] = useState('')
   const [modelRows, setModelRows] = useState([])
+  const [allocationOpenRows, setAllocationOpenRows] = useState({})
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -916,40 +931,19 @@ export default function QcReceivingPage() {
   const arklineChoiceGridStyle = isMobileLayout
     ? { display: 'grid', gridTemplateColumns: '1fr', gap: '12px' }
     : { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '16px' }
-  const modeCardStyle = isMobileLayout
-    ? {
-        border: '1px solid #d1d5db',
-        borderRadius: '16px',
-        padding: '14px',
-        textAlign: 'left',
-        cursor: 'pointer',
-        display: 'flex',
-        flexDirection: 'column',
-        gap: '6px',
-      }
-    : {
-        border: '1px solid #d1d5db',
-        borderRadius: '16px',
-        padding: '18px',
-        textAlign: 'left',
-        cursor: 'pointer',
-        display: 'flex',
-        flexDirection: 'column',
-        gap: '8px',
-      }
   const rowTopGridStyle = isMobileLayout
     ? { ...styles.modelRowTop, gridTemplateColumns: '72px 1fr', alignItems: 'start' }
     : isTabletLayout
       ? { ...styles.modelRowTop, gridTemplateColumns: '84px 1.3fr 1fr' }
       : styles.modelRowTop
   const arklineRowTopGridStyle = isMobileLayout
-    ? { ...styles.modelRowTop, gridTemplateColumns: '72px 1fr', alignItems: 'start' }
+    ? { ...styles.modelRowTop, gridTemplateColumns: '1fr', alignItems: 'start' }
     : isTabletLayout
-      ? { ...styles.modelRowTop, gridTemplateColumns: '84px 1.35fr 1fr' }
-      : { ...styles.modelRowTop, gridTemplateColumns: '84px 1.5fr 1fr' }
+      ? { ...styles.modelRowTop, gridTemplateColumns: '1.35fr 1fr' }
+      : { ...styles.modelRowTop, gridTemplateColumns: '1.5fr 1fr' }
   const allocationGridStyle = isMobileLayout
-    ? { display: 'grid', gridTemplateColumns: '1fr', gap: '8px', alignItems: 'stretch' }
-    : { display: 'grid', gridTemplateColumns: '1.3fr 0.8fr auto', gap: '8px', alignItems: 'center' }
+    ? { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 72px 68px', gap: '6px', alignItems: 'center' }
+    : { display: 'grid', gridTemplateColumns: '140px 78px 68px', gap: '6px', alignItems: 'center' }
   const summaryGridStyle = isMobileLayout
     ? { ...styles.summaryGrid, gridTemplateColumns: 'repeat(2, minmax(0, 1fr))' }
     : styles.summaryGrid
@@ -1123,7 +1117,6 @@ export default function QcReceivingPage() {
     : selectedSourceId
       ? qcItems.filter((item) => item.inbound_unload_id === Number(selectedSourceId))
       : []
-  const hasSavedPlan = currentPlanRows.length > 0
   const selectedSourceStatus = isArklineMode
     ? !currentPlanRows.length
       ? 'idle'
@@ -1137,6 +1130,8 @@ export default function QcReceivingPage() {
       : 'idle'
   const isSelectedSourceStarted = selectedSourceStatus === 'started' || selectedSourceStatus === 'completed'
   const isSelectedSourceCompleted = selectedSourceStatus === 'completed'
+  const canEditSavedPlan = !isSelectedSourceStarted
+  const canAdjustAllocations = !isSelectedSourceCompleted
   const persistedTaskRows = new Map(
     currentPlanRows.map((item) => [isArklineMode ? getArklineTaskKey(item) : getTaskKey(item), item])
   )
@@ -1349,9 +1344,25 @@ export default function QcReceivingPage() {
     setModelRows((prev) => prev.map((row) => (row.id === rowId ? { ...row, ...updates } : row)))
   }
 
+  function isAllocationRowOpen(row) {
+    if (Object.prototype.hasOwnProperty.call(allocationOpenRows, row.id)) {
+      return allocationOpenRows[row.id]
+    }
+    return Boolean((row.allocations || []).length)
+  }
+
+  function toggleAllocationRow(rowId) {
+    const row = modelRows.find((item) => item.id === rowId)
+    const currentOpen = row ? isAllocationRowOpen(row) : false
+    setAllocationOpenRows((prev) => ({
+      ...prev,
+      [rowId]: !currentOpen,
+    }))
+  }
+
   function addAllocationSplit(rowId) {
-    if (isSelectedSourceStarted) {
-      setError('Allocation is locked because QC for this source has already started.')
+    if (!canAdjustAllocations) {
+      setError('Allocation is locked because QC for this source has already finished.')
       return
     }
 
@@ -1367,6 +1378,10 @@ export default function QcReceivingPage() {
     }
 
     setError('')
+    setAllocationOpenRows((prev) => ({
+      ...prev,
+      [rowId]: true,
+    }))
     setModelRows((prev) =>
       prev.map((row) =>
         row.id === rowId
@@ -1415,6 +1430,18 @@ export default function QcReceivingPage() {
           : row
       )
     )
+  }
+
+  function canEditAllocationMember(split) {
+    return canAdjustAllocations && (!split.existing_status || split.existing_status === 'queued')
+  }
+
+  function canEditAllocationQty(split) {
+    return canAdjustAllocations && split.existing_status !== 'done'
+  }
+
+  function canRemoveAllocationSplit(split) {
+    return canAdjustAllocations && Number(split.locked_qty || 0) <= 0 && (!split.existing_status || split.existing_status === 'queued')
   }
 
   function removeModelRow(rowId) {
@@ -1985,29 +2012,32 @@ export default function QcReceivingPage() {
 
         {qcMode === 'arkline' ? (
           <>
-            <div style={arklineChoiceGridStyle}>
+            <div style={styles.field}>
+              <label style={styles.label}>QC Mode</label>
+            </div>
+            <div style={{ ...styles.modeRow, width: isMobileLayout ? '100%' : 'auto' }}>
               <button
                 type="button"
                 onClick={() => handleArklinePlannerModeChange('product')}
                 style={{
-                  ...modeCardStyle,
-                  background: arklinePlannerMode === 'product' ? '#111827' : '#fff',
-                  color: arklinePlannerMode === 'product' ? '#fff' : '#111827',
+                  ...styles.modeButton,
+                  ...(arklinePlannerMode === 'product' ? styles.modeButtonActive : {}),
+                  ...(isMobileLayout ? { flex: 1 } : {}),
                 }}
               >
-                <strong style={{ fontSize: isMobileLayout ? '16px' : '18px' }}>QC Product</strong>
+                QC Product Based
               </button>
 
               <button
                 type="button"
                 onClick={() => handleArklinePlannerModeChange('po')}
                 style={{
-                  ...modeCardStyle,
-                  background: arklinePlannerMode === 'po' ? '#111827' : '#fff',
-                  color: arklinePlannerMode === 'po' ? '#fff' : '#111827',
+                  ...styles.modeButton,
+                  ...(arklinePlannerMode === 'po' ? styles.modeButtonActive : {}),
+                  ...(isMobileLayout ? { flex: 1 } : {}),
                 }}
               >
-                <strong style={{ fontSize: isMobileLayout ? '16px' : '18px' }}>QC PO</strong>
+                QC PO Based
               </button>
             </div>
 
@@ -2111,13 +2141,7 @@ export default function QcReceivingPage() {
                 {modelRows.map((row) => (
                   <div key={row.id} style={styles.modelRow}>
                     <div style={arklineRowTopGridStyle}>
-                      {row.photo_url ? (
-                        <Image src={row.photo_url} alt={row.model_name || 'Arkline model'} width={84} height={84} unoptimized style={styles.thumb} />
-                      ) : (
-                        <div style={styles.thumbEmpty}>NO PHOTO</div>
-                      )}
-
-                      <div style={{ ...styles.modelMeta, ...(isMobileLayout ? { gridColumn: '2 / -1' } : {}) }}>
+                      <div style={styles.modelMeta}>
                         <div style={styles.modelName}>{row.model_name || 'Choose product'}</div>
                         <p style={styles.infoText}>{row.model_color || 'ARKLINE PRODUCT'}</p>
                       </div>
@@ -2133,8 +2157,8 @@ export default function QcReceivingPage() {
                               qty_qc: event.target.value,
                             })
                           }
-                          style={{ ...styles.input, ...(hasSavedPlan ? styles.inputDisabled : {}) }}
-                          disabled={hasSavedPlan}
+                          style={{ ...styles.input, ...(!canEditSavedPlan ? styles.inputDisabled : {}) }}
+                          disabled={!canEditSavedPlan}
                         />
                       </div>
 
@@ -2145,14 +2169,21 @@ export default function QcReceivingPage() {
                         <label style={styles.label}>Allocation</label>
                         <button
                           type="button"
-                          onClick={() => addAllocationSplit(row.id)}
-                          style={{ ...styles.secondaryButton, ...(isSelectedSourceStarted ? styles.buttonDisabled : {}) }}
-                          disabled={isSelectedSourceStarted}
+                          onClick={() => toggleAllocationRow(row.id)}
+                          style={styles.secondaryButton}
                         >
-                          Allocate
+                          {isAllocationRowOpen(row) ? 'Hide Allocation' : 'Allocate'}
                         </button>
                       </div>
+                      {isAllocationRowOpen(row) ? (
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                        {(row.allocations || []).length ? (
+                          <div style={{ ...allocationGridStyle, gap: '8px' }}>
+                            <span style={{ ...styles.helperText, fontWeight: '700', color: '#111827' }}>Inspector</span>
+                            <span style={{ ...styles.helperText, fontWeight: '700', color: '#111827' }}>Qty</span>
+                            <span style={{ ...styles.helperText, fontWeight: '700', color: '#111827' }}>Action</span>
+                          </div>
+                        ) : null}
                         {(row.allocations || []).map((split) => (
                           <div key={split.id} style={allocationGridStyle}>
                             <select
@@ -2160,9 +2191,10 @@ export default function QcReceivingPage() {
                               onChange={(event) => updateAllocationSplit(row.id, split.id, { member_email: event.target.value })}
                               style={{
                                 ...styles.select,
-                                ...(isSelectedSourceStarted || (split.existing_status && split.existing_status !== 'queued') ? styles.selectDisabled : {}),
+                                ...styles.compactAllocationSelect,
+                                ...(!canEditAllocationMember(split) ? styles.selectDisabled : {}),
                               }}
-                              disabled={isSelectedSourceStarted || (split.existing_status && split.existing_status !== 'queued')}
+                              disabled={!canEditAllocationMember(split)}
                             >
                               <option value="">Choose inspector</option>
                               {qcMembers
@@ -2209,31 +2241,37 @@ export default function QcReceivingPage() {
                               }}
                               style={{
                                 ...styles.input,
-                                ...(isSelectedSourceStarted || Boolean(split.existing_status && split.existing_status !== 'queued') ? styles.inputDisabled : {}),
+                                ...styles.compactAllocationInput,
+                                ...(!canEditAllocationQty(split) ? styles.inputDisabled : {}),
                               }}
-                              disabled={isSelectedSourceStarted || Boolean(split.existing_status && split.existing_status !== 'queued')}
+                              disabled={!canEditAllocationQty(split)}
                               placeholder="Qty"
                             />
-                            <button
-                              type="button"
-                              onClick={() => removeAllocationSplit(row.id, split.id)}
-                              style={{
-                                ...styles.secondaryButton,
-                                ...(isMobileLayout ? { width: '100%' } : {}),
-                                ...(isSelectedSourceStarted ||
-                                Number(split.locked_qty || 0) > 0 ||
-                                (split.existing_status && split.existing_status !== 'queued')
-                                  ? styles.buttonDisabled
-                                  : {}),
-                              }}
-                              disabled={
-                                isSelectedSourceStarted ||
-                                Number(split.locked_qty || 0) > 0 ||
-                                (split.existing_status && split.existing_status !== 'queued')
-                              }
-                            >
-                              Remove
-                            </button>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', justifyContent: isMobileLayout ? 'flex-start' : 'flex-end' }}>
+                              <button
+                                type="button"
+                                onClick={() => addAllocationSplit(row.id)}
+                                style={{ ...styles.iconButton, ...(!canAdjustAllocations ? styles.iconButtonDisabled : {}) }}
+                                disabled={!canAdjustAllocations}
+                                title="Add allocation row"
+                                aria-label="Add allocation row"
+                              >
+                                +
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => removeAllocationSplit(row.id, split.id)}
+                                style={{
+                                  ...styles.iconButton,
+                                  ...(!canRemoveAllocationSplit(split) ? styles.iconButtonDisabled : {}),
+                                }}
+                                disabled={!canRemoveAllocationSplit(split)}
+                                title="Remove allocation row"
+                                aria-label="Remove allocation row"
+                              >
+                                X
+                              </button>
+                            </div>
                           </div>
                         ))}
 
@@ -2241,6 +2279,7 @@ export default function QcReceivingPage() {
                           Allocated: {(row.allocations || []).reduce((sum, split) => sum + Number(split.qty || 0), 0)} / {Number(row.qty_qc || 0)}
                         </span>
                       </div>
+                      ) : null}
                     </div>
                   </div>
                 ))}
@@ -2248,25 +2287,6 @@ export default function QcReceivingPage() {
                 {!qcMembers.length ? (
                   <p style={styles.emptyText}>No active QC user found with permission `qc.inspection.do` for today. Activate QC task from Grading Task or User Access.</p>
                 ) : null}
-
-                <div style={arklineSummaryGridStyle}>
-                  <div style={styles.summaryCard}>
-                    <span style={styles.summaryLabel}>QC In</span>
-                    <strong style={styles.summaryValue}>{qcInQty}</strong>
-                  </div>
-                  <div style={styles.summaryCard}>
-                    <span style={styles.summaryLabel}>QC Assigned Qty</span>
-                    <strong style={styles.summaryValue}>{allocationTotal}</strong>
-                  </div>
-                  <div style={styles.summaryCard}>
-                    <span style={styles.summaryLabel}>Selected</span>
-                    <strong style={styles.summaryValue}>
-                      {arklinePlannerMode === 'product'
-                        ? selectedArklineProduct?.model_name || '-'
-                        : selectedArklinePo?.po_number || selectedArklinePoItem?.model_name || '-'}
-                    </strong>
-                  </div>
-                </div>
               </>
             ) : (
               <p style={styles.emptyText}>
@@ -2391,8 +2411,8 @@ export default function QcReceivingPage() {
                         setActiveModelRowId(row.id)
                         setShowChooseModelModal(true)
                       }}
-                      style={{ ...styles.iconButton, ...(hasSavedPlan ? styles.iconButtonDisabled : {}) }}
-                      disabled={hasSavedPlan}
+                      style={{ ...styles.iconButton, ...(!canEditSavedPlan ? styles.iconButtonDisabled : {}) }}
+                      disabled={!canEditSavedPlan}
                       title="Choose model"
                       aria-label="Choose model"
                     >
@@ -2403,14 +2423,14 @@ export default function QcReceivingPage() {
                       onClick={() => removeModelRow(row.id)}
                       style={{
                         ...styles.iconButton,
-                        ...(hasSavedPlan ||
+                        ...(!canEditSavedPlan ||
                         modelRows.length === 1 ||
                         (row.allocations || []).some((split) => Number(split.locked_qty || 0) > 0)
                           ? styles.iconButtonDisabled
                           : {}),
                       }}
                       disabled={
-                        hasSavedPlan ||
+                        !canEditSavedPlan ||
                         modelRows.length === 1 ||
                         (row.allocations || []).some((split) => Number(split.locked_qty || 0) > 0)
                       }
@@ -2438,15 +2458,32 @@ export default function QcReceivingPage() {
                         qty_qc: event.target.value,
                       })
                     }
-                    style={{ ...styles.input, ...(hasSavedPlan ? styles.inputDisabled : {}) }}
-                    disabled={hasSavedPlan}
+                    style={{ ...styles.input, ...(!canEditSavedPlan ? styles.inputDisabled : {}) }}
+                    disabled={!canEditSavedPlan}
                   />
                 </div>
                 </div>
 
                 <div style={{ ...styles.field, ...styles.allocationWrap }}>
-                  <label style={styles.label}>Allocation</label>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+                    <label style={styles.label}>Allocation</label>
+                    <button
+                      type="button"
+                      onClick={() => toggleAllocationRow(row.id)}
+                      style={styles.secondaryButton}
+                    >
+                      {isAllocationRowOpen(row) ? 'Hide Allocation' : 'Allocate'}
+                    </button>
+                  </div>
+                  {isAllocationRowOpen(row) ? (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    {(row.allocations || []).length ? (
+                      <div style={{ ...allocationGridStyle, gap: '8px' }}>
+                        <span style={{ ...styles.helperText, fontWeight: '700', color: '#111827' }}>Inspector</span>
+                        <span style={{ ...styles.helperText, fontWeight: '700', color: '#111827' }}>Qty</span>
+                        <span style={{ ...styles.helperText, fontWeight: '700', color: '#111827' }}>Action</span>
+                      </div>
+                    ) : null}
                     {(row.allocations || []).map((split) => (
                       <div key={split.id} style={allocationGridStyle}>
                         <select
@@ -2454,9 +2491,9 @@ export default function QcReceivingPage() {
                           onChange={(event) => updateAllocationSplit(row.id, split.id, { member_email: event.target.value })}
                           style={{
                             ...styles.select,
-                            ...(isSelectedSourceStarted || (split.existing_status && split.existing_status !== 'queued') ? styles.selectDisabled : {}),
+                            ...(!canEditAllocationMember(split) ? styles.selectDisabled : {}),
                           }}
-                          disabled={isSelectedSourceStarted || (split.existing_status && split.existing_status !== 'queued')}
+                          disabled={!canEditAllocationMember(split)}
                         >
                           <option value="">Choose inspector</option>
                           {qcMembers
@@ -2508,63 +2545,58 @@ export default function QcReceivingPage() {
                           }}
                           style={{
                             ...styles.input,
-                            ...(isSelectedSourceStarted || Boolean(split.existing_status && split.existing_status !== 'queued') ? styles.inputDisabled : {}),
+                            ...(!canEditAllocationQty(split) ? styles.inputDisabled : {}),
                           }}
-                          disabled={isSelectedSourceStarted || Boolean(split.existing_status && split.existing_status !== 'queued')}
+                          disabled={!canEditAllocationQty(split)}
                           placeholder="Qty"
                         />
-                        <button
-                          type="button"
-                          onClick={() => removeAllocationSplit(row.id, split.id)}
-                          style={{
-                            ...styles.secondaryButton,
-                            ...(isMobileLayout ? { width: '100%' } : {}),
-                            ...(isSelectedSourceStarted ||
-                            Number(split.locked_qty || 0) > 0 ||
-                            (split.existing_status && split.existing_status !== 'queued')
-                              ? styles.buttonDisabled
-                              : {}),
-                          }}
-                          disabled={
-                            isSelectedSourceStarted ||
-                            Number(split.locked_qty || 0) > 0 ||
-                            (split.existing_status && split.existing_status !== 'queued')
-                          }
-                        >
-                          Remove
-                        </button>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', justifyContent: isMobileLayout ? 'flex-start' : 'flex-end' }}>
+                          <button
+                            type="button"
+                            onClick={() => addAllocationSplit(row.id)}
+                            style={{ ...styles.iconButton, ...(!canAdjustAllocations ? styles.iconButtonDisabled : {}) }}
+                            disabled={!canAdjustAllocations}
+                            title="Add allocation row"
+                            aria-label="Add allocation row"
+                          >
+                            +
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => removeAllocationSplit(row.id, split.id)}
+                            style={{
+                              ...styles.iconButton,
+                              ...(!canRemoveAllocationSplit(split) ? styles.iconButtonDisabled : {}),
+                            }}
+                            disabled={!canRemoveAllocationSplit(split)}
+                            title="Remove allocation row"
+                            aria-label="Remove allocation row"
+                          >
+                            X
+                          </button>
+                        </div>
                       </div>
                     ))}
-
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
-                      <span style={styles.helperText}>
-                        Allocated: {(row.allocations || []).reduce((sum, split) => sum + Number(split.qty || 0), 0)} / {Number(row.qty_qc || 0)}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => addAllocationSplit(row.id)}
-                        style={{ ...styles.secondaryButton, ...(isSelectedSourceStarted ? styles.buttonDisabled : {}) }}
-                        disabled={isSelectedSourceStarted}
-                      >
-                        Allocate
-                      </button>
-                    </div>
+                    <span style={styles.helperText}>
+                      Allocated: {(row.allocations || []).reduce((sum, split) => sum + Number(split.qty || 0), 0)} / {Number(row.qty_qc || 0)}
+                    </span>
                   </div>
+                  ) : null}
                 </div>
               </div>
             )) : null}
 
             {sourceDetailsExpanded ? (
-            <div style={styles.buttonRow}>
-              <button
-                type="button"
-                onClick={addModelRow}
-                style={{ ...styles.secondaryButton, ...(hasSavedPlan ? styles.buttonDisabled : {}) }}
-                disabled={hasSavedPlan}
-              >
-                + Add Model Row
-              </button>
-            </div>
+              <div style={styles.buttonRow}>
+                <button
+                  type="button"
+                  onClick={addModelRow}
+                  style={{ ...styles.secondaryButton, ...(!canEditSavedPlan ? styles.buttonDisabled : {}) }}
+                  disabled={!canEditSavedPlan}
+                >
+                  + Add Model Row
+                </button>
+              </div>
             ) : null}
 
             {sourceDetailsExpanded ? (
@@ -2574,7 +2606,7 @@ export default function QcReceivingPage() {
                 Each model row can be allocated to one or more inspectors. Allocated qty may be less than QC In, but it cannot be more.
               </p>
               <p style={styles.sectionSubtitle}>
-                After QC has started, allocation stays as the original plan so any allocation gap remains visible for planner KPI.
+                  After QC has started, you can still add the remaining allocation or increase open task allocation, but completed task rows stay locked.
               </p>
             </div>
             ) : null}
@@ -2592,19 +2624,7 @@ export default function QcReceivingPage() {
                   {selectedSourceRows.reduce((sum, row) => sum + Number(row.qty || 0), 0)}
                 </strong>
               </div>
-              <div style={styles.summaryCard}>
-                <span style={styles.summaryLabel}>QC In</span>
-                <strong style={styles.summaryValue}>{qcInQty}</strong>
-              </div>
-              <div style={styles.summaryCard}>
-                <span style={styles.summaryLabel}>QC Assigned Qty</span>
-                <strong style={styles.summaryValue}>{allocationTotal}</strong>
-              </div>
-                <div style={styles.summaryCard}>
-                  <span style={styles.summaryLabel}>Selected</span>
-                  <strong style={styles.summaryValue}>{selectedSource?.label || '-'}</strong>
-                </div>
-              </div>
+            </div>
             </>
           ) : (
             <p style={styles.emptyText}>Choose GRN and Koli/Sample first to start QC planning.</p>
@@ -2621,8 +2641,8 @@ export default function QcReceivingPage() {
             disabled={
               saving ||
               (qcMode === 'arkline'
-                ? !modelRows.length || isSelectedSourceStarted
-                : !selectedSource || isSelectedSourceStarted)
+                ? !modelRows.length || isSelectedSourceCompleted
+                : !selectedSource || isSelectedSourceCompleted)
             }
             style={{
               ...styles.primaryButton,
@@ -2630,8 +2650,8 @@ export default function QcReceivingPage() {
               ...(
                 saving ||
                 (qcMode === 'arkline'
-                  ? !modelRows.length || isSelectedSourceStarted
-                  : !selectedSource || isSelectedSourceStarted)
+                  ? !modelRows.length || isSelectedSourceCompleted
+                  : !selectedSource || isSelectedSourceCompleted)
                   ? styles.buttonDisabled
                   : {}
               ),

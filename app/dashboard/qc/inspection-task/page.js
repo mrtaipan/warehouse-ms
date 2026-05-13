@@ -253,6 +253,12 @@ const styles = {
     opacity: 0.6,
     cursor: 'not-allowed',
   },
+  buttonDisabled: {
+    background: '#d1d5db',
+    color: '#6b7280',
+    cursor: 'not-allowed',
+    boxShadow: 'none',
+  },
   secondaryButton: {
     height: '46px',
     padding: '0 16px',
@@ -355,31 +361,51 @@ function getDateOnly(value) {
   return String(value || '').slice(0, 10)
 }
 
-async function createPauseLog({ taskId, pausedBy, pauseReason, pausedAt }) {
+async function createPauseLog({ taskId, sourceType, pausedBy, pauseReason, pausedAt }) {
   const { error } = await supabase.from('qc_pause_logs').insert([
     {
-      qc_item_id: taskId,
+      qc_item_id: sourceType === 'arkline' ? null : taskId,
+      arkline_qc_id: sourceType === 'arkline' ? taskId : null,
       paused_by: pausedBy || null,
       pause_reason: pauseReason,
       paused_at: pausedAt,
     },
   ])
 
-  return error
+  if (sourceType === 'arkline' && error) {
+    const errorText = `${error.code || ''} ${error.message || ''} ${error.details || ''}`.toLowerCase()
+    if (errorText.includes('arkline_qc_id')) {
+      return { error: null, skipped: true }
+    }
+  }
+
+  return { error: error || null, skipped: false }
 }
 
-async function closeOpenPauseLog({ taskId, resumedBy, resumedAt }) {
-  const { data: openLog, error: openLogError } = await supabase
+async function closeOpenPauseLog({ taskId, sourceType, resumedBy, resumedAt }) {
+  let openLogQuery = supabase
     .from('qc_pause_logs')
     .select('id')
-    .eq('qc_item_id', taskId)
     .is('resumed_at', null)
     .order('paused_at', { ascending: false })
     .limit(1)
-    .maybeSingle()
+
+  openLogQuery =
+    sourceType === 'arkline'
+      ? openLogQuery.eq('arkline_qc_id', taskId).is('qc_item_id', null)
+      : openLogQuery.eq('qc_item_id', taskId).is('arkline_qc_id', null)
+
+  const { data: openLog, error: openLogError } = await openLogQuery.maybeSingle()
+
+  if (sourceType === 'arkline' && openLogError) {
+    const errorText = `${openLogError.code || ''} ${openLogError.message || ''} ${openLogError.details || ''}`.toLowerCase()
+    if (errorText.includes('arkline_qc_id')) {
+      return { error: null, skipped: true }
+    }
+  }
 
   if (openLogError || !openLog) {
-    return openLogError || null
+    return { error: openLogError || null, skipped: false }
   }
 
   const { error: updateError } = await supabase
@@ -390,7 +416,30 @@ async function closeOpenPauseLog({ taskId, resumedBy, resumedAt }) {
     })
     .eq('id', openLog.id)
 
-  return updateError
+  return { error: updateError || null, skipped: false }
+}
+
+async function findOtherRunningTask(task, normalizedEmail) {
+  const [{ data: regularRows, error: regularError }, { data: arklineRows, error: arklineError }] = await Promise.all([
+    supabase.from('qc_items').select('id, assigned_to, status').eq('status', 'in_progress'),
+    supabase.from('arkline_qc').select('id, assigned_to, status').eq('status', 'in_progress'),
+  ])
+
+  if (regularError || arklineError) {
+    return { error: regularError || arklineError, task: null }
+  }
+
+  const otherRegularTask = (regularRows || []).find(
+    (item) => normalizeEmail(item.assigned_to) === normalizedEmail && !(task.source_type !== 'arkline' && item.id === task.id)
+  )
+  if (otherRegularTask) {
+    return { error: null, task: otherRegularTask }
+  }
+
+  const otherArklineTask = (arklineRows || []).find(
+    (item) => normalizeEmail(item.assigned_to) === normalizedEmail && !(task.source_type === 'arkline' && item.id === task.id)
+  )
+  return { error: null, task: otherArklineTask || null }
 }
 
 function InfoHint({ text }) {
@@ -577,6 +626,26 @@ export default function QcInspectionTaskPage() {
     }
   }, [refreshKey])
 
+  useEffect(() => {
+    function requestRefresh() {
+      setRefreshKey((prev) => prev + 1)
+    }
+
+    function handleVisibilityChange() {
+      if (document.visibilityState === 'visible') {
+        requestRefresh()
+      }
+    }
+
+    window.addEventListener('focus', requestRefresh)
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+
+    return () => {
+      window.removeEventListener('focus', requestRefresh)
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+    }
+  }, [])
+
   async function handleRegister() {
     setError('')
     setSuccess('')
@@ -649,6 +718,10 @@ export default function QcInspectionTaskPage() {
       null,
     [activeTaskId, tasks]
   )
+  const runningTaskId = useMemo(
+    () => tasks.find((task) => task.status === 'in_progress')?.id || null,
+    [tasks]
+  )
   const activeTaskInputs = getTaskGradeInputs(activeTask, gradeInputs)
   const runningSeconds = useMemo(() => {
     if (!activeTask) {
@@ -695,17 +768,31 @@ export default function QcInspectionTaskPage() {
       [task.id]: false,
     }))
 
+    const normalizedEmail = normalizeEmail(userEmail)
+    const { error: runningTaskError, task: otherRunningTask } = await findOtherRunningTask(task, normalizedEmail)
+
+    if (runningTaskError) {
+      setError(runningTaskError.message)
+      return
+    }
+
+    if (otherRunningTask) {
+      setError('Finish or pause the current running QC task before starting another one.')
+      return
+    }
+
     const startedAt = new Date().toISOString()
     const nextStatus = task.status === 'paused' ? 'in_progress' : 'in_progress'
-    if (task.status === 'paused' && task.source_type !== 'arkline') {
-      const closeLogError = await closeOpenPauseLog({
+    if (task.status === 'paused') {
+      const pauseLogResult = await closeOpenPauseLog({
         taskId: task.id,
+        sourceType: task.source_type,
         resumedBy: userEmail,
         resumedAt: startedAt,
       })
 
-      if (closeLogError) {
-        setError(closeLogError.message)
+      if (pauseLogResult.error) {
+        setError(pauseLogResult.error.message)
         return
       }
     }
@@ -756,18 +843,17 @@ export default function QcInspectionTaskPage() {
     }
 
     const pausedAt = new Date().toISOString()
-    if (task.source_type !== 'arkline') {
-      const pauseLogError = await createPauseLog({
-        taskId: task.id,
-        pausedBy: userEmail,
-        pauseReason: interruptReason,
-        pausedAt,
-      })
+    const pauseLogResult = await createPauseLog({
+      taskId: task.id,
+      sourceType: task.source_type,
+      pausedBy: userEmail,
+      pauseReason: interruptReason,
+      pausedAt,
+    })
 
-      if (pauseLogError) {
-        setError(pauseLogError.message)
-        return
-      }
+    if (pauseLogResult.error) {
+      setError(pauseLogResult.error.message)
+      return
     }
 
     const { data, error: updateError } = await supabase
@@ -852,32 +938,17 @@ export default function QcInspectionTaskPage() {
       isMarkedComplete || nextLockedQty >= Number(latestTaskRow?.allocated_qty || task.allocated_qty || 0)
     const finishedAt = new Date().toISOString()
 
-    if (!isTaskComplete) {
-      if (task.source_type !== 'arkline') {
-        const pauseLogError = await createPauseLog({
-          taskId: task.id,
-          pausedBy: userEmail,
-          pauseReason: 'PARTIAL SUBMIT',
-          pausedAt: finishedAt,
-        })
+    if (isTaskComplete) {
+      const pauseLogResult = await closeOpenPauseLog({
+        taskId: task.id,
+        sourceType: task.source_type,
+        resumedBy: userEmail,
+        resumedAt: finishedAt,
+      })
 
-        if (pauseLogError) {
-          setError(pauseLogError.message)
-          return
-        }
-      }
-    } else {
-      if (task.source_type !== 'arkline') {
-        const closeLogError = await closeOpenPauseLog({
-          taskId: task.id,
-          resumedBy: userEmail,
-          resumedAt: finishedAt,
-        })
-
-        if (closeLogError) {
-          setError(closeLogError.message)
-          return
-        }
+      if (pauseLogResult.error) {
+        setError(pauseLogResult.error.message)
+        return
       }
     }
 
@@ -892,8 +963,8 @@ export default function QcInspectionTaskPage() {
         finished_at: isTaskComplete ? finishedAt : null,
         locked_qty: nextLockedQty,
         started_at: null,
-        paused_at: isTaskComplete ? null : finishedAt,
-        pause_reason: isTaskComplete ? null : 'PARTIAL SUBMIT',
+        paused_at: null,
+        pause_reason: null,
       })
       .eq('id', task.id)
       .select(task.source_type === 'arkline' ? '*' : `
@@ -998,18 +1069,20 @@ export default function QcInspectionTaskPage() {
             <span style={styles.badge}>{activeTask.assigned_to}</span>
           </div>
 
-          {getTaskModelInfo(activeTask).photoUrl ? (
-            <Image
-              src={getTaskModelInfo(activeTask).photoUrl}
-              alt={getTaskModelInfo(activeTask).modelName}
-              width={640}
-              height={220}
-              unoptimized
-              style={styles.modelThumb}
-            />
-          ) : (
-            <div style={styles.thumbPlaceholder}>NO PHOTO</div>
-          )}
+          {activeTask.source_type !== 'arkline' ? (
+            getTaskModelInfo(activeTask).photoUrl ? (
+              <Image
+                src={getTaskModelInfo(activeTask).photoUrl}
+                alt={getTaskModelInfo(activeTask).modelName}
+                width={640}
+                height={220}
+                unoptimized
+                style={styles.modelThumb}
+              />
+            ) : (
+              <div style={styles.thumbPlaceholder}>NO PHOTO</div>
+            )
+          ) : null}
 
           <div style={styles.mobileStack}>
             <div>
@@ -1047,7 +1120,15 @@ export default function QcInspectionTaskPage() {
             </div>
 
             {activeTask.status === 'queued' || activeTask.status === 'paused' ? (
-              <button type="button" onClick={() => handleStart(activeTask)} style={styles.primaryButton}>
+              <button
+                type="button"
+                onClick={() => handleStart(activeTask)}
+                style={{
+                  ...styles.primaryButton,
+                  ...(runningTaskId && runningTaskId !== activeTask.id ? styles.buttonDisabled : {}),
+                }}
+                disabled={Boolean(runningTaskId && runningTaskId !== activeTask.id)}
+              >
                 {activeTask.status === 'paused' ? 'Resume' : 'Start'}
               </button>
             ) : (
@@ -1114,7 +1195,7 @@ export default function QcInspectionTaskPage() {
             </div>
           </div>
 
-          <label style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '14px', fontWeight: '600', color: '#111827' }}>
+          <label style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', fontSize: '14px', color: '#111827' }}>
             <input
               type="checkbox"
               checked={Boolean(completeChecks[activeTask.id])}
@@ -1124,8 +1205,14 @@ export default function QcInspectionTaskPage() {
                   [activeTask.id]: event.target.checked,
                 }))
               }
+              style={{ marginTop: '2px', flexShrink: 0 }}
             />
-            QC selesai untuk qty yang benar-benar masuk. Kalau allocated lebih besar dari aktual, task tetap boleh selesai dan gap-nya jadi catatan planner.
+            <span style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+              <strong style={{ fontSize: '16px', letterSpacing: '0.02em' }}>QC SELESAI.</strong>
+              <span style={{ fontSize: '12px', fontWeight: '400', color: '#6b7280' }}>
+                Jika fisik yang masuk QC memang lebih sedikit, centang lalu submit.
+              </span>
+            </span>
           </label>
 
           <div style={styles.buttonRow}>
@@ -1146,10 +1233,6 @@ export default function QcInspectionTaskPage() {
             </button>
           </div>
 
-          <p style={styles.subtitle}>
-            Remaining Qty shows allocation gap (`allocated - graded qty`). Jika fisik yang masuk QC memang lebih sedikit,
-            centang `QC selesai` lalu submit. Gap allocation akan tetap tersimpan sebagai catatan mismatch planner.
-          </p>
         </div>
       ) : null}
 
@@ -1175,18 +1258,20 @@ export default function QcInspectionTaskPage() {
                     
                   </div>
 
-                  {taskModel.photoUrl ? (
-                    <Image
-                      src={taskModel.photoUrl}
-                      alt={taskModel.modelName}
-                      width={640}
-                      height={220}
-                      unoptimized
-                      style={styles.modelThumb}
-                    />
-                  ) : (
-                    <div style={styles.thumbPlaceholder}>NO PHOTO</div>
-                  )}
+                  {task.source_type !== 'arkline' ? (
+                    taskModel.photoUrl ? (
+                      <Image
+                        src={taskModel.photoUrl}
+                        alt={taskModel.modelName}
+                        width={640}
+                        height={220}
+                        unoptimized
+                        style={styles.modelThumb}
+                      />
+                    ) : (
+                      <div style={styles.thumbPlaceholder}>NO PHOTO</div>
+                    )
+                  ) : null}
 
                   <div style={styles.bigQty}>{getRemainingQty(task)}</div>
                   <div style={styles.subtitle}>Remaining Qty</div>
@@ -1195,7 +1280,15 @@ export default function QcInspectionTaskPage() {
                   </p>
 
                   <div style={styles.buttonRow}>
-                    <button type="button" onClick={() => handleStart(task)} style={styles.primaryButton}>
+                    <button
+                      type="button"
+                      onClick={() => handleStart(task)}
+                      style={{
+                        ...styles.primaryButton,
+                        ...(runningTaskId ? styles.buttonDisabled : {}),
+                      }}
+                      disabled={Boolean(runningTaskId)}
+                    >
                       {task.status === 'paused' ? 'Resume' : 'Mulai'}
                     </button>
                   </div>
@@ -1207,7 +1300,7 @@ export default function QcInspectionTaskPage() {
 
       {!activeTask && !tasks.length ? (
         <div style={styles.emptyState}>
-          Tidak ada task QC untuk akun ini sekarang. Kalau kosong, berarti belum ada alokasi yang masuk ke {userLabel || userEmail}. Halaman ini akan refresh otomatis setiap 10 detik.
+          Tidak ada task QC untuk akun ini sekarang. Kalau kosong, berarti belum ada alokasi yang masuk ke {userLabel || userEmail}.
         </div>
       ) : null}
 

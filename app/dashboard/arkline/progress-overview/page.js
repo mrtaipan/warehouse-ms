@@ -30,17 +30,6 @@ function KanbanIcon() {
   )
 }
 
-function LineIcon() {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true" className={styles.calendarIcon}>
-      <path d="M4 7.5h16M4 12h16M4 16.5h16" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
-      <circle cx="8" cy="7.5" r="1.5" fill="currentColor" />
-      <circle cx="15" cy="12" r="1.5" fill="currentColor" />
-      <circle cx="11" cy="16.5" r="1.5" fill="currentColor" />
-    </svg>
-  )
-}
-
 function parseIso(value) {
   if (!value) return null
   const date = new Date(`${String(value).slice(0, 10)}T00:00:00`)
@@ -80,6 +69,25 @@ function getDelayTone(targetDate, updatedDate) {
   if (delayDays > 14) return 'late'
   if (delayDays > 0) return 'watch'
   return 'ontime'
+}
+
+function getLaterIsoDate(...values) {
+  let latestValue = ''
+  let latestTime = -Infinity
+
+  values.forEach((value) => {
+    const normalized = String(value || '').slice(0, 10)
+    if (!normalized) return
+    const parsed = parseIso(normalized)
+    if (!parsed) return
+    const nextTime = parsed.getTime()
+    if (nextTime > latestTime) {
+      latestTime = nextTime
+      latestValue = normalized
+    }
+  })
+
+  return latestValue
 }
 
 function buildMonthDays(monthDate) {
@@ -125,7 +133,6 @@ function normalizePoRow(row) {
   const notes = String(row?.notes || '').trim()
   const startDate = String(row?.created_at || '').slice(0, 10)
   const targetDate = String(row?.request_delivery_date || '').slice(0, 10)
-  const updatedDate = String(row?.updated_at || row?.created_at || '').slice(0, 10)
   const status = normalizeBoardStatus(row?.status)
 
   return {
@@ -136,11 +143,13 @@ function normalizePoRow(row) {
     status,
     startDate,
     targetDate,
-    updatedDate,
-    completionDate: status === 'Completed' ? updatedDate : '',
+    updatedDate: '',
+    displayDate: targetDate,
+    completionDate: '',
     notes,
     subtitle: notes,
     productNames: [],
+    productEntries: [],
     totalQty: 0,
   }
 }
@@ -152,7 +161,7 @@ async function loadSnapshotRows() {
       .select('id, po_id, supplier_name, method, status, request_delivery_date, notes, created_at, updated_at')
       .not('po_id', 'is', null)
       .order('created_at', { ascending: false }),
-    supabase.from('arkline_po_items').select('po_id, nama_produk, total_qty'),
+    supabase.from('arkline_po_items').select('po_id, nama_produk, total_qty, updated_delivery_date, status'),
   ])
 
   if (poError) {
@@ -169,11 +178,15 @@ async function loadSnapshotRows() {
 
     const productName = String(row?.nama_produk || '').trim().toUpperCase()
     const totalQty = Number(row?.total_qty || 0)
+    const updatedDeliveryDate = String(row?.updated_delivery_date || '').slice(0, 10)
+    const itemStatus = normalizeBoardStatus(row?.status)
 
     if (!accumulator[poId]) {
       accumulator[poId] = {
         productNames: [],
+        productEntries: [],
         totalQty: 0,
+        latestUpdatedDeliveryDate: '',
       }
     }
 
@@ -181,7 +194,16 @@ async function loadSnapshotRows() {
       accumulator[poId].productNames.push(productName)
     }
 
+    accumulator[poId].productEntries.push({
+      id: `${poId}::${productName || 'NO PRODUCT'}::${accumulator[poId].productEntries.length}`,
+      productName: productName || 'NO PRODUCT',
+      qty: Number.isFinite(totalQty) ? totalQty : 0,
+      updatedDeliveryDate,
+      status: itemStatus,
+    })
+
     accumulator[poId].totalQty += Number.isFinite(totalQty) ? totalQty : 0
+    accumulator[poId].latestUpdatedDeliveryDate = getLaterIsoDate(accumulator[poId].latestUpdatedDeliveryDate, updatedDeliveryDate)
     return accumulator
   }, {})
 
@@ -189,11 +211,21 @@ async function loadSnapshotRows() {
     .map((row) => {
       const normalized = normalizePoRow(row)
       const summary = itemSummaryByPoId[normalized.poId]
-      if (!summary) return normalized
+      const latestUpdatedDeliveryDate = summary?.latestUpdatedDeliveryDate || ''
+      const actualDate = getLaterIsoDate(normalized.targetDate, latestUpdatedDeliveryDate)
       return {
         ...normalized,
-        productNames: summary.productNames,
-        totalQty: summary.totalQty,
+        productNames: summary?.productNames || [],
+        productEntries: (summary?.productEntries || []).map((entry) => ({
+          ...entry,
+          targetDate: normalized.targetDate,
+          displayDate: getLaterIsoDate(normalized.targetDate, entry.updatedDeliveryDate),
+        })),
+        totalQty: summary?.totalQty || 0,
+        updatedDate: actualDate,
+        displayDate: actualDate || normalized.targetDate || normalized.startDate,
+        completionDate: normalized.status === 'Completed' ? actualDate : '',
+        latestUpdatedDeliveryDate,
       }
     })
     .filter((item) => item.poId)
@@ -226,6 +258,7 @@ export default function ArklineProgressOverviewPage() {
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState('')
   const [poRows, setPoRows] = useState([])
+  const [selectedPoDetail, setSelectedPoDetail] = useState(null)
 
   useEffect(() => {
     void refreshRows()
@@ -264,10 +297,50 @@ export default function ArklineProgressOverviewPage() {
   const productItemsInMonth = useMemo(
     () =>
       filteredRows.filter((item) => {
-        const target = parseIso(item.targetDate)
-        const updated = parseIso(item.updatedDate)
+        if (item.status === 'Completed') {
+          return false
+        }
+        const display = parseIso(item.displayDate || item.updatedDate || item.targetDate)
         const created = parseIso(item.startDate)
-        return (target && sameMonth(target, monthDate)) || (updated && sameMonth(updated, monthDate)) || (created && sameMonth(created, monthDate))
+        return (display && sameMonth(display, monthDate)) || (created && sameMonth(created, monthDate))
+      }),
+    [filteredRows, monthDate]
+  )
+  const calendarItemsInMonth = useMemo(
+    () =>
+      filteredRows.flatMap((item) => {
+        if (item.status === 'Completed') {
+          return []
+        }
+
+        const entries = (item.productEntries || []).length
+          ? item.productEntries
+          : [
+              {
+                id: `${item.id}::fallback`,
+                productName: item.productNames?.[0] || 'NO PRODUCT',
+                qty: item.totalQty || 0,
+                displayDate: item.displayDate || item.updatedDate || item.targetDate,
+                status: item.status,
+              },
+            ]
+
+        return entries.filter((entry) => {
+          if (entry.status === 'Completed') {
+            return false
+          }
+          const display = parseIso(entry.displayDate)
+          return Boolean(display && sameMonth(display, monthDate))
+        }).map((entry) => ({
+          id: entry.id,
+          poId: item.poId,
+          supplier: item.supplier,
+          productName: entry.productName,
+          qty: entry.qty,
+          displayDate: entry.displayDate,
+          targetDate: item.targetDate,
+          updatedDate: entry.displayDate,
+        }))
       }),
     [filteredRows, monthDate]
   )
@@ -316,14 +389,6 @@ export default function ArklineProgressOverviewPage() {
                 onClick={() => setView('calendar')}
               >
                 <CalendarIcon />
-              </button>
-              <button
-                type="button"
-                aria-label="Line view"
-                className={`${styles.segmentButton} ${view === 'line' ? styles.segmentButtonActive : ''}`.trim()}
-                onClick={() => setView('line')}
-              >
-                <LineIcon />
               </button>
             </div>
           </div>
@@ -375,7 +440,9 @@ export default function ArklineProgressOverviewPage() {
                         <article key={item.id} className={styles.boardCard}>
                           <div className={styles.boardCardTop}>
                             <div className={styles.boardCardIdentity}>
-                              <strong>{item.poId}</strong>
+                              <button type="button" className={styles.poLinkButton} onClick={() => setSelectedPoDetail(item)}>
+                                {item.poId}
+                              </button>
                               <span className={styles.boardSupplierLine}>{item.supplier || '-'}</span>
                             </div>
                             <span className={styles.boardMethod}>{item.method}</span>
@@ -388,6 +455,9 @@ export default function ArklineProgressOverviewPage() {
                           </div>
                           <div className={styles.boardFooter}>
                             <span className={styles.boardQty}>Qty {item.totalQty || 0}</span>
+                            <span className={styles.boardQty}>
+                              Actual {item.updatedDate || item.targetDate || '-'}
+                            </span>
                           </div>
                         </article>
                       )
@@ -435,10 +505,9 @@ export default function ArklineProgressOverviewPage() {
             <div className={styles.calendarShell}>
               <div className={styles.calendarGrid}>
                 {monthDays.map((day) => {
-                  const dayItems = productItemsInMonth.filter((item) => {
-                    const target = parseIso(item.targetDate)
-                    const updated = parseIso(item.updatedDate)
-                    return (target && sameDay(target, day)) || (updated && sameDay(updated, day))
+                  const dayItems = calendarItemsInMonth.filter((item) => {
+                    const display = parseIso(item.displayDate || item.updatedDate || item.targetDate)
+                    return Boolean(display && sameDay(display, day))
                   })
 
                   return (
@@ -454,8 +523,9 @@ export default function ArklineProgressOverviewPage() {
                             const tone = getDelayTone(item.targetDate, item.updatedDate)
                             return (
                               <article key={item.id} className={`${styles.eventCard} ${styles[`eventCard${tone[0].toUpperCase()}${tone.slice(1)}`]}`.trim()}>
-                                <div className={styles.eventTitle}>{item.poId}</div>
-                                <p className={styles.eventText}>{item.supplier || '-'}</p>
+                                <div className={styles.eventTitle}>{item.productName || 'NO PRODUCT'}</div>
+                                <p className={styles.eventText}>{item.poId}</p>
+                                <p className={styles.eventMetaText}>Qty {item.qty || 0}</p>
                               </article>
                             )
                           })
@@ -469,80 +539,67 @@ export default function ArklineProgressOverviewPage() {
               </div>
             </div>
           </>
-        ) : (
-          <>
-            <div className={styles.legendRow}>
-              <div className={styles.legendGroup}>
-                <span className={`${styles.legendDot} ${styles.legendOnTime}`.trim()} />
-                <span>On time</span>
-              </div>
-              <div className={styles.legendGroup}>
-                <span className={`${styles.legendDot} ${styles.legendWatch}`.trim()} />
-                <span>Delay 1-14 days</span>
-              </div>
-              <div className={styles.legendGroup}>
-                <span className={`${styles.legendDot} ${styles.legendLate}`.trim()} />
-                <span>Delay &gt; 14 days</span>
-              </div>
-              <div className={styles.legendMeta}>
-                <button
-                  type="button"
-                  className={styles.navButton}
-                  onClick={() => setMonthDate((prev) => new Date(prev.getFullYear(), prev.getMonth() - 1, 1))}
-                >
-                  {'<'}
-                </button>
-                <div className={styles.monthPill}>{formatMonthLabel(monthDate)}</div>
-                <button
-                  type="button"
-                  className={styles.navButton}
-                  onClick={() => setMonthDate((prev) => new Date(prev.getFullYear(), prev.getMonth() + 1, 1))}
-                >
-                  {'>'}
-                </button>
-              </div>
-            </div>
-            <div className={styles.lineShell}>
-              <div className={styles.lineHeader}>
-                <div className={styles.lineInfoColumn}>Line</div>
-                <div className={styles.lineMonthGrid}>
-                  {monthDays.map((day) => (
-                    <span key={day.toISOString()}>{day.getDate()}</span>
-                  ))}
-                </div>
-              </div>
-
-              <div className={styles.lineBody}>
-                {productItemsInMonth.map((item) => {
-                  const range = getLineRange(item, monthDate)
-                  const tone = getDelayTone(item.targetDate, item.updatedDate)
-
-                  return (
-                    <div key={item.id} className={styles.lineRow}>
-                      <div className={styles.lineInfo}>
-                        <strong>{item.poId}</strong>
-                        <p>{item.supplier || '-'}</p>
-                      </div>
-                      <div className={styles.lineTrack}>
-                        <div className={styles.lineTrackGrid}>
-                          {monthDays.map((day) => (
-                            <span key={day.toISOString()} />
-                          ))}
-                        </div>
-                        {range ? (
-                          <div className={`${styles.lineBar} ${styles[`lineBar${tone[0].toUpperCase()}${tone.slice(1)}`]}`.trim()} style={range}>
-                            <span>{item.method}</span>
-                          </div>
-                        ) : null}
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
-            </div>
-          </>
-        )}
+        ) : null}
       </section>
+
+      {selectedPoDetail ? (
+        <div className={styles.modalOverlay} onClick={() => setSelectedPoDetail(null)}>
+          <div className={styles.modalCard} onClick={(event) => event.stopPropagation()}>
+            <div className={styles.modalHeader}>
+              <div>
+                <p className={styles.eyebrow}>PO Detail</p>
+                <h3 className={styles.modalTitle}>{selectedPoDetail.poId}</h3>
+              </div>
+              <button type="button" className={styles.secondaryButton} onClick={() => setSelectedPoDetail(null)}>
+                Close
+              </button>
+            </div>
+
+            <div className={styles.modalGrid}>
+              <div className={styles.modalMetric}>
+                <span>Supplier</span>
+                <strong>{selectedPoDetail.supplier || '-'}</strong>
+              </div>
+              <div className={styles.modalMetric}>
+                <span>Status</span>
+                <strong>{selectedPoDetail.status}</strong>
+              </div>
+              <div className={styles.modalMetric}>
+                <span>Method</span>
+                <strong>{selectedPoDetail.method || '-'}</strong>
+              </div>
+              <div className={styles.modalMetric}>
+                <span>Total Qty</span>
+                <strong>{selectedPoDetail.totalQty || 0}</strong>
+              </div>
+              <div className={styles.modalMetric}>
+                <span>Request Delivery</span>
+                <strong>{selectedPoDetail.targetDate || '-'}</strong>
+              </div>
+              <div className={styles.modalMetric}>
+                <span>Actual Snapshot</span>
+                <strong>{selectedPoDetail.updatedDate || selectedPoDetail.targetDate || '-'}</strong>
+              </div>
+            </div>
+
+            <div className={styles.modalSection}>
+              <h4 className={styles.modalSectionTitle}>Products</h4>
+              <div className={styles.modalList}>
+                {(selectedPoDetail.productEntries || []).length ? (
+                  selectedPoDetail.productEntries.map((entry) => (
+                    <div key={entry.id} className={styles.modalListRow}>
+                      <strong>{entry.productName || 'NO PRODUCT'}</strong>
+                      <span>Qty {entry.qty || 0}</span>
+                    </div>
+                  ))
+                ) : (
+                  <div className={styles.emptyMini}>No product lines.</div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   )
 }
