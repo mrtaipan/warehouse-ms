@@ -1352,13 +1352,48 @@ export default function QcReceivingPage() {
   }
 
   function toggleAllocationRow(rowId) {
-    const row = modelRows.find((item) => item.id === rowId)
-    const currentOpen = row ? isAllocationRowOpen(row) : false
-    setAllocationOpenRows((prev) => ({
-      ...prev,
-      [rowId]: !currentOpen,
-    }))
+  const row = modelRows.find((item) => item.id === rowId)
+  const currentOpen = row ? isAllocationRowOpen(row) : false
+  const nextOpen = !currentOpen
+
+  setAllocationOpenRows((prev) => ({
+    ...prev,
+    [rowId]: nextOpen,
+  }))
+
+  if (nextOpen && row && !(row.allocations || []).length) {
+    if (!canAdjustAllocations) {
+      setError('Allocation is locked because QC for this source has already finished.')
+      return
+    }
+
+    if (!qcMembers.length) {
+      setError('No active QC user found with permission `qc.inspection.do` for today. Activate QC task from Grading Task or User Access.')
+      return
+    }
+
+    setError('')
+    setModelRows((prev) =>
+      prev.map((item) =>
+        item.id === rowId
+          ? {
+              ...item,
+              allocations: [
+                {
+                  id: `alloc-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+                  task_id: null,
+                  member_email: '',
+                  qty: '',
+                  existing_status: 'queued',
+                  locked_qty: 0,
+                },
+              ],
+            }
+          : item
+      )
+    )
   }
+}
 
   function addAllocationSplit(rowId) {
     if (!canAdjustAllocations) {
