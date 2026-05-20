@@ -17,6 +17,7 @@ const GROUP_LABELS = {
   inbound: 'Inbound',
   qc: 'QC',
   packing: 'Packing',
+  arkline: 'Arkline',
   masterdata: 'Master Data',
   useraccess: 'User Access',
   other: 'Other',

@@ -840,8 +840,8 @@ export default function QcConfirmationRejectionPage() {
                 </tr>
               </thead>
               <tbody>
-                {currentTakeKoliItems.map((item) => (
-                  <tr key={item.id}>
+                {currentTakeKoliItems.map((item, index) => (
+                  <tr key={`${item.id}-${item.grade || 'take'}-${index}`}>
                     <td style={styles.td}>{getModelLabel(item)}</td>
                     <td style={styles.td}>
                       {item.grade}
@@ -895,8 +895,8 @@ export default function QcConfirmationRejectionPage() {
                 </tr>
               </thead>
               <tbody>
-                {currentReturnKoliItems.map((item) => (
-                  <tr key={item.id}>
+                {currentReturnKoliItems.map((item, index) => (
+                  <tr key={`${item.id}-${item.grade || 'return'}-${index}`}>
                     <td style={styles.td}>{getModelLabel(item)}</td>
                     <td style={styles.td}>
                       {item.grade}

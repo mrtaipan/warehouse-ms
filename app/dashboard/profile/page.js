@@ -27,7 +27,7 @@ export default async function ProfilePage() {
   const isAdmin = user.email?.toLowerCase() === ADMIN_EMAIL
   const { data: profile } = await supabase
     .from('dir_user_profiles')
-    .select('display_name, role')
+    .select('display_name, role, reimbursement_bank_name, reimbursement_account_name, reimbursement_account_number')
     .eq('email', user.email?.toLowerCase())
     .maybeSingle()
 
@@ -86,6 +86,50 @@ export default async function ProfilePage() {
                 Role and access permissions are managed separately from User Access. This page only updates how your
                 name appears in the app.
               </p>
+            </div>
+          </div>
+
+          <div className={styles.bankSection}>
+            <div>
+              <h3 className={styles.bankSectionTitle}>Reimbursement Account</h3>
+              <p className={styles.sectionSubtitle}>This account will be used automatically when you choose your own account in reimbursement claims.</p>
+            </div>
+
+            <div className={styles.fieldGrid}>
+              <label className={styles.field}>
+                <span className={styles.label}>Bank Name</span>
+                <input
+                  className={styles.input}
+                  type="text"
+                  name="reimbursement_bank_name"
+                  defaultValue={profile?.reimbursement_bank_name || ''}
+                  placeholder="Enter bank name"
+                />
+              </label>
+
+              <label className={styles.field}>
+                <span className={styles.label}>Account Name</span>
+                <input
+                  className={styles.input}
+                  type="text"
+                  name="reimbursement_account_name"
+                  defaultValue={profile?.reimbursement_account_name || ''}
+                  placeholder="Enter account name"
+                />
+              </label>
+            </div>
+
+            <div className={styles.fieldGrid}>
+              <label className={styles.field}>
+                <span className={styles.label}>Account Number</span>
+                <input
+                  className={styles.input}
+                  type="text"
+                  name="reimbursement_account_number"
+                  defaultValue={profile?.reimbursement_account_number || ''}
+                  placeholder="Enter account number"
+                />
+              </label>
             </div>
           </div>
 

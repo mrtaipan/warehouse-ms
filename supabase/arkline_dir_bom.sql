@@ -51,6 +51,9 @@ execute function public.set_arkline_dir_bom_updated_at();
 
 alter table public.arkline_dir_bom enable row level security;
 
+grant usage on schema public to authenticated;
+grant select, insert, update, delete on public.arkline_dir_bom to authenticated;
+
 drop policy if exists arkline_dir_bom_authenticated_select on public.arkline_dir_bom;
 drop policy if exists arkline_dir_bom_authenticated_insert on public.arkline_dir_bom;
 drop policy if exists arkline_dir_bom_authenticated_update on public.arkline_dir_bom;

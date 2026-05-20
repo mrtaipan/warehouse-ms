@@ -11,6 +11,10 @@ const supabase = createClient()
 
 const SIZE_OPTIONS = ['XS', 'S', 'M', 'L', 'XL', 'XXL']
 const METHOD_OPTIONS = ['FOB', 'CMT']
+const SIZE_SORT_ORDER = SIZE_OPTIONS.reduce((accumulator, size, index) => {
+  accumulator[size] = index
+  return accumulator
+}, {})
 
 function createEmptySizeQuantities() {
   return SIZE_OPTIONS.reduce((accumulator, size) => {
@@ -77,6 +81,7 @@ function createInitialHeader() {
     supplierId: '',
     supplierName: '',
     requestDeliveryDate: '',
+    paymentTerms: '',
     status: 'Initiated',
     notes: '',
   }
@@ -109,6 +114,7 @@ function normalizePo(row) {
     method: String(row?.method || 'FOB').trim().toUpperCase(),
     status: String(row?.status || 'Draft').trim(),
     requestDeliveryDate: String(row?.request_delivery_date || '').slice(0, 10),
+    paymentTerms: String(row?.payment_terms || '').trim(),
     supplierName: String(row?.supplier_name || '').trim().toUpperCase(),
     createdAt: String(row?.created_at || ''),
   }
@@ -131,15 +137,25 @@ function normalizeBomLine(row) {
 }
 
 function normalizeMaterialLine(row) {
+  const id = String(row?.id || '').trim()
+  const arklinePoItemId = String(row?.arkline_po_item_id || '').trim()
+  const materialId = String(row?.material_id || '').trim()
+  const sizeVariant = String(row?.size_variant || '').trim().toUpperCase()
+  const colorVariant = String(row?.color_variant || '').trim().toUpperCase()
+
   return {
-    materialId: String(row?.material_id || '').trim(),
+    id,
+    poId: String(row?.po_id || '').trim().toUpperCase(),
+    arklinePoItemId,
+    skuInduk: String(row?.sku_induk || '').trim().toUpperCase(),
+    materialId,
     materialNameSnapshot: String(row?.material_name_snapshot || '').trim().toUpperCase(),
     unit: String(row?.unit || 'PCS').trim().toUpperCase(),
-    sizeVariant: String(row?.size_variant || '').trim().toUpperCase(),
-    colorVariant: String(row?.color_variant || '').trim().toUpperCase(),
+    sizeVariant,
+    colorVariant,
     generatedQty: Number(row?.generated_qty || 0) || 0,
     finalQty: Number(row?.final_qty || 0) || 0,
-    sourceSku: String(row?.source_sku_induk || '').trim().toUpperCase(),
+    previewKey: id || `${arklinePoItemId}-${materialId}-${sizeVariant}-${colorVariant}`,
   }
 }
 
@@ -167,6 +183,10 @@ function roundQuantity(value) {
   return Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100
 }
 
+function roundUpQuantity(value) {
+  return Math.ceil(Number(value || 0))
+}
+
 function formatQuantity(value) {
   const rounded = roundQuantity(value)
   return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(2)
@@ -187,6 +207,99 @@ function formatNumberInput(value) {
   const normalizedDecimal = decimalPart?.replace(/\D/g, '') || ''
 
   return decimalPart != null ? `${withSeparator}.${normalizedDecimal}` : withSeparator
+}
+
+function formatDateLabel(value) {
+  if (!value) return '-'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return String(value)
+  return new Intl.DateTimeFormat('en-GB', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  }).format(date)
+}
+
+function formatCurrency(value) {
+  const amount = Number(value || 0)
+  return new Intl.NumberFormat('en-US', {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2,
+  }).format(amount)
+}
+
+async function loadArklineLogoDataUrl() {
+  try {
+    const response = await fetch('/arkline-wordmark-transparent.png')
+    if (!response.ok) return ''
+    const blob = await response.blob()
+    return await new Promise((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onloadend = () => resolve(String(reader.result || ''))
+      reader.onerror = () => reject(new Error('Failed to read logo asset.'))
+      reader.readAsDataURL(blob)
+    })
+  } catch {
+    return ''
+  }
+}
+
+function compareMaterialPreviewRows(left, right) {
+  const leftColorRaw = String(left?.colorVariant || '').trim().toUpperCase()
+  const rightColorRaw = String(right?.colorVariant || '').trim().toUpperCase()
+  const leftSizeRaw = String(left?.sizeVariant || '').trim().toUpperCase()
+  const rightSizeRaw = String(right?.sizeVariant || '').trim().toUpperCase()
+  const leftHasVariant = Boolean(leftColorRaw || leftSizeRaw)
+  const rightHasVariant = Boolean(rightColorRaw || rightSizeRaw)
+
+  if (leftHasVariant !== rightHasVariant) {
+    return leftHasVariant ? 1 : -1
+  }
+
+  const leftPartialVariant = leftHasVariant && (!leftColorRaw || !leftSizeRaw)
+  const rightPartialVariant = rightHasVariant && (!rightColorRaw || !rightSizeRaw)
+
+  if (leftPartialVariant !== rightPartialVariant) {
+    return leftPartialVariant ? -1 : 1
+  }
+
+  const leftMaterial = buildMaterialLabel(left)
+  const rightMaterial = buildMaterialLabel(right)
+  const leftMaterialFamily = leftMaterial.replace(/\s+\d+(?:\.\d+)?\s*(CM|MM|M|INCH|INCHES)\s*$/i, '').trim()
+  const rightMaterialFamily = rightMaterial.replace(/\s+\d+(?:\.\d+)?\s*(CM|MM|M|INCH|INCHES)\s*$/i, '').trim()
+
+  if (leftMaterialFamily !== rightMaterialFamily) {
+    return leftMaterialFamily.localeCompare(rightMaterialFamily, undefined, { numeric: true })
+  }
+
+  const leftColor = leftColorRaw
+  const rightColor = rightColorRaw
+  if (leftColor !== rightColor) {
+    if (!leftColor) return 1
+    if (!rightColor) return -1
+    return leftColor.localeCompare(rightColor, undefined, { numeric: true })
+  }
+
+  const leftSize = leftSizeRaw
+  const rightSize = rightSizeRaw
+  const leftRank = Object.prototype.hasOwnProperty.call(SIZE_SORT_ORDER, leftSize) ? SIZE_SORT_ORDER[leftSize] : Number.MAX_SAFE_INTEGER
+  const rightRank = Object.prototype.hasOwnProperty.call(SIZE_SORT_ORDER, rightSize) ? SIZE_SORT_ORDER[rightSize] : Number.MAX_SAFE_INTEGER
+
+  if (leftRank !== rightRank) {
+    return leftRank - rightRank
+  }
+
+  if (leftSize !== rightSize) {
+    if (!leftSize) return 1
+    if (!rightSize) return -1
+    return leftSize.localeCompare(rightSize, undefined, { numeric: true })
+  }
+
+  if (leftMaterial !== rightMaterial) {
+    return leftMaterial.localeCompare(rightMaterial, undefined, { numeric: true })
+  }
+
+  return 0
 }
 
 function buildNextPoId(records) {
@@ -281,77 +394,206 @@ async function createPrintPdfBlob(bundle) {
     format: 'a4',
   })
 
+  const logoDataUrl = await loadArklineLogoDataUrl()
+  if (logoDataUrl) {
+    doc.addImage(logoDataUrl, 'PNG', 14, 12, 42, 16)
+  }
+
+  doc.setFont('helvetica', 'bold')
+  doc.setFontSize(22)
+  doc.text('PURCHASE ORDER', 196, 20, { align: 'right' })
+  doc.setFontSize(10)
+  doc.setFont('helvetica', 'normal')
+  doc.text(`No PO: ${bundle.poId || '-'}`, 196, 27, { align: 'right' })
+  doc.text(`PO Date: ${formatDateLabel(bundle.poCreatedAt)}`, 196, 33, { align: 'right' })
+
+  doc.setFont('helvetica', 'bold')
+  doc.setFontSize(12)
+  doc.text('PT ANUGERAH RETAIL KARYA', 62, 20)
+  doc.setFont('helvetica', 'normal')
+  doc.setFontSize(9)
+  doc.text(
+    doc.splitTextToSize(
+      'North Point Commercial blok NP 22, Jl. BSD Boulevard Utara, Lengkong Kulon, Pagedangan, Tangerang Regency, Banten 1533.',
+      92
+    ),
+    62,
+    26
+  )
+
+  doc.setFont('helvetica', 'bold')
+  doc.setFontSize(10)
+  doc.text(`To: ${bundle.header.supplierName || '-'}`, 14, 42)
+
+  let currentY = 50
+
+  const itemRows = bundle.items.map((item) => {
+    const qty = getLineTotalQty(item)
+    const price = toNumber(item.hpp)
+    const amount = qty * price
+
+    return [
+      item.namaProdukSnapshot || '-',
+      formatQuantity(qty),
+      formatCurrency(price),
+      formatCurrency(amount),
+    ]
+  })
+
+  const subtotal = bundle.items.reduce((sum, item) => {
+    const qty = getLineTotalQty(item)
+    const price = toNumber(item.hpp)
+    return sum + qty * price
+  }, 0)
+  const ppn = subtotal * 0.11
+  const grandTotal = subtotal + ppn
+
+  const startX = 14
+  const tableWidth = 182
+  const colWidths = [98, 28, 18, 38]
+  const rowHeight = 10
+  const headerHeight = 10
+
+  doc.setDrawColor(190, 190, 190)
+  doc.setLineWidth(0.2)
+  doc.line(startX, currentY, startX + tableWidth, currentY)
+
+  let currentX = startX
+  const headers = ['PRODUCT', 'PRICE', 'QTY', 'TOTAL']
+  headers.forEach((header, index) => {
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(9)
+    doc.text(header, currentX + 2, currentY + 6)
+    currentX += colWidths[index]
+  })
+
+  currentY += headerHeight
+  doc.line(startX, currentY, startX + tableWidth, currentY)
+
+  itemRows.forEach((row) => {
+    const productLines = doc.splitTextToSize(String(row[0] || '-'), colWidths[0] - 4)
+    const dynamicHeight = Math.max(rowHeight, productLines.length * 4 + 4)
+    if (currentY + dynamicHeight > 240) {
+      doc.addPage()
+      currentY = 20
+    }
+
+    let x = startX
+    row.forEach((cell, index) => {
+      doc.setFont('helvetica', 'normal')
+      doc.setFontSize(9)
+      if (index === 0) {
+        doc.text(productLines, x + 2, currentY + 5)
+      } else if (index === 2) {
+        doc.text(String(cell || '-'), x + colWidths[index] - 3, currentY + 5, { align: 'right' })
+      } else {
+        doc.text(String(cell || '-'), x + colWidths[index] - 3, currentY + 5, { align: 'right' })
+      }
+      x += colWidths[index]
+    })
+
+    currentY += dynamicHeight
+    doc.line(startX, currentY, startX + tableWidth, currentY)
+  })
+
+  let verticalX = startX
+  colWidths.forEach((width) => {
+    doc.line(verticalX, 50, verticalX, currentY)
+    verticalX += width
+  })
+  doc.line(startX + tableWidth, 50, startX + tableWidth, currentY)
+
+  const summaryStartX = 122
+  let summaryY = currentY + 8
+  doc.setFontSize(9)
+  doc.setFont('helvetica', 'normal')
+  doc.text('Subtotal', summaryStartX, summaryY)
+  doc.text(formatCurrency(subtotal), 194, summaryY, { align: 'right' })
+  summaryY += 6
+  doc.text('PPN 11%', summaryStartX, summaryY)
+  doc.text(formatCurrency(ppn), 194, summaryY, { align: 'right' })
+  summaryY += 6
+  doc.setFont('helvetica', 'bold')
+  doc.text('Total', summaryStartX, summaryY)
+  doc.text(formatCurrency(grandTotal), 194, summaryY, { align: 'right' })
+
+  currentY = summaryY + 14
+
+  const lowerLeftLines = [
+    `Payment Method: ${bundle.method || '-'}`,
+    `Terms & Condition: ${bundle.header.paymentTerms || '-'}`,
+    `Request Delivery: ${formatDateLabel(bundle.header.requestDeliveryDate)}`,
+    `Remarks: ${bundle.header.notes || '-'}`,
+  ]
+  const lowerLeftText = doc.splitTextToSize(lowerLeftLines.join('\n'), 88)
+
+  if (currentY + Math.max(lowerLeftText.length * 5, 34) > doc.internal.pageSize.getHeight() - 16) {
+    doc.addPage()
+    currentY = 18
+  }
+
+  doc.setFont('helvetica', 'normal')
+  doc.setFontSize(10)
+  doc.text(lowerLeftText, 14, currentY)
+
+  currentY += Math.max(lowerLeftText.length * 5, 28)
+
+  if (currentY > doc.internal.pageSize.getHeight() - 44) {
+    doc.addPage()
+    currentY = 24
+  }
+
+  doc.setFont('helvetica', 'normal')
+  doc.setFontSize(10)
+  doc.text('Aditya C. S.', 150, currentY + 18, { align: 'center' })
+  doc.line(122, currentY + 20, 178, currentY + 20)
+  doc.setFontSize(9)
+  doc.text('President Director', 150, currentY + 26, { align: 'center' })
+
+  return doc.output('blob')
+}
+
+async function createMaterialPrintPdfBlob(bundle) {
+  const { jsPDF } = await import('jspdf')
+  const doc = new jsPDF({
+    orientation: 'portrait',
+    unit: 'mm',
+    format: 'a4',
+  })
+
   doc.setFont('helvetica', 'bold')
   doc.setFontSize(18)
-  doc.text('Arkline Production Planning', 14, 18)
+  doc.text('Arkline Material Requirement', 14, 18)
 
   doc.setFont('helvetica', 'normal')
   doc.setFontSize(10)
   doc.text(`PO ID: ${bundle.poId}`, 14, 26)
-  doc.text(`Method: ${bundle.method}`, 80, 26)
   doc.text(`Supplier: ${bundle.header.supplierName || '-'}`, 14, 32)
-  doc.text(`Status: ${bundle.header.status || '-'}`, 80, 32)
-  doc.text(`Request Delivery: ${bundle.header.requestDeliveryDate || '-'}`, 14, 38)
 
-  let currentY = 46
+  let currentY = 42
 
-  const itemRows = bundle.items.map((item) => {
-    const sizeBreakdown =
-      SIZE_OPTIONS.map((size) => {
-        const value = toNumber(item.qtyBySize[size])
-        return value > 0 ? `${size}:${formatQuantity(value)}` : ''
-      })
-        .filter(Boolean)
-        .join(', ') || '-'
-
-    return [
-      item.skuInduk,
-      item.namaProdukSnapshot || '-',
-      formatQuantity(getLineTotalQty(item)),
-      bundle.method === 'FOB' ? formatQuantity(toNumber(item.hpp)) : '-',
-      sizeBreakdown,
-    ]
-  })
+  const materialRows = bundle.materials.map((line) => [
+    buildMaterialLabel(line) || '-',
+    line.sizeVariant || '-',
+    line.colorVariant || '-',
+    line.unit || '-',
+    formatQuantity(line.finalQty),
+  ])
 
   currentY = addPdfTable(doc, {
-    title: 'Planned Items',
+    title: 'Material Preview',
     startY: currentY,
     headers: [
-      { label: 'SKU', width: 0.2 },
-      { label: 'Product', width: 0.34 },
-      { label: 'Qty', width: 0.12 },
-      { label: 'HPP', width: 0.12 },
-      { label: 'Size Breakdown', width: 0.22 },
+      { label: 'Material', width: 0.4 },
+      { label: 'Size', width: 0.14 },
+      { label: 'Color', width: 0.18 },
+      { label: 'Unit', width: 0.1 },
+      { label: 'Final Qty', width: 0.18 },
     ],
-    rows: itemRows,
+    rows: materialRows,
   })
 
-  if (bundle.method === 'CMT' && bundle.materials.length) {
-    const materialRows = bundle.materials.map((line) => [
-      buildMaterialLabel(line) || '-',
-      line.sizeVariant || '-',
-      line.colorVariant || '-',
-      line.unit || '-',
-      formatQuantity(line.generatedQty),
-      formatQuantity(line.finalQty),
-    ])
-
-    currentY = addPdfTable(doc, {
-      title: 'Generated Materials',
-      startY: currentY,
-      headers: [
-        { label: 'Material', width: 0.3 },
-        { label: 'Size', width: 0.12 },
-        { label: 'Color', width: 0.14 },
-        { label: 'Unit', width: 0.1 },
-        { label: 'Generated', width: 0.18 },
-        { label: 'Final', width: 0.18 },
-      ],
-      rows: materialRows,
-    })
-  }
-
-  const noteLines = doc.splitTextToSize(`Notes: ${bundle.header.notes || '-'}`, 180)
+  const noteLines = doc.splitTextToSize(`PO Notes: ${bundle.header.notes || '-'}`, 180)
   if (currentY + noteLines.length * 5 > doc.internal.pageSize.getHeight() - 16) {
     doc.addPage()
     currentY = 18
@@ -526,7 +768,18 @@ async function fetchPoBundle(poId) {
     throw new Error(sizeError.message)
   }
 
-  const materialRows = []
+  const { data: materialRows, error: materialError } =
+    itemIds.length > 0
+      ? await supabase
+          .from('arkline_po_materials')
+          .select('*')
+          .in('arkline_po_item_id', itemIds)
+          .order('material_name_snapshot', { ascending: true })
+      : { data: [], error: null }
+
+  if (materialError) {
+    throw new Error(materialError.message)
+  }
 
   const sizeRowsByItem = (sizeRows || []).reduce((accumulator, row) => {
     const key = String(row.arkline_po_item_id || '')
@@ -563,7 +816,7 @@ async function fetchPoBundle(poId) {
   return {
     po: poRow,
     items: normalizedItems,
-    materials: materialRows.map(normalizeMaterialLine),
+    materials: (materialRows || []).map(normalizeMaterialLine),
   }
 }
 
@@ -690,10 +943,34 @@ export default function ArklineProductionPlanningPage() {
   )
   const isExistingModeLocked = mode === 'existing' && !selectedExistingPoId
   const isEditingLine = Boolean(lineDraft.localId || lineDraft.dbId)
-  const isHppDisabled = method === 'CMT' || isExistingModeLocked
+  const isHppDisabled = isExistingModeLocked
 
-  const totalMaterialLines = materialPreview.length
-  const totalMaterialFinalQty = materialPreview.reduce((sum, item) => sum + Number(item.finalQty || 0), 0)
+  const displayMaterialPreview = useMemo(() => {
+    const aggregate = new Map()
+
+    materialPreview.forEach((line) => {
+      const key = [line.materialId, buildMaterialLabel(line), line.unit, line.sizeVariant || '', line.colorVariant || ''].join('|')
+      const existing = aggregate.get(key)
+
+      if (!existing) {
+        aggregate.set(key, {
+          ...line,
+          previewKey: key,
+          generatedQty: Number(line.generatedQty || 0) || 0,
+          finalQty: Number(line.finalQty || 0) || 0,
+        })
+        return
+      }
+
+      existing.generatedQty = roundQuantity(existing.generatedQty + (Number(line.generatedQty || 0) || 0))
+      existing.finalQty = roundQuantity(existing.finalQty + (Number(line.finalQty || 0) || 0))
+    })
+
+    return Array.from(aggregate.values()).sort(compareMaterialPreviewRows)
+  }, [materialPreview])
+
+  const totalMaterialLines = displayMaterialPreview.length
+  const totalMaterialFinalQty = displayMaterialPreview.reduce((sum, item) => sum + Number(item.finalQty || 0), 0)
 
   useEffect(() => {
     if (!isPlanningDirty) {
@@ -830,20 +1107,22 @@ export default function ArklineProductionPlanningPage() {
 
           matchingLines.forEach((line) => {
             const generatedQty = roundQuantity(requestedQty * toNumber(line.qtyPer1))
-            const finalQty = roundQuantity(generatedQty * (1 + (allowancePct + toNumber(line.wastePct)) / 100))
-            const key = [line.materialId, line.materialName, line.unit, line.sizeVariant || size, line.colorVariant || '', item.skuInduk].join('|')
+            const finalQty = roundUpQuantity(generatedQty * (1 + (allowancePct + toNumber(line.wastePct)) / 100))
+            const normalizedSizeVariant = line.sizeVariant || ''
+            const key = [item.skuInduk, line.materialId, line.materialName, line.unit, normalizedSizeVariant, line.colorVariant || ''].join('|')
             const existing = aggregate.get(key)
 
             if (!existing) {
               aggregate.set(key, {
+                previewKey: key,
+                skuInduk: item.skuInduk,
                 materialId: line.materialId,
                 materialNameSnapshot: line.materialName,
                 unit: line.unit,
-                sizeVariant: line.sizeVariant || size,
+                sizeVariant: normalizedSizeVariant,
                 colorVariant: line.colorVariant || '',
                 generatedQty,
                 finalQty,
-                sourceSku: item.skuInduk,
               })
               return
             }
@@ -854,13 +1133,7 @@ export default function ArklineProductionPlanningPage() {
         })
       }
 
-      setMaterialPreview(
-        Array.from(aggregate.values()).sort((left, right) =>
-          `${buildMaterialLabel(left)}-${left.sizeVariant}-${left.colorVariant}`.localeCompare(
-            `${buildMaterialLabel(right)}-${right.sizeVariant}-${right.colorVariant}`
-          )
-        )
-      )
+      setMaterialPreview(Array.from(aggregate.values()).sort(compareMaterialPreviewRows))
       setMaterialWarnings(warnings)
     } catch (buildError) {
       setMaterialPreview([])
@@ -1073,8 +1346,8 @@ export default function ArklineProductionPlanningPage() {
       return null
     }
 
-    if (method === 'FOB' && toNumber(lineDraft.hpp) <= 0) {
-      setLineError('Enter HPP for FOB product lines.')
+    if (toNumber(lineDraft.hpp) <= 0) {
+      setLineError('Enter Price for this product line.')
       return null
     }
 
@@ -1085,7 +1358,7 @@ export default function ArklineProductionPlanningPage() {
       kategoriProdukSnapshot: product.kategoriProduk,
       kategoriPengadaanSnapshot: product.kategoriPengadaan,
       allowancePct: String(lineDraft.allowancePct || '0'),
-      hpp: method === 'FOB' ? String(lineDraft.hpp || '') : '',
+      hpp: String(lineDraft.hpp || ''),
     }
   }
 
@@ -1157,6 +1430,7 @@ export default function ArklineProductionPlanningPage() {
         supplierId: bundle.po.supplier_id != null ? String(bundle.po.supplier_id) : '',
         supplierName: String(bundle.po.supplier_name || '').trim().toUpperCase(),
         requestDeliveryDate: String(bundle.po.request_delivery_date || '').slice(0, 10),
+        paymentTerms: String(bundle.po.payment_terms || ''),
         status: String(bundle.po.status || 'Draft'),
         notes: String(bundle.po.notes || ''),
       }
@@ -1216,6 +1490,10 @@ export default function ArklineProductionPlanningPage() {
         throw new Error('Request delivery date is required.')
       }
 
+      if (!String(header.paymentTerms || '').trim()) {
+        throw new Error('Payment terms is required.')
+      }
+
       if (!poItems.length) {
         throw new Error('Add at least one product line before saving.')
       }
@@ -1234,6 +1512,7 @@ export default function ArklineProductionPlanningPage() {
         supplier_id: header.supplierId ? Number(header.supplierId) || header.supplierId : null,
         supplier_name: header.supplierName || null,
         request_delivery_date: header.requestDeliveryDate || null,
+        payment_terms: String(header.paymentTerms || '').trim() || null,
         status: header.status || 'Draft',
         notes: header.notes.trim() || null,
         updated_by: userEmail,
@@ -1298,7 +1577,7 @@ export default function ArklineProductionPlanningPage() {
         allowance_pct: toNumber(item.allowancePct),
         total_qty: getLineTotalQty(item),
         actual_qty: 0,
-        hpp: method === 'FOB' ? toNumber(item.hpp) : null,
+        hpp: toNumber(item.hpp),
         status: item.status || 'Initiated',
         notes: item.notes.trim() || null,
         kategori_pengadaan: item.kategoriPengadaanSnapshot || productBySku[item.skuInduk]?.kategoriPengadaan || null,
@@ -1339,6 +1618,38 @@ export default function ArklineProductionPlanningPage() {
         const { error: insertSizeError } = await supabase.from('arkline_po_item_sizes').insert(sizePayload)
         if (insertSizeError) {
           throw new Error(insertSizeError.message)
+        }
+      }
+
+      if (method === 'CMT' && materialPreview.length) {
+        const materialPayload = materialPreview
+          .map((line) => {
+            const insertedItem = insertedBySku[line.skuInduk]
+            if (!insertedItem || !line.materialId) return null
+
+            return {
+              po_id: header.poId.trim().toUpperCase(),
+              arkline_po_item_id: insertedItem.id,
+              sku_induk: line.skuInduk,
+              material_id: line.materialId,
+              material_name_snapshot: buildMaterialLabel(line) || '-',
+              size_variant: line.sizeVariant || null,
+              color_variant: line.colorVariant || null,
+              unit: line.unit || 'PCS',
+              generated_qty: roundQuantity(line.generatedQty),
+              final_qty: roundQuantity(line.finalQty),
+            }
+          })
+          .filter(Boolean)
+
+        if (materialPayload.length) {
+          const { error: insertMaterialError } = await supabase
+            .from('arkline_po_materials')
+            .insert(materialPayload)
+
+          if (insertMaterialError) {
+            throw new Error(insertMaterialError.message)
+          }
         }
       }
 
@@ -1385,7 +1696,11 @@ export default function ArklineProductionPlanningPage() {
       const pdfBlob = await createPrintPdfBlob({
         poId: header.poId,
         method,
-        header,
+        poCreatedAt: bundle.po.created_at,
+        header: {
+          ...header,
+          paymentTerms: String(bundle.po.payment_terms || header.paymentTerms || ''),
+        },
         items: printableItems,
         materials: bundle.materials,
       })
@@ -1397,6 +1712,45 @@ export default function ArklineProductionPlanningPage() {
       setError(printError.message || 'Failed to prepare print view.')
     } finally {
       setPrinting(false)
+    }
+  }
+
+  async function handlePrintMaterials() {
+    setError('')
+    setSuccess('')
+
+    if (!displayMaterialPreview.length) {
+      setError('Generate materials first before printing the material PDF.')
+      return
+    }
+
+    const previewWindow = window.open('', '_blank')
+
+    try {
+      if (!previewWindow) {
+        throw new Error('Popup blocked. Please allow popups to preview the PDF.')
+      }
+
+      previewWindow.document.write('<html><body style="font-family: Arial, sans-serif; padding: 24px;">Preparing material PDF preview...</body></html>')
+      previewWindow.document.close()
+
+      const printableHeader = {
+        ...header,
+        supplierName: header.supplierName,
+      }
+
+      const pdfBlob = await createMaterialPrintPdfBlob({
+        poId: header.poId,
+        method,
+        header: printableHeader,
+        materials: displayMaterialPreview,
+      })
+      const pdfUrl = URL.createObjectURL(pdfBlob)
+      previewWindow.location.href = pdfUrl
+      window.setTimeout(() => URL.revokeObjectURL(pdfUrl), 60000)
+    } catch (printError) {
+      previewWindow?.close()
+      setError(printError.message || 'Failed to prepare material print view.')
     }
   }
 
@@ -1455,15 +1809,15 @@ export default function ArklineProductionPlanningPage() {
         <div className={styles.header}>
           <div className={styles.headerTitleWrap}>
             <p className={styles.eyebrow}>Arkline</p>
-            <h1 className={styles.title}>Production Planning</h1>
-            <p className={styles.subtitle}>PO planning, size allocation, material generation, save, and print.</p>
+            <h1 className={styles.title}>Production Orders</h1>
+            <p className={styles.subtitle}>Garment PO setup, size allocation, material generation, save, and print.</p>
           </div>
           <div className={styles.headerActions}>
             <button type="button" className={styles.secondaryButton} onClick={() => resetPlanningState('new')}>
               Reset Planning
             </button>
             <button type="button" className={styles.printButton} onClick={handlePrint} disabled={printing || !header.poId}>
-              {printing ? 'Preparing Print...' : 'Print PO'}
+              {printing ? 'Preparing Print...' : 'Print Purchase Order'}
             </button>
             <button type="button" className={styles.primaryButton} onClick={handleSavePo} disabled={saving || loading}>
               {saving ? 'Saving...' : 'Save Planning'}
@@ -1481,7 +1835,7 @@ export default function ArklineProductionPlanningPage() {
         <section className={`${styles.sectionCard} ${styles.poPlanningCard}`.trim()}>
           <div className={styles.sectionHeader}>
             <div>
-              <h2 className={styles.sectionTitle}>PO Planning</h2>
+              <h2 className={styles.sectionTitle}>Production Orders</h2>
               <p className={styles.sectionCopy}>
                 Set the PO details first, then continue the product planning on the right side.
               </p>
@@ -1529,7 +1883,9 @@ export default function ArklineProductionPlanningPage() {
 
             <div className={styles.field}>
               <div className={styles.labelRow}>
-                <label className={styles.label}>PO ID</label>
+                <label className={styles.label}>
+                  PO ID <span className={styles.requiredMark}>*</span>
+                </label>
                 {mode === 'existing' && selectedExistingPoId && !showExistingPoPicker && isEditablePoSuffix(header.poId) ? (
                   <button
                     type="button"
@@ -1588,7 +1944,9 @@ export default function ArklineProductionPlanningPage() {
             </div>
 
             <div className={styles.field}>
-              <label className={styles.label}>Supplier</label>
+              <label className={styles.label}>
+                Supplier <span className={styles.requiredMark}>*</span>
+              </label>
               <select
                 className={styles.select}
                 name="supplierId"
@@ -1606,7 +1964,9 @@ export default function ArklineProductionPlanningPage() {
             </div>
 
             <div className={styles.field}>
-              <label className={styles.label}>Request Delivery</label>
+              <label className={styles.label}>
+                Request Delivery <span className={styles.requiredMark}>*</span>
+              </label>
               <input
                 className={styles.input}
                 type="date"
@@ -1618,13 +1978,15 @@ export default function ArklineProductionPlanningPage() {
             </div>
 
             <div className={styles.field}>
-              <label className={styles.label}>PO Notes</label>
-              <textarea
-                className={styles.textarea}
-                name="notes"
-                value={header.notes}
+              <label className={styles.label}>
+                Payment Terms <span className={styles.requiredMark}>*</span>
+              </label>
+              <input
+                className={styles.input}
+                name="paymentTerms"
+                value={header.paymentTerms}
                 onChange={handleHeaderChange}
-                placeholder="Optional planning notes"
+                placeholder="e.g. 30% DP, 70% before shipment"
                 disabled={isExistingModeLocked}
               />
             </div>
@@ -1639,6 +2001,18 @@ export default function ArklineProductionPlanningPage() {
                 placeholder="Optional notes for this product line"
               />
             </div>
+          </div>
+
+          <div className={styles.remarksSection}>
+            <label className={styles.label}>Remarks</label>
+            <textarea
+              className={`${styles.textarea} ${styles.remarksTextarea}`.trim()}
+              name="notes"
+              value={header.notes}
+              onChange={handleHeaderChange}
+              placeholder="Optional remarks"
+              disabled={isExistingModeLocked}
+            />
           </div>
 
           <div className={styles.sizeSection}>
@@ -1730,7 +2104,9 @@ export default function ArklineProductionPlanningPage() {
             </div>
 
             <div className={`${styles.field} ${styles.productField}`.trim()}>
-              <label className={styles.label}>Product</label>
+              <label className={styles.label}>
+                Product <span className={styles.requiredMark}>*</span>
+              </label>
               <div className={styles.comboBox}>
                 <input
                   className={styles.input}
@@ -1789,12 +2165,14 @@ export default function ArklineProductionPlanningPage() {
             </div>
 
             <div className={`${styles.field} ${styles.hppField}`.trim()}>
-              <label className={styles.label}>HPP</label>
+              <label className={styles.label}>
+                Price <span className={styles.requiredMark}>*</span>
+              </label>
               <input
                 className={styles.input}
                 name="hpp"
                 inputMode="decimal"
-                value={method === 'FOB' ? formatNumberInput(lineDraft.hpp ?? '') : ''}
+                value={formatNumberInput(lineDraft.hpp ?? '')}
                 onChange={handleDraftChange}
                 disabled={isHppDisabled}
                 placeholder="0"
@@ -1898,7 +2276,7 @@ export default function ArklineProductionPlanningPage() {
                   <tr>
                     <th>Product</th>
                     <th>Total Qty</th>
-                    <th>HPP</th>
+                    <th>Price</th>
                     <th>Size Breakdown</th>
                     <th>Action</th>
                   </tr>
@@ -1914,7 +2292,7 @@ export default function ArklineProductionPlanningPage() {
                           <div className={styles.cellSubtext}>{item.skuInduk}</div>
                         </td>
                         <td>{formatQuantity(getLineTotalQty(item))}</td>
-                        <td>{method === 'FOB' ? formatQuantity(toNumber(item.hpp)) : '-'}</td>
+                        <td>{formatCurrency(toNumber(item.hpp))}</td>
                         <td className={styles.sizeBreakdownCell}>
                           <div className={styles.sizeTagRow}>
                             {SIZE_OPTIONS.map((size) => {
@@ -1970,6 +2348,14 @@ export default function ArklineProductionPlanningPage() {
                 </p>
               </div>
               <div className={styles.statGroup}>
+                <button
+                  type="button"
+                  className={styles.secondaryButton}
+                  onClick={handlePrintMaterials}
+                  disabled={!displayMaterialPreview.length}
+                >
+                  Print Materials
+                </button>
                 <div className={styles.statPill}>
                   Material Lines
                   <strong>{totalMaterialLines}</strong>
@@ -1989,13 +2375,13 @@ export default function ArklineProductionPlanningPage() {
               </div>
             ) : null}
 
-            {!materialPreview.length ? (
+            {!displayMaterialPreview.length ? (
               <div className={styles.emptyState}>
                 Add product lines and generate materials to see the calculated BOM output here.
               </div>
             ) : (
               <div className={styles.tableWrap}>
-                <table className={styles.table}>
+                <table className={`${styles.table} ${styles.materialPreviewTable}`.trim()}>
                   <thead>
                     <tr>
                       <th>Material</th>
@@ -2004,19 +2390,17 @@ export default function ArklineProductionPlanningPage() {
                       <th>Unit</th>
                       <th>Generated Qty</th>
                       <th>Final Qty</th>
-                      <th>Source SKU</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {materialPreview.map((line) => (
-                      <tr key={`${line.materialId}-${line.sizeVariant}-${line.colorVariant}-${line.sourceSku}`}>
+                    {displayMaterialPreview.map((line) => (
+                      <tr key={line.previewKey || line.id || `${line.materialId}-${line.sizeVariant}-${line.colorVariant}`}>
                         <td>{buildMaterialLabel(line) || '-'}</td>
                         <td>{line.sizeVariant || '-'}</td>
                         <td>{line.colorVariant || '-'}</td>
                         <td>{line.unit || '-'}</td>
                         <td>{formatQuantity(line.generatedQty)}</td>
                         <td>{formatQuantity(line.finalQty)}</td>
-                        <td>{line.sourceSku || '-'}</td>
                       </tr>
                     ))}
                   </tbody>

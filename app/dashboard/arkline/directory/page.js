@@ -281,11 +281,13 @@ export default function ArklineDirectoryPage() {
                 <div>{item.sku_induk || '-'}</div>
                 <div>{item.kategori_produk || '-'}</div>
                 <div>{item.kategori_pengadaan || '-'}</div>
-                <div className={styles.buttonRow}>
-                  <span className={`${styles.status} ${item.is_active ? styles.statusActive : styles.statusInactive}`.trim()}>
-                    {item.is_active ? 'Active' : 'Inactive'}
-                  </span>
-                  <button type="button" className={styles.secondaryButton} onClick={() => openEditModal(item)}>
+                <div className={`${styles.buttonRow} ${styles.directoryActionCell}`.trim()}>
+                  <span
+                    className={`${styles.statusDot} ${item.is_active ? styles.statusDotActive : styles.statusDotInactive}`.trim()}
+                    title={item.is_active ? 'Active' : 'Inactive'}
+                    aria-label={item.is_active ? 'Active' : 'Inactive'}
+                  />
+                  <button type="button" className={`${styles.secondaryButton} ${styles.directoryEditButton}`.trim()} onClick={() => openEditModal(item)}>
                     Edit
                   </button>
                 </div>
@@ -301,9 +303,11 @@ export default function ArklineDirectoryPage() {
                     <p className={styles.productSku}>{item.sku_induk || 'NO SKU'}</p>
                     <h2 className={styles.cellTitle}>{item.nama_produk}</h2>
                   </div>
-                  <span className={`${styles.status} ${item.is_active ? styles.statusActive : styles.statusInactive}`.trim()}>
-                    {item.is_active ? 'Active' : 'Inactive'}
-                  </span>
+                  <span
+                    className={`${styles.statusDot} ${item.is_active ? styles.statusDotActive : styles.statusDotInactive}`.trim()}
+                    title={item.is_active ? 'Active' : 'Inactive'}
+                    aria-label={item.is_active ? 'Active' : 'Inactive'}
+                  />
                 </div>
 
                 <p className={styles.featureText}>
@@ -314,7 +318,7 @@ export default function ArklineDirectoryPage() {
                 </p>
 
                 <div className={styles.buttonRow}>
-                  <button type="button" className={styles.secondaryButton} onClick={() => openEditModal(item)}>
+                  <button type="button" className={`${styles.secondaryButton} ${styles.directoryEditButton}`.trim()} onClick={() => openEditModal(item)}>
                     Edit Product
                   </button>
                 </div>

@@ -9,10 +9,50 @@ export const ROLE_OPTIONS = [
   { value: 'qc_staff', label: 'QC Staff' },
   { value: 'qc_inspector', label: 'QC Inspector' },
   { value: 'packing_staff', label: 'Packing Staff' },
+  { value: 'arkline_staff', label: 'Arkline Staff' },
+  { value: 'arkline_approver', label: 'Arkline Approver' },
 ]
 
 function hasAnyPermission(permissions, codes) {
   return codes.some((code) => permissions.includes(code))
+}
+
+export function getArklineFeatureAccess(role, permissions = [], isAdmin = false) {
+  if (isAdmin || role === 'admin') {
+    return {
+      menu: true,
+      menuHref: '/dashboard/arkline',
+      overview: true,
+      financialManagement: true,
+      reimbursementView: true,
+      reimbursementSubmit: true,
+      reimbursementApprove: true,
+      reimbursementPay: true,
+    }
+  }
+
+  const reimbursementView = hasAnyPermission(permissions, [
+    'arkline.finance.reimbursement.view',
+    'arkline.finance.reimbursement.submit',
+    'arkline.finance.reimbursement.approve',
+    'arkline.finance.reimbursement.pay',
+  ])
+  const reimbursementSubmit = permissions.includes('arkline.finance.reimbursement.submit')
+  const reimbursementApprove = permissions.includes('arkline.finance.reimbursement.approve')
+  const reimbursementPay = permissions.includes('arkline.finance.reimbursement.pay')
+  const financialManagement = reimbursementView
+  const menu = financialManagement
+
+  return {
+    menu,
+    menuHref: financialManagement ? '/dashboard/arkline/financial-management' : '/dashboard',
+    overview: menu,
+    financialManagement,
+    reimbursementView,
+    reimbursementSubmit,
+    reimbursementApprove,
+    reimbursementPay,
+  }
 }
 
 export function getQcFeatureAccess(permissions = [], isAdmin = false, role = '') {
@@ -105,6 +145,8 @@ export function getLandingPath(role, permissions = [], isAdmin = false) {
   if (qcAccess.menu) return qcAccess.menuHref
   const storageAccess = getStorageFeatureAccess(role, permissions, isAdmin)
   if (storageAccess.menu) return storageAccess.menuHref
+  const arklineAccess = getArklineFeatureAccess(role, permissions, isAdmin)
+  if (arklineAccess.menu) return arklineAccess.menuHref
   return '/dashboard'
 }
 
@@ -112,6 +154,7 @@ export function getAllowedMenus(role, permissions = [], isAdmin = false) {
   if (isAdmin || role === 'admin') {
     return {
       arkline: true,
+      arklineHref: '/dashboard/arkline',
       inbound: true,
       qc: true,
       qcHref: '/dashboard/qc',
@@ -126,9 +169,11 @@ export function getAllowedMenus(role, permissions = [], isAdmin = false) {
 
   const storageAccess = getStorageFeatureAccess(role, permissions, isAdmin)
   const qcAccess = getQcFeatureAccess(permissions, isAdmin, role)
+  const arklineAccess = getArklineFeatureAccess(role, permissions, isAdmin)
 
   return {
-    arkline: false,
+    arkline: arklineAccess.menu,
+    arklineHref: arklineAccess.menuHref,
     inbound: false,
     qc: qcAccess.menu,
     qcHref: qcAccess.menuHref,
@@ -156,6 +201,7 @@ export function canAccessPath(pathname, role, permissions = [], isAdmin = false)
 
   const storageAccess = getStorageFeatureAccess(role, permissions, isAdmin)
   const qcAccess = getQcFeatureAccess(permissions, isAdmin, role)
+  const arklineAccess = getArklineFeatureAccess(role, permissions, isAdmin)
 
   if (pathname === '/dashboard/storage' || pathname.startsWith('/dashboard/storage?')) return storageAccess.menu
   if (pathname.startsWith('/dashboard/storage/overview')) return storageAccess.overview
@@ -178,6 +224,8 @@ export function canAccessPath(pathname, role, permissions = [], isAdmin = false)
   if (pathname.startsWith('/dashboard/qc')) return qcAccess.menu
 
   if (pathname.startsWith('/dashboard/packing-list')) return false
+  if (pathname === '/dashboard/arkline' || pathname.startsWith('/dashboard/arkline?')) return arklineAccess.overview
+  if (pathname.startsWith('/dashboard/arkline/financial-management')) return arklineAccess.financialManagement
   if (pathname.startsWith('/dashboard/arkline')) return false
 
   if (

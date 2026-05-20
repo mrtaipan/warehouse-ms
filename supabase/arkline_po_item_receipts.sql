@@ -5,28 +5,41 @@ create table if not exists public.arkline_po_item_receipts (
   arkline_po_item_id uuid not null,
   po_id text not null,
   sku_induk text not null,
+  receipt_group_id uuid null,
   size text not null,
   received_qty integer not null check (received_qty > 0),
   receive_date date not null,
+  is_final boolean not null default false,
   notes text null,
+  created_by text null,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   constraint arkline_po_item_receipts_po_item_id_fkey
     foreign key (arkline_po_item_id)
     references public.arkline_po_items (id)
-    on delete cascade,
-  constraint arkline_po_item_receipts_po_id_fkey
-    foreign key (po_id)
-    references public.arkline_pos (po_id)
-    on update cascade
     on delete cascade
 );
+
+alter table if exists public.arkline_po_item_receipts
+  drop constraint if exists arkline_po_item_receipts_po_id_fkey;
+
+alter table if exists public.arkline_po_item_receipts
+  add column if not exists receipt_group_id uuid null;
+
+alter table if exists public.arkline_po_item_receipts
+  add column if not exists is_final boolean not null default false;
+
+alter table if exists public.arkline_po_item_receipts
+  add column if not exists created_by text null;
 
 create index if not exists arkline_po_item_receipts_po_item_id_idx
   on public.arkline_po_item_receipts (arkline_po_item_id);
 
 create index if not exists arkline_po_item_receipts_po_id_idx
   on public.arkline_po_item_receipts (po_id);
+
+create index if not exists arkline_po_item_receipts_group_idx
+  on public.arkline_po_item_receipts (receipt_group_id);
 
 create index if not exists arkline_po_item_receipts_po_item_size_date_idx
   on public.arkline_po_item_receipts (arkline_po_item_id, size, receive_date);
@@ -60,7 +73,11 @@ begin
   update public.arkline_po_items item
   set
     actual_qty = coalesce(summary.total_received_qty, 0),
-    completion_date = summary.last_receive_date
+    completion_date = case
+      when coalesce(summary.total_received_qty, 0) >= coalesce(item.total_qty, 0)
+        then summary.last_receive_date
+      else null
+    end
   from (
     select
       arkline_po_item_id,
@@ -95,6 +112,9 @@ for each row
 execute function public.sync_arkline_po_item_receipt_summary();
 
 alter table public.arkline_po_item_receipts enable row level security;
+
+grant usage on schema public to authenticated;
+grant select, insert, update, delete on public.arkline_po_item_receipts to authenticated;
 
 drop policy if exists arkline_po_item_receipts_authenticated_select on public.arkline_po_item_receipts;
 drop policy if exists arkline_po_item_receipts_authenticated_insert on public.arkline_po_item_receipts;

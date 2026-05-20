@@ -27,11 +27,11 @@ const cards = [
     hoverImage: '/arkline-productionplanning-hover.PNG',
   },
   {
-    href: '/dashboard/arkline/material-fulfillment',
+    href: '/dashboard/arkline/financial-management',
     number: '04.',
-    title: 'Material Fulfillment',
-    text: 'Use this space for upcoming material readiness, request tracking, and fulfillment visibility for Arkline jobs.',
-    short: 'Track and post material requirement.',
+    title: 'Financial Management',
+    text: 'Follow payment progress, cost visibility, and finance-side control for each garment PO in the Arkline workflow.',
+    short: 'Track finance status and settlement.',
     hoverImage: '/arkline-materialfulfillment-hover.PNG',
   },
 ]

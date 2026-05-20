@@ -14,8 +14,6 @@ const emptyDraft = {
   size_variant: '',
   color_variant: '',
   qty_per_1: '',
-  waste_pct: '',
-  is_active: true,
 }
 
 function normalizeProduct(row) {
@@ -71,10 +69,11 @@ export default function ArklineBomPage() {
   const [search, setSearch] = useState('')
   const [procurementFilter, setProcurementFilter] = useState('')
   const [skuFilter, setSkuFilter] = useState('')
-  const [statusFilter, setStatusFilter] = useState('active')
   const [showModal, setShowModal] = useState(false)
   const [isEditing, setIsEditing] = useState(false)
   const [draft, setDraft] = useState(emptyDraft)
+  const [expandedCategories, setExpandedCategories] = useState({})
+  const [expandedProducts, setExpandedProducts] = useState({})
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
 
@@ -144,34 +143,67 @@ export default function ArklineBomPage() {
     [activeProducts, procurementFilter]
   )
 
+  const draftSkuOptions = useMemo(
+    () =>
+      activeProducts
+        .filter((item) => !draft.kategori_pengadaan || item.kategori_pengadaan === draft.kategori_pengadaan)
+        .sort((a, b) => a.nama_produk.localeCompare(b.nama_produk, undefined, { numeric: true })),
+    [activeProducts, draft.kategori_pengadaan]
+  )
+
   const filteredBomLines = useMemo(() => {
     const keyword = search.trim().toUpperCase()
 
     return bomLines.filter((item) => {
       const matchesKeyword =
         !keyword ||
-        [
-          item.product_name,
-          item.sku_induk,
-          item.kategori_pengadaan,
-          item.material_name,
-          item.size_variant,
-          item.color_variant,
-        ]
+        [item.product_name, item.sku_induk, item.kategori_pengadaan, item.material_name, item.size_variant, item.color_variant]
           .filter(Boolean)
           .join(' ')
           .includes(keyword)
 
       const matchesProcurement = !procurementFilter || item.kategori_pengadaan === procurementFilter
       const matchesSku = !skuFilter || item.sku_induk === skuFilter
-      const matchesStatus =
-        statusFilter === 'all' ||
-        (statusFilter === 'active' && item.is_active) ||
-        (statusFilter === 'inactive' && !item.is_active)
 
-      return matchesKeyword && matchesProcurement && matchesSku && matchesStatus
+      return matchesKeyword && matchesProcurement && matchesSku
     })
-  }, [bomLines, procurementFilter, search, skuFilter, statusFilter])
+  }, [bomLines, procurementFilter, search, skuFilter])
+
+  const groupedBomLines = useMemo(() => {
+    const grouped = filteredBomLines.reduce((acc, item) => {
+      const categoryKey = item.kategori_pengadaan || 'UNCATEGORIZED'
+      const productKey = item.sku_induk || `CATEGORY_DEFAULT::${categoryKey}`
+
+      if (!acc[categoryKey]) {
+        acc[categoryKey] = {
+          category: categoryKey,
+          products: {},
+        }
+      }
+
+      if (!acc[categoryKey].products[productKey]) {
+        acc[categoryKey].products[productKey] = {
+          key: productKey,
+          productName: item.product_name || categoryKey,
+          skuInduk: item.sku_induk,
+          isCategoryDefault: !item.sku_induk,
+          lines: [],
+        }
+      }
+
+      acc[categoryKey].products[productKey].lines.push(item)
+      return acc
+    }, {})
+
+    return Object.values(grouped)
+      .sort((a, b) => a.category.localeCompare(b.category, undefined, { numeric: true }))
+      .map((group) => ({
+        ...group,
+        products: Object.values(group.products).sort((a, b) =>
+          a.productName.localeCompare(b.productName, undefined, { numeric: true })
+        ),
+      }))
+  }, [filteredBomLines])
 
   function openCreateModal() {
     setDraft(emptyDraft)
@@ -190,8 +222,6 @@ export default function ArklineBomPage() {
       size_variant: line.size_variant,
       color_variant: line.color_variant,
       qty_per_1: formatNumber(line.qty_per_1),
-      waste_pct: formatNumber(line.waste_pct),
-      is_active: line.is_active,
     })
     setIsEditing(true)
     setShowModal(true)
@@ -203,6 +233,20 @@ export default function ArklineBomPage() {
     setShowModal(false)
     setDraft(emptyDraft)
     setIsEditing(false)
+  }
+
+  function toggleCategory(category) {
+    setExpandedCategories((prev) => ({
+      ...prev,
+      [category]: !(prev[category] ?? false),
+    }))
+  }
+
+  function toggleProduct(productKey) {
+    setExpandedProducts((prev) => ({
+      ...prev,
+      [productKey]: !(prev[productKey] ?? false),
+    }))
   }
 
   async function handleSave() {
@@ -223,8 +267,8 @@ export default function ArklineBomPage() {
       size_variant: draft.size_variant || null,
       color_variant: draft.color_variant || null,
       qty_per_1: Number(draft.qty_per_1 || 0),
-      waste_pct: Number(draft.waste_pct || 0),
-      is_active: draft.is_active,
+      waste_pct: 0,
+      is_active: true,
     }
 
     const query = isEditing
@@ -258,24 +302,30 @@ export default function ArklineBomPage() {
     )
     setSuccess(isEditing ? 'BOM line updated.' : 'BOM line created.')
     setSaving(false)
-    closeModal()
+
+    if (isEditing) {
+      closeModal()
+      return
+    }
+
+    setDraft({
+      ...emptyDraft,
+      kategori_pengadaan: draft.kategori_pengadaan,
+    })
   }
 
   return (
     <div className={styles.page}>
-      <section className={`${styles.sectionCard} ${styles.directoryCard}`.trim()}>
+      <section className={styles.directorySection}>
         <div className={styles.sectionHeader}>
           <div>
             <p className={styles.eyebrow}>Arkline</p>
-            <h1 className={styles.sectionTitle}>BOM</h1>
-            <p className={styles.sectionSubtitle}>
-              Maintain BOM lines by procurement category, optional SKU override, material, and variant rules.
-            </p>
+            <h1 className={styles.sectionTitle}>Bill of Materials</h1>
           </div>
 
           <div className={styles.buttonRow}>
             <button type="button" className={styles.primaryButton} onClick={openCreateModal}>
-              + New BOM Line
+              + New BOM
             </button>
           </div>
         </div>
@@ -320,11 +370,6 @@ export default function ArklineBomPage() {
           </div>
 
           <div className={styles.buttonRow}>
-            <select className={styles.select} value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
-              <option value="active">Active only</option>
-              <option value="inactive">Inactive only</option>
-              <option value="all">All status</option>
-            </select>
             <button
               type="button"
               className={styles.ghostButton}
@@ -332,7 +377,6 @@ export default function ArklineBomPage() {
                 setSearch('')
                 setProcurementFilter('')
                 setSkuFilter('')
-                setStatusFilter('active')
               }}
             >
               Reset
@@ -348,50 +392,104 @@ export default function ArklineBomPage() {
         ) : !filteredBomLines.length ? (
           <div className={styles.emptyState}>No BOM line matches the current filters.</div>
         ) : (
-          <div className={styles.listWrap}>
-            <div
-              className={styles.listHead}
-              style={{ gridTemplateColumns: 'minmax(0, 1.2fr) minmax(0, 1fr) 120px 110px 110px 90px auto' }}
-            >
-              <span>Product</span>
-              <span>Material</span>
-              <span>Size</span>
-              <span>Color</span>
-              <span>Qty / 1</span>
-              <span>Waste %</span>
-              <span>Action</span>
-            </div>
+          <div className={styles.bomCategoryStack}>
+            {groupedBomLines.map((group) => {
+              const isExpanded = expandedCategories[group.category] ?? false
 
-            {filteredBomLines.map((item) => (
-              <div
-                key={item.id}
-                className={styles.listRow}
-                style={{ gridTemplateColumns: 'minmax(0, 1.2fr) minmax(0, 1fr) 120px 110px 110px 90px auto' }}
-              >
-                <div>
-                  <p className={styles.cellTitle}>{item.product_name || item.kategori_pengadaan}</p>
-                  <p className={styles.cellMeta}>
-                    {item.sku_induk ? `${item.sku_induk} · SKU override` : `${item.kategori_pengadaan} · Category default`}
-                  </p>
-                </div>
-                <div>
-                  <p className={styles.cellTitle}>{item.material_name || '-'}</p>
-                  <p className={styles.cellMeta}>{item.material_unit || '-'}</p>
-                </div>
-                <div>{item.size_variant || 'ALL'}</div>
-                <div>{item.color_variant || 'ALL'}</div>
-                <div>{formatNumber(item.qty_per_1)}</div>
-                <div>{formatNumber(item.waste_pct, 2)}</div>
-                <div className={styles.buttonRow}>
-                  <span className={`${styles.status} ${item.is_active ? styles.statusActive : styles.statusInactive}`.trim()}>
-                    {item.is_active ? 'Active' : 'Inactive'}
-                  </span>
-                  <button type="button" className={styles.secondaryButton} onClick={() => openEditModal(item)}>
-                    Edit
+              return (
+                <section key={group.category} className={styles.bomCategoryCard}>
+                  <button
+                    type="button"
+                    className={styles.bomCategoryHeader}
+                    onClick={() => toggleCategory(group.category)}
+                    aria-expanded={isExpanded}
+                  >
+                    <div>
+                      <h2 className={styles.bomCategoryTitle}>{group.category}</h2>
+                    </div>
+                    <span className={styles.bomCategoryChevron}>{isExpanded ? '▾' : '▸'}</span>
                   </button>
-                </div>
-              </div>
-            ))}
+
+                  {isExpanded ? (
+                    <div className={styles.bomProductStack}>
+                      {group.products
+                        .sort((a, b) => {
+                          if (a.isCategoryDefault && !b.isCategoryDefault) return -1
+                          if (!a.isCategoryDefault && b.isCategoryDefault) return 1
+                          return a.productName.localeCompare(b.productName, undefined, { numeric: true })
+                        })
+                        .map((product) => {
+                          const isProductExpanded = expandedProducts[product.key] ?? false
+
+                          return (
+                            <div key={product.key} className={styles.bomProductBlock}>
+                              <button
+                                type="button"
+                                className={styles.bomProductHeader}
+                                onClick={() => toggleProduct(product.key)}
+                                aria-expanded={isProductExpanded}
+                              >
+                                <div>
+                                  <p className={styles.cellTitle}>{product.isCategoryDefault ? 'ALL' : product.productName}</p>
+                                  <p className={styles.cellMeta}>
+                                    {product.isCategoryDefault
+                                      ? `${group.category} - Category default`
+                                      : `${product.skuInduk} - SKU override`}
+                                  </p>
+                                </div>
+                                <span className={styles.bomProductChevron}>{isProductExpanded ? '▾' : '▸'}</span>
+                              </button>
+
+                              {isProductExpanded ? (
+                                <div className={styles.bomLineStack}>
+                                  {product.lines.map((item) => (
+                                    <div key={item.id} className={styles.bomLineRow}>
+                                      <div className={styles.bomLineMaterial}>
+                                        <p className={styles.bomLineMaterialName}>{item.material_name || '-'}</p>
+                                        {item.size_variant || item.color_variant ? (
+                                          <p className={styles.cellMeta}>
+                                            {[
+                                              item.size_variant ? `Size ${item.size_variant}` : '',
+                                              item.color_variant ? `Color ${item.color_variant}` : '',
+                                            ]
+                                              .filter(Boolean)
+                                              .join(' · ')}
+                                          </p>
+                                        ) : null}
+                                      </div>
+
+                                      <div className={styles.bomLineQty}>
+                                        <span className={styles.bomLineQtyValue}>
+                                          {formatNumber(item.qty_per_1)} {item.material_unit || 'PCS'}
+                                        </span>
+                                      </div>
+
+                                      <div className={`${styles.buttonRow} ${styles.directoryActionCell}`.trim()}>
+                                        <span
+                                          className={`${styles.statusDot} ${item.is_active ? styles.statusDotActive : styles.statusDotInactive}`.trim()}
+                                          title={item.is_active ? 'Active' : 'Inactive'}
+                                          aria-label={item.is_active ? 'Active' : 'Inactive'}
+                                        />
+                                        <button
+                                          type="button"
+                                          className={`${styles.secondaryButton} ${styles.directoryEditButton}`.trim()}
+                                          onClick={() => openEditModal(item)}
+                                        >
+                                          Edit
+                                        </button>
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : null}
+                            </div>
+                          )
+                        })}
+                    </div>
+                  ) : null}
+                </section>
+              )
+            })}
           </div>
         )}
       </section>
@@ -401,17 +499,13 @@ export default function ArklineBomPage() {
           <div className={styles.modalCard} onClick={(event) => event.stopPropagation()}>
             <div className={styles.sectionHeader}>
               <div>
-                <p className={styles.eyebrow}>Arkline</p>
-                <h2 className={styles.sectionTitle}>{isEditing ? 'Edit BOM Line' : 'New BOM Line'}</h2>
+                <h2 className={styles.sectionTitle}>{isEditing ? 'Edit BOM Line' : 'Add New BOM Line'}</h2>
               </div>
-              <button type="button" className={styles.secondaryButton} onClick={closeModal}>
-                Close
-              </button>
             </div>
 
             <div className={styles.formGrid}>
               <div className={styles.field}>
-                <label className={styles.label}>Procurement Category</label>
+                <label className={styles.label}>Procurement Category *</label>
                 <select
                   className={styles.select}
                   value={draft.kategori_pengadaan}
@@ -427,14 +521,14 @@ export default function ArklineBomPage() {
               </div>
 
               <div className={styles.field}>
-                <label className={styles.label}>SKU Override</label>
+                <label className={styles.label}>SKU Override (Optional)</label>
                 <select
                   className={styles.select}
                   value={draft.sku_induk}
                   onChange={(event) => setDraft((prev) => ({ ...prev, sku_induk: event.target.value }))}
                 >
                   <option value="">Category default (all SKU)</option>
-                  {skuOptions.map((item) => (
+                  {draftSkuOptions.map((item) => (
                     <option key={item.sku_induk} value={item.sku_induk}>
                       {item.nama_produk} ({item.sku_induk})
                     </option>
@@ -443,7 +537,7 @@ export default function ArklineBomPage() {
               </div>
 
               <div className={styles.field}>
-                <label className={styles.label}>Material</label>
+                <label className={styles.label}>Material *</label>
                 <select
                   className={styles.select}
                   value={draft.material_id}
@@ -459,39 +553,7 @@ export default function ArklineBomPage() {
               </div>
 
               <div className={styles.field}>
-                <label className={styles.label}>Status</label>
-                <select
-                  className={styles.select}
-                  value={draft.is_active ? 'active' : 'inactive'}
-                  onChange={(event) => setDraft((prev) => ({ ...prev, is_active: event.target.value === 'active' }))}
-                >
-                  <option value="active">Active</option>
-                  <option value="inactive">Inactive</option>
-                </select>
-              </div>
-
-              <div className={styles.field}>
-                <label className={styles.label}>Size Variant</label>
-                <input
-                  className={styles.input}
-                  value={draft.size_variant}
-                  onChange={(event) => setDraft((prev) => ({ ...prev, size_variant: event.target.value.toUpperCase() }))}
-                  placeholder="ALL / S / M / L"
-                />
-              </div>
-
-              <div className={styles.field}>
-                <label className={styles.label}>Color Variant</label>
-                <input
-                  className={styles.input}
-                  value={draft.color_variant}
-                  onChange={(event) => setDraft((prev) => ({ ...prev, color_variant: event.target.value.toUpperCase() }))}
-                  placeholder="ALL / BLACK / WHITE"
-                />
-              </div>
-
-              <div className={styles.field}>
-                <label className={styles.label}>Qty Per 1</label>
+                <label className={styles.label}>Qty Per 1 *</label>
                 <input
                   type="number"
                   min="0"
@@ -503,14 +565,22 @@ export default function ArklineBomPage() {
               </div>
 
               <div className={styles.field}>
-                <label className={styles.label}>Waste %</label>
+                <label className={styles.label}>Size Variant (Optional)</label>
                 <input
-                  type="number"
-                  min="0"
-                  step="0.0001"
                   className={styles.input}
-                  value={draft.waste_pct}
-                  onChange={(event) => setDraft((prev) => ({ ...prev, waste_pct: event.target.value }))}
+                  value={draft.size_variant}
+                  onChange={(event) => setDraft((prev) => ({ ...prev, size_variant: event.target.value.toUpperCase() }))}
+                  placeholder="ALL / S / M / L"
+                />
+              </div>
+
+              <div className={styles.field}>
+                <label className={styles.label}>Color Variant (Optional)</label>
+                <input
+                  className={styles.input}
+                  value={draft.color_variant}
+                  onChange={(event) => setDraft((prev) => ({ ...prev, color_variant: event.target.value.toUpperCase() }))}
+                  placeholder="ALL / BLACK / WHITE"
                 />
               </div>
             </div>

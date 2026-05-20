@@ -28,6 +28,9 @@ execute function public.set_arkline_dir_materials_updated_at();
 
 alter table public.arkline_dir_materials enable row level security;
 
+grant usage on schema public to authenticated;
+grant select, insert, update, delete on public.arkline_dir_materials to authenticated;
+
 drop policy if exists arkline_dir_materials_authenticated_select on public.arkline_dir_materials;
 drop policy if exists arkline_dir_materials_authenticated_insert on public.arkline_dir_materials;
 drop policy if exists arkline_dir_materials_authenticated_update on public.arkline_dir_materials;

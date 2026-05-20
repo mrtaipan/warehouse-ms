@@ -18,13 +18,11 @@ create table public.arkline_po_items (
   completion_date date null,
   updated_delivery_date date null,
   kategori_pengadaan text null,
-  hpp numeric(14,2) null,
-  constraint arkline_po_items_po_id_fkey
-    foreign key (po_id)
-    references public.arkline_pos (po_id)
-    on update cascade
-    on delete cascade
+  hpp numeric(14,2) null
 );
+
+alter table if exists public.arkline_po_items
+  drop constraint if exists arkline_po_items_po_id_fkey;
 
 create index if not exists arkline_po_items_po_id_idx
   on public.arkline_po_items (po_id);

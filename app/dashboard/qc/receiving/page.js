@@ -672,6 +672,70 @@ function hydrateArklinePlanRows(rows, fallbackColor) {
   }))
 }
 
+function buildArklineProductRows(baseRows, existingPlanRows) {
+  const rowMap = new Map()
+
+  baseRows.forEach((row) => {
+    rowMap.set(getModelKey(row.model_name, row.model_color), {
+      ...row,
+      allocations: [],
+      startedAllocations: [],
+    })
+  })
+
+  existingPlanRows.forEach((planRow) => {
+    const key = getModelKey(planRow.model_name, planRow.model_color)
+    const existingRow =
+      rowMap.get(key) ||
+      {
+        id: `saved-${planRow.id}`,
+        source_id: null,
+        model_id: '',
+        model_name: planRow.model_name || '',
+        model_color: planRow.model_color || fallbackColor || '',
+        qty_in: 0,
+        qty_qc: '',
+        photo_url: planRow.photo_url || '',
+        allocations: [],
+        startedAllocations: [],
+      }
+
+    existingRow.model_name = existingRow.model_name || planRow.model_name || ''
+    existingRow.model_color = existingRow.model_color || planRow.model_color || fallbackColor || ''
+    existingRow.photo_url = existingRow.photo_url || planRow.photo_url || ''
+
+    if (planRow.status === 'queued') {
+      existingRow.allocations = [
+        ...(existingRow.allocations || []),
+        {
+          id: `alloc-saved-${planRow.id}`,
+          task_id: planRow.id,
+          member_email: planRow.assigned_to || '',
+          qty: String(planRow.allocated_qty || 0),
+          existing_status: planRow.status || 'queued',
+          locked_qty: Number(planRow.locked_qty || 0),
+        },
+      ]
+    } else if (planRow.status === 'in_progress' || planRow.status === 'paused') {
+      existingRow.startedAllocations = [
+        ...(existingRow.startedAllocations || []),
+        {
+          id: `alloc-started-${planRow.id}`,
+          task_id: planRow.id,
+          member_email: planRow.assigned_to || '',
+          qty: String(planRow.allocated_qty || 0),
+          existing_status: planRow.status || 'queued',
+          locked_qty: Number(planRow.locked_qty || 0),
+        },
+      ]
+    }
+
+    rowMap.set(key, existingRow)
+  })
+
+  return Array.from(rowMap.values()).sort((a, b) => getModelKey(a.model_name, a.model_color).localeCompare(getModelKey(b.model_name, b.model_color)))
+}
+
 function getSourceStatus(source, qcItems) {
   if (!source?.sourceId) {
     return 'idle'
@@ -1118,20 +1182,28 @@ export default function QcReceivingPage() {
       ? qcItems.filter((item) => item.inbound_unload_id === Number(selectedSourceId))
       : []
   const selectedSourceStatus = isArklineMode
-    ? !currentPlanRows.length
-      ? 'idle'
-      : currentPlanRows.every((item) => item.status === 'done')
-        ? 'completed'
-        : currentPlanRows.some((item) => item.status !== 'queued')
-          ? 'started'
-          : 'planned'
+    ? arklinePlannerMode === 'product'
+      ? currentPlanRows.some((item) => item.status !== 'queued' && item.status !== 'done')
+        ? 'started'
+        : 'planned'
+      : !currentPlanRows.length
+        ? 'idle'
+        : currentPlanRows.every((item) => item.status === 'done')
+          ? 'completed'
+          : currentPlanRows.some((item) => item.status !== 'queued')
+            ? 'started'
+            : 'planned'
     : selectedSource
       ? getSourceStatus(selectedSource, qcItems)
       : 'idle'
-  const isSelectedSourceStarted = selectedSourceStatus === 'started' || selectedSourceStatus === 'completed'
-  const isSelectedSourceCompleted = selectedSourceStatus === 'completed'
-  const canEditSavedPlan = !isSelectedSourceStarted
-  const canAdjustAllocations = !isSelectedSourceCompleted
+  const isSelectedSourceStarted =
+    isArklineMode && arklinePlannerMode === 'product'
+      ? currentPlanRows.some((item) => item.status !== 'queued' && item.status !== 'done')
+      : selectedSourceStatus === 'started' || selectedSourceStatus === 'completed'
+  const isSelectedSourceCompleted =
+    isArklineMode && arklinePlannerMode === 'product' ? false : selectedSourceStatus === 'completed'
+  const canEditSavedPlan = isArklineMode && arklinePlannerMode === 'product' ? true : !isSelectedSourceStarted
+  const canAdjustAllocations = isArklineMode && arklinePlannerMode === 'product' ? true : !isSelectedSourceCompleted
   const persistedTaskRows = new Map(
     currentPlanRows.map((item) => [isArklineMode ? getArklineTaskKey(item) : getTaskKey(item), item])
   )
@@ -1278,7 +1350,7 @@ export default function QcReceivingPage() {
       },
     ]
 
-    setModelRows(buildModelRowsFromPersisted(baseRows, hydratedPlanRows))
+    setModelRows(buildArklineProductRows(baseRows, hydratedPlanRows))
   }
 
   function handleArklinePoChange(poId) {
@@ -1607,12 +1679,25 @@ export default function QcReceivingPage() {
         const hasInvalidSplit = (row.allocations || []).some(
           (split) => !String(split.member_email || '').trim() || Number(split.qty || 0) <= 0
         )
+        const requiresQcIn = arklinePlannerMode === 'po'
 
-        return !row.model_name.trim() || Number(row.qty_qc || 0) <= 0 || hasInvalidSplit || splitTotal > Number(row.qty_qc || 0)
+        if (!row.model_name.trim() || hasInvalidSplit) {
+          return true
+        }
+
+        if (requiresQcIn && (Number(row.qty_qc || 0) <= 0 || splitTotal > Number(row.qty_qc || 0))) {
+          return true
+        }
+
+        return false
       })
 
       if (invalidRow) {
-        setError('Every Arkline row must have a product and QC qty. Allocated qty cannot be greater than QC In.')
+        setError(
+          arklinePlannerMode === 'po'
+            ? 'Every Arkline row must have a product and QC qty. Allocated qty cannot be greater than QC In.'
+            : 'Every Arkline product allocation must have a product, inspector, and qty.'
+        )
         return
       }
 
@@ -1663,7 +1748,7 @@ export default function QcReceivingPage() {
                 : String(selectedArklineProduct?.parent_sku || selectedArklineProduct?.id || '').trim().toUpperCase() || null,
             assigned_to: String(split.member_email || '').trim().toLowerCase(),
             allocated_qty: allocatedQty,
-            qty_in: Number(row.qty_qc || 0),
+            qty_in: arklinePlannerMode === 'po' ? Number(row.qty_qc || 0) : Number(row.qty_qc || 0) || allocatedQty,
             model_name: row.model_name.trim(),
             photo_url: row.photo_url || null,
             locked_qty: lockedQty,
@@ -2181,21 +2266,23 @@ export default function QcReceivingPage() {
                         <p style={styles.infoText}>{row.model_color || 'ARKLINE PRODUCT'}</p>
                       </div>
 
-                      <div style={{ ...styles.field, ...(isMobileLayout ? { gridColumn: '1 / -1' } : {}) }}>
-                        <label style={styles.label}>QC In</label>
-                        <input
-                          type="number"
-                          min="0"
-                          value={row.qty_qc}
-                          onChange={(event) =>
-                            updateModelRow(row.id, {
-                              qty_qc: event.target.value,
-                            })
-                          }
-                          style={{ ...styles.input, ...(!canEditSavedPlan ? styles.inputDisabled : {}) }}
-                          disabled={!canEditSavedPlan}
-                        />
-                      </div>
+                      {arklinePlannerMode === 'po' ? (
+                        <div style={{ ...styles.field, ...(isMobileLayout ? { gridColumn: '1 / -1' } : {}) }}>
+                          <label style={styles.label}>QC In</label>
+                          <input
+                            type="number"
+                            min="0"
+                            value={row.qty_qc}
+                            onChange={(event) =>
+                              updateModelRow(row.id, {
+                                qty_qc: event.target.value,
+                              })
+                            }
+                            style={{ ...styles.input, ...(!canEditSavedPlan ? styles.inputDisabled : {}) }}
+                            disabled={!canEditSavedPlan}
+                          />
+                        </div>
+                      ) : null}
 
                     </div>
 
@@ -2212,6 +2299,27 @@ export default function QcReceivingPage() {
                       </div>
                       {isAllocationRowOpen(row) ? (
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                        {(row.startedAllocations || []).length ? (
+                          <>
+                            <span style={{ ...styles.helperText, fontWeight: '700', color: '#6b7280' }}>Started Batch</span>
+                            <div style={{ ...allocationGridStyle, gap: '8px' }}>
+                              <span style={{ ...styles.helperText, fontWeight: '700', color: '#111827' }}>Inspector</span>
+                              <span style={{ ...styles.helperText, fontWeight: '700', color: '#111827' }}>Qty</span>
+                              <span style={{ ...styles.helperText, fontWeight: '700', color: '#111827' }}>Status</span>
+                            </div>
+                            {(row.startedAllocations || []).map((split) => (
+                              <div key={split.id} style={allocationGridStyle}>
+                                <div style={{ ...styles.readonlyBox, minHeight: '32px', fontSize: '11px', padding: '0 8px' }}>
+                                  {qcMembers.find((member) => member.email === split.member_email)?.display_name || split.member_email || '-'}
+                                </div>
+                                <div style={{ ...styles.readonlyBox, minHeight: '32px', fontSize: '11px', padding: '0 8px' }}>{split.qty || 0}</div>
+                                <div style={{ ...styles.readonlyBox, minHeight: '32px', fontSize: '11px', padding: '0 8px' }}>{split.existing_status || '-'}</div>
+                              </div>
+                            ))}
+                          </>
+                        ) : null}
+
+                        <span style={{ ...styles.helperText, fontWeight: '700', color: '#6b7280' }}>New / Queued Batch</span>
                         {(row.allocations || []).length ? (
                           <div style={{ ...allocationGridStyle, gap: '8px' }}>
                             <span style={{ ...styles.helperText, fontWeight: '700', color: '#111827' }}>Inspector</span>
@@ -2259,7 +2367,10 @@ export default function QcReceivingPage() {
                                   .filter((item) => item.id !== split.id)
                                   .reduce((sum, item) => sum + Number(item.qty || 0), 0)
                                 const minAllowed = Number(split.locked_qty || 0)
-                                const maxAllowed = Math.max(minAllowed, Number(row.qty_qc || 0) - otherTotal)
+                                const maxAllowed =
+                                  arklinePlannerMode === 'po'
+                                    ? Math.max(minAllowed, Number(row.qty_qc || 0) - otherTotal)
+                                    : Number.POSITIVE_INFINITY
                                 const rawValue = event.target.value
 
                                 if (rawValue === '') {
@@ -2271,7 +2382,11 @@ export default function QcReceivingPage() {
 
                                 const nextValue = Number(rawValue || 0)
                                 updateAllocationSplit(row.id, split.id, {
-                                  qty: String(Math.max(minAllowed, Math.min(nextValue, maxAllowed))),
+                                  qty: String(
+                                    arklinePlannerMode === 'po'
+                                      ? Math.max(minAllowed, Math.min(nextValue, maxAllowed))
+                                      : Math.max(minAllowed, nextValue)
+                                  ),
                                 })
                               }}
                               style={{
@@ -2311,7 +2426,9 @@ export default function QcReceivingPage() {
                         ))}
 
                         <span style={styles.helperText}>
-                          Allocated: {(row.allocations || []).reduce((sum, split) => sum + Number(split.qty || 0), 0)} / {Number(row.qty_qc || 0)}
+                          {arklinePlannerMode === 'po'
+                            ? `Allocated: ${(row.allocations || []).reduce((sum, split) => sum + Number(split.qty || 0), 0)} / ${Number(row.qty_qc || 0)}`
+                            : `Allocated: ${(row.allocations || []).reduce((sum, split) => sum + Number(split.qty || 0), 0)}`}
                         </span>
                       </div>
                       ) : null}
@@ -2826,4 +2943,3 @@ export default function QcReceivingPage() {
     </div>
   )
 }
-

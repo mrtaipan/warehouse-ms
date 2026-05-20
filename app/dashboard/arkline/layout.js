@@ -11,7 +11,7 @@ function ArklineSubnav() {
     { href: '/dashboard/arkline/directory', label: 'Product Directory', segment: 'directory' },
     { href: '/dashboard/arkline/progress-overview', label: 'Progress Snapshot', segment: 'progress-overview' },
     { href: '/dashboard/arkline/production-planning', label: 'Production Planning', segment: 'production-planning' },
-    { href: '/dashboard/arkline/material-fulfillment', label: 'Material Fulfillment', segment: 'material-fulfillment' },
+    { href: '/dashboard/arkline/financial-management', label: 'Financial Management', segment: 'financial-management' },
   ]
 
   return (

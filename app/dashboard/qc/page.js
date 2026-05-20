@@ -1798,18 +1798,7 @@ export default function QcDashboardPage() {
         ? baseSeconds + Math.max(0, Math.floor((Date.now() - startedAtMs) / 1000))
         : baseSeconds
       const pausedAt = new Date().toISOString()
-
-      const pauseLogPayload = {
-        qc_item_id: item.qc_table === 'qc_items' ? item.id : null,
-        arkline_qc_id: item.qc_table === 'arkline_qc' ? item.id : null,
-        paused_by: item.assigned_to || null,
-        pause_reason: 'COORDINATOR BREAK',
-        paused_at: pausedAt,
-      }
-
-      const [{ error: pauseLogError }, updateResult] = await Promise.all([
-        supabase.from('qc_pause_logs').insert(pauseLogPayload),
-        supabase
+      const updateResult = await supabase
         .from(item.qc_table)
         .update({
           status: 'paused',
@@ -1818,10 +1807,9 @@ export default function QcDashboardPage() {
           paused_at: pausedAt,
           started_at: null,
         })
-        .eq('id', item.id),
-      ])
+        .eq('id', item.id)
 
-      return { error: pauseLogError || updateResult.error }
+      return { error: updateResult.error || null }
     })
 
     const results = await Promise.all(updates)
@@ -2497,8 +2485,8 @@ export default function QcDashboardPage() {
                 </thead>
                 <tbody>
                   {selectedRejectExistingDetails.length ? (
-                    selectedRejectExistingDetails.map((item) => (
-                      <tr key={item.id}>
+                    selectedRejectExistingDetails.map((item, index) => (
+                      <tr key={`${item.id}-${item.arkline_qc_id || 'reject'}-${index}`}>
                         <td style={styles.td}>{item.reason?.reason_name || '-'}</td>
                         <td style={styles.td}>{item.grade}</td>
                         <td style={styles.td}>{item.size}</td>
@@ -2587,8 +2575,8 @@ export default function QcDashboardPage() {
                         </thead>
                         <tbody>
                           {selectedInspectorPauseLogs.length ? (
-                            selectedInspectorPauseLogs.map((item) => (
-                              <tr key={item.id}>
+                            selectedInspectorPauseLogs.map((item, index) => (
+                              <tr key={`${item.id}-${item.paused_at || 'pause'}-${index}`}>
                                 <td style={{ ...styles.td, ...styles.inspectorTd }}>{item.pause_reason || '-'}</td>
                                 <td style={{ ...styles.td, ...styles.inspectorTd }}>{formatDisplayDate(item.paused_at)}</td>
                                 <td style={{ ...styles.td, ...styles.inspectorTd }}>{formatDisplayDate(item.resumed_at)}</td>
@@ -2635,8 +2623,8 @@ export default function QcDashboardPage() {
                         </thead>
                         <tbody>
                           {selectedInspectorCompletedTaskRows.length ? (
-                            selectedInspectorCompletedTaskRows.map((item) => (
-                              <tr key={item.id}>
+                            selectedInspectorCompletedTaskRows.map((item, index) => (
+                              <tr key={`${item.id}-${item.finishedAt || 'done'}-${index}`}>
                                 <td style={{ ...styles.td, ...styles.inspectorTd }}>{item.source}</td>
                                 <td style={{ ...styles.td, ...styles.inspectorTd }}>{item.category}</td>
                                 <td style={{ ...styles.td, ...styles.inspectorTd }}>{item.model}</td>
@@ -2686,8 +2674,8 @@ export default function QcDashboardPage() {
                         </thead>
                         <tbody>
                           {selectedInspectorActiveTaskRows.length ? (
-                            selectedInspectorActiveTaskRows.map((item) => (
-                              <tr key={item.id}>
+                            selectedInspectorActiveTaskRows.map((item, index) => (
+                              <tr key={`${item.id}-${item.status || 'active'}-${index}`}>
                                 <td style={{ ...styles.td, ...styles.inspectorTd }}>{item.source}</td>
                                 <td style={{ ...styles.td, ...styles.inspectorTd }}>{item.category}</td>
                                 <td style={{ ...styles.td, ...styles.inspectorTd }}>{item.model}</td>

@@ -97,6 +97,8 @@
   display: flex;
   flex-direction: column;
   gap: 0;
+  position: relative;
+  isolation: isolate;
 }
 
 .directoryTabsShell {
@@ -104,8 +106,8 @@
   align-items: flex-end;
   padding-left: 0;
   position: relative;
-  z-index: 2;
-  margin-bottom: -2px;
+  z-index: 4;
+  margin-bottom: -1px;
 }
 
 .directoryTabsBar {
@@ -113,7 +115,6 @@
   align-items: stretch;
   gap: 2px;
   padding: 0;
-  border-bottom: 1px solid #e5e7eb;
 }
 
 .directoryTabLink {
@@ -122,6 +123,8 @@
   min-height: 42px;
   padding: 0 14px;
   border-radius: 16px 16px 0 0;
+  border: 1px solid transparent;
+  border-bottom: none;
   text-decoration: none;
   display: inline-flex;
   align-items: center;
@@ -142,8 +145,9 @@
 .directoryTabLinkActive {
   background: rgba(255, 255, 255, 0.92);
   color: #0f172a;
+  border-color: #e2e8f0;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.88);
-  z-index: 2;
+  z-index: 5;
 }
 
 .directoryTabLinkActive:hover {
@@ -184,9 +188,9 @@
   border-radius: 0 26px 26px 26px;
   padding: 20px 22px 22px;
   box-shadow: 0 18px 40px rgba(15, 23, 42, 0.06);
-  margin-top: -1px;
+  margin-top: 0;
   position: relative;
-  z-index: 1;
+  overflow: hidden;
 }
 
 .directorySection {
@@ -532,6 +536,8 @@
 
 .primaryButton,
 .secondaryButton,
+.accentButton,
+.dangerButton,
 .ghostButton {
   min-height: 44px;
   border-radius: 12px;
@@ -551,6 +557,18 @@
   border: 1px solid #d7dee7;
   background: #ffffff;
   color: #111827;
+}
+
+.accentButton {
+  border: 1px solid #bfdbfe;
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.dangerButton {
+  border: 1px solid #fecaca;
+  background: #fef2f2;
+  color: #dc2626;
 }
 
 .ghostButton {
@@ -612,7 +630,7 @@
 
 .directoryListHead {
   padding: 0 12px;
-  font-size: 7px;
+  font-size: 9px;
 }
 
 .listRow {
@@ -634,6 +652,10 @@
 
 .directoryListRow > div {
   font-size: 10px;
+}
+
+.directoryListRow .buttonRow {
+  align-items: center;
 }
 
 .cellTitle {
@@ -679,6 +701,202 @@
 .statusInactive {
   background: #fef2f2;
   color: #991b1b;
+}
+
+.statusDot {
+  width: 15px;
+  min-width: 15px;
+  height: 15px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+}
+
+.statusDotActive {
+  background: #16a34a;
+  border-color: #15803d;
+}
+
+.statusDotInactive {
+  background: #b91c1c;
+  border-color: #991b1b;
+}
+
+.directoryEditButton {
+  min-height: 26px;
+  padding: 0 8px;
+  border-radius: 8px;
+  font-size: 9px;
+}
+
+.directoryActionCell {
+  align-items: center;
+}
+
+.materialFulfillmentSummaryRow {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.materialFulfillmentStat {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 18px;
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.materialFulfillmentStat span {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #64748b;
+}
+
+.materialFulfillmentStat strong {
+  font-size: 22px;
+  line-height: 1;
+  color: #0f172a;
+}
+
+.materialFulfillmentNote {
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid #fdba74;
+  background: #fff7ed;
+  color: #9a3412;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.bomCategoryStack {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.bomCategoryCard {
+  border: 1px solid #dbe4ef;
+  border-radius: 22px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98) 0%, rgba(247, 250, 252, 0.95) 100%);
+  box-shadow: 0 14px 32px rgba(15, 23, 42, 0.05);
+  overflow: hidden;
+}
+
+.bomCategoryHeader {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  padding: 18px 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.bomCategoryEyebrow {
+  margin: 0 0 6px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #64748b;
+}
+
+.bomCategoryTitle {
+  margin: 0;
+  font-size: 18px;
+  line-height: 1.1;
+  color: #0f172a;
+}
+
+.bomCategoryChevron {
+  font-size: 20px;
+  color: #0f172a;
+  line-height: 1;
+}
+
+.bomProductStack {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 0 20px 20px;
+}
+
+.bomProductBlock {
+  border-radius: 18px;
+  border: 1px solid #e2e8f0;
+  background: #ffffff;
+  overflow: hidden;
+}
+
+.bomProductHeader {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  padding: 16px 18px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid #eef2f7;
+  text-align: left;
+  cursor: pointer;
+}
+
+.bomProductChevron {
+  font-size: 18px;
+  color: #475569;
+  line-height: 1;
+}
+
+.bomLineStack {
+  display: flex;
+  flex-direction: column;
+}
+
+.bomLineRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) 120px auto;
+  gap: 12px;
+  align-items: center;
+  padding: 12px 18px;
+}
+
+.bomLineRow + .bomLineRow {
+  border-top: 1px solid #eef2f7;
+}
+
+.bomLineMaterial {
+  min-width: 0;
+}
+
+.bomLineMaterialName {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 500;
+  color: #0f172a;
+}
+
+.bomLineQty {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+}
+
+.bomLineQtyValue {
+  font-size: 14px;
+  font-weight: 600;
+  color: #0f172a;
 }
 
 .cardWrap {
@@ -839,6 +1057,601 @@
   font-weight: 700;
 }
 
+.textarea {
+  min-height: 120px;
+  border-radius: 12px;
+  border: 1px solid #d7dee7;
+  padding: 12px 14px;
+  background: #ffffff;
+  color: #111827;
+  font-size: 14px;
+  resize: vertical;
+  outline: none;
+}
+
+.textarea:focus {
+  border-color: #94a3b8;
+  box-shadow: 0 0 0 4px rgba(148, 163, 184, 0.14);
+}
+
+.reimbursementInfoCard {
+  border: 1px solid #e2e8f0;
+  border-radius: 18px;
+  background: #ffffff;
+  padding: 16px 18px;
+}
+
+.reimbursementInfoTitle {
+  margin: 0 0 4px;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #64748b;
+}
+
+.reimbursementInfoText {
+  margin: 0;
+  font-size: 14px;
+  color: #0f172a;
+  font-weight: 600;
+}
+
+.reimbursementSummaryHeader {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.reimbursementSummaryFilter {
+  min-width: 220px;
+}
+
+.reimbursementSummaryRow {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.reimbursementBoard {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.reimbursementColumn {
+  border: 1px solid #e2e8f0;
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.96);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.reimbursementColumnHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.reimbursementColumnEyebrow {
+  margin: 0 0 4px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #64748b;
+}
+
+.reimbursementColumnTitle {
+  margin: 0;
+  font-size: 20px;
+  color: #0f172a;
+}
+
+.reimbursementColumnEmpty {
+  min-height: 140px;
+  border: 1px dashed #cbd5e1;
+  border-radius: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  color: #64748b;
+  padding: 16px;
+  background: #fcfdff;
+}
+
+.reimbursementCardStack {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.reimbursementCard {
+  border: 1px solid #e2e8f0;
+  border-radius: 18px;
+  background: #ffffff;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.reimbursementCardTop {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.reimbursementCardNumber {
+  margin: 0 0 4px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #64748b;
+}
+
+.reimbursementCardMeta {
+  margin: 0;
+  font-size: 12px;
+  color: #64748b;
+}
+
+.reimbursementCardDescription {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #334155;
+}
+
+.reimbursementInlineAttachmentList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.reimbursementInlineAttachmentButton {
+  min-height: 28px;
+  max-width: 100%;
+  padding: 0 10px;
+  border: 1px solid #dbe4ee;
+  border-radius: 999px;
+  background: #f8fafc;
+  color: #475569;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.reimbursementCardAmount {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 800;
+  color: #0f172a;
+}
+
+.reimbursementViewButton {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  border: 1px solid #d7dee7;
+  background: #ffffff;
+  color: #475569;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+
+.reimbursementViewButton svg {
+  width: 16px;
+  height: 16px;
+}
+
+.reimbursementStatus {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 30px;
+  padding: 0 12px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+}
+
+.reimbursementStatusSUBMITTED {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+.reimbursementStatusAPPROVED {
+  background: #fef3c7;
+  color: #b45309;
+}
+
+.reimbursementStatusPAID {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.reimbursementBatchModal {
+  width: min(100%, 1040px);
+}
+
+.reimbursementClaimModal {
+  width: min(100%, 920px);
+}
+
+.reimbursementImageModal {
+  width: min(100%, 980px);
+}
+
+.reimbursementModalHeader {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: flex-start;
+}
+
+.reimbursementDraftStack {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.reimbursementBatchLayout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.65fr) minmax(260px, 0.85fr);
+  gap: 16px;
+  align-items: flex-start;
+}
+
+.reimbursementDraftCard,
+.reimbursementAttachmentCard,
+.reimbursementMetricCard {
+  border: 1px solid #e2e8f0;
+  border-radius: 18px;
+  background: #ffffff;
+}
+
+.reimbursementDraftCard {
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.reimbursementDraftHeader {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.formRowFour {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.formRowThree {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.compactFieldText {
+  font-size: 11.2px;
+}
+
+.reimbursementDraftEyebrow {
+  margin: 0 0 4px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #64748b;
+}
+
+.reimbursementDraftTitle {
+  margin: 0;
+  font-size: 18px;
+  color: #0f172a;
+}
+
+.reimbursementBatchSummary {
+  border: 1px solid #e2e8f0;
+  border-radius: 18px;
+  background: #ffffff;
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  position: sticky;
+  top: 0;
+}
+
+.reimbursementBatchSummaryHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.reimbursementBatchSummaryTotals {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.reimbursementBatchCount {
+  min-width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: #111827;
+  color: #ffffff;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.reimbursementBatchGrandTotal {
+  font-size: 14px;
+  color: #0f172a;
+  white-space: nowrap;
+}
+
+.reimbursementBatchSummaryList {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.reimbursementBatchSummaryRow {
+  width: 100%;
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  background: #f8fafc;
+  padding: 12px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 160ms ease, box-shadow 160ms ease, background 160ms ease;
+}
+
+.reimbursementBatchSummaryRow:hover {
+  border-color: #cbd5e1;
+  background: #ffffff;
+}
+
+.reimbursementBatchSummaryRowActive {
+  border-color: #111827;
+  background: #ffffff;
+  box-shadow: 0 10px 20px rgba(15, 23, 42, 0.08);
+}
+
+.reimbursementBatchSummaryTitle {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.reimbursementBatchSummaryMeta {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: #64748b;
+}
+
+.reimbursementBatchSummaryAmount {
+  font-size: 13px;
+  color: #0f172a;
+}
+
+.reimbursementBatchSummaryActions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.reimbursementBatchRemoveButton {
+  width: 26px;
+  height: 26px;
+  border-radius: 999px;
+  border: 1px solid #fecaca;
+  background: #fef2f2;
+  color: #dc2626;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.reimbursementBatchRemoveButton:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.reimbursementHiddenInput {
+  display: none;
+}
+
+.reimbursementAttachmentAddButton {
+  min-height: 44px;
+  border-radius: 12px;
+  border: 1px dashed #cbd5e1;
+  background: #f8fafc;
+  color: #334155;
+  padding: 0 14px;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  width: fit-content;
+}
+
+.reimbursementAttachmentPlus {
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  background: #ffffff;
+  border: 1px solid #d7dee7;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  line-height: 1;
+}
+
+.reimbursementFileList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.reimbursementFileChip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: #f8fafc;
+  border: 1px solid #d7dee7;
+  color: #334155;
+  font-size: 12px;
+  font-weight: 600;
+  gap: 8px;
+}
+
+.reimbursementFileChipRemove {
+  border: none;
+  background: transparent;
+  color: #dc2626;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+}
+
+.reimbursementDetailGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.reimbursementMetricCard {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.reimbursementMetricCard span {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #64748b;
+}
+
+.reimbursementMetricCard strong {
+  font-size: 16px;
+  color: #0f172a;
+}
+
+.reimbursementDetailSection {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.reimbursementSectionTitle {
+  margin: 0;
+  font-size: 16px;
+  color: #0f172a;
+}
+
+.reimbursementDetailText {
+  margin: 0;
+  color: #475569;
+  line-height: 1.7;
+}
+
+.reimbursementAttachmentGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.reimbursementAttachmentCard {
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.reimbursementAttachmentList {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.reimbursementAttachmentRow {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+}
+
+.reimbursementAttachmentName {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.reimbursementImagePreviewWrap {
+  border: 1px solid #e2e8f0;
+  border-radius: 18px;
+  background: #f8fafc;
+  padding: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 320px;
+}
+
+.reimbursementImagePreview {
+  max-width: 100%;
+  max-height: 72vh;
+  object-fit: contain;
+  border-radius: 12px;
+}
+
 @media (max-width: 1080px) {
   .grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -863,6 +1676,19 @@
 
   .cardWrap {
     grid-template-columns: 1fr;
+  }
+
+  .reimbursementListHead,
+  .reimbursementListRow,
+  .reimbursementDetailGrid,
+  .reimbursementAttachmentGrid,
+  .reimbursementBatchLayout {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .reimbursementBoard,
+  .reimbursementSummaryRow {
+    grid-template-columns: 1fr 1fr;
   }
 }
 
@@ -900,6 +1726,30 @@
   .listRow {
     grid-template-columns: 1fr;
     gap: 10px;
+  }
+
+  .reimbursementListHead {
+    display: none;
+  }
+
+  .reimbursementListRow,
+  .reimbursementDetailGrid,
+  .reimbursementAttachmentGrid,
+  .reimbursementBatchLayout,
+  .reimbursementModalHeader {
+    grid-template-columns: 1fr;
+  }
+
+  .reimbursementBoard,
+  .reimbursementSummaryRow {
+    grid-template-columns: 1fr;
+  }
+
+  .reimbursementModalHeader,
+  .reimbursementDraftHeader,
+  .reimbursementAttachmentRow {
+    flex-direction: column;
+    align-items: stretch;
   }
 
   .subnav {

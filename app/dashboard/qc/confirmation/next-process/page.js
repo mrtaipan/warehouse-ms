@@ -846,8 +846,8 @@ export default function QcConfirmationNextProcessPage() {
                 </tr>
               </thead>
               <tbody>
-                {currentKoliItems.map((item) => (
-                  <tr key={item.id}>
+                {currentKoliItems.map((item, index) => (
+                  <tr key={`${item.id}-${item.koli_sequence || 'current'}-${index}`}>
                     <td style={styles.td}>{getModelLabel(item)}</td>
                     <td style={styles.td}>{item.is_adjustment ? 'Adjustment' : 'Source Grade A'}</td>
                     <td style={styles.td}>{item.qty}</td>
@@ -904,8 +904,8 @@ export default function QcConfirmationNextProcessPage() {
                     <td style={styles.td}>{`Koli ${koli.koli_sequence}`}</td>
                     <td style={styles.td}>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                        {koli.items.map((item) => (
-                          <span key={item.id}>
+                        {koli.items.map((item, index) => (
+                          <span key={`${item.id}-${koli.koli_sequence}-${index}`}>
                             {getModelLabel(item)} ({item.qty})
                             {item.is_adjustment ? ' - Adjustment' : ''}
                           </span>

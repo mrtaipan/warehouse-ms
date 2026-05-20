@@ -40,7 +40,7 @@ export default async function DashboardLayout({ children }) {
     },
     { href: '/dashboard/packing-list', label: 'Packing List', icon: 'packing', show: menus.packing },
     { href: menus.storageHref, label: 'Storage', icon: 'storage', show: menus.storage },
-    { href: '/dashboard/arkline', label: 'ARKLINE', icon: 'arkline', show: menus.arkline, isWordmark: true },
+    { href: menus.arklineHref, label: 'ARKLINE', icon: 'arkline', show: menus.arkline, isWordmark: true },
   ].filter((item) => item.show)
 
   const settingHref = menus.masterData || menus.userAccess ? '/dashboard/settings' : null
