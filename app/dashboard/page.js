@@ -299,16 +299,27 @@ export default async function DashboardPage() {
               {birthdayAnnouncements.length ? (
                 birthdayAnnouncements.map((item) => (
                   <div key={`${item.id}-${item.offset}`} className={styles.insightCard}>
-                    <strong className={styles.insightValue}>{item.name}</strong>
-                    <span className={styles.insightLabel}>{getUpcomingBirthdayLabel(item.offset)}</span>
-                    <p className={styles.insightNote}>Birthday reminder from People Directory.</p>
+                    <span className={styles.insightLabel}>
+                      {item.offset === 0 ? 'Happy Birthday' : 'Celebrating Soon 🎂'}
+                    </span>
+                    <strong
+                      className={styles.insightValue}
+                      style={{ fontSize: '22px', lineHeight: 1.2, textTransform: 'none' }}
+                    >
+                      {item.offset === 0 ? item.name : `Poke ${item.name}`}
+                    </strong>
+                    <p className={styles.insightNote}>
+                      {item.offset === 0
+                        ? 'Terima kasih telah ada. Semoga kamu selalu bersinar terang. Selamat ulang tahun! ✨'
+                        : `${getUpcomingBirthdayLabel(item.offset)} birthday reminder from People Directory.`}
+                    </p>
                   </div>
                 ))
               ) : (
                 <div className={styles.insightCard}>
-                  <strong className={styles.insightValue}>No birthday info</strong>
-                  <span className={styles.insightLabel}>Next 3 Days</span>
-                  <p className={styles.insightNote}>No employee birthday falls within the next three days yet.</p>
+                  <strong className={styles.insightValue}>No Announcement</strong>
+                  <span className={styles.insightLabel}>Today</span>
+                  <p className={styles.insightNote}>No Announcement</p>
                 </div>
               )}
             </div>
