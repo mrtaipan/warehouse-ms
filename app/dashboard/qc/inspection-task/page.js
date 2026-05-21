@@ -3,6 +3,7 @@
 import Image from 'next/image'
 import { useEffect, useMemo, useState } from 'react'
 import { createClient } from '@/utils/supabase/browser'
+import { getProfileByAuthenticatedUser } from '@/utils/user-profiles'
 import { formatSeconds } from '../shared'
 
 const supabase = createClient()
@@ -513,11 +514,11 @@ export default function QcInspectionTaskPage() {
         setUserLabel(displayLabel)
       }
 
-      const { data: profileRow, error: profileError } = await supabase
-        .from('dir_user_profiles')
-        .select('id, email, display_name, role, is_qc_active, qc_active_date')
-        .ilike('email', normalizedEmail)
-        .maybeSingle()
+      const { data: profileRow, error: profileError } = await getProfileByAuthenticatedUser(
+        supabase,
+        user,
+        'id, email, display_name, role, is_qc_active, qc_active_date'
+      )
 
       if (!isMounted) {
         return
@@ -662,11 +663,11 @@ export default function QcInspectionTaskPage() {
     }
     const normalizedEmail = normalizeEmail(user.email)
 
-    const { data: profileRow, error: profileError } = await supabase
-      .from('dir_user_profiles')
-      .select('id, role, display_name')
-      .ilike('email', normalizedEmail)
-      .maybeSingle()
+    const { data: profileRow, error: profileError } = await getProfileByAuthenticatedUser(
+      supabase,
+      user,
+      'id, role, display_name'
+    )
 
     if (profileError || !profileRow) {
       setError(profileError?.message || 'User profile not found. Ask admin to create this profile first.')

@@ -26,18 +26,17 @@ export async function updateUserRole(formData) {
   }
 
   const profileId = String(formData.get('profile_id') || '').trim()
-  const email = String(formData.get('email') || '').trim().toLowerCase()
   const role = String(formData.get('role') || '').trim()
   const displayName = String(formData.get('display_name') || '').trim()
   const isQcActive = formData.get('is_qc_active') === 'on'
 
-  if (!profileId || !email || !role) {
-    throw new Error('Profile id, email, and role are required.')
+  if (!profileId || !role) {
+    throw new Error('Profile id and role are required.')
   }
 
   const payload = {
     role,
-    display_name: displayName || email.split('@')[0],
+    display_name: displayName || 'Employee',
     is_qc_active: isQcActive,
     qc_active_date: isQcActive ? getTodayJakartaDate() : null,
   }

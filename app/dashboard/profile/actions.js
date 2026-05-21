@@ -2,6 +2,7 @@
 
 import { revalidatePath } from 'next/cache'
 import { createClient } from '@/utils/supabase/server'
+import { getProfileByAuthenticatedUser } from '@/utils/user-profiles'
 
 export async function updateOwnProfile(formData) {
   const supabase = await createClient()
@@ -22,6 +23,16 @@ export async function updateOwnProfile(formData) {
     throw new Error('Display name is required.')
   }
 
+  const { data: profile, error: profileError } = await getProfileByAuthenticatedUser(supabase, user, 'id')
+
+  if (profileError) {
+    throw new Error(profileError.message)
+  }
+
+  if (!profile?.id) {
+    throw new Error('User profile not found.')
+  }
+
   const { error } = await supabase
     .from('dir_user_profiles')
     .update({
@@ -30,7 +41,7 @@ export async function updateOwnProfile(formData) {
       reimbursement_account_name: reimbursementAccountName || null,
       reimbursement_account_number: reimbursementAccountNumber || null,
     })
-    .eq('email', user.email?.toLowerCase())
+    .eq('id', profile.id)
 
   if (error) {
     throw new Error(error.message)

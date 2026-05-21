@@ -10,12 +10,32 @@ function isValidEmail(value) {
   return /\S+@\S+\.\S+/.test(value)
 }
 
+function EyeIcon({ crossed = false }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      style={styles.passwordToggleIcon}
+    >
+      <path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z" />
+      <circle cx="12" cy="12" r="2.8" />
+      {crossed ? <path d="M4 20 20 4" /> : null}
+    </svg>
+  )
+}
+
 export default function LoginPage() {
   const router = useRouter()
   const supabase = createClient()
 
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [showPassword, setShowPassword] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [focusedField, setFocusedField] = useState('')
@@ -76,65 +96,92 @@ export default function LoginPage() {
   }
 
   return (
-    <main style={styles.wrapper}>
-      <section style={styles.card}>
-        <div style={styles.brandBlock}>
-          <Image src="/mob-text-logo.png" alt="MOB" width={240} height={80} priority style={styles.wordmark} />
-        </div>
-
-        <div style={styles.copyBlock}>
-          <p style={styles.subtitle}>Warehouse Management System</p>
-          <h1 style={styles.title}>Login</h1>
-        </div>
-
-        <form onSubmit={handleLogin} style={styles.form} noValidate>
-          <div style={styles.field}>
-            <label style={styles.label}>Email</label>
-            <input
-              type="email"
-              value={email}
-              onChange={(event) => setEmail(event.target.value)}
-              onFocus={() => setFocusedField('email')}
-              onBlur={() => setFocusedField('')}
-              placeholder="Enter your email"
-              autoComplete="email"
-              style={{
-                ...styles.input,
-                ...(focusedField === 'email' ? styles.inputFocused : {}),
-              }}
-            />
+    <>
+      <main style={styles.wrapper}>
+        <section style={styles.card}>
+          <div style={styles.brandBlock}>
+            <Image src="/mob-text-logo.png" alt="MOB" width={240} height={80} priority style={styles.wordmark} />
           </div>
 
-          <div style={styles.field}>
-            <div style={styles.fieldHeader}>
-              <label style={styles.label}>Password</label>
-              <Link href="/forgot-password" style={styles.forgotLink}>
-                Forgot Password?
-              </Link>
+          <div style={styles.copyBlock}>
+            <p style={styles.subtitle}>Warehouse Management System</p>
+            <h1 style={styles.title}>Login</h1>
+          </div>
+
+          <form onSubmit={handleLogin} style={styles.form} noValidate>
+            <div style={styles.field}>
+              <label style={styles.label}>Email</label>
+              <input
+                type="email"
+                value={email}
+                onChange={(event) => setEmail(event.target.value)}
+                onFocus={() => setFocusedField('email')}
+                onBlur={() => setFocusedField('')}
+                placeholder="Enter your email"
+                autoComplete="email"
+                style={{
+                  ...styles.input,
+                  ...(focusedField === 'email' ? styles.inputFocused : {}),
+                }}
+              />
             </div>
-            <input
-              type="password"
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-              onFocus={() => setFocusedField('password')}
-              onBlur={() => setFocusedField('')}
-              placeholder="Enter your password"
-              autoComplete="current-password"
-              style={{
-                ...styles.input,
-                ...(focusedField === 'password' ? styles.inputFocused : {}),
-              }}
-            />
-          </div>
 
-          {error ? <p style={styles.error}>{error}</p> : null}
+            <div style={styles.field}>
+              <div style={styles.fieldHeader}>
+                <label style={styles.label}>Password</label>
+                <Link href="/forgot-password" style={styles.forgotLink}>
+                  Forgot Password?
+                </Link>
+              </div>
+              <div style={styles.passwordWrap}>
+                <input
+                  type={showPassword ? 'text' : 'password'}
+                  value={password}
+                  onChange={(event) => setPassword(event.target.value)}
+                  onFocus={() => setFocusedField('password')}
+                  onBlur={() => setFocusedField('')}
+                  placeholder="Enter your password"
+                  autoComplete="current-password"
+                  style={{
+                    ...styles.input,
+                    ...styles.inputWithToggle,
+                    ...(focusedField === 'password' ? styles.inputFocused : {}),
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword((prev) => !prev)}
+                  style={styles.passwordToggle}
+                  aria-label={showPassword ? 'Hide password' : 'Show password'}
+                >
+                  <EyeIcon crossed={showPassword} />
+                </button>
+              </div>
+            </div>
 
-          <button type="submit" style={styles.button} disabled={loading}>
-            {loading ? 'Signing in...' : 'Sign In'}
-          </button>
-        </form>
-      </section>
-    </main>
+            {error ? <p style={styles.error}>{error}</p> : null}
+
+            <button type="submit" style={styles.button} disabled={loading}>
+              {loading ? 'Signing in...' : 'Sign In'}
+            </button>
+          </form>
+        </section>
+      </main>
+
+      <style jsx global>{`
+        input[type='password']::-ms-reveal,
+        input[type='password']::-ms-clear {
+          display: none;
+        }
+
+        input[type='password']::-webkit-credentials-auto-fill-button,
+        input[type='password']::-webkit-password-reveal-button {
+          visibility: hidden;
+          display: none !important;
+          pointer-events: none;
+        }
+      `}</style>
+    </>
   )
 }
 
@@ -233,9 +280,36 @@ const styles = {
     boxSizing: 'border-box',
     width: '100%',
   },
+  inputWithToggle: {
+    paddingRight: '92px',
+  },
   inputFocused: {
     border: '1px solid #111111',
     boxShadow: '0 0 0 3px rgba(17,17,17,0.08)',
+  },
+  passwordWrap: {
+    position: 'relative',
+  },
+  passwordToggle: {
+    position: 'absolute',
+    right: '12px',
+    top: '50%',
+    transform: 'translateY(-50%)',
+    border: 'none',
+    background: 'transparent',
+    color: '#4b5563',
+    fontSize: '12px',
+    fontWeight: '700',
+    cursor: 'pointer',
+    padding: 0,
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  passwordToggleIcon: {
+    width: '18px',
+    height: '18px',
+    display: 'block',
   },
   button: {
     height: '50px',

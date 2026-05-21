@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation'
 
 import { createClient } from '@/utils/supabase/server'
 import { ADMIN_EMAIL, getStorageFeatureAccess } from '@/utils/permissions'
+import { getProfileByAuthenticatedUser } from '@/utils/user-profiles'
 
 import overviewStyles from '../../arkline/arkline.module.css'
 import styles from '../storage.module.css'
@@ -37,11 +38,7 @@ export default async function StorageRestockInstructionPage() {
   }
 
   const isAdmin = user.email?.toLowerCase() === ADMIN_EMAIL
-  const { data: profile } = await supabase
-    .from('dir_user_profiles')
-    .select('role')
-    .eq('email', user.email?.toLowerCase())
-    .maybeSingle()
+  const { data: profile } = await getProfileByAuthenticatedUser(supabase, user, 'role')
   const role = isAdmin ? 'admin' : profile?.role || 'storage_staff'
   const { data: rolePermissions } = await supabase
     .from('dir_user_roles')

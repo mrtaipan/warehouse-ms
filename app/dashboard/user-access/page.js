@@ -39,7 +39,10 @@ export default async function UserAccessPage() {
 
   const [{ data: profiles, error: profilesError }, { data: permissions, error: permissionsError }, { data: rolePermissions, error: rolePermissionsError }] =
     await Promise.all([
-        supabase.from('dir_user_profiles').select('id, email, display_name, role, is_qc_active, qc_active_date, updated_at').order('email', { ascending: true }),
+        supabase
+          .from('dir_user_profiles')
+          .select('*')
+          .order('email', { ascending: true }),
       supabase.from('dir_user_permissions').select('code, label, description').order('code', { ascending: true }),
       supabase.from('dir_user_roles').select('role, permission_code').order('role', { ascending: true }),
     ])
@@ -76,6 +79,7 @@ export default async function UserAccessPage() {
               <tr style={styles.headRow}>
                 <th style={styles.th}>Email</th>
                 <th style={styles.th}>Display Name</th>
+                <th style={styles.th}>Access</th>
                 <th style={styles.th}>Role</th>
                 <th style={styles.th}>QC Active</th>
                 <th style={styles.th}>Action</th>
@@ -84,11 +88,10 @@ export default async function UserAccessPage() {
             <tbody>
               {(profiles || []).map((profile) => (
                 <tr key={profile.id || profile.email} style={styles.bodyRow}>
-                  <td style={styles.td}>{profile.email}</td>
+                  <td style={styles.td}>{profile.email || '-'}</td>
                   <td style={styles.td}>
-                    <form id={`access-form-${profile.email}`} action={updateUserRole} style={styles.inlineForm}>
+                    <form id={`access-form-${profile.id}`} action={updateUserRole} style={styles.inlineForm}>
                       <input type="hidden" name="profile_id" value={profile.id || ''} />
-                      <input type="hidden" name="email" value={profile.email} />
                       <input
                         name="display_name"
                         defaultValue={profile.display_name || ''}
@@ -98,9 +101,26 @@ export default async function UserAccessPage() {
                     </form>
                   </td>
                   <td style={styles.td}>
+                    <span
+                      style={
+                        Object.prototype.hasOwnProperty.call(profile, 'authenticated_id')
+                          ? profile.authenticated_id
+                            ? styles.linkedBadge
+                            : styles.unlinkedBadge
+                          : styles.linkedBadge
+                      }
+                    >
+                      {Object.prototype.hasOwnProperty.call(profile, 'authenticated_id')
+                        ? profile.authenticated_id
+                          ? 'Linked'
+                          : 'Not linked'
+                        : 'Linked'}
+                    </span>
+                  </td>
+                  <td style={styles.td}>
                     <select
                       name="role"
-                      form={`access-form-${profile.email}`}
+                      form={`access-form-${profile.id}`}
                       defaultValue={profile.role || 'storage_staff'}
                       style={styles.select}
                     >
@@ -116,14 +136,14 @@ export default async function UserAccessPage() {
                       <input
                         type="checkbox"
                         name="is_qc_active"
-                        form={`access-form-${profile.email}`}
+                        form={`access-form-${profile.id}`}
                         defaultChecked={Boolean(profile.is_qc_active)}
                       />
                       <span>Active for QC task today{profile.qc_active_date ? ` (${profile.qc_active_date})` : ''}</span>
                     </label>
                   </td>
                   <td style={styles.td}>
-                    <button type="submit" form={`access-form-${profile.email}`} style={styles.primaryButton}>
+                    <button type="submit" form={`access-form-${profile.id}`} style={styles.primaryButton}>
                       Save
                     </button>
                   </td>
@@ -283,6 +303,30 @@ const styles = {
     border: 'none',
     fontWeight: '600',
     cursor: 'pointer',
+  },
+  linkedBadge: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: '30px',
+    padding: '0 12px',
+    borderRadius: '999px',
+    background: '#dcfce7',
+    color: '#166534',
+    fontSize: '12px',
+    fontWeight: '700',
+  },
+  unlinkedBadge: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: '30px',
+    padding: '0 12px',
+    borderRadius: '999px',
+    background: '#fef3c7',
+    color: '#92400e',
+    fontSize: '12px',
+    fontWeight: '700',
   },
   checkboxRow: {
     display: 'inline-flex',

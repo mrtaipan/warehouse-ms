@@ -57,7 +57,7 @@ $$;
 create table if not exists public.arkline_reimbursement_claims (
   id bigint generated always as identity primary key,
   claim_number text not null unique default public.generate_arkline_reimbursement_claim_number(),
-  employee_profile_id uuid references public.dir_user_profiles(id) on delete set null,
+  employee_authenticated_id uuid references auth.users(id) on delete set null,
   employee_email_snapshot text not null,
   employee_name_snapshot text,
   expense_date date not null,
@@ -66,7 +66,7 @@ create table if not exists public.arkline_reimbursement_claims (
   description text,
   total_amount numeric(18,2) not null default 0,
   payee_type text not null default 'SELF_ACCOUNT',
-  payee_profile_id uuid references public.dir_user_profiles(id) on delete set null,
+  payee_authenticated_id uuid references auth.users(id) on delete set null,
   payee_bank_name text,
   payee_account_name text,
   payee_account_number text,
@@ -108,7 +108,7 @@ create index if not exists idx_arkline_reimbursement_claims_status
   on public.arkline_reimbursement_claims (status, submitted_at asc);
 
 create index if not exists idx_arkline_reimbursement_claims_employee
-  on public.arkline_reimbursement_claims (employee_profile_id, submitted_at asc);
+  on public.arkline_reimbursement_claims (employee_authenticated_id, submitted_at asc);
 
 create index if not exists idx_arkline_reimbursement_claims_category
   on public.arkline_reimbursement_claims (expense_category_id);

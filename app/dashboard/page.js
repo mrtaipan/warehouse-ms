@@ -2,19 +2,20 @@ import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { createClient } from '@/utils/supabase/server'
 import { ADMIN_EMAIL, getAllowedMenus } from '@/utils/permissions'
+import { getProfileByAuthenticatedUser } from '@/utils/user-profiles'
 import styles from './dashboard.module.css'
 
 const DAILY_QUOTES = [
-  'Take it one step at a time — you’re doing better than you think.',
+  'Take it one step at a time â€” youâ€™re doing better than you think.',
   'Consistency will take you further than motivation ever could.',
   'Not everything needs to be perfect to be meaningful.',
   'Some things fall into place when you stop forcing them.',
   'Do the work, and let the results speak for themselves.',
   'Growth is quiet, but it changes everything.',
-  'The right things will stay — the rest will fade.',
+  'The right things will stay â€” the rest will fade.',
   'Progress is built on the days you feel like doing nothing.',
   'A calm mind makes better decisions.',
-  'You don’t have to rush what’s meant to last.',
+  'You donâ€™t have to rush whatâ€™s meant to last.',
 ]
 
 function formatToday() {
@@ -54,6 +55,52 @@ function getAccentClass(accent) {
   }
 }
 
+function toProperCase(value = '') {
+  return String(value || '')
+    .toLowerCase()
+    .split(' ')
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ')
+}
+
+function formatDashboardName(value = '') {
+  const parts = toProperCase(value).split(' ').filter(Boolean)
+  if (parts.length <= 3) {
+    return parts.join(' ')
+  }
+
+  const visibleParts = parts.slice(0, 2)
+  const lastInitial = parts[2]?.charAt(0) || ''
+  return `${visibleParts.join(' ')} ${lastInitial}.`.trim()
+}
+
+function getBirthDateValue(row = {}) {
+  return row.date_of_birth || row.birthdate || row.birth_date || null
+}
+
+function getUpcomingBirthdayOffset(value) {
+  if (!value) return null
+
+  const parsed = new Date(value)
+  if (Number.isNaN(parsed.getTime())) return null
+
+  const today = new Date()
+  const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate())
+  let upcoming = new Date(today.getFullYear(), parsed.getMonth(), parsed.getDate())
+
+  if (upcoming < todayStart) {
+    upcoming = new Date(today.getFullYear() + 1, parsed.getMonth(), parsed.getDate())
+  }
+
+  return Math.floor((upcoming.getTime() - todayStart.getTime()) / (1000 * 60 * 60 * 24))
+}
+
+function getUpcomingBirthdayLabel(offset) {
+  if (offset === 0) return 'Today'
+  return `H-${offset}`
+}
+
 export default async function DashboardPage() {
   const supabase = await createClient()
   const {
@@ -65,11 +112,7 @@ export default async function DashboardPage() {
   }
 
   const isAdmin = user.email?.toLowerCase() === ADMIN_EMAIL
-  const { data: profile } = await supabase
-    .from('dir_user_profiles')
-    .select('role, display_name')
-    .eq('email', user.email?.toLowerCase())
-    .maybeSingle()
+  const { data: profile } = await getProfileByAuthenticatedUser(supabase, user, 'role, display_name')
 
   const role = isAdmin ? 'admin' : profile?.role || 'storage_staff'
   const { data: rolePermissions } = await supabase
@@ -80,13 +123,27 @@ export default async function DashboardPage() {
   const permissions = (rolePermissions || []).map((item) => item.permission_code)
   const menus = getAllowedMenus(role, permissions, isAdmin)
 
-  const userLabel =
-    profile?.display_name ||
-    user.user_metadata?.full_name ||
-    user.user_metadata?.name ||
-    user.email?.split('@')[0] ||
-    'Team'
+  const rawUserLabel =
+    profile?.display_name || user.user_metadata?.full_name || user.user_metadata?.name || user.email?.split('@')[0] || 'Team'
+  const userLabel = formatDashboardName(rawUserLabel)
   const quoteOfTheDay = getDailyQuote(user.email)
+
+  const { data: announcementRows } = await supabase.from('dir_user_profiles').select('*')
+  const birthdayAnnouncements = (announcementRows || [])
+    .map((person) => {
+      const offset = getUpcomingBirthdayOffset(getBirthDateValue(person))
+      if (offset == null || offset < 0 || offset > 3) {
+        return null
+      }
+
+      return {
+        id: person.id,
+        name: formatDashboardName(person.display_name || person.email || 'Team'),
+        offset,
+      }
+    })
+    .filter(Boolean)
+    .sort((left, right) => left.offset - right.offset || left.name.localeCompare(right.name))
 
   const quickActions = [
     menus.storage
@@ -138,24 +195,6 @@ export default async function DashboardPage() {
       : null,
   ].filter(Boolean)
 
-  const insights = [
-    {
-      value: quickActions.length,
-      label: 'Available Modules',
-      note: 'Visible based on your role and permission settings.',
-    },
-    {
-      value: role.replaceAll('_', ' '),
-      label: 'Current Role',
-      note: 'This dashboard adapts to the access assigned to your account.',
-    },
-    {
-      value: permissions.length,
-      label: 'Active Permissions',
-      note: 'Permission rules are now configurable from User Access.',
-    },
-  ]
-
   const focusList = quickActions.slice(0, 4)
 
   if (!isAdmin) {
@@ -167,6 +206,29 @@ export default async function DashboardPage() {
             <h1 className={styles.heroTitle}>Hello {userLabel}!</h1>
             <p className={styles.heroSupport}>Glad to have you back.</p>
             <p className={styles.heroQuote}>&ldquo;{quoteOfTheDay}&rdquo;</p>
+          </div>
+        </section>
+
+        <section className={`${styles.sectionCard} ${styles.compactCard}`}>
+          <p className={styles.sectionKicker}>Announcement</p>
+          <h2 className={styles.sectionTitle}>Upcoming Birthdays</h2>
+
+          <div className={styles.insightStack}>
+            {birthdayAnnouncements.length ? (
+              birthdayAnnouncements.map((item) => (
+                <div key={`${item.id}-${item.offset}`} className={styles.insightCard}>
+                  <strong className={styles.insightValue}>{item.name}</strong>
+                  <span className={styles.insightLabel}>{getUpcomingBirthdayLabel(item.offset)}</span>
+                  <p className={styles.insightNote}>Birthday reminder from People Directory.</p>
+                </div>
+              ))
+            ) : (
+              <div className={styles.insightCard}>
+                <strong className={styles.insightValue}>No birthday info</strong>
+                <span className={styles.insightLabel}>Next 3 Days</span>
+                <p className={styles.insightNote}>No employee birthday falls within the next three days yet.</p>
+              </div>
+            )}
           </div>
         </section>
       </div>
@@ -230,17 +292,25 @@ export default async function DashboardPage() {
 
         <aside className={styles.rightColumn}>
           <section className={`${styles.sectionCard} ${styles.compactCard}`}>
-            <p className={styles.sectionKicker}>Snapshot</p>
-            <h2 className={styles.sectionTitle}>Role insights</h2>
+            <p className={styles.sectionKicker}>Announcement</p>
+            <h2 className={styles.sectionTitle}>Upcoming Birthdays</h2>
 
             <div className={styles.insightStack}>
-              {insights.map((item) => (
-                <div key={item.label} className={styles.insightCard}>
-                  <strong className={styles.insightValue}>{item.value}</strong>
-                  <span className={styles.insightLabel}>{item.label}</span>
-                  <p className={styles.insightNote}>{item.note}</p>
+              {birthdayAnnouncements.length ? (
+                birthdayAnnouncements.map((item) => (
+                  <div key={`${item.id}-${item.offset}`} className={styles.insightCard}>
+                    <strong className={styles.insightValue}>{item.name}</strong>
+                    <span className={styles.insightLabel}>{getUpcomingBirthdayLabel(item.offset)}</span>
+                    <p className={styles.insightNote}>Birthday reminder from People Directory.</p>
+                  </div>
+                ))
+              ) : (
+                <div className={styles.insightCard}>
+                  <strong className={styles.insightValue}>No birthday info</strong>
+                  <span className={styles.insightLabel}>Next 3 Days</span>
+                  <p className={styles.insightNote}>No employee birthday falls within the next three days yet.</p>
                 </div>
-              ))}
+              )}
             </div>
           </section>
 

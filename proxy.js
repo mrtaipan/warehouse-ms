@@ -1,6 +1,7 @@
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse } from 'next/server'
 import { ADMIN_EMAIL, canAccessPath, getLandingPath } from '@/utils/permissions'
+import { getProfileByAuthenticatedUser } from '@/utils/user-profiles'
 
 export async function proxy(request) {
   let response = NextResponse.next({ request })
@@ -35,11 +36,7 @@ export async function proxy(request) {
   let role = isAdmin ? 'admin' : 'storage_staff'
 
   if (user) {
-    const { data: profile } = await supabase
-      .from('dir_user_profiles')
-      .select('role')
-      .eq('email', user.email?.toLowerCase())
-      .maybeSingle()
+    const { data: profile } = await getProfileByAuthenticatedUser(supabase, user, 'role')
 
     role = isAdmin ? 'admin' : profile?.role || 'storage_staff'
   }

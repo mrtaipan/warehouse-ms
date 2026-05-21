@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { createClient } from '@/utils/supabase/browser'
 import { ADMIN_EMAIL, getArklineFeatureAccess } from '@/utils/permissions'
+import { getProfileByAuthenticatedUser } from '@/utils/user-profiles'
 
 import styles from '../arkline.module.css'
 
@@ -31,6 +32,7 @@ function createDraftRow() {
 function normalizeProfile(row, user) {
   return {
     id: row?.id || '',
+    authenticated_id: row?.authenticated_id || '',
     email: user?.email?.toLowerCase() || '',
     display_name: row?.display_name || user?.user_metadata?.full_name || user?.user_metadata?.name || user?.email?.split('@')[0] || '',
     role: row?.role || 'storage_staff',
@@ -47,7 +49,7 @@ function normalizeClaim(row) {
   return {
     id: row?.id || '',
     claim_number: row?.claim_number || '',
-    employee_profile_id: row?.employee_profile_id || '',
+    employee_authenticated_id: row?.employee_authenticated_id || '',
     employee_email_snapshot: row?.employee_email_snapshot || '',
     employee_name_snapshot: row?.employee_name_snapshot || '',
     expense_date: row?.expense_date || '',
@@ -57,7 +59,7 @@ function normalizeClaim(row) {
     description: row?.description || '',
     total_amount: Number(row?.total_amount || 0),
     payee_type: row?.payee_type || 'SELF_ACCOUNT',
-    payee_profile_id: row?.payee_profile_id || '',
+    payee_authenticated_id: row?.payee_authenticated_id || '',
     payee_bank_name: row?.payee_bank_name || '',
     payee_account_name: row?.payee_account_name || '',
     payee_account_number: row?.payee_account_number || '',
@@ -324,11 +326,11 @@ export default function ArklineFinancialManagementPage() {
     }
 
     const isAdmin = user.email?.toLowerCase() === ADMIN_EMAIL
-    const { data: profileRow, error: profileError } = await supabase
-      .from('dir_user_profiles')
-      .select('id, display_name, role, reimbursement_bank_name, reimbursement_account_name, reimbursement_account_number')
-      .eq('email', user.email?.toLowerCase())
-      .maybeSingle()
+    const { data: profileRow, error: profileError } = await getProfileByAuthenticatedUser(
+      supabase,
+      user,
+      'id, authenticated_id, display_name, role, reimbursement_bank_name, reimbursement_account_name, reimbursement_account_number'
+    )
 
     if (profileError) {
       setError(profileError.message)
@@ -349,7 +351,7 @@ export default function ArklineFinancialManagementPage() {
             `
               id,
               claim_number,
-              employee_profile_id,
+              employee_authenticated_id,
               employee_email_snapshot,
               employee_name_snapshot,
               expense_date,
@@ -358,7 +360,7 @@ export default function ArklineFinancialManagementPage() {
               description,
               total_amount,
               payee_type,
-              payee_profile_id,
+              payee_authenticated_id,
               payee_bank_name,
               payee_account_name,
               payee_account_number,
@@ -758,7 +760,7 @@ export default function ArklineFinancialManagementPage() {
         const normalizedAccountNumber = normalizeAccountNumber(row.payee_account_number).trim()
 
         const payload = {
-          employee_profile_id: profile.id || null,
+          employee_authenticated_id: profile.authenticated_id || null,
           employee_email_snapshot: profile.email || null,
           employee_name_snapshot: profile.display_name || null,
           expense_date: row.expense_date,
@@ -767,7 +769,7 @@ export default function ArklineFinancialManagementPage() {
           description: row.description.trim() || null,
           total_amount: Number(row.total_amount),
           payee_type: row.payee_type,
-          payee_profile_id: row.payee_type === 'SELF_ACCOUNT' ? profile.id || null : null,
+          payee_authenticated_id: row.payee_type === 'SELF_ACCOUNT' ? profile.authenticated_id || null : null,
           payee_bank_name:
             row.payee_type === 'SELF_ACCOUNT'
               ? profile.reimbursement_bank_name || null
@@ -791,7 +793,7 @@ export default function ArklineFinancialManagementPage() {
             `
               id,
               claim_number,
-              employee_profile_id,
+              employee_authenticated_id,
               employee_email_snapshot,
               employee_name_snapshot,
               expense_date,
@@ -800,7 +802,7 @@ export default function ArklineFinancialManagementPage() {
               description,
               total_amount,
               payee_type,
-              payee_profile_id,
+              payee_authenticated_id,
               payee_bank_name,
               payee_account_name,
               payee_account_number,
@@ -940,7 +942,7 @@ export default function ArklineFinancialManagementPage() {
       description: String(editDraft.description || '').trim() || null,
       total_amount: Number(editDraft.total_amount),
       payee_type: editDraft.payee_type,
-      payee_profile_id: editDraft.payee_type === 'SELF_ACCOUNT' ? profile?.id || null : null,
+      payee_authenticated_id: editDraft.payee_type === 'SELF_ACCOUNT' ? profile?.authenticated_id || null : null,
       payee_bank_name:
         editDraft.payee_type === 'SELF_ACCOUNT'
           ? profile?.reimbursement_bank_name || null

@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { createClient } from '@/utils/supabase/browser'
+import { getProfileByAuthenticatedUser } from '@/utils/user-profiles'
 
 const supabase = createClient()
 const RACK_LOCATION_BATCH_SIZE = 1000
@@ -241,11 +242,7 @@ export default function RestockRequestSubmit({
       throw new Error('User session not found.')
     }
 
-    const { data: profile, error: profileError } = await supabase
-      .from('dir_user_profiles')
-      .select('display_name')
-      .eq('email', user.email.toLowerCase())
-      .maybeSingle()
+    const { data: profile, error: profileError } = await getProfileByAuthenticatedUser(supabase, user, 'display_name')
 
     if (profileError) {
       throw profileError

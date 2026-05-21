@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation'
 import { createClient } from '@/utils/supabase/server'
 import { ADMIN_EMAIL } from '@/utils/permissions'
+import { getProfileByAuthenticatedUser } from '@/utils/user-profiles'
 import { updateOwnProfile } from './actions'
 import styles from './page.module.css'
 
@@ -25,11 +26,11 @@ export default async function ProfilePage() {
   }
 
   const isAdmin = user.email?.toLowerCase() === ADMIN_EMAIL
-  const { data: profile } = await supabase
-    .from('dir_user_profiles')
-    .select('display_name, role, reimbursement_bank_name, reimbursement_account_name, reimbursement_account_number')
-    .eq('email', user.email?.toLowerCase())
-    .maybeSingle()
+  const { data: profile } = await getProfileByAuthenticatedUser(
+    supabase,
+    user,
+    'id, display_name, role, reimbursement_bank_name, reimbursement_account_name, reimbursement_account_number'
+  )
 
   const displayName =
     profile?.display_name || user.user_metadata?.full_name || user.user_metadata?.name || user.email?.split('@')[0] || ''

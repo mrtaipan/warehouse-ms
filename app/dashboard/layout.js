@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation'
 import { createClient } from '@/utils/supabase/server'
 import SidebarClient from './sidebar-client'
 import { ADMIN_EMAIL, getAllowedMenus } from '@/utils/permissions'
+import { getProfileByAuthenticatedUser } from '@/utils/user-profiles'
 import styles from './layout.module.css'
 
 export default async function DashboardLayout({ children }) {
@@ -15,11 +16,7 @@ export default async function DashboardLayout({ children }) {
   }
 
   const isAdminEmail = user.email?.toLowerCase() === ADMIN_EMAIL
-  const { data: profile } = await supabase
-    .from('dir_user_profiles')
-    .select('role, display_name')
-    .eq('email', user.email?.toLowerCase())
-    .maybeSingle()
+  const { data: profile } = await getProfileByAuthenticatedUser(supabase, user, 'role, display_name')
 
   const role = isAdminEmail ? 'admin' : profile?.role || 'storage_staff'
   const { data: rolePermissions } = await supabase

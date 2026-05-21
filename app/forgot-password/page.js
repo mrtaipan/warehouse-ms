@@ -9,6 +9,25 @@ function isValidEmail(value) {
   return /\S+@\S+\.\S+/.test(value)
 }
 
+function EyeIcon({ crossed = false }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      style={styles.passwordToggleIcon}
+    >
+      <path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z" />
+      <circle cx="12" cy="12" r="2.8" />
+      {crossed ? <path d="M4 20 20 4" /> : null}
+    </svg>
+  )
+}
+
 function ForgotPasswordContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
@@ -18,6 +37,8 @@ function ForgotPasswordContent() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
+  const [showPassword, setShowPassword] = useState(false)
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false)
   const [loading, setLoading] = useState(false)
   const [success, setSuccess] = useState('')
   const [error, setError] = useState('')
@@ -217,77 +238,120 @@ function ForgotPasswordContent() {
   }
 
   return (
-    <main style={styles.wrapper}>
-      <section style={styles.card}>
-        <p style={styles.kicker}>Account Support</p>
-        <h1 style={styles.title}>{isRecoveryMode ? 'Set New Password' : 'Forgot Password'}</h1>
-        <p style={styles.subtitle}>
-          {isRecoveryMode
-            ? 'Enter your new password below to finish resetting your account password.'
-            : 'Enter your email address and we will send you a password reset link.'}
-        </p>
+    <>
+      <main style={styles.wrapper}>
+        <section style={styles.card}>
+          <div style={styles.topRow}>
+            <p style={styles.kicker}>Account Support</p>
+            <Link href="/login" style={styles.topLink}>
+              Back to Login
+            </Link>
+          </div>
+          <h1 style={styles.title}>{isRecoveryMode ? 'Set New Password' : 'Forgot Password'}</h1>
+          <p style={styles.subtitle}>
+            {isRecoveryMode
+              ? 'Enter your new password below to finish resetting your account password.'
+              : 'Enter your email address and we will send you a password reset link.'}
+          </p>
 
-        {isRecoveryMode ? (
-          <form onSubmit={handleUpdatePassword} style={styles.form} noValidate>
-            <div style={styles.field}>
-              <label style={styles.label}>New Password</label>
-              <input
-                type="password"
-                value={password}
-                onChange={(event) => setPassword(event.target.value)}
-                autoComplete="new-password"
-                placeholder="Enter new password"
-                style={styles.input}
-              />
-            </div>
+          {isRecoveryMode ? (
+            <form onSubmit={handleUpdatePassword} style={styles.form} noValidate>
+              <div style={styles.field}>
+                <label style={styles.label}>New Password</label>
+                <div style={styles.passwordWrap}>
+                  <input
+                    type={showPassword ? 'text' : 'password'}
+                    value={password}
+                    onChange={(event) => setPassword(event.target.value)}
+                    autoComplete="new-password"
+                    placeholder="Enter new password"
+                    style={{
+                      ...styles.input,
+                      ...styles.inputWithToggle,
+                    }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword((prev) => !prev)}
+                    style={styles.passwordToggle}
+                    aria-label={showPassword ? 'Hide password' : 'Show password'}
+                  >
+                    <EyeIcon crossed={showPassword} />
+                  </button>
+                </div>
+              </div>
 
-            <div style={styles.field}>
-              <label style={styles.label}>Confirm New Password</label>
-              <input
-                type="password"
-                value={confirmPassword}
-                onChange={(event) => setConfirmPassword(event.target.value)}
-                autoComplete="new-password"
-                placeholder="Repeat new password"
-                style={styles.input}
-              />
-            </div>
+              <div style={styles.field}>
+                <label style={styles.label}>Confirm New Password</label>
+                <div style={styles.passwordWrap}>
+                  <input
+                    type={showConfirmPassword ? 'text' : 'password'}
+                    value={confirmPassword}
+                    onChange={(event) => setConfirmPassword(event.target.value)}
+                    autoComplete="new-password"
+                    placeholder="Repeat new password"
+                    style={{
+                      ...styles.input,
+                      ...styles.inputWithToggle,
+                    }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowConfirmPassword((prev) => !prev)}
+                    style={styles.passwordToggle}
+                    aria-label={showConfirmPassword ? 'Hide password confirmation' : 'Show password confirmation'}
+                  >
+                    <EyeIcon crossed={showConfirmPassword} />
+                  </button>
+                </div>
+              </div>
 
-            {error ? <p style={styles.error}>{error}</p> : null}
-            {success ? <p style={styles.success}>{success}</p> : null}
+              {error ? <p style={styles.error}>{error}</p> : null}
+              {success ? <p style={styles.success}>{success}</p> : null}
 
-            <button type="submit" style={styles.button} disabled={loading}>
-              {loading ? 'Saving...' : 'Save New Password'}
-            </button>
-          </form>
-        ) : (
-          <form onSubmit={handleSendResetLink} style={styles.form} noValidate>
-            <div style={styles.field}>
-              <label style={styles.label}>Email</label>
-              <input
-                type="email"
-                value={email}
-                onChange={(event) => setEmail(event.target.value)}
-                autoComplete="email"
-                placeholder="Enter your email"
-                style={styles.input}
-              />
-            </div>
+              <button type="submit" style={styles.button} disabled={loading}>
+                {loading ? 'Saving...' : 'Save New Password'}
+              </button>
+            </form>
+          ) : (
+            <form onSubmit={handleSendResetLink} style={styles.form} noValidate>
+              <div style={styles.field}>
+                <label style={styles.label}>Email</label>
+                <input
+                  type="email"
+                  value={email}
+                  onChange={(event) => setEmail(event.target.value)}
+                  autoComplete="email"
+                  placeholder="Enter your email"
+                  style={styles.input}
+                />
+              </div>
 
-            {error ? <p style={styles.error}>{error}</p> : null}
-            {success ? <p style={styles.success}>{success}</p> : null}
+              {error ? <p style={styles.error}>{error}</p> : null}
+              {success ? <p style={styles.success}>{success}</p> : null}
 
-            <button type="submit" style={styles.button} disabled={loading}>
-              {loading ? 'Sending...' : 'Send Reset Link'}
-            </button>
-          </form>
-        )}
+              <button type="submit" style={styles.button} disabled={loading}>
+                {loading ? 'Sending...' : 'Send Reset Link'}
+              </button>
+            </form>
+          )}
+        </section>
+      </main>
 
-        <Link href="/login" style={styles.link}>
-          Back to Login
-        </Link>
-      </section>
-    </main>
+      <style jsx global>{`
+        input[type='password']::-ms-reveal,
+        input[type='password']::-ms-clear {
+          display: none;
+        }
+
+        input[type='password']::-webkit-credentials-auto-fill-button,
+        input[type='password']::-webkit-password-reveal-button {
+          visibility: hidden;
+          display: none !important;
+          pointer-events: none;
+        }
+      `}</style>
+    </>
   )
 }
 
@@ -330,6 +394,12 @@ const styles = {
     flexDirection: 'column',
     gap: '14px',
   },
+  topRow: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: '12px',
+  },
   kicker: {
     margin: 0,
     fontSize: '12px',
@@ -337,6 +407,20 @@ const styles = {
     letterSpacing: '0.14em',
     color: '#5d7497',
     textTransform: 'uppercase',
+  },
+  topLink: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: '32px',
+    padding: '0 12px',
+    borderRadius: '10px',
+    background: '#e5e7eb',
+    color: '#111827',
+    textDecoration: 'none',
+    fontWeight: '700',
+    fontSize: '12px',
+    whiteSpace: 'nowrap',
   },
   title: {
     margin: 0,
@@ -376,6 +460,9 @@ const styles = {
     boxSizing: 'border-box',
     width: '100%',
   },
+  inputWithToggle: {
+    paddingRight: '92px',
+  },
   button: {
     height: '50px',
     border: 'none',
@@ -387,17 +474,29 @@ const styles = {
     cursor: 'pointer',
     width: '100%',
   },
-  link: {
-    marginTop: '4px',
+  passwordWrap: {
+    position: 'relative',
+  },
+  passwordToggle: {
+    position: 'absolute',
+    right: '12px',
+    top: '50%',
+    transform: 'translateY(-50%)',
+    border: 'none',
+    background: 'transparent',
+    color: '#4b5563',
+    fontSize: '12px',
+    fontWeight: '700',
+    cursor: 'pointer',
+    padding: 0,
     display: 'inline-flex',
     alignItems: 'center',
     justifyContent: 'center',
-    minHeight: '48px',
-    borderRadius: '14px',
-    background: '#0f254b',
-    color: '#fff',
-    textDecoration: 'none',
-    fontWeight: '700',
+  },
+  passwordToggleIcon: {
+    width: '18px',
+    height: '18px',
+    display: 'block',
   },
   error: {
     margin: 0,
