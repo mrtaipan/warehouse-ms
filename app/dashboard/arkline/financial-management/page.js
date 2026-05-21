@@ -304,9 +304,11 @@ export default function ArklineFinancialManagementPage() {
   const editSubmissionFileInputRef = useRef(null)
   const paymentFileInputRef = useRef(null)
 
-  async function loadWorkspace() {
-    setLoading(true)
-    setError('')
+  const loadWorkspace = useCallback(async (silent = false) => {
+    if (!silent) {
+      setLoading(true)
+      setError('')
+    }
 
     const {
       data: { user },
@@ -315,13 +317,13 @@ export default function ArklineFinancialManagementPage() {
 
     if (authError) {
       setError(authError.message)
-      setLoading(false)
+      if (!silent) setLoading(false)
       return
     }
 
     if (!user) {
       setError('You need to sign in again to open reimbursement claims.')
-      setLoading(false)
+      if (!silent) setLoading(false)
       return
     }
 
@@ -334,7 +336,7 @@ export default function ArklineFinancialManagementPage() {
 
     if (profileError) {
       setError(profileError.message)
-      setLoading(false)
+      if (!silent) setLoading(false)
       return
     }
 
@@ -391,7 +393,7 @@ export default function ArklineFinancialManagementPage() {
 
     if (permissionError || categoryError || claimError) {
       setError(permissionError?.message || categoryError?.message || claimError?.message || 'Failed to load reimbursement workspace.')
-      setLoading(false)
+      if (!silent) setLoading(false)
       return
     }
 
@@ -400,12 +402,21 @@ export default function ArklineFinancialManagementPage() {
     setProfile(normalizedProfile)
     setCategories((categoryRows || []).filter((item) => item.is_active !== false))
     setClaims((claimRows || []).map(normalizeClaim))
-    setLoading(false)
-  }
+    if (!silent) setLoading(false)
+  }, [])
 
   useEffect(() => {
     void loadWorkspace()
-  }, [])
+  }, [loadWorkspace])
+
+  useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      if (showBatchModal || editingClaim || selectedClaim || selectedApprovedGroup || selectedPaidGroup || saving || actionLoading) return
+      void loadWorkspace(true)
+    }, 10000)
+
+    return () => window.clearInterval(intervalId)
+  }, [actionLoading, editingClaim, loadWorkspace, saving, selectedApprovedGroup, selectedClaim, selectedPaidGroup, showBatchModal])
 
   const isClaimOwner = useCallback((claim) => {
     const currentEmail = String(profile?.email || '').toLowerCase()

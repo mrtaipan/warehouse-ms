@@ -211,7 +211,6 @@ export default async function DashboardPage() {
 
         <section className={`${styles.sectionCard} ${styles.compactCard}`}>
           <p className={styles.sectionKicker}>Announcement</p>
-          <h2 className={styles.sectionTitle}>Upcoming Birthdays</h2>
 
           <div className={styles.insightStack}>
             {birthdayAnnouncements.length ? (
@@ -291,12 +290,11 @@ export default async function DashboardPage() {
         </div>
 
         <aside className={styles.rightColumn}>
-          <section className={`${styles.sectionCard} ${styles.compactCard}`}>
-            <p className={styles.sectionKicker}>Announcement</p>
-            <h2 className={styles.sectionTitle}>Upcoming Birthdays</h2>
+        <section className={`${styles.sectionCard} ${styles.compactCard}`}>
+          <p className={styles.sectionKicker}>Announcement</p>
 
-            <div className={styles.insightStack}>
-              {birthdayAnnouncements.length ? (
+          <div className={styles.insightStack}>
+            {birthdayAnnouncements.length ? (
                 birthdayAnnouncements.map((item) => (
                   <div key={`${item.id}-${item.offset}`} className={styles.insightCard}>
                     <span className={styles.insightLabel}>

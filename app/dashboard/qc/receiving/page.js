@@ -1203,7 +1203,7 @@ export default function QcReceivingPage() {
   const isSelectedSourceCompleted =
     isArklineMode && arklinePlannerMode === 'product' ? false : selectedSourceStatus === 'completed'
   const canEditSavedPlan = isArklineMode && arklinePlannerMode === 'product' ? true : !isSelectedSourceStarted
-  const canAdjustAllocations = isArklineMode && arklinePlannerMode === 'product' ? true : !isSelectedSourceCompleted
+  const canAdjustAllocations = isArklineMode ? true : !isSelectedSourceCompleted
   const persistedTaskRows = new Map(
     currentPlanRows.map((item) => [isArklineMode ? getArklineTaskKey(item) : getTaskKey(item), item])
   )
@@ -1478,12 +1478,6 @@ export default function QcReceivingPage() {
       return
     }
 
-    const targetRow = modelRows.find((row) => row.id === rowId)
-    if (targetRow && (targetRow.allocations || []).length >= qcMembers.length) {
-      setError('All active inspectors have already been used for this model.')
-      return
-    }
-
     setError('')
     setAllocationOpenRows((prev) => ({
       ...prev,
@@ -1492,22 +1486,20 @@ export default function QcReceivingPage() {
     setModelRows((prev) =>
       prev.map((row) =>
         row.id === rowId
-          ? (row.allocations || []).length >= qcMembers.length
-            ? row
-            : {
-                ...row,
-                allocations: [
-                  ...(row.allocations || []),
-                  {
-                    id: `alloc-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-                    task_id: null,
-                    member_email: '',
-                    qty: '',
-                    existing_status: 'queued',
-                    locked_qty: 0,
-                  },
-                ],
-              }
+          ? {
+              ...row,
+              allocations: [
+                ...(row.allocations || []),
+                {
+                  id: `alloc-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+                  task_id: null,
+                  member_email: '',
+                  qty: '',
+                  existing_status: 'queued',
+                  locked_qty: 0,
+                },
+              ],
+            }
           : row
       )
     )
@@ -2340,19 +2332,11 @@ export default function QcReceivingPage() {
                               disabled={!canEditAllocationMember(split)}
                             >
                               <option value="">Choose inspector</option>
-                              {qcMembers
-                                .filter(
-                                  (member) =>
-                                    member.email === split.member_email ||
-                                    !(row.allocations || []).some(
-                                      (allocation) => allocation.id !== split.id && allocation.member_email === member.email
-                                    )
-                                )
-                                .map((member) => (
-                                  <option key={member.id} value={member.email}>
-                                    {member.display_name || member.email}
-                                  </option>
-                                ))}
+                              {qcMembers.map((member) => (
+                                <option key={member.id} value={member.email}>
+                                  {member.display_name || member.email}
+                                </option>
+                              ))}
                             </select>
                             <input
                               type="number"

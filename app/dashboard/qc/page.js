@@ -1,7 +1,7 @@
 'use client'
 
 import Image from 'next/image'
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { createClient } from '@/utils/supabase/browser'
 
 const supabase = createClient()
@@ -217,6 +217,25 @@ const styles = {
     fontSize: '12px',
     fontWeight: '700',
     cursor: 'pointer',
+  },
+  inspectorNameCell: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    flexWrap: 'wrap',
+  },
+  liveTimerBadge: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    height: '24px',
+    padding: '0 8px',
+    borderRadius: '999px',
+    background: '#111827',
+    color: '#fff',
+    fontSize: '11px',
+    fontWeight: '700',
+    letterSpacing: '0.01em',
+    whiteSpace: 'nowrap',
   },
   overlay: {
     position: 'fixed',
@@ -563,6 +582,14 @@ function formatMinutes(seconds) {
   return Math.round((Number(seconds || 0) / 60) * 100) / 100
 }
 
+function formatCompactTimer(totalSeconds) {
+  const safeSeconds = Math.max(0, Math.floor(Number(totalSeconds || 0)))
+  const hours = Math.floor(safeSeconds / 3600)
+  const minutes = Math.floor((safeSeconds % 3600) / 60)
+  const seconds = safeSeconds % 60
+  return [hours, minutes, seconds].map((value) => String(value).padStart(2, '0')).join(':')
+}
+
 function formatDisplayDate(value) {
   if (!value) return '-'
 
@@ -697,6 +724,7 @@ function InfoHint({ text }) {
 
 export default function QcDashboardPage() {
   const today = getTodayLocalDate()
+  const [clockTick, setClockTick] = useState(Date.now())
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
@@ -738,28 +766,128 @@ export default function QcDashboardPage() {
   })
   const [savingRejectDetail, setSavingRejectDetail] = useState(false)
 
-  useEffect(() => {
-    async function loadDashboard() {
+  const loadDashboard = useCallback(async (silent = false) => {
+    if (!silent) {
       setLoading(true)
       setError('')
+    }
 
-      const [
-        { data: qcRows, error: qcError },
-        { data: arklineRows, error: arklineError },
-        { data: confirmRows, error: confirmError },
-        { data: returnData, error: returnError },
-        { data: memberRows, error: memberError },
-        { data: rolePermissionRows, error: rolePermissionError },
-        { data: pauseLogRows, error: pauseLogError },
-        { data: rejectReasonRows, error: rejectReasonError },
-        { data: rejectDetailRows, error: rejectDetailError },
-        { data: rejectAdjustmentRows, error: rejectAdjustmentError },
-        { data: poItemSizeRows, error: poItemSizeError },
-      ] = await Promise.all([
-        supabase
-          .from('qc_items')
-          .select(`
-            *,
+    const [
+      { data: qcRows, error: qcError },
+      { data: arklineRows, error: arklineError },
+      { data: confirmRows, error: confirmError },
+      { data: returnData, error: returnError },
+      { data: memberRows, error: memberError },
+      { data: rolePermissionRows, error: rolePermissionError },
+      { data: pauseLogRows, error: pauseLogError },
+      { data: rejectReasonRows, error: rejectReasonError },
+      { data: rejectDetailRows, error: rejectDetailError },
+      { data: rejectAdjustmentRows, error: rejectAdjustmentError },
+      { data: poItemSizeRows, error: poItemSizeError },
+    ] = await Promise.all([
+      supabase
+        .from('qc_items')
+        .select(`
+          *,
+          inbound:inbound_id (
+            id,
+            grn_number
+          ),
+          inbound_unload:inbound_unload_id (
+            id,
+            brand_id,
+            category_id,
+            brands:dir_brands!brand_id (
+              id,
+              brand_name
+            ),
+            categories:dir_categories!category_id (
+              id,
+              category_name,
+              full_name
+            )
+          )
+        `)
+        .order('created_at', { ascending: false }),
+      supabase
+        .from('arkline_qc')
+        .select('*')
+        .order('created_at', { ascending: false }),
+      supabase
+        .from('qc_confirm')
+        .select(`
+          id,
+          inbound_id,
+          model_name,
+          model_color,
+          photo_url,
+          qty,
+          grade,
+          is_adjustment,
+          created_at,
+          inbound:inbound_id (
+            id,
+            grn_number
+          ),
+          brands:dir_brands!brand_id (
+            id,
+            brand_name
+          ),
+          categories:dir_categories!category_id (
+            id,
+            category_name,
+            full_name
+          )
+        `)
+        .order('created_at', { ascending: false }),
+      supabase
+        .from('warehouse_returns')
+        .select(`
+          id,
+          inbound_id,
+          model_name,
+          model_color,
+          qty,
+          grade,
+          is_adjustment,
+          created_at,
+          source_phase,
+          inbound:inbound_id (
+            id,
+            grn_number
+          ),
+          brands:dir_brands!brand_id (
+            id,
+            brand_name
+          ),
+          categories:dir_categories!category_id (
+            id,
+            category_name,
+            full_name
+          )
+        `)
+        .eq('source_phase', 'qc')
+        .order('created_at', { ascending: false }),
+      supabase
+        .from('dir_user_profiles')
+        .select('id, email, display_name, role, is_qc_active, qc_active_date')
+        .order('display_name', { ascending: true }),
+      supabase.from('dir_user_roles').select('role, permission_code').eq('permission_code', 'qc.inspection.do'),
+      supabase
+        .from('qc_pause_logs')
+        .select(`
+          id,
+          qc_item_id,
+          arkline_qc_id,
+          paused_by,
+          pause_reason,
+          paused_at,
+          resumed_at,
+          resumed_by,
+          duration_seconds,
+          qc_item:qc_item_id (
+            id,
+            assigned_to,
             inbound:inbound_id (
               id,
               grn_number
@@ -778,202 +906,121 @@ export default function QcDashboardPage() {
                 full_name
               )
             )
-          `)
-          .order('created_at', { ascending: false }),
-        supabase
-          .from('arkline_qc')
-          .select('*')
-          .order('created_at', { ascending: false }),
-        supabase
-          .from('qc_confirm')
-          .select(`
+          ),
+          arkline_qc:arkline_qc_id (
             id,
-            inbound_id,
-            model_name,
-            model_color,
-            photo_url,
-            qty,
-            grade,
-            is_adjustment,
-            created_at,
-            inbound:inbound_id (
-              id,
-              grn_number
-            ),
-            brands:dir_brands!brand_id (
-              id,
-              brand_name
-            ),
-            categories:dir_categories!category_id (
-              id,
-              category_name,
-              full_name
-            )
-          `)
-          .order('created_at', { ascending: false }),
-        supabase
-          .from('warehouse_returns')
-          .select(`
-            id,
-            inbound_id,
-            model_name,
-            model_color,
-            qty,
-            grade,
-            is_adjustment,
-            created_at,
-            source_phase,
-            inbound:inbound_id (
-              id,
-              grn_number
-            ),
-            brands:dir_brands!brand_id (
-              id,
-              brand_name
-            ),
-            categories:dir_categories!category_id (
-              id,
-              category_name,
-              full_name
-            )
-          `)
-          .eq('source_phase', 'qc')
-          .order('created_at', { ascending: false }),
-        supabase
-          .from('dir_user_profiles')
-          .select('id, email, display_name, role, is_qc_active, qc_active_date')
-          .order('display_name', { ascending: true }),
-        supabase.from('dir_user_roles').select('role, permission_code').eq('permission_code', 'qc.inspection.do'),
-        supabase
-          .from('qc_pause_logs')
-          .select(`
-            id,
-            qc_item_id,
-            arkline_qc_id,
-            paused_by,
-            pause_reason,
-            paused_at,
-            resumed_at,
-            resumed_by,
-            duration_seconds,
-            qc_item:qc_item_id (
-              id,
-              assigned_to,
-              inbound:inbound_id (
-                id,
-                grn_number
-              ),
-              inbound_unload:inbound_unload_id (
-                id,
-                brand_id,
-                category_id,
-                brands:dir_brands!brand_id (
-                  id,
-                  brand_name
-                ),
-                categories:dir_categories!category_id (
-                  id,
-                  category_name,
-                  full_name
-                )
-              )
-            ),
-            arkline_qc:arkline_qc_id (
-              id,
-              assigned_to,
-              po_id,
-              sku_induk,
-              model_name
-            )
-          `)
-          .order('paused_at', { ascending: false }),
-        supabase
-          .from('arkline_qc_reject_reasons')
-          .select('id, reason_name, is_active')
-          .eq('is_active', true)
-          .order('reason_name', { ascending: true }),
-        supabase
-          .from('arkline_qc_reject_details')
-          .select(`
-            id,
-            arkline_qc_id,
+            assigned_to,
             po_id,
-            arkline_po_item_id,
             sku_induk,
-            model_name,
-            grade,
-            size,
-            reject_reason_id,
-            qty,
-            reason:reject_reason_id (
-              id,
-              reason_name
-            )
-          `)
-          .order('created_at', { ascending: false }),
-        supabase
-          .from('arkline_qc_reject_adjustments')
-          .select('*')
-          .order('created_at', { ascending: false }),
-        supabase
-          .from('arkline_po_item_sizes')
-          .select('arkline_po_item_id, size, qty')
-          .order('size', { ascending: true }),
-      ])
+            model_name
+          )
+        `)
+        .order('paused_at', { ascending: false }),
+      supabase
+        .from('arkline_qc_reject_reasons')
+        .select('id, reason_name, is_active')
+        .eq('is_active', true)
+        .order('reason_name', { ascending: true }),
+      supabase
+        .from('arkline_qc_reject_details')
+        .select(`
+          id,
+          arkline_qc_id,
+          po_id,
+          arkline_po_item_id,
+          sku_induk,
+          model_name,
+          grade,
+          size,
+          reject_reason_id,
+          qty,
+          reason:reject_reason_id (
+            id,
+            reason_name
+          )
+        `)
+        .order('created_at', { ascending: false }),
+      supabase
+        .from('arkline_qc_reject_adjustments')
+        .select('*')
+        .order('created_at', { ascending: false }),
+      supabase
+        .from('arkline_po_item_sizes')
+        .select('arkline_po_item_id, size, qty')
+        .order('size', { ascending: true }),
+    ])
 
-      if (
-        qcError ||
-        arklineError ||
-        confirmError ||
-        returnError ||
-        memberError ||
-        pauseLogError ||
-        rolePermissionError ||
-        rejectReasonError ||
-        rejectDetailError ||
-        rejectAdjustmentError ||
-        poItemSizeError
-      ) {
-        setError(
-          qcError?.message ||
-            arklineError?.message ||
-            confirmError?.message ||
-            returnError?.message ||
-            memberError?.message ||
-            pauseLogError?.message ||
-            rolePermissionError?.message ||
-            rejectReasonError?.message ||
-            rejectDetailError?.message ||
-            rejectAdjustmentError?.message ||
-            poItemSizeError?.message ||
-            'Failed to load QC dashboard.'
-        )
-        setLoading(false)
-        return
-      }
-
-      const allowedRoles = new Set((rolePermissionRows || []).map((item) => item.role))
-      const allProfiles = memberRows || []
-      const eligibleMembers = allProfiles.filter(
-        (item) => allowedRoles.has(item.role) && item.is_qc_active === true && getDateOnly(item.qc_active_date) === today
+    if (
+      qcError ||
+      arklineError ||
+      confirmError ||
+      returnError ||
+      memberError ||
+      pauseLogError ||
+      rolePermissionError ||
+      rejectReasonError ||
+      rejectDetailError ||
+      rejectAdjustmentError ||
+      poItemSizeError
+    ) {
+      setError(
+        qcError?.message ||
+          arklineError?.message ||
+          confirmError?.message ||
+          returnError?.message ||
+          memberError?.message ||
+          pauseLogError?.message ||
+          rolePermissionError?.message ||
+          rejectReasonError?.message ||
+          rejectDetailError?.message ||
+          rejectAdjustmentError?.message ||
+          poItemSizeError?.message ||
+          'Failed to load QC dashboard.'
       )
-
-      setQcItems(qcRows || [])
-      setArklineQcItems(arklineRows || [])
-      setQcConfirmRows(confirmRows || [])
-      setReturnRows(returnData || [])
-      setQcMembers(eligibleMembers)
-      setQcProfiles(allProfiles)
-      setPauseLogs(pauseLogRows || [])
-      setArklineRejectReasons(rejectReasonRows || [])
-      setArklineRejectDetails(rejectDetailRows || [])
-      setArklineRejectAdjustments(rejectAdjustmentRows || [])
-      setArklinePoItemSizes(poItemSizeRows || [])
-      setLoading(false)
+      if (!silent) setLoading(false)
+      return
     }
 
-    loadDashboard()
+    const allowedRoles = new Set((rolePermissionRows || []).map((item) => item.role))
+    const allProfiles = memberRows || []
+    const eligibleMembers = allProfiles.filter(
+      (item) => allowedRoles.has(item.role) && item.is_qc_active === true && getDateOnly(item.qc_active_date) === today
+    )
+
+    setQcItems(qcRows || [])
+    setArklineQcItems(arklineRows || [])
+    setQcConfirmRows(confirmRows || [])
+    setReturnRows(returnData || [])
+    setQcMembers(eligibleMembers)
+    setQcProfiles(allProfiles)
+    setPauseLogs(pauseLogRows || [])
+    setArklineRejectReasons(rejectReasonRows || [])
+    setArklineRejectDetails(rejectDetailRows || [])
+    setArklineRejectAdjustments(rejectAdjustmentRows || [])
+    setArklinePoItemSizes(poItemSizeRows || [])
+    if (!silent) setLoading(false)
   }, [today])
+
+  useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      setClockTick(Date.now())
+    }, 1000)
+
+    return () => window.clearInterval(intervalId)
+  }, [])
+
+  useEffect(() => {
+    void loadDashboard()
+  }, [loadDashboard])
+
+  useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      if (showPauseConfirm || previewPhoto || rejectDetailSummary || pauseDetailInspector || savingRejectDetail) return
+      void loadDashboard(true)
+    }, 10000)
+
+    return () => window.clearInterval(intervalId)
+  }, [loadDashboard, pauseDetailInspector, previewPhoto, rejectDetailSummary, savingRejectDetail, showPauseConfirm])
 
   const grnOptions = useMemo(
     () => Array.from(new Set(qcItems.map((item) => item.inbound?.grn_number).filter(Boolean))),
@@ -1348,6 +1395,11 @@ export default function QcDashboardPage() {
       const key = item.assigned_to || '-'
       const totalPcs = getCheckedQty(item)
       const minutes = Number(item.stopwatch_seconds || 0) / 60
+      const startedAtMs = item.started_at ? new Date(item.started_at).getTime() : null
+      const liveSeconds =
+        item.status === 'in_progress' && startedAtMs
+          ? Number(item.stopwatch_seconds || 0) + Math.max(0, Math.floor((clockTick - startedAtMs) / 1000))
+          : 0
       const workDate = String(item.finished_at || item.created_at || '').slice(0, 10)
       const current =
         grouped.get(key) || {
@@ -1363,6 +1415,8 @@ export default function QcDashboardPage() {
           activeTaskRows: [],
           activeTaskCount: 0,
           activeAllocatedQty: 0,
+          activeLiveSeconds: 0,
+          runningTaskCount: 0,
         }
 
       if (item.status === 'done' || hasQcResult(item)) {
@@ -1388,6 +1442,8 @@ export default function QcDashboardPage() {
       if (item.status !== 'done') {
         current.activeTaskCount += 1
         current.activeAllocatedQty += Number(item.allocated_qty || 0)
+        current.activeLiveSeconds += liveSeconds
+        if (item.status === 'in_progress') current.runningTaskCount += 1
         current.activeTaskRows.push({
           id: item.id,
           source: qcMode === 'arkline' ? getArklinePoLabel(item) : item.inbound?.grn_number || '-',
@@ -1440,9 +1496,11 @@ export default function QcDashboardPage() {
           activeTaskRows: [...(item.activeTaskRows || [])].sort((a, b) => String(a.status || '').localeCompare(String(b.status || ''))),
           activeTaskCount: item.activeTaskCount,
           activeAllocatedQty: item.activeAllocatedQty,
+          activeLiveSeconds: item.activeLiveSeconds,
+          runningTaskCount: item.runningTaskCount,
         }
       })
-  }, [activeItems, activePauseLogs, memberNameMap, qcMode])
+  }, [activeItems, activePauseLogs, clockTick, memberNameMap, qcMode])
 
   const categoryTimes = useMemo(() => {
     const grouped = new Map()
@@ -2142,7 +2200,16 @@ export default function QcDashboardPage() {
               {inspectorPerformance.length ? (
                 inspectorPerformance.map((item) => (
                   <tr key={item.inspectorKey}>
-                    <td style={styles.td}>{item.inspector}</td>
+                    <td style={styles.td}>
+                      <div style={styles.inspectorNameCell}>
+                        <span>{item.inspector}</span>
+                        {item.runningTaskCount ? (
+                          <span style={styles.liveTimerBadge} title={`${item.runningTaskCount} running task${item.runningTaskCount > 1 ? 's' : ''}`}>
+                            {formatCompactTimer(item.activeLiveSeconds)}
+                          </span>
+                        ) : null}
+                      </div>
+                    </td>
                     <td style={styles.td}>{item.totalPcs}</td>
                     <td style={styles.td}>{item.avgPerDay}</td>
                     <td style={styles.td}>{item.rate}</td>
