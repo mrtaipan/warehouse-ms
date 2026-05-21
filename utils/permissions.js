@@ -153,6 +153,8 @@ export function getLandingPath(role, permissions = [], isAdmin = false) {
 export function getAllowedMenus(role, permissions = [], isAdmin = false) {
   if (isAdmin || role === 'admin') {
     return {
+      humanResources: true,
+      humanResourcesHref: '/dashboard/human-resources',
       arkline: true,
       arklineHref: '/dashboard/arkline',
       inbound: true,
@@ -172,6 +174,8 @@ export function getAllowedMenus(role, permissions = [], isAdmin = false) {
   const arklineAccess = getArklineFeatureAccess(role, permissions, isAdmin)
 
   return {
+    humanResources: true,
+    humanResourcesHref: '/dashboard/human-resources',
     arkline: arklineAccess.menu,
     arklineHref: arklineAccess.menuHref,
     inbound: false,
@@ -198,6 +202,7 @@ export function canAccessPath(pathname, role, permissions = [], isAdmin = false)
   if (isAdmin || role === 'admin') return true
   if (pathname === '/dashboard') return true
   if (pathname.startsWith('/dashboard/profile')) return true
+  if (pathname === '/dashboard/human-resources' || pathname.startsWith('/dashboard/human-resources/')) return true
 
   const storageAccess = getStorageFeatureAccess(role, permissions, isAdmin)
   const qcAccess = getQcFeatureAccess(permissions, isAdmin, role)

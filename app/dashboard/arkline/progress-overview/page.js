@@ -239,7 +239,7 @@ async function loadSnapshotRows() {
       .order('created_at', { ascending: false }),
     supabase
       .from('arkline_po_items')
-      .select('id, po_id, sku_induk, nama_produk, total_qty, actual_qty, hpp, updated_delivery_date, notes, status'),
+      .select('id, po_id, sku_induk, nama_produk, total_qty, actual_qty, price, hpp, updated_delivery_date, notes, status'),
     supabase.from('arkline_po_item_receipts').select('arkline_po_item_id, received_qty'),
     supabase.from('arkline_po_item_sizes').select('arkline_po_item_id, size, qty'),
   ])
@@ -287,6 +287,7 @@ async function loadSnapshotRows() {
     const totalQty = Number(row?.total_qty || 0)
     const actualQty = Number(receiptQtyByItemId[String(row?.id || '').trim()] ?? row?.actual_qty ?? 0)
     const updatedDeliveryDate = String(row?.updated_delivery_date || '').slice(0, 10)
+    const price = Number(row?.price || 0)
     const hpp = Number(row?.hpp || 0)
     const itemStatus = normalizeBoardStatus(row?.status)
     const itemNotes = String(row?.notes || '').trim()
@@ -320,6 +321,7 @@ async function loadSnapshotRows() {
       productName: productName || 'NO PRODUCT',
       qty: Number.isFinite(totalQty) ? totalQty : 0,
       actualQty: Number.isFinite(actualQty) ? actualQty : 0,
+      price: Number.isFinite(price) ? price : 0,
       hpp: Number.isFinite(hpp) ? hpp : 0,
       updatedDeliveryDate,
       status: itemStatus,
@@ -908,7 +910,7 @@ export default function ArklineProgressOverviewPage() {
         loadOptionalRows(() =>
           supabase
             .from('arkline_po_items')
-            .select('id, sku_induk, nama_produk, total_qty, actual_qty, allowance_pct, hpp, notes, status, updated_delivery_date, completion_date')
+            .select('id, sku_induk, nama_produk, total_qty, actual_qty, allowance_pct, price, hpp, notes, status, updated_delivery_date, completion_date')
             .eq('id', entry.id)
             .limit(1)
         ),
@@ -952,6 +954,7 @@ export default function ArklineProgressOverviewPage() {
       ])
 
       const itemDetail = itemRows[0] || null
+      const price = Number(itemDetail?.price || entry.price || 0)
       const hpp = Number(itemDetail?.hpp || 0)
       const plannedQty = Number(itemDetail?.total_qty || entry.qty || 0)
       const actualQty = Number(itemDetail?.actual_qty || 0)
@@ -988,6 +991,7 @@ export default function ArklineProgressOverviewPage() {
         poNotes: selectedPoDetail.notes || '',
         notes: itemDetail?.notes || entry.notes || '',
         status: itemDetail?.status || entry.status || '',
+        price,
         updatedDeliveryDate: itemDetail?.updated_delivery_date || entry.updatedDeliveryDate || '',
         receipts: receiptRows,
         updates: updateRows,
@@ -995,11 +999,12 @@ export default function ArklineProgressOverviewPage() {
         qcRows,
         sizeBreakdown,
         financeSummary: {
+          price,
           hpp,
           plannedQty,
           actualQty,
           allowancePct: Number(itemDetail?.allowance_pct || 0),
-          plannedValue: hpp * plannedQty,
+          plannedValue: (price || hpp) * plannedQty,
           actualValue: hpp * (actualQty || totalReceived),
           paidValue: paymentRows.reduce((sum, row) => sum + Number(row?.amount || 0), 0),
         },
@@ -1586,7 +1591,7 @@ export default function ArklineProgressOverviewPage() {
                 <>
                   {(() => {
                     const dueValue = (selectedPoDetail.productEntries || []).reduce(
-                      (sum, entry) => sum + Number(entry?.qty || 0) * Number(entry?.hpp || 0),
+                      (sum, entry) => sum + Number(entry?.qty || 0) * Number(entry?.price || entry?.hpp || 0),
                       0
                     )
                     const paidValue = (selectedPoDetail.payments || []).reduce((sum, row) => sum + Number(row?.amount || 0), 0)

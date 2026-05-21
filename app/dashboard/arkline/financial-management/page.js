@@ -173,6 +173,11 @@ function normalizeAccountNumber(value) {
   return String(value || '').replace(/\D/g, '')
 }
 
+function buildClaimStorageFolder(claimNumber, fallbackId) {
+  const safeClaimNumber = sanitizeFileName(String(claimNumber || '').trim()).replace(/\.+/g, '-')
+  return safeClaimNumber || String(fallbackId || 'claim')
+}
+
 async function compressImageFile(file) {
   if (!isImageMimeType(file?.type) || /image\/(gif|svg\+xml)/i.test(String(file?.type || ''))) {
     return file
@@ -228,17 +233,18 @@ async function compressImageFile(file) {
   }
 }
 
-async function uploadClaimFiles({ claimId, files, folder, uploadedBy }) {
+async function uploadClaimFiles({ claimId, claimNumber, files, folder, uploadedBy }) {
   const uploadedPaths = []
   const attachmentRows = []
   const year = new Date().getFullYear()
+  const claimFolder = buildClaimStorageFolder(claimNumber, claimId)
 
   for (const sourceFile of files) {
     const file = await compressImageFile(sourceFile)
     const extension = String(file?.name || '').split('.').pop()?.toLowerCase() || 'bin'
     const safeName = sanitizeFileName(file?.name || `attachment.${extension}`)
     const fileName = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}-${safeName}`
-    const storagePath = `${year}/${claimId}/${folder}/${fileName}`
+    const storagePath = `${year}/${claimFolder}/${folder}/${fileName}`
 
     const { error: uploadError } = await supabase.storage.from(REIMBURSEMENT_BUCKET).upload(storagePath, file, { upsert: false })
 
@@ -830,6 +836,7 @@ export default function ArklineFinancialManagementPage() {
 
         const uploadResult = await uploadClaimFiles({
           claimId: insertedClaim.id,
+          claimNumber: insertedClaim.claim_number,
           files: row.submission_files,
           folder: 'submission',
           uploadedBy: profile.email,
@@ -960,6 +967,7 @@ export default function ArklineFinancialManagementPage() {
       if (editFiles.length) {
         const uploadResult = await uploadClaimFiles({
           claimId: editingClaim.id,
+          claimNumber: editingClaim.claim_number,
           files: editFiles,
           folder: 'submission',
           uploadedBy: profile?.email || null,
@@ -999,6 +1007,7 @@ export default function ArklineFinancialManagementPage() {
       if (paymentFiles.length) {
         const uploadResult = await uploadClaimFiles({
           claimId: claim.id,
+          claimNumber: claim.claim_number,
           files: paymentFiles,
           folder: 'payment',
           uploadedBy: profile?.email || null,
@@ -1059,6 +1068,7 @@ export default function ArklineFinancialManagementPage() {
         for (const claim of group.claims) {
           const uploadResult = await uploadClaimFiles({
             claimId: claim.id,
+            claimNumber: claim.claim_number,
             files: paymentFiles,
             folder: 'payment',
             uploadedBy: profile?.email || null,

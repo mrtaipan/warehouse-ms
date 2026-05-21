@@ -32,7 +32,7 @@ function createEmptyLineDraft() {
     kategoriProdukSnapshot: '',
     kategoriPengadaanSnapshot: '',
     allowancePct: '3',
-    hpp: '',
+    price: '',
     status: 'Initiated',
     notes: '',
     qtyBySize: createEmptySizeQuantities(),
@@ -328,7 +328,7 @@ function getLineTotalQty(line) {
 function cloneLine(line) {
   return {
     ...line,
-    hpp: String(line?.hpp || ''),
+    price: String(line?.price || ''),
     qtyBySize: { ...line.qtyBySize },
   }
 }
@@ -429,7 +429,7 @@ async function createPrintPdfBlob(bundle) {
 
   const itemRows = bundle.items.map((item) => {
     const qty = getLineTotalQty(item)
-    const price = toNumber(item.hpp)
+    const price = toNumber(item.price ?? item.hpp)
     const amount = qty * price
 
     return [
@@ -442,7 +442,7 @@ async function createPrintPdfBlob(bundle) {
 
   const subtotal = bundle.items.reduce((sum, item) => {
     const qty = getLineTotalQty(item)
-    const price = toNumber(item.hpp)
+    const price = toNumber(item.price ?? item.hpp)
     return sum + qty * price
   }, 0)
   const ppn = subtotal * 0.11
@@ -805,7 +805,7 @@ async function fetchPoBundle(poId) {
       kategoriProdukSnapshot: String(item.kategori_produk || '').trim().toUpperCase(),
       kategoriPengadaanSnapshot: String(item.kategori_pengadaan || '').trim().toUpperCase(),
       allowancePct: String(item.allowance_pct ?? '0'),
-      hpp: String(item.hpp ?? ''),
+      price: String(item.price ?? item.hpp ?? ''),
       status: String(item.status || 'Initiated'),
       notes: String(item.notes || ''),
       actualQty: Number(item.actual_qty || 0) || 0,
@@ -943,7 +943,7 @@ export default function ArklineProductionPlanningPage() {
   )
   const isExistingModeLocked = mode === 'existing' && !selectedExistingPoId
   const isEditingLine = Boolean(lineDraft.localId || lineDraft.dbId)
-  const isHppDisabled = isExistingModeLocked
+  const isPriceDisabled = isExistingModeLocked
 
   const displayMaterialPreview = useMemo(() => {
     const aggregate = new Map()
@@ -1025,7 +1025,7 @@ export default function ArklineProductionPlanningPage() {
     setLineDraft({
       ...createEmptyLineDraft(),
       ...nextDraft,
-      hpp: String(nextDraft?.hpp || ''),
+      price: String(nextDraft?.price || ''),
       qtyBySize: {
         ...createEmptySizeQuantities(),
         ...(nextDraft?.qtyBySize || {}),
@@ -1224,11 +1224,11 @@ export default function ArklineProductionPlanningPage() {
       return
     }
 
-    if (name === 'hpp') {
+    if (name === 'price') {
       const numericValue = value.replace(/,/g, '').replace(/[^\d.]/g, '')
       setLineDraft((prev) => ({
         ...prev,
-        hpp: numericValue,
+        price: numericValue,
       }))
       setIsPlanningDirty(true)
       setLineError('')
@@ -1346,7 +1346,7 @@ export default function ArklineProductionPlanningPage() {
       return null
     }
 
-    if (toNumber(lineDraft.hpp) <= 0) {
+    if (toNumber(lineDraft.price) <= 0) {
       setLineError('Enter Price for this product line.')
       return null
     }
@@ -1358,7 +1358,7 @@ export default function ArklineProductionPlanningPage() {
       kategoriProdukSnapshot: product.kategoriProduk,
       kategoriPengadaanSnapshot: product.kategoriPengadaan,
       allowancePct: String(lineDraft.allowancePct || '0'),
-      hpp: String(lineDraft.hpp || ''),
+      price: String(lineDraft.price || ''),
     }
   }
 
@@ -1577,7 +1577,8 @@ export default function ArklineProductionPlanningPage() {
         allowance_pct: toNumber(item.allowancePct),
         total_qty: getLineTotalQty(item),
         actual_qty: 0,
-        hpp: toNumber(item.hpp),
+        price: toNumber(item.price),
+        hpp: method === 'FOB' ? toNumber(item.price) : null,
         status: item.status || 'Initiated',
         notes: item.notes.trim() || null,
         kategori_pengadaan: item.kategoriPengadaanSnapshot || productBySku[item.skuInduk]?.kategoriPengadaan || null,
@@ -1812,24 +1813,26 @@ export default function ArklineProductionPlanningPage() {
             <h1 className={styles.title}>Production Orders</h1>
             <p className={styles.subtitle}>Garment PO setup, size allocation, material generation, save, and print.</p>
           </div>
-          <div className={styles.headerActions}>
-            <button type="button" className={styles.secondaryButton} onClick={() => resetPlanningState('new')}>
-              Reset Planning
-            </button>
-            <button type="button" className={styles.printButton} onClick={handlePrint} disabled={printing || !header.poId}>
-              {printing ? 'Preparing Print...' : 'Print Purchase Order'}
-            </button>
-            <button type="button" className={styles.primaryButton} onClick={handleSavePo} disabled={saving || loading}>
-              {saving ? 'Saving...' : 'Save Planning'}
-            </button>
+          <div className={styles.headerControls}>
+            <div className={styles.headerActions}>
+              <button type="button" className={styles.secondaryButton} onClick={() => resetPlanningState('new')}>
+                Reset Planning
+              </button>
+              <button type="button" className={styles.printButton} onClick={handlePrint} disabled={printing || !header.poId}>
+                {printing ? 'Preparing Print...' : 'Print Purchase Order'}
+              </button>
+              <button type="button" className={styles.primaryButton} onClick={handleSavePo} disabled={saving || loading}>
+                {saving ? 'Saving...' : 'Save Planning'}
+              </button>
+            </div>
+            {(error || success) && (
+              <div className={styles.feedbackStrip}>
+                {error ? <p className={styles.errorText}>{error}</p> : null}
+                {success ? <p className={styles.successText}>{success}</p> : null}
+              </div>
+            )}
           </div>
         </div>
-        {(error || success) && (
-          <div className={styles.feedbackStrip}>
-            {error ? <p className={styles.errorText}>{error}</p> : null}
-            {success ? <p className={styles.successText}>{success}</p> : null}
-          </div>
-        )}
 
         <div className={styles.planningColumns}>
         <section className={`${styles.sectionCard} ${styles.poPlanningCard}`.trim()}>
@@ -2170,11 +2173,11 @@ export default function ArklineProductionPlanningPage() {
               </label>
               <input
                 className={styles.input}
-                name="hpp"
+                name="price"
                 inputMode="decimal"
-                value={formatNumberInput(lineDraft.hpp ?? '')}
+                value={formatNumberInput(lineDraft.price ?? '')}
                 onChange={handleDraftChange}
-                disabled={isHppDisabled}
+                disabled={isPriceDisabled}
                 placeholder="0"
               />
             </div>
@@ -2292,7 +2295,7 @@ export default function ArklineProductionPlanningPage() {
                           <div className={styles.cellSubtext}>{item.skuInduk}</div>
                         </td>
                         <td>{formatQuantity(getLineTotalQty(item))}</td>
-                        <td>{formatCurrency(toNumber(item.hpp))}</td>
+                        <td>{formatCurrency(toNumber(item.price))}</td>
                         <td className={styles.sizeBreakdownCell}>
                           <div className={styles.sizeTagRow}>
                             {SIZE_OPTIONS.map((size) => {

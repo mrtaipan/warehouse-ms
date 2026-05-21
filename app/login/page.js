@@ -2,7 +2,7 @@
 
 import Image from 'next/image'
 import Link from 'next/link'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/utils/supabase/browser'
 
@@ -19,6 +19,29 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [focusedField, setFocusedField] = useState('')
+
+  useEffect(() => {
+    const searchParams = new URLSearchParams(window.location.search)
+    const hash = window.location.hash || ''
+    const hashParams = new URLSearchParams(hash.startsWith('#') ? hash.slice(1) : hash)
+    const searchType = String(searchParams.get('type') || '').trim().toLowerCase()
+    const hashType = String(hashParams.get('type') || '').trim().toLowerCase()
+    const hasRecoverySignal =
+      searchType === 'recovery' ||
+      hashType === 'recovery' ||
+      Boolean(searchParams.get('code')) ||
+      Boolean(searchParams.get('token_hash')) ||
+      Boolean(hashParams.get('access_token'))
+
+    if (!hasRecoverySignal) return
+
+    const nextUrl = new URL('/forgot-password', window.location.origin)
+    searchParams.forEach((value, key) => {
+      nextUrl.searchParams.set(key, value)
+    })
+    nextUrl.hash = hash
+    router.replace(`${nextUrl.pathname}${nextUrl.search}${nextUrl.hash}`)
+  }, [router])
 
   async function handleLogin(event) {
     event.preventDefault()
@@ -48,7 +71,7 @@ export default function LoginPage() {
     }
 
     const nextPath = new URLSearchParams(window.location.search).get('next')
-    router.push(nextPath || '/dashboard/storage')
+    router.push(nextPath || '/dashboard')
     router.refresh()
   }
 
@@ -86,7 +109,7 @@ export default function LoginPage() {
             <div style={styles.fieldHeader}>
               <label style={styles.label}>Password</label>
               <Link href="/forgot-password" style={styles.forgotLink}>
-                Lupa Password?
+                Forgot Password?
               </Link>
             </div>
             <input

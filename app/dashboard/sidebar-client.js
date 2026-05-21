@@ -55,6 +55,15 @@ function NavIcon({ kind }) {
           <path d="M16 6.5V20" />
         </svg>
       )
+    case 'human-resources':
+      return (
+        <svg {...commonProps}>
+          <circle cx="9" cy="8" r="2.5" />
+          <circle cx="16.5" cy="9.5" r="2" />
+          <path d="M4.8 18c.8-2.7 2.8-4 4.9-4s4.1 1.3 4.9 4" />
+          <path d="M13.8 18c.4-1.8 1.6-2.9 3.1-3.4 1-.3 2-.3 3.1 0" />
+        </svg>
+      )
     case 'arkline':
       return (
         <svg {...commonProps}>
@@ -99,6 +108,7 @@ export default function SidebarClient({ navItems, settingHref }) {
       className={`${styles.sidebar} ${isMobileExpanded ? styles.sidebarMobileExpanded : styles.sidebarMobileCollapsed}`.trim()}
     >
       <div className={styles.mobileSidebarHeader}>
+        <Link href="/dashboard" className={styles.brandLink} title="Dashboard">
         <div className={styles.brand}>
           <div className={styles.brandMark}>
             <Image src="/mob-text-logo.png" alt="MOB" width={40} height={18} className={styles.brandLogo} priority />
@@ -109,6 +119,7 @@ export default function SidebarClient({ navItems, settingHref }) {
             <p className={styles.brandSubtitle}>Management System</p>
           </div>
         </div>
+        </Link>
 
         <button
           type="button"

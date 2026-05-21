@@ -34,7 +34,7 @@ export default async function UserAccessPage() {
   }
 
   if (user.email?.toLowerCase() !== ADMIN_EMAIL) {
-    redirect('/dashboard/storage')
+    redirect('/dashboard')
   }
 
   const [{ data: profiles, error: profilesError }, { data: permissions, error: permissionsError }, { data: rolePermissions, error: rolePermissionsError }] =
