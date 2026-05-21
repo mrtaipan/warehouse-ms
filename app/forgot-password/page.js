@@ -1,7 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { createClient } from '@/utils/supabase/browser'
 
@@ -9,7 +9,7 @@ function isValidEmail(value) {
   return /\S+@\S+\.\S+/.test(value)
 }
 
-export default function ForgotPasswordPage() {
+function ForgotPasswordContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const supabase = useMemo(() => createClient(), [])
@@ -288,6 +288,24 @@ export default function ForgotPasswordPage() {
         </Link>
       </section>
     </main>
+  )
+}
+
+export default function ForgotPasswordPage() {
+  return (
+    <Suspense
+      fallback={
+        <main style={styles.wrapper}>
+          <section style={styles.card}>
+            <p style={styles.kicker}>Account Support</p>
+            <h1 style={styles.title}>Forgot Password</h1>
+            <p style={styles.subtitle}>Preparing password recovery...</p>
+          </section>
+        </main>
+      }
+    >
+      <ForgotPasswordContent />
+    </Suspense>
   )
 }
 
