@@ -413,21 +413,16 @@ function buildRejectDetailSummary(rows) {
   const grouped = new Map()
 
   ;(rows || []).forEach((row) => {
-    const grade = String(row?.grade || '').trim().toUpperCase()
-    if (grade !== 'B' && grade !== 'C') return
-
     const reason = String(row?.reason?.reason_name || row?.reason_name || '-').trim() || '-'
-    const size = String(row?.size || '-').trim().toUpperCase() || '-'
-    const key = `${grade}::${reason}::${size}`
-    const current = grouped.get(key) || { key, grade, reason, size, qty: 0 }
+    const key = reason
+    const current = grouped.get(key) || { key, reason, qty: 0 }
     current.qty += Number(row?.qty || 0)
     grouped.set(key, current)
   })
 
   return Array.from(grouped.values()).sort((left, right) => {
-    if (left.grade !== right.grade) return left.grade.localeCompare(right.grade)
-    if (left.reason !== right.reason) return left.reason.localeCompare(right.reason)
-    return left.size.localeCompare(right.size, undefined, { numeric: true })
+    if (right.qty !== left.qty) return right.qty - left.qty
+    return left.reason.localeCompare(right.reason)
   })
 }
 
@@ -980,7 +975,7 @@ export default function ArklineProgressOverviewPage() {
         loadOptionalRows(() =>
           supabase
             .from('arkline_qc')
-            .select('id, assigned_to, allocated_qty, qty_a, qty_b, qty_c, model_name, status, started_at, finished_at, updated_at')
+            .select('id, arkline_po_item_id, po_id, sku_induk, assigned_to, allocated_qty, qty_a, qty_b, qty_c, model_name, status, started_at, finished_at, updated_at')
             .eq('po_id', selectedPoDetail.poId)
             .order('updated_at', { ascending: false })
         ),
@@ -988,33 +983,43 @@ export default function ArklineProgressOverviewPage() {
 
       const normalizedItemId = String(entry.id || '').trim()
       const normalizedSku = String(entry.sku || '').trim().toUpperCase()
-      const qcRows = (qcRowsRaw || []).filter((row) => {
+      const qcRowsByItem = (qcRowsRaw || []).filter((row) => {
         const rowItemId = String(row?.arkline_po_item_id || '').trim()
         const rowSku = String(row?.sku_induk || '').trim().toUpperCase()
         return (normalizedItemId && rowItemId === normalizedItemId) || (normalizedSku && rowSku === normalizedSku)
       })
+      const qcRows = qcRowsByItem.length ? qcRowsByItem : (qcRowsRaw || []).filter((row) => String(row?.sku_induk || '').trim().toUpperCase() === normalizedSku)
       const qcTaskIds = qcRows.map((row) => row.id).filter(Boolean)
-      const rejectDetailRows = qcTaskIds.length
-        ? await loadOptionalRows(() =>
-            supabase
-              .from('arkline_qc_reject_details')
-              .select(
-                `
-                  id,
-                  arkline_qc_id,
-                  grade,
-                  size,
-                  qty,
-                  reason:reject_reason_id (
-                    id,
-                    reason_name
-                  )
-                `
+      const rejectDetailRows = await loadOptionalRows(() => {
+        let query = supabase
+          .from('arkline_qc_reject_details')
+          .select(
+            `
+              id,
+              arkline_qc_id,
+              po_id,
+              sku_induk,
+              grade,
+              size,
+              qty,
+              reason:reject_reason_id (
+                id,
+                reason_name
               )
-              .in('arkline_qc_id', qcTaskIds)
-              .order('created_at', { ascending: false })
+            `
           )
-        : []
+          .order('created_at', { ascending: false })
+
+        if (qcTaskIds.length) {
+          query = query.in('arkline_qc_id', qcTaskIds)
+        } else if (selectedPoDetail.poId && normalizedSku) {
+          query = query.eq('po_id', selectedPoDetail.poId).eq('sku_induk', normalizedSku)
+        } else {
+          query = query.limit(0)
+        }
+
+        return query
+      })
 
       const itemDetail = itemRows[0] || null
       const price = Number(itemDetail?.price || entry.price || 0)
@@ -1907,7 +1912,6 @@ export default function ArklineProgressOverviewPage() {
                                 <div key={row.key} className={styles.productDetailRow}>
                                   <div>
                                     <strong>{row.reason}</strong>
-                                    <span>{`Grade ${row.grade} • Size ${row.size || '-'}`}</span>
                                   </div>
                                   <div className={styles.productDetailRowMeta}>
                                     <strong>{formatNumber(row.qty)}</strong>
@@ -2156,3 +2160,4 @@ export default function ArklineProgressOverviewPage() {
     </div>
   )
 }
+
