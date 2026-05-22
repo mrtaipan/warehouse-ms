@@ -946,7 +946,7 @@ export default function ArklineProgressOverviewPage() {
         loadOptionalRows(() =>
           supabase
             .from('arkline_qc')
-            .select('id, assigned_to, allocated_qty, qty_in, qty_a, qty_b, qty_c, model_name, status, started_at, finished_at, updated_at')
+            .select('id, assigned_to, allocated_qty, qty_a, qty_b, qty_c, model_name, status, started_at, finished_at, updated_at')
             .eq('po_id', selectedPoDetail.poId)
             .or(`arkline_po_item_id.eq.${entry.id},sku_induk.eq.${entry.sku}`)
             .order('updated_at', { ascending: false })

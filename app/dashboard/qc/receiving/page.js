@@ -582,6 +582,7 @@ function buildModelRowsFromPersisted(baseRows, existingPlanRows) {
     rowMap.set(getModelKey(row.model_name, row.model_color), {
       ...row,
       allocations: row.allocations || [],
+      startedAllocations: row.startedAllocations || [],
     })
   })
 
@@ -596,24 +597,37 @@ function buildModelRowsFromPersisted(baseRows, existingPlanRows) {
         model_name: planRow.model_name || '',
         model_color: planRow.model_color || '',
         qty_in: Number(planRow.expected_qty || 0),
-        qty_qc: String(planRow.qty_in || 0),
         photo_url: planRow.photo_url || '',
         allocations: [],
+        startedAllocations: [],
       }
 
-    existingRow.qty_qc = String(Math.max(Number(existingRow.qty_qc || 0), Number(planRow.qty_in || 0)))
     existingRow.photo_url = existingRow.photo_url || planRow.photo_url || ''
-    existingRow.allocations = [
-      ...(existingRow.allocations || []),
-      {
-        id: `alloc-saved-${planRow.id}`,
-        task_id: planRow.id,
-        member_email: planRow.assigned_to || '',
-        qty: String(planRow.allocated_qty || 0),
-        existing_status: planRow.status || 'queued',
-        locked_qty: Number(planRow.locked_qty || 0),
-      },
-    ]
+    if (planRow.status === 'queued') {
+      existingRow.allocations = [
+        ...(existingRow.allocations || []),
+        {
+          id: `alloc-saved-${planRow.id}`,
+          task_id: planRow.id,
+          member_email: planRow.assigned_to || '',
+          qty: String(planRow.allocated_qty || 0),
+          existing_status: planRow.status || 'queued',
+          locked_qty: Number(planRow.locked_qty || 0),
+        },
+      ]
+    } else {
+      existingRow.startedAllocations = [
+        ...(existingRow.startedAllocations || []),
+        {
+          id: `alloc-started-${planRow.id}`,
+          task_id: planRow.id,
+          member_email: planRow.assigned_to || '',
+          qty: String(planRow.allocated_qty || 0),
+          existing_status: planRow.status || 'queued',
+          locked_qty: Number(planRow.locked_qty || 0),
+        },
+      ]
+    }
 
     rowMap.set(key, existingRow)
   })
@@ -1201,8 +1215,8 @@ export default function QcReceivingPage() {
       ? currentPlanRows.some((item) => item.status !== 'queued' && item.status !== 'done')
       : selectedSourceStatus === 'started' || selectedSourceStatus === 'completed'
   const isSelectedSourceCompleted =
-    isArklineMode && arklinePlannerMode === 'product' ? false : selectedSourceStatus === 'completed'
-  const canEditSavedPlan = isArklineMode && arklinePlannerMode === 'product' ? true : !isSelectedSourceStarted
+    isArklineMode ? false : selectedSourceStatus === 'completed'
+  const canEditSavedPlan = isArklineMode ? true : !isSelectedSourceStarted
   const canAdjustAllocations = isArklineMode ? true : !isSelectedSourceCompleted
   const persistedTaskRows = new Map(
     currentPlanRows.map((item) => [isArklineMode ? getArklineTaskKey(item) : getTaskKey(item), item])
@@ -1667,17 +1681,11 @@ export default function QcReceivingPage() {
       }
 
       const invalidRow = modelRows.find((row) => {
-        const splitTotal = (row.allocations || []).reduce((sum, split) => sum + Number(split.qty || 0), 0)
         const hasInvalidSplit = (row.allocations || []).some(
           (split) => !String(split.member_email || '').trim() || Number(split.qty || 0) <= 0
         )
-        const requiresQcIn = arklinePlannerMode === 'po'
 
         if (!row.model_name.trim() || hasInvalidSplit) {
-          return true
-        }
-
-        if (requiresQcIn && (Number(row.qty_qc || 0) <= 0 || splitTotal > Number(row.qty_qc || 0))) {
           return true
         }
 
@@ -1685,11 +1693,7 @@ export default function QcReceivingPage() {
       })
 
       if (invalidRow) {
-        setError(
-          arklinePlannerMode === 'po'
-            ? 'Every Arkline row must have a product and QC qty. Allocated qty cannot be greater than QC In.'
-            : 'Every Arkline product allocation must have a product, inspector, and qty.'
-        )
+        setError('Every Arkline product allocation must have a product, inspector, and qty.')
         return
       }
 
@@ -1700,7 +1704,7 @@ export default function QcReceivingPage() {
 
       setSaving(true)
 
-      const activeTaskKeys = new Set()
+      const referencedPersistedTaskIds = new Set()
       const insertPayload = []
       const updatesForPersistedRows = []
       let blockingError = ''
@@ -1710,19 +1714,10 @@ export default function QcReceivingPage() {
           if (blockingError) return
           if (!split.member_email || Number(split.qty || 0) <= 0) return
 
-          const taskKey = getArklineTaskKey({
-            member_email: split.member_email,
-            po_id: arklinePlannerMode === 'po' ? String(selectedArklinePo?.id || '').trim().toUpperCase() || null : null,
-            arkline_po_item_id: arklinePlannerMode === 'po' ? row.source_id || selectedArklinePoItem?.id || null : null,
-            sku_induk:
-              arklinePlannerMode === 'po'
-                ? String(selectedArklinePoItem?.sku_induk || '').trim().toUpperCase() || null
-                : String(selectedArklineProduct?.parent_sku || selectedArklineProduct?.id || '').trim().toUpperCase() || null,
-          })
-
-          activeTaskKeys.add(taskKey)
-
-          const persistedRow = persistedTaskRows.get(taskKey) || null
+          const persistedRow = split.task_id ? currentPlanRows.find((item) => item.id === split.task_id) || null : null
+          if (persistedRow?.id) {
+            referencedPersistedTaskIds.add(persistedRow.id)
+          }
           const lockedQty = Number(persistedRow?.locked_qty ?? split.locked_qty ?? 0)
           const allocatedQty = Number(split.qty || 0)
 
@@ -1740,7 +1735,6 @@ export default function QcReceivingPage() {
                 : String(selectedArklineProduct?.parent_sku || selectedArklineProduct?.id || '').trim().toUpperCase() || null,
             assigned_to: String(split.member_email || '').trim().toLowerCase(),
             allocated_qty: allocatedQty,
-            qty_in: arklinePlannerMode === 'po' ? Number(row.qty_qc || 0) : Number(row.qty_qc || 0) || allocatedQty,
             model_name: row.model_name.trim(),
             photo_url: row.photo_url || null,
             locked_qty: lockedQty,
@@ -1772,9 +1766,7 @@ export default function QcReceivingPage() {
         return
       }
 
-      const queuedRowsToDelete = currentPlanRows.filter(
-        (item) => item.status === 'queued' && !activeTaskKeys.has(getArklineTaskKey(item))
-      )
+      const queuedRowsToDelete = currentPlanRows.filter((item) => item.status === 'queued' && !referencedPersistedTaskIds.has(item.id))
 
       if (queuedRowsToDelete.length) {
         const { error: deleteError } = await supabase
@@ -1878,9 +1870,9 @@ export default function QcReceivingPage() {
                 model_name: selectedArklinePoItem.model_name,
                 model_color: selectedArklinePoItem.model_color,
                 qty_in: Number(selectedArklinePoItem.qty_in || 0),
-                qty_qc: String(selectedArklinePoItem.qty_in || 0),
                 photo_url: selectedArklinePoItem.photo_url || '',
                 allocations: [],
+                startedAllocations: [],
               },
             ],
             matchingPlanRows
@@ -2258,24 +2250,6 @@ export default function QcReceivingPage() {
                         <p style={styles.infoText}>{row.model_color || 'ARKLINE PRODUCT'}</p>
                       </div>
 
-                      {arklinePlannerMode === 'po' ? (
-                        <div style={{ ...styles.field, ...(isMobileLayout ? { gridColumn: '1 / -1' } : {}) }}>
-                          <label style={styles.label}>QC In</label>
-                          <input
-                            type="number"
-                            min="0"
-                            value={row.qty_qc}
-                            onChange={(event) =>
-                              updateModelRow(row.id, {
-                                qty_qc: event.target.value,
-                              })
-                            }
-                            style={{ ...styles.input, ...(!canEditSavedPlan ? styles.inputDisabled : {}) }}
-                            disabled={!canEditSavedPlan}
-                          />
-                        </div>
-                      ) : null}
-
                     </div>
 
                     <div style={{ ...styles.field, ...styles.allocationWrap }}>
@@ -2347,14 +2321,7 @@ export default function QcReceivingPage() {
                               }}
                               onChange={(event) => updateAllocationSplit(row.id, split.id, { qty: event.target.value })}
                               onBlur={(event) => {
-                                const otherTotal = (row.allocations || [])
-                                  .filter((item) => item.id !== split.id)
-                                  .reduce((sum, item) => sum + Number(item.qty || 0), 0)
                                 const minAllowed = Number(split.locked_qty || 0)
-                                const maxAllowed =
-                                  arklinePlannerMode === 'po'
-                                    ? Math.max(minAllowed, Number(row.qty_qc || 0) - otherTotal)
-                                    : Number.POSITIVE_INFINITY
                                 const rawValue = event.target.value
 
                                 if (rawValue === '') {
@@ -2366,11 +2333,7 @@ export default function QcReceivingPage() {
 
                                 const nextValue = Number(rawValue || 0)
                                 updateAllocationSplit(row.id, split.id, {
-                                  qty: String(
-                                    arklinePlannerMode === 'po'
-                                      ? Math.max(minAllowed, Math.min(nextValue, maxAllowed))
-                                      : Math.max(minAllowed, nextValue)
-                                  ),
+                                  qty: String(Math.max(minAllowed, nextValue)),
                                 })
                               }}
                               style={{
@@ -2410,9 +2373,7 @@ export default function QcReceivingPage() {
                         ))}
 
                         <span style={styles.helperText}>
-                          {arklinePlannerMode === 'po'
-                            ? `Allocated: ${(row.allocations || []).reduce((sum, split) => sum + Number(split.qty || 0), 0)} / ${Number(row.qty_qc || 0)}`
-                            : `Allocated: ${(row.allocations || []).reduce((sum, split) => sum + Number(split.qty || 0), 0)}`}
+                          {`Allocated: ${(row.allocations || []).reduce((sum, split) => sum + Number(split.qty || 0), 0)}`}
                         </span>
                       </div>
                       ) : null}
@@ -2739,10 +2700,10 @@ export default function QcReceivingPage() {
             <div>
               <h3 style={styles.sectionTitle}>Model Allocation</h3>
               <p style={styles.sectionSubtitle}>
-                Each model row can be allocated to one or more inspectors. Allocated qty may be less than QC In, but it cannot be more.
+                Each model row can be allocated to one or more inspectors.
               </p>
               <p style={styles.sectionSubtitle}>
-                  After QC has started, you can still add the remaining allocation or increase open task allocation, but completed task rows stay locked.
+                  After QC has started, the running batch moves out of editable allocation. You can send a new batch again anytime.
               </p>
             </div>
             ) : null}

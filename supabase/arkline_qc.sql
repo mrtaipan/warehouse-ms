@@ -19,7 +19,6 @@ create table public.arkline_qc (
   sku_induk text null,
   assigned_to text not null,
   allocated_qty integer not null default 0 check (allocated_qty >= 0),
-  qty_in integer not null default 0 check (qty_in >= 0),
   qty_a integer not null default 0 check (qty_a >= 0),
   qty_b integer not null default 0 check (qty_b >= 0),
   qty_c integer not null default 0 check (qty_c >= 0),
