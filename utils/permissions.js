@@ -9,12 +9,17 @@ export const ROLE_OPTIONS = [
   { value: 'qc_staff', label: 'QC Staff' },
   { value: 'qc_inspector', label: 'QC Inspector' },
   { value: 'packing_staff', label: 'Packing Staff' },
+  { value: 'hrga_approver', label: 'HRGA Approver' },
   { value: 'arkline_staff', label: 'Arkline Staff' },
   { value: 'arkline_approver', label: 'Arkline Approver' },
 ]
 
 function hasAnyPermission(permissions, codes) {
   return codes.some((code) => permissions.includes(code))
+}
+
+export function canAccessPeopleManagement(role = '', isAdmin = false) {
+  return isAdmin || role === 'admin' || role === 'hrga_approver'
 }
 
 export function getArklineFeatureAccess(role, permissions = [], isAdmin = false) {
@@ -155,6 +160,8 @@ export function getAllowedMenus(role, permissions = [], isAdmin = false) {
     return {
       humanResources: true,
       humanResourcesHref: '/dashboard/human-resources',
+      myArklife: false,
+      myArklifeHref: '/dashboard/myarklife',
       arkline: true,
       arklineHref: '/dashboard/arkline',
       inbound: true,
@@ -174,8 +181,10 @@ export function getAllowedMenus(role, permissions = [], isAdmin = false) {
   const arklineAccess = getArklineFeatureAccess(role, permissions, isAdmin)
 
   return {
-    humanResources: false,
+    humanResources: canAccessPeopleManagement(role, isAdmin),
     humanResourcesHref: '/dashboard/human-resources',
+    myArklife: false,
+    myArklifeHref: '/dashboard/myarklife',
     arkline: arklineAccess.menu,
     arklineHref: arklineAccess.menuHref,
     inbound: false,
@@ -200,12 +209,13 @@ export function canAccessPath(pathname, role, permissions = [], isAdmin = false)
   }
 
   if (pathname === '/dashboard/human-resources' || pathname.startsWith('/dashboard/human-resources/')) {
-    return isAdmin || role === 'admin'
+    return canAccessPeopleManagement(role, isAdmin)
   }
 
   if (isAdmin || role === 'admin') return true
   if (pathname === '/dashboard') return true
   if (pathname.startsWith('/dashboard/profile')) return true
+  if (pathname === '/dashboard/myarklife' || pathname.startsWith('/dashboard/myarklife/')) return true
 
   const storageAccess = getStorageFeatureAccess(role, permissions, isAdmin)
   const qcAccess = getQcFeatureAccess(permissions, isAdmin, role)

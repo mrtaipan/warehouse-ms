@@ -1,0 +1,9 @@
+.pageCompact {
+  width: 100%;
+}
+
+@media (min-width: 1200px) {
+  .pageCompact {
+    zoom: 0.625;
+  }
+}

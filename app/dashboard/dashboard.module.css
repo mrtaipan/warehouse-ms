@@ -25,7 +25,15 @@
   gap: 12px;
   position: relative;
   z-index: 1;
-  max-width: 72ch;
+  max-width: 100%;
+}
+
+.heroTopRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
 }
 
 .heroKicker,
@@ -63,8 +71,23 @@
   color: #6b7280;
   font-size: 14px;
   line-height: 1.7;
-  max-width: 48ch;
+  max-width: 100%;
   font-style: italic;
+}
+
+.heroActionButton {
+  min-height: 42px;
+  padding: 0 18px;
+  border-radius: 999px;
+  border: 1px solid #dbe4ef;
+  background: #f8fafc;
+  color: #111827;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  font-weight: 700;
 }
 
 .contentGrid {
@@ -271,6 +294,10 @@
 @media (min-width: 900px) {
   .heroCard {
     padding: 26px;
+  }
+
+  .heroQuote {
+    white-space: nowrap;
   }
 
   .contentGrid {

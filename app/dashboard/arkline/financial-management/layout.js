@@ -8,7 +8,7 @@ import styles from '../arkline.module.css'
 export default function ArklineFinancialManagementLayout({ children }) {
   const pathname = usePathname()
 
-  const tabs = [{ href: '/dashboard/arkline/financial-management', label: 'Reimbursement Claim', exact: true }]
+  const tabs = [{ href: '/dashboard/arkline/financial-management', label: 'Financial Management', exact: true }]
 
   return (
     <div className={styles.directoryTabsPage}>

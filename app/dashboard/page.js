@@ -6,16 +6,16 @@ import { getProfileByAuthenticatedUser } from '@/utils/user-profiles'
 import styles from './dashboard.module.css'
 
 const DAILY_QUOTES = [
-  'Take it one step at a time â€” youâ€™re doing better than you think.',
+  "Take it one step at a time - you're doing better than you think.",
   'Consistency will take you further than motivation ever could.',
   'Not everything needs to be perfect to be meaningful.',
   'Some things fall into place when you stop forcing them.',
   'Do the work, and let the results speak for themselves.',
   'Growth is quiet, but it changes everything.',
-  'The right things will stay â€” the rest will fade.',
+  'The right things will stay - the rest will fade.',
   'Progress is built on the days you feel like doing nothing.',
   'A calm mind makes better decisions.',
-  'You donâ€™t have to rush whatâ€™s meant to last.',
+  "You don't have to rush what's meant to last.",
 ]
 
 function formatToday() {
@@ -101,6 +101,14 @@ function getUpcomingBirthdayLabel(offset) {
   return `H-${offset}`
 }
 
+function getTodayDateString() {
+  const now = new Date()
+  const year = now.getFullYear()
+  const month = String(now.getMonth() + 1).padStart(2, '0')
+  const day = String(now.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
 export default async function DashboardPage() {
   const supabase = await createClient()
   const {
@@ -127,8 +135,28 @@ export default async function DashboardPage() {
     profile?.display_name || user.user_metadata?.full_name || user.user_metadata?.name || user.email?.split('@')[0] || 'Team'
   const userLabel = formatDashboardName(rawUserLabel)
   const quoteOfTheDay = getDailyQuote(user.email)
+  const todayDate = getTodayDateString()
 
   const { data: announcementRows } = await supabase.from('dir_user_profiles').select('*')
+  const { data: broadcastRows, error: broadcastError } = await supabase
+    .from('hrd_announcement')
+    .select('id, title, message, start_date, end_date, is_active')
+    .eq('is_active', true)
+    .lte('start_date', todayDate)
+    .gte('end_date', todayDate)
+    .order('start_date', { ascending: false })
+
+  const activeBroadcasts = (broadcastError ? [] : broadcastRows || []).map((item) => ({
+    id: item.id,
+    title: item.title || 'Announcement',
+    message: item.message || '',
+    dateLabel:
+      item.start_date && item.end_date
+        ? item.start_date === item.end_date
+          ? item.start_date
+          : `${item.start_date} to ${item.end_date}`
+        : 'Active now',
+  }))
   const birthdayAnnouncements = (announcementRows || [])
     .map((person) => {
       const offset = getUpcomingBirthdayOffset(getBirthDateValue(person))
@@ -196,6 +224,7 @@ export default async function DashboardPage() {
   ].filter(Boolean)
 
   const focusList = quickActions.slice(0, 4)
+  const showMyArklifeButton = true
 
   if (!isAdmin) {
     return (
@@ -203,29 +232,60 @@ export default async function DashboardPage() {
         <section className={styles.heroCard}>
           <div className={styles.heroCopy}>
             <span className={styles.heroKicker}>{formatToday()}</span>
-            <h1 className={styles.heroTitle}>Hello {userLabel}!</h1>
+            <div className={styles.heroTopRow}>
+              <h1 className={styles.heroTitle}>Hello {userLabel}!</h1>
+              {showMyArklifeButton ? (
+                <Link href={menus.myArklifeHref} className={styles.heroActionButton}>
+                  MyARKLIFE
+                </Link>
+              ) : null}
+            </div>
             <p className={styles.heroSupport}>Glad to have you back.</p>
             <p className={styles.heroQuote}>&ldquo;{quoteOfTheDay}&rdquo;</p>
           </div>
         </section>
 
         <section className={`${styles.sectionCard} ${styles.compactCard}`}>
-          <p className={styles.sectionKicker}>Announcement</p>
+          <p className={styles.sectionKicker}>News &amp; Updates</p>
 
           <div className={styles.insightStack}>
-            {birthdayAnnouncements.length ? (
+            {activeBroadcasts.length ? (
+              activeBroadcasts.map((item) => (
+                <div key={item.id} className={styles.insightCard}>
+                  <span className={styles.insightLabel}>{item.dateLabel}</span>
+                  <strong
+                    className={styles.insightValue}
+                    style={{ fontSize: '22px', lineHeight: 1.2, textTransform: 'none' }}
+                  >
+                    {item.title}
+                  </strong>
+                  <p className={styles.insightNote}>{item.message || 'No Announcement'}</p>
+                </div>
+              ))
+            ) : birthdayAnnouncements.length ? (
               birthdayAnnouncements.map((item) => (
                 <div key={`${item.id}-${item.offset}`} className={styles.insightCard}>
-                  <strong className={styles.insightValue}>{item.name}</strong>
-                  <span className={styles.insightLabel}>{getUpcomingBirthdayLabel(item.offset)}</span>
-                  <p className={styles.insightNote}>Birthday reminder from People Directory.</p>
+                  <span className={styles.insightLabel}>
+                    {item.offset === 0 ? 'Happy Birthday' : 'Celebrating Soon'}
+                  </span>
+                  <strong
+                    className={styles.insightValue}
+                    style={{ fontSize: '22px', lineHeight: 1.2, textTransform: 'none' }}
+                  >
+                    {item.offset === 0 ? item.name : `Poke ${item.name}`}
+                  </strong>
+                  <p className={styles.insightNote}>
+                    {item.offset === 0
+                      ? 'Terima kasih telah ada. Semoga kamu selalu bersinar terang. Selamat ulang tahun!'
+                      : `${getUpcomingBirthdayLabel(item.offset)} birthday reminder from People Directory.`}
+                  </p>
                 </div>
               ))
             ) : (
               <div className={styles.insightCard}>
-                <strong className={styles.insightValue}>No birthday info</strong>
-                <span className={styles.insightLabel}>Next 3 Days</span>
-                <p className={styles.insightNote}>No employee birthday falls within the next three days yet.</p>
+                <strong className={styles.insightValue}>No Announcement</strong>
+                <span className={styles.insightLabel}>Today</span>
+                <p className={styles.insightNote}>No Announcement</p>
               </div>
             )}
           </div>
@@ -239,7 +299,14 @@ export default async function DashboardPage() {
       <section className={styles.heroCard}>
         <div className={styles.heroCopy}>
           <span className={styles.heroKicker}>{formatToday()}</span>
-          <h1 className={styles.heroTitle}>Hello {userLabel}!</h1>
+          <div className={styles.heroTopRow}>
+            <h1 className={styles.heroTitle}>Hello {userLabel}!</h1>
+            {showMyArklifeButton ? (
+              <Link href={menus.myArklifeHref} className={styles.heroActionButton}>
+                MyARKLIFE
+              </Link>
+            ) : null}
+          </div>
           <p className={styles.heroSupport}>Glad to have you back.</p>
           <p className={styles.heroQuote}>&ldquo;{quoteOfTheDay}&rdquo;</p>
         </div>
@@ -291,14 +358,27 @@ export default async function DashboardPage() {
 
         <aside className={styles.rightColumn}>
         <section className={`${styles.sectionCard} ${styles.compactCard}`}>
-          <p className={styles.sectionKicker}>Announcement</p>
+          <p className={styles.sectionKicker}>News &amp; Updates</p>
 
           <div className={styles.insightStack}>
-            {birthdayAnnouncements.length ? (
+            {activeBroadcasts.length ? (
+                activeBroadcasts.map((item) => (
+                  <div key={item.id} className={styles.insightCard}>
+                    <span className={styles.insightLabel}>{item.dateLabel}</span>
+                    <strong
+                      className={styles.insightValue}
+                      style={{ fontSize: '22px', lineHeight: 1.2, textTransform: 'none' }}
+                    >
+                      {item.title}
+                    </strong>
+                    <p className={styles.insightNote}>{item.message || 'No Announcement'}</p>
+                  </div>
+                ))
+              ) : birthdayAnnouncements.length ? (
                 birthdayAnnouncements.map((item) => (
                   <div key={`${item.id}-${item.offset}`} className={styles.insightCard}>
                     <span className={styles.insightLabel}>
-                      {item.offset === 0 ? 'Happy Birthday' : 'Celebrating Soon 🎂'}
+                      {item.offset === 0 ? 'Happy Birthday' : 'Celebrating Soon'}
                     </span>
                     <strong
                       className={styles.insightValue}
@@ -308,7 +388,7 @@ export default async function DashboardPage() {
                     </strong>
                     <p className={styles.insightNote}>
                       {item.offset === 0
-                        ? 'Terima kasih telah ada. Semoga kamu selalu bersinar terang. Selamat ulang tahun! ✨'
+                        ? 'Terima kasih telah ada. Semoga kamu selalu bersinar terang. Selamat ulang tahun!'
                         : `${getUpcomingBirthdayLabel(item.offset)} birthday reminder from People Directory.`}
                     </p>
                   </div>
@@ -336,3 +416,4 @@ export default async function DashboardPage() {
     </div>
   )
 }
+

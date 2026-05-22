@@ -1,0 +1,892 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.portalGrid {
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.sidebar,
+.mainPanel {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.profileCard,
+.sideCard,
+.giftCard,
+.reimbursementShell,
+.metricCard,
+.modalCard,
+.modalWideCard {
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  background: #ffffff;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.05);
+}
+
+.profileCard,
+.sideCard,
+.giftCard,
+.metricCard {
+  padding: 14px;
+}
+
+.profileTop {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 10px;
+  align-items: start;
+}
+
+.avatarWrap {
+  position: relative;
+  width: 46px;
+  height: 46px;
+}
+
+.avatar {
+  width: 46px;
+  height: 46px;
+  border-radius: 12px;
+  background: linear-gradient(180deg, #cbd5e1 0%, #94a3b8 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  font-weight: 800;
+  color: #0f172a;
+}
+
+.avatarStatus {
+  position: absolute;
+  right: -1px;
+  bottom: -1px;
+  width: 11px;
+  height: 11px;
+  border-radius: 999px;
+  background: #22c55e;
+  border: 2px solid #ffffff;
+}
+
+.profileInfo {
+  min-width: 0;
+}
+
+.profileName,
+.modalTitle,
+.reimbursementListTitle,
+.claimListTitle,
+.batchTitle {
+  margin: 0;
+  color: #0f172a;
+}
+
+.profileName {
+  font-size: 14px;
+  font-weight: 800;
+  line-height: 1.2;
+}
+
+.profileRole,
+.requestSubtitle,
+.detailHint,
+.emptyText,
+.claimRowMeta,
+.claimRowText,
+.label,
+.formNote,
+.batchText,
+.reimbursementListText,
+.giftText,
+.giftSubtext {
+  color: #64748b;
+}
+
+.profileRole {
+  margin: 2px 0 0;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.editButton,
+.inlineLink,
+.modalClose,
+.smallAction,
+.smallDanger,
+.managementLink,
+.fileChipRemove,
+.batchRowDelete {
+  border: none;
+  background: transparent;
+  padding: 0;
+  font: inherit;
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.editButton {
+  font-size: 11px;
+  font-weight: 700;
+  color: #475569;
+}
+
+.profileDetails {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid #e2e8f0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.detailRow {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.detailIcon {
+  width: 14px;
+  flex: 0 0 14px;
+  font-size: 11px;
+  margin-top: 2px;
+  color: #94a3b8;
+}
+
+.detailText {
+  margin: 0;
+  font-size: 12px;
+  color: #0f172a;
+}
+
+.detailHint {
+  margin: 2px 0 0;
+  font-size: 10px;
+}
+
+.sideHeader,
+.claimListHeader,
+.modalHeader,
+.formFooter,
+.batchEditorHeader,
+.batchSidebarHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.sideTitle,
+.sideTitleLight,
+.requestTitle,
+.metricValue,
+.claimRowTitle,
+.giftTitle {
+  margin: 0;
+  color: #0f172a;
+}
+
+.sideTitle,
+.sideTitleLight {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 800;
+}
+
+.sideTitleLight {
+  color: #64748b;
+}
+
+.inlineLink {
+  min-height: 30px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid #dbe4ef;
+  background: #f8fafc;
+  font-size: 10px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.requestList {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.requestItem {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 8px;
+  align-items: center;
+  padding: 10px;
+  border-radius: 11px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+}
+
+.requestIcon {
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #94a3b8;
+  font-size: 10px;
+}
+
+.requestTitle {
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.requestSubtitle {
+  margin: 1px 0 0;
+  font-size: 10px;
+}
+
+.statusBadge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 22px;
+  padding: 0 9px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.statusApproved {
+  background: #dcfce7;
+  color: #15803d;
+}
+
+.statusRejected {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+
+.statusPending {
+  background: #e2e8f0;
+  color: #475569;
+}
+
+.statusPaid {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+.giftBanner {
+  margin-top: 10px;
+  padding: 14px;
+  border-radius: 12px;
+  background: linear-gradient(180deg, #0f172a 0%, #1e293b 100%);
+  color: #ffffff;
+  min-height: 110px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.giftTitle {
+  font-size: 13px;
+  font-weight: 800;
+  color: #ffffff;
+}
+
+.giftText,
+.giftSubtext {
+  margin: 4px 0 0;
+  font-size: 10px;
+  line-height: 1.5;
+  color: rgba(255, 255, 255, 0.78);
+}
+
+.giftButton {
+  align-self: flex-start;
+  min-height: 26px;
+  padding: 0 10px;
+  border: none;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #0f172a;
+  font: inherit;
+  font-size: 10px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.giftButton:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.reimbursementShell {
+  padding: 18px;
+}
+
+.reimbursementListTitle {
+  font-size: 22px;
+  font-weight: 900;
+}
+
+.reimbursementListText {
+  margin: 4px 0 0;
+  font-size: 12px;
+}
+
+.claimSummaryRow {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.claimSummaryCard {
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.claimSummaryCard span {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #64748b;
+  font-weight: 800;
+}
+
+.claimSummaryCard strong {
+  font-size: 16px;
+  color: #0f172a;
+}
+
+.reimbursementForm,
+.modalForm {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.formGridTwo {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.label {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.input,
+.textarea,
+.select {
+  width: 100%;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  background: #ffffff;
+  color: #0f172a;
+  font: inherit;
+  font-size: 13px;
+  padding: 12px 14px;
+  outline: none;
+}
+
+.textarea {
+  min-height: 88px;
+  resize: vertical;
+}
+
+.hiddenInput {
+  display: none;
+}
+
+.formFooter {
+  align-items: flex-end;
+  padding-top: 8px;
+  border-top: 1px solid #e2e8f0;
+}
+
+.formNote {
+  font-size: 10px;
+  max-width: 240px;
+}
+
+.formActionsRow,
+.modalActions,
+.claimActions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.cancelButton,
+.primaryButton,
+.secondaryButton {
+  min-height: 40px;
+  border: none;
+  border-radius: 999px;
+  padding: 0 18px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.cancelButton {
+  background: transparent;
+  color: #334155;
+}
+
+.primaryButton {
+  background: #0f172a;
+  color: #ffffff;
+}
+
+.secondaryButton {
+  background: #e2e8f0;
+  color: #0f172a;
+}
+
+.batchActionButton {
+  min-height: 40px;
+  border: 1px solid #1d4ed8;
+  border-radius: 999px;
+  padding: 0 18px;
+  background: #2563eb;
+  color: #ffffff;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.claimListSection {
+  margin-top: 18px;
+  max-height: 264px;
+  overflow: hidden;
+}
+
+.claimList {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 264px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.claimRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: start;
+  padding: 14px;
+  border-radius: 12px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+}
+
+.claimRowTitle {
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.claimRowMeta,
+.claimRowText {
+  margin: 3px 0 0;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.claimRowSide {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.claimAmount {
+  font-size: 13px;
+  color: #0f172a;
+}
+
+.smallAction,
+.smallDanger {
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.smallAction {
+  color: #334155;
+}
+
+.smallDanger {
+  color: #b91c1c;
+}
+
+.metricsGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.metricCard {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 10px;
+  align-items: start;
+}
+
+.metricIcon {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #334155;
+}
+
+.metricSvg {
+  width: 16px;
+  height: 16px;
+  display: block;
+}
+
+.metricLabel {
+  margin: 0;
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-weight: 800;
+  color: #94a3b8;
+}
+
+.metricValue {
+  margin-top: 4px;
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.modalOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 18px;
+  background: rgba(15, 23, 42, 0.28);
+  backdrop-filter: blur(4px);
+}
+
+.modalCard,
+.modalWideCard {
+  width: min(100%, 520px);
+  padding: 20px;
+}
+
+.modalWideCard {
+  width: min(100%, 1040px);
+}
+
+.modalTitle {
+  font-size: 22px;
+  font-weight: 800;
+}
+
+.modalBody {
+  margin-top: 18px;
+}
+
+.formGridThree {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.batchLayout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) 320px;
+  gap: 18px;
+}
+
+.batchEditor,
+.batchSidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.batchEditor {
+  padding-right: 18px;
+}
+
+.batchSidebar {
+  padding-left: 18px;
+  border-left: 1px solid #e2e8f0;
+}
+
+.batchTitle {
+  font-size: 16px;
+  font-weight: 800;
+}
+
+.batchText {
+  margin: 4px 0 0;
+  font-size: 11px;
+}
+
+.batchList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.batchRowButton {
+  width: 100%;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  background: #f8fafc;
+  padding: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.batchRowButtonActive {
+  border-color: #94a3b8;
+  background: #ffffff;
+}
+
+.batchRowTitle,
+.batchRowMeta {
+  margin: 0;
+}
+
+.batchRowTitle {
+  font-size: 12px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.batchRowMeta {
+  margin-top: 2px;
+  font-size: 10px;
+  color: #64748b;
+}
+
+.batchRowSide {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+}
+
+.batchRowDelete {
+  font-size: 10px;
+  font-weight: 700;
+  color: #b91c1c;
+}
+
+.batchTotal {
+  font-size: 16px;
+  color: #0f172a;
+}
+
+.fileChipList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.fileChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 999px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  font-size: 11px;
+  color: #334155;
+}
+
+.fileChipRemove {
+  font-size: 11px;
+  font-weight: 700;
+  color: #b91c1c;
+}
+
+.cancelDangerButton {
+  min-height: 40px;
+  border: 1px solid #ef4444;
+  border-radius: 999px;
+  padding: 0 18px;
+  background: #fee2e2;
+  color: #b91c1c;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.cancelButton {
+  min-height: 40px;
+  border: 1px solid #ef4444;
+  border-radius: 999px;
+  padding: 0 18px;
+  background: #ffffff;
+  color: #b91c1c;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.detailStack {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.detailCard {
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.detailLabel {
+  margin: 0;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 800;
+  color: #64748b;
+}
+
+.detailSection {
+  margin-top: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.detailParagraph {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #334155;
+  white-space: pre-wrap;
+}
+
+.attachmentList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.attachmentButton {
+  width: 100%;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  background: #ffffff;
+  padding: 12px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  color: #0f172a;
+}
+
+.attachmentButton span {
+  font-size: 10px;
+  color: #64748b;
+}
+
+.emptyText,
+.errorText,
+.successText {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.errorText {
+  color: #b91c1c;
+}
+
+.successText {
+  color: #15803d;
+}
+
+@media (max-width: 1080px) {
+  .portalGrid,
+  .batchLayout {
+    grid-template-columns: 1fr;
+  }
+
+  .metricsGrid,
+  .claimSummaryRow {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 720px) {
+  .formGridTwo,
+  .formGridThree,
+  .metricsGrid,
+  .claimSummaryRow {
+    grid-template-columns: 1fr;
+  }
+
+  .claimRow {
+    grid-template-columns: 1fr;
+  }
+
+  .claimRowSide {
+    align-items: flex-start;
+  }
+}

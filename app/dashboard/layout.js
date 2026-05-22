@@ -36,7 +36,7 @@ export default async function DashboardLayout({ children }) {
     },
     { href: '/dashboard/packing-list', label: 'Packing List', icon: 'packing', show: menus.packing },
     { href: menus.storageHref, label: 'Storage', icon: 'storage', show: menus.storage },
-    { href: menus.humanResourcesHref, label: 'Human Resources', icon: 'human-resources', show: menus.humanResources },
+    { href: menus.humanResourcesHref, label: 'HRGA', icon: 'human-resources', show: menus.humanResources },
     { href: menus.arklineHref, label: 'ARKLINE', icon: 'arkline', show: menus.arkline, isWordmark: true },
   ].filter((item) => item.show)
 

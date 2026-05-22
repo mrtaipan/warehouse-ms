@@ -397,6 +397,40 @@ function formatNumber(value) {
   return new Intl.NumberFormat('en-US').format(numeric)
 }
 
+function buildQcGradeSummary(rows) {
+  return (rows || []).reduce(
+    (accumulator, row) => {
+      accumulator.qtyA += Number(row?.qty_a || 0)
+      accumulator.qtyB += Number(row?.qty_b || 0)
+      accumulator.qtyC += Number(row?.qty_c || 0)
+      return accumulator
+    },
+    { qtyA: 0, qtyB: 0, qtyC: 0 }
+  )
+}
+
+function buildRejectDetailSummary(rows) {
+  const grouped = new Map()
+
+  ;(rows || []).forEach((row) => {
+    const grade = String(row?.grade || '').trim().toUpperCase()
+    if (grade !== 'B' && grade !== 'C') return
+
+    const reason = String(row?.reason?.reason_name || row?.reason_name || '-').trim() || '-'
+    const size = String(row?.size || '-').trim().toUpperCase() || '-'
+    const key = `${grade}::${reason}::${size}`
+    const current = grouped.get(key) || { key, grade, reason, size, qty: 0 }
+    current.qty += Number(row?.qty || 0)
+    grouped.set(key, current)
+  })
+
+  return Array.from(grouped.values()).sort((left, right) => {
+    if (left.grade !== right.grade) return left.grade.localeCompare(right.grade)
+    if (left.reason !== right.reason) return left.reason.localeCompare(right.reason)
+    return left.size.localeCompare(right.size, undefined, { numeric: true })
+  })
+}
+
 function formatDateLabel(value) {
   const parsed = parseIso(value)
   if (!parsed) return '-'
@@ -906,7 +940,7 @@ export default function ArklineProgressOverviewPage() {
       notes: '',
     })
     try {
-      const [itemRows, sizeRows, receiptRows, updateRows, paymentRows, qcRows] = await Promise.all([
+      const [itemRows, sizeRows, receiptRows, updateRows, paymentRows, qcRowsRaw] = await Promise.all([
         loadOptionalRows(() =>
           supabase
             .from('arkline_po_items')
@@ -948,10 +982,39 @@ export default function ArklineProgressOverviewPage() {
             .from('arkline_qc')
             .select('id, assigned_to, allocated_qty, qty_a, qty_b, qty_c, model_name, status, started_at, finished_at, updated_at')
             .eq('po_id', selectedPoDetail.poId)
-            .or(`arkline_po_item_id.eq.${entry.id},sku_induk.eq.${entry.sku}`)
             .order('updated_at', { ascending: false })
         ),
       ])
+
+      const normalizedItemId = String(entry.id || '').trim()
+      const normalizedSku = String(entry.sku || '').trim().toUpperCase()
+      const qcRows = (qcRowsRaw || []).filter((row) => {
+        const rowItemId = String(row?.arkline_po_item_id || '').trim()
+        const rowSku = String(row?.sku_induk || '').trim().toUpperCase()
+        return (normalizedItemId && rowItemId === normalizedItemId) || (normalizedSku && rowSku === normalizedSku)
+      })
+      const qcTaskIds = qcRows.map((row) => row.id).filter(Boolean)
+      const rejectDetailRows = qcTaskIds.length
+        ? await loadOptionalRows(() =>
+            supabase
+              .from('arkline_qc_reject_details')
+              .select(
+                `
+                  id,
+                  arkline_qc_id,
+                  grade,
+                  size,
+                  qty,
+                  reason:reject_reason_id (
+                    id,
+                    reason_name
+                  )
+                `
+              )
+              .in('arkline_qc_id', qcTaskIds)
+              .order('created_at', { ascending: false })
+          )
+        : []
 
       const itemDetail = itemRows[0] || null
       const price = Number(itemDetail?.price || entry.price || 0)
@@ -997,6 +1060,7 @@ export default function ArklineProgressOverviewPage() {
         updates: updateRows,
         payments: paymentRows,
         qcRows,
+        qcRejectRows: rejectDetailRows,
         sizeBreakdown,
         financeSummary: {
           price,
@@ -1817,22 +1881,47 @@ export default function ArklineProgressOverviewPage() {
                 {productDetailSections.qcSampleReport ? (
                 <div className={styles.productDetailRows}>
                   {(selectedProductDetail.qcRows || []).length ? (
-                    selectedProductDetail.qcRows.map((row) => (
-                      <div key={row.id} className={styles.productDetailRow}>
-                        <div>
-                          <strong>{row.assigned_to || '-'}</strong>
-                          <span>{row.model_name || selectedProductDetail.productName || '-'}</span>
-                        </div>
-                        <div className={styles.productDetailRowMeta}>
-                          <strong>
-                            A {formatNumber(row.qty_a)} | B {formatNumber(row.qty_b)} | C {formatNumber(row.qty_c)}
-                          </strong>
-                          <span>
-                            {row.status || '-'} | Finished {formatDateTimeLabel(row.finished_at)}
-                          </span>
-                        </div>
-                      </div>
-                    ))
+                    <>
+                      {(() => {
+                        const qcSummary = buildQcGradeSummary(selectedProductDetail.qcRows || [])
+                        const rejectSummary = buildRejectDetailSummary(selectedProductDetail.qcRejectRows || [])
+
+                        return (
+                          <>
+                            <div className={`${styles.modalGrid} ${styles.compactModalGrid}`.trim()}>
+                              <div className={styles.modalMetric}>
+                                <span>Grade A</span>
+                                <strong>{formatNumber(qcSummary.qtyA)}</strong>
+                              </div>
+                              <div className={styles.modalMetric}>
+                                <span>Grade B</span>
+                                <strong>{formatNumber(qcSummary.qtyB)}</strong>
+                              </div>
+                              <div className={styles.modalMetric}>
+                                <span>Grade C</span>
+                                <strong>{formatNumber(qcSummary.qtyC)}</strong>
+                              </div>
+                            </div>
+                            {rejectSummary.length ? (
+                              rejectSummary.map((row) => (
+                                <div key={row.key} className={styles.productDetailRow}>
+                                  <div>
+                                    <strong>{row.reason}</strong>
+                                    <span>{`Grade ${row.grade} • Size ${row.size || '-'}`}</span>
+                                  </div>
+                                  <div className={styles.productDetailRowMeta}>
+                                    <strong>{formatNumber(row.qty)}</strong>
+                                    <span>Qty Reject</span>
+                                  </div>
+                                </div>
+                              ))
+                            ) : (
+                              <div className={styles.emptyMini}>No reject detail rows.</div>
+                            )}
+                          </>
+                        )
+                      })()}
+                    </>
                   ) : (
                     <div className={styles.emptyMini}>No QC report rows.</div>
                   )}

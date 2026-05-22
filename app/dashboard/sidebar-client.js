@@ -64,6 +64,14 @@ function NavIcon({ kind }) {
           <path d="M13.8 18c.4-1.8 1.6-2.9 3.1-3.4 1-.3 2-.3 3.1 0" />
         </svg>
       )
+    case 'myarklife':
+      return (
+        <svg {...commonProps}>
+          <path d="M12 20s-6.5-4.2-8.3-8.1C2.3 8.9 4 6 7 6c1.9 0 3 1 5 3 2-2 3.1-3 5-3 3 0 4.7 2.9 3.3 5.9C18.5 15.8 12 20 12 20Z" />
+          <path d="M10 11h4" />
+          <path d="M12 9v4" />
+        </svg>
+      )
     case 'arkline':
       return (
         <svg {...commonProps}>

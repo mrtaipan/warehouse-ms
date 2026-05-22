@@ -112,7 +112,11 @@ function buildEditableFields(people) {
   })
 }
 
-export default function PeopleDirectoryClient({ people, isAdmin }) {
+export function PeopleDirectoryEyeIcon() {
+  return <EyeIcon />
+}
+
+export default function PeopleDirectoryClient({ people, isAdmin, showSummary = true, triggerClassName = '', triggerStyle = null }) {
   const [open, setOpen] = useState(false)
   const [editingId, setEditingId] = useState('')
   const editableFields = useMemo(() => buildEditableFields(people), [people])
@@ -141,41 +145,66 @@ export default function PeopleDirectoryClient({ people, isAdmin }) {
 
   return (
     <>
-      <div className={styles.materialFulfillmentSummaryRow}>
-        <div className={styles.materialFulfillmentStat}>
-          <span>Number of People</span>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' }}>
-            <strong>{people.length}</strong>
-            <button
-              type="button"
-              onClick={() => setOpen(true)}
-              aria-label="View employee list"
-              style={{
-                width: '34px',
-                height: '34px',
-                borderRadius: '999px',
-                border: '1px solid #d1d5db',
-                background: '#ffffff',
-                color: '#111827',
-                display: 'inline-flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                cursor: 'pointer',
-              }}
-            >
-              <EyeIcon />
-            </button>
+      {showSummary ? (
+        <div className={styles.materialFulfillmentSummaryRow}>
+          <div className={styles.materialFulfillmentStat}>
+            <span>Number of People</span>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' }}>
+              <strong>{people.length}</strong>
+              <button
+                type="button"
+                onClick={() => setOpen(true)}
+                aria-label="View employee list"
+                style={{
+                  width: '34px',
+                  height: '34px',
+                  borderRadius: '999px',
+                  border: '1px solid #d1d5db',
+                  background: '#ffffff',
+                  color: '#111827',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  cursor: 'pointer',
+                }}
+              >
+                <EyeIcon />
+              </button>
+            </div>
+          </div>
+          <div className={styles.materialFulfillmentStat}>
+            <span>Male</span>
+            <strong>{maleCount}</strong>
+          </div>
+          <div className={styles.materialFulfillmentStat}>
+            <span>Female</span>
+            <strong>{femaleCount}</strong>
           </div>
         </div>
-        <div className={styles.materialFulfillmentStat}>
-          <span>Male</span>
-          <strong>{maleCount}</strong>
-        </div>
-        <div className={styles.materialFulfillmentStat}>
-          <span>Female</span>
-          <strong>{femaleCount}</strong>
-        </div>
-      </div>
+      ) : (
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          aria-label="View employee list"
+          className={triggerClassName}
+          style={
+            triggerStyle || {
+              width: '34px',
+              height: '34px',
+              borderRadius: '999px',
+              border: '1px solid #d1d5db',
+              background: '#ffffff',
+              color: '#111827',
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              cursor: 'pointer',
+            }
+          }
+        >
+          <EyeIcon />
+        </button>
+      )}
 
       {open ? (
         <div className={styles.modalOverlay} onClick={() => setOpen(false)}>

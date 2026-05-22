@@ -1109,7 +1109,7 @@
 }
 
 .reimbursementSummaryRow {
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
 }
 
 .reimbursementBoard {
@@ -1177,6 +1177,11 @@
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+.reimbursementCardRevision {
+  border-color: #fecaca;
+  background: #fff5f5;
 }
 
 .reimbursementCardTop {
@@ -1283,12 +1288,17 @@
   color: #166534;
 }
 
+.reimbursementStatusNEED_REVISION {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+
 .reimbursementBatchModal {
   width: min(100%, 1040px);
 }
 
 .reimbursementClaimModal {
-  width: min(100%, 920px);
+  width: min(100%, 1120px);
 }
 
 .reimbursementImageModal {
