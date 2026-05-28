@@ -93,6 +93,14 @@
   color: #ffffff;
 }
 
+.subnavLinkDisabled {
+  opacity: 0.44;
+  cursor: not-allowed;
+  pointer-events: none;
+  background: rgba(248, 250, 252, 0.72);
+  color: #94a3b8;
+}
+
 .directoryTabsPage {
   display: flex;
   flex-direction: column;
@@ -153,6 +161,12 @@
 .directoryTabLinkActive:hover {
   background: rgba(255, 255, 255, 0.92);
   color: #0f172a;
+}
+
+.directoryTabLinkDisabled {
+  opacity: 0.44;
+  cursor: not-allowed;
+  pointer-events: none;
 }
 
 .directoryTabLabel {
@@ -335,6 +349,13 @@
     0 34px 54px rgba(15, 23, 42, 0.22),
     0 12px 22px rgba(15, 23, 42, 0.14);
   color: #ffffff;
+}
+
+.overviewCardDisabled {
+  opacity: 0.52;
+  cursor: not-allowed;
+  pointer-events: none;
+  box-shadow: 0 10px 18px rgba(15, 23, 42, 0.04);
 }
 
 .overviewNumber {
@@ -1010,7 +1031,7 @@
 .modalCard {
   width: min(100%, 560px);
   max-height: calc(100vh - 40px);
-  overflow: auto;
+  overflow: hidden;
   background: #ffffff;
   border-radius: 24px;
   border: 1px solid #e2e8f0;
@@ -1021,10 +1042,42 @@
   gap: 18px;
 }
 
+.modalOverlayTall {
+  padding: 0;
+  align-items: center;
+}
+
+.modalCardTall {
+  max-height: 100vh;
+  height: 100vh;
+  border-radius: 28px;
+}
+
 .formGrid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 14px;
+}
+
+.directoryModalBody {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding-right: 6px;
+}
+
+.inputDisabled {
+  background: #f1f5f9;
+  border-color: #d7dee7;
+  color: #64748b;
+  cursor: not-allowed;
+}
+
+.inputDisabled:disabled {
+  opacity: 1;
+  background: #f1f5f9;
+  color: #64748b;
+  -webkit-text-fill-color: #64748b;
 }
 
 .fullSpan {
@@ -1298,7 +1351,10 @@
 }
 
 .reimbursementClaimModal {
-  width: min(100%, 1120px);
+  width: min(98vw, 1360px);
+  max-height: calc(100vh - 24px);
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .reimbursementImageModal {
@@ -1310,6 +1366,19 @@
   justify-content: space-between;
   gap: 16px;
   align-items: flex-start;
+}
+
+.reimbursementPreviewActions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.reimbursementPreviewButtonActive {
+  background: #0f172a;
+  border-color: #0f172a;
+  color: #ffffff;
 }
 
 .reimbursementDraftStack {
@@ -1653,6 +1722,10 @@
   align-items: center;
   justify-content: center;
   min-height: 320px;
+  max-height: 72vh;
+  overflow: hidden;
+  touch-action: none;
+  user-select: none;
 }
 
 .reimbursementImagePreview {
@@ -1660,6 +1733,9 @@
   max-height: 72vh;
   object-fit: contain;
   border-radius: 12px;
+  transform-origin: center center;
+  transition: transform 0.18s ease;
+  user-select: none;
 }
 
 @media (max-width: 1080px) {

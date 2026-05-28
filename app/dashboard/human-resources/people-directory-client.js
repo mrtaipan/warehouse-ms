@@ -60,6 +60,24 @@ function EditIcon() {
 }
 
 function formatFieldLabel(key) {
+  const customLabels = {
+    reimbursement_bank_name: 'Bank Name',
+    reimbursement_account_name: 'Account Name',
+    reimbursement_account_number: 'Account Number',
+  }
+
+  if (customLabels[key]) {
+    return customLabels[key]
+  }
+
+  if (String(key || '').toLowerCase() === 'nik') {
+    return 'KTP'
+  }
+
+  if (String(key || '').toLowerCase().includes('ktp')) {
+    return 'KTP'
+  }
+
   return key
     .replaceAll('_', ' ')
     .replace(/\b\w/g, (char) => char.toUpperCase())
@@ -73,7 +91,7 @@ function getFieldType(field) {
 
 function buildEditableFields(people) {
   const excluded = new Set(['id', 'authenticated_id', 'role', 'is_qc_active', 'qc_active_date', 'created_at', 'updated_at'])
-  const fallback = ['display_name', 'email', 'gender', 'reimbursement_bank_name', 'reimbursement_account_name', 'reimbursement_account_number']
+  const fallback = ['display_name', 'group', 'email', 'gender', 'reimbursement_bank_name', 'reimbursement_account_name', 'reimbursement_account_number']
   const discovered = new Set()
 
   for (const person of people) {
@@ -92,6 +110,7 @@ function buildEditableFields(people) {
   return fields.sort((a, b) => {
     const order = [
       'display_name',
+      'group',
       'email',
       'gender',
       'phone_number',
@@ -112,14 +131,44 @@ function buildEditableFields(people) {
   })
 }
 
+function buildGroupOptions(people) {
+  const defaults = ['ARKLINE', 'MOB', 'OI', 'WAREHOUSE', 'HQ']
+  const discovered = new Set()
+
+  for (const person of people) {
+    const value = String(person?.group || '').trim().toUpperCase()
+    if (value) {
+      discovered.add(value)
+    }
+  }
+
+  defaults.forEach((value) => discovered.add(value))
+  return Array.from(discovered).sort((a, b) => a.localeCompare(b))
+}
+
+function isKtpField(field) {
+  const normalized = String(field || '').trim().toLowerCase()
+  return normalized === 'nik' || normalized.includes('ktp')
+}
+
 export function PeopleDirectoryEyeIcon() {
   return <EyeIcon />
 }
 
-export default function PeopleDirectoryClient({ people, isAdmin, showSummary = true, triggerClassName = '', triggerStyle = null }) {
+export default function PeopleDirectoryClient({
+  people,
+  isAdmin,
+  showSummary = true,
+  triggerClassName = '',
+  triggerStyle = null,
+  triggerLabel = '',
+  openCreateOnTrigger = false,
+}) {
   const [open, setOpen] = useState(false)
   const [editingId, setEditingId] = useState('')
+  const [openedFromCreateShortcut, setOpenedFromCreateShortcut] = useState(false)
   const editableFields = useMemo(() => buildEditableFields(people), [people])
+  const groupOptions = useMemo(() => buildGroupOptions(people), [people])
 
   const maleCount = people.filter((person) => normalizeGenderValue(person.gender || person.jenis_kelamin) === 'Male').length
   const femaleCount = people.filter((person) => normalizeGenderValue(person.gender || person.jenis_kelamin) === 'Female').length
@@ -128,20 +177,173 @@ export default function PeopleDirectoryClient({ people, isAdmin, showSummary = t
   function renderField(field, value, disabled = false) {
     const fieldType = getFieldType(field)
     const defaultValue = value == null ? '' : String(value)
+    const isRequired = field === 'display_name' || field === 'group'
+
+    if (field === 'gender' || field === 'jenis_kelamin') {
+      return (
+        <label key={field} className={styles.field}>
+          <span className={styles.label}>{formatFieldLabel(field)}</span>
+          <select
+            className={`${styles.input} ${disabled ? styles.inputDisabled : ''}`.trim()}
+            name={field}
+            defaultValue={normalizeGenderValue(defaultValue)}
+            disabled={disabled}
+            required={isRequired}
+          >
+            <option value="" disabled>
+              Select gender
+            </option>
+            <option value="Male">Male</option>
+            <option value="Female">Female</option>
+          </select>
+        </label>
+      )
+    }
+
+    if (field === 'group') {
+      return (
+        <label key={field} className={styles.field}>
+          <span className={styles.label}>{formatFieldLabel(field)}</span>
+          <select
+            className={`${styles.input} ${disabled ? styles.inputDisabled : ''}`.trim()}
+            name={field}
+            defaultValue={defaultValue ? defaultValue.toUpperCase() : ''}
+            disabled={disabled}
+            required={isRequired}
+          >
+            <option value="" disabled>
+              Select group
+            </option>
+            {groupOptions.map((option) => (
+              <option key={option} value={option}>
+                {option}
+              </option>
+            ))}
+          </select>
+        </label>
+      )
+    }
+
     return (
       <label key={field} className={styles.field}>
         <span className={styles.label}>{formatFieldLabel(field)}</span>
         <input
-          className={styles.input}
+          className={`${styles.input} ${disabled ? styles.inputDisabled : ''}`.trim()}
           type={fieldType}
           name={field}
           defaultValue={defaultValue}
           disabled={disabled}
-          required={field === 'display_name'}
+          readOnly={disabled}
+          required={isRequired}
+          inputMode={isKtpField(field) ? 'numeric' : undefined}
+          pattern={isKtpField(field) ? '[0-9]*' : undefined}
+          style={field === 'birthplace' || field === 'tempat_lahir' ? { textTransform: 'uppercase' } : undefined}
         />
       </label>
     )
   }
+
+  function closeEditor() {
+    setEditingId('')
+    if (openedFromCreateShortcut) {
+      setOpen(false)
+      setOpenedFromCreateShortcut(false)
+    }
+  }
+
+  function handleTriggerClick() {
+    setOpen(true)
+    setOpenedFromCreateShortcut(openCreateOnTrigger)
+    setEditingId(openCreateOnTrigger ? '__new__' : '')
+  }
+
+  const editorModal =
+    editingId === '__new__' ? (
+      <div className={styles.modalOverlay} onClick={closeEditor}>
+        <div
+          className={styles.modalCard}
+          onClick={(event) => event.stopPropagation()}
+          style={{ width: 'min(96vw, 1180px)', maxHeight: 'calc(100vh - 48px)', overflow: 'auto' }}
+        >
+          <div className={styles.sectionHeader}>
+            <div>
+              <h3 className={styles.sectionTitle}>Add New Person</h3>
+            </div>
+            <button type="button" className={styles.secondaryButton} onClick={closeEditor}>
+              Cancel
+            </button>
+          </div>
+
+          <div className={styles.directoryModalBody}>
+            <form action={createEmployeeProfile} className={styles.formGrid}>
+              <label className={styles.field}>
+                <span className={styles.label}>People ID</span>
+                <input
+                  className={`${styles.input} ${styles.inputDisabled}`.trim()}
+                  type="text"
+                  value="Auto-generated from group + current month"
+                  disabled
+                  readOnly
+                />
+              </label>
+              {editableFields.map((field) => renderField(field, ''))}
+              <div className={`${styles.buttonRow} ${styles.fullSpan}`.trim()}>
+                <button type="submit" className={styles.primaryButton}>
+                  Save Person
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </div>
+    ) : editingPerson ? (
+      <div className={styles.modalOverlay} onClick={closeEditor}>
+        <div
+          className={styles.modalCard}
+          onClick={(event) => event.stopPropagation()}
+          style={{ width: 'min(96vw, 1180px)', maxHeight: 'calc(100vh - 48px)', overflow: 'auto' }}
+        >
+          <div className={styles.sectionHeader}>
+            <div>
+              <h3 className={styles.sectionTitle}>Edit Person</h3>
+            </div>
+            <button type="button" className={styles.secondaryButton} onClick={closeEditor}>
+              Cancel
+            </button>
+          </div>
+
+          <div className={styles.directoryModalBody}>
+            <form action={updateEmployeeProfile} className={styles.formGrid}>
+              <input type="hidden" name="profile_id" value={editingPerson.id} />
+              <label className={styles.field}>
+                <span className={styles.label}>Id</span>
+                <input className={`${styles.input} ${styles.inputDisabled}`.trim()} type="text" value={editingPerson.id || ''} disabled readOnly />
+              </label>
+              <label className={styles.field}>
+                <span className={styles.label}>Authenticated Id</span>
+                <input
+                  className={`${styles.input} ${styles.inputDisabled}`.trim()}
+                  type="text"
+                  value={editingPerson.authenticated_id || ''}
+                  disabled
+                  readOnly
+                />
+              </label>
+              <label className={styles.field}>
+                <span className={styles.label}>Role</span>
+                <input className={`${styles.input} ${styles.inputDisabled}`.trim()} type="text" value={editingPerson.role || ''} disabled readOnly />
+              </label>
+              {editableFields.map((field) => renderField(field, editingPerson[field], field === 'email'))}
+              <div className={`${styles.buttonRow} ${styles.fullSpan}`.trim()}>
+                <button type="submit" className={styles.primaryButton}>
+                  Save Changes
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </div>
+    ) : null
 
   return (
     <>
@@ -153,8 +355,8 @@ export default function PeopleDirectoryClient({ people, isAdmin, showSummary = t
               <strong>{people.length}</strong>
               <button
                 type="button"
-                onClick={() => setOpen(true)}
-                aria-label="View employee list"
+                onClick={handleTriggerClick}
+                aria-label="View people list"
                 style={{
                   width: '34px',
                   height: '34px',
@@ -184,8 +386,8 @@ export default function PeopleDirectoryClient({ people, isAdmin, showSummary = t
       ) : (
         <button
           type="button"
-          onClick={() => setOpen(true)}
-          aria-label="View employee list"
+          onClick={handleTriggerClick}
+          aria-label="View people list"
           className={triggerClassName}
           style={
             triggerStyle || {
@@ -202,16 +404,16 @@ export default function PeopleDirectoryClient({ people, isAdmin, showSummary = t
             }
           }
         >
-          <EyeIcon />
+          {triggerLabel ? <span>{triggerLabel}</span> : <EyeIcon />}
         </button>
       )}
 
-      {open ? (
+      {open && !editingId ? (
         <div className={styles.modalOverlay} onClick={() => setOpen(false)}>
           <div
             className={styles.modalCard}
             onClick={(event) => event.stopPropagation()}
-            style={{ width: 'min(100%, 1120px)' }}
+            style={{ width: 'min(96vw, 1520px)', maxHeight: 'calc(100vh - 48px)', overflow: 'auto' }}
           >
             <div className={styles.sectionHeader}>
               <div>
@@ -229,7 +431,7 @@ export default function PeopleDirectoryClient({ people, isAdmin, showSummary = t
               </div>
             </div>
 
-            <div className={styles.directoryListWrap}>
+            <div className={styles.directoryListWrap} style={{ flex: '1 1 auto', minHeight: 0, overflow: 'auto', paddingRight: '4px' }}>
               <div
                 className={styles.listHead}
                 style={{ gridTemplateColumns: '150px minmax(0, 1.2fr) minmax(0, 1fr) 130px auto' }}
@@ -269,73 +471,11 @@ export default function PeopleDirectoryClient({ people, isAdmin, showSummary = t
                 </div>
               ))}
             </div>
-
-            {editingId ? (
-              <div
-                style={{
-                  borderTop: '1px solid #e2e8f0',
-                  paddingTop: '18px',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: '16px',
-                }}
-              >
-                <div className={styles.sectionHeader}>
-                  <div>
-                    <h3 className={styles.sectionTitle}>{editingId === '__new__' ? 'Add New Employee' : 'Edit Employee'}</h3>
-                  </div>
-                  <button type="button" className={styles.secondaryButton} onClick={() => setEditingId('')}>
-                    Cancel
-                  </button>
-                </div>
-
-                {editingId === '__new__' ? (
-                  <form action={createEmployeeProfile} className={styles.formGrid}>
-                    <label className={styles.field}>
-                      <span className={styles.label}>Id</span>
-                      <input className={styles.input} type="text" name="id" placeholder="Enter employee id" required />
-                    </label>
-                    {editableFields.map((field) => renderField(field, ''))}
-                    <div className={`${styles.buttonRow} ${styles.fullSpan}`.trim()}>
-                      <button type="submit" className={styles.primaryButton}>
-                        Save Employee
-                      </button>
-                    </div>
-                  </form>
-                ) : editingPerson ? (
-                  <form action={updateEmployeeProfile} className={styles.formGrid}>
-                    <input type="hidden" name="profile_id" value={editingPerson.id} />
-                    <label className={styles.field}>
-                      <span className={styles.label}>Id</span>
-                      <input className={styles.input} type="text" value={editingPerson.id || ''} disabled readOnly />
-                    </label>
-                    <label className={styles.field}>
-                      <span className={styles.label}>Authenticated Id</span>
-                      <input
-                        className={styles.input}
-                        type="text"
-                        value={editingPerson.authenticated_id || ''}
-                        disabled
-                        readOnly
-                      />
-                    </label>
-                    <label className={styles.field}>
-                      <span className={styles.label}>Role</span>
-                      <input className={styles.input} type="text" value={editingPerson.role || ''} disabled readOnly />
-                    </label>
-                    {editableFields.map((field) => renderField(field, editingPerson[field]))}
-                    <div className={`${styles.buttonRow} ${styles.fullSpan}`.trim()}>
-                      <button type="submit" className={styles.primaryButton}>
-                        Save Changes
-                      </button>
-                    </div>
-                  </form>
-                ) : null}
-              </div>
-            ) : null}
           </div>
         </div>
       ) : null}
+
+      {open && editingId ? editorModal : null}
     </>
   )
 }

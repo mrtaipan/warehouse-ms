@@ -183,6 +183,28 @@
   gap: 10px;
 }
 
+.modalHeaderTitleWrap {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.leaveDaysBadge {
+  min-height: 24px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: #0f172a;
+  color: #ffffff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
 .sideTitle,
 .sideTitleLight,
 .requestTitle,
@@ -214,6 +236,28 @@
   font-size: 10px;
   font-weight: 700;
   color: #0f172a;
+}
+
+.leaveActionButton {
+  width: 30px;
+  height: 30px;
+  border: none;
+  border-radius: 12px;
+  background: #0f172a;
+  color: #ffffff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 10px 18px rgba(15, 23, 42, 0.14);
+}
+
+.leaveActionButton span {
+  display: block;
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1;
+  transform: translateY(-1px);
 }
 
 .requestList {
@@ -344,39 +388,56 @@
   font-weight: 900;
 }
 
+.claimHeaderMain {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  width: 100%;
+}
+
+.claimTitleBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.claimTitleRow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  margin-left: auto;
+}
+
 .reimbursementListText {
-  margin: 4px 0 0;
+  margin: 0;
   font-size: 12px;
 }
 
-.claimSummaryRow {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
-  margin-top: 14px;
-}
-
-.claimSummaryCard {
-  padding: 12px 14px;
-  border-radius: 12px;
-  background: #f8fafc;
-  border: 1px solid #e2e8f0;
+.claimSummaryInline {
+  min-height: 34px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: #0f172a;
+  color: #ffffff;
   display: flex;
-  flex-direction: column;
-  gap: 4px;
+  align-items: center;
+  gap: 8px;
 }
 
-.claimSummaryCard span {
-  font-size: 10px;
+.claimSummaryInline span {
+  font-size: 9px;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  color: #64748b;
+  color: rgba(255, 255, 255, 0.7);
   font-weight: 800;
 }
 
-.claimSummaryCard strong {
-  font-size: 16px;
-  color: #0f172a;
+.claimSummaryInline strong {
+  font-size: 14px;
+  color: #ffffff;
 }
 
 .reimbursementForm,
@@ -495,9 +556,9 @@
 }
 
 .claimList {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
   max-height: 264px;
   overflow-y: auto;
   padding-right: 4px;
@@ -505,43 +566,65 @@
 
 .claimRow {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 12px;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
   align-items: start;
-  padding: 14px;
-  border-radius: 12px;
+  padding: 8px;
+  border-radius: 9px;
   background: #f8fafc;
   border: 1px solid #e2e8f0;
 }
 
+.claimRowTop {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
 .claimRowTitle {
-  font-size: 13px;
+  font-size: 10px;
   font-weight: 800;
 }
 
 .claimRowMeta,
 .claimRowText {
   margin: 3px 0 0;
-  font-size: 11px;
-  line-height: 1.5;
+  font-size: 8px;
+  line-height: 1.35;
 }
 
 .claimRowSide {
   display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 8px;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  flex-wrap: wrap;
 }
 
 .claimAmount {
-  font-size: 13px;
+  font-size: 10px;
   color: #0f172a;
+  align-self: flex-start;
+  white-space: nowrap;
 }
 
 .smallAction,
 .smallDanger {
-  font-size: 11px;
+  font-size: 9px;
   font-weight: 700;
+}
+
+.claimActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.claimRowSide .statusBadge {
+  align-self: center;
 }
 
 .smallAction {
@@ -618,7 +701,11 @@
 }
 
 .modalWideCard {
-  width: min(100%, 1040px);
+  width: min(96vw, 1120px);
+  max-height: 92vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .modalTitle {
@@ -628,6 +715,11 @@
 
 .modalBody {
   margin-top: 18px;
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 4px;
 }
 
 .formGridThree {
@@ -640,6 +732,9 @@
   display: grid;
   grid-template-columns: minmax(0, 1.2fr) 320px;
   gap: 18px;
+  min-height: 0;
+  height: 100%;
+  align-items: start;
 }
 
 .batchEditor,
@@ -647,15 +742,21 @@
   display: flex;
   flex-direction: column;
   gap: 16px;
+  min-height: 0;
 }
 
 .batchEditor {
   padding-right: 18px;
+  overflow-y: auto;
+  padding-bottom: 20px;
+  min-height: 0;
 }
 
 .batchSidebar {
   padding-left: 18px;
   border-left: 1px solid #e2e8f0;
+  overflow: hidden;
+  max-height: 100%;
 }
 
 .batchTitle {
@@ -672,6 +773,12 @@
   display: flex;
   flex-direction: column;
   gap: 8px;
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: calc(88vh - 290px);
+  overflow-y: auto;
+  padding: 0 4px 14px 0;
+  scroll-padding-bottom: 14px;
 }
 
 .batchRowButton {
@@ -734,22 +841,110 @@
   gap: 8px;
 }
 
-.fileChip {
+.uploadPanel {
+  border: 1px dashed #cbd5e1;
+  border-radius: 14px;
+  background: #f8fafc;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.uploadPanelHeader {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.uploadPanelTitle,
+.uploadPanelMeta,
+.uploadEmptyText {
+  margin: 0;
+}
+
+.uploadPanelTitle {
+  font-size: 11px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.uploadPanelMeta,
+.uploadEmptyText {
+  margin-top: 3px;
+  font-size: 10px;
+  color: #64748b;
+  line-height: 1.45;
+}
+
+.uploadTileRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.uploadAddButton,
+.uploadFileTile {
+  min-height: 36px;
+  border-radius: 12px;
+  border: 1px solid #dbe4ee;
+  background: #ffffff;
+}
+
+.uploadAddButton {
+  width: 36px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font: inherit;
+  font-size: 20px;
+  font-weight: 700;
+  color: #2563eb;
+  cursor: pointer;
+}
+
+.uploadFileTile {
+  max-width: 220px;
+  padding: 0 10px;
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 10px;
-  border-radius: 999px;
-  background: #f8fafc;
-  border: 1px solid #e2e8f0;
+}
+
+.uploadFileName,
+.uploadFileLink {
+  min-width: 0;
   font-size: 11px;
   color: #334155;
+}
+
+.uploadFileName {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.uploadFileLink {
+  border: none;
+  background: transparent;
+  padding: 0;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .fileChipRemove {
   font-size: 11px;
   font-weight: 700;
   color: #b91c1c;
+  border: none;
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
 }
 
 .cancelDangerButton {
@@ -810,12 +1005,26 @@
   gap: 8px;
 }
 
+.leaveNotesSection {
+  gap: 6px;
+}
+
 .detailParagraph {
   margin: 0;
   font-size: 12px;
   line-height: 1.6;
   color: #334155;
   white-space: pre-wrap;
+}
+
+.leaveNotesLabel {
+  font-size: 9px;
+}
+
+.leaveNotesText {
+  font-size: 10px;
+  line-height: 1.45;
+  color: #475569;
 }
 
 .attachmentList {
@@ -846,6 +1055,13 @@
   color: #64748b;
 }
 
+.attachmentActions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
 .emptyText,
 .errorText,
 .successText {
@@ -869,7 +1085,7 @@
   }
 
   .metricsGrid,
-  .claimSummaryRow {
+  .claimList {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
@@ -878,7 +1094,7 @@
   .formGridTwo,
   .formGridThree,
   .metricsGrid,
-  .claimSummaryRow {
+  .claimList {
     grid-template-columns: 1fr;
   }
 
@@ -886,7 +1102,29 @@
     grid-template-columns: 1fr;
   }
 
+  .claimListHeader,
   .claimRowSide {
     align-items: flex-start;
+  }
+
+  .claimHeaderMain,
+  .claimTitleRow,
+  .claimRowTop {
+    width: 100%;
+    align-items: flex-start;
+    justify-content: space-between;
+  }
+
+  .claimHeaderMain {
+    flex-direction: column;
+  }
+
+  .claimTitleRow {
+    margin-left: 0;
+  }
+
+  .claimAmount,
+  .claimRowSide .statusBadge {
+    align-self: flex-start;
   }
 }

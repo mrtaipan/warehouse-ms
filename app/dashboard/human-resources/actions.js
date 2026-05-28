@@ -1,7 +1,10 @@
 'use server'
 
+'use server'
+
 import { revalidatePath } from 'next/cache'
 import { createClient } from '@/utils/supabase/server'
+import { createHrgaRequestLinkPayload, verifyHrgaRequestLinkPayload } from '@/utils/hrga-request-link'
 import { ADMIN_EMAIL } from '@/utils/permissions'
 import { getProfileByAuthenticatedUser } from '@/utils/user-profiles'
 
@@ -72,6 +75,187 @@ function refreshHrgaPages() {
   revalidatePath('/dashboard/myarklife')
 }
 
+export async function createPublicHoliday(formData) {
+  const { supabase, user } = await getActorContext()
+
+  if (!user || user.email?.toLowerCase() !== ADMIN_EMAIL) {
+    throw new Error('Only admin can add public holidays.')
+  }
+
+  const holidayDate = String(formData.get('holiday_date') || '').trim()
+  const holidayName = String(formData.get('holiday_name') || '').trim()
+  const notes = String(formData.get('notes') || '').trim()
+
+  if (!holidayDate || !holidayName) {
+    throw new Error('Holiday date and holiday name are required.')
+  }
+
+  const { error } = await supabase.from('hrga_public_holidays').insert({
+    holiday_date: holidayDate,
+    holiday_name: holidayName,
+    notes: notes || null,
+  })
+
+  if (error) {
+    throw new Error(error.message)
+  }
+
+  refreshHrgaPages()
+}
+
+export async function createPublicRequestLink(formData) {
+  const { supabase, user, isApprover } = await getActorContext()
+
+  if (!isApprover) {
+    throw new Error('Only HRGA can create public request links.')
+  }
+
+  const requestType = String(formData.get('request_type') || '').trim().toUpperCase()
+  const employeeProfileId = String(formData.get('employee_profile_id') || '').trim()
+
+  if (!['LEAVE', 'BIRTHDAY'].includes(requestType)) {
+    throw new Error('Request type is required.')
+  }
+
+  if (!employeeProfileId) {
+    throw new Error('Target person is required.')
+  }
+
+  const { data: targetProfile, error: profileError } = await supabase
+    .from('dir_user_profiles')
+    .select('id, authenticated_id, display_name, email')
+    .eq('id', employeeProfileId)
+    .maybeSingle()
+
+  if (profileError) {
+    throw new Error(profileError.message)
+  }
+
+  if (!targetProfile?.id) {
+    throw new Error('Selected person was not found.')
+  }
+
+  const expiresAt = Date.now() + 1000 * 60 * 60 * 24 * 30
+  const payload = {
+    type: requestType,
+    profile_id: targetProfile.id,
+    authenticated_id: targetProfile.authenticated_id || null,
+    display_name: targetProfile.display_name || targetProfile.email || 'Team',
+    email: targetProfile.email || null,
+    exp: expiresAt,
+  }
+  const { encoded, signature } = createHrgaRequestLinkPayload(payload)
+  const searchParams = new URLSearchParams({
+    payload: encoded,
+    sig: signature,
+  })
+
+  return {
+    linkPath: `/people-request?${searchParams.toString()}`,
+  }
+}
+
+export async function submitPublicRequest(formData) {
+  const payloadValue = String(formData.get('payload') || '').trim()
+  const signature = String(formData.get('sig') || '').trim()
+  const decoded = verifyHrgaRequestLinkPayload(payloadValue, signature)
+
+  if (!decoded) {
+    throw new Error('Invalid request link.')
+  }
+  const requestType = String(decoded.type || '').trim().toUpperCase()
+  if (!['LEAVE', 'BIRTHDAY'].includes(requestType)) {
+    throw new Error('Invalid request type.')
+  }
+
+  const client = await createClient()
+  const { data, error } = await client.rpc('submit_signed_hrga_request', {
+    p_payload: payloadValue,
+    p_signature: signature,
+    p_start_date: String(formData.get('start_date') || '').trim() || null,
+    p_end_date: String(formData.get('end_date') || '').trim() || null,
+    p_reason: String(formData.get('reason') || '').trim() || null,
+    p_request_date: String(formData.get('request_date') || '').trim() || null,
+    p_item_name: String(formData.get('item_name') || '').trim() || null,
+    p_size: String(formData.get('size') || '').trim().toUpperCase() || null,
+  })
+
+  if (error) {
+    throw new Error(error.message)
+  }
+
+  refreshHrgaPages()
+  return data || { success: true }
+}
+
+function normalizeEmployeeProfileField(key, value) {
+  const normalizedValue = String(value || '').trim()
+  if (!normalizedValue) {
+    return null
+  }
+
+  const normalizedKey = String(key || '').trim().toLowerCase()
+
+  if (normalizedKey === 'email') {
+    return normalizedValue.toLowerCase()
+  }
+
+  if (normalizedKey === 'gender' || normalizedKey === 'jenis_kelamin') {
+    const upperValue = normalizedValue.toUpperCase()
+    if (upperValue === 'MALE' || upperValue === 'M') return 'Male'
+    if (upperValue === 'FEMALE' || upperValue === 'F') return 'Female'
+    return normalizedValue
+  }
+
+  if (normalizedKey === 'birthplace' || normalizedKey === 'tempat_lahir') {
+    return normalizedValue.toUpperCase()
+  }
+
+  if (normalizedKey.includes('ktp') || normalizedKey === 'nik') {
+    const digitsOnly = normalizedValue.replace(/\D+/g, '')
+    return digitsOnly || null
+  }
+
+  return normalizedValue
+}
+
+function resolveEmployeeIdPrefix(groupValue) {
+  const normalizedGroup = String(groupValue || '').trim().toUpperCase()
+  if (!normalizedGroup) {
+    throw new Error('Group is required to generate Employee ID.')
+  }
+
+  return normalizedGroup === 'ARKLINE' ? '21' : '13'
+}
+
+async function generateEmployeeProfileId(supabase, groupValue) {
+  const prefix = resolveEmployeeIdPrefix(groupValue)
+  const now = new Date()
+  const yearMonth = `${String(now.getFullYear()).slice(-2)}${String(now.getMonth() + 1).padStart(2, '0')}`
+  const baseId = `${prefix}${yearMonth}`
+
+  const { data, error } = await supabase
+    .from('dir_user_profiles')
+    .select('id')
+    .ilike('id', `${baseId}%`)
+    .order('id', { ascending: false })
+    .limit(1)
+
+  if (error) {
+    throw new Error(error.message)
+  }
+
+  const lastId = String(data?.[0]?.id || '')
+  const lastSequence = lastId.startsWith(baseId) ? Number.parseInt(lastId.slice(baseId.length), 10) || 0 : 0
+  const nextSequence = lastSequence + 1
+
+  if (nextSequence > 999) {
+    throw new Error(`Employee ID sequence for ${baseId} is full.`)
+  }
+
+  return `${baseId}${String(nextSequence).padStart(3, '0')}`
+}
+
 export async function createEmployeeProfile(formData) {
   const { supabase, user } = await getActorContext()
 
@@ -79,20 +263,21 @@ export async function createEmployeeProfile(formData) {
     throw new Error('Only admin can add employee profiles.')
   }
 
-  const profileId = String(formData.get('id') || '').trim()
   const displayName = String(formData.get('display_name') || '').trim()
+  const groupValue = String(formData.get('group') || '').trim()
 
-  if (!profileId || !displayName) {
-    throw new Error('Id and display name are required.')
+  if (!displayName || !groupValue) {
+    throw new Error('Display name and group are required.')
   }
+
+  const profileId = await generateEmployeeProfileId(supabase, groupValue)
 
   const blockedFields = new Set(['authenticated_id', 'role', 'is_qc_active', 'qc_active_date', 'created_at', 'updated_at'])
   const payload = { id: profileId, authenticated_id: null, role: 'storage_staff', is_qc_active: false, qc_active_date: null }
 
   for (const [key, value] of formData.entries()) {
     if (blockedFields.has(key) || key === 'id') continue
-    const normalizedValue = String(value || '').trim()
-    payload[key] = normalizedValue ? (key === 'email' ? normalizedValue.toLowerCase() : normalizedValue) : null
+    payload[key] = normalizeEmployeeProfileField(key, value)
   }
 
   const { error } = await supabase.from('dir_user_profiles').insert(payload)
@@ -120,6 +305,7 @@ export async function updateEmployeeProfile(formData) {
   const blockedFields = new Set([
     'profile_id',
     'id',
+    'email',
     'authenticated_id',
     'role',
     'is_qc_active',
@@ -131,8 +317,7 @@ export async function updateEmployeeProfile(formData) {
 
   for (const [key, value] of formData.entries()) {
     if (blockedFields.has(key)) continue
-    const normalizedValue = String(value || '').trim()
-    payload[key] = normalizedValue ? (key === 'email' ? normalizedValue.toLowerCase() : normalizedValue) : null
+    payload[key] = normalizeEmployeeProfileField(key, value)
   }
 
   const { error } = await supabase.from('dir_user_profiles').update(payload).eq('id', profileId)
@@ -243,16 +428,25 @@ export async function deleteAnnouncementBroadcast(formData) {
 export async function submitLeaveRequest(formData) {
   const { supabase, user, profile } = await getActorContext()
 
-  const requestType = String(formData.get('request_type') || '').trim().toUpperCase()
+  const requestType = 'LEAVE'
   const startDate = String(formData.get('start_date') || '').trim()
   const endDate = String(formData.get('end_date') || '').trim()
   const reason = String(formData.get('reason') || '').trim()
+  const today = new Date().toISOString().slice(0, 10)
 
-  if (!['LEAVE', 'PERMIT'].includes(requestType) || !startDate || !endDate || !reason) {
-    throw new Error('Request type, dates, and reason are required.')
+  if (!startDate || !endDate || !reason) {
+    throw new Error('Dates and reason are required.')
   }
 
-  const { error } = await supabase.from('hrd_leave_requests').insert({
+  if (startDate < today || endDate < today) {
+    throw new Error('Leave request date cannot be earlier than today.')
+  }
+
+  if (endDate < startDate) {
+    throw new Error('End date cannot be earlier than start date.')
+  }
+
+  const { error } = await supabase.from('hrga_leave_requests').insert({
     employee_authenticated_id: user.id,
     employee_name_snapshot:
       profile?.display_name || user.user_metadata?.full_name || user.user_metadata?.name || user.email?.split('@')[0] || 'Team',
@@ -292,7 +486,7 @@ export async function submitBirthdayGiftRequest(formData) {
   }
 
   const { data: existingRows, error: existingError } = await supabase
-    .from('hrd_birthday_gift_requests')
+    .from('hrga_birthday_gift')
     .select('id')
     .eq('employee_authenticated_id', user.id)
     .gte('request_date', formatDateOnly(birthdayWindow.birthday))
@@ -312,7 +506,7 @@ export async function submitBirthdayGiftRequest(formData) {
     noteLines.push(`Size: ${size}`)
   }
 
-  const { error } = await supabase.from('hrd_birthday_gift_requests').insert({
+  const { error } = await supabase.from('hrga_birthday_gift').insert({
     employee_authenticated_id: user.id,
     employee_name_snapshot:
       profile?.display_name || user.user_metadata?.full_name || user.user_metadata?.name || user.email?.split('@')[0] || 'Team',
@@ -344,11 +538,11 @@ export async function approveLeaveRequest(formData) {
   }
 
   const { error } = await supabase
-    .from('hrd_leave_requests')
+    .from('hrga_leave_requests')
     .update({
       status: nextStatus,
       approved_at: new Date().toISOString(),
-      approved_by: String(user.email || '').toLowerCase(),
+      approved_by: user.id,
     })
     .eq('id', requestId)
 
@@ -374,11 +568,11 @@ export async function approveBirthdayGiftRequest(formData) {
   }
 
   const { error } = await supabase
-    .from('hrd_birthday_gift_requests')
+    .from('hrga_birthday_gift')
     .update({
       status: nextStatus,
       approved_at: new Date().toISOString(),
-      approved_by: String(user.email || '').toLowerCase(),
+      approved_by: user.id,
     })
     .eq('id', requestId)
 

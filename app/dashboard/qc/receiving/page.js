@@ -1557,6 +1557,18 @@ export default function QcReceivingPage() {
     return canAdjustAllocations && Number(split.locked_qty || 0) <= 0 && (!split.existing_status || split.existing_status === 'queued')
   }
 
+  function isDoneAllocation(split) {
+    return String(split?.existing_status || '').trim().toLowerCase() === 'done'
+  }
+
+  function getVisibleAllocations(row) {
+    return (row.allocations || []).filter((split) => !isDoneAllocation(split))
+  }
+
+  function getVisibleStartedAllocations(row) {
+    return (row.startedAllocations || []).filter((split) => !isDoneAllocation(split))
+  }
+
   function removeModelRow(rowId) {
     if (typeof window !== 'undefined') {
       const confirmed = window.confirm('Remove this model row?')
@@ -2265,7 +2277,7 @@ export default function QcReceivingPage() {
                       </div>
                       {isAllocationRowOpen(row) ? (
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                        {(row.startedAllocations || []).length ? (
+                        {getVisibleStartedAllocations(row).length ? (
                           <>
                             <span style={{ ...styles.helperText, fontWeight: '700', color: '#6b7280' }}>Started Batch</span>
                             <div style={{ ...allocationGridStyle, gap: '8px' }}>
@@ -2273,7 +2285,7 @@ export default function QcReceivingPage() {
                               <span style={{ ...styles.helperText, fontWeight: '700', color: '#111827' }}>Qty</span>
                               <span style={{ ...styles.helperText, fontWeight: '700', color: '#111827' }}>Status</span>
                             </div>
-                            {(row.startedAllocations || []).map((split) => (
+                            {getVisibleStartedAllocations(row).map((split) => (
                               <div key={split.id} style={allocationGridStyle}>
                                 <div style={{ ...styles.readonlyBox, minHeight: '32px', fontSize: '11px', padding: '0 8px' }}>
                                   {qcMembers.find((member) => member.email === split.member_email)?.display_name || split.member_email || '-'}
@@ -2286,14 +2298,14 @@ export default function QcReceivingPage() {
                         ) : null}
 
                         <span style={{ ...styles.helperText, fontWeight: '700', color: '#6b7280' }}>New / Queued Batch</span>
-                        {(row.allocations || []).length ? (
+                        {getVisibleAllocations(row).length ? (
                           <div style={{ ...allocationGridStyle, gap: '8px' }}>
                             <span style={{ ...styles.helperText, fontWeight: '700', color: '#111827' }}>Inspector</span>
                             <span style={{ ...styles.helperText, fontWeight: '700', color: '#111827' }}>Qty</span>
                             <span style={{ ...styles.helperText, fontWeight: '700', color: '#111827' }}>Action</span>
                           </div>
                         ) : null}
-                        {(row.allocations || []).map((split) => (
+                        {getVisibleAllocations(row).map((split) => (
                           <div key={split.id} style={allocationGridStyle}>
                             <select
                               value={split.member_email || ''}
@@ -2373,7 +2385,7 @@ export default function QcReceivingPage() {
                         ))}
 
                         <span style={styles.helperText}>
-                          {`Allocated: ${(row.allocations || []).reduce((sum, split) => sum + Number(split.qty || 0), 0)}`}
+                          {`Allocated: ${getVisibleAllocations(row).reduce((sum, split) => sum + Number(split.qty || 0), 0)}`}
                         </span>
                       </div>
                       ) : null}
@@ -2574,14 +2586,14 @@ export default function QcReceivingPage() {
                   </div>
                   {isAllocationRowOpen(row) ? (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                    {(row.allocations || []).length ? (
+                    {getVisibleAllocations(row).length ? (
                       <div style={{ ...allocationGridStyle, gap: '8px' }}>
                         <span style={{ ...styles.helperText, fontWeight: '700', color: '#111827' }}>Inspector</span>
                         <span style={{ ...styles.helperText, fontWeight: '700', color: '#111827' }}>Qty</span>
                         <span style={{ ...styles.helperText, fontWeight: '700', color: '#111827' }}>Action</span>
                       </div>
                     ) : null}
-                    {(row.allocations || []).map((split) => (
+                    {getVisibleAllocations(row).map((split) => (
                       <div key={split.id} style={allocationGridStyle}>
                         <select
                           value={split.member_email || ''}
@@ -2675,7 +2687,7 @@ export default function QcReceivingPage() {
                       </div>
                     ))}
                     <span style={styles.helperText}>
-                      Allocated: {(row.allocations || []).reduce((sum, split) => sum + Number(split.qty || 0), 0)} / {Number(row.qty_qc || 0)}
+                      Allocated: {getVisibleAllocations(row).reduce((sum, split) => sum + Number(split.qty || 0), 0)} / {Number(row.qty_qc || 0)}
                     </span>
                   </div>
                   ) : null}

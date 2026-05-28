@@ -10,8 +10,8 @@ export const ROLE_OPTIONS = [
   { value: 'qc_inspector', label: 'QC Inspector' },
   { value: 'packing_staff', label: 'Packing Staff' },
   { value: 'hrga_approver', label: 'HRGA Approver' },
-  { value: 'arkline_staff', label: 'Arkline Staff' },
-  { value: 'arkline_approver', label: 'Arkline Approver' },
+  { value: 'arkline_viewer', label: 'Arkline Viewer' },
+  { value: 'arkline_purchaser', label: 'Arkline Purchaser' },
 ]
 
 function hasAnyPermission(permissions, codes) {
@@ -28,6 +28,14 @@ export function getArklineFeatureAccess(role, permissions = [], isAdmin = false)
       menu: true,
       menuHref: '/dashboard/arkline',
       overview: true,
+      directory: true,
+      directoryBom: true,
+      directoryCreate: true,
+      progressOverview: true,
+      progressKanban: true,
+      progressCalendar: true,
+      progressProducts: true,
+      productionPlanning: true,
       financialManagement: true,
       reimbursementView: true,
       reimbursementSubmit: true,
@@ -36,22 +44,46 @@ export function getArklineFeatureAccess(role, permissions = [], isAdmin = false)
     }
   }
 
-  const reimbursementView = hasAnyPermission(permissions, [
-    'arkline.finance.reimbursement.view',
-    'arkline.finance.reimbursement.submit',
-    'arkline.finance.reimbursement.approve',
-    'arkline.finance.reimbursement.pay',
+  const overview = permissions.includes('arkline.overview.view')
+  const directory = hasAnyPermission(permissions, ['arkline.directory.view', 'arkline.directory.bom.view', 'arkline.directory.create'])
+  const directoryBom = permissions.includes('arkline.directory.bom.view')
+  const directoryCreate = permissions.includes('arkline.directory.create')
+  const progressKanban = permissions.includes('arkline.progress.kanban.view')
+  const progressCalendar = permissions.includes('arkline.progress.calendar.view')
+  const progressProducts = permissions.includes('arkline.progress.products.view')
+  const progressOverview = hasAnyPermission(permissions, [
+    'arkline.progress.view',
+    'arkline.progress.kanban.view',
+    'arkline.progress.calendar.view',
+    'arkline.progress.products.view',
   ])
-  const reimbursementSubmit = permissions.includes('arkline.finance.reimbursement.submit')
-  const reimbursementApprove = permissions.includes('arkline.finance.reimbursement.approve')
-  const reimbursementPay = permissions.includes('arkline.finance.reimbursement.pay')
-  const financialManagement = reimbursementView
-  const menu = financialManagement
+  const productionPlanning = permissions.includes('arkline.production-planning.view')
+  const financialManagement = permissions.includes('arkline.financial-management.view')
+  const reimbursementView = false
+  const reimbursementSubmit = false
+  const reimbursementApprove = false
+  const reimbursementPay = false
+  const menu = overview || directory || progressOverview || productionPlanning || financialManagement
+
+  let menuHref = '/dashboard'
+  if (overview) menuHref = '/dashboard/arkline'
+  else if (directory) menuHref = '/dashboard/arkline/directory'
+  else if (progressOverview) menuHref = '/dashboard/arkline/progress-overview'
+  else if (productionPlanning) menuHref = '/dashboard/arkline/production-planning'
+  else if (financialManagement) menuHref = '/dashboard/arkline/financial-management'
 
   return {
     menu,
-    menuHref: financialManagement ? '/dashboard/arkline/financial-management' : '/dashboard',
-    overview: menu,
+    menuHref,
+    overview,
+    directory,
+    directoryBom,
+    directoryCreate,
+    progressOverview,
+    progressKanban,
+    progressCalendar,
+    progressProducts,
+    productionPlanning,
     financialManagement,
     reimbursementView,
     reimbursementSubmit,
@@ -243,6 +275,10 @@ export function canAccessPath(pathname, role, permissions = [], isAdmin = false)
 
   if (pathname.startsWith('/dashboard/packing-list')) return false
   if (pathname === '/dashboard/arkline' || pathname.startsWith('/dashboard/arkline?')) return arklineAccess.overview
+  if (pathname === '/dashboard/arkline/directory' || pathname.startsWith('/dashboard/arkline/directory?')) return arklineAccess.directory
+  if (pathname.startsWith('/dashboard/arkline/directory/bom')) return arklineAccess.directoryBom
+  if (pathname.startsWith('/dashboard/arkline/progress-overview')) return arklineAccess.progressOverview
+  if (pathname.startsWith('/dashboard/arkline/production-planning')) return arklineAccess.productionPlanning
   if (pathname.startsWith('/dashboard/arkline/financial-management')) return arklineAccess.financialManagement
   if (pathname.startsWith('/dashboard/arkline')) return false
 

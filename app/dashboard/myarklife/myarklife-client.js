@@ -36,6 +36,51 @@ function formatLongDate(value) {
   }).format(parsed)
 }
 
+function getTodayInputValue() {
+  return new Date().toISOString().slice(0, 10)
+}
+
+function toDateOnlyValue(value) {
+  if (!value) return null
+  const [year, month, day] = String(value).split('-').map(Number)
+  if (!year || !month || !day) return null
+  return new Date(year, month - 1, day)
+}
+
+function calculateLeaveWorkingDays(startDateValue, endDateValue, publicHolidayRows = []) {
+  const startDate = toDateOnlyValue(startDateValue)
+  const endDate = toDateOnlyValue(endDateValue)
+
+  if (!startDate || !endDate || endDate < startDate) {
+    return null
+  }
+
+  const holidaySet = new Set(
+    (publicHolidayRows || [])
+      .map((item) => String(item?.holiday_date || '').trim())
+      .filter(Boolean),
+  )
+
+  let totalDays = 0
+  const cursor = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate())
+  const last = new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate())
+
+  while (cursor <= last) {
+    const dayOfWeek = cursor.getDay()
+    const iso = `${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, '0')}-${String(cursor.getDate()).padStart(2, '0')}`
+    const isWeekend = dayOfWeek === 0 || dayOfWeek === 6
+    const isPublicHoliday = holidaySet.has(iso)
+
+    if (!isWeekend && !isPublicHoliday) {
+      totalDays += 1
+    }
+
+    cursor.setDate(cursor.getDate() + 1)
+  }
+
+  return totalDays
+}
+
 function formatNumber(value) {
   if (value == null || value === '') return '-'
   const parsed = Number(value)
@@ -129,12 +174,15 @@ function getBirthdayClaimState(profile, giftRows) {
   }
 }
 
-function ModalFrame({ title, children, onClose }) {
+function ModalFrame({ title, headerAddon = null, children, onClose }) {
   return (
     <div className={styles.modalOverlay} onClick={onClose}>
       <div className={styles.modalCard} onClick={(event) => event.stopPropagation()}>
         <div className={styles.modalHeader}>
-          <h2 className={styles.modalTitle}>{title}</h2>
+          <div className={styles.modalHeaderTitleWrap}>
+            <h2 className={styles.modalTitle}>{title}</h2>
+            {headerAddon}
+          </div>
         </div>
         <div className={styles.modalBody}>{children}</div>
       </div>
@@ -206,12 +254,16 @@ function MetricCard({ icon, label, value }) {
   )
 }
 
-export default function MyArklifeClient({ profile, leaveRows, giftRows, leaveMissing, giftMissing, canOpenPeopleManagement }) {
+export default function MyArklifeClient({ profile, leaveRows, giftRows, publicHolidayRows, leaveMissing, giftMissing, canOpenPeopleManagement }) {
   const [openLeaveModal, setOpenLeaveModal] = useState(false)
   const [openGiftModal, setOpenGiftModal] = useState(false)
   const [openProfileModal, setOpenProfileModal] = useState(false)
   const [pending, startTransition] = useTransition()
-  const [error, setError] = useState('')
+  const [profileError, setProfileError] = useState('')
+  const [leaveError, setLeaveError] = useState('')
+  const [giftError, setGiftError] = useState('')
+  const [leaveStartDate, setLeaveStartDate] = useState('')
+  const [leaveEndDate, setLeaveEndDate] = useState('')
 
   const displayName = toProperCase(profile?.display_name || profile?.email?.split('@')[0] || 'Team Member')
   const leaveCount = Array.isArray(leaveRows) ? leaveRows.length : 0
@@ -222,15 +274,21 @@ export default function MyArklifeClient({ profile, leaveRows, giftRows, leaveMis
   const bankCaption = profile?.reimbursement_account_number ? `Ending in ${profile.reimbursement_account_number.slice(-4)}` : 'Update in profile'
   const birthdayClaimState = useMemo(() => getBirthdayClaimState(profile, giftRows), [profile, giftRows])
   const leaveBalance = Math.max(0, Number(profile?.leave_allocation || 0) - Number(profile?.leave_used || 0))
+  const todayInputValue = getTodayInputValue()
+  const leaveWorkingDays = useMemo(
+    () => calculateLeaveWorkingDays(leaveStartDate, leaveEndDate, publicHolidayRows),
+    [leaveEndDate, leaveStartDate, publicHolidayRows],
+  )
 
-  async function handleServerAction(action, formData, onSuccess) {
-    setError('')
+  async function handleServerAction(action, formData, { onSuccess, setModalError, clearOthers = [] } = {}) {
+    setModalError?.('')
+    clearOthers.forEach((clearError) => clearError(''))
     startTransition(async () => {
       try {
         await action(formData)
         onSuccess?.()
       } catch (actionError) {
-        setError(actionError?.message || 'Something went wrong.')
+        setModalError?.(actionError?.message || 'Something went wrong.')
       }
     })
   }
@@ -247,7 +305,7 @@ export default function MyArklifeClient({ profile, leaveRows, giftRows, leaveMis
               </div>
               <div className={styles.profileInfo}>
                 <h2 className={styles.profileName}>{displayName}</h2>
-                <p className={styles.profileRole}>{toProperCase(profile?.role || 'Employee')}</p>
+                <p className={styles.profileRole}>{toProperCase(profile?.group || 'Employee')}</p>
               </div>
               <button type="button" className={styles.editButton} onClick={() => setOpenProfileModal(true)} aria-label="Edit profile">
                 Edit
@@ -272,8 +330,14 @@ export default function MyArklifeClient({ profile, leaveRows, giftRows, leaveMis
           <section className={styles.sideCard}>
             <div className={styles.sideHeader}>
               <h3 className={styles.sideTitle}>Leave Requests</h3>
-              <button type="button" className={styles.inlineLink} onClick={() => setOpenLeaveModal(true)}>
-                New Request
+              <button
+                type="button"
+                className={styles.leaveActionButton}
+                onClick={() => setOpenLeaveModal(true)}
+                aria-label="New request"
+                title="New request"
+              >
+                <span>+</span>
               </button>
             </div>
 
@@ -317,15 +381,17 @@ export default function MyArklifeClient({ profile, leaveRows, giftRows, leaveMis
         <MetricCard icon={<BriefcaseIcon />} label="Working Days" value={formatNumber(profile?.working_days || 0)} />
       </section>
 
-      {error ? <p className={styles.errorText}>{error}</p> : null}
-
       {openProfileModal ? (
         <ModalFrame title="Edit Profile" onClose={() => setOpenProfileModal(false)}>
           <form
             className={styles.modalForm}
             action={(formData) =>
-              handleServerAction(updateOwnProfile, formData, () => {
-                setOpenProfileModal(false)
+              handleServerAction(updateOwnProfile, formData, {
+                onSuccess: () => {
+                  setOpenProfileModal(false)
+                },
+                setModalError: setProfileError,
+                clearOthers: [setLeaveError, setGiftError],
               })
             }
           >
@@ -361,6 +427,7 @@ export default function MyArklifeClient({ profile, leaveRows, giftRows, leaveMis
               <span className={styles.label}>Address</span>
               <textarea className={styles.textarea} name="address" defaultValue={profile?.address || ''} />
             </label>
+            {profileError ? <p className={styles.errorText}>{profileError}</p> : null}
             <div className={styles.modalActions}>
               <button type="button" className={styles.cancelButton} onClick={() => setOpenProfileModal(false)}>
                 Cancel
@@ -374,36 +441,70 @@ export default function MyArklifeClient({ profile, leaveRows, giftRows, leaveMis
       ) : null}
 
       {openLeaveModal ? (
-        <ModalFrame title="Request Leave" onClose={() => setOpenLeaveModal(false)}>
+        <ModalFrame
+          title="Request Leave"
+          headerAddon={
+            leaveStartDate && leaveEndDate && leaveWorkingDays != null ? (
+              <span className={styles.leaveDaysBadge}>
+                {leaveWorkingDays} day{leaveWorkingDays === 1 ? '' : 's'}
+              </span>
+            ) : null
+          }
+          onClose={() => setOpenLeaveModal(false)}
+        >
           <form
             className={styles.modalForm}
             action={(formData) =>
-              handleServerAction(submitLeaveRequest, formData, () => {
-                setOpenLeaveModal(false)
+              handleServerAction(submitLeaveRequest, formData, {
+                onSuccess: () => {
+                  setLeaveStartDate('')
+                  setLeaveEndDate('')
+                  setOpenLeaveModal(false)
+                },
+                setModalError: setLeaveError,
+                clearOthers: [setProfileError, setGiftError],
               })
             }
           >
             <label className={styles.field}>
-              <span className={styles.label}>Request Type</span>
-              <select className={styles.select} name="request_type" defaultValue="LEAVE" required>
-                <option value="LEAVE">Leave</option>
-                <option value="PERMIT">Permit</option>
-              </select>
-            </label>
-            <label className={styles.field}>
               <span className={styles.label}>Start Date</span>
-              <input className={styles.input} type="date" name="start_date" required />
+              <input
+                className={styles.input}
+                type="date"
+                name="start_date"
+                min={todayInputValue}
+                required
+                value={leaveStartDate}
+                onChange={(event) => setLeaveStartDate(event.currentTarget.value)}
+              />
             </label>
             <label className={styles.field}>
               <span className={styles.label}>End Date</span>
-              <input className={styles.input} type="date" name="end_date" required />
+              <input
+                className={styles.input}
+                type="date"
+                name="end_date"
+                min={leaveStartDate || todayInputValue}
+                required
+                value={leaveEndDate}
+                onChange={(event) => setLeaveEndDate(event.currentTarget.value)}
+              />
             </label>
             <label className={styles.field}>
               <span className={styles.label}>Reason</span>
               <textarea className={styles.textarea} name="reason" required />
             </label>
+            <div className={`${styles.detailSection} ${styles.leaveNotesSection}`.trim()}>
+              <p className={`${styles.detailLabel} ${styles.leaveNotesLabel}`.trim()}>Leave Request Notes</p>
+              <p className={`${styles.detailParagraph} ${styles.leaveNotesText}`.trim()}>
+                KEWAJIBAN SEBELUM MENGAJUKAN CUTI = Memastikan seluruh tanggung jawab pekerjaan dan kelancaran operasional perusahaan tetap berjalan
+                dengan baik dan sesuai arahan user. Jika didapati pelanggaran kewajiban pekerjaan yang tidak terselesaikan dengan baik maka cuti
+                dianggap hangus dan terhitung unpaid leave (memotong gaji).
+              </p>
+            </div>
+            {leaveError ? <p className={styles.errorText}>{leaveError}</p> : null}
             <div className={styles.modalActions}>
-              <button type="button" className={styles.cancelButton} onClick={() => setOpenLeaveModal(false)}>
+              <button type="button" className={styles.cancelDangerButton} onClick={() => setOpenLeaveModal(false)}>
                 Cancel
               </button>
               <button type="submit" className={styles.primaryButton} disabled={pending}>
@@ -419,8 +520,12 @@ export default function MyArklifeClient({ profile, leaveRows, giftRows, leaveMis
           <form
             className={styles.modalForm}
             action={(formData) =>
-              handleServerAction(submitBirthdayGiftRequest, formData, () => {
-                setOpenGiftModal(false)
+              handleServerAction(submitBirthdayGiftRequest, formData, {
+                onSuccess: () => {
+                  setOpenGiftModal(false)
+                },
+                setModalError: setGiftError,
+                clearOthers: [setProfileError, setLeaveError],
               })
             }
           >
@@ -433,6 +538,7 @@ export default function MyArklifeClient({ profile, leaveRows, giftRows, leaveMis
               <span className={styles.label}>Size</span>
               <input className={styles.input} type="text" name="size" placeholder="S, M, L, XL" />
             </label>
+            {giftError ? <p className={styles.errorText}>{giftError}</p> : null}
             <div className={styles.modalActions}>
               <button type="button" className={styles.cancelButton} onClick={() => setOpenGiftModal(false)}>
                 Cancel

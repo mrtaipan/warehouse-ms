@@ -2,6 +2,7 @@
 import { useEffect, useMemo, useState } from 'react'
 
 import { createClient } from '@/utils/supabase/browser'
+import useArklineAccess from '../use-arkline-access'
 
 import shellStyles from '../arkline.module.css'
 import styles from './progress-overview.module.css'
@@ -48,6 +49,21 @@ function PlusIcon() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true" className={styles.actionIcon}>
       <path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+    </svg>
+  )
+}
+
+function PrintIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className={styles.actionIcon}>
+      <path
+        d="M7 9V4.8h10V9M7.2 14.5H6.4A2.4 2.4 0 0 1 4 12.1V9.9a2.4 2.4 0 0 1 2.4-2.4h11.2A2.4 2.4 0 0 1 20 9.9v2.2a2.4 2.4 0 0 1-2.4 2.4h-.8M8 12.5h8v6.7H8zM16.6 10.8h.01"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
     </svg>
   )
 }
@@ -398,7 +414,7 @@ function formatNumber(value) {
 }
 
 function buildQcGradeSummary(rows) {
-  return (rows || []).reduce(
+  const summary = (rows || []).reduce(
     (accumulator, row) => {
       accumulator.qtyA += Number(row?.qty_a || 0)
       accumulator.qtyB += Number(row?.qty_b || 0)
@@ -407,23 +423,44 @@ function buildQcGradeSummary(rows) {
     },
     { qtyA: 0, qtyB: 0, qtyC: 0 }
   )
+
+  return {
+    ...summary,
+    totalQc: summary.qtyA + summary.qtyB + summary.qtyC,
+  }
 }
 
-function buildRejectDetailSummary(rows) {
+function buildRejectDetailSummary(rows, qcSummary = {}) {
   const grouped = new Map()
+  let identifiedQty = 0
 
   ;(rows || []).forEach((row) => {
     const reason = String(row?.reason?.reason_name || row?.reason_name || '-').trim() || '-'
-    const key = reason
-    const current = grouped.get(key) || { key, reason, qty: 0 }
-    current.qty += Number(row?.qty || 0)
+    const grade = String(row?.grade || '').trim().toUpperCase() || '-'
+    const key = `${reason}::${grade}`
+    const qty = Number(row?.qty || 0)
+    const current = grouped.get(key) || { key, reason, grade, qty: 0 }
+    current.qty += qty
+    identifiedQty += qty
     grouped.set(key, current)
   })
 
-  return Array.from(grouped.values()).sort((left, right) => {
+  const summaryRows = Array.from(grouped.values()).sort((left, right) => {
     if (right.qty !== left.qty) return right.qty - left.qty
     return left.reason.localeCompare(right.reason)
   })
+
+  const unidentifiedQty = Math.max(Number(qcSummary.qtyB || 0) + Number(qcSummary.qtyC || 0) - identifiedQty, 0)
+  if (unidentifiedQty > 0) {
+    summaryRows.push({
+      key: 'unidentified',
+      reason: 'Belum Diidentifikasi',
+      grade: 'B/C',
+      qty: unidentifiedQty,
+    })
+  }
+
+  return summaryRows
 }
 
 function formatDateLabel(value) {
@@ -603,7 +640,8 @@ async function loadOptionalRows(queryFactory) {
 }
 
 export default function ArklineProgressOverviewPage() {
-  const [view, setView] = useState('kanban')
+  const { access, loading: accessLoading } = useArklineAccess()
+  const [view, setView] = useState('')
   const [monthDate, setMonthDate] = useState(() => new Date())
   const [lastRefresh, setLastRefresh] = useState(() => new Date())
   const [productFilter, setProductFilter] = useState('')
@@ -629,6 +667,7 @@ export default function ArklineProgressOverviewPage() {
   })
   const [productActionMessage, setProductActionMessage] = useState('')
   const [productActionError, setProductActionError] = useState('')
+  const [printingQcReport, setPrintingQcReport] = useState(false)
   const [receiptDraft, setReceiptDraft] = useState({ receiveDate: '', notes: '', sizeQty: {}, isFinal: false, hpp: '' })
   const [statusDraft, setStatusDraft] = useState({
     updatedDeliveryDate: '',
@@ -636,6 +675,20 @@ export default function ArklineProgressOverviewPage() {
     customReason: '',
     notes: '',
   })
+
+  useEffect(() => {
+    if (accessLoading) return
+
+    setView((current) => {
+      if (current === 'kanban' && access.progressKanban) return current
+      if (current === 'calendar' && access.progressCalendar) return current
+      if (current === 'products' && access.progressProducts) return current
+      if (access.progressKanban) return 'kanban'
+      if (access.progressCalendar) return 'calendar'
+      if (access.progressProducts) return 'products'
+      return 'calendar'
+    })
+  }, [access.progressCalendar, access.progressKanban, access.progressProducts, accessLoading])
 
   useEffect(() => {
     void refreshRows()
@@ -1264,6 +1317,110 @@ export default function ArklineProgressOverviewPage() {
     await refreshRows()
   }
 
+  async function handlePrintQcSampleReport() {
+    if (!selectedProductDetail || !(selectedProductDetail.qcRows || []).length || printingQcReport) {
+      return
+    }
+
+    setProductActionError('')
+    setPrintingQcReport(true)
+    try {
+      const { jsPDF } = await import('jspdf')
+      const qcSummary = buildQcGradeSummary(selectedProductDetail.qcRows || [])
+      const rejectSummary = buildRejectDetailSummary(selectedProductDetail.qcRejectRows || [], qcSummary)
+      const doc = new jsPDF({ unit: 'mm', format: 'a4' })
+      const pageWidth = doc.internal.pageSize.getWidth()
+      const pageHeight = doc.internal.pageSize.getHeight()
+      const margin = 14
+      let cursorY = 18
+
+      const ensureSpace = (neededHeight = 8) => {
+        if (cursorY + neededHeight <= pageHeight - margin) return
+        doc.addPage()
+        cursorY = 18
+      }
+
+      doc.setFont('helvetica', 'bold')
+      doc.setFontSize(16)
+      doc.text('QC Sample Report', margin, cursorY)
+      cursorY += 8
+
+      doc.setFont('helvetica', 'normal')
+      doc.setFontSize(10)
+      doc.text(`PO: ${selectedProductDetail.poId || '-'}`, margin, cursorY)
+      cursorY += 5
+      doc.text(`Product: ${selectedProductDetail.productName || '-'}`, margin, cursorY)
+      cursorY += 5
+      doc.text(`SKU: ${selectedProductDetail.sku || '-'}`, margin, cursorY)
+      cursorY += 8
+
+      const metricWidth = (pageWidth - margin * 2 - 9) / 4
+      const metricHeight = 18
+      const metrics = [
+        { label: 'Grade A', value: formatNumber(qcSummary.qtyA), dark: false },
+        { label: 'Grade B', value: formatNumber(qcSummary.qtyB), dark: false },
+        { label: 'Grade C', value: formatNumber(qcSummary.qtyC), dark: false },
+        { label: 'Total QC', value: formatNumber(qcSummary.totalQc), dark: true },
+      ]
+
+      metrics.forEach((metric, index) => {
+        const x = margin + index * (metricWidth + 3)
+        doc.setDrawColor(226, 232, 240)
+        if (metric.dark) {
+          doc.setFillColor(15, 23, 42)
+          doc.roundedRect(x, cursorY, metricWidth, metricHeight, 3, 3, 'FD')
+          doc.setTextColor(255, 255, 255)
+        } else {
+          doc.setFillColor(248, 250, 252)
+          doc.roundedRect(x, cursorY, metricWidth, metricHeight, 3, 3, 'FD')
+          doc.setTextColor(100, 116, 139)
+        }
+        doc.setFont('helvetica', 'bold')
+        doc.setFontSize(8)
+        doc.text(metric.label.toUpperCase(), x + 3, cursorY + 5)
+        doc.setFontSize(13)
+        doc.setTextColor(metric.dark ? 255 : 15, metric.dark ? 255 : 23, metric.dark ? 255 : 42)
+        doc.text(metric.value, x + 3, cursorY + 13)
+      })
+
+      cursorY += metricHeight + 10
+      doc.setTextColor(15, 23, 42)
+      doc.setFont('helvetica', 'bold')
+      doc.setFontSize(11)
+      doc.text('Reject Details', margin, cursorY)
+      cursorY += 6
+
+      if (!rejectSummary.length) {
+        doc.setFont('helvetica', 'normal')
+        doc.setFontSize(10)
+        doc.setTextColor(100, 116, 139)
+        doc.text('No reject detail rows.', margin, cursorY)
+      } else {
+        rejectSummary.forEach((row) => {
+          ensureSpace(14)
+          const label = `${row.grade === 'B/C' ? row.grade : `Grade ${row.grade}`} • ${row.reason}`
+          doc.setDrawColor(226, 232, 240)
+          doc.setFillColor(248, 250, 252)
+          doc.roundedRect(margin, cursorY, pageWidth - margin * 2, 12, 3, 3, 'FD')
+          doc.setFont('helvetica', 'bold')
+          doc.setFontSize(10)
+          doc.setTextColor(15, 23, 42)
+          doc.text(label, margin + 4, cursorY + 7)
+          doc.text(formatNumber(row.qty), pageWidth - margin - 4, cursorY + 7, { align: 'right' })
+          cursorY += 15
+        })
+      }
+
+      const safePoId = String(selectedProductDetail.poId || 'PO').replace(/[^A-Z0-9_-]+/gi, '-')
+      const safeProduct = String(selectedProductDetail.productName || 'PRODUCT').replace(/[^A-Z0-9_-]+/gi, '-')
+      doc.save(`qc-sample-report-${safePoId}-${safeProduct}.pdf`)
+    } catch (error) {
+      setProductActionError(error?.message || 'Failed to generate QC sample report PDF.')
+    } finally {
+      setPrintingQcReport(false)
+    }
+  }
+
   function openDeliveryModal() {
     setDeliveryModalOpen(true)
     setStatusModalOpen(false)
@@ -1292,15 +1449,17 @@ export default function ArklineProgressOverviewPage() {
               <h2 className={styles.scheduleTitle}>Progress Snapshot</h2>
             </div>
             <div className={styles.segmented}>
-              <button
-                type="button"
-                aria-label="Kanban view"
-                data-view-label="Kanban View"
-                className={`${styles.segmentButton} ${view === 'kanban' ? styles.segmentButtonActive : ''}`.trim()}
-                onClick={() => setView('kanban')}
-              >
-                <KanbanIcon />
-              </button>
+              {access.progressKanban ? (
+                <button
+                  type="button"
+                  aria-label="Kanban view"
+                  data-view-label="Kanban View"
+                  className={`${styles.segmentButton} ${view === 'kanban' ? styles.segmentButtonActive : ''}`.trim()}
+                  onClick={() => setView('kanban')}
+                >
+                  <KanbanIcon />
+                </button>
+              ) : null}
               <button
                 type="button"
                 aria-label="Calendar view"
@@ -1348,7 +1507,9 @@ export default function ArklineProgressOverviewPage() {
           </div>
         </div>
 
-        {loading ? (
+        {accessLoading || !view ? (
+          <div className={styles.emptyColumn}>Loading progress snapshot...</div>
+        ) : loading ? (
           <div className={styles.emptyColumn}>Loading progress snapshot...</div>
         ) : view === 'kanban' ? (
           <div className={styles.boardGrid}>
@@ -1877,7 +2038,19 @@ export default function ArklineProgressOverviewPage() {
 
               <div className={styles.productDetailSection}>
                 <div className={styles.productDetailSectionHead}>
-                  <h4 className={styles.modalSectionTitle}>QC Sample Report</h4>
+                  <div className={styles.productSectionHeadLeft}>
+                    <h4 className={styles.modalSectionTitle}>QC Sample Report</h4>
+                    <button
+                      type="button"
+                      className={styles.productSectionLaunch}
+                      onClick={() => void handlePrintQcSampleReport()}
+                      aria-label="Generate QC sample report PDF"
+                      title="Generate QC sample report PDF"
+                      disabled={printingQcReport || !(selectedProductDetail.qcRows || []).length}
+                    >
+                      <PrintIcon />
+                    </button>
+                  </div>
                   <button type="button" className={styles.productDetailSectionToggle} onClick={() => toggleProductDetailSection('qcSampleReport')}>
                     <span className={styles.productDetailHint}>{selectedProductDetail.poId || '-'}</span>
                     <ChevronIcon expanded={productDetailSections.qcSampleReport} />
@@ -1889,11 +2062,11 @@ export default function ArklineProgressOverviewPage() {
                     <>
                       {(() => {
                         const qcSummary = buildQcGradeSummary(selectedProductDetail.qcRows || [])
-                        const rejectSummary = buildRejectDetailSummary(selectedProductDetail.qcRejectRows || [])
+                        const rejectSummary = buildRejectDetailSummary(selectedProductDetail.qcRejectRows || [], qcSummary)
 
                         return (
                           <>
-                            <div className={`${styles.modalGrid} ${styles.compactModalGrid}`.trim()}>
+                            <div className={`${styles.modalGrid} ${styles.compactModalGrid}`.trim()} style={{ gridTemplateColumns: 'repeat(4, minmax(0, 1fr))' }}>
                               <div className={styles.modalMetric}>
                                 <span>Grade A</span>
                                 <strong>{formatNumber(qcSummary.qtyA)}</strong>
@@ -1906,16 +2079,21 @@ export default function ArklineProgressOverviewPage() {
                                 <span>Grade C</span>
                                 <strong>{formatNumber(qcSummary.qtyC)}</strong>
                               </div>
+                              <div className={`${styles.modalMetric} ${styles.qcTotalMetric}`.trim()}>
+                                <span>Total QC</span>
+                                <strong>{formatNumber(qcSummary.totalQc)}</strong>
+                              </div>
                             </div>
                             {rejectSummary.length ? (
                               rejectSummary.map((row) => (
                                 <div key={row.key} className={styles.productDetailRow}>
                                   <div>
-                                    <strong>{row.reason}</strong>
+                                    <strong>
+                                      {row.grade === 'B/C' ? row.grade : `Grade ${row.grade}`} • {row.reason}
+                                    </strong>
                                   </div>
                                   <div className={styles.productDetailRowMeta}>
                                     <strong>{formatNumber(row.qty)}</strong>
-                                    <span>Qty Reject</span>
                                   </div>
                                 </div>
                               ))

@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { createClient } from '@/utils/supabase/browser'
 import styles from '../arkline.module.css'
+import useArklineAccess from '../use-arkline-access'
 
 const supabase = createClient()
 
@@ -25,6 +26,7 @@ function normalizeProduct(row) {
 }
 
 export default function ArklineDirectoryPage() {
+  const { access } = useArklineAccess()
   const [products, setProducts] = useState([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -91,6 +93,7 @@ export default function ArklineDirectoryPage() {
   }, [categoryFilter, products, search, statusFilter])
 
   function openCreateModal() {
+    if (!access.directoryCreate) return
     setDraft(emptyDraft)
     setIsEditing(false)
     setShowModal(true)
@@ -205,7 +208,7 @@ export default function ArklineDirectoryPage() {
                 Cards
               </button>
             </div>
-            <button type="button" className={styles.primaryButton} onClick={openCreateModal}>
+            <button type="button" className={styles.primaryButton} onClick={openCreateModal} disabled={!access.directoryCreate}>
               + New SKU
             </button>
           </div>

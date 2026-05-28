@@ -70,6 +70,16 @@ function parseAmountInput(value) {
   return digits ? Number(digits) : 0
 }
 
+function formatAttachmentCount(count) {
+  return `${count} attachment${count === 1 ? '' : 's'} added`
+}
+
+function truncateFileLabel(value, maxLength = 28) {
+  const text = String(value || '')
+  if (text.length <= maxLength) return text
+  return `${text.slice(0, maxLength - 1)}…`
+}
+
 function normalizeClaim(row) {
   return {
     id: row?.id || '',
@@ -156,6 +166,8 @@ async function uploadReceiptFile({ file, claimId, claimNumber, uploadedBy }) {
 export default function MyArklifeReimbursementClient({ profile }) {
   const batchFileInputRef = useRef(null)
   const editFileInputRef = useRef(null)
+  const batchFileInputId = 'myarklife-batch-receipt-input'
+  const editFileInputId = 'myarklife-edit-receipt-input'
   const [categories, setCategories] = useState([])
   const [claims, setClaims] = useState([])
   const [groupOptions, setGroupOptions] = useState(DEFAULT_GROUP_OPTIONS)
@@ -174,10 +186,6 @@ export default function MyArklifeReimbursementClient({ profile }) {
 
   const profileGroup = getProfileGroup(profile)
   const hqUser = isHeadquarterGroup(profileGroup)
-  const pendingAmount = useMemo(
-    () => claims.filter((item) => item.status !== 'PAID').reduce((sum, item) => sum + Number(item.total_amount || 0), 0),
-    [claims]
-  )
   const totalHistoryAmount = useMemo(() => claims.reduce((sum, item) => sum + Number(item.total_amount || 0), 0), [claims])
   const activeBatchRow = batchRows.find((item) => item.localId === activeBatchRowId) || batchRows[0] || null
   const availableGroupOptions = useMemo(
@@ -347,6 +355,15 @@ export default function MyArklifeReimbursementClient({ profile }) {
       }
       return nextRows
     })
+  }
+
+  function appendEditFiles(files) {
+    if (!files.length) return
+    setEditFiles((prev) => [...prev, ...files])
+  }
+
+  function removeEditFile(targetIndex) {
+    setEditFiles((prev) => prev.filter((_, index) => index !== targetIndex))
   }
 
   function resolveChargeGroup(value) {
@@ -557,6 +574,46 @@ export default function MyArklifeReimbursementClient({ profile }) {
     }
   }
 
+  function syncClaimAttachments(claimId, nextAttachments) {
+    setClaims((prev) => prev.map((item) => (item.id === claimId ? { ...item, attachments: nextAttachments } : item)))
+    setSelectedClaim((prev) => (prev?.id === claimId ? { ...prev, attachments: nextAttachments } : prev))
+    setEditingClaim((prev) => (prev?.id === claimId ? { ...prev, attachments: nextAttachments } : prev))
+  }
+
+  async function handleDeleteExistingAttachment(attachment) {
+    if (!editingClaim || !attachment?.id) return
+
+    setSaving(true)
+    setError('')
+    setSuccess('')
+
+    try {
+      if (attachment.storage_path) {
+        const { error: storageError } = await supabase
+          .storage
+          .from(attachment.storage_bucket || REIMBURSEMENT_BUCKET)
+          .remove([attachment.storage_path])
+
+        if (storageError) {
+          throw new Error(storageError.message)
+        }
+      }
+
+      const { error: deleteError } = await supabase.from(tableNames.attachments).delete().eq('id', attachment.id)
+      if (deleteError) {
+        throw new Error(deleteError.message)
+      }
+
+      const nextAttachments = (editingClaim.attachments || []).filter((item) => item.id !== attachment.id)
+      syncClaimAttachments(editingClaim.id, nextAttachments)
+      setSuccess(`Attachment ${attachment.file_name || ''} removed.`.trim())
+    } catch (deleteError) {
+      setError(deleteError?.message || 'Failed to remove attachment.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
   async function handleDeleteClaim(claim) {
     if (!claim || claim.status !== 'SUBMITTED') return
 
@@ -590,31 +647,30 @@ export default function MyArklifeReimbursementClient({ profile }) {
   return (
     <section className={styles.reimbursementShell}>
       <div className={styles.claimListHeader}>
-        <div>
-          <h2 className={styles.reimbursementListTitle}>Reimbursement Claim</h2>
-          <p className={styles.reimbursementListText}>History list with current statuses and quick actions.</p>
+        <div className={styles.claimHeaderMain}>
+          <div className={styles.claimTitleBlock}>
+            <h2 className={styles.reimbursementListTitle}>Reimbursement Claim</h2>
+            <p className={styles.reimbursementListText}>History list with current statuses and quick actions.</p>
+          </div>
+          <div className={styles.claimTitleRow}>
+            <div className={styles.claimSummaryInline}>
+              <span>Total Claim Amount</span>
+              <strong>{formatCurrency(totalHistoryAmount)}</strong>
+            </div>
+            <button
+              type="button"
+              className={styles.leaveActionButton}
+              onClick={openCreateModal}
+              aria-label="New claim"
+              title="New claim"
+            >
+              <span>+</span>
+            </button>
+          </div>
         </div>
-        <button type="button" className={styles.primaryButton} onClick={openCreateModal}>
-          New Claim
-        </button>
       </div>
 
-      <div className={styles.claimSummaryRow}>
-        <div className={styles.claimSummaryCard}>
-          <span>Total History</span>
-          <strong>{claims.length}</strong>
-        </div>
-        <div className={styles.claimSummaryCard}>
-          <span>Total Claim Amount</span>
-          <strong>{formatCurrency(totalHistoryAmount)}</strong>
-        </div>
-        <div className={styles.claimSummaryCard}>
-          <span>Pending Amount</span>
-          <strong>{formatCurrency(pendingAmount)}</strong>
-        </div>
-      </div>
-
-      {error ? <p className={styles.errorText}>{error}</p> : null}
+      {error && !openBatchModal ? <p className={styles.errorText}>{error}</p> : null}
       {success ? <p className={styles.successText}>{success}</p> : null}
 
       <div className={styles.claimListSection}>
@@ -624,16 +680,17 @@ export default function MyArklifeReimbursementClient({ profile }) {
           <div className={styles.claimList}>
             {claims.map((claim) => (
               <article key={claim.id} className={styles.claimRow}>
-                <div>
-                  <p className={styles.claimRowTitle}>{claim.claim_number || claim.expense_category_name || 'Claim'}</p>
-                  <p className={styles.claimRowMeta}>
-                    {claim.expense_category_name || '-'} | {formatDate(claim.expense_date)} | {claim.charge_group || '-'}
-                  </p>
-                  <p className={styles.claimRowText}>{claim.description || 'No description provided.'}</p>
-                </div>
-                <div className={styles.claimRowSide}>
-                  <span className={`${styles.statusBadge} ${getStatusTone(claim.status)}`.trim()}>{claim.status}</span>
+                <div className={styles.claimRowTop}>
+                  <div>
+                    <p className={styles.claimRowTitle}>{claim.claim_number || claim.expense_category_name || 'Claim'}</p>
+                    <p className={styles.claimRowMeta}>
+                      {claim.expense_category_name || '-'} | {formatDate(claim.expense_date)} | {claim.charge_group || '-'}
+                    </p>
+                  </div>
                   <strong className={styles.claimAmount}>{formatCurrency(claim.total_amount)}</strong>
+                </div>
+                <p className={styles.claimRowText}>{claim.description || 'No description provided.'}</p>
+                <div className={styles.claimRowSide}>
                   <div className={styles.claimActions}>
                     {claim.status === 'SUBMITTED' || claim.status === 'NEED_REVISION' ? (
                       <>
@@ -659,6 +716,7 @@ export default function MyArklifeReimbursementClient({ profile }) {
                       </button>
                     )}
                   </div>
+                  <span className={`${styles.statusBadge} ${getStatusTone(claim.status)}`.trim()}>{claim.status}</span>
                 </div>
               </article>
             ))}
@@ -676,6 +734,8 @@ export default function MyArklifeReimbursementClient({ profile }) {
             </div>
 
             <div className={styles.modalBody}>
+              {error ? <p className={styles.errorText}>{error}</p> : null}
+
               <div className={styles.batchLayout}>
                 <section className={styles.batchEditor}>
                   {activeBatchRow ? (
@@ -764,6 +824,7 @@ export default function MyArklifeReimbursementClient({ profile }) {
                         <div className={styles.field}>
                           <span className={styles.label}>Receipt Upload</span>
                           <input
+                            id={batchFileInputId}
                             ref={batchFileInputRef}
                             className={styles.hiddenInput}
                             type="file"
@@ -774,23 +835,33 @@ export default function MyArklifeReimbursementClient({ profile }) {
                               event.target.value = ''
                             }}
                           />
-                          <button type="button" className={styles.batchActionButton} onClick={() => batchFileInputRef.current?.click()}>
-                            Add Receipt
-                          </button>
-                        </div>
+                          <div className={styles.uploadPanel}>
+                            <div className={styles.uploadPanelHeader}>
+                              <div>
+                                <p className={styles.uploadPanelTitle}>Receipt files</p>
+                                <p className={styles.uploadPanelMeta}>{formatAttachmentCount(activeBatchRow.submission_files.length)}</p>
+                              </div>
+                            </div>
 
-                        {activeBatchRow.submission_files.length ? (
-                          <div className={styles.fileChipList}>
-                            {activeBatchRow.submission_files.map((file, index) => (
-                              <span key={`${activeBatchRow.localId}-${file.name}-${index}`} className={styles.fileChip}>
-                                {file.name}
-                                <button type="button" className={styles.fileChipRemove} onClick={() => removeSubmissionFile(activeBatchRow.localId, index)}>
-                                  x
-                                </button>
-                              </span>
-                            ))}
+                    <div className={styles.uploadTileRow}>
+                      <label htmlFor={batchFileInputId} className={styles.uploadAddButton} aria-label="Add receipt files">
+                        +
+                      </label>
+                      {activeBatchRow.submission_files.map((file, index) => (
+                                <div key={`${activeBatchRow.localId}-${file.name}-${index}`} className={styles.uploadFileTile}>
+                                  <span className={styles.uploadFileName} title={file.name}>
+                                    {truncateFileLabel(file.name)}
+                                  </span>
+                                  <button type="button" className={styles.fileChipRemove} onClick={() => removeSubmissionFile(activeBatchRow.localId, index)} aria-label={`Remove ${file.name}`}>
+                                    x
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+
+                            {!activeBatchRow.submission_files.length ? <p className={styles.uploadEmptyText}>Tap + to add one or more receipts.</p> : null}
                           </div>
-                        ) : null}
+                        </div>
                       </div>
                     </>
                   ) : null}
@@ -800,6 +871,15 @@ export default function MyArklifeReimbursementClient({ profile }) {
                   <div className={styles.batchSidebarHeader}>
                     <h3 className={styles.batchTitle}>Added Entries</h3>
                     <strong className={styles.batchTotal}>{formatCurrency(batchRows.reduce((sum, item) => sum + parseAmountInput(item.total_amount), 0))}</strong>
+                  </div>
+
+                  <div className={styles.modalActions}>
+                    <button type="button" className={styles.cancelDangerButton} onClick={resetBatchModal}>
+                      Cancel
+                    </button>
+                    <button type="button" className={styles.primaryButton} onClick={() => void handleSaveBatch()} disabled={saving}>
+                      {saving ? 'Saving...' : 'Submit Batch'}
+                    </button>
                   </div>
 
                   <div className={styles.batchList}>
@@ -833,15 +913,6 @@ export default function MyArklifeReimbursementClient({ profile }) {
                       )
                     })}
                   </div>
-
-                  <div className={styles.modalActions}>
-                    <button type="button" className={styles.cancelDangerButton} onClick={resetBatchModal}>
-                      Cancel
-                    </button>
-                    <button type="button" className={styles.primaryButton} onClick={() => void handleSaveBatch()} disabled={saving}>
-                      {saving ? 'Saving...' : 'Submit Batch'}
-                    </button>
-                  </div>
                 </aside>
               </div>
             </div>
@@ -851,7 +922,7 @@ export default function MyArklifeReimbursementClient({ profile }) {
 
       {editingClaim && editDraft ? (
         <div className={styles.modalOverlay} onClick={() => setEditingClaim(null)}>
-          <div className={styles.modalCard} onClick={(event) => event.stopPropagation()}>
+          <div className={styles.modalCard} style={{ maxHeight: '90vh', overflow: 'hidden' }} onClick={(event) => event.stopPropagation()}>
             <div className={styles.modalHeader}>
               <h2 className={styles.modalTitle}>Edit Claim</h2>
             </div>
@@ -931,31 +1002,81 @@ export default function MyArklifeReimbursementClient({ profile }) {
                 <div className={styles.field}>
                   <span className={styles.label}>Add Receipt</span>
                   <input
+                    id={editFileInputId}
                     ref={editFileInputRef}
                     className={styles.hiddenInput}
                     type="file"
                     multiple
                     accept=".pdf,.png,.jpg,.jpeg"
                     onChange={(event) => {
-                      setEditFiles((prev) => [...prev, ...Array.from(event.target.files || [])])
+                      appendEditFiles(Array.from(event.target.files || []))
                       event.target.value = ''
                     }}
                   />
-                  <button type="button" className={styles.batchActionButton} onClick={() => editFileInputRef.current?.click()}>
-                    Add Receipt
-                  </button>
+                  <div className={styles.uploadPanel}>
+                    <div className={styles.uploadPanelHeader}>
+                      <div>
+                        <p className={styles.uploadPanelTitle}>New receipt files</p>
+                        <p className={styles.uploadPanelMeta}>{formatAttachmentCount(editFiles.length)}</p>
+                      </div>
+                    </div>
+
+                    <div className={styles.uploadTileRow}>
+                      <button
+                        type="button"
+                        className={styles.uploadAddButton}
+                        aria-label="Add receipt files"
+                        onClick={() => editFileInputRef.current?.click()}
+                      >
+                        +
+                      </button>
+                      {editFiles.map((file, index) => (
+                        <div key={`${editingClaim.id}-${file.name}-${index}`} className={styles.uploadFileTile}>
+                          <span className={styles.uploadFileName} title={file.name}>
+                            {truncateFileLabel(file.name)}
+                          </span>
+                          <button
+                            type="button"
+                            className={styles.fileChipRemove}
+                            onClick={() => removeEditFile(index)}
+                            aria-label={`Remove ${file.name}`}
+                          >
+                            x
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+
+                    {!editFiles.length ? <p className={styles.uploadEmptyText}>Tap + to add one or more receipts.</p> : null}
+                  </div>
                 </div>
 
-                {editFiles.length ? (
-                  <div className={styles.fileChipList}>
-                    {editFiles.map((file, index) => (
-                      <span key={`${editingClaim.id}-${file.name}-${index}`} className={styles.fileChip}>
-                        {file.name}
-                        <button type="button" className={styles.fileChipRemove} onClick={() => setEditFiles((prev) => prev.filter((_, fileIndex) => fileIndex !== index))}>
-                          x
-                        </button>
-                      </span>
-                    ))}
+                {(editingClaim.attachments || []).length ? (
+                  <div className={styles.detailSection}>
+                    <p className={styles.detailLabel}>Current Attachments</p>
+                    <div className={styles.uploadTileRow}>
+                      {editingClaim.attachments.map((attachment) => (
+                        <div key={attachment.id} className={styles.uploadFileTile}>
+                          <button
+                            type="button"
+                            className={styles.uploadFileLink}
+                            title={attachment.file_name}
+                            onClick={() => void handleOpenAttachment(attachment)}
+                          >
+                            {truncateFileLabel(attachment.file_name)}
+                          </button>
+                          <button
+                            type="button"
+                            className={styles.fileChipRemove}
+                            onClick={() => void handleDeleteExistingAttachment(attachment)}
+                            disabled={saving}
+                            aria-label={`Remove ${attachment.file_name}`}
+                          >
+                            x
+                          </button>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 ) : null}
 

@@ -685,6 +685,30 @@ function createRejectDraftRow(overrides = {}) {
   }
 }
 
+function buildGroupedRejectDraftRows(rows = []) {
+  const grouped = new Map()
+
+  rows.forEach((item) => {
+    const grade = String(item.grade || 'B').toUpperCase()
+    const rejectReasonId = item.reject_reason_id || ''
+    const size = String(item.size || '').trim().toUpperCase()
+    const key = `${grade}|||${rejectReasonId}|||${size}`
+    const current =
+      grouped.get(key) ||
+      createRejectDraftRow({
+        grade,
+        rejectReasonId,
+        qty: '0',
+        size,
+      })
+
+    current.qty = String(Number(current.qty || 0) + Number(item.qty || 0))
+    grouped.set(key, current)
+  })
+
+  return Array.from(grouped.values())
+}
+
 function getSummaryRejectKey(item) {
   return `${item.brand}|||${item.category}|||${item.model}`
 }
@@ -728,6 +752,7 @@ export default function QcDashboardPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
+  const [rejectDetailError, setRejectDetailError] = useState('')
   const [pausingAll, setPausingAll] = useState(false)
   const [showPauseConfirm, setShowPauseConfirm] = useState(false)
   const [previewPhoto, setPreviewPhoto] = useState(null)
@@ -1557,15 +1582,7 @@ export default function QcDashboardPage() {
 
     const summaryRejectTargetQty = Number(summary.rejectTargetQty ?? getRejectQty(summary))
     const initialRows = existingDetails.length
-      ? existingDetails.map((item) =>
-          createRejectDraftRow({
-            id: item.id,
-            grade: String(item.grade || 'B').toUpperCase(),
-            rejectReasonId: item.reject_reason_id || '',
-            qty: String(item.qty || ''),
-            size: item.size || '',
-          })
-        )
+      ? buildGroupedRejectDraftRows(existingDetails)
       : [
           ...(Number(summary.qtyB || 0) > 0 ? [createRejectDraftRow({ grade: 'B', qty: String(summary.qtyB || '') })] : []),
           ...(Number(summary.qtyC || 0) > 0 ? [createRejectDraftRow({ grade: 'C', qty: String(summary.qtyC || '') })] : []),
@@ -1576,6 +1593,7 @@ export default function QcDashboardPage() {
     const inspectorErrorAdjustment = existingAdjustments.find((item) => item.adjustment_type === 'inspector_data_error')
 
     setRejectDetailSummary(summary)
+    setRejectDetailError('')
     setRejectDraftRows(initialRows.length ? initialRows : [createRejectDraftRow()])
     setRejectAdjustmentDraft({
       bcToAQty: bcToAAdjustment?.qty ? String(bcToAAdjustment.qty) : '',
@@ -1652,7 +1670,7 @@ export default function QcDashboardPage() {
   async function handleSaveRejectDetail() {
     if (!rejectDetailSummary) return
 
-    setError('')
+    setRejectDetailError('')
     setSuccess('')
     setSavingRejectDetail(true)
 
@@ -1738,9 +1756,9 @@ export default function QcDashboardPage() {
         }
       })
 
-      const taskIds = selectedRejectTaskRows.map((item) => item.id)
-      if (taskIds.length) {
-        const { error: deleteDetailError } = await supabase.from('arkline_qc_reject_details').delete().in('arkline_qc_id', taskIds)
+      const existingDetailIds = selectedRejectExistingDetails.map((item) => item.id).filter(Boolean)
+      if (existingDetailIds.length) {
+        const { error: deleteDetailError } = await supabase.from('arkline_qc_reject_details').delete().in('id', existingDetailIds)
         if (deleteDetailError) throw new Error(deleteDetailError.message)
       }
 
@@ -1822,10 +1840,11 @@ export default function QcDashboardPage() {
       setArklineRejectDetails(nextDetailRows || [])
       setArklineRejectAdjustments(nextAdjustmentRows || [])
       setRejectDetailSummary(null)
+      setRejectDetailError('')
       setRejectDraftRows([])
       setSuccess('Arkline reject detail saved.')
     } catch (saveError) {
-      setError(saveError.message || 'Failed to save Arkline reject detail.')
+      setRejectDetailError(saveError.message || 'Failed to save Arkline reject detail.')
     } finally {
       setSavingRejectDetail(false)
     }
@@ -2323,7 +2342,7 @@ export default function QcDashboardPage() {
               </div>
             </div>
 
-            {error ? <p style={{ color: '#dc2626', margin: 0 }}>{error}</p> : null}
+            {rejectDetailError ? <p style={{ color: '#dc2626', margin: 0 }}>{rejectDetailError}</p> : null}
             {success ? <p style={{ color: '#16a34a', margin: 0 }}>{success}</p> : null}
 
             <div style={styles.rejectDetailGrid}>

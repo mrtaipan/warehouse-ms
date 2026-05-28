@@ -14,7 +14,7 @@ check (
     'qc_inspector',
     'packing_staff',
     'hrga_approver',
-    'arkline_staff',
-    'arkline_approver'
+    'arkline_viewer',
+    'arkline_purchaser'
   )
 );

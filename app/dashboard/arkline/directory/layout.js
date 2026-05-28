@@ -4,13 +4,15 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 
 import styles from '../arkline.module.css'
+import useArklineAccess from '../use-arkline-access'
 
 export default function ArklineDirectoryLayout({ children }) {
   const pathname = usePathname()
+  const { access } = useArklineAccess()
 
   const tabs = [
-    { href: '/dashboard/arkline/directory', label: 'Products', exact: true },
-    { href: '/dashboard/arkline/directory/bom', label: 'BOM', exact: true },
+    { href: '/dashboard/arkline/directory', label: 'Products', exact: true, enabled: access.directory },
+    { href: '/dashboard/arkline/directory/bom', label: 'BOM', exact: true, enabled: access.directoryBom },
   ]
 
   return (
@@ -19,16 +21,18 @@ export default function ArklineDirectoryLayout({ children }) {
         <div className={styles.directoryTabsBar}>
           {tabs.map((tab) => {
             const isActive = tab.exact ? pathname === tab.href : pathname.startsWith(tab.href)
+            const className = `${styles.directoryTabLink} ${isActive ? styles.directoryTabLinkActive : ''} ${tab.enabled ? '' : styles.directoryTabLinkDisabled}`.trim()
 
-            return (
-              <Link
-                key={tab.href}
-                href={tab.href}
-                className={`${styles.directoryTabLink} ${isActive ? styles.directoryTabLinkActive : ''}`}
-              >
+            return tab.enabled ? (
+              <Link key={tab.href} href={tab.href} className={className}>
                 <span className={styles.directoryTabLabel}>{tab.label}</span>
                 <span className={styles.directoryTabUnderline} />
               </Link>
+            ) : (
+              <span key={tab.href} className={className} aria-disabled="true">
+                <span className={styles.directoryTabLabel}>{tab.label}</span>
+                <span className={styles.directoryTabUnderline} />
+              </span>
             )
           })}
         </div>

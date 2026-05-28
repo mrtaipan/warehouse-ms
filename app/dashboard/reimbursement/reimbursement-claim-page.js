@@ -160,7 +160,33 @@ function isImageMimeType(value) {
 }
 
 function isImageFileName(value) {
-  return /\.(png|jpe?g|webp|gif|bmp)$/i.test(String(value || ''))
+  const normalizedValue = String(value || '').split('?')[0].split('#')[0]
+  return /\.(png|jpe?g|webp|gif|bmp|avif|heic|heif)$/i.test(normalizedValue)
+}
+
+function isPdfMimeType(value) {
+  return String(value || '').toLowerCase() === 'application/pdf'
+}
+
+function isPdfFileName(value) {
+  const normalizedValue = String(value || '').split('?')[0].split('#')[0]
+  return /\.pdf$/i.test(normalizedValue)
+}
+
+function isPreviewableImageAttachment(attachment) {
+  return isImageMimeType(attachment?.mime_type) || isImageFileName(attachment?.file_name)
+}
+
+function getAttachmentActionLabel(attachment) {
+  if (isPreviewableImageAttachment(attachment)) {
+    return 'Preview'
+  }
+
+  if (isPdfMimeType(attachment?.mime_type) || isPdfFileName(attachment?.file_name)) {
+    return 'Open PDF'
+  }
+
+  return 'Open'
 }
 
 function buildCompressedName(fileName, mimeType) {
@@ -292,10 +318,13 @@ export default function ReimbursementClaimPage({
   title = 'Reimbursement Claim',
   selfOnly = false,
   showSummary = true,
+  showSummaryBreakdown = true,
+  showSummaryMonthFilter = true,
   allowBatchCreation = true,
   allowHrgaApproverView = false,
   showHeader = true,
   showToolbar = true,
+  compactToolbar = false,
   showAccountInfo = true,
 } = {}) {
   const [loading, setLoading] = useState(true)
@@ -315,7 +344,6 @@ export default function ReimbursementClaimPage({
   const [groupFilter, setGroupFilter] = useState('')
   const [monthFilter, setMonthFilter] = useState('')
   const [yearFilter, setYearFilter] = useState('')
-  const [summaryMonthFilter, setSummaryMonthFilter] = useState('all')
   const [showBatchModal, setShowBatchModal] = useState(false)
   const [batchRows, setBatchRows] = useState([createDraftRow()])
   const [activeBatchRowId, setActiveBatchRowId] = useState('')
@@ -331,10 +359,24 @@ export default function ReimbursementClaimPage({
   const [actionError, setActionError] = useState('')
   const [revisionComment, setRevisionComment] = useState('')
   const [imagePreview, setImagePreview] = useState(null)
+  const [imagePreviewZoom, setImagePreviewZoom] = useState(1)
+  const [imagePreviewTool, setImagePreviewTool] = useState('zoom-in')
+  const [imagePreviewOrigin, setImagePreviewOrigin] = useState({ x: 50, y: 50 })
+  const [imagePreviewOffset, setImagePreviewOffset] = useState({ x: 0, y: 0 })
   const [tableNames, setTableNames] = useState(HRGA_REIMBURSEMENT_TABLES)
   const submissionFileInputRef = useRef(null)
   const editSubmissionFileInputRef = useRef(null)
   const paymentFileInputRef = useRef(null)
+  const imagePreviewDragRef = useRef(null)
+
+  function resetImagePreviewState() {
+    setImagePreview(null)
+    setImagePreviewZoom(1)
+    setImagePreviewTool('zoom-in')
+    setImagePreviewOrigin({ x: 50, y: 50 })
+    setImagePreviewOffset({ x: 0, y: 0 })
+    imagePreviewDragRef.current = null
+  }
 
   const loadWorkspace = useCallback(async (silent = false) => {
     if (!silent) {
@@ -537,29 +579,6 @@ export default function ReimbursementClaimPage({
     [visibleClaims]
   )
 
-  const summaryMonthOptions = useMemo(() => {
-    const values = Array.from(
-      new Set(
-        visibleClaims
-          .map((item) => {
-            if (!item.expense_date) return ''
-            const date = new Date(item.expense_date)
-            if (Number.isNaN(date.getTime())) return ''
-            const year = date.getFullYear()
-            const month = String(date.getMonth() + 1).padStart(2, '0')
-            return `${year}-${month}`
-          })
-          .filter(Boolean)
-      )
-    ).sort((a, b) => b.localeCompare(a))
-
-    return values.map((value) => {
-      const [year, month] = value.split('-')
-      const label = new Intl.DateTimeFormat('en-GB', { month: 'long', year: 'numeric' }).format(new Date(Number(year), Number(month) - 1, 1))
-      return { value, label }
-    })
-  }, [visibleClaims])
-
   const monthFilterOptions = useMemo(
     () =>
       Array.from({ length: 12 }, (_, index) => {
@@ -571,16 +590,9 @@ export default function ReimbursementClaimPage({
   )
 
   const summaryClaims = useMemo(() => {
-    if (summaryMonthFilter === 'all') return visibleClaims
-    return visibleClaims.filter((item) => {
-      if (!item.expense_date) return false
-      const date = new Date(item.expense_date)
-      if (Number.isNaN(date.getTime())) return false
-      const year = date.getFullYear()
-      const month = String(date.getMonth() + 1).padStart(2, '0')
-      return `${year}-${month}` === summaryMonthFilter
-    })
-  }, [summaryMonthFilter, visibleClaims])
+    if (!showSummaryMonthFilter) return filteredClaims
+    return visibleClaims
+  }, [filteredClaims, showSummaryMonthFilter, visibleClaims])
 
   const summary = useMemo(
     () => ({
@@ -1300,16 +1312,85 @@ export default function ReimbursementClaimPage({
     }
 
     if (data?.signedUrl) {
-      if (isImageMimeType(attachment.mime_type) || isImageFileName(attachment.file_name)) {
+      if (isPreviewableImageAttachment(attachment)) {
         setImagePreview({
           src: data.signedUrl,
           name: attachment.file_name,
         })
+        setImagePreviewZoom(1)
+        setImagePreviewTool('zoom-in')
+        setImagePreviewOrigin({ x: 50, y: 50 })
+        setImagePreviewOffset({ x: 0, y: 0 })
         return
       }
 
       window.open(data.signedUrl, '_blank', 'noopener,noreferrer')
     }
+  }
+
+  function handleImagePreviewWrapClick(event) {
+    if (imagePreviewTool === 'pan') {
+      return
+    }
+
+    const bounds = event.currentTarget.getBoundingClientRect()
+    const x = ((event.clientX - bounds.left) / bounds.width) * 100
+    const y = ((event.clientY - bounds.top) / bounds.height) * 100
+
+    setImagePreviewOrigin({
+      x: Number.isFinite(x) ? x : 50,
+      y: Number.isFinite(y) ? y : 50,
+    })
+
+    if (imagePreviewTool === 'zoom-in') {
+      setImagePreviewZoom((currentZoom) => Math.min(4, Number((currentZoom + 0.35).toFixed(2))))
+      return
+    }
+
+    setImagePreviewZoom((currentZoom) => {
+      const nextZoom = Math.max(1, Number((currentZoom - 0.35).toFixed(2)))
+      if (nextZoom === 1) {
+        setImagePreviewOffset({ x: 0, y: 0 })
+      }
+      return nextZoom
+    })
+  }
+
+  function handleImagePreviewPointerDown(event) {
+    if (imagePreviewTool !== 'pan' || imagePreviewZoom <= 1) {
+      return
+    }
+
+    imagePreviewDragRef.current = {
+      startX: event.clientX,
+      startY: event.clientY,
+      offsetX: imagePreviewOffset.x,
+      offsetY: imagePreviewOffset.y,
+    }
+
+    event.currentTarget.setPointerCapture?.(event.pointerId)
+  }
+
+  function handleImagePreviewPointerMove(event) {
+    const dragState = imagePreviewDragRef.current
+    if (!dragState || imagePreviewTool !== 'pan' || imagePreviewZoom <= 1) {
+      return
+    }
+
+    const deltaX = event.clientX - dragState.startX
+    const deltaY = event.clientY - dragState.startY
+
+    setImagePreviewOffset({
+      x: dragState.offsetX + deltaX,
+      y: dragState.offsetY + deltaY,
+    })
+  }
+
+  function handleImagePreviewPointerUp(event) {
+    if (imagePreviewDragRef.current) {
+      event.currentTarget.releasePointerCapture?.(event.pointerId)
+    }
+    imagePreviewDragRef.current = null
   }
 
   const canView = selfOnly ? true : access.reimbursementView
@@ -1338,60 +1419,21 @@ export default function ReimbursementClaimPage({
         </div>
       ) : null}
 
-      {showSummary ? (
-        <>
-          <div className={styles.reimbursementSummaryHeader}>
-            <div>
-              <p className={styles.reimbursementInfoTitle}>Summary Month</p>
-            </div>
-            <div className={styles.reimbursementSummaryFilter}>
-              <select className={styles.select} value={summaryMonthFilter} onChange={(event) => setSummaryMonthFilter(event.target.value)}>
-                <option value="all">All months</option>
-                {summaryMonthOptions.map((item) => (
-                  <option key={item.value} value={item.value}>
-                    {item.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
-
-          <div className={`${styles.materialFulfillmentSummaryRow} ${styles.reimbursementSummaryRow}`.trim()}>
-            <div className={styles.materialFulfillmentStat}>
-              <span>Total Claims</span>
-              <strong>{summary.total}</strong>
-            </div>
-            <div className={styles.materialFulfillmentStat}>
-              <span>Total Amount</span>
-              <strong>{formatCurrency(summary.totalAmount)}</strong>
-            </div>
-            <div className={styles.materialFulfillmentStat}>
-              <span>Total Paid</span>
-              <strong>{formatCurrency(summary.totalPaidAmount)}</strong>
-            </div>
-            <div className={styles.materialFulfillmentStat}>
-              <span>Submitted</span>
-              <strong>{summary.submitted + summary.needRevision}</strong>
-            </div>
-            <div className={styles.materialFulfillmentStat}>
-              <span>Need Revision</span>
-              <strong>{summary.needRevision}</strong>
-            </div>
-            <div className={styles.materialFulfillmentStat}>
-              <span>Approved</span>
-              <strong>{summary.approved}</strong>
-            </div>
-            <div className={styles.materialFulfillmentStat}>
-              <span>Paid</span>
-              <strong>{summary.paid}</strong>
-            </div>
-          </div>
-        </>
-      ) : null}
-
       {showToolbar ? (
-        <div className={styles.toolbar}>
-          <div className={styles.field}>
+        <div
+          className={styles.toolbar}
+          style={
+            compactToolbar
+              ? {
+                  display: 'grid',
+                  gridTemplateColumns: 'minmax(180px, 1.1fr) repeat(4, minmax(0, 0.9fr)) auto',
+                  alignItems: 'end',
+                  gap: '10px',
+                }
+              : undefined
+          }
+        >
+          <div className={styles.field} style={compactToolbar ? { minWidth: 0 } : undefined}>
             <input
               className={styles.input}
               value={search}
@@ -1400,7 +1442,7 @@ export default function ReimbursementClaimPage({
             />
           </div>
 
-          <div className={styles.field}>
+          <div className={styles.field} style={compactToolbar ? { minWidth: 0 } : undefined}>
             <select className={styles.select} value={categoryFilter} onChange={(event) => setCategoryFilter(event.target.value)}>
               <option value="">All categories</option>
               {categories.map((item) => (
@@ -1411,7 +1453,7 @@ export default function ReimbursementClaimPage({
             </select>
           </div>
 
-          <div className={styles.field}>
+          <div className={styles.field} style={compactToolbar ? { minWidth: 0 } : undefined}>
             <select className={styles.select} value={groupFilter} onChange={(event) => setGroupFilter(event.target.value)}>
               <option value="">All groups</option>
               {groupFilterOptions.map((item) => (
@@ -1422,7 +1464,7 @@ export default function ReimbursementClaimPage({
             </select>
           </div>
 
-          <div className={styles.field}>
+          <div className={styles.field} style={compactToolbar ? { minWidth: 0 } : undefined}>
             <select className={styles.select} value={monthFilter} onChange={(event) => setMonthFilter(event.target.value)}>
               <option value="">All months</option>
               {monthFilterOptions.map((item) => (
@@ -1433,7 +1475,7 @@ export default function ReimbursementClaimPage({
             </select>
           </div>
 
-          <div className={styles.field}>
+          <div className={styles.field} style={compactToolbar ? { minWidth: 0 } : undefined}>
             <select className={styles.select} value={yearFilter} onChange={(event) => setYearFilter(event.target.value)}>
               <option value="">All years</option>
               {yearFilterOptions.map((item) => (
@@ -1459,6 +1501,43 @@ export default function ReimbursementClaimPage({
               Reset
             </button>
           </div>
+        </div>
+      ) : null}
+
+      {showSummary ? (
+        <div className={`${styles.materialFulfillmentSummaryRow} ${styles.reimbursementSummaryRow}`.trim()}>
+          <div className={styles.materialFulfillmentStat}>
+            <span>Number of Claims</span>
+            <strong>{summary.total}</strong>
+          </div>
+          <div className={styles.materialFulfillmentStat}>
+            <span>Total Amount</span>
+            <strong>{formatCurrency(summary.totalAmount)}</strong>
+          </div>
+          <div className={styles.materialFulfillmentStat}>
+            <span>Total Paid</span>
+            <strong>{formatCurrency(summary.totalPaidAmount)}</strong>
+          </div>
+          {showSummaryBreakdown ? (
+            <>
+              <div className={styles.materialFulfillmentStat}>
+                <span>Submitted</span>
+                <strong>{summary.submitted + summary.needRevision}</strong>
+              </div>
+              <div className={styles.materialFulfillmentStat}>
+                <span>Need Revision</span>
+                <strong>{summary.needRevision}</strong>
+              </div>
+              <div className={styles.materialFulfillmentStat}>
+                <span>Approved</span>
+                <strong>{summary.approved}</strong>
+              </div>
+              <div className={styles.materialFulfillmentStat}>
+                <span>Paid</span>
+                <strong>{summary.paid}</strong>
+              </div>
+            </>
+          ) : null}
         </div>
       ) : null}
 
@@ -1894,10 +1973,6 @@ export default function ReimbursementClaimPage({
                 <strong>{formatCurrency(selectedClaim.total_amount)}</strong>
               </div>
               <div className={styles.reimbursementMetricCard}>
-                <span>Submitted By</span>
-                <strong>{selectedClaim.created_by || '-'}</strong>
-              </div>
-              <div className={styles.reimbursementMetricCard}>
                 <span>Updated</span>
                 <strong>{formatDateTime(selectedClaim.updated_at)}</strong>
               </div>
@@ -1941,7 +2016,7 @@ export default function ReimbursementClaimPage({
                             <p className={styles.cellMeta}>{formatDateTime(attachment.created_at)}</p>
                           </div>
                           <button type="button" className={styles.secondaryButton} onClick={() => void handleOpenAttachment(attachment)}>
-                            Open
+                            {getAttachmentActionLabel(attachment)}
                           </button>
                         </div>
                       ))}
@@ -1964,7 +2039,7 @@ export default function ReimbursementClaimPage({
                             <p className={styles.cellMeta}>{formatDateTime(attachment.created_at)}</p>
                           </div>
                           <button type="button" className={styles.secondaryButton} onClick={() => void handleOpenAttachment(attachment)}>
-                            Open
+                            {getAttachmentActionLabel(attachment)}
                           </button>
                         </div>
                       ))}
@@ -2485,21 +2560,90 @@ export default function ReimbursementClaimPage({
       ) : null}
 
       {imagePreview ? (
-        <div className={styles.modalOverlay} onClick={() => setImagePreview(null)}>
+        <div
+          className={styles.modalOverlay}
+          onClick={resetImagePreviewState}
+        >
           <div className={`${styles.modalCard} ${styles.reimbursementImageModal}`.trim()} onClick={(event) => event.stopPropagation()}>
             <div className={styles.reimbursementModalHeader}>
               <div>
                 <p className={styles.eyebrow}>Attachment Preview</p>
                 <h2 className={styles.sectionTitle}>{imagePreview.name}</h2>
               </div>
-              <button type="button" className={styles.secondaryButton} onClick={() => setImagePreview(null)}>
-                Close
-              </button>
+              <div className={styles.reimbursementPreviewActions}>
+                <button
+                  type="button"
+                  className={`${styles.secondaryButton} ${imagePreviewTool === 'zoom-out' ? styles.reimbursementPreviewButtonActive : ''}`.trim()}
+                  onClick={() => setImagePreviewTool('zoom-out')}
+                >
+                  Zoom Out
+                </button>
+                <button
+                  type="button"
+                  className={`${styles.secondaryButton} ${imagePreviewTool === 'pan' ? styles.reimbursementPreviewButtonActive : ''}`.trim()}
+                  onClick={() => setImagePreviewTool('pan')}
+                >
+                  Pan
+                </button>
+                <button
+                  type="button"
+                  className={`${styles.secondaryButton} ${imagePreviewTool === 'zoom-in' ? styles.reimbursementPreviewButtonActive : ''}`.trim()}
+                  onClick={() => setImagePreviewTool('zoom-in')}
+                >
+                  Zoom In
+                </button>
+                <button
+                  type="button"
+                  className={styles.secondaryButton}
+                  onClick={() => {
+                    setImagePreviewZoom(1)
+                    setImagePreviewOrigin({ x: 50, y: 50 })
+                    setImagePreviewOffset({ x: 0, y: 0 })
+                  }}
+                >
+                  Reset
+                </button>
+                <button
+                  type="button"
+                  className={styles.secondaryButton}
+                  onClick={resetImagePreviewState}
+                >
+                  Close
+                </button>
+              </div>
             </div>
 
-            <div className={styles.reimbursementImagePreviewWrap}>
+            <div
+              className={styles.reimbursementImagePreviewWrap}
+              style={{
+                cursor:
+                  imagePreviewTool === 'pan'
+                    ? imagePreviewZoom > 1
+                      ? imagePreviewDragRef.current
+                        ? 'grabbing'
+                        : 'grab'
+                      : 'default'
+                    : imagePreviewTool === 'zoom-out'
+                      ? 'zoom-out'
+                      : 'zoom-in',
+              }}
+              onClick={handleImagePreviewWrapClick}
+              onPointerDown={handleImagePreviewPointerDown}
+              onPointerMove={handleImagePreviewPointerMove}
+              onPointerUp={handleImagePreviewPointerUp}
+              onPointerCancel={handleImagePreviewPointerUp}
+            >
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={imagePreview.src} alt={imagePreview.name} className={styles.reimbursementImagePreview} />
+              <img
+                src={imagePreview.src}
+                alt={imagePreview.name}
+                className={styles.reimbursementImagePreview}
+                draggable={false}
+                style={{
+                  transform: `translate(${imagePreviewOffset.x}px, ${imagePreviewOffset.y}px) scale(${imagePreviewZoom})`,
+                  transformOrigin: `${imagePreviewOrigin.x}% ${imagePreviewOrigin.y}%`,
+                }}
+              />
             </div>
           </div>
         </div>

@@ -3,9 +3,12 @@ import { Inter } from 'next/font/google'
 import { createClient } from '@/utils/supabase/server'
 import { ADMIN_EMAIL, canAccessPeopleManagement } from '@/utils/permissions'
 import { getProfileByAuthenticatedUser } from '@/utils/user-profiles'
-import { approveBirthdayGiftRequest, approveLeaveRequest } from './actions'
+import HumanResourcesAutoRefreshClient from './auto-refresh-client'
 import PeopleDirectoryClient from './people-directory-client'
-import ReimbursementClaimPage from '../reimbursement/reimbursement-claim-page'
+import PublicHolidayClient from './public-holiday-client'
+import { approveBirthdayGiftRequest, approveLeaveRequest } from './actions'
+import RequestPanelsClient from './request-panels-client.js'
+import ReimbursementPanelClient from './reimbursement-panel-client'
 import styles from '../arkline/arkline.module.css'
 
 const inter = Inter({ subsets: ['latin'] })
@@ -21,12 +24,84 @@ function formatDateValue(value) {
   }).format(parsed)
 }
 
+function StatusPill({ value }) {
+  return (
+    <span
+      className={`${styles.status} ${
+        value === 'APPROVED' ? styles.statusActive : value === 'REJECTED' ? styles.statusInactive : styles.accentButton
+      }`.trim()}
+      style={{ minHeight: '24px', padding: '0 10px', fontSize: '10px' }}
+    >
+      {value || 'SUBMITTED'}
+    </span>
+  )
+}
+
+function RequestCard({ title, eyebrow, meta, note, actions }) {
+  return (
+    <div
+      style={{
+        border: '1px solid #e2e8f0',
+        borderRadius: '14px',
+        background: '#ffffff',
+        padding: '12px 14px',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '8px',
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '12px' }}>
+        <div>
+          <p style={{ margin: 0, fontSize: '14px', fontWeight: 700, color: '#0f172a' }}>{title}</p>
+          {eyebrow ? <p style={{ margin: '4px 0 0', fontSize: '11px', color: '#64748b' }}>{eyebrow}</p> : null}
+        </div>
+        <span style={{ fontSize: '11px', color: '#64748b', whiteSpace: 'nowrap' }}>{meta}</span>
+      </div>
+
+      <p style={{ margin: 0, fontSize: '13px', color: '#475569', fontStyle: 'italic' }}>{note}</p>
+      <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>{actions}</div>
+    </div>
+  )
+}
+
 function getQueryData(result) {
   if (result.error?.code === '42P01') {
     return { rows: [], missing: true }
   }
 
   return { rows: result.data || [], missing: false }
+}
+
+function filterActiveLeaveRows(rows) {
+  const today = new Date()
+  const todayValue = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime()
+
+  return (rows || []).filter((item) => {
+    const status = String(item?.status || '').toUpperCase()
+    if (status === 'REJECTED') return false
+
+    const endDate = new Date(item?.end_date || item?.start_date || '')
+    if (Number.isNaN(endDate.getTime())) return false
+    const endValue = new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate()).getTime()
+    return endValue >= todayValue
+  })
+}
+
+function filterVisibleBirthdayGiftRows(rows) {
+  const today = new Date()
+  const todayValue = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime()
+
+  return (rows || []).filter((item) => {
+    const status = String(item?.status || '').toUpperCase()
+    if (status === 'SUBMITTED') return true
+    if (status !== 'APPROVED') return false
+
+    const approvedAt = new Date(item?.approved_at || '')
+    if (Number.isNaN(approvedAt.getTime())) return false
+    const expiry = new Date(approvedAt.getFullYear(), approvedAt.getMonth(), approvedAt.getDate())
+    expiry.setDate(expiry.getDate() + 3)
+    return expiry.getTime() >= todayValue
+  })
 }
 
 function normalizeGenderValue(value) {
@@ -67,70 +142,6 @@ function PlusIcon() {
   )
 }
 
-function SummaryCard({ label, value }) {
-  return (
-    <div
-      style={{
-        border: '1px solid #e2e8f0',
-        borderRadius: '16px',
-        background: '#ffffff',
-        padding: '16px 20px',
-        display: 'flex',
-        flexDirection: 'column',
-        justifyContent: 'space-between',
-        gap: '18px',
-        minHeight: '124px',
-      }}
-    >
-      <span style={{ fontSize: '10px', fontWeight: 800, letterSpacing: '0.08em', textTransform: 'uppercase', color: '#64748b' }}>
-        {label}
-      </span>
-      <strong style={{ fontSize: '38px', lineHeight: 1, color: '#0f172a', letterSpacing: '-0.03em' }}>{value}</strong>
-    </div>
-  )
-}
-
-function StatusPill({ value }) {
-  return (
-    <span
-      className={`${styles.status} ${
-        value === 'APPROVED' ? styles.statusActive : value === 'REJECTED' ? styles.statusInactive : styles.accentButton
-      }`.trim()}
-      style={{ minHeight: '24px', padding: '0 10px', fontSize: '10px' }}
-    >
-      {value || 'SUBMITTED'}
-    </span>
-  )
-}
-
-function RequestCard({ title, eyebrow, meta, note, actions }) {
-  return (
-    <div
-      style={{
-        border: '1px solid #e2e8f0',
-        borderRadius: '14px',
-        background: '#ffffff',
-        padding: '12px 14px',
-        display: 'flex',
-        flexDirection: 'column',
-        gap: '8px',
-      }}
-    >
-      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '12px' }}>
-        <div>
-          <p style={{ margin: 0, fontSize: '14px', fontWeight: 700, color: '#0f172a' }}>{title}</p>
-          <p style={{ margin: '4px 0 0', fontSize: '11px', color: '#64748b' }}>{eyebrow}</p>
-        </div>
-        <span style={{ fontSize: '11px', color: '#64748b', whiteSpace: 'nowrap' }}>{meta}</span>
-      </div>
-
-      <p style={{ margin: 0, fontSize: '13px', color: '#475569', fontStyle: 'italic' }}>{note}</p>
-
-      <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>{actions}</div>
-    </div>
-  )
-}
-
 export default async function HumanResourcesPage() {
   const supabase = await createClient()
   const {
@@ -149,15 +160,19 @@ export default async function HumanResourcesPage() {
     redirect('/dashboard')
   }
 
-  const [peopleResult, leaveResult, giftResult] = await Promise.all([
+  const [peopleResult, leaveResult, giftResult, holidayResult] = await Promise.all([
     supabase.from('dir_user_profiles').select('*').order('id', { ascending: true }),
-    supabase.from('hrd_leave_requests').select('*').order('submitted_at', { ascending: false }),
-    supabase.from('hrd_birthday_gift_requests').select('*').order('submitted_at', { ascending: false }),
+    supabase.from('hrga_leave_requests').select('*').order('submitted_at', { ascending: false }),
+    supabase.from('hrga_birthday_gift').select('*').order('submitted_at', { ascending: false }),
+    supabase.from('hrga_public_holidays').select('*').order('holiday_date', { ascending: true }),
   ])
 
   const { rows: peopleRows } = getQueryData(peopleResult)
-  const { rows: leaveRows, missing: leaveMissing } = getQueryData(leaveResult)
-  const { rows: giftRows, missing: giftMissing } = getQueryData(giftResult)
+  const { rows: leaveRowsRaw, missing: leaveMissing } = getQueryData(leaveResult)
+  const { rows: giftRowsRaw, missing: giftMissing } = getQueryData(giftResult)
+  const { rows: publicHolidayRows, missing: holidayMissing } = getQueryData(holidayResult)
+  const leaveRows = filterActiveLeaveRows(leaveRowsRaw)
+  const giftRows = filterVisibleBirthdayGiftRows(giftRowsRaw)
 
   const maleCount = peopleRows.filter((person) => normalizeGenderValue(person.gender || person.jenis_kelamin) === 'Male').length
   const femaleCount = peopleRows.filter((person) => normalizeGenderValue(person.gender || person.jenis_kelamin) === 'Female').length
@@ -173,11 +188,9 @@ export default async function HumanResourcesPage() {
 
   const malePercent = peopleCount ? Math.round((maleCount / peopleCount) * 100) : 0
   const femalePercent = peopleCount ? Math.max(0, 100 - malePercent) : 0
-  const submittedLeaveCount = leaveRows.filter((item) => item.status === 'SUBMITTED').length
-  const submittedGiftCount = giftRows.filter((item) => item.status === 'SUBMITTED').length
-
   return (
     <div className={`${styles.page} ${inter.className}`.trim()}>
+      <HumanResourcesAutoRefreshClient />
       <section
         style={{
           background: '#f7f9fb',
@@ -200,30 +213,25 @@ export default async function HumanResourcesPage() {
             </p>
           </div>
 
-          <div className={styles.buttonRow}>
-            <button type="button" className={styles.primaryButton} style={{ minHeight: '42px', borderRadius: '999px', gap: '8px', padding: '0 20px' }}>
-              <PlusIcon />
-              <span>New Record</span>
-            </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+            <PeopleDirectoryClient
+              people={peopleRows}
+              isAdmin={isAdmin}
+              showSummary={false}
+              openCreateOnTrigger
+              triggerClassName={styles.primaryButton}
+              triggerStyle={{ minHeight: '42px', borderRadius: '999px', gap: '8px', padding: '0 20px', whiteSpace: 'nowrap' }}
+              triggerLabel="+ New People"
+            />
+            <PublicHolidayClient
+              isAdmin={isAdmin}
+              triggerClassName={styles.secondaryButton}
+              triggerStyle={{ minHeight: '42px', borderRadius: '999px', padding: '0 18px', whiteSpace: 'nowrap' }}
+            />
           </div>
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.75fr) minmax(300px, 0.95fr)', gap: '18px' }}>
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
-              gap: '12px',
-            }}
-          >
-            <SummaryCard label="Number of People" value={peopleCount} />
-            <SummaryCard label="Arkline" value={groupCounters.Arkline} />
-            <SummaryCard label="MOB" value={groupCounters.MOB} />
-            <SummaryCard label="OI" value={groupCounters.OI} />
-            <SummaryCard label="Warehouse" value={groupCounters.Warehouse} />
-            <SummaryCard label="HQ" value={groupCounters.HQ} />
-          </div>
-
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '18px' }}>
           <div
             style={{
               background: '#ffffff',
@@ -236,9 +244,79 @@ export default async function HumanResourcesPage() {
             }}
           >
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px' }}>
-              <h2 style={{ margin: 0, fontSize: '18px', lineHeight: 1.1, fontWeight: 700, color: '#0f172a' }}>Gender Snapshot</h2>
+              <div>
+                <p
+                  style={{
+                    margin: 0,
+                    fontSize: '10px',
+                    fontWeight: 800,
+                    letterSpacing: '0.08em',
+                    textTransform: 'uppercase',
+                    color: '#64748b',
+                  }}
+                >
+                  Number of People
+                </p>
+                <strong style={{ display: 'block', marginTop: '8px', fontSize: '54px', lineHeight: 0.95, color: '#0f172a', letterSpacing: '-0.04em' }}>
+                  {peopleCount}
+                </strong>
+              </div>
               <PeopleDirectoryClient people={peopleRows} isAdmin={isAdmin} showSummary={false} />
             </div>
+
+            <details
+              style={{
+                border: '1px solid #e2e8f0',
+                borderRadius: '14px',
+                background: '#f8fafc',
+                padding: '10px 12px',
+              }}
+            >
+              <summary
+                style={{
+                  cursor: 'pointer',
+                  listStyle: 'none',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: '12px',
+                  fontSize: '12px',
+                  fontWeight: 700,
+                  color: '#334155',
+                }}
+              >
+                <span>People Breakdown</span>
+                <span style={{ fontSize: '13px', color: '#64748b' }}>▾</span>
+              </summary>
+
+              <div
+                style={{
+                  marginTop: '12px',
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+                  gap: '10px',
+                }}
+              >
+                {Object.entries(groupCounters).map(([label, value]) => (
+                  <div
+                    key={label}
+                    style={{
+                      border: '1px solid #e2e8f0',
+                      borderRadius: '12px',
+                      background: '#ffffff',
+                      padding: '10px 12px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      gap: '10px',
+                    }}
+                  >
+                    <span style={{ fontSize: '12px', fontWeight: 700, color: '#475569' }}>{label}</span>
+                    <strong style={{ fontSize: '18px', color: '#0f172a' }}>{value}</strong>
+                  </div>
+                ))}
+              </div>
+            </details>
 
             <div style={{ height: '24px', borderRadius: '999px', overflow: 'hidden', background: '#e2e8f0', display: 'flex' }}>
               <div style={{ width: `${malePercent}%`, background: '#111827' }} />
@@ -262,8 +340,21 @@ export default async function HumanResourcesPage() {
               </div>
             </div>
           </div>
+          <RequestPanelsClient
+            leaveRows={leaveRows}
+            leaveRowsAll={leaveRowsRaw}
+            leaveMissing={leaveMissing}
+            giftRows={giftRows}
+            giftRowsAll={giftRowsRaw}
+            giftMissing={giftMissing}
+            peopleRows={peopleRows}
+            publicHolidayRows={publicHolidayRows}
+            holidayMissing={holidayMissing}
+            canCreatePublicRequest={isAdmin || role === 'hrga_approver'}
+          />
         </div>
 
+        {false ? (
         <section style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '12px' }}>
           <div style={{ background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '18px', overflow: 'hidden' }}>
             <div
@@ -276,7 +367,7 @@ export default async function HumanResourcesPage() {
                 gap: '12px',
               }}
             >
-              <h2 style={{ margin: 0, fontSize: '18px', lineHeight: 1.1, fontWeight: 700, color: '#0f172a' }}>Leave / Permit Requests</h2>
+              <h2 style={{ margin: 0, fontSize: '18px', lineHeight: 1.1, fontWeight: 700, color: '#0f172a' }}>Leave Requests</h2>
               <span
                 style={{
                   minWidth: '20px',
@@ -296,19 +387,28 @@ export default async function HumanResourcesPage() {
               </span>
             </div>
 
-            <div style={{ padding: '14px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+            <div style={{ padding: '14px', display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: '10px' }}>
               {leaveMissing ? (
                 <div className={styles.materialFulfillmentNote}>
-                  Table <strong>hrd_leave_requests</strong> is not available yet. Run the HRGA request SQL first.
+                  Table <strong>hrga_leave_requests</strong> is not available yet. Run the HRGA request SQL first.
                 </div>
               ) : leaveRows.length ? (
-                leaveRows.slice(0, 4).map((item) => (
+                leaveRows.map((item) => (
                   <RequestCard
                     key={item.id}
                     title={item.employee_name_snapshot || item.employee_email_snapshot || '-'}
-                    eyebrow={item.request_type || '-'}
+                    eyebrow="Leave"
                     meta={`${formatDateValue(item.start_date)} - ${formatDateValue(item.end_date)}`}
                     note={item.reason || '-'}
+                    detailRows={[
+                      { label: 'Status', value: item.status || '-' },
+                      { label: 'Employee Email', value: item.employee_email_snapshot || '-' },
+                      { label: 'Start Date', value: formatDateValue(item.start_date) },
+                      { label: 'End Date', value: formatDateValue(item.end_date) },
+                      { label: 'Submitted At', value: formatDateValue(item.submitted_at) },
+                      { label: 'Approved At', value: formatDateValue(item.approved_at) },
+                      { label: 'Approved By', value: item.approved_by || '-' },
+                    ]}
                     actions={
                       item.status === 'SUBMITTED' ? (
                         <>
@@ -373,19 +473,27 @@ export default async function HumanResourcesPage() {
               </span>
             </div>
 
-            <div style={{ padding: '14px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+            <div style={{ padding: '14px', display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: '10px' }}>
               {giftMissing ? (
                 <div className={styles.materialFulfillmentNote}>
-                  Table <strong>hrd_birthday_gift_requests</strong> is not available yet. Run the HRGA request SQL first.
+                  Table <strong>hrga_birthday_gift</strong> is not available yet. Run the HRGA request SQL first.
                 </div>
               ) : giftRows.length ? (
-                giftRows.slice(0, 4).map((item) => (
+                giftRows.map((item) => (
                   <RequestCard
                     key={item.id}
                     title={item.employee_name_snapshot || item.employee_email_snapshot || '-'}
                     eyebrow={item.status === 'SUBMITTED' ? 'Birthday Gift' : `Birthday Gift · ${item.status}`}
                     meta={`Requested: ${formatDateValue(item.request_date)}`}
                     note={item.notes || 'Standard corporate gift set'}
+                    detailRows={[
+                      { label: 'Status', value: item.status || '-' },
+                      { label: 'Employee Email', value: item.employee_email_snapshot || '-' },
+                      { label: 'Request Date', value: formatDateValue(item.request_date) },
+                      { label: 'Submitted At', value: formatDateValue(item.submitted_at) },
+                      { label: 'Approved At', value: formatDateValue(item.approved_at) },
+                      { label: 'Approved By', value: item.approved_by || '-' },
+                    ]}
                     actions={
                       item.status === 'SUBMITTED' ? (
                         <>
@@ -419,34 +527,11 @@ export default async function HumanResourcesPage() {
             </div>
           </div>
         </section>
+        ) : null}
 
-        <div style={{ background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '18px', overflow: 'hidden' }}>
-          <div
-            style={{
-              padding: '16px 18px',
-              borderBottom: '1px solid #e2e8f0',
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              gap: '12px',
-            }}
-          >
-            <h2 style={{ margin: 0, fontSize: '18px', lineHeight: 1.1, fontWeight: 700, color: '#0f172a' }}>Reimbursement Claims</h2>
-          </div>
-
-          <div style={{ padding: '14px' }}>
-            <ReimbursementClaimPage
-              title="Reimbursement Claims"
-              showSummary={false}
-              allowBatchCreation={false}
-              allowHrgaApproverView
-              showHeader={false}
-              showToolbar={false}
-              showAccountInfo={false}
-            />
-          </div>
-        </div>
+        <ReimbursementPanelClient />
       </section>
     </div>
   )
 }
+

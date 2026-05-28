@@ -102,6 +102,9 @@ function normalizeSupplier(row, source) {
     id: String(row?.id || '').trim(),
     supplierName: String(row?.supplier_name || row?.nama_supplier || '').trim().toUpperCase(),
     supplierGroup: String(row?.group || '').trim().toUpperCase(),
+    contactPerson: String(row?.contact_person || '').trim(),
+    phone: String(row?.phone || '').trim(),
+    address: String(row?.address || '').trim(),
     isActive: row?.is_active !== false,
     source,
   }
@@ -226,22 +229,6 @@ function formatCurrency(value) {
     minimumFractionDigits: 0,
     maximumFractionDigits: 2,
   }).format(amount)
-}
-
-async function loadArklineLogoDataUrl() {
-  try {
-    const response = await fetch('/arkline-wordmark-transparent.png')
-    if (!response.ok) return ''
-    const blob = await response.blob()
-    return await new Promise((resolve, reject) => {
-      const reader = new FileReader()
-      reader.onloadend = () => resolve(String(reader.result || ''))
-      reader.onerror = () => reject(new Error('Failed to read logo asset.'))
-      reader.readAsDataURL(blob)
-    })
-  } catch {
-    return ''
-  }
 }
 
 function compareMaterialPreviewRows(left, right) {
@@ -386,171 +373,222 @@ function addPdfTable(doc, config) {
   return y + 8
 }
 
-async function createPrintPdfBlob(bundle) {
-  const { jsPDF } = await import('jspdf')
-  const doc = new jsPDF({
-    orientation: 'portrait',
-    unit: 'mm',
-    format: 'a4',
-  })
+async function createPurchaseOrderPreviewHtml(bundle) {
+  const logoUrl =
+    typeof window !== 'undefined'
+      ? `${window.location.origin}/Gemini_Generated_Image_1pgskj1pgskj1pgs.png`
+      : '/Gemini_Generated_Image_1pgskj1pgskj1pgs.png'
+  const escapeHtml = (value) =>
+    String(value ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;')
 
-  const logoDataUrl = await loadArklineLogoDataUrl()
-  if (logoDataUrl) {
-    doc.addImage(logoDataUrl, 'PNG', 14, 12, 42, 16)
+  const formatPrintDate = (value) => {
+    if (!value) return '-'
+    const date = new Date(value)
+    if (Number.isNaN(date.getTime())) return String(value)
+    return new Intl.DateTimeFormat('en-GB', {
+      day: '2-digit',
+      month: 'long',
+      year: 'numeric',
+    }).format(date)
   }
 
-  doc.setFont('helvetica', 'bold')
-  doc.setFontSize(22)
-  doc.text('PURCHASE ORDER', 196, 20, { align: 'right' })
-  doc.setFontSize(10)
-  doc.setFont('helvetica', 'normal')
-  doc.text(`No PO: ${bundle.poId || '-'}`, 196, 27, { align: 'right' })
-  doc.text(`PO Date: ${formatDateLabel(bundle.poCreatedAt)}`, 196, 33, { align: 'right' })
+  const formatIdr = (value) =>
+    new Intl.NumberFormat('id-ID', {
+      style: 'currency',
+      currency: 'IDR',
+      maximumFractionDigits: 0,
+    }).format(Number(value || 0))
 
-  doc.setFont('helvetica', 'bold')
-  doc.setFontSize(12)
-  doc.text('PT ANUGERAH RETAIL KARYA', 62, 20)
-  doc.setFont('helvetica', 'normal')
-  doc.setFontSize(9)
-  doc.text(
-    doc.splitTextToSize(
-      'North Point Commercial blok NP 22, Jl. BSD Boulevard Utara, Lengkong Kulon, Pagedangan, Tangerang Regency, Banten 1533.',
-      92
-    ),
-    62,
-    26
-  )
-
-  doc.setFont('helvetica', 'bold')
-  doc.setFontSize(10)
-  doc.text(`To: ${bundle.header.supplierName || '-'}`, 14, 42)
-
-  let currentY = 50
-
-  const itemRows = bundle.items.map((item) => {
+  const printableItems = bundle.items.map((item) => {
     const qty = getLineTotalQty(item)
-    const price = toNumber(item.price ?? item.hpp)
+    const price = toNumber(item.price)
     const amount = qty * price
+    const sizeBreakdown = SIZE_OPTIONS.filter((size) => toNumber(item.qtyBySize?.[size]) > 0)
+      .map((size) => `${size} ${formatQuantity(item.qtyBySize[size])}`)
+      .join(' • ')
 
-    return [
-      item.namaProdukSnapshot || '-',
-      formatQuantity(qty),
-      formatCurrency(price),
-      formatCurrency(amount),
-    ]
-  })
-
-  const subtotal = bundle.items.reduce((sum, item) => {
-    const qty = getLineTotalQty(item)
-    const price = toNumber(item.price ?? item.hpp)
-    return sum + qty * price
-  }, 0)
-  const ppn = subtotal * 0.11
-  const grandTotal = subtotal + ppn
-
-  const startX = 14
-  const tableWidth = 182
-  const colWidths = [98, 28, 18, 38]
-  const rowHeight = 10
-  const headerHeight = 10
-
-  doc.setDrawColor(190, 190, 190)
-  doc.setLineWidth(0.2)
-  doc.line(startX, currentY, startX + tableWidth, currentY)
-
-  let currentX = startX
-  const headers = ['PRODUCT', 'PRICE', 'QTY', 'TOTAL']
-  headers.forEach((header, index) => {
-    doc.setFont('helvetica', 'bold')
-    doc.setFontSize(9)
-    doc.text(header, currentX + 2, currentY + 6)
-    currentX += colWidths[index]
-  })
-
-  currentY += headerHeight
-  doc.line(startX, currentY, startX + tableWidth, currentY)
-
-  itemRows.forEach((row) => {
-    const productLines = doc.splitTextToSize(String(row[0] || '-'), colWidths[0] - 4)
-    const dynamicHeight = Math.max(rowHeight, productLines.length * 4 + 4)
-    if (currentY + dynamicHeight > 240) {
-      doc.addPage()
-      currentY = 20
+    return {
+      name: item.namaProdukSnapshot || '-',
+      qty,
+      price,
+      amount,
+      sizeBreakdown,
     }
+  })
 
-    let x = startX
-    row.forEach((cell, index) => {
-      doc.setFont('helvetica', 'normal')
-      doc.setFontSize(9)
-      if (index === 0) {
-        doc.text(productLines, x + 2, currentY + 5)
-      } else if (index === 2) {
-        doc.text(String(cell || '-'), x + colWidths[index] - 3, currentY + 5, { align: 'right' })
-      } else {
-        doc.text(String(cell || '-'), x + colWidths[index] - 3, currentY + 5, { align: 'right' })
+  const subtotal = printableItems.reduce((sum, item) => sum + item.amount, 0)
+  const ppn = subtotal * 0.11
+  const total = subtotal + ppn
+  const remarks =
+    String(bundle.header.notes || '').trim() ||
+    'Mohon cantumkan nomor Purchase Order ini pada Invoice, Surat Jalan, dan dokumen pengiriman lainnya.'
+
+  const itemRowsHtml = printableItems
+    .map(
+      (item) => `
+        <tr class="border-b border-gray-200">
+          <td class="py-4 px-1 text-left font-medium">
+            <div>${escapeHtml(item.name)}</div>
+            ${
+              item.sizeBreakdown
+                ? `<div class="mt-1 text-[8pt] text-gray-500">${escapeHtml(item.sizeBreakdown)}</div>`
+                : ''
+            }
+          </td>
+          <td class="py-4 px-1 text-center text-gray-600">${escapeHtml(formatQuantity(item.qty))}</td>
+          <td class="py-4 px-1 text-right text-gray-600">${escapeHtml(formatIdr(item.price))}</td>
+          <td class="py-4 px-1 text-right font-medium">${escapeHtml(formatIdr(item.amount))}</td>
+        </tr>
+      `
+    )
+    .join('')
+
+  return `<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>${escapeHtml(bundle.poId || 'Purchase Order')}</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+      @page {
+        size: A4;
+        margin: 0;
       }
-      x += colWidths[index]
-    })
 
-    currentY += dynamicHeight
-    doc.line(startX, currentY, startX + tableWidth, currentY)
-  })
+      body {
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+      }
+    </style>
+  </head>
+  <body class="bg-gray-100 min-h-screen py-10 print:bg-white print:py-0">
+    <div class="print:hidden sticky top-0 z-10 flex justify-center gap-3 bg-gray-100/90 px-4 pb-4">
+      <button onclick="window.print()" class="rounded-full bg-black px-5 py-2 text-sm font-semibold text-white transition hover:bg-gray-800">
+        Print PDF
+      </button>
+      <button onclick="window.close()" class="rounded-full border border-gray-300 bg-white px-5 py-2 text-sm font-semibold text-gray-700 transition hover:bg-gray-50">
+        Close
+      </button>
+    </div>
 
-  let verticalX = startX
-  colWidths.forEach((width) => {
-    doc.line(verticalX, 50, verticalX, currentY)
-    verticalX += width
-  })
-  doc.line(startX + tableWidth, 50, startX + tableWidth, currentY)
+    <div class="mx-auto min-h-[297mm] w-[210mm] bg-white p-[20mm] font-sans text-[#111] shadow-lg print:min-h-0 print:w-full print:p-[20mm] print:shadow-none">
+      <div class="mb-14 flex items-start justify-between">
+        <div class="flex w-[45%] flex-col gap-3">
+          <div>
+            <div class="text-[7pt] font-bold uppercase tracking-widest text-gray-500">PO Number</div>
+            <div class="text-[9.5pt] font-medium">${escapeHtml(bundle.poId || '-')}</div>
+          </div>
+          <div>
+            <div class="text-[7pt] font-bold uppercase tracking-widest text-gray-500">Date</div>
+            <div class="text-[9.5pt] font-medium">${escapeHtml(formatPrintDate(bundle.poCreatedAt))}</div>
+          </div>
+          <div>
+            <div class="text-[7pt] font-bold uppercase tracking-widest text-gray-500">Request Delivery Date</div>
+            <div class="text-[9.5pt] font-medium">${escapeHtml(formatPrintDate(bundle.header.requestDeliveryDate))}</div>
+          </div>
+          <div>
+            <div class="text-[7pt] font-bold uppercase tracking-widest text-gray-500">Payment Terms</div>
+            <div class="text-[9.5pt] font-medium">${escapeHtml(bundle.header.paymentTerms || bundle.method || '-')}</div>
+          </div>
 
-  const summaryStartX = 122
-  let summaryY = currentY + 8
-  doc.setFontSize(9)
-  doc.setFont('helvetica', 'normal')
-  doc.text('Subtotal', summaryStartX, summaryY)
-  doc.text(formatCurrency(subtotal), 194, summaryY, { align: 'right' })
-  summaryY += 6
-  doc.text('PPN 11%', summaryStartX, summaryY)
-  doc.text(formatCurrency(ppn), 194, summaryY, { align: 'right' })
-  summaryY += 6
-  doc.setFont('helvetica', 'bold')
-  doc.text('Total', summaryStartX, summaryY)
-  doc.text(formatCurrency(grandTotal), 194, summaryY, { align: 'right' })
+          <div class="mt-6">
+            <div class="mb-1 text-[7pt] font-bold uppercase tracking-widest text-gray-500">To</div>
+            <div class="mb-1 text-[11pt] font-semibold">${escapeHtml(bundle.header.supplierName || '-')}</div>
+            <div class="text-[8.5pt] leading-relaxed text-gray-600">
+              ${escapeHtml(bundle.header.supplierAddress || 'Alamat supplier belum diisi.')}<br />
+              ${escapeHtml(bundle.header.supplierContact || 'Kontak supplier belum diisi.')}
+            </div>
+          </div>
+        </div>
 
-  currentY = summaryY + 14
+        <div class="flex w-[55%] flex-col items-end">
+          <div class="w-full max-w-[320px] text-left">
+            <div class="mb-1 inline-flex bg-white p-1">
+              <img
+                src="${escapeHtml(logoUrl)}"
+                alt="Arkline"
+                class="block h-auto max-w-[220px] object-contain"
+              />
+            </div>
+            <div class="mb-2 mt-1 text-[11pt] font-semibold tracking-wide">
+              <span class="block pl-[18px]">PT ANUGERAH RETAIL KARYA</span>
+            </div>
+            <div class="pl-[18px] text-[8.5pt] leading-relaxed text-gray-600">
+              North Point Commercial blok NP 22,<br />
+              Jl. BSD Boulevard Utara, Lengkong Kulon,<br />
+              Pagedangan, Tangerang Regency,<br />
+              Banten 1533
+            </div>
+          </div>
+        </div>
+      </div>
 
-  const lowerLeftLines = [
-    `Payment Method: ${bundle.method || '-'}`,
-    `Terms & Condition: ${bundle.header.paymentTerms || '-'}`,
-    `Request Delivery: ${formatDateLabel(bundle.header.requestDeliveryDate)}`,
-    `Remarks: ${bundle.header.notes || '-'}`,
-  ]
-  const lowerLeftText = doc.splitTextToSize(lowerLeftLines.join('\n'), 88)
+      <table class="mb-16 w-full border-collapse">
+        <thead>
+          <tr class="border-b-[1.5px] border-black">
+            <th class="px-1 py-3 text-left text-[7pt] font-bold uppercase tracking-widest text-gray-700">Produk</th>
+            <th class="w-[12%] px-1 py-3 text-center text-[7pt] font-bold uppercase tracking-widest text-gray-700">Qty</th>
+            <th class="w-[22%] px-1 py-3 text-right text-[7pt] font-bold uppercase tracking-widest text-gray-700">Price</th>
+            <th class="w-[25%] px-1 py-3 text-right text-[7pt] font-bold uppercase tracking-widest text-gray-700">Amount</th>
+          </tr>
+        </thead>
+        <tbody class="text-[9.5pt]">
+          ${itemRowsHtml || `
+            <tr>
+              <td colspan="4" class="px-1 py-8 text-center text-[9pt] text-gray-500">No item lines saved for this PO.</td>
+            </tr>
+          `}
+        </tbody>
+      </table>
 
-  if (currentY + Math.max(lowerLeftText.length * 5, 34) > doc.internal.pageSize.getHeight() - 16) {
-    doc.addPage()
-    currentY = 18
-  }
+      <div class="print:break-inside-avoid flex items-end justify-between">
+        <div class="flex min-h-[280px] w-[50%] flex-col justify-between">
+          <div class="m-0 p-0">
+            <div class="mb-1 text-[7pt] font-bold uppercase tracking-widest text-gray-500">Remarks</div>
+            <div class="max-w-[90%] text-[9pt] leading-relaxed text-gray-600">
+              ${escapeHtml(remarks)}
+            </div>
+          </div>
 
-  doc.setFont('helvetica', 'normal')
-  doc.setFontSize(10)
-  doc.text(lowerLeftText, 14, currentY)
+          <div class="mt-auto text-[36pt] font-bold leading-[0.95] tracking-tighter text-black">
+            PURCHASE<br />ORDER
+          </div>
+        </div>
 
-  currentY += Math.max(lowerLeftText.length * 5, 28)
+        <div class="flex min-h-[280px] w-[45%] flex-col justify-between">
+          <table class="w-full text-[9.5pt]">
+            <tbody>
+              <tr>
+                <td class="py-2 text-[7pt] font-bold uppercase tracking-widest text-gray-400">Subtotal</td>
+                <td class="py-2 text-right text-gray-700">${escapeHtml(formatIdr(subtotal))}</td>
+              </tr>
+              <tr>
+                <td class="py-2 text-[7pt] font-bold uppercase tracking-widest text-gray-400">PPN 11%</td>
+                <td class="py-2 text-right text-gray-700">${escapeHtml(formatIdr(ppn))}</td>
+              </tr>
+              <tr class="border-t-[1.5px] border-black text-[11.5pt] font-bold">
+                <td class="pt-3 text-[7pt] font-bold uppercase tracking-widest text-black">Total</td>
+                <td class="pt-3 text-right text-black">${escapeHtml(formatIdr(total))}</td>
+              </tr>
+            </tbody>
+          </table>
 
-  if (currentY > doc.internal.pageSize.getHeight() - 44) {
-    doc.addPage()
-    currentY = 24
-  }
-
-  doc.setFont('helvetica', 'normal')
-  doc.setFontSize(10)
-  doc.text('Aditya C. S.', 150, currentY + 18, { align: 'center' })
-  doc.line(122, currentY + 20, 178, currentY + 20)
-  doc.setFontSize(9)
-  doc.text('President Director', 150, currentY + 26, { align: 'center' })
-
-  return doc.output('blob')
+          <div class="mt-auto pt-12 text-right">
+            <div class="mb-2 inline-block w-[180px] border-b border-black"></div>
+            <div class="text-[10.5pt] font-semibold tracking-wide text-black">Aditya C. S.</div>
+            <div class="text-[8.5pt] font-medium text-gray-500">President Director</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>`
 }
 
 async function createMaterialPrintPdfBlob(bundle) {
@@ -608,7 +646,7 @@ async function createMaterialPrintPdfBlob(bundle) {
 async function loadSuppliers() {
   const { data, error } = await supabase
     .from('dir_suppliers')
-    .select('id, supplier_name, supplier_code, "group", is_active')
+    .select('id, supplier_name, supplier_code, "group", contact_person, phone, address, is_active')
     .eq('group', 'ARKLINE')
     .order('supplier_name', { ascending: true })
 
@@ -742,6 +780,22 @@ async function fetchPoBundle(poId) {
     throw new Error('PO not found.')
   }
 
+  let supplier = null
+
+  if (poRow.supplier_id != null) {
+    const { data: supplierRow, error: supplierError } = await supabase
+      .from('dir_suppliers')
+      .select('id, supplier_name, supplier_code, "group", contact_person, phone, address, is_active')
+      .eq('id', poRow.supplier_id)
+      .maybeSingle()
+
+    if (supplierError && supplierError.code !== 'PGRST116') {
+      throw new Error(supplierError.message)
+    }
+
+    supplier = supplierRow ? normalizeSupplier(supplierRow, 'regular') : null
+  }
+
   const { data: itemRows, error: itemError } = await supabase
     .from('arkline_po_items')
     .select('*')
@@ -815,6 +869,7 @@ async function fetchPoBundle(poId) {
 
   return {
     po: poRow,
+    supplier,
     items: normalizedItems,
     materials: (materialRows || []).map(normalizeMaterialLine),
   }
@@ -1686,6 +1741,7 @@ export default function ArklineProductionPlanningPage() {
       previewWindow.document.close()
 
       const bundle = await fetchPoBundle(header.poId)
+      const supplierContactParts = [bundle.supplier?.contactPerson, bundle.supplier?.phone].filter(Boolean)
       const printableItems = bundle.items.map((item) => {
         const currentProduct = productBySku[item.skuInduk] || null
         return {
@@ -1694,20 +1750,22 @@ export default function ArklineProductionPlanningPage() {
           kategoriProdukSnapshot: currentProduct?.kategoriProduk || item.kategoriProdukSnapshot,
         }
       })
-      const pdfBlob = await createPrintPdfBlob({
+      const previewHtml = await createPurchaseOrderPreviewHtml({
         poId: header.poId,
         method,
         poCreatedAt: bundle.po.created_at,
         header: {
           ...header,
           paymentTerms: String(bundle.po.payment_terms || header.paymentTerms || ''),
+          supplierAddress: bundle.supplier?.address || '',
+          supplierContact: supplierContactParts.join(' | '),
         },
         items: printableItems,
         materials: bundle.materials,
       })
-      const pdfUrl = URL.createObjectURL(pdfBlob)
-      previewWindow.location.href = pdfUrl
-      window.setTimeout(() => URL.revokeObjectURL(pdfUrl), 60000)
+      previewWindow.document.open()
+      previewWindow.document.write(previewHtml)
+      previewWindow.document.close()
     } catch (printError) {
       previewWindow?.close()
       setError(printError.message || 'Failed to prepare print view.')
