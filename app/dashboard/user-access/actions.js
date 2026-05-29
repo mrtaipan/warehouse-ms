@@ -1,7 +1,10 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
+import { headers } from 'next/headers'
+import { redirect } from 'next/navigation'
 import { createClient } from '@/utils/supabase/server'
+import { createAdminClient } from '@/utils/supabase/admin'
 import { ADMIN_EMAIL } from '@/utils/permissions'
 
 function getTodayJakartaDate() {
@@ -101,4 +104,79 @@ export async function updateRolePermissions(formData) {
 
   revalidatePath('/dashboard/user-access')
   revalidatePath('/dashboard')
+}
+
+function resolveAppOrigin(headerStore) {
+  const forwardedProto = headerStore.get('x-forwarded-proto')
+  const forwardedHost = headerStore.get('x-forwarded-host')
+  const origin = headerStore.get('origin')
+
+  if (origin) return origin
+  if (forwardedProto && forwardedHost) return `${forwardedProto}://${forwardedHost}`
+  if (forwardedHost) return `https://${forwardedHost}`
+  return 'http://localhost:3000'
+}
+
+export async function sendUserInvite(formData) {
+  const supabase = await createClient()
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+
+  if (!user || user.email?.toLowerCase() !== ADMIN_EMAIL) {
+    throw new Error('Only admin can send user invitations.')
+  }
+
+  const profileId = String(formData.get('profile_id') || '').trim()
+  const email = String(formData.get('email') || '').trim().toLowerCase()
+  const displayName = String(formData.get('display_name') || '').trim()
+
+  if (!profileId || !email) {
+    redirect('/dashboard/user-access?invite=missing')
+  }
+
+  const headerStore = await headers()
+  const redirectTo = `${resolveAppOrigin(headerStore)}/accept-invite`
+
+  try {
+    const adminClient = createAdminClient()
+    const { data, error } = await adminClient.auth.admin.inviteUserByEmail(email, {
+      redirectTo,
+      data: displayName
+        ? {
+            display_name: displayName,
+            full_name: displayName,
+          }
+        : undefined,
+    })
+
+    if (error) {
+      redirect(`/dashboard/user-access?invite=error&message=${encodeURIComponent(error.message)}`)
+    }
+
+    const invitedUserId = String(data?.user?.id || '').trim()
+    if (invitedUserId) {
+      const { error: updateError } = await supabase
+        .from('dir_user_profiles')
+        .update({
+          authenticated_id: invitedUserId,
+          email,
+          ...(displayName ? { display_name: displayName } : {}),
+        })
+        .eq('id', profileId)
+
+      if (updateError) {
+        redirect(`/dashboard/user-access?invite=error&message=${encodeURIComponent(updateError.message)}`)
+      }
+    }
+
+    revalidatePath('/dashboard/user-access')
+    revalidatePath('/dashboard')
+    redirect('/dashboard/user-access?invite=sent')
+  } catch (error) {
+    if (String(error?.digest || '').startsWith('NEXT_REDIRECT')) {
+      throw error
+    }
+    redirect(`/dashboard/user-access?invite=error&message=${encodeURIComponent(error?.message || 'Failed to send invite.')}`)
+  }
 }

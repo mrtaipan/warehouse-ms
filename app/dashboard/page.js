@@ -40,21 +40,6 @@ function getDailyQuote(email = '') {
   return DAILY_QUOTES[(dateSeed + emailSeed) % DAILY_QUOTES.length]
 }
 
-function getAccentClass(accent) {
-  switch (accent) {
-    case 'sky':
-      return styles.actionSky
-    case 'ink':
-      return styles.actionInk
-    case 'sand':
-      return styles.actionSand
-    case 'platinum':
-      return styles.actionPlatinum
-    default:
-      return styles.actionSlate
-  }
-}
-
 function toProperCase(value = '') {
   return String(value || '')
     .toLowerCase()
@@ -173,57 +158,6 @@ export default async function DashboardPage() {
     .filter(Boolean)
     .sort((left, right) => left.offset - right.offset || left.name.localeCompare(right.name))
 
-  const quickActions = [
-    menus.storage
-      ? {
-          href: menus.storageHref,
-          title: 'Storage',
-          eyebrow: 'Operations',
-          description: 'Open storage tools, stock visibility, and replenishment flow.',
-          accent: 'slate',
-        }
-      : null,
-    menus.inbound
-      ? {
-          href: '/dashboard/inbound',
-          title: 'Inbound',
-          eyebrow: 'Operations',
-          description: 'Continue receiving, unload, and inbound monitoring.',
-          accent: 'sky',
-        }
-      : null,
-    menus.qc
-      ? {
-          href: menus.qcHref,
-          title: menus.qcInspectorOnly ? 'Inspection Task' : 'Quality Control',
-          eyebrow: 'Quality',
-          description: menus.qcInspectorOnly
-            ? 'See your active queue and continue inspection tasks.'
-            : 'Open quality control receiving, inspection, confirmation, and return flow.',
-          accent: 'ink',
-        }
-      : null,
-    menus.packing
-      ? {
-          href: '/dashboard/packing-list',
-          title: 'Packing List',
-          eyebrow: 'Operations',
-          description: 'Review outgoing preparation and packing progress.',
-          accent: 'sand',
-        }
-      : null,
-    menus.userAccess
-      ? {
-          href: '/dashboard/user-access',
-          title: 'User Access',
-          eyebrow: 'Control',
-          description: 'Manage role mapping and permission access from one place.',
-          accent: 'platinum',
-        }
-      : null,
-  ].filter(Boolean)
-
-  const focusList = quickActions.slice(0, 4)
   const showMyArklifeButton = true
 
   if (!isAdmin) {
@@ -313,50 +247,7 @@ export default async function DashboardPage() {
       </section>
 
       <div className={styles.contentGrid}>
-        <div className={styles.leftColumn}>
-          <section className={styles.sectionCard}>
-            <div className={styles.sectionHead}>
-              <div>
-                <p className={styles.sectionKicker}>Quick Access</p>
-                <h2 className={styles.sectionTitle}>Your modules</h2>
-              </div>
-            </div>
-
-            <div className={styles.actionGrid}>
-              {quickActions.map((item) => (
-                <Link key={item.href} href={item.href} className={`${styles.actionCard} ${getAccentClass(item.accent)}`}>
-                  <span className={styles.actionEyebrow}>{item.eyebrow}</span>
-                  <strong className={styles.actionTitle}>{item.title}</strong>
-                  <span className={styles.actionText}>{item.description}</span>
-                </Link>
-              ))}
-            </div>
-          </section>
-
-          <section className={styles.sectionCard}>
-            <div className={styles.sectionHead}>
-              <div>
-                <p className={styles.sectionKicker}>Today&apos;s Focus</p>
-                <h2 className={styles.sectionTitle}>Recommended next steps</h2>
-              </div>
-            </div>
-
-            <div className={styles.focusList}>
-              {focusList.map((item, index) => (
-                <Link key={item.href} href={item.href} className={styles.focusRow}>
-                  <span className={styles.focusIndex}>{String(index + 1).padStart(2, '0')}</span>
-                  <div className={styles.focusCopy}>
-                    <strong>{item.title}</strong>
-                    <span>{item.description}</span>
-                  </div>
-                  <span className={styles.focusArrow}>&rarr;</span>
-                </Link>
-              ))}
-            </div>
-          </section>
-        </div>
-
-        <aside className={styles.rightColumn}>
+        <div className={styles.rightColumn}>
         <section className={`${styles.sectionCard} ${styles.compactCard}`}>
           <p className={styles.sectionKicker}>News &amp; Updates</p>
 
@@ -402,16 +293,7 @@ export default async function DashboardPage() {
               )}
             </div>
           </section>
-
-          <section className={`${styles.sectionCard} ${styles.compactCard} ${styles.accentCard}`}>
-            <p className={styles.sectionKicker}>Access Design</p>
-            <h2 className={styles.sectionTitle}>Responsive by role</h2>
-            <p className={styles.accentCopy}>
-              Mobile keeps actions concise and stacked. Desktop expands into a broader operational overview with more
-              breathing room.
-            </p>
-          </section>
-        </aside>
+        </div>
       </div>
     </div>
   )

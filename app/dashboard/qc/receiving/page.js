@@ -22,7 +22,28 @@ function getTodayLocalDate() {
 }
 
 function getDateOnly(value) {
-  return String(value || '').slice(0, 10)
+  const rawValue = String(value || '').trim()
+  if (!rawValue) {
+    return ''
+  }
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(rawValue)) {
+    return rawValue
+  }
+
+  const parsedDate = new Date(rawValue)
+  if (Number.isNaN(parsedDate.getTime())) {
+    return rawValue.slice(0, 10)
+  }
+
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Jakarta',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(parsedDate)
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]))
+  return `${values.year}-${values.month}-${values.day}`
 }
 
 const styles = {

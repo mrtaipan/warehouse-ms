@@ -21,6 +21,7 @@ const defaultAccess = {
   progressProducts: false,
   productionPlanning: false,
   financialManagement: false,
+  financialReporting: false,
   reimbursementView: false,
   reimbursementSubmit: false,
   reimbursementApprove: false,

@@ -324,6 +324,9 @@ async function loadSnapshotRows() {
         productEntries: [],
         totalQty: 0,
         latestUpdatedDeliveryDate: '',
+        itemCount: 0,
+        completedItemCount: 0,
+        hasReceipts: false,
       }
     }
 
@@ -345,6 +348,13 @@ async function loadSnapshotRows() {
       sizeBreakdown,
     })
 
+    accumulator[poId].itemCount += 1
+    if (itemStatus === 'Completed') {
+      accumulator[poId].completedItemCount += 1
+    }
+    if (actualQty > 0) {
+      accumulator[poId].hasReceipts = true
+    }
     accumulator[poId].totalQty += Number.isFinite(totalQty) ? totalQty : 0
     accumulator[poId].latestUpdatedDeliveryDate = getLaterIsoDate(accumulator[poId].latestUpdatedDeliveryDate, updatedDeliveryDate)
     return accumulator
@@ -354,10 +364,17 @@ async function loadSnapshotRows() {
     .map((row) => {
       const normalized = normalizePoRow(row)
       const summary = itemSummaryByPoId[normalized.poId]
+      const derivedStatus =
+        summary?.itemCount && summary.completedItemCount === summary.itemCount
+          ? 'Completed'
+          : summary?.hasReceipts
+            ? 'On Progress'
+            : normalized.status
       const latestUpdatedDeliveryDate = summary?.latestUpdatedDeliveryDate || ''
       const actualDate = getLaterIsoDate(normalized.targetDate, latestUpdatedDeliveryDate)
       return {
         ...normalized,
+        status: derivedStatus,
         productNames: summary?.productNames || [],
         productEntries: (summary?.productEntries || []).map((entry) => ({
           ...entry,
@@ -367,7 +384,7 @@ async function loadSnapshotRows() {
         totalQty: summary?.totalQty || 0,
         updatedDate: actualDate,
         displayDate: actualDate || normalized.targetDate || normalized.startDate,
-        completionDate: normalized.status === 'Completed' ? actualDate : '',
+        completionDate: derivedStatus === 'Completed' ? actualDate : '',
         latestUpdatedDeliveryDate,
       }
     })
@@ -411,6 +428,33 @@ function formatNumber(value) {
   const numeric = Number(value || 0)
   if (!Number.isFinite(numeric)) return '0'
   return new Intl.NumberFormat('en-US').format(numeric)
+}
+
+async function syncPoBoardStatus(poId) {
+  const normalizedPoId = String(poId || '').trim().toUpperCase()
+  if (!normalizedPoId) return
+
+  const { data: itemRows, error: itemError } = await supabase
+    .from('arkline_po_items')
+    .select('status, actual_qty')
+    .eq('po_id', normalizedPoId)
+
+  if (itemError) {
+    throw new Error(itemError.message)
+  }
+
+  const items = itemRows || []
+  const nextStatus =
+    items.length && items.every((row) => normalizeBoardStatus(row?.status) === 'Completed')
+      ? 'Completed'
+      : items.some((row) => Number(row?.actual_qty || 0) > 0 || normalizeBoardStatus(row?.status) === 'Completed')
+        ? 'On Progress'
+        : 'Initiated'
+
+  const { error: updateError } = await supabase.from('arkline_pos').update({ status: nextStatus }).eq('po_id', normalizedPoId)
+  if (updateError) {
+    throw new Error(updateError.message)
+  }
 }
 
 function buildQcGradeSummary(rows) {
@@ -1210,6 +1254,13 @@ export default function ArklineProgressOverviewPage() {
     const { error: itemUpdateError } = await supabase.from('arkline_po_items').update(itemUpdatePayload).eq('id', selectedProductDetail.id)
     if (itemUpdateError) {
       setProductActionError(itemUpdateError.message || 'Receipt saved, but failed to update HPP/item summary.')
+      return
+    }
+
+    try {
+      await syncPoBoardStatus(selectedProductDetail.poId)
+    } catch (statusError) {
+      setProductActionError(statusError.message || 'Receipt saved, but failed to update PO status.')
       return
     }
 

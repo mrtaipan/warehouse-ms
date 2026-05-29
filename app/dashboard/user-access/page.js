@@ -1,7 +1,7 @@
 import { redirect } from 'next/navigation'
 import { createClient } from '@/utils/supabase/server'
 import { ADMIN_EMAIL, ROLE_OPTIONS } from '@/utils/permissions'
-import { updateRolePermissions, updateUserRole } from './actions'
+import { sendUserInvite, updateRolePermissions, updateUserRole } from './actions'
 
 function groupPermissions(items) {
   return items.reduce((accumulator, item) => {
@@ -23,7 +23,8 @@ const GROUP_LABELS = {
   other: 'Other',
 }
 
-export default async function UserAccessPage() {
+export default async function UserAccessPage({ searchParams }) {
+  const resolvedSearchParams = await Promise.resolve(searchParams)
   const supabase = await createClient()
   const {
     data: { user },
@@ -53,6 +54,8 @@ export default async function UserAccessPage() {
     accumulator[item.role].add(item.permission_code)
     return accumulator
   }, {})
+  const inviteStatus = String(resolvedSearchParams?.invite || '').trim().toLowerCase()
+  const inviteMessage = String(resolvedSearchParams?.message || '').trim()
 
   return (
     <div style={styles.wrapper}>
@@ -60,6 +63,14 @@ export default async function UserAccessPage() {
         <h1 style={styles.title}>User Access</h1>
         <p style={styles.subtitle}>Atur role per user dan centang permission per role langsung dari UI.</p>
       </div>
+
+      {inviteStatus === 'sent' ? (
+        <div style={styles.successBanner}>Invitation email sent. The user can now continue from the invite link.</div>
+      ) : null}
+
+      {inviteStatus === 'error' ? (
+        <div style={styles.errorBanner}>Failed to send invite: {inviteMessage || 'Unknown error.'}</div>
+      ) : null}
 
       {profilesError || permissionsError || rolePermissionsError ? (
         <div style={styles.card}>
@@ -143,9 +154,24 @@ export default async function UserAccessPage() {
                     </label>
                   </td>
                   <td style={styles.td}>
-                    <button type="submit" form={`access-form-${profile.id}`} style={styles.primaryButton}>
-                      Save
-                    </button>
+                    <div style={styles.actionStack}>
+                      <button type="submit" form={`access-form-${profile.id}`} style={styles.primaryButton}>
+                        Save
+                      </button>
+                      <form action={sendUserInvite} style={styles.inviteForm}>
+                        <input type="hidden" name="profile_id" value={profile.id || ''} />
+                        <input type="hidden" name="email" value={profile.email || ''} />
+                        <input type="hidden" name="display_name" value={profile.display_name || ''} />
+                        <button
+                          type="submit"
+                          style={styles.secondaryButton}
+                          disabled={!profile.email || Boolean(profile.authenticated_id)}
+                          title={!profile.email ? 'Profile needs an email before invite can be sent.' : profile.authenticated_id ? 'This profile is already linked to an auth account.' : 'Send invitation email'}
+                        >
+                          Send Invite
+                        </button>
+                      </form>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -304,6 +330,25 @@ const styles = {
     fontWeight: '600',
     cursor: 'pointer',
   },
+  secondaryButton: {
+    padding: '9px 14px',
+    background: '#ffffff',
+    color: '#111827',
+    borderRadius: '8px',
+    border: '1px solid #d1d5db',
+    fontWeight: '600',
+    cursor: 'pointer',
+    minWidth: '104px',
+  },
+  actionStack: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    flexWrap: 'wrap',
+  },
+  inviteForm: {
+    margin: 0,
+  },
   linkedBadge: {
     display: 'inline-flex',
     alignItems: 'center',
@@ -405,5 +450,25 @@ const styles = {
   errorText: {
     margin: 0,
     color: '#dc2626',
+  },
+  successBanner: {
+    margin: 0,
+    color: '#166534',
+    fontSize: '13px',
+    lineHeight: 1.5,
+    background: '#f0fdf4',
+    borderRadius: '12px',
+    padding: '12px 14px',
+    border: '1px solid #bbf7d0',
+  },
+  errorBanner: {
+    margin: 0,
+    color: '#b91c1c',
+    fontSize: '13px',
+    lineHeight: 1.5,
+    background: '#fef2f2',
+    borderRadius: '12px',
+    padding: '12px 14px',
+    border: '1px solid #fecaca',
   },
 }

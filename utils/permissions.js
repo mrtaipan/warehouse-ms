@@ -37,6 +37,7 @@ export function getArklineFeatureAccess(role, permissions = [], isAdmin = false)
       progressProducts: true,
       productionPlanning: true,
       financialManagement: true,
+      financialReporting: true,
       reimbursementView: true,
       reimbursementSubmit: true,
       reimbursementApprove: true,
@@ -59,6 +60,7 @@ export function getArklineFeatureAccess(role, permissions = [], isAdmin = false)
   ])
   const productionPlanning = permissions.includes('arkline.production-planning.view')
   const financialManagement = permissions.includes('arkline.financial-management.view')
+  const financialReporting = false
   const reimbursementView = false
   const reimbursementSubmit = false
   const reimbursementApprove = false
@@ -85,6 +87,7 @@ export function getArklineFeatureAccess(role, permissions = [], isAdmin = false)
     progressProducts,
     productionPlanning,
     financialManagement,
+    financialReporting,
     reimbursementView,
     reimbursementSubmit,
     reimbursementApprove,
@@ -279,6 +282,7 @@ export function canAccessPath(pathname, role, permissions = [], isAdmin = false)
   if (pathname.startsWith('/dashboard/arkline/directory/bom')) return arklineAccess.directoryBom
   if (pathname.startsWith('/dashboard/arkline/progress-overview')) return arklineAccess.progressOverview
   if (pathname.startsWith('/dashboard/arkline/production-planning')) return arklineAccess.productionPlanning
+  if (pathname.startsWith('/dashboard/arkline/financial-management/reporting')) return arklineAccess.financialReporting
   if (pathname.startsWith('/dashboard/arkline/financial-management')) return arklineAccess.financialManagement
   if (pathname.startsWith('/dashboard/arkline')) return false
 

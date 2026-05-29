@@ -46,12 +46,22 @@ export default function LoginPage() {
     const hashParams = new URLSearchParams(hash.startsWith('#') ? hash.slice(1) : hash)
     const searchType = String(searchParams.get('type') || '').trim().toLowerCase()
     const hashType = String(hashParams.get('type') || '').trim().toLowerCase()
+    const isInviteSignal = searchType === 'invite' || hashType === 'invite'
     const hasRecoverySignal =
       searchType === 'recovery' ||
       hashType === 'recovery' ||
-      Boolean(searchParams.get('code')) ||
-      Boolean(searchParams.get('token_hash')) ||
-      Boolean(hashParams.get('access_token'))
+      (Boolean(searchParams.get('token_hash')) && searchType === 'recovery') ||
+      (Boolean(hashParams.get('access_token')) && hashType === 'recovery')
+
+    if (isInviteSignal) {
+      const nextUrl = new URL('/accept-invite', window.location.origin)
+      searchParams.forEach((value, key) => {
+        nextUrl.searchParams.set(key, value)
+      })
+      nextUrl.hash = hash
+      router.replace(`${nextUrl.pathname}${nextUrl.search}${nextUrl.hash}`)
+      return
+    }
 
     if (!hasRecoverySignal) return
 
