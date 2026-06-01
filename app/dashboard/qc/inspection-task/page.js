@@ -599,13 +599,13 @@ export default function QcInspectionTaskPage() {
               koli_sequence
             )
           `)
-          .ilike('assigned_to', `%${normalizedEmail}%`)
+          .eq('assigned_to', normalizedEmail)
           .in('status', ['queued', 'in_progress', 'paused'])
           .order('created_at', { ascending: true }),
         supabase
           .from('arkline_qc')
           .select('*')
-          .ilike('assigned_to', `%${normalizedEmail}%`)
+          .eq('assigned_to', normalizedEmail)
           .in('status', ['queued', 'in_progress', 'paused'])
           .order('created_at', { ascending: true }),
       ])
@@ -620,15 +620,11 @@ export default function QcInspectionTaskPage() {
         return
       }
 
-      const normalizedRegularTasks = (regularTaskResult.data || [])
-        .filter((item) => normalizeEmail(item.assigned_to) === normalizedEmail)
-        .map((item) => ({
+    const normalizedRegularTasks = (regularTaskResult.data || []).map((item) => ({
           ...item,
           source_type: 'regular',
         }))
-      const normalizedArklineTasks = (arklineTaskResult.data || [])
-        .filter((item) => normalizeEmail(item.assigned_to) === normalizedEmail)
-        .map((item) => ({
+      const normalizedArklineTasks = (arklineTaskResult.data || []).map((item) => ({
           ...item,
           source_type: 'arkline',
         }))
@@ -826,6 +822,7 @@ export default function QcInspectionTaskPage() {
         started_at: startedAt,
       })
       .eq('id', task.id)
+      .eq('assigned_to', normalizedEmail)
       .select(task.source_type === 'arkline' ? '*' : `
         *,
         inbound:inbound_id (
@@ -864,6 +861,7 @@ export default function QcInspectionTaskPage() {
       return
     }
 
+    const normalizedEmail = normalizeEmail(userEmail)
     const pausedAt = new Date().toISOString()
     const pauseLogResult = await createPauseLog({
       taskId: task.id,
@@ -888,6 +886,7 @@ export default function QcInspectionTaskPage() {
         started_at: null,
       })
       .eq('id', task.id)
+      .eq('assigned_to', normalizedEmail)
       .select(task.source_type === 'arkline' ? '*' : `
         *,
         inbound:inbound_id (
@@ -922,6 +921,7 @@ export default function QcInspectionTaskPage() {
   async function handleFinish(task) {
     setError('')
     setSuccess('')
+    const normalizedEmail = normalizeEmail(userEmail)
 
     const currentInputs = gradeInputs[task.id] || { qty_a: '', qty_b: '', qty_c: '' }
     if (!currentInputs.qty_a && !currentInputs.qty_b && !currentInputs.qty_c) {
@@ -933,6 +933,7 @@ export default function QcInspectionTaskPage() {
       .from(getTaskTableName(task))
       .select('qty_a, qty_b, qty_c, allocated_qty, locked_qty')
       .eq('id', task.id)
+      .eq('assigned_to', normalizedEmail)
       .single()
 
     if (latestTaskError) {
@@ -989,6 +990,7 @@ export default function QcInspectionTaskPage() {
         pause_reason: null,
       })
       .eq('id', task.id)
+      .eq('assigned_to', normalizedEmail)
       .select(task.source_type === 'arkline' ? '*' : `
         *,
         inbound:inbound_id (
