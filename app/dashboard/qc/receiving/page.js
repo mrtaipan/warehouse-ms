@@ -1799,24 +1799,6 @@ export default function QcReceivingPage() {
         return
       }
 
-      const queuedRowsToDelete = currentPlanRows.filter((item) => item.status === 'queued' && !referencedPersistedTaskIds.has(item.id))
-
-      if (queuedRowsToDelete.length) {
-        const { error: deleteError } = await supabase
-          .from('arkline_qc')
-          .delete()
-          .in(
-            'id',
-            queuedRowsToDelete.map((item) => item.id)
-          )
-
-        if (deleteError) {
-          setError(deleteError.message)
-          setSaving(false)
-          return
-        }
-      }
-
       for (const updateRow of updatesForPersistedRows) {
         const { error: updateError } = await supabase
           .from('arkline_qc')
@@ -2017,26 +1999,6 @@ export default function QcReceivingPage() {
       return
     }
 
-    const queuedRowsToDelete = currentPlanRows.filter(
-      (item) => item.status === 'queued' && !activeTaskKeys.has(getTaskKey(item))
-    )
-
-    if (queuedRowsToDelete.length) {
-      const { error: deleteError } = await supabase
-        .from('qc_items')
-        .delete()
-        .in(
-          'id',
-          queuedRowsToDelete.map((item) => item.id)
-        )
-
-      if (deleteError) {
-        setError(deleteError.message)
-        setSaving(false)
-        return
-      }
-    }
-
     let insertedRows = []
     if (insertPayload.length) {
       const insertResponse = await supabase
@@ -2087,9 +2049,8 @@ export default function QcReceivingPage() {
       updatedRows.push(updatedRow)
     }
 
-    const deletedIds = new Set(queuedRowsToDelete.map((item) => item.id))
     const nextQcItems = [
-      ...qcItems.filter((item) => !deletedIds.has(item.id) && !updatedRows.some((updated) => updated.id === item.id)),
+      ...qcItems.filter((item) => !updatedRows.some((updated) => updated.id === item.id)),
       ...updatedRows,
       ...insertedRows,
     ]
