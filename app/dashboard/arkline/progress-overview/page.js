@@ -256,7 +256,7 @@ async function loadSnapshotRows() {
     supabase
       .from('arkline_po_items')
       .select('id, po_id, sku_induk, nama_produk, total_qty, actual_qty, price, hpp, updated_delivery_date, notes, status'),
-    supabase.from('arkline_po_item_receipts').select('arkline_po_item_id, received_qty'),
+    supabase.from('arkline_po_item_receipts').select('arkline_po_item_id, size, received_qty'),
     supabase.from('arkline_po_item_sizes').select('arkline_po_item_id, size, qty'),
   ])
 
@@ -279,6 +279,15 @@ async function loadSnapshotRows() {
   const receiptQtyByItemId = (receiptData || []).reduce((accumulator, row) => {
     const key = String(row?.arkline_po_item_id || '').trim()
     if (!key) return accumulator
+    accumulator[key] = (accumulator[key] || 0) + Number(row?.received_qty || 0)
+    return accumulator
+  }, {})
+
+  const receiptQtyByItemAndSize = (receiptData || []).reduce((accumulator, row) => {
+    const itemId = String(row?.arkline_po_item_id || '').trim()
+    const size = String(row?.size || '').trim().toUpperCase()
+    if (!itemId || !size) return accumulator
+    const key = `${itemId}::${size}`
     accumulator[key] = (accumulator[key] || 0) + Number(row?.received_qty || 0)
     return accumulator
   }, {})
@@ -308,7 +317,19 @@ async function loadSnapshotRows() {
     const itemStatus = normalizeBoardStatus(row?.status)
     const itemNotes = String(row?.notes || '').trim()
     const itemId = String(row?.id || '').trim()
+
     const sizeBreakdown = ((sizeRowsByItemId[itemId] || []).length ? sizeRowsByItemId[itemId] : [])
+      .map((row) => {
+        const orderedQty = Number(row?.qty || 0)
+        const sizeKey = String(row?.size || '').trim().toUpperCase()
+        const receivedQty = Number(receiptQtyByItemAndSize[`${itemId}::${sizeKey}`] || 0)
+        return {
+          ...row,
+          orderedQty,
+          receivedQty,
+          remainingQty: Math.max(orderedQty - receivedQty, 0),
+        }
+      })
       .sort((left, right) => {
         const leftIndex = RECEIPT_SIZE_ORDER.indexOf(left.size)
         const rightIndex = RECEIPT_SIZE_ORDER.indexOf(right.size)
@@ -340,6 +361,7 @@ async function loadSnapshotRows() {
       productName: productName || 'NO PRODUCT',
       qty: Number.isFinite(totalQty) ? totalQty : 0,
       actualQty: Number.isFinite(actualQty) ? actualQty : 0,
+      remainingQty: Math.max((Number.isFinite(totalQty) ? totalQty : 0) - (Number.isFinite(actualQty) ? actualQty : 0), 0),
       price: Number.isFinite(price) ? price : 0,
       hpp: Number.isFinite(hpp) ? hpp : 0,
       updatedDeliveryDate,
@@ -430,6 +452,19 @@ function formatNumber(value) {
   return new Intl.NumberFormat('en-US').format(numeric)
 }
 
+function formatPercent(value, total) {
+  const numericValue = Number(value || 0)
+  const numericTotal = Number(total || 0)
+  if (!numericTotal) return '0%'
+  return `${((numericValue / numericTotal) * 100).toFixed(1)}%`
+}
+
+function getReceivingQtyBase(receipts = [], actualQty = 0) {
+  const receivedFromHistory = (receipts || []).reduce((sum, row) => sum + Number(row?.received_qty || 0), 0)
+  if (receivedFromHistory > 0) return receivedFromHistory
+  return Number(actualQty || 0)
+}
+
 async function syncPoBoardStatus(poId) {
   const normalizedPoId = String(poId || '').trim().toUpperCase()
   if (!normalizedPoId) return
@@ -457,7 +492,30 @@ async function syncPoBoardStatus(poId) {
   }
 }
 
-function buildQcGradeSummary(rows) {
+function applyInspectorErrorToRejectTotals(qtyB, qtyC, inspectorErrorQty) {
+  let nextQtyB = Number(qtyB || 0)
+  let nextQtyC = Number(qtyC || 0)
+  const signedQty = Number(inspectorErrorQty || 0)
+
+  if (!signedQty) {
+    return { qtyB: nextQtyB, qtyC: nextQtyC }
+  }
+
+  if (signedQty > 0) {
+    let remaining = signedQty
+    const qtyCAdjustment = Math.min(nextQtyC, remaining)
+    nextQtyC -= qtyCAdjustment
+    remaining -= qtyCAdjustment
+    const qtyBAdjustment = Math.min(nextQtyB, remaining)
+    nextQtyB -= qtyBAdjustment
+    return { qtyB: nextQtyB, qtyC: nextQtyC }
+  }
+
+  nextQtyC += Math.abs(signedQty)
+  return { qtyB: nextQtyB, qtyC: nextQtyC }
+}
+
+function buildQcGradeSummary(rows, rejectRows = [], adjustmentRows = []) {
   const summary = (rows || []).reduce(
     (accumulator, row) => {
       accumulator.qtyA += Number(row?.qty_a || 0)
@@ -467,6 +525,34 @@ function buildQcGradeSummary(rows) {
     },
     { qtyA: 0, qtyB: 0, qtyC: 0 }
   )
+
+  if ((rejectRows || []).length) {
+    summary.qtyB = 0
+    summary.qtyC = 0
+
+    ;(rejectRows || []).forEach((row) => {
+      const grade = String(row?.grade || '').trim().toUpperCase()
+      const qty = Number(row?.qty || 0)
+
+      if (grade === 'B') summary.qtyB += qty
+      if (grade === 'C') summary.qtyC += qty
+    })
+  }
+
+  const adjustmentSummary = (adjustmentRows || []).reduce(
+    (accumulator, row) => {
+      const type = String(row?.adjustment_type || '').trim().toLowerCase()
+      if (type === 'bc_to_a') accumulator.bcToAQty += Number(row?.qty || 0)
+      if (type === 'inspector_data_error') accumulator.inspectorErrorQty += Number(row?.qty || 0)
+      return accumulator
+    },
+    { bcToAQty: 0, inspectorErrorQty: 0 }
+  )
+
+  summary.qtyA += adjustmentSummary.bcToAQty
+  const adjustedRejectTotals = applyInspectorErrorToRejectTotals(summary.qtyB, summary.qtyC, adjustmentSummary.inspectorErrorQty)
+  summary.qtyB = adjustedRejectTotals.qtyB
+  summary.qtyC = adjustedRejectTotals.qtyC
 
   return {
     ...summary,
@@ -684,7 +770,8 @@ async function loadOptionalRows(queryFactory) {
 }
 
 export default function ArklineProgressOverviewPage() {
-  const { access, loading: accessLoading } = useArklineAccess()
+  const { access, loading: accessLoading, role } = useArklineAccess()
+  const canOpenKanbanDetail = role !== 'arkline_viewer'
   const [view, setView] = useState('')
   const [monthDate, setMonthDate] = useState(() => new Date())
   const [lastRefresh, setLastRefresh] = useState(() => new Date())
@@ -845,6 +932,9 @@ export default function ArklineProgressOverviewPage() {
           if (String(entry?.status || '').trim() === 'Completed') {
             return false
           }
+          if (Number(entry?.remainingQty || 0) <= 0) {
+            return false
+          }
           if (!keyword) {
             return true
           }
@@ -883,14 +973,14 @@ export default function ArklineProgressOverviewPage() {
         }
       }
 
-      accumulator[key].totalQty += Number(entry?.qty || 0)
+      accumulator[key].totalQty += Number(entry?.remainingQty || 0)
       if (entry.poId && !accumulator[key].poIds.includes(entry.poId)) {
         accumulator[key].poIds.push(entry.poId)
       }
       ;(entry.sizeBreakdown || []).forEach((row) => {
         const size = String(row?.size || '').trim().toUpperCase()
         if (!size) return
-        accumulator[key].sizeTotals[size] = (accumulator[key].sizeTotals[size] || 0) + Number(row?.qty || 0)
+        accumulator[key].sizeTotals[size] = (accumulator[key].sizeTotals[size] || 0) + Number(row?.remainingQty || 0)
       })
       accumulator[key].rows.push(entry)
       return accumulator
@@ -1021,6 +1111,8 @@ export default function ArklineProgressOverviewPage() {
       updates: [],
       payments: [],
       qcRows: [],
+      qcRejectRows: [],
+      qcRejectAdjustments: [],
       financeSummary: null,
       sizeBreakdown: [],
     })
@@ -1087,6 +1179,7 @@ export default function ArklineProgressOverviewPage() {
       })
       const qcRows = qcRowsByItem.length ? qcRowsByItem : (qcRowsRaw || []).filter((row) => String(row?.sku_induk || '').trim().toUpperCase() === normalizedSku)
       const qcTaskIds = qcRows.map((row) => row.id).filter(Boolean)
+      const qcModelName = String(qcRows[0]?.model_name || entry.productName || '').trim()
       const rejectDetailRows = await loadOptionalRows(() => {
         let query = supabase
           .from('arkline_qc_reject_details')
@@ -1111,6 +1204,21 @@ export default function ArklineProgressOverviewPage() {
           query = query.in('arkline_qc_id', qcTaskIds)
         } else if (selectedPoDetail.poId && normalizedSku) {
           query = query.eq('po_id', selectedPoDetail.poId).eq('sku_induk', normalizedSku)
+        } else {
+          query = query.limit(0)
+        }
+
+        return query
+      })
+      const rejectAdjustmentRows = await loadOptionalRows(() => {
+        let query = supabase
+          .from('arkline_qc_reject_adjustments')
+          .select('id, po_id, arkline_po_item_id, sku_induk, model_name, adjustment_type, qty, notes, created_at')
+          .order('created_at', { ascending: false })
+
+        if (selectedPoDetail.poId && normalizedSku) {
+          query = query.eq('po_id', selectedPoDetail.poId).eq('sku_induk', normalizedSku)
+          if (qcModelName) query = query.eq('model_name', qcModelName)
         } else {
           query = query.limit(0)
         }
@@ -1163,6 +1271,7 @@ export default function ArklineProgressOverviewPage() {
         payments: paymentRows,
         qcRows,
         qcRejectRows: rejectDetailRows,
+        qcRejectAdjustments: rejectAdjustmentRows,
         sizeBreakdown,
         financeSummary: {
           price,
@@ -1377,8 +1486,13 @@ export default function ArklineProgressOverviewPage() {
     setPrintingQcReport(true)
     try {
       const { jsPDF } = await import('jspdf')
-      const qcSummary = buildQcGradeSummary(selectedProductDetail.qcRows || [])
+      const qcSummary = buildQcGradeSummary(
+        selectedProductDetail.qcRows || [],
+        selectedProductDetail.qcRejectRows || [],
+        selectedProductDetail.qcRejectAdjustments || []
+      )
       const rejectSummary = buildRejectDetailSummary(selectedProductDetail.qcRejectRows || [], qcSummary)
+      const receivingQty = getReceivingQtyBase(selectedProductDetail.receipts || [], selectedProductDetail.financeSummary?.actualQty || 0)
       const doc = new jsPDF({ unit: 'mm', format: 'a4' })
       const pageWidth = doc.internal.pageSize.getWidth()
       const pageHeight = doc.internal.pageSize.getHeight()
@@ -1406,12 +1520,32 @@ export default function ArklineProgressOverviewPage() {
       cursorY += 8
 
       const metricWidth = (pageWidth - margin * 2 - 9) / 4
-      const metricHeight = 18
+      const metricHeight = 24
       const metrics = [
-        { label: 'Grade A', value: formatNumber(qcSummary.qtyA), dark: false },
-        { label: 'Grade B', value: formatNumber(qcSummary.qtyB), dark: false },
-        { label: 'Grade C', value: formatNumber(qcSummary.qtyC), dark: false },
-        { label: 'Total QC', value: formatNumber(qcSummary.totalQc), dark: true },
+        {
+          label: 'Grade A',
+          value: formatNumber(qcSummary.qtyA),
+          note: `${formatPercent(qcSummary.qtyA, qcSummary.totalQc)} of total QC sample`,
+          dark: false,
+        },
+        {
+          label: 'Grade B',
+          value: formatNumber(qcSummary.qtyB),
+          note: `${formatPercent(qcSummary.qtyB, qcSummary.totalQc)} of total QC sample`,
+          dark: false,
+        },
+        {
+          label: 'Grade C',
+          value: formatNumber(qcSummary.qtyC),
+          note: `${formatPercent(qcSummary.qtyC, qcSummary.totalQc)} of total QC sample`,
+          dark: false,
+        },
+        {
+          label: 'Total QC',
+          value: formatNumber(qcSummary.totalQc),
+          note: `${formatPercent(qcSummary.totalQc, receivingQty)} of receiving qty`,
+          dark: true,
+        },
       ]
 
       metrics.forEach((metric, index) => {
@@ -1432,6 +1566,10 @@ export default function ArklineProgressOverviewPage() {
         doc.setFontSize(13)
         doc.setTextColor(metric.dark ? 255 : 15, metric.dark ? 255 : 23, metric.dark ? 255 : 42)
         doc.text(metric.value, x + 3, cursorY + 13)
+        doc.setFont('helvetica', 'normal')
+        doc.setFontSize(6.5)
+        doc.setTextColor(metric.dark ? 226 : 100, metric.dark ? 232 : 116, metric.dark ? 240 : 139)
+        doc.text(metric.note, x + 3, cursorY + 19)
       })
 
       cursorY += metricHeight + 10
@@ -1580,16 +1718,20 @@ export default function ArklineProgressOverviewPage() {
                       return (
                         <article
                           key={item.id}
-                          className={styles.boardCard}
-                          role="button"
-                          tabIndex={0}
-                          onClick={() => openPoDetail(item)}
-                          onKeyDown={(event) => {
-                            if (event.key === 'Enter' || event.key === ' ') {
-                              event.preventDefault()
-                              openPoDetail(item)
-                            }
-                          }}
+                          className={`${styles.boardCard} ${!canOpenKanbanDetail ? styles.boardCardStatic : ''}`.trim()}
+                          role={canOpenKanbanDetail ? 'button' : undefined}
+                          tabIndex={canOpenKanbanDetail ? 0 : undefined}
+                          onClick={canOpenKanbanDetail ? () => openPoDetail(item) : undefined}
+                          onKeyDown={
+                            canOpenKanbanDetail
+                              ? (event) => {
+                                  if (event.key === 'Enter' || event.key === ' ') {
+                                    event.preventDefault()
+                                    openPoDetail(item)
+                                  }
+                                }
+                              : undefined
+                          }
                         >
                           <div className={styles.boardCardTop}>
                             <div className={styles.boardCardIdentity}>
@@ -2112,8 +2254,16 @@ export default function ArklineProgressOverviewPage() {
                   {(selectedProductDetail.qcRows || []).length ? (
                     <>
                       {(() => {
-                        const qcSummary = buildQcGradeSummary(selectedProductDetail.qcRows || [])
+                        const qcSummary = buildQcGradeSummary(
+                          selectedProductDetail.qcRows || [],
+                          selectedProductDetail.qcRejectRows || [],
+                          selectedProductDetail.qcRejectAdjustments || []
+                        )
                         const rejectSummary = buildRejectDetailSummary(selectedProductDetail.qcRejectRows || [], qcSummary)
+                        const receivingQty = getReceivingQtyBase(
+                          selectedProductDetail.receipts || [],
+                          selectedProductDetail.financeSummary?.actualQty || 0
+                        )
 
                         return (
                           <>
@@ -2121,18 +2271,22 @@ export default function ArklineProgressOverviewPage() {
                               <div className={styles.modalMetric}>
                                 <span>Grade A</span>
                                 <strong>{formatNumber(qcSummary.qtyA)}</strong>
+                                <small className={styles.metricNote}>{formatPercent(qcSummary.qtyA, qcSummary.totalQc)} of total QC sample</small>
                               </div>
                               <div className={styles.modalMetric}>
                                 <span>Grade B</span>
                                 <strong>{formatNumber(qcSummary.qtyB)}</strong>
+                                <small className={styles.metricNote}>{formatPercent(qcSummary.qtyB, qcSummary.totalQc)} of total QC sample</small>
                               </div>
                               <div className={styles.modalMetric}>
                                 <span>Grade C</span>
                                 <strong>{formatNumber(qcSummary.qtyC)}</strong>
+                                <small className={styles.metricNote}>{formatPercent(qcSummary.qtyC, qcSummary.totalQc)} of total QC sample</small>
                               </div>
                               <div className={`${styles.modalMetric} ${styles.qcTotalMetric}`.trim()}>
                                 <span>Total QC</span>
                                 <strong>{formatNumber(qcSummary.totalQc)}</strong>
+                                <small className={styles.metricNote}>{formatPercent(qcSummary.totalQc, receivingQty)} of receiving qty</small>
                               </div>
                             </div>
                             {rejectSummary.length ? (

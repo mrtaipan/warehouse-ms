@@ -31,6 +31,7 @@ const defaultAccess = {
 export default function useArklineAccess() {
   const [loading, setLoading] = useState(true)
   const [access, setAccess] = useState(defaultAccess)
+  const [role, setRole] = useState('')
 
   useEffect(() => {
     let active = true
@@ -45,6 +46,7 @@ export default function useArklineAccess() {
       if (!user) {
         if (active) {
           setAccess(defaultAccess)
+          setRole('')
           setLoading(false)
         }
         return
@@ -60,6 +62,7 @@ export default function useArklineAccess() {
 
       if (active) {
         setAccess(nextAccess)
+        setRole(role)
         setLoading(false)
       }
     }
@@ -71,5 +74,5 @@ export default function useArklineAccess() {
     }
   }, [])
 
-  return { loading, access }
+  return { loading, access, role }
 }

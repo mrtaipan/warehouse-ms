@@ -121,7 +121,7 @@ function fallbackDisplayName(value) {
 
 function buildRequestFolder(request) {
   const invoiceFolder = sanitizeFileName(request?.invoice_number || '').replace(/\.+/g, '-')
-  return invoiceFolder ? `${request.id}-${invoiceFolder}` : String(request?.id || 'request')
+  return invoiceFolder || String(request?.id || 'request')
 }
 
 function isImageAttachment(attachment) {
@@ -269,7 +269,7 @@ export default function ArklineFinancialManagementPage() {
         .from('arkline_po_material_ordered')
         .select('id, material_po_number, created_at')
         .order('created_at', { ascending: false }),
-      supabase.from('dir_reimbursement_categories').select('id, name, is_active').eq('is_active', true).order('name', { ascending: true }),
+      supabase.from('dir_reimbursement_categories').select('id, name, is_active').eq('is_active', true).order('id', { ascending: true }),
     ])
 
     if (paymentError || poError || materialPoError || categoryError) {

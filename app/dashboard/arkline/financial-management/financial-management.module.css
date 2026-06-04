@@ -395,7 +395,12 @@
   cursor: pointer;
 }
 
-.modalCard,
+.modalCard {
+  width: min(1120px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  overflow: auto;
+}
+
 .detailModal,
 .imageModal {
   width: min(980px, calc(100vw - 32px));

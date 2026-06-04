@@ -312,6 +312,16 @@
   border-color: #cbd5e1;
 }
 
+.boardCardStatic {
+  cursor: default;
+}
+
+.boardCardStatic:hover {
+  transform: none;
+  box-shadow: 0 6px 14px rgba(15, 23, 42, 0.035);
+  border-color: #e2e8f0;
+}
+
 .boardCard:focus-visible {
   outline: none;
   border-color: #94a3b8;
@@ -877,6 +887,12 @@
   line-height: 1.4;
 }
 
+.metricNote {
+  color: #64748b;
+  font-size: 10px;
+  line-height: 1.35;
+}
+
 .compactModalGrid .modalMetric {
   padding: 9px 10px;
   border-radius: 12px;
@@ -890,13 +906,18 @@
   font-size: 12px;
 }
 
+.compactModalGrid .metricNote {
+  font-size: 9px;
+}
+
 .qcTotalMetric {
   border-color: #0f172a;
   background: #0f172a;
 }
 
 .qcTotalMetric span,
-.qcTotalMetric strong {
+.qcTotalMetric strong,
+.qcTotalMetric .metricNote {
   color: #ffffff;
 }
 
