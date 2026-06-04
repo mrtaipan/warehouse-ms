@@ -82,7 +82,6 @@ function normalizeRequest(row) {
     payment_basis: row?.payment_basis || 'NON_PO_BASED',
     po_source_type: row?.po_source_type || 'GARMENT',
     po_db_id: row?.po_db_id || null,
-    po_reference_id: row?.po_reference_id || '',
     po_number: row?.po_number || '',
     supplier_name_snapshot: row?.supplier_name_snapshot || '',
     invoice_number: row?.invoice_number || '',
@@ -236,7 +235,6 @@ export default function ArklineFinancialManagementPage() {
             payment_basis,
             po_source_type,
             po_db_id,
-            po_reference_id,
             po_number,
             supplier_name_snapshot,
             invoice_number,
@@ -268,8 +266,8 @@ export default function ArklineFinancialManagementPage() {
         .order('created_at', { ascending: true }),
       supabase.from('arkline_pos').select('id, po_id, supplier_name, created_at').order('created_at', { ascending: false }),
       supabase
-        .from('arkline_po_materials')
-        .select('id, po_id, material_name_snapshot, created_at')
+        .from('arkline_po_material_ordered')
+        .select('id, material_po_number, created_at')
         .order('created_at', { ascending: false }),
       supabase.from('dir_reimbursement_categories').select('id, name, is_active').eq('is_active', true).order('name', { ascending: true }),
     ])
@@ -325,8 +323,7 @@ export default function ArklineFinancialManagementPage() {
     setMaterialPoOptions(
       (materialPoRows || []).map((item) => ({
         id: String(item.id),
-        poNumber: String(item.po_id || '').trim().toUpperCase(),
-        materialName: String(item.material_name_snapshot || '').trim().toUpperCase(),
+        poNumber: String(item.material_po_number || '').trim().toUpperCase(),
       }))
     )
     setCategories((categoryRows || []).map((item) => ({ id: String(item.id), name: item.name })))
@@ -399,7 +396,6 @@ export default function ArklineFinancialManagementPage() {
       payment_basis: item.payment_basis || 'NON_PO_BASED',
       po_source_type: item.po_source_type || 'GARMENT',
       linked_po_id: item.po_db_id ? String(item.po_db_id) : '',
-      ...(item.po_source_type === 'MATERIAL' ? { linked_po_id: item.po_reference_id ? String(item.po_reference_id) : '' } : {}),
       invoice_number: item.invoice_number || '',
       category_id: item.category_id || '',
       amount: formatNumberInput(item.amount || ''),
@@ -477,16 +473,15 @@ export default function ArklineFinancialManagementPage() {
     const uploadedPaths = []
 
     try {
-      const payload = {
+        const payload = {
         payment_basis: draft.payment_basis,
         po_source_type: draft.payment_basis === 'PO_BASED' ? draft.po_source_type : null,
-        po_db_id: draft.payment_basis === 'PO_BASED' && draft.po_source_type === 'GARMENT' && draft.linked_po_id ? Number(draft.linked_po_id) : null,
-        po_reference_id: draft.payment_basis === 'PO_BASED' ? String(draft.linked_po_id || '') || null : null,
+        po_db_id: draft.payment_basis === 'PO_BASED' && draft.linked_po_id ? Number(draft.linked_po_id) : null,
         po_number: draft.payment_basis === 'PO_BASED' ? selectedPo?.poNumber || null : null,
         supplier_name_snapshot:
           draft.payment_basis === 'PO_BASED'
             ? draft.po_source_type === 'MATERIAL'
-              ? selectedPo?.materialName || null
+              ? selectedPo?.poNumber || null
               : selectedPo?.supplierName || null
             : null,
         invoice_number: normalizeUppercase(draft.invoice_number).trim(),
@@ -528,7 +523,6 @@ export default function ArklineFinancialManagementPage() {
               payment_basis,
               po_source_type,
               po_db_id,
-              po_reference_id,
               po_number,
               supplier_name_snapshot,
               invoice_number,
@@ -872,7 +866,8 @@ export default function ArklineFinancialManagementPage() {
                       <option value="">{draft.po_source_type === 'MATERIAL' ? 'Choose material PO' : 'Choose garment PO'}</option>
                       {(draft.po_source_type === 'MATERIAL' ? materialPoOptions : poOptions).map((item) => (
                         <option key={item.id} value={item.id}>
-                          {item.poNumber} - {item.materialName || item.supplierName || 'Reference'}
+                          {item.poNumber}
+                          {item.supplierName ? ` - ${item.supplierName}` : ''}
                         </option>
                       ))}
                     </select>

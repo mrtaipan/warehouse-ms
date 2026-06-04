@@ -5,7 +5,6 @@ create table if not exists public.arkline_payment (
   payment_basis text not null default 'NON_PO_BASED',
   po_source_type text,
   po_db_id bigint,
-  po_reference_id text,
   po_number text,
   supplier_name_snapshot text,
   invoice_number text not null,
@@ -28,8 +27,7 @@ create table if not exists public.arkline_payment (
 );
 
 alter table public.arkline_payment
-  add column if not exists po_source_type text,
-  add column if not exists po_reference_id text;
+  add column if not exists po_source_type text;
 
 do $$
 begin
