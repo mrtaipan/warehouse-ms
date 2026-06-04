@@ -165,15 +165,18 @@ export default async function DashboardPage() {
       <div className={styles.dashboardShell}>
         <section className={styles.heroCard}>
           <div className={styles.heroCopy}>
+          <div className={styles.heroTopBar}>
             <span className={styles.heroKicker}>{formatToday()}</span>
-            <div className={styles.heroTopRow}>
-              <h1 className={styles.heroTitle}>Hello {userLabel}!</h1>
-              {showMyArklifeButton ? (
-                <Link href={menus.myArklifeHref} className={styles.heroActionButton}>
-                  MyARKLIFE
-                </Link>
-              ) : null}
-            </div>
+            {showMyArklifeButton ? (
+              <Link href={menus.myArklifeHref} className={styles.heroProfileLink} aria-label="Open MyARKLIFE">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M20 21a8 8 0 0 0-16 0" />
+                  <circle cx="12" cy="8" r="4" />
+                </svg>
+              </Link>
+            ) : null}
+          </div>
+          <h1 className={styles.heroTitle}>Hello {userLabel}!</h1>
             <p className={styles.heroSupport}>Glad to have you back.</p>
             <p className={styles.heroQuote}>&ldquo;{quoteOfTheDay}&rdquo;</p>
           </div>
@@ -232,15 +235,18 @@ export default async function DashboardPage() {
     <div className={styles.dashboardShell}>
       <section className={styles.heroCard}>
         <div className={styles.heroCopy}>
-          <span className={styles.heroKicker}>{formatToday()}</span>
-          <div className={styles.heroTopRow}>
-            <h1 className={styles.heroTitle}>Hello {userLabel}!</h1>
+          <div className={styles.heroTopBar}>
+            <span className={styles.heroKicker}>{formatToday()}</span>
             {showMyArklifeButton ? (
-              <Link href={menus.myArklifeHref} className={styles.heroActionButton}>
-                MyARKLIFE
+              <Link href={menus.myArklifeHref} className={styles.heroProfileLink} aria-label="Open MyARKLIFE">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M20 21a8 8 0 0 0-16 0" />
+                  <circle cx="12" cy="8" r="4" />
+                </svg>
               </Link>
             ) : null}
           </div>
+          <h1 className={styles.heroTitle}>Hello {userLabel}!</h1>
           <p className={styles.heroSupport}>Glad to have you back.</p>
           <p className={styles.heroQuote}>&ldquo;{quoteOfTheDay}&rdquo;</p>
         </div>

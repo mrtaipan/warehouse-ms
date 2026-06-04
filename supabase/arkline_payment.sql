@@ -3,7 +3,9 @@ begin;
 create table if not exists public.arkline_payment (
   id bigint generated always as identity primary key,
   payment_basis text not null default 'NON_PO_BASED',
+  po_source_type text,
   po_db_id bigint,
+  po_reference_id text,
   po_number text,
   supplier_name_snapshot text,
   invoice_number text not null,
@@ -20,9 +22,29 @@ create table if not exists public.arkline_payment (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   constraint arkline_payment_basis_check check (payment_basis in ('PO_BASED', 'NON_PO_BASED')),
+  constraint arkline_payment_po_source_type_check check (po_source_type is null or po_source_type in ('GARMENT', 'MATERIAL')),
   constraint arkline_payment_status_check check (status in ('SUBMITTED', 'PAID')),
   constraint arkline_payment_amount_check check (amount >= 0)
 );
+
+alter table public.arkline_payment
+  add column if not exists po_source_type text,
+  add column if not exists po_reference_id text;
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'arkline_payment_po_source_type_check'
+      and conrelid = 'public.arkline_payment'::regclass
+  ) then
+    alter table public.arkline_payment
+      add constraint arkline_payment_po_source_type_check
+      check (po_source_type is null or po_source_type in ('GARMENT', 'MATERIAL'));
+  end if;
+end
+$$;
 
 create table if not exists public.arkline_payment_attachments (
   id bigint generated always as identity primary key,

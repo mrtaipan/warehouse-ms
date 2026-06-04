@@ -102,6 +102,7 @@ function normalizeSupplier(row, source) {
     id: String(row?.id || '').trim(),
     supplierName: String(row?.supplier_name || row?.nama_supplier || '').trim().toUpperCase(),
     supplierGroup: String(row?.group || '').trim().toUpperCase(),
+    supplierLevel: String(row?.supplier_level || '').trim().toUpperCase(),
     contactPerson: String(row?.contact_person || '').trim(),
     phone: String(row?.phone || '').trim(),
     address: String(row?.address || '').trim(),
@@ -646,8 +647,9 @@ async function createMaterialPrintPdfBlob(bundle) {
 async function loadSuppliers() {
   const { data, error } = await supabase
     .from('dir_suppliers')
-    .select('id, supplier_name, supplier_code, "group", contact_person, phone, address, is_active')
+    .select('id, supplier_name, supplier_code, "group", supplier_level, contact_person, phone, address, is_active')
     .eq('group', 'ARKLINE')
+    .eq('supplier_level', 'GARMENT')
     .order('supplier_name', { ascending: true })
 
   if (error) {
@@ -785,7 +787,7 @@ async function fetchPoBundle(poId) {
   if (poRow.supplier_id != null) {
     const { data: supplierRow, error: supplierError } = await supabase
       .from('dir_suppliers')
-      .select('id, supplier_name, supplier_code, "group", contact_person, phone, address, is_active')
+      .select('id, supplier_name, supplier_code, "group", supplier_level, contact_person, phone, address, is_active')
       .eq('id', poRow.supplier_id)
       .maybeSingle()
 

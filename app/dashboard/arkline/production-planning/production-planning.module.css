@@ -816,11 +816,309 @@
   flex-wrap: wrap;
 }
 
+.materialModeRow {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.modeButton {
+  min-height: 38px;
+  padding: 0 14px;
+  border-radius: 999px;
+  border: 1px solid #d7dee7;
+  background: #ffffff;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 700;
+  transition: background 160ms ease, color 160ms ease, border-color 160ms ease, transform 160ms ease;
+}
+
+.modeButton:hover {
+  border-color: #cbd5e1;
+  color: #0f172a;
+  transform: translateY(-1px);
+}
+
+.modeButtonActive {
+  background: #0f172a;
+  border-color: #0f172a;
+  color: #ffffff;
+}
+
+.modeButtonActive:hover {
+  background: #0f172a;
+  border-color: #0f172a;
+  color: #ffffff;
+}
+
+.materialHeaderGrid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.materialWorkflow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+}
+
+.primaryButton,
+.secondaryButton,
+.ghostButton {
+  min-height: 38px;
+  padding: 0 14px;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  font-size: 12px;
+  font-weight: 700;
+  transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease, background 160ms ease, color 160ms ease;
+}
+
+.primaryButton {
+  background: #0f172a;
+  border-color: #0f172a;
+  color: #ffffff;
+}
+
+.primaryButton:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 10px 20px rgba(15, 23, 42, 0.14);
+}
+
+.secondaryButton {
+  background: #ffffff;
+  border-color: #d7dee7;
+  color: #0f172a;
+}
+
+.secondaryButton:hover {
+  transform: translateY(-1px);
+  border-color: #cbd5e1;
+}
+
+.ghostButton {
+  background: #f8fafc;
+  border-color: #e2e8f0;
+  color: #64748b;
+}
+
+.ghostButton:hover {
+  transform: translateY(-1px);
+  color: #0f172a;
+}
+
+.primaryButton:disabled,
+.secondaryButton:disabled,
+.ghostButton:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+.materialRowAssigned {
+  opacity: 0.52;
+}
+
+.materialCellTitle {
+  font-size: 12px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.materialCellMeta {
+  margin-top: 2px;
+  font-size: 10px;
+  color: #64748b;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.freeMaterialGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(120px, 0.6fr) minmax(90px, 0.4fr) auto;
+  gap: 12px;
+  align-items: end;
+}
+
+.orderDraftPriceRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(140px, 0.7fr);
+  gap: 12px;
+  align-items: end;
+}
+
+.orderDraftAmountCard {
+  min-height: 40px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid #d7dee7;
+  background: #ffffff;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
+}
+
+.orderDraftAmountLabel {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #64748b;
+}
+
+.orderDraftAmountValue {
+  color: #0f172a;
+  font-size: 13px;
+}
+
+.orderDraftList {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.orderDraftCard {
+  border: 1px solid #e2e8f0;
+  border-radius: 16px;
+  background: #fbfcfe;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.orderDraftHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.orderDraftCopy {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.orderDraftTitle {
+  color: #0f172a;
+  font-size: 14px;
+}
+
+.orderDraftMeta {
+  color: #64748b;
+  font-size: 11px;
+}
+
+.orderDraftActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.orderDraftQty {
+  min-height: 34px;
+  padding: 0 12px;
+  border-radius: 10px;
+  border: 1px solid #d7dee7;
+  background: #ffffff;
+  display: inline-flex;
+  align-items: center;
+  color: #0f172a;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.orderDraftHoverWrap {
+  position: relative;
+  width: fit-content;
+}
+
+.orderDraftSourceBadge {
+  min-height: 28px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid #dbe4ef;
+  background: #ffffff;
+  display: inline-flex;
+  align-items: center;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: default;
+}
+
+.orderDraftTooltip {
+  position: absolute;
+  left: 0;
+  top: calc(100% + 8px);
+  min-width: 280px;
+  max-width: min(360px, 72vw);
+  border-radius: 14px;
+  border: 1px solid #dbe4ef;
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow: 0 18px 36px rgba(15, 23, 42, 0.12);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(6px);
+  transition: opacity 160ms ease, transform 160ms ease;
+  z-index: 10;
+}
+
+.orderDraftHoverWrap:hover .orderDraftTooltip {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.orderDraftTooltip strong {
+  font-size: 11px;
+  color: #0f172a;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.orderDraftTooltipList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.orderDraftTooltipRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  font-size: 12px;
+  color: #475569;
+}
+
 @media (max-width: 1100px) {
   .planningColumns,
   .grid,
   .formGrid,
   .inlineFieldRow {
+    grid-template-columns: 1fr;
+  }
+
+  .materialWorkflow {
+    grid-template-columns: 1fr;
+  }
+
+  .freeMaterialGrid {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+
+  .materialHeaderGrid,
+  .orderDraftPriceRow {
     grid-template-columns: 1fr;
   }
 

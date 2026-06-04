@@ -14,6 +14,7 @@ const PAYMENT_REQUEST_BUCKET = 'arkline-payments'
 function createDraft() {
   return {
     payment_basis: 'NON_PO_BASED',
+    po_source_type: 'GARMENT',
     linked_po_id: '',
     invoice_number: '',
     category_id: '',
@@ -79,7 +80,9 @@ function normalizeRequest(row) {
   return {
     id: row?.id || '',
     payment_basis: row?.payment_basis || 'NON_PO_BASED',
+    po_source_type: row?.po_source_type || 'GARMENT',
     po_db_id: row?.po_db_id || null,
+    po_reference_id: row?.po_reference_id || '',
     po_number: row?.po_number || '',
     supplier_name_snapshot: row?.supplier_name_snapshot || '',
     invoice_number: row?.invoice_number || '',
@@ -164,6 +167,7 @@ export default function ArklineFinancialManagementPage() {
   const [profile, setProfile] = useState(null)
   const [requests, setRequests] = useState([])
   const [poOptions, setPoOptions] = useState([])
+  const [materialPoOptions, setMaterialPoOptions] = useState([])
   const [categories, setCategories] = useState([])
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('ALL')
@@ -218,14 +222,21 @@ export default function ArklineFinancialManagementPage() {
       return
     }
 
-    const [{ data: paymentRows, error: paymentError }, { data: poRows, error: poError }, { data: categoryRows, error: categoryError }] = await Promise.all([
+    const [
+      { data: paymentRows, error: paymentError },
+      { data: poRows, error: poError },
+      { data: materialPoRows, error: materialPoError },
+      { data: categoryRows, error: categoryError },
+    ] = await Promise.all([
       supabase
         .from('arkline_payment')
         .select(
           `
             id,
             payment_basis,
+            po_source_type,
             po_db_id,
+            po_reference_id,
             po_number,
             supplier_name_snapshot,
             invoice_number,
@@ -256,11 +267,15 @@ export default function ArklineFinancialManagementPage() {
         )
         .order('created_at', { ascending: true }),
       supabase.from('arkline_pos').select('id, po_id, supplier_name, created_at').order('created_at', { ascending: false }),
+      supabase
+        .from('arkline_po_materials')
+        .select('id, po_id, material_name_snapshot, created_at')
+        .order('created_at', { ascending: false }),
       supabase.from('dir_reimbursement_categories').select('id, name, is_active').eq('is_active', true).order('name', { ascending: true }),
     ])
 
-    if (paymentError || poError || categoryError) {
-      setError(paymentError?.message || poError?.message || categoryError?.message || 'Failed to load payment request workspace.')
+    if (paymentError || poError || materialPoError || categoryError) {
+      setError(paymentError?.message || poError?.message || materialPoError?.message || categoryError?.message || 'Failed to load payment request workspace.')
       setLoading(false)
       return
     }
@@ -305,6 +320,13 @@ export default function ArklineFinancialManagementPage() {
         id: String(item.id),
         poNumber: String(item.po_id || '').trim().toUpperCase(),
         supplierName: String(item.supplier_name || '').trim().toUpperCase(),
+      }))
+    )
+    setMaterialPoOptions(
+      (materialPoRows || []).map((item) => ({
+        id: String(item.id),
+        poNumber: String(item.po_id || '').trim().toUpperCase(),
+        materialName: String(item.material_name_snapshot || '').trim().toUpperCase(),
       }))
     )
     setCategories((categoryRows || []).map((item) => ({ id: String(item.id), name: item.name })))
@@ -375,7 +397,9 @@ export default function ArklineFinancialManagementPage() {
     setEditingRequest(item)
     setDraft({
       payment_basis: item.payment_basis || 'NON_PO_BASED',
+      po_source_type: item.po_source_type || 'GARMENT',
       linked_po_id: item.po_db_id ? String(item.po_db_id) : '',
+      ...(item.po_source_type === 'MATERIAL' ? { linked_po_id: item.po_reference_id ? String(item.po_reference_id) : '' } : {}),
       invoice_number: item.invoice_number || '',
       category_id: item.category_id || '',
       amount: formatNumberInput(item.amount || ''),
@@ -423,7 +447,7 @@ export default function ArklineFinancialManagementPage() {
     }
 
     if (draft.payment_basis === 'PO_BASED' && !draft.linked_po_id) {
-      setError('Choose an existing PO first for PO based payment.')
+      setError(`Choose a ${draft.po_source_type === 'MATERIAL' ? 'material' : 'garment'} PO first for PO based payment.`)
       return
     }
 
@@ -442,7 +466,12 @@ export default function ArklineFinancialManagementPage() {
       return
     }
 
-    const selectedPo = poOptions.find((item) => item.id === draft.linked_po_id)
+    const selectedPo =
+      draft.payment_basis === 'PO_BASED'
+        ? draft.po_source_type === 'MATERIAL'
+          ? materialPoOptions.find((item) => item.id === draft.linked_po_id)
+          : poOptions.find((item) => item.id === draft.linked_po_id)
+        : null
 
     setSaving(true)
     const uploadedPaths = []
@@ -450,9 +479,16 @@ export default function ArklineFinancialManagementPage() {
     try {
       const payload = {
         payment_basis: draft.payment_basis,
-        po_db_id: draft.linked_po_id ? Number(draft.linked_po_id) : null,
+        po_source_type: draft.payment_basis === 'PO_BASED' ? draft.po_source_type : null,
+        po_db_id: draft.payment_basis === 'PO_BASED' && draft.po_source_type === 'GARMENT' && draft.linked_po_id ? Number(draft.linked_po_id) : null,
+        po_reference_id: draft.payment_basis === 'PO_BASED' ? String(draft.linked_po_id || '') || null : null,
         po_number: draft.payment_basis === 'PO_BASED' ? selectedPo?.poNumber || null : null,
-        supplier_name_snapshot: selectedPo?.supplierName || null,
+        supplier_name_snapshot:
+          draft.payment_basis === 'PO_BASED'
+            ? draft.po_source_type === 'MATERIAL'
+              ? selectedPo?.materialName || null
+              : selectedPo?.supplierName || null
+            : null,
         invoice_number: normalizeUppercase(draft.invoice_number).trim(),
         category_id: Number(draft.category_id),
         amount: Number(normalizeDigits(draft.amount)),
@@ -490,7 +526,9 @@ export default function ArklineFinancialManagementPage() {
             `
               id,
               payment_basis,
+              po_source_type,
               po_db_id,
+              po_reference_id,
               po_number,
               supplier_name_snapshot,
               invoice_number,
@@ -801,7 +839,9 @@ export default function ArklineFinancialManagementPage() {
                 <select
                   className={styles.select}
                   value={draft.payment_basis}
-                  onChange={(event) => setDraft((prev) => ({ ...prev, payment_basis: event.target.value, linked_po_id: '' }))}
+                  onChange={(event) =>
+                    setDraft((prev) => ({ ...prev, payment_basis: event.target.value, po_source_type: 'GARMENT', linked_po_id: '' }))
+                  }
                 >
                   <option value="NON_PO_BASED">Non-PO Based</option>
                   <option value="PO_BASED">PO Based</option>
@@ -809,21 +849,35 @@ export default function ArklineFinancialManagementPage() {
               </div>
 
               {draft.payment_basis === 'PO_BASED' ? (
-              <div className={styles.field}>
-                <label className={styles.label}>Existing PO</label>
-                <select
-                  className={styles.select}
-                  value={draft.linked_po_id}
-                  onChange={(event) => setDraft((prev) => ({ ...prev, linked_po_id: event.target.value }))}
-                >
-                  <option value="">Choose existing PO</option>
-                  {poOptions.map((item) => (
-                    <option key={item.id} value={item.id}>
-                      {item.poNumber} - {item.supplierName || 'Supplier'}
-                    </option>
-                  ))}
-                </select>
-              </div>
+                <>
+                  <div className={styles.field}>
+                    <label className={styles.label}>PO Type *</label>
+                    <select
+                      className={styles.select}
+                      value={draft.po_source_type}
+                      onChange={(event) => setDraft((prev) => ({ ...prev, po_source_type: event.target.value, linked_po_id: '' }))}
+                    >
+                      <option value="GARMENT">Garment</option>
+                      <option value="MATERIAL">Material</option>
+                    </select>
+                  </div>
+
+                  <div className={styles.field}>
+                    <label className={styles.label}>{draft.po_source_type === 'MATERIAL' ? 'Material PO *' : 'Garment PO *'}</label>
+                    <select
+                      className={styles.select}
+                      value={draft.linked_po_id}
+                      onChange={(event) => setDraft((prev) => ({ ...prev, linked_po_id: event.target.value }))}
+                    >
+                      <option value="">{draft.po_source_type === 'MATERIAL' ? 'Choose material PO' : 'Choose garment PO'}</option>
+                      {(draft.po_source_type === 'MATERIAL' ? materialPoOptions : poOptions).map((item) => (
+                        <option key={item.id} value={item.id}>
+                          {item.poNumber} - {item.materialName || item.supplierName || 'Reference'}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </>
               ) : null}
 
               <div className={`${styles.formRowThree} ${styles.fullSpan}`.trim()}>

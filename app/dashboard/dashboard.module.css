@@ -36,6 +36,20 @@
   flex-wrap: wrap;
 }
 
+.heroTopBar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.heroProfileRow {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: -2px;
+}
+
 .heroKicker,
 .sectionKicker {
   margin: 0;
@@ -88,6 +102,32 @@
   justify-content: center;
   font-size: 13px;
   font-weight: 700;
+}
+
+.heroProfileLink {
+  width: 42px;
+  height: 42px;
+  border-radius: 999px;
+  border: 1px solid #dbe4ef;
+  background: #f8fafc;
+  color: #111827;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+  transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease, background 160ms ease;
+}
+
+.heroProfileLink:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 10px 20px rgba(15, 23, 42, 0.08);
+  border-color: #cbd5e1;
+  background: #ffffff;
+}
+
+.heroProfileLink svg {
+  width: 18px;
+  height: 18px;
 }
 
 .contentGrid {
