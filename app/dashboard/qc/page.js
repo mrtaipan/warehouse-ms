@@ -1195,15 +1195,21 @@ export default function QcDashboardPage() {
   const qcResultSummary = useMemo(() => {
     const grouped = new Map()
     const arklineDetailByTaskId = new Map()
+    const arklineDetailBySummaryKey = new Map()
     const arklineAdjustmentBySummaryKey = new Map()
 
     if (qcMode === 'arkline') {
       arklineRejectDetails.forEach((detail) => {
         const current = arklineDetailByTaskId.get(detail.arkline_qc_id) || { qtyB: 0, qtyC: 0 }
+        const summaryKey = getRejectDetailSummaryKey(detail)
+        const summaryCurrent = arklineDetailBySummaryKey.get(summaryKey) || { qtyB: 0, qtyC: 0 }
         const grade = String(detail.grade || '').toUpperCase()
         if (grade === 'B') current.qtyB += Number(detail.qty || 0)
         if (grade === 'C') current.qtyC += Number(detail.qty || 0)
+        if (grade === 'B') summaryCurrent.qtyB += Number(detail.qty || 0)
+        if (grade === 'C') summaryCurrent.qtyC += Number(detail.qty || 0)
         arklineDetailByTaskId.set(detail.arkline_qc_id, current)
+        arklineDetailBySummaryKey.set(summaryKey, summaryCurrent)
       })
 
       arklineRejectAdjustments.forEach((adjustment) => {
@@ -1252,12 +1258,15 @@ export default function QcDashboardPage() {
     if (qcMode === 'arkline') {
       grouped.forEach((current, key) => {
         const adjustment = arklineAdjustmentBySummaryKey.get(key) || { bcToAQty: 0, inspectorErrorQty: 0 }
-        current.qtyA += adjustment.bcToAQty
-        if (!current.hasRejectDetails) {
-          const adjustedRejectTotals = applyInspectorErrorToRejectTotals(current.qtyB, current.qtyC, adjustment.inspectorErrorQty)
-          current.qtyB = adjustedRejectTotals.qtyB
-          current.qtyC = adjustedRejectTotals.qtyC
+        const detailSummary = arklineDetailBySummaryKey.get(key)
+        if (detailSummary) {
+          current.qtyB = detailSummary.qtyB
+          current.qtyC = detailSummary.qtyC
         }
+        current.qtyA += adjustment.bcToAQty
+        const adjustedRejectTotals = applyInspectorErrorToRejectTotals(current.qtyB, current.qtyC, adjustment.inspectorErrorQty)
+        current.qtyB = adjustedRejectTotals.qtyB
+        current.qtyC = adjustedRejectTotals.qtyC
         current.checked = current.qtyA + current.qtyB + current.qtyC
       })
     }
@@ -1371,7 +1380,7 @@ export default function QcDashboardPage() {
     Number(rejectAdjustmentDraft.bcToAQty || 0) + Number(rejectAdjustmentDraft.inspectorErrorQty || 0)
   const selectedRejectGap = selectedRejectTargetQty - selectedRejectDetailQty - selectedRejectAdjustmentQty
   const selectedRejectPreviewSummary = useMemo(() => {
-    const baseQtyA = Number(rejectDetailSummary?.qtyA || 0)
+    const baseQtyA = selectedRejectTaskRows.reduce((sum, item) => sum + Number(item.qty_a || 0), 0)
     const baseQtyB = Number(rejectDetailSummary?.qtyB || 0)
     const baseQtyC = Number(rejectDetailSummary?.qtyC || 0)
     const bcToAQty = Number(rejectAdjustmentDraft.bcToAQty || 0)
@@ -1399,7 +1408,7 @@ export default function QcDashboardPage() {
       qtyB: hasDraftRejectQty ? previewQtyB : baseQtyB,
       qtyC: hasDraftRejectQty ? previewQtyC : baseQtyC,
     }
-  }, [rejectAdjustmentDraft.bcToAQty, rejectDetailSummary, rejectDraftRows])
+  }, [rejectAdjustmentDraft.bcToAQty, rejectDetailSummary, rejectDraftRows, selectedRejectTaskRows])
   const selectedRejectPreviewChecked =
     selectedRejectPreviewSummary.qtyA + selectedRejectPreviewSummary.qtyB + selectedRejectPreviewSummary.qtyC
   const selectedRejectSizeOptions = useMemo(() => {

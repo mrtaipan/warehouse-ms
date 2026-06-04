@@ -10,7 +10,7 @@ function ArklineSubnav() {
   const { access, loading } = useArklineAccess()
   const items = [
     { href: '/dashboard/arkline', label: 'Overview', segment: null, enabled: access.overview },
-    { href: '/dashboard/arkline/directory', label: 'Product Directory', segment: 'directory', enabled: access.directory },
+    { href: '/dashboard/arkline/directory', label: 'Directory', segment: 'directory', enabled: access.directory },
     { href: '/dashboard/arkline/progress-overview', label: 'Progress Snapshot', segment: 'progress-overview', enabled: access.progressOverview },
     { href: '/dashboard/arkline/production-planning', label: 'Production Planning', segment: 'production-planning', enabled: access.productionPlanning },
     { href: '/dashboard/arkline/financial-management', label: 'Financial Management', segment: 'financial-management', enabled: access.financialManagement },

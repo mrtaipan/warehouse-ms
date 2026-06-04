@@ -9,9 +9,9 @@ const cards = [
   {
     href: '/dashboard/arkline/directory',
     number: '01.',
-    title: 'Product Directory',
-    text: 'Manage Arkline products, create new SKU entries, and manage BOM in the same workspace.',
-    short: 'Product setup and SKU master.',
+    title: 'Directory',
+    text: 'Manage Arkline products, materials, and BOM in the same workspace.',
+    short: 'Product, material, and BOM master.',
     hoverImage: '/arkline-productdirectory-hover.PNG',
     accessKey: 'directory',
   },
