@@ -317,6 +317,12 @@
   background: #fef2f2;
 }
 
+.iconButtonSuccess {
+  color: #15803d;
+  border-color: #bbf7d0;
+  background: #f0fdf4;
+}
+
 .statusPill {
   display: inline-flex;
   align-items: center;
@@ -334,7 +340,39 @@
   color: #1d4ed8;
 }
 
+.statusPillApproved {
+  background: #fef3c7;
+  color: #b45309;
+}
+
 .statusPillPaid {
+  background: #dcfce7;
+  color: #15803d;
+}
+
+.statusBadge {
+  min-height: 28px;
+  padding: 0 12px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.statusSubmitted {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+.statusApproved {
+  background: #fef3c7;
+  color: #b45309;
+}
+
+.statusPaid {
   background: #dcfce7;
   color: #15803d;
 }
@@ -396,7 +434,7 @@
 }
 
 .modalCard {
-  width: min(1120px, calc(100vw - 32px));
+  width: min(1280px, calc(100vw - 24px));
   max-height: calc(100vh - 32px);
   overflow: auto;
 }
@@ -410,13 +448,19 @@
 
 .formGrid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(220px, 0.9fr) minmax(0, 1.1fr);
   gap: 14px;
 }
 
 .formRowThree {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.formRowTwo {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 14px;
 }
 
@@ -733,6 +777,7 @@
   .reportingGrid,
   .detailGrid,
   .formGrid,
+  .formRowTwo,
   .formRowThree {
     grid-template-columns: 1fr;
   }

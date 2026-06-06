@@ -9,7 +9,6 @@ export const ROLE_OPTIONS = [
   { value: 'qc_staff', label: 'QC Staff' },
   { value: 'qc_inspector', label: 'QC Inspector' },
   { value: 'packing_staff', label: 'Packing Staff' },
-  { value: 'hrga', label: 'HRGA' },
   { value: 'hrga_approver', label: 'HRGA Approver' },
   { value: 'arkline_viewer', label: 'Arkline Viewer' },
   { value: 'arkline_purchaser', label: 'Arkline Purchaser' },
@@ -20,7 +19,7 @@ function hasAnyPermission(permissions, codes) {
 }
 
 export function canAccessPeopleManagement(role = '', isAdmin = false) {
-  return isAdmin || role === 'admin' || role === 'hrga' || role === 'hrga_approver'
+  return isAdmin || role === 'admin' || role === 'hrga_approver'
 }
 
 export function getArklineFeatureAccess(role, permissions = [], isAdmin = false) {

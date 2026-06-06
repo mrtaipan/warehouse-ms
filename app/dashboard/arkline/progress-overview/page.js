@@ -465,6 +465,10 @@ function getReceivingQtyBase(receipts = [], actualQty = 0) {
   return Number(actualQty || 0)
 }
 
+function formatRepairabilityNote(qty, totalRejectQty, receivingQty) {
+  return `${formatPercent(qty, totalRejectQty)} of reject | ${formatPercent(qty, receivingQty)} of receiving`
+}
+
 async function syncPoBoardStatus(poId) {
   const normalizedPoId = String(poId || '').trim().toUpperCase()
   if (!normalizedPoId) return
@@ -489,6 +493,17 @@ async function syncPoBoardStatus(poId) {
   const { error: updateError } = await supabase.from('arkline_pos').update({ status: nextStatus }).eq('po_id', normalizedPoId)
   if (updateError) {
     throw new Error(updateError.message)
+  }
+}
+
+function normalizeFinancePaymentRow(row) {
+  return {
+    id: row?.id || '',
+    paymentDate: String(row?.paid_at || row?.created_at || '').slice(0, 10),
+    paymentLabel: String(row?.invoice_number || row?.status || 'Payment').trim() || 'Payment',
+    amount: Number(row?.amount || 0),
+    notes: row?.notes || '',
+    status: String(row?.status || 'SUBMITTED').trim().toUpperCase() || 'SUBMITTED',
   }
 }
 
@@ -591,6 +606,22 @@ function buildRejectDetailSummary(rows, qcSummary = {}) {
   }
 
   return summaryRows
+}
+
+function buildRepairabilitySummary(rows = []) {
+  return (rows || []).reduce(
+    (accumulator, row) => {
+      const qty = Number(row?.qty || 0)
+      const isRepairable = Boolean(row?.reason?.is_repairable)
+      if (isRepairable) {
+        accumulator.repairableQty += qty
+      } else {
+        accumulator.nonRepairableQty += qty
+      }
+      return accumulator
+    },
+    { repairableQty: 0, nonRepairableQty: 0 }
+  )
 }
 
 function formatDateLabel(value) {
@@ -790,6 +821,7 @@ export default function ArklineProgressOverviewPage() {
   const [productDetailLoading, setProductDetailLoading] = useState(false)
   const [deliveryModalOpen, setDeliveryModalOpen] = useState(false)
   const [statusModalOpen, setStatusModalOpen] = useState(false)
+  const [deleteStatusConfirmRow, setDeleteStatusConfirmRow] = useState(null)
   const [productDetailSections, setProductDetailSections] = useState({
     receivingHistory: false,
     updateStatus: false,
@@ -799,8 +831,10 @@ export default function ArklineProgressOverviewPage() {
   const [productActionMessage, setProductActionMessage] = useState('')
   const [productActionError, setProductActionError] = useState('')
   const [printingQcReport, setPrintingQcReport] = useState(false)
+  const [savingStatusChange, setSavingStatusChange] = useState(false)
   const [receiptDraft, setReceiptDraft] = useState({ receiveDate: '', notes: '', sizeQty: {}, isFinal: false, hpp: '' })
   const [statusDraft, setStatusDraft] = useState({
+    editingUpdateId: '',
     updatedDeliveryDate: '',
     reason: DEFAULT_UPDATE_REASON,
     customReason: '',
@@ -1064,13 +1098,17 @@ export default function ArklineProgressOverviewPage() {
     })
     setSelectedProductDetail(null)
 
-    const paymentRows = await loadOptionalRows(() =>
+    const paymentRowsRaw = await loadOptionalRows(() =>
       supabase
-        .from('arkline_po_payments')
-        .select('id, payment_date, payment_type, amount, notes')
-        .eq('po_id', item.poId)
-        .order('payment_date', { ascending: false })
+        .from('arkline_payment')
+        .select('id, payment_basis, po_source_type, po_db_id, po_number, invoice_number, amount, notes, status, paid_at, created_at')
+        .eq('payment_basis', 'PO_BASED')
+        .eq('po_source_type', 'GARMENT')
+        .eq('po_number', item.poId)
+        .order('created_at', { ascending: false })
     )
+
+    const paymentRows = (paymentRowsRaw || []).map(normalizeFinancePaymentRow)
 
     setSelectedPoDetail((prev) => {
       if (!prev || String(prev.id) !== String(item.id)) return prev
@@ -1124,7 +1162,7 @@ export default function ArklineProgressOverviewPage() {
       notes: '',
     })
     try {
-      const [itemRows, sizeRows, receiptRows, updateRows, paymentRows, qcRowsRaw] = await Promise.all([
+      const [itemRows, sizeRows, receiptRows, updateRows, paymentRowsRaw, qcRowsRaw] = await Promise.all([
         loadOptionalRows(() =>
           supabase
             .from('arkline_po_items')
@@ -1156,10 +1194,12 @@ export default function ArklineProgressOverviewPage() {
         ),
         loadOptionalRows(() =>
           supabase
-            .from('arkline_po_payments')
-            .select('id, payment_date, payment_type, amount, notes')
-            .eq('po_id', selectedPoDetail.poId)
-            .order('payment_date', { ascending: false })
+            .from('arkline_payment')
+            .select('id, payment_basis, po_source_type, po_db_id, po_number, invoice_number, amount, notes, status, paid_at, created_at')
+            .eq('payment_basis', 'PO_BASED')
+            .eq('po_source_type', 'GARMENT')
+            .eq('po_number', selectedPoDetail.poId)
+            .order('created_at', { ascending: false })
         ),
         loadOptionalRows(() =>
           supabase
@@ -1194,7 +1234,8 @@ export default function ArklineProgressOverviewPage() {
               qty,
               reason:reject_reason_id (
                 id,
-                reason_name
+                reason_name,
+                is_repairable
               )
             `
           )
@@ -1226,6 +1267,7 @@ export default function ArklineProgressOverviewPage() {
         return query
       })
 
+      const paymentRows = (paymentRowsRaw || []).map(normalizeFinancePaymentRow)
       const itemDetail = itemRows[0] || null
       const price = Number(itemDetail?.price || entry.price || 0)
       const hpp = Number(itemDetail?.hpp || 0)
@@ -1281,10 +1323,11 @@ export default function ArklineProgressOverviewPage() {
           allowancePct: Number(itemDetail?.allowance_pct || 0),
           plannedValue: (price || hpp) * plannedQty,
           actualValue: hpp * (actualQty || totalReceived),
-          paidValue: paymentRows.reduce((sum, row) => sum + Number(row?.amount || 0), 0),
+          paidValue: paymentRows.filter((row) => row.status === 'PAID').reduce((sum, row) => sum + Number(row?.amount || 0), 0),
         },
       })
       setStatusDraft({
+        editingUpdateId: '',
         updatedDeliveryDate: itemDetail?.updated_delivery_date || entry.updatedDeliveryDate || '',
         reason: DEFAULT_UPDATE_REASON,
         customReason: '',
@@ -1389,7 +1432,7 @@ export default function ArklineProgressOverviewPage() {
   }
 
   async function handleSaveStatusChange() {
-    if (!selectedProductDetail) return
+    if (!selectedProductDetail || savingStatusChange) return
     setProductActionMessage('')
     setProductActionError('')
     const resolvedReason = getResolvedUpdateReason(statusDraft)
@@ -1413,68 +1456,98 @@ export default function ArklineProgressOverviewPage() {
     } = await supabase.auth.getUser()
     const createdBy = user?.email?.toLowerCase() || null
 
-    if (statusDraft.reason === OTHERS_UPDATE_REASON) {
-      const normalizedCustomReason = resolvedReason.toUpperCase()
-      const { error: reasonInsertError } = await supabase.from('arkline_po_update_reasons').upsert(
-        [
-          {
-            reason_name: normalizedCustomReason,
-            sort_order: 998,
-            is_active: true,
-          },
-        ],
-        { onConflict: 'reason_name' }
-      )
+    setSavingStatusChange(true)
+    try {
+      if (statusDraft.reason === OTHERS_UPDATE_REASON) {
+        const normalizedCustomReason = resolvedReason.toUpperCase()
+        const { error: reasonInsertError } = await supabase.from('arkline_po_update_reasons').upsert(
+          [
+            {
+              reason_name: normalizedCustomReason,
+              sort_order: 998,
+              is_active: true,
+            },
+          ],
+          { onConflict: 'reason_name' }
+        )
 
-      if (reasonInsertError) {
-        setProductActionError(reasonInsertError.message || 'Failed to save custom reason.')
+        if (reasonInsertError) {
+          setProductActionError(reasonInsertError.message || 'Failed to save custom reason.')
+          return
+        }
+      }
+
+      const itemPayload = {
+        updated_delivery_date: statusDraft.updatedDeliveryDate || null,
+        notes: statusDraft.notes.trim(),
+      }
+
+      const { error: updateError } = await supabase
+        .from('arkline_po_items')
+        .update(itemPayload)
+        .eq('id', selectedProductDetail.id)
+
+      if (updateError) {
+        setProductActionError(updateError.message || 'Failed to update delivery.')
         return
       }
+
+      const editingUpdateId = String(statusDraft.editingUpdateId || '').trim()
+      if (editingUpdateId) {
+        const existingUpdateRow = (selectedProductDetail.updates || []).find((item) => String(item.id) === editingUpdateId)
+        const previousUpdatedDate = existingUpdateRow?.previous_updated_delivery_date || currentUpdatedDate || null
+        const nextImpactDays = getUpdateImpactDays(previousUpdatedDate || selectedProductDetail.requestDeliveryDate, statusDraft.updatedDeliveryDate)
+        const { error: editUpdateError } = await supabase
+          .from('arkline_po_item_updates')
+          .update({
+            updated_delivery_date: statusDraft.updatedDeliveryDate || null,
+            reason: resolvedReason,
+            notes: statusDraft.notes.trim(),
+            impact_days: nextImpactDays,
+          })
+          .eq('id', editingUpdateId)
+
+        if (editUpdateError) {
+          setProductActionError(editUpdateError.message || 'Delivery updated, but failed to edit monitoring log.')
+          return
+        }
+
+        setProductActionMessage('Update delivery log berhasil diedit.')
+      } else {
+        const { error: insertUpdateError } = await supabase.from('arkline_po_item_updates').insert([
+          {
+            arkline_po_item_id: selectedProductDetail.id,
+            po_id: selectedProductDetail.poId,
+            sku_induk: selectedProductDetail.sku,
+            previous_updated_delivery_date: currentUpdatedDate || null,
+            updated_delivery_date: statusDraft.updatedDeliveryDate || null,
+            reason: resolvedReason,
+            notes: statusDraft.notes.trim(),
+            impact_days: impactDays,
+            created_by: createdBy,
+          },
+        ])
+
+        if (insertUpdateError) {
+          setProductActionError(insertUpdateError.message || 'Delivery updated, but failed to save monitoring log.')
+          return
+        }
+
+        setProductActionMessage('Update delivery berhasil disimpan.')
+      }
+
+      setStatusDraft({
+        editingUpdateId: '',
+        updatedDeliveryDate: statusDraft.updatedDeliveryDate,
+        reason: availableUpdateReasons[0]?.reason_name || DEFAULT_UPDATE_REASON,
+        customReason: '',
+        notes: '',
+      })
+      await openProductDetail({ ...selectedProductDetail, updatedDeliveryDate: statusDraft.updatedDeliveryDate })
+      await refreshRows()
+    } finally {
+      setSavingStatusChange(false)
     }
-
-    const itemPayload = {
-      updated_delivery_date: statusDraft.updatedDeliveryDate || null,
-      notes: statusDraft.notes.trim(),
-    }
-
-    const { error: updateError } = await supabase
-      .from('arkline_po_items')
-      .update(itemPayload)
-      .eq('id', selectedProductDetail.id)
-
-    if (updateError) {
-      setProductActionError(updateError.message || 'Failed to update delivery.')
-      return
-    }
-
-    const { error: insertUpdateError } = await supabase.from('arkline_po_item_updates').insert([
-      {
-        arkline_po_item_id: selectedProductDetail.id,
-        po_id: selectedProductDetail.poId,
-        sku_induk: selectedProductDetail.sku,
-        previous_updated_delivery_date: currentUpdatedDate || null,
-        updated_delivery_date: statusDraft.updatedDeliveryDate || null,
-        reason: resolvedReason,
-        notes: statusDraft.notes.trim(),
-        impact_days: impactDays,
-        created_by: createdBy,
-      },
-    ])
-
-    if (insertUpdateError) {
-      setProductActionError(insertUpdateError.message || 'Delivery updated, but failed to save monitoring log.')
-      return
-    }
-
-    setProductActionMessage('Update delivery berhasil disimpan.')
-    setStatusDraft({
-      updatedDeliveryDate: statusDraft.updatedDeliveryDate,
-      reason: availableUpdateReasons[0]?.reason_name || DEFAULT_UPDATE_REASON,
-      customReason: '',
-      notes: '',
-    })
-    await openProductDetail({ ...selectedProductDetail, updatedDeliveryDate: statusDraft.updatedDeliveryDate })
-    await refreshRows()
   }
 
   async function handlePrintQcSampleReport() {
@@ -1492,7 +1565,9 @@ export default function ArklineProgressOverviewPage() {
         selectedProductDetail.qcRejectAdjustments || []
       )
       const rejectSummary = buildRejectDetailSummary(selectedProductDetail.qcRejectRows || [], qcSummary)
+      const repairabilitySummary = buildRepairabilitySummary(selectedProductDetail.qcRejectRows || [])
       const receivingQty = getReceivingQtyBase(selectedProductDetail.receipts || [], selectedProductDetail.financeSummary?.actualQty || 0)
+      const totalRejectQty = Number(qcSummary.qtyB || 0) + Number(qcSummary.qtyC || 0)
       const doc = new jsPDF({ unit: 'mm', format: 'a4' })
       const pageWidth = doc.internal.pageSize.getWidth()
       const pageHeight = doc.internal.pageSize.getHeight()
@@ -1519,7 +1594,7 @@ export default function ArklineProgressOverviewPage() {
       doc.text(`SKU: ${selectedProductDetail.sku || '-'}`, margin, cursorY)
       cursorY += 8
 
-      const metricWidth = (pageWidth - margin * 2 - 9) / 4
+      const metricWidth = (pageWidth - margin * 2 - 15) / 6
       const metricHeight = 24
       const metrics = [
         {
@@ -1545,6 +1620,18 @@ export default function ArklineProgressOverviewPage() {
           value: formatNumber(qcSummary.totalQc),
           note: `${formatPercent(qcSummary.totalQc, receivingQty)} of receiving qty`,
           dark: true,
+        },
+        {
+          label: 'Repairable',
+          value: formatNumber(repairabilitySummary.repairableQty),
+          note: formatRepairabilityNote(repairabilitySummary.repairableQty, totalRejectQty, receivingQty),
+          dark: false,
+        },
+        {
+          label: 'Non-Repairable',
+          value: formatNumber(repairabilitySummary.nonRepairableQty),
+          note: formatRepairabilityNote(repairabilitySummary.nonRepairableQty, totalRejectQty, receivingQty),
+          dark: false,
         },
       ]
 
@@ -1613,6 +1700,7 @@ export default function ArklineProgressOverviewPage() {
   function openDeliveryModal() {
     setDeliveryModalOpen(true)
     setStatusModalOpen(false)
+    setDeleteStatusConfirmRow(null)
     setProductActionMessage('')
     setProductActionError('')
   }
@@ -1620,12 +1708,79 @@ export default function ArklineProgressOverviewPage() {
   function openStatusModal() {
     setStatusModalOpen(true)
     setDeliveryModalOpen(false)
+    setDeleteStatusConfirmRow(null)
     setProductActionMessage('')
     setProductActionError('')
-    setStatusDraft((prev) => ({
-      ...prev,
-      reason: prev.reason || availableUpdateReasons[0]?.reason_name || DEFAULT_UPDATE_REASON,
-    }))
+    setStatusDraft({
+      editingUpdateId: '',
+      updatedDeliveryDate: selectedProductDetail?.updatedDeliveryDate || '',
+      reason: availableUpdateReasons[0]?.reason_name || DEFAULT_UPDATE_REASON,
+      customReason: '',
+      notes: '',
+    })
+  }
+
+  function openUpdateDeliveryEditor(row) {
+    if (!row) return
+    const reason = String(row.reason || '').trim()
+    const hasPresetReason = availableUpdateReasons.some((item) => item.reason_name === reason)
+    setStatusModalOpen(true)
+    setDeliveryModalOpen(false)
+    setDeleteStatusConfirmRow(null)
+    setProductActionMessage('')
+    setProductActionError('')
+    setStatusDraft({
+      editingUpdateId: String(row.id || ''),
+      updatedDeliveryDate: row.updated_delivery_date || '',
+      reason: hasPresetReason ? reason : OTHERS_UPDATE_REASON,
+      customReason: hasPresetReason ? '' : reason,
+      notes: row.notes || '',
+    })
+  }
+
+  function openDeleteStatusConfirm(row) {
+    if (!row?.id) return
+    setStatusModalOpen(false)
+    setDeliveryModalOpen(false)
+    setProductActionMessage('')
+    setProductActionError('')
+    setDeleteStatusConfirmRow(row)
+  }
+
+  async function handleDeleteStatusUpdate(row) {
+    if (!selectedProductDetail || !row?.id) return
+    setProductActionMessage('')
+    setProductActionError('')
+
+    const remainingUpdates = (selectedProductDetail.updates || []).filter((item) => String(item.id) !== String(row.id))
+    const latestRemainingUpdate = remainingUpdates[0] || null
+
+    const { error: deleteError } = await supabase.from('arkline_po_item_updates').delete().eq('id', row.id)
+    if (deleteError) {
+      setProductActionError(deleteError.message || 'Failed to delete update delivery log.')
+      return
+    }
+
+    const { error: itemError } = await supabase
+      .from('arkline_po_items')
+      .update({
+        updated_delivery_date: latestRemainingUpdate?.updated_delivery_date || null,
+        notes: latestRemainingUpdate?.notes || null,
+      })
+      .eq('id', selectedProductDetail.id)
+
+    if (itemError) {
+      setProductActionError(itemError.message || 'Update log deleted, but failed to refresh latest delivery state.')
+      return
+    }
+
+    setDeleteStatusConfirmRow(null)
+    setProductActionMessage('Update delivery log deleted.')
+    await openProductDetail({
+      ...selectedProductDetail,
+      updatedDeliveryDate: latestRemainingUpdate?.updated_delivery_date || '',
+    })
+    await refreshRows()
   }
 
   return (
@@ -2017,30 +2172,25 @@ export default function ArklineProgressOverviewPage() {
                       (sum, entry) => sum + Number(entry?.qty || 0) * Number(entry?.price || entry?.hpp || 0),
                       0
                     )
-                    const paidValue = (selectedPoDetail.payments || []).reduce((sum, row) => sum + Number(row?.amount || 0), 0)
+                    const paidValue = (selectedPoDetail.payments || [])
+                      .filter((row) => row.status === 'PAID')
+                      .reduce((sum, row) => sum + Number(row?.amount || 0), 0)
                     const progressPct = dueValue > 0 ? Math.min((paidValue / dueValue) * 100, 100) : 0
-                    let paymentStatus = 'Unpaid'
-                    if (paidValue > 0 && paidValue < dueValue) paymentStatus = 'Partial'
-                    if (paidValue >= dueValue && dueValue > 0) paymentStatus = 'Paid'
 
                     return (
                       <>
                         <div className={styles.financeGrid}>
                           <div className={styles.modalMetric}>
-                            <span>Seharusnya Dibayar</span>
+                            <span>Amount Due</span>
                             <strong>{formatNumber(dueValue)}</strong>
                           </div>
                           <div className={styles.modalMetric}>
-                            <span>Sudah Dibayar</span>
+                            <span>Amount Paid</span>
                             <strong>{formatNumber(paidValue)}</strong>
                           </div>
                           <div className={styles.modalMetric}>
                             <span>Progress Payment</span>
                             <strong>{`${progressPct.toFixed(1)}%`}</strong>
-                          </div>
-                          <div className={styles.modalMetric}>
-                            <span>Status Otomatis</span>
-                            <strong>{paymentStatus}</strong>
                           </div>
                         </div>
                         <div className={styles.productDetailRows}>
@@ -2048,12 +2198,12 @@ export default function ArklineProgressOverviewPage() {
                             selectedPoDetail.payments.map((row) => (
                               <div key={row.id} className={styles.productDetailRow}>
                                 <div>
-                                  <strong>{row.payment_type || 'Payment'}</strong>
-                                  <span>{formatDateLabel(row.payment_date)}</span>
+                                  <strong>{row.paymentLabel || 'Payment'}</strong>
+                                  <span>{formatDateLabel(row.paymentDate)}</span>
                                 </div>
                                 <div className={styles.productDetailRowMeta}>
                                   <strong>{formatNumber(row.amount)}</strong>
-                                  <span>{row.notes || '-'}</span>
+                                  <span>{row.status === 'PAID' ? row.notes || 'Paid' : row.notes || 'Submitted'}</span>
                                 </div>
                               </div>
                             ))
@@ -2139,22 +2289,32 @@ export default function ArklineProgressOverviewPage() {
                           selectedProductDetail.updates.map((row) => (
                             <div key={row.id} className={styles.updateTimelineCard}>
                               <div className={styles.updateTimelineHead}>
-                                <div>
+                                <div className={styles.updateTimelineHeadPrimary}>
                                   <strong>{row.reason || '-'}</strong>
                                   <span>{formatDateTimeLabel(row.created_at)}</span>
+                                  <div className={styles.updateTimelinePill}>
+                                    <span>Delivery</span>
+                                    <strong>{`${formatDateLabel(row.previous_updated_delivery_date)} -> ${formatDateLabel(row.updated_delivery_date)}`}</strong>
+                                  </div>
                                 </div>
                                 <div className={styles.updateTimelineMeta}>
                                   <strong>{formatSignedDays(getUpdateShiftDays(row.previous_updated_delivery_date, row.updated_delivery_date))}</strong>
                                   <span>{row.created_by || '-'}</span>
                                 </div>
                               </div>
-                              <div className={styles.updateTimelineBody}>
-                                <div className={styles.updateTimelinePill}>
-                                  <span>Delivery</span>
-                                  <strong>{`${formatDateLabel(row.previous_updated_delivery_date)} -> ${formatDateLabel(row.updated_delivery_date)}`}</strong>
+                              <div className={styles.updateTimelineFooter}>
+                                <p className={styles.updateTimelineNotes}>{row.notes || '-'}</p>
+                                <div className={styles.updateTimelineActions}>
+                                  <button type="button" className={styles.secondaryButton} onClick={() => openUpdateDeliveryEditor(row)}>
+                                    Edit
+                                  </button>
+                                  {role === 'admin' ? (
+                                    <button type="button" className={styles.updateTimelineDeleteButton} onClick={() => openDeleteStatusConfirm(row)}>
+                                      Delete
+                                    </button>
+                                  ) : null}
                                 </div>
                               </div>
-                              <p className={styles.updateTimelineNotes}>{row.notes || '-'}</p>
                             </div>
                           ))
                         ) : (
@@ -2260,25 +2420,30 @@ export default function ArklineProgressOverviewPage() {
                           selectedProductDetail.qcRejectAdjustments || []
                         )
                         const rejectSummary = buildRejectDetailSummary(selectedProductDetail.qcRejectRows || [], qcSummary)
+                        const repairabilitySummary = buildRepairabilitySummary(selectedProductDetail.qcRejectRows || [])
                         const receivingQty = getReceivingQtyBase(
                           selectedProductDetail.receipts || [],
                           selectedProductDetail.financeSummary?.actualQty || 0
                         )
+                        const totalRejectQty = Number(qcSummary.qtyB || 0) + Number(qcSummary.qtyC || 0)
+                        const repairableWidth = totalRejectQty > 0 ? Math.max(Math.min((repairabilitySummary.repairableQty / totalRejectQty) * 100, 100), 0) : 0
+                        const nonRepairableWidth =
+                          totalRejectQty > 0 ? Math.max(Math.min((repairabilitySummary.nonRepairableQty / totalRejectQty) * 100, 100), 0) : 0
 
                         return (
                           <>
                             <div className={`${styles.modalGrid} ${styles.compactModalGrid}`.trim()} style={{ gridTemplateColumns: 'repeat(4, minmax(0, 1fr))' }}>
-                              <div className={styles.modalMetric}>
+                              <div className={`${styles.modalMetric} ${styles.qcGradeAMetric}`.trim()}>
                                 <span>Grade A</span>
                                 <strong>{formatNumber(qcSummary.qtyA)}</strong>
                                 <small className={styles.metricNote}>{formatPercent(qcSummary.qtyA, qcSummary.totalQc)} of total QC sample</small>
                               </div>
-                              <div className={styles.modalMetric}>
+                              <div className={`${styles.modalMetric} ${styles.qcGradeBMetric}`.trim()}>
                                 <span>Grade B</span>
                                 <strong>{formatNumber(qcSummary.qtyB)}</strong>
                                 <small className={styles.metricNote}>{formatPercent(qcSummary.qtyB, qcSummary.totalQc)} of total QC sample</small>
                               </div>
-                              <div className={styles.modalMetric}>
+                              <div className={`${styles.modalMetric} ${styles.qcGradeCMetric}`.trim()}>
                                 <span>Grade C</span>
                                 <strong>{formatNumber(qcSummary.qtyC)}</strong>
                                 <small className={styles.metricNote}>{formatPercent(qcSummary.qtyC, qcSummary.totalQc)} of total QC sample</small>
@@ -2287,6 +2452,24 @@ export default function ArklineProgressOverviewPage() {
                                 <span>Total QC</span>
                                 <strong>{formatNumber(qcSummary.totalQc)}</strong>
                                 <small className={styles.metricNote}>{formatPercent(qcSummary.totalQc, receivingQty)} of receiving qty</small>
+                              </div>
+                            </div>
+                            <div className={styles.repairabilityInlineBarWrap}>
+                              <div className={styles.repairabilityInlineBar}>
+                                <div className={styles.repairabilityInlineBackground}>
+                                  <div className={styles.repairabilityInlineRepairable} style={{ width: `${repairableWidth}%` }} />
+                                  <div className={styles.repairabilityInlineNonRepairable} style={{ width: `${nonRepairableWidth}%` }} />
+                                </div>
+                                <div className={styles.repairabilityInlineContent}>
+                                  <div className={styles.repairabilityInlineContentRepairable}>
+                                    <strong>Repairable {formatNumber(repairabilitySummary.repairableQty)}</strong>
+                                    <span>{formatRepairabilityNote(repairabilitySummary.repairableQty, totalRejectQty, receivingQty)}</span>
+                                  </div>
+                                  <div className={styles.repairabilityInlineContentNonRepairable}>
+                                    <strong>Non-Repairable {formatNumber(repairabilitySummary.nonRepairableQty)}</strong>
+                                    <span>{formatRepairabilityNote(repairabilitySummary.nonRepairableQty, totalRejectQty, receivingQty)}</span>
+                                  </div>
+                                </div>
                               </div>
                             </div>
                             {rejectSummary.length ? (
@@ -2481,18 +2664,26 @@ export default function ArklineProgressOverviewPage() {
       ) : null}
 
       {selectedProductDetail && statusModalOpen ? (
-        <div className={styles.modalOverlay} onClick={() => setStatusModalOpen(false)}>
+        <div className={styles.modalOverlay} onClick={() => (!savingStatusChange ? setStatusModalOpen(false) : null)}>
           <div className={`${styles.modalCard} ${styles.actionModalCard}`.trim()} onClick={(event) => event.stopPropagation()}>
             <div className={styles.modalHeader}>
               <div>
                 <p className={styles.eyebrow}>Update Delivery</p>
-                <h3 className={styles.modalTitle}>Update Delivery - {selectedProductDetail.productName || 'NO PRODUCT'}</h3>
+                <h3 className={styles.modalTitle}>
+                  {statusDraft.editingUpdateId ? 'Edit Update Delivery' : 'Update Delivery'} - {selectedProductDetail.productName || 'NO PRODUCT'}
+                </h3>
               </div>
               <div className={styles.productHeaderActions}>
-                <button type="button" className={styles.primaryButton} onClick={() => void handleSaveStatusChange()}>
-                  Save
+                <button type="button" className={styles.primaryButton} onClick={() => void handleSaveStatusChange()} disabled={savingStatusChange}>
+                  {savingStatusChange ? 'Saving...' : statusDraft.editingUpdateId ? 'Update' : 'Save'}
                 </button>
-                <button type="button" className={styles.iconButton} onClick={() => setStatusModalOpen(false)} aria-label="Close update delivery">
+                <button
+                  type="button"
+                  className={styles.iconButton}
+                  onClick={() => setStatusModalOpen(false)}
+                  aria-label="Close update delivery"
+                  disabled={savingStatusChange}
+                >
                   <CloseIcon />
                 </button>
               </div>
@@ -2502,11 +2693,22 @@ export default function ArklineProgressOverviewPage() {
             <div className={styles.productFormGrid}>
               <label className={styles.filterField}>
                 <span>Updated Delivery Date</span>
-                <input className={styles.input} type="date" value={statusDraft.updatedDeliveryDate} onChange={(event) => setStatusDraft((prev) => ({ ...prev, updatedDeliveryDate: event.target.value }))} />
+                <input
+                  className={styles.input}
+                  type="date"
+                  value={statusDraft.updatedDeliveryDate}
+                  onChange={(event) => setStatusDraft((prev) => ({ ...prev, updatedDeliveryDate: event.target.value }))}
+                  disabled={savingStatusChange}
+                />
               </label>
               <label className={styles.filterField}>
                 <span>Reason</span>
-                <select className={styles.select} value={statusDraft.reason} onChange={(event) => setStatusDraft((prev) => ({ ...prev, reason: event.target.value }))}>
+                <select
+                  className={styles.select}
+                  value={statusDraft.reason}
+                  onChange={(event) => setStatusDraft((prev) => ({ ...prev, reason: event.target.value }))}
+                  disabled={savingStatusChange}
+                >
                   {availableUpdateReasons.map((item) => (
                     <option key={item.id || item.reason_name} value={item.reason_name}>
                       {item.reason_name}
@@ -2522,6 +2724,7 @@ export default function ArklineProgressOverviewPage() {
                     placeholder="Type custom reason"
                     value={statusDraft.customReason}
                     onChange={(event) => setStatusDraft((prev) => ({ ...prev, customReason: event.target.value.toUpperCase() }))}
+                    disabled={savingStatusChange}
                   />
                 ) : (
                   <div className={styles.readonlyField}>{statusDraft.reason}</div>
@@ -2534,8 +2737,48 @@ export default function ArklineProgressOverviewPage() {
                   placeholder="Notes alasan update ini apa?"
                   value={statusDraft.notes}
                   onChange={(event) => setStatusDraft((prev) => ({ ...prev, notes: event.target.value }))}
+                  disabled={savingStatusChange}
                 />
               </label>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {selectedProductDetail && deleteStatusConfirmRow ? (
+        <div className={styles.modalOverlay} onClick={() => setDeleteStatusConfirmRow(null)}>
+          <div className={`${styles.modalCard} ${styles.actionModalCard}`.trim()} onClick={(event) => event.stopPropagation()}>
+            <div className={styles.modalHeader}>
+              <div>
+                <p className={styles.eyebrow}>Delete Update</p>
+                <h3 className={styles.modalTitle}>Delete update delivery log?</h3>
+              </div>
+              <div className={styles.productHeaderActions}>
+                <button type="button" className={styles.iconButton} onClick={() => setDeleteStatusConfirmRow(null)} aria-label="Close delete update confirmation">
+                  <CloseIcon />
+                </button>
+              </div>
+            </div>
+            <div className={styles.productDetailRows}>
+              <div className={styles.productDetailRow}>
+                <div>
+                  <strong>{deleteStatusConfirmRow.reason || '-'}</strong>
+                  <span>{formatDateTimeLabel(deleteStatusConfirmRow.created_at)}</span>
+                </div>
+                <div className={styles.productDetailRowMeta}>
+                  <strong>{formatDateLabel(deleteStatusConfirmRow.updated_delivery_date)}</strong>
+                  <span>{deleteStatusConfirmRow.created_by || '-'}</span>
+                </div>
+              </div>
+              <p className={styles.updateTimelineNotes}>This will remove the selected update log and refresh the latest updated delivery state for this product.</p>
+            </div>
+            <div className={styles.productHeaderActions}>
+              <button type="button" className={styles.secondaryButton} onClick={() => setDeleteStatusConfirmRow(null)}>
+                Cancel
+              </button>
+              <button type="button" className={styles.updateTimelineDeleteButton} onClick={() => void handleDeleteStatusUpdate(deleteStatusConfirmRow)}>
+                Delete
+              </button>
             </div>
           </div>
         </div>

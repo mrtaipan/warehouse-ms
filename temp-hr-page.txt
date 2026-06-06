@@ -350,7 +350,7 @@ export default async function HumanResourcesPage() {
             peopleRows={peopleRows}
             publicHolidayRows={publicHolidayRows}
             holidayMissing={holidayMissing}
-            canCreatePublicRequest={isAdmin || role === 'hrga' || role === 'hrga_approver'}
+            canCreatePublicRequest={isAdmin || role === 'hrga_approver'}
           />
         </div>
 

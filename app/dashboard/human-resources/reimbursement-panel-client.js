@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 
 import styles from '../arkline/arkline.module.css'
 import ReimbursementClaimPage from '../reimbursement/reimbursement-claim-page'
@@ -62,6 +62,19 @@ function ReimbursementDetailModal({ onClose }) {
 
 export default function ReimbursementPanelClient() {
   const [openModal, setOpenModal] = useState(false)
+  const [groupFilter, setGroupFilter] = useState('')
+  const panelFilterStyle = useMemo(
+    () => ({
+      minHeight: '28px',
+      minWidth: '140px',
+      width: '160px',
+      borderRadius: '999px',
+      fontSize: '11px',
+      padding: '0 28px 0 12px',
+      backgroundPosition: 'right 10px center',
+    }),
+    []
+  )
 
   return (
     <>
@@ -78,6 +91,14 @@ export default function ReimbursementPanelClient() {
         >
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
             <h2 style={{ margin: 0, fontSize: '18px', lineHeight: 1.1, fontWeight: 700, color: '#0f172a' }}>Reimbursement Claims</h2>
+            <select className={styles.select} value={groupFilter} onChange={(event) => setGroupFilter(event.target.value)} style={panelFilterStyle}>
+              <option value="">All groups</option>
+              <option value="ARKLINE">ARKLINE</option>
+              <option value="MOB">MOB</option>
+              <option value="OI">OI</option>
+              <option value="WAREHOUSE">WAREHOUSE</option>
+              <option value="HQ">HQ</option>
+            </select>
             <button type="button" className={styles.secondaryButton} style={{ minHeight: '28px', borderRadius: '999px', fontSize: '11px' }} onClick={() => setOpenModal(true)}>
               View Detail
             </button>
@@ -93,6 +114,7 @@ export default function ReimbursementPanelClient() {
             showHeader={false}
             showToolbar={false}
             showAccountInfo={false}
+            initialGroupFilter={groupFilter}
           />
         </div>
       </div>

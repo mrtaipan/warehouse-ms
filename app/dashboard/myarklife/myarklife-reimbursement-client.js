@@ -223,7 +223,7 @@ export default function MyArklifeReimbursementClient({ profile }) {
     const currentEmail = String(profileRow?.email || profile?.email || user.email || '').toLowerCase()
 
     const [{ data: categoryRows, error: categoryError }, { data: claimRows, error: claimError }, { data: groupRows, error: groupError }] = await Promise.all([
-      supabase.from('dir_reimbursement_categories').select('id, name, is_active').order('name', { ascending: true }),
+      supabase.from('dir_reimbursement_categories').select('id, name, is_active').order('id', { ascending: true }),
       supabase
         .from(resolvedTables.claims)
         .select(

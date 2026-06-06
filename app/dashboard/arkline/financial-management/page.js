@@ -76,6 +76,14 @@ function formatNumberInput(value) {
   return new Intl.NumberFormat('id-ID', { maximumFractionDigits: 0 }).format(Number(digits))
 }
 
+function getPoSortNumber(value) {
+  const text = String(value || '').trim().toUpperCase()
+  const match = text.match(/PO-(\d+)/)
+  if (match) return Number(match[1])
+  const fallback = text.match(/(\d+)/)
+  return fallback ? Number(fallback[1]) : Number.MAX_SAFE_INTEGER
+}
+
 function normalizeRequest(row) {
   return {
     id: row?.id || '',
@@ -95,6 +103,9 @@ function normalizeRequest(row) {
     status: row?.status || 'SUBMITTED',
     created_by: row?.created_by || '',
     created_by_display_name: row?.created_by_display_name || '',
+    approved_by: row?.approved_by || '',
+    approved_by_display_name: row?.approved_by_display_name || '',
+    approved_at: row?.approved_at || '',
     paid_by: row?.paid_by || '',
     paid_by_display_name: row?.paid_by_display_name || '',
     paid_at: row?.paid_at || '',
@@ -159,7 +170,7 @@ async function uploadRequestFiles({ request, files, uploadedBy, folder = 'submis
 }
 
 export default function ArklineFinancialManagementPage() {
-  const { loading: accessLoading, access } = useArklineAccess()
+  const { loading: accessLoading, access, role } = useArklineAccess()
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [actionLoading, setActionLoading] = useState(false)
@@ -187,10 +198,15 @@ export default function ArklineFinancialManagementPage() {
   const canView = access.financialManagement
   const canSubmit = access.financialManagement
   const canPay = access.financialManagement
+  const canApprove = role === 'admin'
 
-  async function loadWorkspace() {
-    setLoading(true)
-    setError('')
+  async function loadWorkspace(options = {}) {
+    const { silent = false } = options
+
+    if (!silent) {
+      setLoading(true)
+      setError('')
+    }
 
     const {
       data: { user },
@@ -199,13 +215,13 @@ export default function ArklineFinancialManagementPage() {
 
     if (authError) {
       setError(authError.message)
-      setLoading(false)
+      if (!silent) setLoading(false)
       return
     }
 
     if (!user) {
       setError('You need to sign in again to open financial management.')
-      setLoading(false)
+      if (!silent) setLoading(false)
       return
     }
 
@@ -217,7 +233,7 @@ export default function ArklineFinancialManagementPage() {
 
     if (profileError) {
       setError(profileError.message)
-      setLoading(false)
+      if (!silent) setLoading(false)
       return
     }
 
@@ -246,6 +262,8 @@ export default function ArklineFinancialManagementPage() {
             account_number,
             status,
             created_by,
+            approved_by,
+            approved_at,
             paid_by,
             paid_at,
             created_at,
@@ -274,7 +292,7 @@ export default function ArklineFinancialManagementPage() {
 
     if (paymentError || poError || materialPoError || categoryError) {
       setError(paymentError?.message || poError?.message || materialPoError?.message || categoryError?.message || 'Failed to load payment request workspace.')
-      setLoading(false)
+      if (!silent) setLoading(false)
       return
     }
 
@@ -310,15 +328,28 @@ export default function ArklineFinancialManagementPage() {
               ? String(profileRow?.display_name || '').trim()
               : '') ||
             fallbackDisplayName(normalized.paid_by),
+          approved_by_display_name:
+            displayNameMap.get(String(normalized.approved_by || '').trim().toLowerCase()) ||
+            (String(normalized.approved_by || '').trim().toLowerCase() === String(user.email || '').trim().toLowerCase()
+              ? String(profileRow?.display_name || '').trim()
+              : '') ||
+            fallbackDisplayName(normalized.approved_by),
         }
       })
     )
     setPoOptions(
-      (poRows || []).map((item) => ({
-        id: String(item.id),
-        poNumber: String(item.po_id || '').trim().toUpperCase(),
-        supplierName: String(item.supplier_name || '').trim().toUpperCase(),
-      }))
+      (poRows || [])
+        .map((item) => ({
+          id: String(item.id),
+          poNumber: String(item.po_id || '').trim().toUpperCase(),
+          supplierName: String(item.supplier_name || '').trim().toUpperCase(),
+        }))
+        .sort((left, right) => {
+          const leftNumber = getPoSortNumber(left.poNumber)
+          const rightNumber = getPoSortNumber(right.poNumber)
+          if (leftNumber !== rightNumber) return leftNumber - rightNumber
+          return left.poNumber.localeCompare(right.poNumber, undefined, { sensitivity: 'base' })
+        })
     )
     setMaterialPoOptions(
       (materialPoRows || []).map((item) => ({
@@ -327,12 +358,22 @@ export default function ArklineFinancialManagementPage() {
       }))
     )
     setCategories((categoryRows || []).map((item) => ({ id: String(item.id), name: item.name })))
-    setLoading(false)
+    if (!silent) setLoading(false)
   }
 
   useEffect(() => {
     void loadWorkspace()
   }, [])
+
+  useEffect(() => {
+    if (accessLoading || !canView) return undefined
+
+    const intervalId = window.setInterval(() => {
+      void loadWorkspace({ silent: true })
+    }, 30000)
+
+    return () => window.clearInterval(intervalId)
+  }, [accessLoading, canView])
 
   const filteredRequests = useMemo(() => {
     const keyword = search.trim().toUpperCase()
@@ -362,7 +403,7 @@ export default function ArklineFinancialManagementPage() {
   const summary = useMemo(
     () => ({
       outstanding: requests
-        .filter((item) => item.status === 'SUBMITTED')
+        .filter((item) => item.status !== 'PAID')
         .reduce((sum, item) => sum + Number(item.amount || 0), 0),
     }),
     [requests]
@@ -447,8 +488,13 @@ export default function ArklineFinancialManagementPage() {
       return
     }
 
-    if (!String(draft.invoice_number || '').trim() || !String(draft.amount || '').trim() || !String(draft.category_id || '').trim()) {
-      setError('Invoice number, category, and payment amount are required.')
+    if (!String(draft.invoice_number || '').trim() || !String(draft.amount || '').trim()) {
+      setError(`Invoice number and payment amount are required${draft.payment_basis === 'NON_PO_BASED' ? ', plus category' : ''}.`)
+      return
+    }
+
+    if (draft.payment_basis === 'NON_PO_BASED' && !String(draft.category_id || '').trim()) {
+      setError('Category is required for non-PO based payment.')
       return
     }
 
@@ -485,7 +531,7 @@ export default function ArklineFinancialManagementPage() {
               : selectedPo?.supplierName || null
             : null,
         invoice_number: normalizeUppercase(draft.invoice_number).trim(),
-        category_id: Number(draft.category_id),
+        category_id: draft.payment_basis === 'PO_BASED' ? null : Number(draft.category_id),
         amount: Number(normalizeDigits(draft.amount)),
         notes: String(draft.notes || '').trim() || null,
         account_name: normalizeUppercase(draft.account_name).trim(),
@@ -534,6 +580,8 @@ export default function ArklineFinancialManagementPage() {
               account_number,
               status,
               created_by,
+              approved_by,
+              approved_at,
               paid_by,
               paid_at,
               created_at,
@@ -620,7 +668,38 @@ export default function ArklineFinancialManagementPage() {
     }
   }
 
+  async function handleApproveRequest(request) {
+    if (!canApprove || !request || request.status !== 'SUBMITTED') return
+
+    setActionLoading(true)
+    setDetailError('')
+    setSuccess('')
+
+    try {
+      const { error: updateError } = await supabase
+        .from('arkline_payment')
+        .update({
+          status: 'APPROVED',
+          approved_at: new Date().toISOString(),
+          approved_by: profile?.email || null,
+        })
+        .eq('id', request.id)
+
+      if (updateError) throw new Error(updateError.message)
+
+      setSuccess(`Payment request ${request.invoice_number} approved.`)
+      closeRequestDetail()
+      await loadWorkspace()
+    } catch (approveError) {
+      setDetailError(approveError.message || 'Failed to approve payment request.')
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
   async function handleMarkPaid(request) {
+    if (!request || request.status !== 'APPROVED') return
+
     setActionLoading(true)
     setDetailError('')
     setSuccess('')
@@ -711,6 +790,7 @@ export default function ArklineFinancialManagementPage() {
               <select className={styles.select} value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
                 <option value="ALL">All Status</option>
                 <option value="SUBMITTED">Submitted</option>
+                <option value="APPROVED">Approved</option>
                 <option value="PAID">Paid</option>
               </select>
             </div>
@@ -764,21 +844,39 @@ export default function ArklineFinancialManagementPage() {
                         <td className={styles.amountCell}>{formatCurrency(item.amount)}</td>
                         <td>
                           <span
-                            className={`${styles.statusPill} ${item.status === 'PAID' ? styles.statusPillPaid : styles.statusPillSubmitted}`.trim()}
+                            className={`${styles.statusPill} ${
+                              item.status === 'PAID'
+                                ? styles.statusPillPaid
+                                : item.status === 'APPROVED'
+                                  ? styles.statusPillApproved
+                                  : styles.statusPillSubmitted
+                            }`.trim()}
                           >
-                            {item.status === 'PAID' ? 'Paid' : 'Submitted'}
+                            {item.status === 'PAID' ? 'Paid' : item.status === 'APPROVED' ? 'Approved' : 'Submitted'}
                           </span>
                         </td>
                         <td>
                           <div className={styles.actionCell}>
-                            <button type="button" className={styles.iconButton} onClick={() => openRequestDetail(item)} title="View detail">
-                              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                                <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6Z" />
-                                <circle cx="12" cy="12" r="3" />
-                              </svg>
-                            </button>
                             {item.status === 'SUBMITTED' ? (
                               <>
+                                {canApprove ? (
+                                  <button
+                                    type="button"
+                                    className={`${styles.iconButton} ${styles.iconButtonSuccess}`.trim()}
+                                    onClick={() => void handleApproveRequest(item)}
+                                    title="Approve"
+                                  >
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                      <path d="m5 12 4.2 4.2L19 6.5" />
+                                  </svg>
+                                </button>
+                              ) : null}
+                              <button type="button" className={styles.iconButton} onClick={() => openRequestDetail(item)} title="View detail">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                  <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6Z" />
+                                  <circle cx="12" cy="12" r="3" />
+                                </svg>
+                              </button>
                                 <button type="button" className={styles.iconButton} onClick={() => openEditRequest(item)} title="Edit">
                                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                                     <path d="M12 20h9" />
@@ -794,7 +892,14 @@ export default function ArklineFinancialManagementPage() {
                                   </svg>
                                 </button>
                               </>
-                            ) : null}
+                            ) : (
+                              <button type="button" className={styles.iconButton} onClick={() => openRequestDetail(item)} title="View detail">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                  <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6Z" />
+                                  <circle cx="12" cy="12" r="3" />
+                                </svg>
+                              </button>
+                            )}
                           </div>
                         </td>
                       </tr>
@@ -834,7 +939,13 @@ export default function ArklineFinancialManagementPage() {
                   className={styles.select}
                   value={draft.payment_basis}
                   onChange={(event) =>
-                    setDraft((prev) => ({ ...prev, payment_basis: event.target.value, po_source_type: 'GARMENT', linked_po_id: '' }))
+                    setDraft((prev) => ({
+                      ...prev,
+                      payment_basis: event.target.value,
+                      po_source_type: 'GARMENT',
+                      linked_po_id: '',
+                      category_id: event.target.value === 'PO_BASED' ? '' : prev.category_id,
+                    }))
                   }
                 >
                   <option value="NON_PO_BASED">Non-PO Based</option>
@@ -855,7 +966,11 @@ export default function ArklineFinancialManagementPage() {
                       <option value="MATERIAL">Material</option>
                     </select>
                   </div>
+                </>
+              ) : null}
 
+              <div className={`${draft.payment_basis === 'PO_BASED' ? styles.formRowThree : styles.formRowThree} ${styles.fullSpan}`.trim()}>
+                {draft.payment_basis === 'PO_BASED' ? (
                   <div className={styles.field}>
                     <label className={styles.label}>{draft.po_source_type === 'MATERIAL' ? 'Material PO *' : 'Garment PO *'}</label>
                     <select
@@ -872,10 +987,8 @@ export default function ArklineFinancialManagementPage() {
                       ))}
                     </select>
                   </div>
-                </>
-              ) : null}
+                ) : null}
 
-              <div className={`${styles.formRowThree} ${styles.fullSpan}`.trim()}>
                 <div className={styles.field}>
                   <label className={styles.label}>Invoice Number *</label>
                   <input
@@ -885,21 +998,23 @@ export default function ArklineFinancialManagementPage() {
                   />
                 </div>
 
-                <div className={styles.field}>
-                  <label className={styles.label}>Category *</label>
-                  <select
-                    className={styles.select}
-                    value={draft.category_id}
-                    onChange={(event) => setDraft((prev) => ({ ...prev, category_id: event.target.value }))}
-                  >
-                    <option value="">Choose category</option>
-                    {categories.map((item) => (
-                      <option key={item.id} value={item.id}>
-                        {item.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+                {draft.payment_basis === 'NON_PO_BASED' ? (
+                  <div className={styles.field}>
+                    <label className={styles.label}>Category *</label>
+                    <select
+                      className={styles.select}
+                      value={draft.category_id}
+                      onChange={(event) => setDraft((prev) => ({ ...prev, category_id: event.target.value }))}
+                    >
+                      <option value="">Choose category</option>
+                      {categories.map((item) => (
+                        <option key={item.id} value={item.id}>
+                          {item.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                ) : null}
 
                 <div className={styles.field}>
                   <label className={styles.label}>Amount to Pay *</label>
@@ -1020,7 +1135,15 @@ export default function ArklineFinancialManagementPage() {
                   {selectedRequest.payment_basis === 'PO_BASED' ? selectedRequest.po_number || 'PO Based' : 'NON-PO BASED'} • {selectedRequest.supplier_name_snapshot || selectedRequest.account_name}
                 </p>
               </div>
-              <span className={`${styles.statusBadge} ${selectedRequest.status === 'PAID' ? styles.statusPaid : styles.statusSubmitted}`.trim()}>
+              <span
+                className={`${styles.statusBadge} ${
+                  selectedRequest.status === 'PAID'
+                    ? styles.statusPaid
+                    : selectedRequest.status === 'APPROVED'
+                      ? styles.statusApproved
+                      : styles.statusSubmitted
+                }`.trim()}
+              >
                 {selectedRequest.status}
               </span>
             </div>
@@ -1049,6 +1172,10 @@ export default function ArklineFinancialManagementPage() {
               <div className={styles.metricCard}>
                 <span>Submitted By</span>
                 <strong>{selectedRequest.created_by_display_name || '-'}</strong>
+              </div>
+              <div className={styles.metricCard}>
+                <span>Approved By</span>
+                <strong>{selectedRequest.approved_by_display_name || '-'}</strong>
               </div>
               <div className={styles.metricCard}>
                 <span>Paid By</span>
@@ -1103,7 +1230,7 @@ export default function ArklineFinancialManagementPage() {
               )}
             </div>
 
-            {selectedRequest.status === 'SUBMITTED' && canPay ? (
+            {selectedRequest.status === 'APPROVED' && canPay ? (
               <div className={styles.detailSection}>
                 <h3 className={styles.sectionTitle}>Add Payment Proof</h3>
                 <input
@@ -1148,7 +1275,12 @@ export default function ArklineFinancialManagementPage() {
                   Delete
                 </button>
               ) : null}
-              {selectedRequest.status === 'SUBMITTED' && canPay ? (
+              {selectedRequest.status === 'SUBMITTED' && canApprove ? (
+                <button type="button" className={styles.primaryButton} onClick={() => void handleApproveRequest(selectedRequest)} disabled={actionLoading}>
+                  {actionLoading ? 'Saving...' : 'Approve'}
+                </button>
+              ) : null}
+              {selectedRequest.status === 'APPROVED' && canPay ? (
                 <button type="button" className={styles.primaryButton} onClick={() => void handleMarkPaid(selectedRequest)} disabled={actionLoading}>
                   {actionLoading ? 'Saving...' : 'Mark as Paid'}
                 </button>

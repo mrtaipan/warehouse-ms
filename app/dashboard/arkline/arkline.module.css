@@ -1261,9 +1261,10 @@
 
 .reimbursementCardDescription {
   margin: 0;
-  font-size: 12px;
+  font-size: 14px;
+  font-weight: 700;
   line-height: 1.5;
-  color: #334155;
+  color: #0f172a;
 }
 
 .reimbursementInlineAttachmentList {

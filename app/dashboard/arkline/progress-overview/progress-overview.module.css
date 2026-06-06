@@ -893,6 +893,48 @@
   line-height: 1.35;
 }
 
+.qcGradeAMetric {
+  border-color: #cfe9da;
+  background: #eefaf2;
+}
+
+.qcGradeAMetric span,
+.qcGradeAMetric .metricNote {
+  color: #4b7b5f;
+}
+
+.qcGradeAMetric strong {
+  color: #155e3b;
+}
+
+.qcGradeBMetric {
+  border-color: #f3e1ae;
+  background: #fff9e8;
+}
+
+.qcGradeBMetric span,
+.qcGradeBMetric .metricNote {
+  color: #8a6b16;
+}
+
+.qcGradeBMetric strong {
+  color: #7c5b08;
+}
+
+.qcGradeCMetric {
+  border-color: #f0c7c7;
+  background: #fff1f1;
+}
+
+.qcGradeCMetric span,
+.qcGradeCMetric .metricNote {
+  color: #a55454;
+}
+
+.qcGradeCMetric strong {
+  color: #8f2d2d;
+}
+
 .compactModalGrid .modalMetric {
   padding: 9px 10px;
   border-radius: 12px;
@@ -908,6 +950,86 @@
 
 .compactModalGrid .metricNote {
   font-size: 9px;
+}
+
+.repairabilityInlineBarWrap {
+  border-radius: 14px;
+  overflow: hidden;
+  border: 1px solid #dbe4f0;
+  background: #e2e8f0;
+}
+
+.repairabilityInlineBar {
+  position: relative;
+  display: flex;
+  width: 100%;
+  min-height: 62px;
+}
+
+.repairabilityInlineBackground {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  width: 100%;
+}
+
+.repairabilityInlineRepairable,
+.repairabilityInlineNonRepairable {
+  min-height: 62px;
+}
+
+.repairabilityInlineContent {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  width: 100%;
+}
+
+.repairabilityInlineContentRepairable,
+.repairabilityInlineContentNonRepairable {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 10px 12px;
+  min-height: 62px;
+  justify-content: center;
+}
+
+.repairabilityInlineContentRepairable strong,
+.repairabilityInlineContentNonRepairable strong {
+  font-size: 11px;
+  line-height: 1.3;
+  font-weight: 800;
+}
+
+.repairabilityInlineContentRepairable span,
+.repairabilityInlineContentNonRepairable span {
+  font-size: 10px;
+  line-height: 1.35;
+}
+
+.repairabilityInlineRepairable {
+  background: #166534;
+}
+
+.repairabilityInlineContentRepairable strong,
+.repairabilityInlineContentRepairable span {
+  color: #ffffff;
+}
+
+.repairabilityInlineNonRepairable {
+  background: #6f1d2a;
+}
+
+.repairabilityInlineContentNonRepairable {
+  align-items: flex-end;
+  text-align: right;
+}
+
+.repairabilityInlineContentNonRepairable strong,
+.repairabilityInlineContentNonRepairable span {
+  color: #ffffff;
 }
 
 .qcTotalMetric {
@@ -1574,6 +1696,12 @@
   gap: 12px;
 }
 
+.updateTimelineHeadPrimary {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
 .updateTimelineHead > div,
 .updateTimelineMeta {
   display: flex;
@@ -1599,10 +1727,34 @@
   text-align: right;
 }
 
-.updateTimelineBody {
+.updateTimelineActions {
   display: flex;
-  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: flex-end;
   gap: 8px;
+}
+
+.updateTimelineFooter {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.updateTimelineFooter .updateTimelineNotes {
+  flex: 1;
+}
+
+.updateTimelineDeleteButton {
+  min-height: 34px;
+  padding: 0 11px;
+  border-radius: 10px;
+  border: 1px solid #fecaca;
+  background: #fef2f2;
+  color: #b91c1c;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
 }
 
 .updateTimelinePill {
@@ -1648,7 +1800,7 @@
 
 .financeGrid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
 }
 

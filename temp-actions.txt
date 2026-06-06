@@ -26,7 +26,7 @@ async function getActorContext() {
     user,
     profile,
     isAdmin,
-    isApprover: isAdmin || profile?.role === 'hrga' || profile?.role === 'hrga_approver',
+    isApprover: isAdmin || profile?.role === 'hrga_approver',
   }
 }
 

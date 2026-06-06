@@ -326,6 +326,8 @@ export default function ReimbursementClaimPage({
   showToolbar = true,
   compactToolbar = false,
   showAccountInfo = true,
+  showGroupFilterOnly = false,
+  initialGroupFilter = '',
 } = {}) {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -341,7 +343,7 @@ export default function ReimbursementClaimPage({
   })
   const [search, setSearch] = useState('')
   const [categoryFilter, setCategoryFilter] = useState('')
-  const [groupFilter, setGroupFilter] = useState('')
+  const [groupFilter, setGroupFilter] = useState(initialGroupFilter)
   const [monthFilter, setMonthFilter] = useState('')
   const [yearFilter, setYearFilter] = useState('')
   const [showBatchModal, setShowBatchModal] = useState(false)
@@ -423,7 +425,7 @@ export default function ReimbursementClaimPage({
     const [{ data: rolePermissions, error: permissionError }, { data: categoryRows, error: categoryError }, { data: claimRows, error: claimError }] =
       await Promise.all([
         supabase.from('dir_user_roles').select('permission_code').eq('role', role),
-        supabase.from('dir_reimbursement_categories').select('id, name, is_active').order('name', { ascending: true }),
+        supabase.from('dir_reimbursement_categories').select('id, name, is_active').order('id', { ascending: true }),
         supabase
           .from(resolvedTables.claims)
           .select(
@@ -494,6 +496,10 @@ export default function ReimbursementClaimPage({
   useEffect(() => {
     void loadWorkspace()
   }, [loadWorkspace])
+
+  useEffect(() => {
+    setGroupFilter(initialGroupFilter || '')
+  }, [initialGroupFilter])
 
   useEffect(() => {
     const intervalId = window.setInterval(() => {
@@ -1426,65 +1432,80 @@ export default function ReimbursementClaimPage({
             compactToolbar
               ? {
                   display: 'grid',
-                  gridTemplateColumns: 'minmax(180px, 1.1fr) repeat(4, minmax(0, 0.9fr)) auto',
+                  gridTemplateColumns: showGroupFilterOnly ? 'minmax(220px, 0.9fr) auto' : 'minmax(180px, 1.1fr) repeat(4, minmax(0, 0.9fr)) auto',
                   alignItems: 'end',
                   gap: '10px',
                 }
               : undefined
           }
         >
-          <div className={styles.field} style={compactToolbar ? { minWidth: 0 } : undefined}>
-            <input
-              className={styles.input}
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder="Search claim number, employee, category, or description"
-            />
-          </div>
+          {!showGroupFilterOnly ? (
+            <>
+              <div className={styles.field} style={compactToolbar ? { minWidth: 0 } : undefined}>
+                <input
+                  className={styles.input}
+                  value={search}
+                  onChange={(event) => setSearch(event.target.value)}
+                  placeholder="Search claim number, employee, category, or description"
+                />
+              </div>
 
-          <div className={styles.field} style={compactToolbar ? { minWidth: 0 } : undefined}>
-            <select className={styles.select} value={categoryFilter} onChange={(event) => setCategoryFilter(event.target.value)}>
-              <option value="">All categories</option>
-              {categories.map((item) => (
-                <option key={item.id} value={String(item.id)}>
-                  {item.name}
-                </option>
-              ))}
-            </select>
-          </div>
+              <div className={styles.field} style={compactToolbar ? { minWidth: 0 } : undefined}>
+                <select className={styles.select} value={categoryFilter} onChange={(event) => setCategoryFilter(event.target.value)}>
+                  <option value="">All categories</option>
+                  {categories.map((item) => (
+                    <option key={item.id} value={String(item.id)}>
+                      {item.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
 
-          <div className={styles.field} style={compactToolbar ? { minWidth: 0 } : undefined}>
-            <select className={styles.select} value={groupFilter} onChange={(event) => setGroupFilter(event.target.value)}>
-              <option value="">All groups</option>
-              {groupFilterOptions.map((item) => (
-                <option key={item} value={item}>
-                  {item}
-                </option>
-              ))}
-            </select>
-          </div>
+              <div className={styles.field} style={compactToolbar ? { minWidth: 0 } : undefined}>
+                <select className={styles.select} value={groupFilter} onChange={(event) => setGroupFilter(event.target.value)}>
+                  <option value="">All groups</option>
+                  {groupFilterOptions.map((item) => (
+                    <option key={item} value={item}>
+                      {item}
+                    </option>
+                  ))}
+                </select>
+              </div>
 
-          <div className={styles.field} style={compactToolbar ? { minWidth: 0 } : undefined}>
-            <select className={styles.select} value={monthFilter} onChange={(event) => setMonthFilter(event.target.value)}>
-              <option value="">All months</option>
-              {monthFilterOptions.map((item) => (
-                <option key={item.value} value={item.value}>
-                  {item.label}
-                </option>
-              ))}
-            </select>
-          </div>
+              <div className={styles.field} style={compactToolbar ? { minWidth: 0 } : undefined}>
+                <select className={styles.select} value={monthFilter} onChange={(event) => setMonthFilter(event.target.value)}>
+                  <option value="">All months</option>
+                  {monthFilterOptions.map((item) => (
+                    <option key={item.value} value={item.value}>
+                      {item.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
 
-          <div className={styles.field} style={compactToolbar ? { minWidth: 0 } : undefined}>
-            <select className={styles.select} value={yearFilter} onChange={(event) => setYearFilter(event.target.value)}>
-              <option value="">All years</option>
-              {yearFilterOptions.map((item) => (
-                <option key={item} value={item}>
-                  {item}
-                </option>
-              ))}
-            </select>
-          </div>
+              <div className={styles.field} style={compactToolbar ? { minWidth: 0 } : undefined}>
+                <select className={styles.select} value={yearFilter} onChange={(event) => setYearFilter(event.target.value)}>
+                  <option value="">All years</option>
+                  {yearFilterOptions.map((item) => (
+                    <option key={item} value={item}>
+                      {item}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </>
+          ) : (
+            <div className={styles.field} style={compactToolbar ? { minWidth: 0 } : undefined}>
+              <select className={styles.select} value={groupFilter} onChange={(event) => setGroupFilter(event.target.value)}>
+                <option value="">All groups</option>
+                {groupFilterOptions.map((item) => (
+                  <option key={item} value={item}>
+                    {item}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
 
           <div className={styles.buttonRow}>
             <button
@@ -1492,10 +1513,12 @@ export default function ReimbursementClaimPage({
               className={styles.ghostButton}
               onClick={() => {
                 setSearch('')
-                setCategoryFilter('')
                 setGroupFilter('')
-                setMonthFilter('')
-                setYearFilter('')
+                if (!showGroupFilterOnly) {
+                  setCategoryFilter('')
+                  setMonthFilter('')
+                  setYearFilter('')
+                }
               }}
             >
               Reset
@@ -1647,7 +1670,9 @@ export default function ReimbursementClaimPage({
                           <div className={styles.reimbursementCardTop}>
                             <div>
                               <p className={styles.reimbursementCardNumber}>{item.claim_number}</p>
-                              <h3 className={styles.cellTitle}>{item.expense_category_name || '-'}</h3>
+                              <p className={styles.reimbursementCardMeta}>
+                                {[item.employee_name_snapshot || item.employee_email_snapshot, formatDate(item.expense_date), item.group].filter(Boolean).join(' • ')}
+                              </p>
                             </div>
                             <button
                               type="button"
@@ -1663,14 +1688,9 @@ export default function ReimbursementClaimPage({
                             </button>
                           </div>
 
-                          <p className={styles.reimbursementCardMeta}>
-                            {item.employee_name_snapshot || item.employee_email_snapshot}
-                          </p>
-                          <p className={styles.reimbursementCardMeta}>
-                            {formatDate(item.expense_date)}{item.group ? ` • ${item.group}` : ''}
-                          </p>
                           {item.comments ? <p className={styles.reimbursementCardMeta}>Comment: {item.comments}</p> : null}
                           <p className={styles.reimbursementCardDescription}>{item.description || 'No description provided.'}</p>
+                          <p className={styles.reimbursementCardMeta}>{item.expense_category_name || '-'}</p>
                           {getAttachmentsByType(item, 'SUBMISSION_PROOF').length ? (
                             <div className={styles.reimbursementInlineAttachmentList}>
                               {getAttachmentsByType(item, 'SUBMISSION_PROOF').map((attachment) => (
@@ -2210,13 +2230,12 @@ export default function ReimbursementClaimPage({
                 {selectedApprovedGroup.claims.map((claim) => (
                   <div key={claim.id} className={styles.reimbursementAttachmentRow}>
                     <div>
-                      <p className={styles.reimbursementAttachmentName}>
-                        {claim.claim_number} - {claim.expense_category_name || '-'}
-                      </p>
+                      <p className={styles.reimbursementAttachmentName}>{claim.claim_number}</p>
                       <p className={styles.cellMeta}>
-                        {claim.employee_name_snapshot || claim.employee_email_snapshot} • {formatDate(claim.expense_date)}
+                        {[claim.employee_name_snapshot || claim.employee_email_snapshot, formatDate(claim.expense_date), claim.group].filter(Boolean).join(' • ')}
                       </p>
                       <p className={styles.reimbursementCardDescription}>{claim.description || 'No description provided.'}</p>
+                      <p className={styles.cellMeta}>{claim.expense_category_name || '-'}</p>
                       {getAttachmentsByType(claim, 'SUBMISSION_PROOF').length ? (
                         <div className={styles.reimbursementInlineAttachmentList}>
                           {getAttachmentsByType(claim, 'SUBMISSION_PROOF').map((attachment) => (
@@ -2343,13 +2362,12 @@ export default function ReimbursementClaimPage({
                 {selectedPaidGroup.claims.map((claim) => (
                   <div key={claim.id} className={styles.reimbursementAttachmentRow}>
                     <div>
-                      <p className={styles.reimbursementAttachmentName}>
-                        {claim.claim_number} - {claim.expense_category_name || '-'}
-                      </p>
+                      <p className={styles.reimbursementAttachmentName}>{claim.claim_number}</p>
                       <p className={styles.cellMeta}>
-                        {claim.employee_name_snapshot || claim.employee_email_snapshot} • {formatDate(claim.expense_date)}
+                        {[claim.employee_name_snapshot || claim.employee_email_snapshot, formatDate(claim.expense_date), claim.group].filter(Boolean).join(' • ')}
                       </p>
                       <p className={styles.reimbursementCardDescription}>{claim.description || 'No description provided.'}</p>
+                      <p className={styles.cellMeta}>{claim.expense_category_name || '-'}</p>
                       {getAttachmentsByType(claim, 'SUBMISSION_PROOF').length ? (
                         <div className={styles.reimbursementInlineAttachmentList}>
                           {getAttachmentsByType(claim, 'SUBMISSION_PROOF').map((attachment) => (
