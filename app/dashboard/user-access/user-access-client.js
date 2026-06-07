@@ -240,6 +240,7 @@ export default function UserAccessClient({
   permissionCatalog,
   rolePermissionMap,
   inviteStatus,
+  actionStatus,
   inviteMessage,
   updateUserRole,
   updateRolePermissions,
@@ -335,6 +336,14 @@ export default function UserAccessClient({
 
       {inviteStatus === 'error' ? (
         <div style={styles.errorBanner}>Failed to send invite: {inviteMessage || 'Unknown error.'}</div>
+      ) : null}
+
+      {actionStatus === 'saved' ? (
+        <div style={styles.successBanner}>{inviteMessage || 'Changes saved.'}</div>
+      ) : null}
+
+      {actionStatus === 'error' ? (
+        <div style={styles.errorBanner}>{inviteMessage || 'Failed to save changes.'}</div>
       ) : null}
 
       <div style={styles.tabRow}>

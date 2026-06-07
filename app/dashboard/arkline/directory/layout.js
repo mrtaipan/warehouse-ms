@@ -11,8 +11,8 @@ export default function ArklineDirectoryLayout({ children }) {
   const { access } = useArklineAccess()
 
   const tabs = [
-    { href: '/dashboard/arkline/directory', label: 'Products', exact: true, enabled: access.directory },
-    { href: '/dashboard/arkline/directory/materials', label: 'Materials', exact: true, enabled: access.directory },
+    { href: '/dashboard/arkline/directory', label: 'Products', exact: true, enabled: access.directoryProducts || access.directory },
+    { href: '/dashboard/arkline/directory/materials', label: 'Materials', exact: true, enabled: access.directoryMaterials },
     { href: '/dashboard/arkline/directory/bom', label: 'BOM', exact: true, enabled: access.directoryBom },
   ]
 

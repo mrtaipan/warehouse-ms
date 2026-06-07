@@ -106,6 +106,12 @@
   margin-bottom: 4px;
 }
 
+.mobilePanelActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .sectionHead,
 .metricHead {
   display: flex;

@@ -52,11 +52,12 @@ export default function ArklinePage() {
       <section className={styles.overviewGrid}>
         {cards.map((card) => {
           const enabled = Boolean(access[card.accessKey])
+          const href = card.accessKey === 'financialManagement' ? access.financialManagementHref || card.href : card.href
           const className = `${styles.overviewCard} ${styles.overviewCardWithImage} ${!loading && !enabled ? styles.overviewCardDisabled : ''}`.trim()
           const style = { '--overview-hover-image': `url("${card.hoverImage}")` }
 
           return !loading && enabled ? (
-            <Link key={card.href} href={card.href} className={className} style={style}>
+            <Link key={card.href} href={href} className={className} style={style}>
               <span className={styles.overviewNumber}>{card.number}</span>
               <div className={styles.overviewCardContent}>
                 <p className={styles.overviewCardKicker}>{card.short}</p>

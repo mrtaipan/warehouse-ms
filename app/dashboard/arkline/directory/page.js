@@ -27,6 +27,8 @@ function normalizeProduct(row) {
 
 export default function ArklineDirectoryPage() {
   const { access } = useArklineAccess()
+  const canCreateSku = access.directoryProductsCreate
+  const canEditProduct = access.directoryProductsEdit
   const [products, setProducts] = useState([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -93,7 +95,7 @@ export default function ArklineDirectoryPage() {
   }, [categoryFilter, products, search, statusFilter])
 
   function openCreateModal() {
-    if (!access.directoryCreate) return
+    if (!canCreateSku) return
     setDraft(emptyDraft)
     setIsEditing(false)
     setShowModal(true)
@@ -102,6 +104,7 @@ export default function ArklineDirectoryPage() {
   }
 
   function openEditModal(product) {
+    if (!canEditProduct) return
     setDraft(product)
     setIsEditing(true)
     setShowModal(true)
@@ -118,6 +121,16 @@ export default function ArklineDirectoryPage() {
   async function handleSave() {
     setError('')
     setSuccess('')
+
+    if (isEditing && !canEditProduct) {
+      setError('You do not have permission to edit Arkline products.')
+      return
+    }
+
+    if (!isEditing && !canCreateSku) {
+      setError('You do not have permission to create a new Arkline SKU.')
+      return
+    }
 
     if (!draft.sku_induk.trim() || !draft.nama_produk.trim()) {
       setError('SKU and product name are required.')
@@ -208,7 +221,7 @@ export default function ArklineDirectoryPage() {
                 Cards
               </button>
             </div>
-            <button type="button" className={styles.primaryButton} onClick={openCreateModal} disabled={!access.directoryCreate}>
+            <button type="button" className={styles.primaryButton} onClick={openCreateModal} disabled={!canCreateSku}>
               + New SKU
             </button>
           </div>
@@ -290,7 +303,12 @@ export default function ArklineDirectoryPage() {
                     title={item.is_active ? 'Active' : 'Inactive'}
                     aria-label={item.is_active ? 'Active' : 'Inactive'}
                   />
-                  <button type="button" className={`${styles.secondaryButton} ${styles.directoryEditButton}`.trim()} onClick={() => openEditModal(item)}>
+                  <button
+                    type="button"
+                    className={`${styles.secondaryButton} ${styles.directoryEditButton}`.trim()}
+                    onClick={() => openEditModal(item)}
+                    disabled={!canEditProduct}
+                  >
                     Edit
                   </button>
                 </div>
@@ -321,7 +339,12 @@ export default function ArklineDirectoryPage() {
                 </p>
 
                 <div className={styles.buttonRow}>
-                  <button type="button" className={`${styles.secondaryButton} ${styles.directoryEditButton}`.trim()} onClick={() => openEditModal(item)}>
+                  <button
+                    type="button"
+                    className={`${styles.secondaryButton} ${styles.directoryEditButton}`.trim()}
+                    onClick={() => openEditModal(item)}
+                    disabled={!canEditProduct}
+                  >
                     Edit Product
                   </button>
                 </div>
@@ -404,7 +427,12 @@ export default function ArklineDirectoryPage() {
             {error ? <p className={styles.errorText}>{error}</p> : null}
 
             <div className={styles.buttonRow}>
-              <button type="button" className={styles.primaryButton} onClick={handleSave} disabled={saving}>
+              <button
+                type="button"
+                className={styles.primaryButton}
+                onClick={handleSave}
+                disabled={saving || (isEditing ? !canEditProduct : !canCreateSku)}
+              >
                 {saving ? 'Saving...' : isEditing ? 'Save Changes' : 'Create SKU'}
               </button>
               <button type="button" className={styles.secondaryButton} onClick={closeModal} disabled={saving}>

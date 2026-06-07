@@ -11,12 +11,20 @@ export default function ArklineFinancialManagementLayout({ children }) {
   const { access } = useArklineAccess()
 
   const tabs = [
-    { href: '/dashboard/arkline/financial-management', label: 'Payment Submission', exact: true },
-    { href: '/dashboard/arkline/financial-management/live-reporting', label: 'Live Reporting', exact: false },
-    { href: '/dashboard/arkline/financial-management/reporting', label: 'Financial Reporting', exact: false },
+    {
+      href: '/dashboard/arkline/financial-management',
+      label: 'Payment Submission',
+      exact: true,
+      enabled: access.financialManagementPaymentSubmissionView,
+    },
+    {
+      href: '/dashboard/arkline/financial-management/reporting',
+      label: 'Financial Reporting',
+      exact: false,
+      enabled: access.financialReporting,
+    },
   ].filter((tab) => {
-    if (tab.href.endsWith('/financial-management/reporting')) return access.financialReporting
-    return access.financialManagement
+    return tab.enabled
   })
 
   return (

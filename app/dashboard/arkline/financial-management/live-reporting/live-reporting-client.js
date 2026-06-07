@@ -21,6 +21,24 @@ function HomeIcon() {
   )
 }
 
+function HistoryIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className={styles.homeIcon}>
+      <path d="M4 12a8 8 0 1 0 2.3-5.7" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M4 4v4h4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M12 8v4l2.6 1.8" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
+function AddIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className={styles.homeIcon}>
+      <path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
 function createDraft() {
   return {
     session_date: '',
@@ -98,7 +116,7 @@ function normalizeCredit(row) {
   }
 }
 
-export default function LiveReportingClient({ mobile = false }) {
+export default function LiveReportingClient({ mobile = false, mobileView = 'entry' }) {
   const { loading: accessLoading, access } = useArklineAccess()
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -114,7 +132,8 @@ export default function LiveReportingClient({ mobile = false }) {
   const [yearFilter, setYearFilter] = useState('all')
   const [selectedRanking, setSelectedRanking] = useState(null)
 
-  const canView = access.financialManagement
+  const canView = access.financialManagementLiveReportingView
+  const canSubmit = access.financialManagementLiveReportingAdd
 
   async function loadWorkspace() {
     setLoading(true)
@@ -289,6 +308,14 @@ export default function LiveReportingClient({ mobile = false }) {
     [filteredSessions]
   )
 
+  const personalSessions = useMemo(() => {
+    const profileEmail = String(profile?.email || '').trim().toLowerCase()
+    return filteredSessions.filter((item) => {
+      if (!profileEmail) return false
+      return String(item.submitted_by || '').trim().toLowerCase() === profileEmail
+    })
+  }, [filteredSessions, profile])
+
   const ranking = useMemo(() => {
     return Array.from(
       filteredCredits.reduce((map, item) => {
@@ -305,6 +332,11 @@ export default function LiveReportingClient({ mobile = false }) {
     event.preventDefault()
     setError('')
     setSuccess('')
+
+    if (!canSubmit) {
+      setError('You do not have permission to submit live reporting.')
+      return
+    }
 
     if (!profile?.email || !profile?.id) {
       setError('Your profile is not ready yet. Please refresh and try again.')
@@ -399,19 +431,19 @@ export default function LiveReportingClient({ mobile = false }) {
   return (
     <div className={styles.page}>
       <section className={`${styles.shell} ${mobile ? styles.mobileShell : ''}`.trim()}>
-        <div className={styles.header}>
-          <div>
-            <p className={styles.eyebrow}>Arkline</p>
-            <h1 className={styles.title}>Live Reporting</h1>
-          </div>
-          <div className={styles.headerActions}>
-            {!mobile ? (
-              <Link href="/mobile/arkline/live-reporting" className={styles.primaryButton}>
-                Open Mobile App
+        {!mobile ? (
+          <div className={styles.header}>
+            <div />
+            <div className={styles.headerActions}>
+              <Link href="/mobile/arkline/live-reporting" className={styles.ghostButton}>
+                Live Entry
               </Link>
-            ) : null}
+              <Link href="/mobile/arkline/live-reporting/history" className={styles.primaryButton}>
+                History
+              </Link>
+            </div>
           </div>
-        </div>
+        ) : null}
 
         {error ? <p className={shellStyles.errorText}>{error}</p> : null}
         {success ? <p className={shellStyles.successText}>{success}</p> : null}
@@ -499,11 +531,22 @@ export default function LiveReportingClient({ mobile = false }) {
               <div className={styles.mobilePanelHead}>
                 <div>
                   <p className={styles.sectionEyebrow}>Arkline</p>
-                  <h2 className={styles.sectionTitle}>Live Reporting</h2>
+                  <h2 className={styles.title}>{mobileView === 'history' ? 'History' : 'Live Reporting'}</h2>
                 </div>
-                <Link href="/dashboard" className={styles.mobileHomeButton} aria-label="Go to dashboard home">
-                  <HomeIcon />
-                </Link>
+                <div className={styles.mobilePanelActions}>
+                  <Link href="/dashboard" className={styles.mobileHomeButton} aria-label="Go to dashboard home">
+                    <HomeIcon />
+                  </Link>
+                  {mobileView === 'history' ? (
+                    <Link href="/mobile/arkline/live-reporting" className={styles.mobileHomeButton} aria-label="Open live reporting entry">
+                      <AddIcon />
+                    </Link>
+                  ) : (
+                    <Link href="/mobile/arkline/live-reporting/history" className={styles.mobileHomeButton} aria-label="Open live reporting history">
+                      <HistoryIcon />
+                    </Link>
+                  )}
+                </div>
               </div>
             ) : null}
 
@@ -511,11 +554,42 @@ export default function LiveReportingClient({ mobile = false }) {
               <div className={styles.sectionHead}>
                 <div>
                   <p className={styles.sectionEyebrow}>Live GMV</p>
-                  <h2 className={styles.sectionTitle}>Session Entry</h2>
+                  <h2 className={styles.title}>Session Entry</h2>
                   </div>
                 </div>
               ) : null}
 
+              {mobileView === 'history' ? (
+                <div className={styles.form}>
+                  <div className={styles.sectionHead}>
+                    <div>
+                      <p className={styles.sectionEyebrow}>Recent Entries</p>
+                      <h2 className={styles.sectionTitle}>Your History</h2>
+                    </div>
+                  </div>
+
+                  {!personalSessions.length ? (
+                    <div className={styles.emptyState}>No live reporting entry has been submitted from your account yet.</div>
+                  ) : (
+                    <div className={styles.sessionList}>
+                      {personalSessions.map((item) => (
+                        <div key={item.id} className={styles.sessionRow}>
+                          <div className={styles.sessionMain}>
+                            <strong>{item.hero_product_name_snapshot || item.hero_product_sku || 'No product'}</strong>
+                            <span>
+                              {formatDate(item.session_date)} • {item.start_time?.slice(0, 5)} - {item.end_time?.slice(0, 5)}
+                            </span>
+                            <span>
+                              {item.session_type === 'PAIRING' ? `Pairing with ${item.partner_display_name_snapshot || '-'}` : 'Standalone'} • {item.submitted_by_display_name || '-'}
+                            </span>
+                          </div>
+                          <div className={styles.sessionAmount}>{formatCurrency(item.gross_amount)}</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ) : (
               <form className={styles.form} onSubmit={handleSubmit}>
                 <div className={mobile ? styles.mobileSegment : styles.formRowTwo}>
                   <div className={styles.field}>
@@ -630,17 +704,18 @@ export default function LiveReportingClient({ mobile = false }) {
                       <button type="button" className={styles.ghostButton} onClick={() => setDraft(createDraft())} disabled={saving}>
                         Clear
                       </button>
-                      <button type="submit" className={styles.primaryButton} disabled={saving}>
+                      <button type="submit" className={styles.primaryButton} disabled={saving || !canSubmit}>
                         {saving ? 'Saving...' : 'Add'}
                       </button>
                     </>
                   ) : (
-                    <button type="submit" className={styles.primaryButton} disabled={saving}>
+                    <button type="submit" className={styles.primaryButton} disabled={saving || !canSubmit}>
                       {saving ? 'Saving...' : 'Save Session'}
                     </button>
                   )}
                 </div>
               </form>
+              )}
             </section>
 
           </>

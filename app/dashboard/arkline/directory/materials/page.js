@@ -25,6 +25,8 @@ function normalizeMaterial(row) {
 
 export default function ArklineMaterialDirectoryPage() {
   const { access } = useArklineAccess()
+  const canCreateMaterial = access.directoryMaterialsCreate
+  const canEditMaterial = access.directoryMaterialsEdit
   const [materials, setMaterials] = useState([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -75,7 +77,7 @@ export default function ArklineMaterialDirectoryPage() {
   }, [materials, search, statusFilter])
 
   function openCreateModal() {
-    if (!access.directoryCreate) return
+    if (!canCreateMaterial) return
     setDraft(emptyDraft)
     setIsEditing(false)
     setShowModal(true)
@@ -84,7 +86,7 @@ export default function ArklineMaterialDirectoryPage() {
   }
 
   function openEditModal(material) {
-    if (!access.directoryCreate) return
+    if (!canEditMaterial) return
     setDraft(material)
     setIsEditing(true)
     setShowModal(true)
@@ -101,6 +103,16 @@ export default function ArklineMaterialDirectoryPage() {
   async function handleSave() {
     setError('')
     setSuccess('')
+
+    if (isEditing && !canEditMaterial) {
+      setError('You do not have permission to edit Arkline materials.')
+      return
+    }
+
+    if (!isEditing && !canCreateMaterial) {
+      setError('You do not have permission to create a new Arkline material.')
+      return
+    }
 
     if (!draft.material_name.trim()) {
       setError('Material name is required.')
@@ -188,7 +200,7 @@ export default function ArklineMaterialDirectoryPage() {
                 Cards
               </button>
             </div>
-            <button type="button" className={styles.primaryButton} onClick={openCreateModal} disabled={!access.directoryCreate}>
+            <button type="button" className={styles.primaryButton} onClick={openCreateModal} disabled={!canCreateMaterial}>
               + New Material
             </button>
           </div>
@@ -260,7 +272,7 @@ export default function ArklineMaterialDirectoryPage() {
                     type="button"
                     className={`${styles.secondaryButton} ${styles.directoryEditButton}`.trim()}
                     onClick={() => openEditModal(item)}
-                    disabled={!access.directoryCreate}
+                    disabled={!canEditMaterial}
                   >
                     Edit
                   </button>
@@ -293,7 +305,7 @@ export default function ArklineMaterialDirectoryPage() {
                     type="button"
                     className={`${styles.secondaryButton} ${styles.directoryEditButton}`.trim()}
                     onClick={() => openEditModal(item)}
-                    disabled={!access.directoryCreate}
+                    disabled={!canEditMaterial}
                   >
                     Edit Material
                   </button>
@@ -355,7 +367,12 @@ export default function ArklineMaterialDirectoryPage() {
               <button type="button" className={styles.ghostButton} onClick={closeModal} disabled={saving}>
                 Cancel
               </button>
-              <button type="button" className={styles.primaryButton} onClick={() => void handleSave()} disabled={saving}>
+              <button
+                type="button"
+                className={styles.primaryButton}
+                onClick={() => void handleSave()}
+                disabled={saving || (isEditing ? !canEditMaterial : !canCreateMaterial)}
+              >
                 {saving ? 'Saving...' : isEditing ? 'Update Material' : 'Save Material'}
               </button>
             </div>

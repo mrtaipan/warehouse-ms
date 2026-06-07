@@ -1,6 +1,6 @@
 ﻿'use client'
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { createClient } from '@/utils/supabase/browser'
 import { getProfileByAuthenticatedUser } from '@/utils/user-profiles'
@@ -195,7 +195,7 @@ export default function ArklineFinancialManagementPage() {
   const attachmentInputRef = useRef(null)
   const paymentProofInputRef = useRef(null)
 
-  const canView = access.financialManagement
+  const canView = access.financialManagement || access.financialManagementPaymentSubmissionView
   const canSubmit =
     access.financialManagementPaymentSubmissionView ||
     access.financialManagementPaymentSubmissionAdd ||
@@ -203,7 +203,7 @@ export default function ArklineFinancialManagementPage() {
   const canPay = role === 'admin'
   const canApprove = role === 'admin'
 
-  async function loadWorkspace(options = {}) {
+  const loadWorkspace = useCallback(async (options = {}) => {
     const { silent = false } = options
 
     if (!silent) {
@@ -246,9 +246,10 @@ export default function ArklineFinancialManagementPage() {
       { data: materialPoRows, error: materialPoError },
       { data: categoryRows, error: categoryError },
     ] = await Promise.all([
-      supabase
-        .from('arkline_payment')
-        .select(
+      (() => {
+        let paymentQuery = supabase
+          .from('arkline_payment')
+          .select(
           `
             id,
             payment_basis,
@@ -284,7 +285,14 @@ export default function ArklineFinancialManagementPage() {
             )
           `
         )
-        .order('created_at', { ascending: true }),
+          .order('created_at', { ascending: true })
+
+        if (role !== 'admin') {
+          paymentQuery = paymentQuery.eq('created_by', String(profileRow?.email || user.email || '').trim().toLowerCase())
+        }
+
+        return paymentQuery
+      })(),
       supabase.from('arkline_pos').select('id, po_id, supplier_name, created_at').order('created_at', { ascending: false }),
       supabase
         .from('arkline_po_material_ordered')
@@ -362,11 +370,11 @@ export default function ArklineFinancialManagementPage() {
     )
     setCategories((categoryRows || []).map((item) => ({ id: String(item.id), name: item.name })))
     if (!silent) setLoading(false)
-  }
+  }, [role])
 
   useEffect(() => {
     void loadWorkspace()
-  }, [])
+  }, [loadWorkspace])
 
   useEffect(() => {
     if (accessLoading || !canView) return undefined
@@ -376,7 +384,7 @@ export default function ArklineFinancialManagementPage() {
     }, 30000)
 
     return () => window.clearInterval(intervalId)
-  }, [accessLoading, canView])
+  }, [accessLoading, canView, loadWorkspace])
 
   const filteredRequests = useMemo(() => {
     const keyword = search.trim().toUpperCase()

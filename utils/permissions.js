@@ -110,7 +110,7 @@ const BASE_PERMISSION_GROUPS = [
     label: 'Arkline',
     items: [
       { key: 'overview', label: 'Arkline Overview', description: 'Halaman utama workspace Arkline.', actions: ['view'] },
-      { key: 'directory', label: 'Product Directory', description: 'Pintu masuk halaman product directory Arkline.', actions: ['view'] },
+      { key: 'directory', label: 'Directory', description: 'Pintu masuk halaman product directory Arkline.', actions: ['view'] },
       { key: 'directory.products', label: 'Products', description: 'Kelola daftar produk Arkline.', actions: ['view', 'add', 'edit', 'delete'] },
       { key: 'directory.materials', label: 'Materials', description: 'Kelola master material Arkline.', actions: ['view', 'add', 'edit', 'delete'] },
       { key: 'directory.bom', label: 'BOM', description: 'Kelola bill of materials produk Arkline.', actions: ['view', 'add', 'edit', 'delete'] },
@@ -123,7 +123,7 @@ const BASE_PERMISSION_GROUPS = [
       { key: 'production_planning.material_fulfillment', label: 'Material Fulfillment', codePrefix: 'arkline.material_fulfillment', description: 'Kelola kebutuhan dan pemenuhan material produksi.', actions: ['view', 'add', 'edit', 'delete'] },
       { key: 'financial_management', label: 'Financial Management', description: 'Pintu masuk halaman financial management Arkline.', actions: ['view'] },
       { key: 'financial_management.payment_submission', label: 'Payment Submission', description: 'Kelola submission pembayaran terhadap PO/material.', actions: ['view', 'add', 'edit'] },
-      { key: 'financial_management.reporting', label: 'Financial Reporting', description: 'Lihat reporting finansial Arkline.', actions: ['view'] },
+      { key: 'financial_management.reporting', label: 'Financial Reporting', description: 'Lihat reporting finansial Arkline sekaligus akses live reporting mobile.', actions: ['view', 'add', 'edit'] },
     ],
   },
 ]
@@ -387,6 +387,8 @@ const DEFAULT_ROLE_BUNDLES = {
     'arkline.financial_management.payment_submission.add',
     'arkline.financial_management.payment_submission.edit',
     'arkline.financial_management.reporting.view',
+    'arkline.financial_management.reporting.add',
+    'arkline.financial_management.reporting.edit',
   ],
   arkline_host: [
     'dashboard.home.view',
@@ -501,6 +503,7 @@ export function getArklineFeatureAccess(role, permissions = [], isAdmin = false)
       materialFulfillmentEdit: true,
       materialFulfillmentDelete: true,
       financialManagement: true,
+      financialManagementHref: '/dashboard/arkline/financial-management',
       financialManagementPaymentSubmissionView: true,
       financialManagementPaymentSubmissionAdd: true,
       financialManagementPaymentSubmissionEdit: true,
@@ -527,6 +530,10 @@ export function getArklineFeatureAccess(role, permissions = [], isAdmin = false)
   const financialManagement = buildFeatureAccess('arkline.financial_management', permissions, isAdmin)
   const paymentSubmission = buildFeatureAccess('arkline.financial_management.payment_submission', permissions, isAdmin)
   const financialReporting = buildFeatureAccess('arkline.financial_management.reporting', permissions, isAdmin)
+  const legacyLiveReporting = buildFeatureAccess('arkline.financial_management.live_reporting', permissions, isAdmin)
+  const financialReportingView = financialReporting.view || legacyLiveReporting.view
+  const financialReportingAdd = financialReporting.add || legacyLiveReporting.add
+  const financialReportingEdit = financialReporting.edit || legacyLiveReporting.edit
   const myArklife = hasPermission(permissions, 'myarklife.view', isAdmin)
   const overview = hasPermission(permissions, 'arkline.overview.view', isAdmin)
   const menu =
@@ -544,14 +551,21 @@ export function getArklineFeatureAccess(role, permissions = [], isAdmin = false)
     materialFulfillment.view ||
     financialManagement.view ||
     paymentSubmission.view ||
-    financialReporting.view
+    financialReportingView
 
   let menuHref = '/dashboard'
   if (overview) menuHref = '/dashboard/arkline'
   else if (directoryHome.view || directoryProducts.view || directoryBom.view || directoryMaterials.view) menuHref = '/dashboard/arkline/directory'
   else if (progressHome.view || progressKanban.view || progressCalendar.view || progressProducts.view) menuHref = '/dashboard/arkline/progress-overview'
   else if (productionPlanning.view || productionOrders.view || materialFulfillment.view) menuHref = '/dashboard/arkline/production-planning'
-  else if (financialManagement.view || paymentSubmission.view || financialReporting.view) menuHref = '/dashboard/arkline/financial-management'
+
+  let financialManagementHref = '/dashboard/arkline/financial-management'
+  if (financialManagement.view || paymentSubmission.view) financialManagementHref = '/dashboard/arkline/financial-management'
+  else if (financialReportingView) financialManagementHref = '/mobile/arkline/live-reporting'
+
+  if (menuHref === '/dashboard' && (financialManagement.view || paymentSubmission.view || financialReportingView)) {
+    menuHref = financialManagementHref
+  }
 
   return {
     menu,
@@ -584,11 +598,15 @@ export function getArklineFeatureAccess(role, permissions = [], isAdmin = false)
     materialFulfillmentAdd: materialFulfillment.add,
     materialFulfillmentEdit: materialFulfillment.edit,
     materialFulfillmentDelete: materialFulfillment.delete,
-    financialManagement: financialManagement.view || paymentSubmission.view || financialReporting.view,
+    financialManagement: financialManagement.view || paymentSubmission.view || financialReportingView,
+    financialManagementHref,
     financialManagementPaymentSubmissionView: paymentSubmission.view,
     financialManagementPaymentSubmissionAdd: paymentSubmission.add,
     financialManagementPaymentSubmissionEdit: paymentSubmission.edit,
-    financialReporting: financialReporting.view,
+    financialManagementLiveReportingView: financialReportingView,
+    financialManagementLiveReportingAdd: financialReportingAdd,
+    financialManagementLiveReportingEdit: financialReportingEdit,
+    financialReporting: financialReportingView,
     reimbursementView: myArklife,
     reimbursementSubmit: myArklife,
     reimbursementEdit: myArklife,
@@ -762,8 +780,11 @@ const ROUTE_PERMISSION_MAP = [
   { matcher: (pathname) => pathname.startsWith('/dashboard/arkline/progress-overview'), codes: ['arkline.progress_snapshot.view', 'arkline.progress_snapshot.kanban.view', 'arkline.progress_snapshot.calendar.view', 'arkline.progress_snapshot.products.view'] },
   { matcher: (pathname) => pathname.startsWith('/dashboard/arkline/production-planning/material-fulfillment'), codes: ['arkline.material_fulfillment.view'] },
   { matcher: (pathname) => pathname.startsWith('/dashboard/arkline/production-planning'), codes: ['arkline.production_planning.view', 'arkline.production_orders.view', 'arkline.material_fulfillment.view'] },
+  { matcher: (pathname) => pathname === '/dashboard/arkline/financial-management' || pathname.startsWith('/dashboard/arkline/financial-management?'), codes: ['arkline.financial_management.view', 'arkline.financial_management.payment_submission.view'] },
+  { matcher: (pathname) => pathname.startsWith('/dashboard/arkline/financial-management/live-reporting'), codes: ['arkline.financial_management.reporting.view', 'arkline.financial_management.live_reporting.view'] },
   { matcher: (pathname) => pathname.startsWith('/dashboard/arkline/financial-management/reporting'), codes: ['arkline.financial_management.reporting.view'] },
-  { matcher: (pathname) => pathname.startsWith('/dashboard/arkline/financial-management'), codes: ['arkline.financial_management.view', 'arkline.financial_management.payment_submission.view', 'arkline.financial_management.reporting.view'] },
+  { matcher: (pathname) => pathname.startsWith('/mobile/arkline/live-reporting'), codes: ['arkline.financial_management.reporting.view', 'arkline.financial_management.live_reporting.view'] },
+  { matcher: (pathname) => pathname.startsWith('/dashboard/arkline/financial-management'), codes: ['arkline.financial_management.view', 'arkline.financial_management.payment_submission.view', 'arkline.financial_management.reporting.view', 'arkline.financial_management.live_reporting.view'] },
   { matcher: (pathname) => pathname.startsWith('/dashboard/reimbursement'), codes: ['myarklife.view'] },
 ]
 

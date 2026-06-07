@@ -236,6 +236,8 @@ values
   ('arkline.financial_management.payment_submission.add', 'Add Payment Submission', 'Add access for Payment Submission in Arkline.'),
   ('arkline.financial_management.payment_submission.edit', 'Edit Payment Submission', 'Edit access for Payment Submission in Arkline.'),
   ('arkline.financial_management.reporting.view', 'View Financial Reporting', 'View access for Financial Reporting in Arkline.'),
+  ('arkline.financial_management.reporting.add', 'Add Financial Reporting', 'Add access for Financial Reporting in Arkline.'),
+  ('arkline.financial_management.reporting.edit', 'Edit Financial Reporting', 'Edit access for Financial Reporting in Arkline.'),
   ('settings.user_access.view', 'View User Access', 'View access for User Access in Settings.'),
   ('settings.user_access.edit', 'Edit User Access', 'Edit access for User Access in Settings.')
 on conflict (code) do update
@@ -412,6 +414,8 @@ from (
     ('arkline_merchandiser', 'arkline.financial_management.payment_submission.add'),
     ('arkline_merchandiser', 'arkline.financial_management.payment_submission.edit'),
     ('arkline_merchandiser', 'arkline.financial_management.reporting.view'),
+    ('arkline_merchandiser', 'arkline.financial_management.reporting.add'),
+    ('arkline_merchandiser', 'arkline.financial_management.reporting.edit'),
     ('arkline_host', 'dashboard.home.view'),
     ('arkline_host', 'myarklife.view'),
     ('arkline_host', 'arkline.overview.view'),

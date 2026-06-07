@@ -167,6 +167,20 @@
   opacity: 0.44;
   cursor: not-allowed;
   pointer-events: none;
+  background: rgba(248, 250, 252, 0.72);
+  color: #94a3b8;
+  box-shadow: none;
+}
+
+.directoryTabLinkDisabled:hover {
+  background: rgba(248, 250, 252, 0.72);
+  color: #94a3b8;
+  box-shadow: none;
+}
+
+.directoryTabLinkDisabled .directoryTabUnderline {
+  opacity: 0;
+  transform: scaleX(0);
 }
 
 .directoryTabLabel {
@@ -568,6 +582,18 @@
   cursor: pointer;
 }
 
+.primaryButton:disabled,
+.secondaryButton:disabled,
+.accentButton:disabled,
+.dangerButton:disabled,
+.ghostButton:disabled,
+.toggleButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+  box-shadow: none;
+  transform: none;
+}
+
 .primaryButton {
   border: none;
   background: #111827;
@@ -596,6 +622,30 @@
   border: 1px solid #d7dee7;
   background: #f8fafc;
   color: #475569;
+}
+
+.primaryButton:disabled {
+  background: #cbd5e1;
+  color: #ffffff;
+}
+
+.secondaryButton:disabled,
+.ghostButton:disabled {
+  background: #f8fafc;
+  border-color: #e2e8f0;
+  color: #94a3b8;
+}
+
+.accentButton:disabled {
+  background: #eff6ff;
+  border-color: #dbeafe;
+  color: #93c5fd;
+}
+
+.dangerButton:disabled {
+  background: #fef2f2;
+  border-color: #fee2e2;
+  color: #fca5a5;
 }
 
 .viewToggle {

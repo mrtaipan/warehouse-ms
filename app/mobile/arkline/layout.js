@@ -1,5 +1,7 @@
 import { redirect } from 'next/navigation'
 import { createClient } from '@/utils/supabase/server'
+import { canAccessPath } from '@/utils/permissions'
+import { loadAccessContext } from '@/utils/access-control'
 
 import styles from './layout.module.css'
 
@@ -11,6 +13,12 @@ export default async function MobileArklineLayout({ children }) {
 
   if (!user) {
     redirect('/login')
+  }
+
+  const { role, permissions, isAdmin } = await loadAccessContext(supabase, user, 'role')
+
+  if (!canAccessPath('/mobile/arkline/live-reporting', role, permissions, isAdmin)) {
+    redirect('/dashboard')
   }
 
   return (

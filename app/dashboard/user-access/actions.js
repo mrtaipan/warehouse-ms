@@ -5,7 +5,13 @@ import { headers } from 'next/headers'
 import { redirect } from 'next/navigation'
 import { createClient } from '@/utils/supabase/server'
 import { createAdminClient } from '@/utils/supabase/admin'
-import { ADMIN_EMAIL, OFFICIAL_ROLE_VALUES, expandImpliedPermissions, normalizeRole } from '@/utils/permissions'
+import {
+  ADMIN_EMAIL,
+  OFFICIAL_ROLE_VALUES,
+  expandImpliedPermissions,
+  getPermissionSeedRows,
+  normalizeRole,
+} from '@/utils/permissions'
 
 function getTodayJakartaDate() {
   const parts = new Intl.DateTimeFormat('en-CA', {
@@ -18,97 +24,152 @@ function getTodayJakartaDate() {
   return `${values.year}-${values.month}-${values.day}`
 }
 
+function redirectUserAccessWithStatus(type, message) {
+  redirect(`/dashboard/user-access?status=${encodeURIComponent(type)}&message=${encodeURIComponent(message)}`)
+}
+
 export async function updateUserRole(formData) {
-  const supabase = await createClient()
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
+  try {
+    const supabase = await createClient()
+    const {
+      data: { user },
+    } = await supabase.auth.getUser()
 
-  if (!user || user.email?.toLowerCase() !== ADMIN_EMAIL) {
-    throw new Error('Only admin can update user access.')
+    if (!user || user.email?.toLowerCase() !== ADMIN_EMAIL) {
+      redirectUserAccessWithStatus('error', 'Only admin can update user access.')
+    }
+
+    const profileId = String(formData.get('profile_id') || '').trim()
+    const role = normalizeRole(formData.get('role'))
+    const displayName = String(formData.get('display_name') || '').trim()
+    const hasQcActiveField = formData.has('is_qc_active')
+    const isQcActive = formData.get('is_qc_active') === 'on'
+
+    if (!profileId || !role || !OFFICIAL_ROLE_VALUES.includes(role)) {
+      redirectUserAccessWithStatus('error', 'Profile id and role are required.')
+    }
+
+    const payload = {
+      role,
+      display_name: displayName || 'Employee',
+    }
+
+    if (hasQcActiveField) {
+      payload.is_qc_active = isQcActive
+      payload.qc_active_date = isQcActive ? getTodayJakartaDate() : null
+    }
+
+    const { data, error } = await supabase
+      .from('dir_user_profiles')
+      .update(payload)
+      .eq('id', profileId)
+      .select('id, role')
+      .maybeSingle()
+
+    if (error) {
+      redirectUserAccessWithStatus('error', error.message)
+    }
+
+    if (!data) {
+      redirectUserAccessWithStatus('error', 'User profile was not updated. Please check the dir_user_profiles update policy or profile id.')
+    }
+
+    revalidatePath('/dashboard/user-access')
+    revalidatePath('/dashboard')
+    redirectUserAccessWithStatus('saved', 'User access updated.')
+  } catch (error) {
+    if (String(error?.digest || '').startsWith('NEXT_REDIRECT')) {
+      throw error
+    }
+    redirectUserAccessWithStatus('error', error?.message || 'Failed to update user access.')
   }
-
-  const profileId = String(formData.get('profile_id') || '').trim()
-  const role = normalizeRole(formData.get('role'))
-  const displayName = String(formData.get('display_name') || '').trim()
-  const hasQcActiveField = formData.has('is_qc_active')
-  const isQcActive = formData.get('is_qc_active') === 'on'
-
-  if (!profileId || !role || !OFFICIAL_ROLE_VALUES.includes(role)) {
-    throw new Error('Profile id and role are required.')
-  }
-
-  const payload = {
-    role,
-    display_name: displayName || 'Employee',
-  }
-
-  if (hasQcActiveField) {
-    payload.is_qc_active = isQcActive
-    payload.qc_active_date = isQcActive ? getTodayJakartaDate() : null
-  }
-
-  const { data, error } = await supabase
-    .from('dir_user_profiles')
-    .update(payload)
-    .eq('id', profileId)
-    .select('id, role')
-    .maybeSingle()
-
-  if (error) {
-    throw new Error(error.message)
-  }
-
-  if (!data) {
-    throw new Error('User profile was not updated. Please check the dir_user_profiles update policy or profile id.')
-  }
-
-  revalidatePath('/dashboard/user-access')
-  revalidatePath('/dashboard')
 }
 
 export async function updateRolePermissions(formData) {
-  const supabase = await createClient()
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
+  try {
+    const supabase = await createClient()
+    const {
+      data: { user },
+    } = await supabase.auth.getUser()
 
-  if (!user || user.email?.toLowerCase() !== ADMIN_EMAIL) {
-    throw new Error('Only admin can update role permissions.')
-  }
-
-  const role = normalizeRole(formData.get('role'))
-  const permissionCodes = formData
-    .getAll('permission_code')
-    .map((item) => String(item || '').trim())
-    .filter(Boolean)
-  const normalizedPermissionCodes = Array.from(expandImpliedPermissions(permissionCodes))
-
-  if (!role || !OFFICIAL_ROLE_VALUES.includes(role)) {
-    throw new Error('Role is required.')
-  }
-
-  const { error: deleteError } = await supabase.from('dir_user_roles').delete().eq('role', role)
-
-  if (deleteError) {
-    throw new Error(deleteError.message)
-  }
-
-  if (normalizedPermissionCodes.length) {
-    const { error: insertError } = await supabase.from('dir_user_roles').insert(
-      normalizedPermissionCodes.map((permissionCode) => ({
-        role,
-        permission_code: permissionCode,
-      }))
-    )
-
-    if (insertError) {
-      throw new Error(insertError.message)
+    if (!user || user.email?.toLowerCase() !== ADMIN_EMAIL) {
+      redirectUserAccessWithStatus('error', 'Only admin can update role permissions.')
     }
-  }
 
-  revalidatePath('/dashboard/user-access')
-  revalidatePath('/dashboard')
+    const role = normalizeRole(formData.get('role'))
+    const permissionCodes = formData
+      .getAll('permission_code')
+      .map((item) => String(item || '').trim())
+      .filter(Boolean)
+    const normalizedPermissionCodes = Array.from(expandImpliedPermissions(permissionCodes))
+    const permissionSeedRows = getPermissionSeedRows()
+    const permissionSeedMap = new Map(permissionSeedRows.map((item) => [item.code, item]))
+
+    if (!role || !OFFICIAL_ROLE_VALUES.includes(role)) {
+      redirectUserAccessWithStatus('error', 'Role is required.')
+    }
+
+    const unknownPermissionCodes = normalizedPermissionCodes.filter((code) => !permissionSeedMap.has(code))
+
+    if (unknownPermissionCodes.length) {
+      redirectUserAccessWithStatus('error', `Unknown permission code: ${unknownPermissionCodes[0]}`)
+    }
+
+    if (normalizedPermissionCodes.length) {
+      const { data: existingPermissionRows, error: permissionLookupError } = await supabase
+        .from('dir_user_permissions')
+        .select('code')
+        .in('code', normalizedPermissionCodes)
+
+      if (permissionLookupError) {
+        redirectUserAccessWithStatus('error', permissionLookupError.message)
+      }
+
+      const existingPermissionSet = new Set((existingPermissionRows || []).map((item) => item.code))
+      const missingPermissionRows = normalizedPermissionCodes
+        .filter((code) => !existingPermissionSet.has(code))
+        .map((code) => permissionSeedMap.get(code))
+        .filter(Boolean)
+
+      if (missingPermissionRows.length) {
+        const { error: permissionInsertError } = await supabase.from('dir_user_permissions').upsert(missingPermissionRows, {
+          onConflict: 'code',
+        })
+
+        if (permissionInsertError) {
+          redirectUserAccessWithStatus('error', permissionInsertError.message)
+        }
+      }
+    }
+
+    const { error: deleteError } = await supabase.from('dir_user_roles').delete().eq('role', role)
+
+    if (deleteError) {
+      redirectUserAccessWithStatus('error', deleteError.message)
+    }
+
+    if (normalizedPermissionCodes.length) {
+      const { error: insertError } = await supabase.from('dir_user_roles').insert(
+        normalizedPermissionCodes.map((permissionCode) => ({
+          role,
+          permission_code: permissionCode,
+        }))
+      )
+
+      if (insertError) {
+        redirectUserAccessWithStatus('error', insertError.message)
+      }
+    }
+
+    revalidatePath('/dashboard/user-access')
+    revalidatePath('/dashboard')
+    redirectUserAccessWithStatus('saved', `Role permission updated for ${role}.`)
+  } catch (error) {
+    if (String(error?.digest || '').startsWith('NEXT_REDIRECT')) {
+      throw error
+    }
+    redirectUserAccessWithStatus('error', error?.message || 'Failed to update role permissions.')
+  }
 }
 
 function resolveAppOrigin(headerStore) {

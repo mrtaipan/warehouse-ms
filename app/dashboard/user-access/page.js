@@ -35,6 +35,7 @@ export default async function UserAccessPage({ searchParams }) {
   }, {})
 
   const inviteStatus = String(resolvedSearchParams?.invite || '').trim().toLowerCase()
+  const actionStatus = String(resolvedSearchParams?.status || '').trim().toLowerCase()
   const inviteMessage = String(resolvedSearchParams?.message || '').trim()
 
   return (
@@ -44,6 +45,7 @@ export default async function UserAccessPage({ searchParams }) {
       permissionCatalog={getPermissionCatalog()}
       rolePermissionMap={rolePermissionMap}
       inviteStatus={inviteStatus}
+      actionStatus={actionStatus}
       inviteMessage={inviteMessage}
       updateUserRole={updateUserRole}
       updateRolePermissions={updateRolePermissions}

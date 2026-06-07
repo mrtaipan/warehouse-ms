@@ -25,6 +25,17 @@ function formatMonthLabel(value) {
   return new Intl.DateTimeFormat('en-GB', { month: 'long', year: 'numeric' }).format(new Date(Number(year), Number(month) - 1, 1))
 }
 
+function formatDate(value) {
+  if (!value) return '-'
+  const date = new Date(`${value}T00:00:00`)
+  if (Number.isNaN(date.getTime())) return value
+  return new Intl.DateTimeFormat('en-GB', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+  }).format(date)
+}
+
 function normalizePaidRow(row) {
   return {
     id: row?.id || '',
@@ -38,6 +49,35 @@ function normalizePaidRow(row) {
   }
 }
 
+function normalizeSession(row) {
+  return {
+    id: row?.id || '',
+    session_date: row?.session_date || '',
+    start_time: row?.start_time || '',
+    end_time: row?.end_time || '',
+    session_type: row?.session_type || 'STANDALONE',
+    hero_product_name_snapshot: row?.hero_product_name_snapshot || '',
+    gross_amount: Number(row?.gross_amount || 0),
+    submitted_by_display_name_snapshot: row?.submitted_by_display_name_snapshot || '-',
+    partner_display_name_snapshot: row?.partner_display_name_snapshot || '',
+  }
+}
+
+function normalizeCredit(row) {
+  return {
+    id: row?.id || '',
+    participant_display_name: row?.participant_profile?.display_name || row?.participant_display_name_snapshot || row?.participant_email || '-',
+    credited_amount: Number(row?.credited_amount || 0),
+    session_date: row?.session?.session_date || '',
+    session_start_time: row?.session?.start_time || '',
+    session_end_time: row?.session?.end_time || '',
+    session_type: row?.session?.session_type || 'STANDALONE',
+    hero_product_name_snapshot: row?.session?.hero_product_name_snapshot || '',
+    submitted_by_display_name_snapshot: row?.session?.submitted_by_display_name_snapshot || '',
+    partner_display_name_snapshot: row?.session?.partner_display_name_snapshot || '',
+  }
+}
+
 export default function ArklineFinancialReportingPage() {
   const { loading: accessLoading, access } = useArklineAccess()
   const [loading, setLoading] = useState(true)
@@ -45,13 +85,16 @@ export default function ArklineFinancialReportingPage() {
   const [yearFilter, setYearFilter] = useState('all')
   const [monthFilter, setMonthFilter] = useState('all')
   const [paidRequests, setPaidRequests] = useState([])
+  const [sessions, setSessions] = useState([])
+  const [credits, setCredits] = useState([])
 
   useEffect(() => {
     let active = true
 
-    supabase
-      .from('arkline_payment')
-      .select(
+    Promise.all([
+      supabase
+        .from('arkline_payment')
+        .select(
         `
           id,
           supplier_name_snapshot,
@@ -62,19 +105,58 @@ export default function ArklineFinancialReportingPage() {
           account_number,
           paid_at
         `
-      )
-      .eq('status', 'PAID')
-      .order('paid_at', { ascending: false })
-      .then(({ data, error: queryError }) => {
+        )
+        .eq('status', 'PAID')
+        .order('paid_at', { ascending: false }),
+      supabase
+        .from('arkline_live_reporting_sessions')
+        .select(
+          `
+            id,
+            session_date,
+            start_time,
+            end_time,
+            session_type,
+            hero_product_name_snapshot,
+            gross_amount,
+            submitted_by_display_name_snapshot,
+            partner_display_name_snapshot
+          `
+        )
+        .order('session_date', { ascending: false })
+        .order('start_time', { ascending: false }),
+      supabase
+        .from('arkline_live_reporting_credits')
+        .select(
+          `
+            id,
+            credited_amount,
+            participant_email,
+            participant_display_name_snapshot,
+            participant_profile:dir_user_profiles!arkline_live_reporting_credits_participant_profile_id_fkey(display_name),
+            session:arkline_live_reporting_sessions!arkline_live_reporting_credits_session_id_fkey(
+              session_date,
+              start_time,
+              end_time,
+              session_type,
+              hero_product_name_snapshot,
+              submitted_by_display_name_snapshot,
+              partner_display_name_snapshot
+            )
+          `
+        ),
+    ]).then(([paymentResult, sessionResult, creditResult]) => {
         if (!active) return
 
-        if (queryError) {
-          setError(queryError.message || 'Failed to load financial reporting.')
+        if (paymentResult.error || sessionResult.error || creditResult.error) {
+          setError(paymentResult.error?.message || sessionResult.error?.message || creditResult.error?.message || 'Failed to load financial reporting.')
           setLoading(false)
           return
         }
 
-        setPaidRequests((data || []).map(normalizePaidRow))
+        setPaidRequests((paymentResult.data || []).map(normalizePaidRow))
+        setSessions((sessionResult.data || []).map(normalizeSession))
+        setCredits((creditResult.data || []).map(normalizeCredit))
         setLoading(false)
       })
 
@@ -82,6 +164,43 @@ export default function ArklineFinancialReportingPage() {
       active = false
     }
   }, [])
+
+  const filteredSessions = useMemo(() => {
+    return sessions.filter((item) => {
+      if (!item.session_date) return false
+      const [year, month] = String(item.session_date).split('-')
+      const matchesMonth = monthFilter === 'all' ? true : month === monthFilter
+      const matchesYear = yearFilter === 'all' ? true : year === yearFilter
+      return matchesMonth && matchesYear
+    })
+  }, [sessions, monthFilter, yearFilter])
+
+  const filteredCredits = useMemo(() => {
+    return credits.filter((item) => {
+      if (!item.session_date) return false
+      const [year, month] = String(item.session_date).split('-')
+      const matchesMonth = monthFilter === 'all' ? true : month === monthFilter
+      const matchesYear = yearFilter === 'all' ? true : year === yearFilter
+      return matchesMonth && matchesYear
+    })
+  }, [credits, monthFilter, yearFilter])
+
+  const totalLiveNominal = useMemo(
+    () => filteredSessions.reduce((sum, item) => sum + Number(item.gross_amount || 0), 0),
+    [filteredSessions]
+  )
+
+  const ranking = useMemo(() => {
+    return Array.from(
+      filteredCredits.reduce((map, item) => {
+        const key = item.participant_display_name || 'Unknown'
+        map.set(key, (map.get(key) || 0) + Number(item.credited_amount || 0))
+        return map
+      }, new Map())
+    )
+      .map(([name, amount]) => ({ name, amount }))
+      .sort((left, right) => right.amount - left.amount)
+  }, [filteredCredits])
 
   const monthOptions = useMemo(() => {
     const values = Array.from(
@@ -233,6 +352,12 @@ export default function ArklineFinancialReportingPage() {
           </div>
 
           <div className={styles.reportingFilters}>
+            <a href="/mobile/arkline/live-reporting" className={styles.secondaryButton}>
+              Live Entry
+            </a>
+            <a href="/mobile/arkline/live-reporting/history" className={styles.primaryButton}>
+              History
+            </a>
             <div className={styles.filterField}>
               <span>Month</span>
               <select className={styles.select} value={monthFilter} onChange={(event) => setMonthFilter(event.target.value)}>
@@ -268,9 +393,74 @@ export default function ArklineFinancialReportingPage() {
           <>
             <div className={styles.summaryRow}>
               <div className={styles.summaryCard}>
+                <span>Live GMV</span>
+                <strong>{formatCurrency(totalLiveNominal)}</strong>
+              </div>
+              <div className={styles.summaryCard}>
                 <span>Total Expenditure</span>
                 <strong>{formatCurrency(totalExpenditure)}</strong>
               </div>
+            </div>
+
+            <div className={styles.reportingSplit}>
+              <section className={styles.reportingCard}>
+                <div className={styles.reportingCardHead}>
+                  <div>
+                    <p className={styles.columnEyebrow}>Live Dashboard</p>
+                    <h2 className={styles.columnTitle}>User Total</h2>
+                  </div>
+                </div>
+
+                {!ranking.length ? (
+                  <div className={styles.emptyColumn}>No live reporting data found for the selected period.</div>
+                ) : (
+                  <div className={styles.chartList}>
+                    {ranking.map((item, index) => (
+                      <div key={item.name} className={styles.chartRow}>
+                        <div className={styles.chartHead}>
+                          <div className={styles.reportingRowCopy}>
+                            <p className={styles.reportingRowTitle}>
+                              {index + 1}. {item.name}
+                            </p>
+                            <p className={styles.reportingRowMeta}>Total user credit for the filtered period.</p>
+                          </div>
+                          <strong className={styles.reportingAmount}>{formatCurrency(item.amount)}</strong>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </section>
+
+              <section className={styles.reportingCard}>
+                <div className={styles.reportingCardHead}>
+                  <div>
+                    <p className={styles.columnEyebrow}>Recent Live Session</p>
+                    <h2 className={styles.columnTitle}>Latest Entry</h2>
+                  </div>
+                </div>
+
+                {!filteredSessions.length ? (
+                  <div className={styles.emptyColumn}>No live session found for the selected period.</div>
+                ) : (
+                  <div className={styles.chartList}>
+                    {filteredSessions.slice(0, 5).map((item) => (
+                      <div key={item.id} className={styles.chartRow}>
+                        <div className={styles.chartHead}>
+                          <div className={styles.reportingRowCopy}>
+                            <p className={styles.reportingRowTitle}>{item.hero_product_name_snapshot || 'No product'}</p>
+                            <p className={styles.reportingRowMeta}>
+                              {formatDate(item.session_date)} | {item.start_time?.slice(0, 5)} - {item.end_time?.slice(0, 5)} | {item.session_type === 'PAIRING' ? `Pairing with ${item.partner_display_name_snapshot || '-'}` : 'Standalone'}
+                            </p>
+                            <p className={styles.reportingRowMeta}>Submitted by {item.submitted_by_display_name_snapshot || '-'}</p>
+                          </div>
+                          <strong className={styles.reportingAmount}>{formatCurrency(item.gross_amount)}</strong>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </section>
             </div>
 
             <div className={styles.reportingSplit}>
