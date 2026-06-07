@@ -1,5 +1,6 @@
 'use client'
 
+import Link from 'next/link'
 import { useEffect, useMemo, useState } from 'react'
 
 import { createClient } from '@/utils/supabase/browser'
@@ -9,6 +10,24 @@ import shellStyles from '../../arkline.module.css'
 import styles from '../financial-management.module.css'
 
 const supabase = createClient()
+
+function EntryIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
+function HistoryIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M4 12a8 8 0 1 0 2.3-5.7" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M4 4v4h4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M12 8v4l2.6 1.8" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  )
+}
 
 function formatCurrency(value) {
   return new Intl.NumberFormat('id-ID', {
@@ -352,12 +371,12 @@ export default function ArklineFinancialReportingPage() {
           </div>
 
           <div className={styles.reportingFilters}>
-            <a href="/mobile/arkline/live-reporting" className={styles.secondaryButton}>
-              Live Entry
-            </a>
-            <a href="/mobile/arkline/live-reporting/history" className={styles.primaryButton}>
-              History
-            </a>
+            <Link href="/mobile/arkline/live-reporting" className={styles.iconActionButton} aria-label="Open live entry">
+              <EntryIcon />
+            </Link>
+            <Link href="/mobile/arkline/live-reporting/history" className={`${styles.iconActionButton} ${styles.iconActionButtonPrimary}`.trim()} aria-label="Open history">
+              <HistoryIcon />
+            </Link>
             <div className={styles.filterField}>
               <span>Month</span>
               <select className={styles.select} value={monthFilter} onChange={(event) => setMonthFilter(event.target.value)}>

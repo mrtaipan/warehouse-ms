@@ -386,7 +386,12 @@
 
   .sidebarMobileExpanded .sidebarInner {
     display: flex;
+    flex: 0 0 auto;
     margin-top: 14px;
+  }
+
+  .sidebarInner {
+    flex: 0 0 auto;
   }
 
   .nav {
@@ -401,6 +406,14 @@
   .sidebar:hover .logoutButton {
     width: 100%;
     justify-content: flex-start;
+  }
+
+  .spacer {
+    display: none;
+  }
+
+  .footer {
+    margin-top: 12px;
   }
 
   .main {
