@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 
 import { createClient } from '@/utils/supabase/browser'
-import { ADMIN_EMAIL, getArklineFeatureAccess } from '@/utils/permissions'
+import { ADMIN_EMAIL, expandImpliedPermissions, getArklineFeatureAccess, resolveRole } from '@/utils/permissions'
 import { getProfileByAuthenticatedUser } from '@/utils/user-profiles'
 
 const supabase = createClient()
@@ -54,15 +54,15 @@ export default function useArklineAccess() {
 
       const isAdmin = user.email?.toLowerCase() === ADMIN_EMAIL
       const { data: profile } = await getProfileByAuthenticatedUser(supabase, user, 'role')
-      const role = isAdmin ? 'admin' : profile?.role || 'storage_staff'
+      const resolvedRole = resolveRole(profile?.role, isAdmin)
 
-      const { data: rolePermissions } = await supabase.from('dir_user_roles').select('permission_code').eq('role', role)
-      const permissions = (rolePermissions || []).map((item) => item.permission_code)
-      const nextAccess = getArklineFeatureAccess(role, permissions, isAdmin)
+      const { data: rolePermissions } = await supabase.from('dir_user_roles').select('permission_code').eq('role', resolvedRole)
+      const permissions = Array.from(expandImpliedPermissions((rolePermissions || []).map((item) => item.permission_code)))
+      const nextAccess = getArklineFeatureAccess(resolvedRole, permissions, isAdmin)
 
       if (active) {
         setAccess(nextAccess)
-        setRole(role)
+        setRole(resolvedRole)
         setLoading(false)
       }
     }

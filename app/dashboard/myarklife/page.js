@@ -1,7 +1,7 @@
 import { redirect } from 'next/navigation'
 import { createClient } from '@/utils/supabase/server'
-import { ADMIN_EMAIL, canAccessPeopleManagement } from '@/utils/permissions'
-import { getProfileByAuthenticatedUser } from '@/utils/user-profiles'
+import { canAccessPeopleManagement } from '@/utils/permissions'
+import { loadAccessContext } from '@/utils/access-control'
 import MyArklifeClient from './myarklife-client'
 import styles from './myarklife.module.css'
 
@@ -35,9 +35,7 @@ export default async function MyArklifePage() {
     redirect('/login')
   }
 
-  const isAdmin = user.email?.toLowerCase() === ADMIN_EMAIL
-  const { data: profile } = await getProfileByAuthenticatedUser(supabase, user, '*')
-  const role = isAdmin ? 'admin' : profile?.role || 'storage_staff'
+  const { profile, permissions, isAdmin } = await loadAccessContext(supabase, user, '*')
   const [leaveResult, giftResult, publicHolidayResult] = await Promise.all([
     supabase
       .from('hrga_leave_requests')
@@ -66,7 +64,7 @@ export default async function MyArklifePage() {
         publicHolidayRows={publicHolidayRows}
         leaveMissing={leaveMissing}
         giftMissing={giftMissing}
-        canOpenPeopleManagement={canAccessPeopleManagement(role, isAdmin)}
+        canOpenPeopleManagement={canAccessPeopleManagement(permissions, isAdmin)}
       />
     </div>
   )

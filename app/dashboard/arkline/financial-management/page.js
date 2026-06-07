@@ -196,8 +196,11 @@ export default function ArklineFinancialManagementPage() {
   const paymentProofInputRef = useRef(null)
 
   const canView = access.financialManagement
-  const canSubmit = access.financialManagement
-  const canPay = access.financialManagement
+  const canSubmit =
+    access.financialManagementPaymentSubmissionView ||
+    access.financialManagementPaymentSubmissionAdd ||
+    access.financialManagementPaymentSubmissionEdit
+  const canPay = role === 'admin'
   const canApprove = role === 'admin'
 
   async function loadWorkspace(options = {}) {

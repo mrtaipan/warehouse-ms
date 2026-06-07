@@ -918,7 +918,7 @@ export default function QcDashboardPage() {
         .from('dir_user_profiles')
         .select('id, email, display_name, role, is_qc_active, qc_active_date')
         .order('display_name', { ascending: true }),
-      supabase.from('dir_user_roles').select('role, permission_code').eq('permission_code', 'qc.inspection.do'),
+      supabase.from('dir_user_roles').select('role, permission_code').eq('permission_code', 'qc.grading_task.view'),
       supabase
         .from('qc_pause_logs')
         .select(`

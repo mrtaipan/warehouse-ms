@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { createClient } from '@/utils/supabase/browser'
-import { ADMIN_EMAIL, getArklineFeatureAccess } from '@/utils/permissions'
+import { ADMIN_EMAIL, expandImpliedPermissions, getArklineFeatureAccess, resolveRole } from '@/utils/permissions'
 import { getProfileByAuthenticatedUser } from '@/utils/user-profiles'
 
 import styles from '../arkline/arkline.module.css'
@@ -43,7 +43,7 @@ function normalizeProfile(row, user) {
     authenticated_id: row?.authenticated_id || user?.id || '',
     email: user?.email?.toLowerCase() || '',
     display_name: row?.display_name || user?.user_metadata?.full_name || user?.user_metadata?.name || user?.email?.split('@')[0] || '',
-    role: row?.role || 'storage_staff',
+    role: resolveRole(row?.role || 'guest'),
     reimbursement_bank_name: row?.reimbursement_bank_name || '',
     reimbursement_account_name: row?.reimbursement_account_name || '',
     reimbursement_account_number: row?.reimbursement_account_number || '',
@@ -417,7 +417,7 @@ export default function ReimbursementClaimPage({
     }
 
     const normalizedProfile = normalizeProfile(profileRow, user)
-    const role = isAdmin ? 'admin' : normalizedProfile.role || 'storage_staff'
+    const role = resolveRole(normalizedProfile.role, isAdmin)
 
     const { error: hrgaClaimProbeError } = await supabase.from(HRGA_REIMBURSEMENT_TABLES.claims).select('id').limit(1)
     const resolvedTables = hrgaClaimProbeError?.code === '42P01' ? LEGACY_REIMBURSEMENT_TABLES : HRGA_REIMBURSEMENT_TABLES
@@ -478,20 +478,16 @@ export default function ReimbursementClaimPage({
       return
     }
 
-    const permissions = (rolePermissions || []).map((item) => item.permission_code)
+    const permissions = Array.from(expandImpliedPermissions((rolePermissions || []).map((item) => item.permission_code)))
     const resolvedAccess = getArklineFeatureAccess(role, permissions, isAdmin)
     setTableNames(resolvedTables)
-
-    if (allowHrgaApproverView && normalizedProfile.role === 'hrga_approver') {
-      resolvedAccess.reimbursementView = true
-    }
 
     setAccess(resolvedAccess)
     setProfile(normalizedProfile)
     setCategories((categoryRows || []).filter((item) => item.is_active !== false))
     setClaims((claimRows || []).map(normalizeClaim))
     if (!silent) setLoading(false)
-  }, [allowHrgaApproverView])
+  }, [])
 
   useEffect(() => {
     void loadWorkspace()

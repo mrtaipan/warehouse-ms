@@ -5,7 +5,7 @@ import { headers } from 'next/headers'
 import { redirect } from 'next/navigation'
 import { createClient } from '@/utils/supabase/server'
 import { createAdminClient } from '@/utils/supabase/admin'
-import { ADMIN_EMAIL } from '@/utils/permissions'
+import { ADMIN_EMAIL, OFFICIAL_ROLE_VALUES, expandImpliedPermissions, normalizeRole } from '@/utils/permissions'
 
 function getTodayJakartaDate() {
   const parts = new Intl.DateTimeFormat('en-CA', {
@@ -29,19 +29,23 @@ export async function updateUserRole(formData) {
   }
 
   const profileId = String(formData.get('profile_id') || '').trim()
-  const role = String(formData.get('role') || '').trim()
+  const role = normalizeRole(formData.get('role'))
   const displayName = String(formData.get('display_name') || '').trim()
+  const hasQcActiveField = formData.has('is_qc_active')
   const isQcActive = formData.get('is_qc_active') === 'on'
 
-  if (!profileId || !role) {
+  if (!profileId || !role || !OFFICIAL_ROLE_VALUES.includes(role)) {
     throw new Error('Profile id and role are required.')
   }
 
   const payload = {
     role,
     display_name: displayName || 'Employee',
-    is_qc_active: isQcActive,
-    qc_active_date: isQcActive ? getTodayJakartaDate() : null,
+  }
+
+  if (hasQcActiveField) {
+    payload.is_qc_active = isQcActive
+    payload.qc_active_date = isQcActive ? getTodayJakartaDate() : null
   }
 
   const { data, error } = await supabase
@@ -73,13 +77,14 @@ export async function updateRolePermissions(formData) {
     throw new Error('Only admin can update role permissions.')
   }
 
-  const role = String(formData.get('role') || '').trim()
+  const role = normalizeRole(formData.get('role'))
   const permissionCodes = formData
     .getAll('permission_code')
     .map((item) => String(item || '').trim())
     .filter(Boolean)
+  const normalizedPermissionCodes = Array.from(expandImpliedPermissions(permissionCodes))
 
-  if (!role) {
+  if (!role || !OFFICIAL_ROLE_VALUES.includes(role)) {
     throw new Error('Role is required.')
   }
 
@@ -89,9 +94,9 @@ export async function updateRolePermissions(formData) {
     throw new Error(deleteError.message)
   }
 
-  if (permissionCodes.length) {
+  if (normalizedPermissionCodes.length) {
     const { error: insertError } = await supabase.from('dir_user_roles').insert(
-      permissionCodes.map((permissionCode) => ({
+      normalizedPermissionCodes.map((permissionCode) => ({
         role,
         permission_code: permissionCode,
       }))

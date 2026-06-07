@@ -1,7 +1,6 @@
 import { redirect } from 'next/navigation'
 import { createClient } from '@/utils/supabase/server'
-import { ADMIN_EMAIL } from '@/utils/permissions'
-import { getProfileByAuthenticatedUser } from '@/utils/user-profiles'
+import { loadAccessContext } from '@/utils/access-control'
 import { updateOwnProfile } from './actions'
 import styles from './page.module.css'
 
@@ -25,8 +24,7 @@ export default async function ProfilePage() {
     redirect('/login')
   }
 
-  const isAdmin = user.email?.toLowerCase() === ADMIN_EMAIL
-  const { data: profile } = await getProfileByAuthenticatedUser(
+  const { profile, role } = await loadAccessContext(
     supabase,
     user,
     'id, display_name, role, reimbursement_bank_name, reimbursement_account_name, reimbursement_account_number'
@@ -34,7 +32,6 @@ export default async function ProfilePage() {
 
   const displayName =
     profile?.display_name || user.user_metadata?.full_name || user.user_metadata?.name || user.email?.split('@')[0] || ''
-  const role = isAdmin ? 'admin' : profile?.role || 'storage_staff'
 
   return (
     <div className={styles.page}>

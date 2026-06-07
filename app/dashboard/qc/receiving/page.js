@@ -951,7 +951,7 @@ export default function QcReceivingPage() {
           .select('id, email, display_name, role, is_qc_active, qc_active_date')
           .eq('is_qc_active', true)
           .order('display_name', { ascending: true }),
-        supabase.from('dir_user_roles').select('role, permission_code').eq('permission_code', 'qc.inspection.do'),
+        supabase.from('dir_user_roles').select('role, permission_code').eq('permission_code', 'qc.grading_task.view'),
       ])
 
       if (inboundError || modelError || qcError || arklineQcError || memberError || rolePermissionError) {
@@ -1475,7 +1475,7 @@ export default function QcReceivingPage() {
     }
 
     if (!qcMembers.length) {
-      setError('No active QC user found with permission `qc.inspection.do` for today. Activate QC task from Grading Task or User Access.')
+      setError('No active QC user found with permission `qc.grading_task.view` for today. Activate QC task from Grading Task or User Access.')
       return
     }
 
@@ -1509,7 +1509,7 @@ export default function QcReceivingPage() {
     }
 
     if (!qcMembers.length) {
-      setError('No active QC user found with permission `qc.inspection.do` for today. Activate QC task from Grading Task or User Access.')
+      setError('No active QC user found with permission `qc.grading_task.view` for today. Activate QC task from Grading Task or User Access.')
       return
     }
 
@@ -1731,7 +1731,7 @@ export default function QcReceivingPage() {
       }
 
       if (!qcMembers.length) {
-        setError('No active QC user found with permission `qc.inspection.do` for today. Activate QC task from Grading Task or User Access.')
+        setError('No active QC user found with permission `qc.grading_task.view` for today. Activate QC task from Grading Task or User Access.')
         return
       }
 
@@ -1925,7 +1925,7 @@ export default function QcReceivingPage() {
     }
 
     if (!qcMembers.length) {
-      setError('No active QC user found with permission `qc.inspection.do` for today. Activate QC task from Grading Task or User Access.')
+      setError('No active QC user found with permission `qc.grading_task.view` for today. Activate QC task from Grading Task or User Access.')
       return
     }
 
@@ -2376,7 +2376,7 @@ export default function QcReceivingPage() {
                 ))}
 
                 {!qcMembers.length ? (
-                  <p style={styles.emptyText}>No active QC user found with permission `qc.inspection.do` for today. Activate QC task from Grading Task or User Access.</p>
+                  <p style={styles.emptyText}>No active QC user found with permission `qc.grading_task.view` for today. Activate QC task from Grading Task or User Access.</p>
                 ) : null}
               </>
             ) : (
@@ -2704,7 +2704,7 @@ export default function QcReceivingPage() {
 
             {!qcMembers.length ? (
               <p style={styles.emptyText}>
-                No active QC user found with permission `qc.inspection.do` for today. Activate QC task from Grading Task or User Access.
+                No active QC user found with permission `qc.grading_task.view` for today. Activate QC task from Grading Task or User Access.
               </p>
             ) : null}
 

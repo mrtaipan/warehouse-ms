@@ -3,6 +3,7 @@
 import Image from 'next/image'
 import { useEffect, useMemo, useState } from 'react'
 import { createClient } from '@/utils/supabase/browser'
+import { ADMIN_EMAIL, expandImpliedPermissions, resolveRole } from '@/utils/permissions'
 import { getProfileByAuthenticatedUser } from '@/utils/user-profiles'
 import { formatSeconds } from '../shared'
 
@@ -523,6 +524,7 @@ export default function QcInspectionTaskPage() {
         return
       }
       const normalizedEmail = normalizeEmail(user.email)
+      const isAdmin = normalizedEmail === ADMIN_EMAIL
 
       const displayLabel =
         user.user_metadata?.full_name ||
@@ -551,11 +553,12 @@ export default function QcInspectionTaskPage() {
         return
       }
 
-      const { data: rolePermissionRows, error: rolePermissionError } = profileRow?.role
+      const resolvedRole = resolveRole(profileRow?.role, isAdmin)
+      const { data: rolePermissionRows, error: rolePermissionError } = resolvedRole
         ? await supabase
             .from('dir_user_roles')
             .select('permission_code')
-            .eq('role', profileRow.role)
+            .eq('role', resolvedRole)
         : { data: [], error: null }
 
       if (rolePermissionError) {
@@ -564,13 +567,13 @@ export default function QcInspectionTaskPage() {
         return
       }
 
-      const permissionCodes = (rolePermissionRows || []).map((item) => item.permission_code)
-      const canDoQcInspection = permissionCodes.includes('qc.inspection.do')
+      const permissionSet = expandImpliedPermissions((rolePermissionRows || []).map((item) => item.permission_code))
+      const canDoQcInspection = permissionSet.has('qc.grading_task.view')
       const isActiveInspector =
         canDoQcInspection &&
         Boolean(profileRow?.is_qc_active) &&
         getDateOnly(profileRow?.qc_active_date) === today
-      setProfileRole(profileRow?.role || '')
+      setProfileRole(resolvedRole)
       setCanActivateQcTask(canDoQcInspection)
       setIsRegistered(isActiveInspector)
 
@@ -679,6 +682,7 @@ export default function QcInspectionTaskPage() {
       return
     }
     const normalizedEmail = normalizeEmail(user.email)
+    const isAdmin = normalizedEmail === ADMIN_EMAIL
 
     const { data: profileRow, error: profileError } = await getProfileByAuthenticatedUser(
       supabase,
@@ -691,11 +695,12 @@ export default function QcInspectionTaskPage() {
       return
     }
 
-    const { data: rolePermissionRows, error: rolePermissionError } = profileRow?.role
+    const resolvedRole = resolveRole(profileRow?.role, isAdmin)
+    const { data: rolePermissionRows, error: rolePermissionError } = resolvedRole
       ? await supabase
           .from('dir_user_roles')
           .select('permission_code')
-          .eq('role', profileRow.role)
+          .eq('role', resolvedRole)
       : { data: [], error: null }
 
     if (rolePermissionError) {
@@ -703,9 +708,11 @@ export default function QcInspectionTaskPage() {
       return
     }
 
-    if (!(rolePermissionRows || []).some((item) => item.permission_code === 'qc.inspection.do')) {
-      setError('This role does not have permission `qc.inspection.do`, so it cannot activate grading task.')
-      setProfileRole(profileRow.role || '')
+    const permissionSet = expandImpliedPermissions((rolePermissionRows || []).map((item) => item.permission_code))
+
+    if (!permissionSet.has('qc.grading_task.view')) {
+      setError('This role does not have permission `qc.grading_task.view`, so it cannot activate grading task.')
+      setProfileRole(resolvedRole)
       setCanActivateQcTask(false)
       return
     }
@@ -721,7 +728,7 @@ export default function QcInspectionTaskPage() {
     }
 
     setIsRegistered(true)
-    setProfileRole(profileRow.role || '')
+    setProfileRole(resolvedRole)
     setCanActivateQcTask(true)
     setUserEmail(normalizedEmail)
     setUserLabel(profileRow.display_name || user.user_metadata?.full_name || user.user_metadata?.name || String(user.email || '').split('@')[0] || '')
@@ -1052,7 +1059,7 @@ export default function QcInspectionTaskPage() {
         <p style={styles.subtitle}>
           {canActivateQcTask
             ? 'Activate this account for QC task so the planner can allocate QC work to you.'
-            : 'This account needs role permission `qc.inspection.do` before it can receive grading tasks.'}
+            : 'This account needs role permission `qc.grading_task.view` before it can receive grading tasks.'}
         </p>
         {error ? <p style={styles.errorText}>{error}</p> : null}
         {success ? <p style={styles.successText}>{success}</p> : null}

@@ -1,8 +1,8 @@
 import { redirect } from 'next/navigation'
 import { createClient } from '@/utils/supabase/server'
 import SidebarClient from './sidebar-client'
-import { ADMIN_EMAIL, getAllowedMenus } from '@/utils/permissions'
-import { getProfileByAuthenticatedUser } from '@/utils/user-profiles'
+import { getAllowedMenus } from '@/utils/permissions'
+import { loadAccessContext } from '@/utils/access-control'
 import styles from './layout.module.css'
 
 export default async function DashboardLayout({ children }) {
@@ -15,17 +15,8 @@ export default async function DashboardLayout({ children }) {
     redirect('/login')
   }
 
-  const isAdminEmail = user.email?.toLowerCase() === ADMIN_EMAIL
-  const { data: profile } = await getProfileByAuthenticatedUser(supabase, user, 'role, display_name')
-
-  const role = isAdminEmail ? 'admin' : profile?.role || 'storage_staff'
-  const { data: rolePermissions } = await supabase
-    .from('dir_user_roles')
-    .select('permission_code')
-    .eq('role', role)
-
-  const permissions = (rolePermissions || []).map((item) => item.permission_code)
-  const menus = getAllowedMenus(role, permissions, isAdminEmail)
+  const { role, permissions, isAdmin } = await loadAccessContext(supabase, user, 'role, display_name')
+  const menus = getAllowedMenus(role, permissions, isAdmin)
   const navItems = [
     { href: '/dashboard/inbound', label: 'Inbound', icon: 'inbound', show: menus.inbound },
     {
@@ -40,7 +31,7 @@ export default async function DashboardLayout({ children }) {
     { href: menus.arklineHref, label: 'ARKLINE', icon: 'arkline', show: menus.arkline, isWordmark: true },
   ].filter((item) => item.show)
 
-  const settingHref = menus.masterData || menus.userAccess ? '/dashboard/settings' : null
+  const settingHref = isAdmin ? '/dashboard/settings' : null
 
   return (
     <div className={styles.shell}>

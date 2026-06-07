@@ -1,8 +1,8 @@
 import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { createClient } from '@/utils/supabase/server'
-import { ADMIN_EMAIL, getAllowedMenus } from '@/utils/permissions'
-import { getProfileByAuthenticatedUser } from '@/utils/user-profiles'
+import { getAllowedMenus } from '@/utils/permissions'
+import { loadAccessContext } from '@/utils/access-control'
 import styles from './dashboard.module.css'
 
 const DAILY_QUOTES = [
@@ -104,16 +104,7 @@ export default async function DashboardPage() {
     redirect('/login')
   }
 
-  const isAdmin = user.email?.toLowerCase() === ADMIN_EMAIL
-  const { data: profile } = await getProfileByAuthenticatedUser(supabase, user, 'role, display_name')
-
-  const role = isAdmin ? 'admin' : profile?.role || 'storage_staff'
-  const { data: rolePermissions } = await supabase
-    .from('dir_user_roles')
-    .select('permission_code')
-    .eq('role', role)
-
-  const permissions = (rolePermissions || []).map((item) => item.permission_code)
+  const { profile, role, permissions, isAdmin } = await loadAccessContext(supabase, user, 'role, display_name')
   const menus = getAllowedMenus(role, permissions, isAdmin)
 
   const rawUserLabel =

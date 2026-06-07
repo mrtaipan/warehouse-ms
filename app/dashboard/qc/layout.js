@@ -1,7 +1,7 @@
 import { redirect } from 'next/navigation'
 import { createClient } from '@/utils/supabase/server'
-import { ADMIN_EMAIL, getQcFeatureAccess } from '@/utils/permissions'
-import { getProfileByAuthenticatedUser } from '@/utils/user-profiles'
+import { getQcFeatureAccess } from '@/utils/permissions'
+import { loadAccessContext } from '@/utils/access-control'
 import DashboardSubnav from '@/components/dashboardsubnav'
 
 export default async function QcLayout({ children }) {
@@ -14,16 +14,7 @@ export default async function QcLayout({ children }) {
     redirect('/login')
   }
 
-  const isAdmin = user.email?.toLowerCase() === ADMIN_EMAIL
-  const { data: profile } = await getProfileByAuthenticatedUser(supabase, user, 'role')
-
-  const role = isAdmin ? 'admin' : profile?.role || 'storage_staff'
-  const { data: rolePermissions } = await supabase
-    .from('dir_user_roles')
-    .select('permission_code')
-    .eq('role', role)
-
-  const permissions = (rolePermissions || []).map((item) => item.permission_code)
+  const { role, permissions, isAdmin } = await loadAccessContext(supabase, user, 'role')
   const access = getQcFeatureAccess(permissions, isAdmin, role)
 
   const items = [

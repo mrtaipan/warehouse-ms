@@ -1,8 +1,8 @@
 import { redirect } from 'next/navigation'
 import { Inter } from 'next/font/google'
 import { createClient } from '@/utils/supabase/server'
-import { ADMIN_EMAIL, canAccessPeopleManagement } from '@/utils/permissions'
-import { getProfileByAuthenticatedUser } from '@/utils/user-profiles'
+import { canAccessPeopleManagement, hasPermission } from '@/utils/permissions'
+import { loadAccessContext } from '@/utils/access-control'
 import HumanResourcesAutoRefreshClient from './auto-refresh-client'
 import PeopleDirectoryClient from './people-directory-client'
 import PublicHolidayClient from './public-holiday-client'
@@ -152,11 +152,9 @@ export default async function HumanResourcesPage() {
     redirect('/login')
   }
 
-  const isAdmin = user.email?.toLowerCase() === ADMIN_EMAIL
-  const { data: profile } = await getProfileByAuthenticatedUser(supabase, user, 'role')
-  const role = isAdmin ? 'admin' : profile?.role || 'storage_staff'
+  const { permissions, isAdmin } = await loadAccessContext(supabase, user, 'role')
 
-  if (!canAccessPeopleManagement(role, isAdmin)) {
+  if (!canAccessPeopleManagement(permissions, isAdmin)) {
     redirect('/dashboard')
   }
 
@@ -350,7 +348,7 @@ export default async function HumanResourcesPage() {
             peopleRows={peopleRows}
             publicHolidayRows={publicHolidayRows}
             holidayMissing={holidayMissing}
-            canCreatePublicRequest={isAdmin || role === 'hrga' || role === 'hrga_approver'}
+            canCreatePublicRequest={hasPermission(permissions, 'hrga.public_request_links.edit', isAdmin)}
           />
         </div>
 

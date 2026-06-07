@@ -2,7 +2,6 @@ import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { createClient } from '@/utils/supabase/server'
 import { ADMIN_EMAIL } from '@/utils/permissions'
-import { getProfileByAuthenticatedUser } from '@/utils/user-profiles'
 import styles from './settings.module.css'
 
 export default async function SettingsPage() {
@@ -15,30 +14,17 @@ export default async function SettingsPage() {
     redirect('/login')
   }
 
-  const isAdmin = user.email?.toLowerCase() === ADMIN_EMAIL
-  const { data: profile } = await getProfileByAuthenticatedUser(supabase, user, 'role')
-
-  const role = isAdmin ? 'admin' : profile?.role || 'storage_staff'
-  const { data: rolePermissions } = await supabase
-    .from('dir_user_roles')
-    .select('permission_code')
-    .eq('role', role)
-
-  const permissions = (rolePermissions || []).map((item) => item.permission_code)
-  const canViewMasterData = isAdmin || permissions.includes('masterdata.view')
-  const canManageAccess = isAdmin || permissions.includes('useraccess.manage')
-
-  if (!canViewMasterData && !canManageAccess) {
+  if (user.email?.toLowerCase() !== ADMIN_EMAIL) {
     redirect('/dashboard')
   }
 
   const modules = [
-    canManageAccess ? { href: '/dashboard/user-access', title: 'USER ACCESS' } : null,
-    canViewMasterData ? { href: '/dashboard/suppliers', title: 'SUPPLIERS' } : null,
-    canViewMasterData ? { href: '/dashboard/brands', title: 'BRANDS' } : null,
-    canViewMasterData ? { href: '/dashboard/categories', title: 'CATEGORIES' } : null,
-    canViewMasterData ? { href: '/dashboard/skus', title: 'SKUS' } : null,
-    canViewMasterData ? { href: '/dashboard/rack-locations', title: 'RACK LOCATIONS' } : null,
+    { href: '/dashboard/user-access', title: 'USER ACCESS' },
+    { href: '/dashboard/suppliers', title: 'SUPPLIERS' },
+    { href: '/dashboard/brands', title: 'BRANDS' },
+    { href: '/dashboard/categories', title: 'CATEGORIES' },
+    { href: '/dashboard/skus', title: 'SKUS' },
+    { href: '/dashboard/rack-locations', title: 'RACK LOCATIONS' },
   ].filter(Boolean)
 
   return (

@@ -5,8 +5,8 @@
 import { revalidatePath } from 'next/cache'
 import { createClient } from '@/utils/supabase/server'
 import { createHrgaRequestLinkPayload, verifyHrgaRequestLinkPayload } from '@/utils/hrga-request-link'
-import { ADMIN_EMAIL } from '@/utils/permissions'
-import { getProfileByAuthenticatedUser } from '@/utils/user-profiles'
+import { ADMIN_EMAIL, canAccessPeopleManagement } from '@/utils/permissions'
+import { loadAccessContext } from '@/utils/access-control'
 
 async function getActorContext() {
   const supabase = await createClient()
@@ -18,15 +18,14 @@ async function getActorContext() {
     throw new Error('You need to sign in again.')
   }
 
-  const isAdmin = user.email?.toLowerCase() === ADMIN_EMAIL
-  const { data: profile } = await getProfileByAuthenticatedUser(supabase, user, '*')
+  const { profile, permissions, isAdmin } = await loadAccessContext(supabase, user, '*')
 
   return {
     supabase,
     user,
     profile,
     isAdmin,
-    isApprover: isAdmin || profile?.role === 'hrga' || profile?.role === 'hrga_approver',
+    isApprover: canAccessPeopleManagement(permissions, isAdmin),
   }
 }
 
@@ -273,7 +272,7 @@ export async function createEmployeeProfile(formData) {
   const profileId = await generateEmployeeProfileId(supabase, groupValue)
 
   const blockedFields = new Set(['authenticated_id', 'role', 'is_qc_active', 'qc_active_date', 'created_at', 'updated_at'])
-  const payload = { id: profileId, authenticated_id: null, role: 'storage_staff', is_qc_active: false, qc_active_date: null }
+  const payload = { id: profileId, authenticated_id: null, role: 'guest', is_qc_active: false, qc_active_date: null }
 
   for (const [key, value] of formData.entries()) {
     if (blockedFields.has(key) || key === 'id') continue

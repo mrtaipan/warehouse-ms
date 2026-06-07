@@ -802,7 +802,7 @@ async function loadOptionalRows(queryFactory) {
 
 export default function ArklineProgressOverviewPage() {
   const { access, loading: accessLoading, role } = useArklineAccess()
-  const canOpenKanbanDetail = role !== 'arkline_viewer'
+  const canOpenKanbanDetail = role === 'admin' || access.progressKanbanAdd || access.progressKanbanEdit
   const [view, setView] = useState('')
   const [monthDate, setMonthDate] = useState(() => new Date())
   const [lastRefresh, setLastRefresh] = useState(() => new Date())
