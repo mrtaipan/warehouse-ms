@@ -200,6 +200,7 @@ export default async function HumanResourcesPage() {
     role === 'leader' ||
     hasPermission(permissions, 'arkline.financial_management.view', isAdmin) ||
     hasPermission(permissions, 'arkline.financial_management.payment_submission.view', isAdmin)
+  const canManagePeopleDirectory = hasPermission(permissions, 'hrga.people.edit', isAdmin)
   return (
     <div className={`${styles.page} ${inter.className}`.trim()}>
       <HumanResourcesAutoRefreshClient />
@@ -227,7 +228,7 @@ export default async function HumanResourcesPage() {
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
             <PublicHolidayClient
-              isAdmin={isAdmin}
+              canManage={canAccessPeopleManagement(permissions, isAdmin)}
               triggerClassName={styles.secondaryButton}
               triggerStyle={topActionStyle}
             />
@@ -273,13 +274,14 @@ export default async function HumanResourcesPage() {
                 <PeopleDirectoryClient
                   people={peopleRows}
                   isAdmin={isAdmin}
+                  canManage={canManagePeopleDirectory}
                   showSummary={false}
                   openCreateOnTrigger
                   triggerClassName={styles.primaryButton}
                   triggerStyle={{ ...topActionStyle, minWidth: '140px' }}
                   triggerLabel="+ New People"
                 />
-                <PeopleDirectoryClient people={peopleRows} isAdmin={isAdmin} showSummary={false} />
+                <PeopleDirectoryClient people={peopleRows} isAdmin={isAdmin} canManage={canManagePeopleDirectory} showSummary={false} />
               </div>
             </div>
 

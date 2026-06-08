@@ -36,6 +36,7 @@ async function getCurrentUserSafely() {
 function createDraft(profile = {}) {
   return {
     invoice_number: '',
+    no_invoice_number: false,
     category_id: '',
     amount: '',
     notes: '',
@@ -93,6 +94,31 @@ function formatDateTime(value) {
     hour: '2-digit',
     minute: '2-digit',
   }).format(date)
+}
+
+const ROMAN_MONTHS = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X', 'XI', 'XII']
+
+function getInternalInvoicePrefix(date = new Date()) {
+  const month = ROMAN_MONTHS[date.getMonth()] || 'I'
+  const year = String(date.getFullYear()).slice(-2)
+  return `INV-${month}${year}`
+}
+
+async function generateInternalInvoiceNumber() {
+  const prefix = getInternalInvoicePrefix()
+  const { data, error } = await supabase.from('mob_payment').select('invoice_number').like('invoice_number', `${prefix}-%`)
+
+  if (error) {
+    throw new Error(error.message)
+  }
+
+  const maxIteration = (data || []).reduce((highest, item) => {
+    const match = String(item?.invoice_number || '').match(new RegExp(`^${prefix}-(\\d{3})$`))
+    if (!match) return highest
+    return Math.max(highest, Number(match[1]))
+  }, 0)
+
+  return `${prefix}-${String(maxIteration + 1).padStart(3, '0')}`
 }
 
 function fallbackDisplayName(value) {
@@ -201,12 +227,17 @@ export default function MobGroupPaymentClient({
   const [editingRequest, setEditingRequest] = useState(null)
   const [selectedRequest, setSelectedRequest] = useState(null)
   const [imagePreview, setImagePreview] = useState(null)
+  const [imagePreviewZoom, setImagePreviewZoom] = useState(1)
+  const [imagePreviewTool, setImagePreviewTool] = useState('zoom-in')
+  const [imagePreviewOrigin, setImagePreviewOrigin] = useState({ x: 50, y: 50 })
+  const [imagePreviewOffset, setImagePreviewOffset] = useState({ x: 0, y: 0 })
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
   const [detailError, setDetailError] = useState('')
   const [paymentProofFiles, setPaymentProofFiles] = useState([])
   const [canApprove, setCanApprove] = useState(false)
   const [canPay, setCanPay] = useState(false)
+  const imagePreviewDragRef = useRef(null)
 
   const hrgaMode = mode === 'hrga'
 
@@ -400,7 +431,14 @@ export default function MobGroupPaymentClient({
   )
 
   const selectableRequests = useMemo(() => filteredRequests.filter((item) => item.status === 'SUBMITTED'), [filteredRequests])
-  const allSelectableChecked = selectableRequests.length > 0 && selectableRequests.every((item) => selectedRequestIds.includes(item.id))
+  const payableRequests = useMemo(() => filteredRequests.filter((item) => item.status === 'APPROVED'), [filteredRequests])
+  const actionableRequests = useMemo(
+    () => filteredRequests.filter((item) => item.status === 'SUBMITTED' || item.status === 'APPROVED'),
+    [filteredRequests]
+  )
+  const allSelectableChecked = actionableRequests.length > 0 && actionableRequests.every((item) => selectedRequestIds.includes(item.id))
+  const selectedSubmittedCount = selectableRequests.filter((item) => selectedRequestIds.includes(item.id)).length
+  const selectedApprovedCount = payableRequests.filter((item) => selectedRequestIds.includes(item.id)).length
 
   const summary = useMemo(
     () => ({
@@ -433,6 +471,7 @@ export default function MobGroupPaymentClient({
     setEditingRequest(item)
     setDraft({
       invoice_number: item.invoice_number || '',
+      no_invoice_number: false,
       category_id: item.category_id || '',
       amount: formatNumberInput(item.amount || ''),
       notes: item.notes || '',
@@ -462,6 +501,28 @@ export default function MobGroupPaymentClient({
     setPaymentProofFiles((prev) => prev.filter((_, index) => index !== targetIndex))
   }
 
+  async function handleNoInvoiceNumberChange(checked) {
+    if (!checked) {
+      setDraft((prev) => ({ ...prev, no_invoice_number: false, invoice_number: '' }))
+      return
+    }
+
+    try {
+      const invoiceNumber = await generateInternalInvoiceNumber()
+      setDraft((prev) => ({ ...prev, no_invoice_number: true, invoice_number: invoiceNumber }))
+    } catch (invoiceError) {
+      setError(invoiceError.message || 'Failed to generate internal invoice number.')
+    }
+  }
+
+  useEffect(() => {
+    setSelectedRequestIds((prev) =>
+      prev.filter((id) =>
+        filteredRequests.some((item) => item.id === id && (item.status === 'SUBMITTED' || item.status === 'APPROVED'))
+      )
+    )
+  }, [filteredRequests])
+
   async function handleCreateRequest() {
     setError('')
     setSuccess('')
@@ -471,7 +532,7 @@ export default function MobGroupPaymentClient({
       return
     }
 
-    if (!String(draft.invoice_number || '').trim() || !String(draft.amount || '').trim() || !String(draft.category_id || '').trim()) {
+    if ((!draft.no_invoice_number && !String(draft.invoice_number || '').trim()) || !String(draft.amount || '').trim() || !String(draft.category_id || '').trim()) {
       setError('Invoice number, payment amount, and category are required.')
       return
     }
@@ -490,8 +551,9 @@ export default function MobGroupPaymentClient({
     const uploadedPaths = []
 
     try {
+      const resolvedInvoiceNumber = draft.no_invoice_number ? await generateInternalInvoiceNumber() : normalizeUppercase(draft.invoice_number).trim()
       const payload = {
-        invoice_number: normalizeUppercase(draft.invoice_number).trim(),
+        invoice_number: resolvedInvoiceNumber,
         category_id: Number(draft.category_id),
         amount: Number(normalizeDigits(draft.amount)),
         notes: String(draft.notes || '').trim() || null,
@@ -668,20 +730,60 @@ export default function MobGroupPaymentClient({
     }
   }
 
+  async function handleMarkPaidSelected() {
+    if (!canPay || !selectedRequestIds.length) return
+
+    setActionLoading(true)
+    setError('')
+    setSuccess('')
+
+    try {
+      const selectedApprovedIds = filteredRequests
+        .filter((item) => item.status === 'APPROVED' && selectedRequestIds.includes(item.id))
+        .map((item) => item.id)
+
+      if (!selectedApprovedIds.length) {
+        setSelectedRequestIds([])
+        return
+      }
+
+      const { error: paidError } = await supabase
+        .from('mob_payment')
+        .update({
+          status: 'PAID',
+          paid_by: profile?.email || '',
+          paid_at: new Date().toISOString(),
+        })
+        .in('id', selectedApprovedIds)
+
+      if (paidError) throw new Error(paidError.message)
+
+      setSelectedRequestIds([])
+      await loadWorkspace(true)
+      setSuccess(`${selectedApprovedIds.length} payment request${selectedApprovedIds.length > 1 ? 's' : ''} marked as paid.`)
+    } catch (paidError) {
+      setError(paidError.message || 'Failed to mark selected payment requests as paid.')
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
   function toggleRequestSelection(requestId) {
     setSelectedRequestIds((prev) => (prev.includes(requestId) ? prev.filter((id) => id !== requestId) : [...prev, requestId]))
   }
 
   function toggleSelectAll() {
-    if (!selectableRequests.length) return
+    const eligibleRequests = filteredRequests.filter((item) => item.status === 'SUBMITTED' || item.status === 'APPROVED')
+    if (!eligibleRequests.length) return
 
     setSelectedRequestIds((prev) => {
-      if (allSelectableChecked) {
-        return prev.filter((id) => !selectableRequests.some((item) => item.id === id))
+      const allEligibleChecked = eligibleRequests.every((item) => prev.includes(item.id))
+      if (allEligibleChecked) {
+        return prev.filter((id) => !eligibleRequests.some((item) => item.id === id))
       }
 
       const next = new Set(prev)
-      selectableRequests.forEach((item) => next.add(item.id))
+      eligibleRequests.forEach((item) => next.add(item.id))
       return Array.from(next)
     })
   }
@@ -785,11 +887,87 @@ export default function MobGroupPaymentClient({
     if (data?.signedUrl) {
       if (isImageAttachment(attachment)) {
         setImagePreview({ name: attachment.file_name, src: data.signedUrl })
+        setImagePreviewZoom(1)
+        setImagePreviewTool('zoom-in')
+        setImagePreviewOrigin({ x: 50, y: 50 })
+        setImagePreviewOffset({ x: 0, y: 0 })
         return
       }
       window.open(data.signedUrl, '_blank', 'noopener,noreferrer')
     }
   }
+
+  function resetImagePreviewState() {
+    setImagePreview(null)
+    setImagePreviewZoom(1)
+    setImagePreviewTool('zoom-in')
+    setImagePreviewOrigin({ x: 50, y: 50 })
+    setImagePreviewOffset({ x: 0, y: 0 })
+    imagePreviewDragRef.current = null
+  }
+
+  function handleImagePreviewWrapClick(event) {
+    if (imagePreviewTool === 'pan') return
+
+    const bounds = event.currentTarget.getBoundingClientRect()
+    const x = ((event.clientX - bounds.left) / bounds.width) * 100
+    const y = ((event.clientY - bounds.top) / bounds.height) * 100
+
+    setImagePreviewOrigin({
+      x: Number.isFinite(x) ? x : 50,
+      y: Number.isFinite(y) ? y : 50,
+    })
+
+    if (imagePreviewTool === 'zoom-in') {
+      setImagePreviewZoom((currentZoom) => Math.min(4, Number((currentZoom + 0.35).toFixed(2))))
+      return
+    }
+
+    setImagePreviewZoom((currentZoom) => {
+      const nextZoom = Math.max(1, Number((currentZoom - 0.35).toFixed(2)))
+      if (nextZoom === 1) {
+        setImagePreviewOffset({ x: 0, y: 0 })
+      }
+      return nextZoom
+    })
+  }
+
+  function handleImagePreviewPointerDown(event) {
+    if (imagePreviewTool !== 'pan' || imagePreviewZoom <= 1) return
+
+    imagePreviewDragRef.current = {
+      startX: event.clientX,
+      startY: event.clientY,
+      offsetX: imagePreviewOffset.x,
+      offsetY: imagePreviewOffset.y,
+    }
+
+    event.currentTarget.setPointerCapture?.(event.pointerId)
+  }
+
+  function handleImagePreviewPointerMove(event) {
+    const dragState = imagePreviewDragRef.current
+    if (!dragState || imagePreviewTool !== 'pan' || imagePreviewZoom <= 1) return
+
+    const deltaX = event.clientX - dragState.startX
+    const deltaY = event.clientY - dragState.startY
+
+    setImagePreviewOffset({
+      x: dragState.offsetX + deltaX,
+      y: dragState.offsetY + deltaY,
+    })
+  }
+
+  function handleImagePreviewPointerUp(event) {
+    if (imagePreviewDragRef.current) {
+      event.currentTarget.releasePointerCapture?.(event.pointerId)
+    }
+    imagePreviewDragRef.current = null
+  }
+
+  const canManagePaymentProofOnDetail =
+    selectedRequest &&
+    ((((selectedRequest.status === 'APPROVED' || selectedRequest.status === 'PAID') && canPay) || isRequestOwner(selectedRequest)))
 
   const selfModeRows = filteredRequests
 
@@ -813,6 +991,15 @@ export default function MobGroupPaymentClient({
                   <input className={styles.input} value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search invoice, person, bank" />
                 </label>
                 <label className={styles.filterField}>
+                  <span className={styles.label}>Status</span>
+                  <select className={styles.select} value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
+                    <option value="ALL">All Status</option>
+                    <option value="SUBMITTED">Submitted</option>
+                    <option value="APPROVED">Approved</option>
+                    <option value="PAID">Paid</option>
+                  </select>
+                </label>
+                <label className={styles.filterField}>
                   <span className={styles.label}>Requester</span>
                   <select className={styles.select} value={requesterFilter} onChange={(event) => setRequesterFilter(event.target.value)}>
                     <option value="ALL">All Requester</option>
@@ -821,15 +1008,6 @@ export default function MobGroupPaymentClient({
                         {item.label}
                       </option>
                     ))}
-                  </select>
-                </label>
-                <label className={styles.filterField}>
-                  <span className={styles.label}>Status</span>
-                  <select className={styles.select} value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
-                    <option value="ALL">All Status</option>
-                    <option value="SUBMITTED">Submitted</option>
-                    <option value="APPROVED">Approved</option>
-                    <option value="PAID">Paid</option>
                   </select>
                 </label>
                 {allowCreate ? (
@@ -851,18 +1029,73 @@ export default function MobGroupPaymentClient({
                         type="button"
                         className={styles.compactApproveButton}
                         onClick={() => void handleApproveSelected()}
-                        disabled={actionLoading || !selectedRequestIds.length}
+                        disabled={actionLoading || !selectedSubmittedCount}
                       >
-                        {actionLoading ? 'Saving...' : `Approve${selectedRequestIds.length ? ` (${selectedRequestIds.length})` : ''}`}
+                        {actionLoading ? 'Saving...' : `Approve${selectedSubmittedCount ? ` (${selectedSubmittedCount})` : ''}`}
                       </button>
                     ) : null}
-                    <div className={styles.metricCard}>
-                      <span>Outstanding</span>
-                      <strong>{formatCurrency(summary.outstanding)}</strong>
-                    </div>
+                    {canPay ? (
+                      <button
+                        type="button"
+                        className={styles.compactApproveButton}
+                        onClick={() => void handleMarkPaidSelected()}
+                        disabled={actionLoading || !selectedApprovedCount}
+                      >
+                        {actionLoading ? 'Saving...' : `Mark as Paid${selectedApprovedCount ? ` (${selectedApprovedCount})` : ''}`}
+                      </button>
+                    ) : null}
                   </div>
                 )}
               </div>
+            </div>
+          </div>
+        ) : hrgaMode ? (
+          <div className={styles.headerActionsInline} style={{ marginBottom: '14px' }}>
+            <label className={styles.searchField}>
+              <span>Search</span>
+              <input className={styles.input} value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search invoice, person, bank" />
+            </label>
+            <label className={styles.filterField}>
+              <span className={styles.label}>Status</span>
+              <select className={styles.select} value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
+                <option value="ALL">All Status</option>
+                <option value="SUBMITTED">Submitted</option>
+                <option value="APPROVED">Approved</option>
+                <option value="PAID">Paid</option>
+              </select>
+            </label>
+            <label className={styles.filterField}>
+              <span className={styles.label}>Requester</span>
+              <select className={styles.select} value={requesterFilter} onChange={(event) => setRequesterFilter(event.target.value)}>
+                <option value="ALL">All Requester</option>
+                {requesterOptions.map((item) => (
+                  <option key={item.value} value={item.value}>
+                    {item.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div className={styles.headerButtonGroup}>
+              {canApprove ? (
+                <button
+                  type="button"
+                  className={styles.compactApproveButton}
+                  onClick={() => void handleApproveSelected()}
+                  disabled={actionLoading || !selectedSubmittedCount}
+                >
+                  {actionLoading ? 'Saving...' : `Approve${selectedSubmittedCount ? ` (${selectedSubmittedCount})` : ''}`}
+                </button>
+              ) : null}
+              {canPay ? (
+                <button
+                  type="button"
+                  className={styles.compactApproveButton}
+                  onClick={() => void handleMarkPaidSelected()}
+                  disabled={actionLoading || !selectedApprovedCount}
+                >
+                  {actionLoading ? 'Saving...' : `Mark as Paid${selectedApprovedCount ? ` (${selectedApprovedCount})` : ''}`}
+                </button>
+              ) : null}
             </div>
           </div>
         ) : null}
@@ -893,15 +1126,15 @@ export default function MobGroupPaymentClient({
                           type="checkbox"
                           checked={allSelectableChecked}
                           onChange={toggleSelectAll}
-                          disabled={!canApprove || !selectableRequests.length}
-                          aria-label="Select all submitted requests"
+                          disabled={!(canApprove || canPay) || !actionableRequests.length}
+                          aria-label="Select all actionable requests"
                         />
                       </th>
                       <th>No Invoice</th>
                       <th>Submission Date</th>
                       <th>Submitted By</th>
                       <th>Category</th>
-                      <th>Outstanding</th>
+                      <th>Amount</th>
                       <th>Status</th>
                       <th>Action</th>
                     </tr>
@@ -914,7 +1147,7 @@ export default function MobGroupPaymentClient({
                             type="checkbox"
                             checked={selectedRequestIds.includes(item.id)}
                             onChange={() => toggleRequestSelection(item.id)}
-                            disabled={!canApprove || item.status !== 'SUBMITTED'}
+                            disabled={!(canApprove || canPay) || (item.status !== 'SUBMITTED' && item.status !== 'APPROVED')}
                             aria-label={`Select ${item.invoice_number || 'payment request'}`}
                           />
                         </td>
@@ -1059,11 +1292,27 @@ export default function MobGroupPaymentClient({
             <div className={styles.formGrid}>
               <div className={styles.formRowThree}>
                 <div className={styles.field}>
-                  <label className={styles.label}>Invoice Number *</label>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px' }}>
+                    <label className={styles.label}>Invoice Number *</label>
+                    {!editingRequest ? (
+                      <label style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '11px', fontWeight: 700, color: '#64748b' }}>
+                        <input
+                          type="checkbox"
+                          checked={draft.no_invoice_number}
+                          onChange={(event) => {
+                            void handleNoInvoiceNumberChange(event.target.checked)
+                          }}
+                        />
+                        No Invoice Number
+                      </label>
+                    ) : null}
+                  </div>
                   <input
                     className={styles.input}
                     value={draft.invoice_number}
+                    disabled={draft.no_invoice_number}
                     onChange={(event) => setDraft((prev) => ({ ...prev, invoice_number: normalizeUppercase(event.target.value) }))}
+                    placeholder={draft.no_invoice_number ? 'Auto-generated internal invoice number' : ''}
                   />
                 </div>
 
@@ -1274,7 +1523,7 @@ export default function MobGroupPaymentClient({
               )}
             </div>
 
-            {((selectedRequest.status === 'APPROVED' && canPay) || isRequestOwner(selectedRequest)) ? (
+            {canManagePaymentProofOnDetail ? (
               <div className={styles.detailSection}>
                 <h3 className={styles.sectionTitle}>Add Payment Proof</h3>
                 <input
@@ -1324,7 +1573,7 @@ export default function MobGroupPaymentClient({
                   {actionLoading ? 'Saving...' : 'Approve'}
                 </button>
               ) : null}
-              {paymentProofFiles.length && ((selectedRequest.status === 'APPROVED' && canPay) || isRequestOwner(selectedRequest)) ? (
+              {paymentProofFiles.length && canManagePaymentProofOnDetail ? (
                 <button type="button" className={styles.secondaryButton} onClick={() => void handleUploadPaymentProof(selectedRequest)} disabled={actionLoading}>
                   {actionLoading ? 'Saving...' : 'Upload Payment Proof'}
                 </button>
@@ -1343,20 +1592,79 @@ export default function MobGroupPaymentClient({
       ) : null}
 
       {imagePreview ? (
-        <div className={shellStyles.modalOverlay} onClick={() => setImagePreview(null)}>
+        <div className={shellStyles.modalOverlay} onClick={resetImagePreviewState}>
           <div className={`${shellStyles.modalCard} ${styles.imageModal}`.trim()} onClick={(event) => event.stopPropagation()}>
             <div className={styles.modalHeader}>
               <div>
                 <p className={styles.eyebrow}>Attachment Preview</p>
                 <h2 className={styles.modalTitle}>{imagePreview.name}</h2>
               </div>
-              <button type="button" className={styles.secondaryButton} onClick={() => setImagePreview(null)}>
+            </div>
+            <div className={shellStyles.reimbursementPreviewActions}>
+              <button
+                type="button"
+                className={`${styles.secondaryButton} ${imagePreviewTool === 'zoom-out' ? shellStyles.reimbursementPreviewButtonActive : ''}`.trim()}
+                onClick={() => {
+                  setImagePreviewTool('zoom-out')
+                }}
+              >
+                Zoom Out
+              </button>
+              <button
+                type="button"
+                className={`${styles.secondaryButton} ${imagePreviewTool === 'pan' ? shellStyles.reimbursementPreviewButtonActive : ''}`.trim()}
+                onClick={() => {
+                  setImagePreviewTool('pan')
+                }}
+              >
+                Pan
+              </button>
+              <button
+                type="button"
+                className={`${styles.secondaryButton} ${imagePreviewTool === 'zoom-in' ? shellStyles.reimbursementPreviewButtonActive : ''}`.trim()}
+                onClick={() => {
+                  setImagePreviewTool('zoom-in')
+                }}
+              >
+                Zoom In
+              </button>
+              <button
+                type="button"
+                className={styles.secondaryButton}
+                onClick={() => {
+                  setImagePreviewZoom(1)
+                  setImagePreviewOrigin({ x: 50, y: 50 })
+                  setImagePreviewOffset({ x: 0, y: 0 })
+                  setImagePreviewTool('zoom-in')
+                }}
+              >
+                Reset
+              </button>
+              <button type="button" className={styles.secondaryButton} onClick={resetImagePreviewState}>
                 Close
               </button>
             </div>
-            <div className={styles.imagePreviewWrap}>
+            <div
+              className={shellStyles.reimbursementImagePreviewWrap}
+              onClick={handleImagePreviewWrapClick}
+              onPointerDown={handleImagePreviewPointerDown}
+              onPointerMove={handleImagePreviewPointerMove}
+              onPointerUp={handleImagePreviewPointerUp}
+              onPointerCancel={handleImagePreviewPointerUp}
+              style={{ cursor: imagePreviewTool === 'pan' && imagePreviewZoom > 1 ? 'grab' : imagePreviewTool === 'zoom-out' ? 'zoom-out' : 'zoom-in' }}
+            >
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={imagePreview.src} alt={imagePreview.name} className={styles.imagePreview} />
+              <img
+                src={imagePreview.src}
+                alt={imagePreview.name}
+                className={shellStyles.reimbursementImagePreview}
+                draggable={false}
+                style={{
+                  transform: `translate(${imagePreviewOffset.x}px, ${imagePreviewOffset.y}px) scale(${imagePreviewZoom})`,
+                  transformOrigin: `${imagePreviewOrigin.x}% ${imagePreviewOrigin.y}%`,
+                  cursor: imagePreviewTool === 'pan' && imagePreviewZoom > 1 ? 'grab' : imagePreviewTool === 'zoom-out' ? 'zoom-out' : 'zoom-in',
+                }}
+              />
             </div>
           </div>
         </div>

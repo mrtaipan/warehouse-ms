@@ -11,12 +11,35 @@ import styles from './financial-management.module.css'
 
 const supabase = createClient()
 const PAYMENT_REQUEST_BUCKET = 'arkline-payments'
+
+async function getCurrentUserSafely() {
+  const userResult = await supabase.auth.getUser()
+  if (!userResult.error) {
+    return userResult
+  }
+
+  if (!String(userResult.error.message || '').includes('was released because another request stole it')) {
+    return userResult
+  }
+
+  const sessionResult = await supabase.auth.getSession()
+  if (sessionResult.error) {
+    return userResult
+  }
+
+  return {
+    data: { user: sessionResult.data.session?.user ?? null },
+    error: null,
+  }
+}
+
 function createDraft() {
   return {
     payment_basis: 'NON_PO_BASED',
     po_source_type: 'GARMENT',
     linked_po_id: '',
     invoice_number: '',
+    no_invoice_number: false,
     category_id: '',
     amount: '',
     notes: '',
@@ -82,6 +105,31 @@ function getPoSortNumber(value) {
   if (match) return Number(match[1])
   const fallback = text.match(/(\d+)/)
   return fallback ? Number(fallback[1]) : Number.MAX_SAFE_INTEGER
+}
+
+const ROMAN_MONTHS = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X', 'XI', 'XII']
+
+function getInternalInvoicePrefix(date = new Date()) {
+  const month = ROMAN_MONTHS[date.getMonth()] || 'I'
+  const year = String(date.getFullYear()).slice(-2)
+  return `INV-${month}${year}`
+}
+
+async function generateInternalInvoiceNumber() {
+  const prefix = getInternalInvoicePrefix()
+  const { data, error } = await supabase.from('arkline_payment').select('invoice_number').like('invoice_number', `${prefix}-%`)
+
+  if (error) {
+    throw new Error(error.message)
+  }
+
+  const maxIteration = (data || []).reduce((highest, item) => {
+    const match = String(item?.invoice_number || '').match(new RegExp(`^${prefix}-(\\d{3})$`))
+    if (!match) return highest
+    return Math.max(highest, Number(match[1]))
+  }, 0)
+
+  return `${prefix}-${String(maxIteration + 1).padStart(3, '0')}`
 }
 
 function normalizeRequest(row) {
@@ -197,12 +245,17 @@ export default function ArklineFinancialManagementPage({
   const [removedDraftAttachmentIds, setRemovedDraftAttachmentIds] = useState([])
   const [selectedRequest, setSelectedRequest] = useState(null)
   const [imagePreview, setImagePreview] = useState(null)
+  const [imagePreviewZoom, setImagePreviewZoom] = useState(1)
+  const [imagePreviewTool, setImagePreviewTool] = useState('zoom-in')
+  const [imagePreviewOrigin, setImagePreviewOrigin] = useState({ x: 50, y: 50 })
+  const [imagePreviewOffset, setImagePreviewOffset] = useState({ x: 0, y: 0 })
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
   const [detailError, setDetailError] = useState('')
   const [paymentProofFiles, setPaymentProofFiles] = useState([])
   const attachmentInputRef = useRef(null)
   const paymentProofInputRef = useRef(null)
+  const imagePreviewDragRef = useRef(null)
 
   const canView = hrgaView ? true : access.financialManagement || access.financialManagementPaymentSubmissionView
   const canSubmitBase =
@@ -210,6 +263,7 @@ export default function ArklineFinancialManagementPage({
     access.financialManagementPaymentSubmissionAdd ||
     access.financialManagementPaymentSubmissionEdit
   const canSubmit = allowCreateOverride === null ? (hrgaView ? false : canSubmitBase) : Boolean(allowCreateOverride)
+  const canReviewAllRequests = hrgaView || role === 'admin' || role === 'hrga' || role === 'leader'
   const canPay = hrgaView ? role === 'admin' || role === 'hrga' || role === 'leader' : role === 'admin'
   const canApprove = hrgaView ? role === 'admin' || role === 'hrga' || role === 'leader' : role === 'admin'
 
@@ -224,7 +278,7 @@ export default function ArklineFinancialManagementPage({
     const {
       data: { user },
       error: authError,
-    } = await supabase.auth.getUser()
+    } = await getCurrentUserSafely()
 
     if (authError) {
       setError(authError.message)
@@ -297,7 +351,7 @@ export default function ArklineFinancialManagementPage({
         )
           .order('created_at', { ascending: true })
 
-        if (!hrgaView && role !== 'admin') {
+        if (!canReviewAllRequests) {
           paymentQuery = paymentQuery.eq('created_by', String(profileRow?.email || user.email || '').trim().toLowerCase())
         }
 
@@ -380,7 +434,7 @@ export default function ArklineFinancialManagementPage({
     )
     setCategories((categoryRows || []).map((item) => ({ id: String(item.id), name: item.name })))
     if (!silent) setLoading(false)
-  }, [hrgaView, role])
+  }, [canReviewAllRequests])
 
   useEffect(() => {
     void loadWorkspace()
@@ -444,11 +498,21 @@ export default function ArklineFinancialManagementPage({
     () => filteredRequests.filter((item) => item.status === 'SUBMITTED'),
     [filteredRequests]
   )
-
-  const allSelectableChecked = selectableRequests.length > 0 && selectableRequests.every((item) => selectedRequestIds.includes(item.id))
+  const payableRequests = useMemo(() => filteredRequests.filter((item) => item.status === 'APPROVED'), [filteredRequests])
+  const actionableRequests = useMemo(
+    () => filteredRequests.filter((item) => item.status === 'SUBMITTED' || item.status === 'APPROVED'),
+    [filteredRequests]
+  )
+  const allSelectableChecked = actionableRequests.length > 0 && actionableRequests.every((item) => selectedRequestIds.includes(item.id))
+  const selectedSubmittedCount = selectableRequests.filter((item) => selectedRequestIds.includes(item.id)).length
+  const selectedApprovedCount = payableRequests.filter((item) => selectedRequestIds.includes(item.id)).length
 
   useEffect(() => {
-    setSelectedRequestIds((prev) => prev.filter((id) => filteredRequests.some((item) => item.id === id && item.status === 'SUBMITTED')))
+    setSelectedRequestIds((prev) =>
+      prev.filter((id) =>
+        filteredRequests.some((item) => item.id === id && (item.status === 'SUBMITTED' || item.status === 'APPROVED'))
+      )
+    )
   }, [filteredRequests])
 
   const summary = useMemo(
@@ -489,6 +553,7 @@ export default function ArklineFinancialManagementPage({
       po_source_type: item.po_source_type || 'GARMENT',
       linked_po_id: item.po_db_id ? String(item.po_db_id) : '',
       invoice_number: item.invoice_number || '',
+      no_invoice_number: false,
       category_id: item.category_id || '',
       amount: formatNumberInput(item.amount || ''),
       notes: item.notes || '',
@@ -525,6 +590,20 @@ export default function ArklineFinancialManagementPage({
     setPaymentProofFiles((prev) => prev.filter((_, index) => index !== targetIndex))
   }
 
+  async function handleNoInvoiceNumberChange(checked) {
+    if (!checked) {
+      setDraft((prev) => ({ ...prev, no_invoice_number: false, invoice_number: '' }))
+      return
+    }
+
+    try {
+      const invoiceNumber = await generateInternalInvoiceNumber()
+      setDraft((prev) => ({ ...prev, no_invoice_number: true, invoice_number: invoiceNumber }))
+    } catch (invoiceError) {
+      setError(invoiceError.message || 'Failed to generate internal invoice number.')
+    }
+  }
+
   async function handleCreateRequest() {
     setError('')
     setSuccess('')
@@ -539,7 +618,7 @@ export default function ArklineFinancialManagementPage({
       return
     }
 
-    if (!String(draft.invoice_number || '').trim() || !String(draft.amount || '').trim()) {
+    if ((!draft.no_invoice_number && !String(draft.invoice_number || '').trim()) || !String(draft.amount || '').trim()) {
       setError(`Invoice number and payment amount are required${draft.payment_basis === 'NON_PO_BASED' ? ', plus category' : ''}.`)
       return
     }
@@ -570,6 +649,7 @@ export default function ArklineFinancialManagementPage({
     const uploadedPaths = []
 
     try {
+        const resolvedInvoiceNumber = draft.no_invoice_number ? await generateInternalInvoiceNumber() : normalizeUppercase(draft.invoice_number).trim()
         const payload = {
         payment_basis: draft.payment_basis,
         po_source_type: draft.payment_basis === 'PO_BASED' ? draft.po_source_type : null,
@@ -581,7 +661,7 @@ export default function ArklineFinancialManagementPage({
               ? selectedPo?.poNumber || null
               : selectedPo?.supplierName || null
             : null,
-        invoice_number: normalizeUppercase(draft.invoice_number).trim(),
+        invoice_number: resolvedInvoiceNumber,
         category_id: draft.payment_basis === 'PO_BASED' ? null : Number(draft.category_id),
         amount: Number(normalizeDigits(draft.amount)),
         notes: String(draft.notes || '').trim() || null,
@@ -786,19 +866,57 @@ export default function ArklineFinancialManagementPage({
     }
   }
 
+  async function handleMarkPaidSelected() {
+    if (!canPay || !selectedRequestIds.length) return
+
+    setActionLoading(true)
+    setError('')
+    setSuccess('')
+
+    try {
+      const selectedApprovedIds = filteredRequests
+        .filter((item) => item.status === 'APPROVED' && selectedRequestIds.includes(item.id))
+        .map((item) => item.id)
+
+      if (!selectedApprovedIds.length) {
+        setSelectedRequestIds([])
+        return
+      }
+
+      const { error: updateError } = await supabase
+        .from('arkline_payment')
+        .update({
+          status: 'PAID',
+          paid_at: new Date().toISOString(),
+          paid_by: profile?.email || null,
+        })
+        .in('id', selectedApprovedIds)
+
+      if (updateError) throw new Error(updateError.message)
+
+      setSelectedRequestIds([])
+      setSuccess(`${selectedApprovedIds.length} payment request${selectedApprovedIds.length > 1 ? 's' : ''} marked as paid.`)
+      await loadWorkspace({ silent: true })
+    } catch (paidError) {
+      setError(paidError.message || 'Failed to mark selected payment requests as paid.')
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
   function toggleRequestSelection(requestId) {
     setSelectedRequestIds((prev) => (prev.includes(requestId) ? prev.filter((id) => id !== requestId) : [...prev, requestId]))
   }
 
   function toggleSelectAll() {
-    if (!selectableRequests.length) return
+    if (!actionableRequests.length) return
     setSelectedRequestIds((prev) => {
       if (allSelectableChecked) {
-        return prev.filter((id) => !selectableRequests.some((item) => item.id === id))
+        return prev.filter((id) => !actionableRequests.some((item) => item.id === id))
       }
 
       const next = new Set(prev)
-      selectableRequests.forEach((item) => next.add(item.id))
+      actionableRequests.forEach((item) => next.add(item.id))
       return Array.from(next)
     })
   }
@@ -910,12 +1028,88 @@ export default function ArklineFinancialManagementPage({
     if (data?.signedUrl) {
       if (isImageAttachment(attachment)) {
         setImagePreview({ src: data.signedUrl, name: attachment.file_name })
+        setImagePreviewZoom(1)
+        setImagePreviewTool('zoom-in')
+        setImagePreviewOrigin({ x: 50, y: 50 })
+        setImagePreviewOffset({ x: 0, y: 0 })
         return
       }
 
       window.open(data.signedUrl, '_blank', 'noopener,noreferrer')
     }
   }
+
+  function resetImagePreviewState() {
+    setImagePreview(null)
+    setImagePreviewZoom(1)
+    setImagePreviewTool('zoom-in')
+    setImagePreviewOrigin({ x: 50, y: 50 })
+    setImagePreviewOffset({ x: 0, y: 0 })
+    imagePreviewDragRef.current = null
+  }
+
+  function handleImagePreviewWrapClick(event) {
+    if (imagePreviewTool === 'pan') return
+
+    const bounds = event.currentTarget.getBoundingClientRect()
+    const x = ((event.clientX - bounds.left) / bounds.width) * 100
+    const y = ((event.clientY - bounds.top) / bounds.height) * 100
+
+    setImagePreviewOrigin({
+      x: Number.isFinite(x) ? x : 50,
+      y: Number.isFinite(y) ? y : 50,
+    })
+
+    if (imagePreviewTool === 'zoom-in') {
+      setImagePreviewZoom((currentZoom) => Math.min(4, Number((currentZoom + 0.35).toFixed(2))))
+      return
+    }
+
+    setImagePreviewZoom((currentZoom) => {
+      const nextZoom = Math.max(1, Number((currentZoom - 0.35).toFixed(2)))
+      if (nextZoom === 1) {
+        setImagePreviewOffset({ x: 0, y: 0 })
+      }
+      return nextZoom
+    })
+  }
+
+  function handleImagePreviewPointerDown(event) {
+    if (imagePreviewTool !== 'pan' || imagePreviewZoom <= 1) return
+
+    imagePreviewDragRef.current = {
+      startX: event.clientX,
+      startY: event.clientY,
+      offsetX: imagePreviewOffset.x,
+      offsetY: imagePreviewOffset.y,
+    }
+
+    event.currentTarget.setPointerCapture?.(event.pointerId)
+  }
+
+  function handleImagePreviewPointerMove(event) {
+    const dragState = imagePreviewDragRef.current
+    if (!dragState || imagePreviewTool !== 'pan' || imagePreviewZoom <= 1) return
+
+    const deltaX = event.clientX - dragState.startX
+    const deltaY = event.clientY - dragState.startY
+
+    setImagePreviewOffset({
+      x: dragState.offsetX + deltaX,
+      y: dragState.offsetY + deltaY,
+    })
+  }
+
+  function handleImagePreviewPointerUp(event) {
+    if (imagePreviewDragRef.current) {
+      event.currentTarget.releasePointerCapture?.(event.pointerId)
+    }
+    imagePreviewDragRef.current = null
+  }
+
+  const canManagePaymentProofOnDetail =
+    selectedRequest &&
+    ((((selectedRequest.status === 'APPROVED' || selectedRequest.status === 'PAID') && canPay) || isRequestOwner(selectedRequest)))
 
   return (
     <div className={embedded ? undefined : styles.page}>
@@ -960,9 +1154,19 @@ export default function ArklineFinancialManagementPage({
                     type="button"
                     className={styles.compactApproveButton}
                     onClick={() => void handleApproveSelected()}
-                    disabled={actionLoading || !selectedRequestIds.length}
+                    disabled={actionLoading || !selectedSubmittedCount}
                   >
-                    {actionLoading ? 'Saving...' : `Approve${selectedRequestIds.length ? ` (${selectedRequestIds.length})` : ''}`}
+                    {actionLoading ? 'Saving...' : `Approve${selectedSubmittedCount ? ` (${selectedSubmittedCount})` : ''}`}
+                  </button>
+                ) : null}
+                {canPay ? (
+                  <button
+                    type="button"
+                    className={styles.compactApproveButton}
+                    onClick={() => void handleMarkPaidSelected()}
+                    disabled={actionLoading || !selectedApprovedCount}
+                  >
+                    {actionLoading ? 'Saving...' : `Mark as Paid${selectedApprovedCount ? ` (${selectedApprovedCount})` : ''}`}
                   </button>
                 ) : null}
                 {canSubmit ? (
@@ -1007,9 +1211,19 @@ export default function ArklineFinancialManagementPage({
                   type="button"
                   className={styles.compactApproveButton}
                   onClick={() => void handleApproveSelected()}
-                  disabled={actionLoading || !selectedRequestIds.length}
+                  disabled={actionLoading || !selectedSubmittedCount}
                 >
-                  {actionLoading ? 'Saving...' : `Approve${selectedRequestIds.length ? ` (${selectedRequestIds.length})` : ''}`}
+                  {actionLoading ? 'Saving...' : `Approve${selectedSubmittedCount ? ` (${selectedSubmittedCount})` : ''}`}
+                </button>
+              ) : null}
+              {canPay ? (
+                <button
+                  type="button"
+                  className={styles.compactApproveButton}
+                  onClick={() => void handleMarkPaidSelected()}
+                  disabled={actionLoading || !selectedApprovedCount}
+                >
+                  {actionLoading ? 'Saving...' : `Mark as Paid${selectedApprovedCount ? ` (${selectedApprovedCount})` : ''}`}
                 </button>
               ) : null}
               {canSubmit ? (
@@ -1049,15 +1263,15 @@ export default function ArklineFinancialManagementPage({
                           type="checkbox"
                           checked={allSelectableChecked}
                           onChange={toggleSelectAll}
-                          disabled={!canApprove || !selectableRequests.length}
-                          aria-label="Select all submitted requests"
+                          disabled={!(canApprove || canPay) || !actionableRequests.length}
+                          aria-label="Select all actionable requests"
                         />
                       </th>
                       <th>No Invoice</th>
                       <th>Submission Date</th>
                       <th>Submitted By</th>
                       <th>Category</th>
-                      <th>Outstanding</th>
+                      <th>Amount</th>
                       <th>Status</th>
                       <th>Action</th>
                     </tr>
@@ -1070,7 +1284,7 @@ export default function ArklineFinancialManagementPage({
                             type="checkbox"
                             checked={selectedRequestIds.includes(item.id)}
                             onChange={() => toggleRequestSelection(item.id)}
-                            disabled={!canApprove || item.status !== 'SUBMITTED'}
+                            disabled={!(canApprove || canPay) || (item.status !== 'SUBMITTED' && item.status !== 'APPROVED')}
                             aria-label={`Select ${item.invoice_number || 'payment request'}`}
                           />
                         </td>
@@ -1227,11 +1441,27 @@ export default function ArklineFinancialManagementPage({
                 ) : null}
 
                 <div className={styles.field}>
-                  <label className={styles.label}>Invoice Number *</label>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px' }}>
+                    <label className={styles.label}>Invoice Number *</label>
+                    {!editingRequest && draft.payment_basis === 'NON_PO_BASED' ? (
+                      <label style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '11px', fontWeight: 700, color: '#64748b' }}>
+                        <input
+                          type="checkbox"
+                          checked={draft.no_invoice_number}
+                          onChange={(event) => {
+                            void handleNoInvoiceNumberChange(event.target.checked)
+                          }}
+                        />
+                        No Invoice Number
+                      </label>
+                    ) : null}
+                  </div>
                   <input
                     className={styles.input}
                     value={draft.invoice_number}
+                    disabled={draft.payment_basis === 'NON_PO_BASED' && draft.no_invoice_number}
                     onChange={(event) => setDraft((prev) => ({ ...prev, invoice_number: normalizeUppercase(event.target.value) }))}
+                    placeholder={draft.payment_basis === 'NON_PO_BASED' && draft.no_invoice_number ? 'Auto-generated internal invoice number' : ''}
                   />
                 </div>
 
@@ -1467,7 +1697,7 @@ export default function ArklineFinancialManagementPage({
               )}
             </div>
 
-            {((selectedRequest.status === 'APPROVED' && canPay) || isRequestOwner(selectedRequest)) ? (
+            {canManagePaymentProofOnDetail ? (
               <div className={styles.detailSection}>
                 <h3 className={styles.sectionTitle}>Add Payment Proof</h3>
                 <input
@@ -1517,7 +1747,7 @@ export default function ArklineFinancialManagementPage({
                   {actionLoading ? 'Saving...' : 'Approve'}
                 </button>
               ) : null}
-            {paymentProofFiles.length && ((selectedRequest.status === 'APPROVED' && canPay) || isRequestOwner(selectedRequest)) ? (
+            {paymentProofFiles.length && canManagePaymentProofOnDetail ? (
               <button type="button" className={styles.secondaryButton} onClick={() => void handleUploadPaymentProof(selectedRequest)} disabled={actionLoading}>
                 {actionLoading ? 'Saving...' : 'Upload Payment Proof'}
               </button>
@@ -1536,20 +1766,73 @@ export default function ArklineFinancialManagementPage({
       ) : null}
 
       {imagePreview ? (
-        <div className={shellStyles.modalOverlay} onClick={() => setImagePreview(null)}>
+        <div className={shellStyles.modalOverlay} onClick={resetImagePreviewState}>
           <div className={`${shellStyles.modalCard} ${styles.imageModal}`.trim()} onClick={(event) => event.stopPropagation()}>
             <div className={styles.modalHeader}>
               <div>
                 <p className={styles.eyebrow}>Attachment Preview</p>
                 <h2 className={styles.modalTitle}>{imagePreview.name}</h2>
               </div>
-              <button type="button" className={styles.secondaryButton} onClick={() => setImagePreview(null)}>
+            </div>
+            <div className={shellStyles.reimbursementPreviewActions}>
+              <button
+                type="button"
+                className={`${styles.secondaryButton} ${imagePreviewTool === 'zoom-out' ? shellStyles.reimbursementPreviewButtonActive : ''}`.trim()}
+                onClick={() => setImagePreviewTool('zoom-out')}
+              >
+                Zoom Out
+              </button>
+              <button
+                type="button"
+                className={`${styles.secondaryButton} ${imagePreviewTool === 'pan' ? shellStyles.reimbursementPreviewButtonActive : ''}`.trim()}
+                onClick={() => setImagePreviewTool('pan')}
+              >
+                Pan
+              </button>
+              <button
+                type="button"
+                className={`${styles.secondaryButton} ${imagePreviewTool === 'zoom-in' ? shellStyles.reimbursementPreviewButtonActive : ''}`.trim()}
+                onClick={() => setImagePreviewTool('zoom-in')}
+              >
+                Zoom In
+              </button>
+              <button
+                type="button"
+                className={styles.secondaryButton}
+                onClick={() => {
+                  setImagePreviewZoom(1)
+                  setImagePreviewOrigin({ x: 50, y: 50 })
+                  setImagePreviewOffset({ x: 0, y: 0 })
+                  setImagePreviewTool('zoom-in')
+                }}
+              >
+                Reset
+              </button>
+              <button type="button" className={styles.secondaryButton} onClick={resetImagePreviewState}>
                 Close
               </button>
             </div>
-            <div className={styles.imagePreviewWrap}>
+            <div
+              className={shellStyles.reimbursementImagePreviewWrap}
+              onClick={handleImagePreviewWrapClick}
+              onPointerDown={handleImagePreviewPointerDown}
+              onPointerMove={handleImagePreviewPointerMove}
+              onPointerUp={handleImagePreviewPointerUp}
+              onPointerCancel={handleImagePreviewPointerUp}
+              style={{ cursor: imagePreviewTool === 'pan' && imagePreviewZoom > 1 ? 'grab' : imagePreviewTool === 'zoom-out' ? 'zoom-out' : 'zoom-in' }}
+            >
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={imagePreview.src} alt={imagePreview.name} className={styles.imagePreview} />
+              <img
+                src={imagePreview.src}
+                alt={imagePreview.name}
+                className={shellStyles.reimbursementImagePreview}
+                draggable={false}
+                style={{
+                  transform: `translate(${imagePreviewOffset.x}px, ${imagePreviewOffset.y}px) scale(${imagePreviewZoom})`,
+                  transformOrigin: `${imagePreviewOrigin.x}% ${imagePreviewOrigin.y}%`,
+                  cursor: imagePreviewTool === 'pan' && imagePreviewZoom > 1 ? 'grab' : imagePreviewTool === 'zoom-out' ? 'zoom-out' : 'zoom-in',
+                }}
+              />
             </div>
           </div>
         </div>

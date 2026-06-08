@@ -158,6 +158,7 @@ export function PeopleDirectoryEyeIcon() {
 export default function PeopleDirectoryClient({
   people,
   isAdmin,
+  canManage = false,
   showSummary = true,
   triggerClassName = '',
   triggerStyle = null,
@@ -167,6 +168,9 @@ export default function PeopleDirectoryClient({
   const [open, setOpen] = useState(false)
   const [editingId, setEditingId] = useState('')
   const [openedFromCreateShortcut, setOpenedFromCreateShortcut] = useState(false)
+  const [editorSuccess, setEditorSuccess] = useState('')
+  const [formError, setFormError] = useState('')
+  const [submitting, setSubmitting] = useState(false)
   const editableFields = useMemo(() => buildEditableFields(people), [people])
   const groupOptions = useMemo(() => buildGroupOptions(people), [people])
 
@@ -243,8 +247,14 @@ export default function PeopleDirectoryClient({
     )
   }
 
-  function closeEditor() {
+  function closeEditor(options = {}) {
+    const { keepSuccess = false } = options
     setEditingId('')
+    setFormError('')
+    setSubmitting(false)
+    if (!keepSuccess) {
+      setEditorSuccess('')
+    }
     if (openedFromCreateShortcut) {
       setOpen(false)
       setOpenedFromCreateShortcut(false)
@@ -255,6 +265,40 @@ export default function PeopleDirectoryClient({
     setOpen(true)
     setOpenedFromCreateShortcut(openCreateOnTrigger)
     setEditingId(openCreateOnTrigger ? '__new__' : '')
+    setEditorSuccess('')
+    setFormError('')
+  }
+
+  async function handleCreateSubmit(event) {
+    event.preventDefault()
+    setSubmitting(true)
+    setFormError('')
+
+    try {
+      const result = await createEmployeeProfile(new FormData(event.currentTarget))
+      setEditorSuccess(result?.message || 'Person saved successfully.')
+      closeEditor({ keepSuccess: true })
+    } catch (error) {
+      setFormError(error.message || 'Failed to save person.')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  async function handleUpdateSubmit(event) {
+    event.preventDefault()
+    setSubmitting(true)
+    setFormError('')
+
+    try {
+      const result = await updateEmployeeProfile(new FormData(event.currentTarget))
+      setEditorSuccess(result?.message || 'Person saved successfully.')
+      closeEditor({ keepSuccess: true })
+    } catch (error) {
+      setFormError(error.message || 'Failed to save person.')
+    } finally {
+      setSubmitting(false)
+    }
   }
 
   const editorModal =
@@ -275,7 +319,7 @@ export default function PeopleDirectoryClient({
           </div>
 
           <div className={styles.directoryModalBody}>
-            <form action={createEmployeeProfile} className={styles.formGrid}>
+            <form onSubmit={handleCreateSubmit} className={styles.formGrid}>
               <label className={styles.field}>
                 <span className={styles.label}>People ID</span>
                 <input
@@ -287,9 +331,14 @@ export default function PeopleDirectoryClient({
                 />
               </label>
               {editableFields.map((field) => renderField(field, ''))}
+              {formError ? (
+                <p className={styles.errorText} style={{ margin: 0 }}>
+                  {formError}
+                </p>
+              ) : null}
               <div className={`${styles.buttonRow} ${styles.fullSpan}`.trim()}>
-                <button type="submit" className={styles.primaryButton}>
-                  Save Person
+                <button type="submit" className={styles.primaryButton} disabled={submitting}>
+                  {submitting ? 'Saving...' : 'Save Person'}
                 </button>
               </div>
             </form>
@@ -313,7 +362,7 @@ export default function PeopleDirectoryClient({
           </div>
 
           <div className={styles.directoryModalBody}>
-            <form action={updateEmployeeProfile} className={styles.formGrid}>
+            <form onSubmit={handleUpdateSubmit} className={styles.formGrid}>
               <input type="hidden" name="profile_id" value={editingPerson.id} />
               <label className={styles.field}>
                 <span className={styles.label}>Id</span>
@@ -334,9 +383,14 @@ export default function PeopleDirectoryClient({
                 <input className={`${styles.input} ${styles.inputDisabled}`.trim()} type="text" value={editingPerson.role || ''} disabled readOnly />
               </label>
               {editableFields.map((field) => renderField(field, editingPerson[field], field === 'email'))}
+              {formError ? (
+                <p className={styles.errorText} style={{ margin: 0 }}>
+                  {formError}
+                </p>
+              ) : null}
               <div className={`${styles.buttonRow} ${styles.fullSpan}`.trim()}>
-                <button type="submit" className={styles.primaryButton}>
-                  Save Changes
+                <button type="submit" className={styles.primaryButton} disabled={submitting}>
+                  {submitting ? 'Saving...' : 'Save Changes'}
                 </button>
               </div>
             </form>
@@ -418,9 +472,14 @@ export default function PeopleDirectoryClient({
             <div className={styles.sectionHeader}>
               <div>
                 <h2 className={styles.sectionTitle}>People Directory</h2>
+                {editorSuccess ? (
+                  <p className={styles.successText} style={{ margin: '6px 0 0' }}>
+                    {editorSuccess}
+                  </p>
+                ) : null}
               </div>
               <div className={styles.buttonRow}>
-                {isAdmin ? (
+                {canManage ? (
                   <button type="button" className={styles.primaryButton} onClick={() => setEditingId('__new__')}>
                     + Add New
                   </button>
@@ -462,7 +521,7 @@ export default function PeopleDirectoryClient({
                     <p className={styles.cellTitle}>{normalizeGenderValue(person.gender || person.jenis_kelamin) || '-'}</p>
                   </div>
                   <div className={styles.buttonRow}>
-                    {isAdmin ? (
+                    {canManage ? (
                       <button type="button" className={styles.secondaryButton} onClick={() => setEditingId(person.id)}>
                         <EditIcon />
                       </button>

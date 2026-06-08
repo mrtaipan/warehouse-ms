@@ -1,14 +1,31 @@
 'use client'
 
-import { useState } from 'react'
+import { useActionState, useEffect, useState } from 'react'
 
 import styles from '../arkline/arkline.module.css'
 import { createPublicHoliday } from './actions'
 
-export default function PublicHolidayClient({ isAdmin, triggerClassName, triggerStyle, triggerLabel = '+ Public Holiday' }) {
-  const [open, setOpen] = useState(false)
+const INITIAL_STATE = { ok: false, message: '' }
 
-  if (!isAdmin) {
+export default function PublicHolidayClient({ canManage = false, triggerClassName, triggerStyle, triggerLabel = '+ Public Holiday' }) {
+  const [open, setOpen] = useState(false)
+  const [state, formAction] = useActionState(async (_prevState, formData) => {
+    try {
+      return (await createPublicHoliday(formData)) || { ok: true, message: 'Public holiday saved.' }
+    } catch (error) {
+      return { ok: false, message: error.message || 'Failed to save public holiday.' }
+    }
+  }, INITIAL_STATE)
+
+  useEffect(() => {
+    if (state?.ok && open) {
+      const timerId = window.setTimeout(() => setOpen(false), 900)
+      return () => window.clearTimeout(timerId)
+    }
+    return undefined
+  }, [open, state])
+
+  if (!canManage) {
     return null
   }
 
@@ -30,7 +47,7 @@ export default function PublicHolidayClient({ isAdmin, triggerClassName, trigger
               </button>
             </div>
 
-            <form action={createPublicHoliday} className={styles.formGrid} style={{ gridTemplateColumns: 'minmax(0, 1fr)' }}>
+            <form action={formAction} className={styles.formGrid} style={{ gridTemplateColumns: 'minmax(0, 1fr)' }}>
               <label className={styles.field}>
                 <span className={styles.label}>Holiday Date</span>
                 <input className={styles.input} type="date" name="holiday_date" required />
@@ -45,6 +62,12 @@ export default function PublicHolidayClient({ isAdmin, triggerClassName, trigger
                 <span className={styles.label}>Notes</span>
                 <textarea className={styles.textarea} name="notes" rows={3} placeholder="Optional note" />
               </label>
+
+              {state?.message ? (
+                <p className={state.ok ? styles.successText : styles.errorText} style={{ margin: 0 }}>
+                  {state.message}
+                </p>
+              ) : null}
 
               <div className={styles.buttonRow}>
                 <button type="submit" className={styles.primaryButton}>

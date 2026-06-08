@@ -358,6 +358,8 @@ export default function ReimbursementClaimPage({
   const [selectedApprovedGroup, setSelectedApprovedGroup] = useState(null)
   const [selectedPaidGroup, setSelectedPaidGroup] = useState(null)
   const [selectedSubmittedClaimIds, setSelectedSubmittedClaimIds] = useState([])
+  const [selectedApprovedClaimIds, setSelectedApprovedClaimIds] = useState([])
+  const [selectedApprovedGroupKeys, setSelectedApprovedGroupKeys] = useState([])
   const [editingClaim, setEditingClaim] = useState(null)
   const [editDraft, setEditDraft] = useState(null)
   const [editFiles, setEditFiles] = useState([])
@@ -509,6 +511,10 @@ export default function ReimbursementClaimPage({
 
   useEffect(() => {
     setSelectedSubmittedClaimIds((prev) => prev.filter((id) => claims.some((item) => item.id === id && item.status === 'SUBMITTED')))
+  }, [claims])
+
+  useEffect(() => {
+    setSelectedApprovedClaimIds((prev) => prev.filter((id) => claims.some((item) => item.id === id && item.status === 'APPROVED')))
   }, [claims])
 
   useEffect(() => {
@@ -724,6 +730,13 @@ export default function ReimbursementClaimPage({
     },
     [filteredClaims]
   )
+
+  useEffect(() => {
+    const approvedGroupKeys = new Set(
+      (claimColumns.find((column) => column.key === 'APPROVED')?.items || []).map((item) => item.key).filter(Boolean)
+    )
+    setSelectedApprovedGroupKeys((prev) => prev.filter((key) => approvedGroupKeys.has(key)))
+  }, [claimColumns])
 
   function openBatchModal() {
     const firstRow = createDraftRow()
@@ -1117,8 +1130,44 @@ export default function ReimbursementClaimPage({
     await loadWorkspace()
   }
 
+  async function handleMarkPaidSelectedClaims() {
+    const targetClaims = filteredClaims.filter((item) => selectedApprovedClaimIds.includes(item.id) && item.status === 'APPROVED')
+    if (!targetClaims.length) return
+
+    setActionLoading(true)
+    setActionError('')
+    setSuccess('')
+
+    try {
+      const { error: updateError } = await supabase
+        .from(tableNames.claims)
+        .update({
+          status: 'PAID',
+          paid_at: new Date().toISOString(),
+          paid_by: profile?.email || null,
+        })
+        .in('id', targetClaims.map((item) => item.id))
+
+      if (updateError) {
+        throw new Error(updateError.message || 'Failed to mark selected claims as paid.')
+      }
+
+      setSuccess(`${targetClaims.length} claim${targetClaims.length > 1 ? 's' : ''} marked as paid.`)
+      setSelectedApprovedClaimIds([])
+      await loadWorkspace()
+    } catch (markPaidError) {
+      setActionError(markPaidError.message || 'Failed to mark selected claims as paid.')
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
   function toggleSubmittedClaimSelection(claimId) {
     setSelectedSubmittedClaimIds((prev) => (prev.includes(claimId) ? prev.filter((item) => item !== claimId) : [...prev, claimId]))
+  }
+
+  function toggleApprovedClaimSelection(claimId) {
+    setSelectedApprovedClaimIds((prev) => (prev.includes(claimId) ? prev.filter((item) => item !== claimId) : [...prev, claimId]))
   }
 
   function toggleSelectAllSubmittedClaims(items) {
@@ -1145,6 +1194,54 @@ export default function ReimbursementClaimPage({
       }
 
       return Array.from(new Set([...prev, ...submittedIds]))
+    })
+  }
+
+  function toggleSelectAllFilteredApprovedClaims() {
+    const approvedIds = filteredClaims.filter((item) => item.status === 'APPROVED').map((item) => item.id)
+    if (!approvedIds.length) return
+
+    const allSelected = approvedIds.every((id) => selectedApprovedClaimIds.includes(id))
+    setSelectedApprovedClaimIds((prev) => {
+      if (allSelected) {
+        return prev.filter((id) => !approvedIds.includes(id))
+      }
+
+      return Array.from(new Set([...prev, ...approvedIds]))
+    })
+  }
+
+  function toggleSelectAllFilteredActionableClaims() {
+    const submittedIds = filteredClaims.filter((item) => item.status === 'SUBMITTED').map((item) => item.id)
+    const approvedIds = filteredClaims.filter((item) => item.status === 'APPROVED').map((item) => item.id)
+    const allSubmittedSelected = !submittedIds.length || submittedIds.every((id) => selectedSubmittedClaimIds.includes(id))
+    const allApprovedSelected = !approvedIds.length || approvedIds.every((id) => selectedApprovedClaimIds.includes(id))
+
+    if (allSubmittedSelected && allApprovedSelected) {
+      setSelectedSubmittedClaimIds((prev) => prev.filter((id) => !submittedIds.includes(id)))
+      setSelectedApprovedClaimIds((prev) => prev.filter((id) => !approvedIds.includes(id)))
+      return
+    }
+
+    setSelectedSubmittedClaimIds((prev) => Array.from(new Set([...prev, ...submittedIds])))
+    setSelectedApprovedClaimIds((prev) => Array.from(new Set([...prev, ...approvedIds])))
+  }
+
+  function toggleApprovedGroupSelection(groupKey) {
+    setSelectedApprovedGroupKeys((prev) => (prev.includes(groupKey) ? prev.filter((item) => item !== groupKey) : [...prev, groupKey]))
+  }
+
+  function toggleSelectAllApprovedGroups(groups) {
+    const approvedKeys = (groups || []).map((item) => item.key).filter(Boolean)
+    if (!approvedKeys.length) return
+
+    const allSelected = approvedKeys.every((key) => selectedApprovedGroupKeys.includes(key))
+    setSelectedApprovedGroupKeys((prev) => {
+      if (allSelected) {
+        return prev.filter((key) => !approvedKeys.includes(key))
+      }
+
+      return Array.from(new Set([...prev, ...approvedKeys]))
     })
   }
 
@@ -1362,6 +1459,41 @@ export default function ReimbursementClaimPage({
       }
 
       setActionError(paymentError.message || 'Failed to upload payment proof for this account batch.')
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
+  async function handleMarkPaidSelectedGroups(groups) {
+    const targetGroups = (groups || []).filter((group) => selectedApprovedGroupKeys.includes(group.key))
+    if (!targetGroups.length) return
+
+    const claimIds = targetGroups.flatMap((group) => group.claims.map((item) => item.id))
+    if (!claimIds.length) return
+
+    setActionLoading(true)
+    setActionError('')
+    setSuccess('')
+
+    try {
+      const { error: updateError } = await supabase
+        .from(tableNames.claims)
+        .update({
+          status: 'PAID',
+          paid_at: new Date().toISOString(),
+          paid_by: profile?.email || null,
+        })
+        .in('id', claimIds)
+
+      if (updateError) {
+        throw new Error(updateError.message || 'Failed to mark selected approved groups as paid.')
+      }
+
+      setSuccess(`${claimIds.length} claim${claimIds.length > 1 ? 's' : ''} marked as paid.`)
+      setSelectedApprovedGroupKeys([])
+      await loadWorkspace()
+    } catch (markPaidError) {
+      setActionError(markPaidError.message || 'Failed to mark selected approved groups as paid.')
     } finally {
       setActionLoading(false)
     }
@@ -1623,6 +1755,25 @@ export default function ReimbursementClaimPage({
                 </button>
               </>
             ) : null}
+            {tableView && canPay ? (
+              <>
+                <button
+                  type="button"
+                  className={styles.ghostButton}
+                  onClick={toggleSelectAllFilteredApprovedClaims}
+                >
+                  Select All Approved
+                </button>
+                <button
+                  type="button"
+                  className={styles.secondaryButton}
+                  onClick={() => void handleMarkPaidSelectedClaims()}
+                  disabled={actionLoading || !selectedApprovedClaimIds.length}
+                >
+                  {actionLoading ? 'Saving...' : `Mark as Paid${selectedApprovedClaimIds.length ? ` (${selectedApprovedClaimIds.length})` : ''}`}
+                </button>
+              </>
+            ) : null}
             <button
               type="button"
               className={styles.ghostButton}
@@ -1717,10 +1868,19 @@ export default function ReimbursementClaimPage({
                   <th className={tableStyles.checkboxColumn}>
                     <input
                       type="checkbox"
-                      checked={filteredClaims.filter((item) => item.status === 'SUBMITTED').length > 0 && filteredClaims.filter((item) => item.status === 'SUBMITTED').every((item) => selectedSubmittedClaimIds.includes(item.id))}
-                      onChange={toggleSelectAllFilteredSubmittedClaims}
-                      disabled={!canApprove || !filteredClaims.some((item) => item.status === 'SUBMITTED')}
-                      aria-label="Select all submitted claims"
+                      checked={
+                        filteredClaims.filter((item) => item.status === 'SUBMITTED' || item.status === 'APPROVED').length > 0 &&
+                        filteredClaims
+                          .filter((item) => item.status === 'SUBMITTED' || item.status === 'APPROVED')
+                          .every((item) =>
+                            item.status === 'SUBMITTED'
+                              ? selectedSubmittedClaimIds.includes(item.id)
+                              : selectedApprovedClaimIds.includes(item.id)
+                          )
+                      }
+                      onChange={toggleSelectAllFilteredActionableClaims}
+                      disabled={!(canApprove || canPay) || !filteredClaims.some((item) => item.status === 'SUBMITTED' || item.status === 'APPROVED')}
+                      aria-label="Select all actionable claims"
                     />
                   </th>
                   <th>Claim No</th>
@@ -1740,9 +1900,15 @@ export default function ReimbursementClaimPage({
                     <td className={tableStyles.checkboxColumn}>
                       <input
                         type="checkbox"
-                        checked={selectedSubmittedClaimIds.includes(item.id)}
-                        onChange={() => toggleSubmittedClaimSelection(item.id)}
-                        disabled={!canApprove || item.status !== 'SUBMITTED'}
+                        checked={item.status === 'SUBMITTED' ? selectedSubmittedClaimIds.includes(item.id) : selectedApprovedClaimIds.includes(item.id)}
+                        onChange={() => {
+                          if (item.status === 'SUBMITTED') {
+                            toggleSubmittedClaimSelection(item.id)
+                          } else if (item.status === 'APPROVED') {
+                            toggleApprovedClaimSelection(item.id)
+                          }
+                        }}
+                        disabled={(item.status === 'SUBMITTED' && !canApprove) || (item.status === 'APPROVED' && !canPay) || (item.status !== 'SUBMITTED' && item.status !== 'APPROVED')}
                         aria-label={`Select ${item.claim_number || 'claim'}`}
                       />
                     </td>
@@ -1779,6 +1945,19 @@ export default function ReimbursementClaimPage({
                           >
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                               <path d="m5 12 4.2 4.2L19 6.5" />
+                            </svg>
+                          </button>
+                        ) : null}
+                        {item.status === 'APPROVED' && canPay ? (
+                          <button
+                            type="button"
+                            className={`${tableStyles.iconButton} ${tableStyles.iconButtonSuccess}`.trim()}
+                            onClick={() => void handleMarkPaid(item)}
+                            title="Mark as paid"
+                          >
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                              <path d="M5 12h14" />
+                              <path d="M12 5l7 7-7 7" />
                             </svg>
                           </button>
                         ) : null}
@@ -1830,6 +2009,25 @@ export default function ReimbursementClaimPage({
                       </button>
                     </>
                   ) : null}
+                  {column.key === 'APPROVED' && canPay ? (
+                    <>
+                      <button
+                        type="button"
+                        className={styles.secondaryButton}
+                        onClick={() => toggleSelectAllApprovedGroups(column.items)}
+                      >
+                        Select All
+                      </button>
+                      <button
+                        type="button"
+                        className={styles.secondaryButton}
+                        onClick={() => void handleMarkPaidSelectedGroups(column.items)}
+                        disabled={actionLoading || !selectedApprovedGroupKeys.length}
+                      >
+                        {actionLoading ? 'Saving...' : `Mark as Paid${selectedApprovedGroupKeys.length ? ` (${selectedApprovedGroupKeys.length})` : ''}`}
+                      </button>
+                    </>
+                  ) : null}
                   <span className={`${styles.reimbursementStatus} ${styles[`reimbursementStatus${column.key}`]}`.trim()}>
                     {column.badgeCount ?? column.items.length}
                   </span>
@@ -1844,9 +2042,18 @@ export default function ReimbursementClaimPage({
                     ? column.items.map((group) => (
                         <article key={group.key} className={styles.reimbursementCard}>
                           <div className={styles.reimbursementCardTop}>
-                            <div>
-                              <p className={styles.reimbursementCardNumber}>Approved Batch</p>
-                              <h3 className={styles.cellTitle}>{group.payee_account_name || '-'}</h3>
+                            <div className={styles.buttonRow}>
+                              <label className={styles.reimbursementSelectPill}>
+                                <input
+                                  type="checkbox"
+                                  checked={selectedApprovedGroupKeys.includes(group.key)}
+                                  onChange={() => toggleApprovedGroupSelection(group.key)}
+                                />
+                              </label>
+                              <div>
+                                <p className={styles.reimbursementCardNumber}>Approved Batch</p>
+                                <h3 className={styles.cellTitle}>{group.payee_account_name || '-'}</h3>
+                              </div>
                             </div>
                             <button
                               type="button"

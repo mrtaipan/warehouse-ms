@@ -43,11 +43,11 @@
 
 .headerActionsInline {
   display: grid;
-  grid-template-columns: minmax(180px, 260px) minmax(150px, 170px) minmax(170px, 210px) auto;
+  grid-template-columns: minmax(160px, 220px) minmax(128px, 150px) minmax(140px, 180px) auto;
   gap: 10px;
   align-items: end;
   justify-content: start;
-  width: min(100%, 900px);
+  width: min(100%, 980px);
 }
 
 .filterField {
@@ -110,13 +110,13 @@
 .select,
 .textarea {
   width: 100%;
-  min-height: 38px;
-  padding: 0 12px;
+  min-height: 34px;
+  padding: 0 10px;
   border-radius: 12px;
   border: 1px solid #dbe4f0;
   background: rgba(255, 255, 255, 0.96);
   color: #0f172a;
-  font-size: 13px;
+  font-size: 12px;
   outline: none;
 }
 
@@ -157,26 +157,26 @@
 }
 
 .compactPrimaryButton {
-  min-height: 36px;
-  padding: 0 12px;
+  min-height: 34px;
+  padding: 0 10px;
   border-radius: 11px;
   border: 0;
   background: linear-gradient(180deg, #0f172a 0%, #111827 100%);
   color: #ffffff;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 800;
   cursor: pointer;
   white-space: nowrap;
 }
 
 .compactApproveButton {
-  min-height: 36px;
-  padding: 0 12px;
+  min-height: 34px;
+  padding: 0 10px;
   border-radius: 11px;
   border: 1px solid #bbf7d0;
   background: #f0fdf4;
   color: #15803d;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 800;
   cursor: pointer;
   white-space: nowrap;
@@ -480,15 +480,19 @@
 
 .detailModal,
 .imageModal {
-  width: min(980px, calc(100vw - 32px));
   max-height: calc(100vh - 24px);
   overflow-y: auto;
   overflow-x: hidden;
 }
 
 .detailModal {
-  height: min(920px, calc(100vh - 24px));
-  min-height: 0;
+  width: min(1360px, calc(100vw - 24px));
+  height: auto;
+  min-height: min(860px, calc(100vh - 24px));
+}
+
+.imageModal {
+  width: min(1180px, calc(100vw - 24px));
 }
 
 .formGrid {

@@ -75,10 +75,10 @@ function refreshHrgaPages() {
 }
 
 export async function createPublicHoliday(formData) {
-  const { supabase, user } = await getActorContext()
+  const { supabase, isApprover } = await getActorContext()
 
-  if (!user || user.email?.toLowerCase() !== ADMIN_EMAIL) {
-    throw new Error('Only admin can add public holidays.')
+  if (!isApprover) {
+    throw new Error('Only HRGA can add public holidays.')
   }
 
   const holidayDate = String(formData.get('holiday_date') || '').trim()
@@ -100,6 +100,7 @@ export async function createPublicHoliday(formData) {
   }
 
   refreshHrgaPages()
+  return { ok: true, message: 'Public holiday saved.' }
 }
 
 export async function createPublicRequestLink(formData) {
@@ -256,10 +257,10 @@ async function generateEmployeeProfileId(supabase, groupValue) {
 }
 
 export async function createEmployeeProfile(formData) {
-  const { supabase, user } = await getActorContext()
+  const { supabase, isApprover } = await getActorContext()
 
-  if (!user || user.email?.toLowerCase() !== ADMIN_EMAIL) {
-    throw new Error('Only admin can add employee profiles.')
+  if (!isApprover) {
+    throw new Error('Only HRGA can add employee profiles.')
   }
 
   const displayName = String(formData.get('display_name') || '').trim()
@@ -287,13 +288,14 @@ export async function createEmployeeProfile(formData) {
 
   revalidatePath('/dashboard/human-resources')
   revalidatePath('/dashboard/user-access')
+  return { ok: true, message: 'Person saved successfully.' }
 }
 
 export async function updateEmployeeProfile(formData) {
-  const { supabase, user } = await getActorContext()
+  const { supabase, isApprover } = await getActorContext()
 
-  if (!user || user.email?.toLowerCase() !== ADMIN_EMAIL) {
-    throw new Error('Only admin can update employee profiles.')
+  if (!isApprover) {
+    throw new Error('Only HRGA can update employee profiles.')
   }
 
   const profileId = String(formData.get('profile_id') || '').trim()
@@ -327,6 +329,7 @@ export async function updateEmployeeProfile(formData) {
 
   revalidatePath('/dashboard/human-resources')
   revalidatePath('/dashboard/user-access')
+  return { ok: true, message: 'Person saved successfully.' }
 }
 
 export async function createAnnouncementBroadcast(formData) {
