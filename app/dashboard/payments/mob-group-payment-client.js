@@ -1,21 +1,40 @@
-﻿'use client'
+'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { createClient } from '@/utils/supabase/browser'
+import { ADMIN_EMAIL } from '@/utils/permissions'
 import { getProfileByAuthenticatedUser } from '@/utils/user-profiles'
 
-import useArklineAccess from '../use-arkline-access'
-import shellStyles from '../arkline.module.css'
-import styles from './financial-management.module.css'
+import shellStyles from '../arkline/arkline.module.css'
+import styles from '../arkline/financial-management/financial-management.module.css'
 
 const supabase = createClient()
-const PAYMENT_REQUEST_BUCKET = 'arkline-payments'
-function createDraft() {
+const PAYMENT_BUCKET = 'mob-payments'
+
+async function getCurrentUserSafely() {
+  const userResult = await supabase.auth.getUser()
+  if (!userResult.error) {
+    return userResult
+  }
+
+  if (!String(userResult.error.message || '').includes('was released because another request stole it')) {
+    return userResult
+  }
+
+  const sessionResult = await supabase.auth.getSession()
+  if (sessionResult.error) {
+    return userResult
+  }
+
   return {
-    payment_basis: 'NON_PO_BASED',
-    po_source_type: 'GARMENT',
-    linked_po_id: '',
+    data: { user: sessionResult.data.session?.user ?? null },
+    error: null,
+  }
+}
+
+function createDraft(profile = {}) {
+  return {
     invoice_number: '',
     category_id: '',
     amount: '',
@@ -25,27 +44,6 @@ function createDraft() {
     account_number: '',
     attachments: [],
   }
-}
-
-function formatCurrency(value) {
-  return new Intl.NumberFormat('id-ID', {
-    style: 'currency',
-    currency: 'IDR',
-    maximumFractionDigits: 0,
-  }).format(Number(value || 0))
-}
-
-function formatDateTime(value) {
-  if (!value) return '-'
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return '-'
-  return new Intl.DateTimeFormat('en-GB', {
-    day: '2-digit',
-    month: 'short',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  }).format(date)
 }
 
 function sanitizeFileName(value) {
@@ -76,51 +74,25 @@ function formatNumberInput(value) {
   return new Intl.NumberFormat('id-ID', { maximumFractionDigits: 0 }).format(Number(digits))
 }
 
-function getPoSortNumber(value) {
-  const text = String(value || '').trim().toUpperCase()
-  const match = text.match(/PO-(\d+)/)
-  if (match) return Number(match[1])
-  const fallback = text.match(/(\d+)/)
-  return fallback ? Number(fallback[1]) : Number.MAX_SAFE_INTEGER
+function formatCurrency(value) {
+  return new Intl.NumberFormat('id-ID', {
+    style: 'currency',
+    currency: 'IDR',
+    maximumFractionDigits: 0,
+  }).format(Number(value || 0))
 }
 
-function normalizeRequest(row) {
-  return {
-    id: row?.id || '',
-    payment_basis: row?.payment_basis || 'NON_PO_BASED',
-    po_source_type: row?.po_source_type || 'GARMENT',
-    po_db_id: row?.po_db_id || null,
-    po_number: row?.po_number || '',
-    supplier_name_snapshot: row?.supplier_name_snapshot || '',
-    invoice_number: row?.invoice_number || '',
-    category_id: row?.category_id ? String(row.category_id) : '',
-    category_name: row?.category?.name || '',
-    amount: Number(row?.amount || 0),
-    notes: row?.notes || '',
-    account_name: row?.account_name || '',
-    bank_name: row?.bank_name || '',
-    account_number: row?.account_number || '',
-    status: row?.status || 'SUBMITTED',
-    created_by: row?.created_by || '',
-    created_by_display_name: row?.created_by_display_name || '',
-    approved_by: row?.approved_by || '',
-    approved_by_display_name: row?.approved_by_display_name || '',
-    approved_at: row?.approved_at || '',
-    paid_by: row?.paid_by || '',
-    paid_by_display_name: row?.paid_by_display_name || '',
-    paid_at: row?.paid_at || '',
-    created_at: row?.created_at || '',
-    updated_at: row?.updated_at || '',
-    attachments: Array.isArray(row?.attachments) ? row.attachments : [],
-  }
-}
-
-function getAttachmentKind(attachment) {
-  return String(attachment?.storage_path || '').includes('/payment-proof/') ? 'PAYMENT_PROOF' : 'SUBMISSION_ATTACHMENT'
-}
-
-function getAttachmentsByKind(request, kind) {
-  return (request?.attachments || []).filter((attachment) => getAttachmentKind(attachment) === kind)
+function formatDateTime(value) {
+  if (!value) return '-'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return '-'
+  return new Intl.DateTimeFormat('en-GB', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(date)
 }
 
 function fallbackDisplayName(value) {
@@ -139,6 +111,39 @@ function isImageAttachment(attachment) {
   return String(attachment?.mime_type || '').toLowerCase().startsWith('image/')
 }
 
+function normalizeRequest(row) {
+  return {
+    id: row?.id || '',
+    invoice_number: row?.invoice_number || '',
+    category_id: row?.category_id ? String(row.category_id) : '',
+    category_name: row?.category?.name || '',
+    amount: Number(row?.amount || 0),
+    notes: row?.notes || '',
+    account_name: row?.account_name || '',
+    bank_name: row?.bank_name || '',
+    account_number: row?.account_number || '',
+    status: row?.status || 'SUBMITTED',
+    employee_name_snapshot: row?.employee_name_snapshot || '',
+    employee_email_snapshot: row?.employee_email_snapshot || '',
+    created_by: row?.created_by || '',
+    approved_by: row?.approved_by || '',
+    approved_at: row?.approved_at || '',
+    paid_by: row?.paid_by || '',
+    paid_at: row?.paid_at || '',
+    created_at: row?.created_at || '',
+    updated_at: row?.updated_at || '',
+    attachments: Array.isArray(row?.attachments) ? row.attachments : [],
+  }
+}
+
+function getAttachmentKind(attachment) {
+  return String(attachment?.storage_path || '').includes('/payment-proof/') ? 'PAYMENT_PROOF' : 'SUBMISSION_ATTACHMENT'
+}
+
+function getAttachmentsByKind(request, kind) {
+  return (request?.attachments || []).filter((attachment) => getAttachmentKind(attachment) === kind)
+}
+
 async function uploadRequestFiles({ request, files, uploadedBy, folder = 'submission' }) {
   const uploadedPaths = []
   const attachmentRows = []
@@ -151,13 +156,13 @@ async function uploadRequestFiles({ request, files, uploadedBy, folder = 'submis
     const fileName = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}-${safeName}`
     const storagePath = `${year}/${requestFolder}/${folder}/${fileName}`
 
-    const { error: uploadError } = await supabase.storage.from(PAYMENT_REQUEST_BUCKET).upload(storagePath, file, { upsert: false })
+    const { error: uploadError } = await supabase.storage.from(PAYMENT_BUCKET).upload(storagePath, file, { upsert: false })
     if (uploadError) throw new Error(uploadError.message)
 
     uploadedPaths.push(storagePath)
     attachmentRows.push({
       payment_id: request.id,
-      storage_bucket: PAYMENT_REQUEST_BUCKET,
+      storage_bucket: PAYMENT_BUCKET,
       storage_path: storagePath,
       file_name: file.name,
       mime_type: file.type || null,
@@ -169,22 +174,23 @@ async function uploadRequestFiles({ request, files, uploadedBy, folder = 'submis
   return { uploadedPaths, attachmentRows }
 }
 
-export default function ArklineFinancialManagementPage({
-  embedded = false,
+export default function MobGroupPaymentClient({
+  mode = 'self',
+  panelTitle = 'MOB Group Payment Submission',
+  panelSubtitle = '',
   showHeader = true,
-  headerEyebrow = 'Arkline',
-  headerTitle = 'Payment Submission',
-  allowCreateOverride = null,
-  hrgaView = false,
-} = {}) {
-  const { loading: accessLoading, access, role } = useArklineAccess()
+  allowCreate = false,
+  hideHeaderCopy = false,
+  embedded = false,
+  createLabel = 'New Request',
+}) {
+  const attachmentInputRef = useRef(null)
+  const paymentProofInputRef = useRef(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [actionLoading, setActionLoading] = useState(false)
   const [profile, setProfile] = useState(null)
   const [requests, setRequests] = useState([])
-  const [poOptions, setPoOptions] = useState([])
-  const [materialPoOptions, setMaterialPoOptions] = useState([])
   const [categories, setCategories] = useState([])
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('ALL')
@@ -193,29 +199,18 @@ export default function ArklineFinancialManagementPage({
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [draft, setDraft] = useState(createDraft())
   const [editingRequest, setEditingRequest] = useState(null)
-  const [existingDraftAttachments, setExistingDraftAttachments] = useState([])
-  const [removedDraftAttachmentIds, setRemovedDraftAttachmentIds] = useState([])
   const [selectedRequest, setSelectedRequest] = useState(null)
   const [imagePreview, setImagePreview] = useState(null)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
   const [detailError, setDetailError] = useState('')
   const [paymentProofFiles, setPaymentProofFiles] = useState([])
-  const attachmentInputRef = useRef(null)
-  const paymentProofInputRef = useRef(null)
+  const [canApprove, setCanApprove] = useState(false)
+  const [canPay, setCanPay] = useState(false)
 
-  const canView = hrgaView ? true : access.financialManagement || access.financialManagementPaymentSubmissionView
-  const canSubmitBase =
-    access.financialManagementPaymentSubmissionView ||
-    access.financialManagementPaymentSubmissionAdd ||
-    access.financialManagementPaymentSubmissionEdit
-  const canSubmit = allowCreateOverride === null ? (hrgaView ? false : canSubmitBase) : Boolean(allowCreateOverride)
-  const canPay = hrgaView ? role === 'admin' || role === 'hrga_approver' : role === 'admin'
-  const canApprove = hrgaView ? role === 'admin' || role === 'hrga_approver' : role === 'admin'
+  const hrgaMode = mode === 'hrga'
 
-  const loadWorkspace = useCallback(async (options = {}) => {
-    const { silent = false } = options
-
+  const loadWorkspace = useCallback(async (silent = false) => {
     if (!silent) {
       setLoading(true)
       setError('')
@@ -224,7 +219,7 @@ export default function ArklineFinancialManagementPage({
     const {
       data: { user },
       error: authError,
-    } = await supabase.auth.getUser()
+    } = await getCurrentUserSafely()
 
     if (authError) {
       setError(authError.message)
@@ -233,15 +228,16 @@ export default function ArklineFinancialManagementPage({
     }
 
     if (!user) {
-      setError('You need to sign in again to open financial management.')
+      setError('You need to sign in again to open MOB payment submission.')
       if (!silent) setLoading(false)
       return
     }
 
+    const isAdmin = user.email?.toLowerCase() === ADMIN_EMAIL
     const { data: profileRow, error: profileError } = await getProfileByAuthenticatedUser(
       supabase,
       user,
-      'id, email, display_name, role'
+      'id, authenticated_id, email, display_name, role, reimbursement_bank_name, reimbursement_account_name, reimbursement_account_number'
     )
 
     if (profileError) {
@@ -250,77 +246,66 @@ export default function ArklineFinancialManagementPage({
       return
     }
 
-    const [
-      { data: paymentRows, error: paymentError },
-      { data: poRows, error: poError },
-      { data: materialPoRows, error: materialPoError },
-      { data: categoryRows, error: categoryError },
-    ] = await Promise.all([
+    const role = String(profileRow?.role || '').trim().toLowerCase()
+    const canManageHrga = isAdmin || role === 'hrga' || role === 'hrga_approver'
+
+    const [{ data: paymentRows, error: paymentError }, { data: categoryRows, error: categoryError }, { data: profileRows }] = await Promise.all([
       (() => {
         let paymentQuery = supabase
-          .from('arkline_payment')
+          .from('mob_payment')
           .select(
-          `
-            id,
-            payment_basis,
-            po_source_type,
-            po_db_id,
-            po_number,
-            supplier_name_snapshot,
-            invoice_number,
-            category_id,
-            amount,
-            notes,
-            account_name,
-            bank_name,
-            account_number,
-            status,
-            created_by,
-            approved_by,
-            approved_at,
-            paid_by,
-            paid_at,
-            created_at,
-            updated_at,
-            category:dir_reimbursement_categories(id, name),
-            attachments:arkline_payment_attachments(
+            `
               id,
-              storage_bucket,
-              storage_path,
-              file_name,
-              mime_type,
-              file_size,
-              uploaded_by,
-              created_at
-            )
-          `
-        )
+              invoice_number,
+              category_id,
+              amount,
+              notes,
+              account_name,
+              bank_name,
+              account_number,
+              status,
+              employee_authenticated_id,
+              employee_name_snapshot,
+              employee_email_snapshot,
+              created_by,
+              approved_by,
+              approved_at,
+              paid_by,
+              paid_at,
+              created_at,
+              updated_at,
+              category:dir_reimbursement_categories(id, name),
+              attachments:mob_payment_attachments(
+                id,
+                storage_bucket,
+                storage_path,
+                file_name,
+                mime_type,
+                file_size,
+                uploaded_by,
+                created_at
+              )
+            `
+          )
           .order('created_at', { ascending: true })
 
-        if (!hrgaView && role !== 'admin') {
-          paymentQuery = paymentQuery.eq('created_by', String(profileRow?.email || user.email || '').trim().toLowerCase())
+        if (!hrgaMode) {
+          paymentQuery = paymentQuery.eq('employee_authenticated_id', user.id)
         }
 
         return paymentQuery
       })(),
-      supabase.from('arkline_pos').select('id, po_id, supplier_name, created_at').order('created_at', { ascending: false }),
-      supabase
-        .from('arkline_po_material_ordered')
-        .select('id, material_po_number, created_at')
-        .order('created_at', { ascending: false }),
       supabase.from('dir_reimbursement_categories').select('id, name, is_active').eq('is_active', true).order('id', { ascending: true }),
+      supabase.from('dir_user_profiles').select('email, display_name'),
     ])
 
-    if (paymentError || poError || materialPoError || categoryError) {
-      setError(paymentError?.message || poError?.message || materialPoError?.message || categoryError?.message || 'Failed to load payment request workspace.')
+    if (paymentError || categoryError) {
+      setError(paymentError?.message || categoryError?.message || 'Failed to load MOB payment submission.')
       if (!silent) setLoading(false)
       return
     }
 
-    let displayNameMap = new Map()
-    const { data: profileRows } = await supabase.from('dir_user_profiles').select('email, display_name')
-
-    displayNameMap = new Map(
+    const displayNameMap = new Map(
       (profileRows || [])
         .filter((item) => String(item.email || '').trim())
         .map((item) => [String(item.email || '').trim().toLowerCase(), String(item.display_name || '').trim()])
@@ -328,9 +313,14 @@ export default function ArklineFinancialManagementPage({
 
     setProfile({
       id: profileRow?.id || '',
-      email: user.email?.toLowerCase() || '',
+      authenticated_id: profileRow?.authenticated_id || user.id,
+      email: String(profileRow?.email || user.email || '').toLowerCase(),
       display_name:
         profileRow?.display_name || user.user_metadata?.full_name || user.user_metadata?.name || user.email?.split('@')[0] || '',
+      reimbursement_bank_name: profileRow?.reimbursement_bank_name || '',
+      reimbursement_account_name: profileRow?.reimbursement_account_name || '',
+      reimbursement_account_number: profileRow?.reimbursement_account_number || '',
+      role: profileRow?.role || '',
     })
     setRequests(
       (paymentRows || []).map((item) => {
@@ -338,63 +328,32 @@ export default function ArklineFinancialManagementPage({
         return {
           ...normalized,
           created_by_display_name:
-            displayNameMap.get(String(normalized.created_by || '').trim().toLowerCase()) ||
-            (String(normalized.created_by || '').trim().toLowerCase() === String(user.email || '').trim().toLowerCase()
-              ? String(profileRow?.display_name || '').trim()
-              : '') ||
-            fallbackDisplayName(normalized.created_by),
-          paid_by_display_name:
-            displayNameMap.get(String(normalized.paid_by || '').trim().toLowerCase()) ||
-            (String(normalized.paid_by || '').trim().toLowerCase() === String(user.email || '').trim().toLowerCase()
-              ? String(profileRow?.display_name || '').trim()
-              : '') ||
-            fallbackDisplayName(normalized.paid_by),
+            displayNameMap.get(String(normalized.created_by || '').trim().toLowerCase()) || fallbackDisplayName(normalized.created_by),
           approved_by_display_name:
-            displayNameMap.get(String(normalized.approved_by || '').trim().toLowerCase()) ||
-            (String(normalized.approved_by || '').trim().toLowerCase() === String(user.email || '').trim().toLowerCase()
-              ? String(profileRow?.display_name || '').trim()
-              : '') ||
-            fallbackDisplayName(normalized.approved_by),
+            displayNameMap.get(String(normalized.approved_by || '').trim().toLowerCase()) || fallbackDisplayName(normalized.approved_by),
+          paid_by_display_name:
+            displayNameMap.get(String(normalized.paid_by || '').trim().toLowerCase()) || fallbackDisplayName(normalized.paid_by),
         }
       })
     )
-    setPoOptions(
-      (poRows || [])
-        .map((item) => ({
-          id: String(item.id),
-          poNumber: String(item.po_id || '').trim().toUpperCase(),
-          supplierName: String(item.supplier_name || '').trim().toUpperCase(),
-        }))
-        .sort((left, right) => {
-          const leftNumber = getPoSortNumber(left.poNumber)
-          const rightNumber = getPoSortNumber(right.poNumber)
-          if (leftNumber !== rightNumber) return leftNumber - rightNumber
-          return left.poNumber.localeCompare(right.poNumber, undefined, { sensitivity: 'base' })
-        })
-    )
-    setMaterialPoOptions(
-      (materialPoRows || []).map((item) => ({
-        id: String(item.id),
-        poNumber: String(item.material_po_number || '').trim().toUpperCase(),
-      }))
-    )
     setCategories((categoryRows || []).map((item) => ({ id: String(item.id), name: item.name })))
+    setCanApprove(hrgaMode && canManageHrga)
+    setCanPay(hrgaMode && canManageHrga)
     if (!silent) setLoading(false)
-  }, [hrgaView, role])
+  }, [hrgaMode])
 
   useEffect(() => {
     void loadWorkspace()
   }, [loadWorkspace])
 
   useEffect(() => {
-    if (accessLoading || !canView) return undefined
-
+    if (loading) return undefined
     const intervalId = window.setInterval(() => {
-      void loadWorkspace({ silent: true })
+      if (saving || actionLoading) return
+      void loadWorkspace(true)
     }, 30000)
-
     return () => window.clearInterval(intervalId)
-  }, [accessLoading, canView, loadWorkspace])
+  }, [actionLoading, loadWorkspace, loading, saving])
 
   const filteredRequests = useMemo(() => {
     const keyword = search.trim().toUpperCase()
@@ -403,8 +362,8 @@ export default function ArklineFinancialManagementPage({
         !keyword ||
         [
           item.invoice_number,
-          item.po_number,
-          item.supplier_name_snapshot,
+          item.employee_name_snapshot,
+          item.employee_email_snapshot,
           item.category_name,
           item.account_name,
           item.bank_name,
@@ -425,37 +384,27 @@ export default function ArklineFinancialManagementPage({
   const requesterOptions = useMemo(
     () =>
       Array.from(
-        requests.reduce((map, item) => {
-          const requesterKey = String(item.created_by || '').trim().toLowerCase()
-          if (!requesterKey) return map
-          if (!map.has(requesterKey)) {
-            map.set(requesterKey, {
-              value: item.created_by,
-              label: item.created_by_display_name || fallbackDisplayName(item.created_by),
-            })
-          }
-          return map
-        }, new Map()).values()
-      ).sort((left, right) => left.label.localeCompare(right.label, undefined, { sensitivity: 'base' })),
+        new Map(
+          requests
+            .filter((item) => String(item.created_by || '').trim())
+            .map((item) => [
+              item.created_by,
+              {
+                value: item.created_by,
+                label: item.created_by_display_name || item.employee_name_snapshot || fallbackDisplayName(item.created_by),
+              },
+            ])
+        ).values()
+      ).sort((left, right) => left.label.localeCompare(right.label)),
     [requests]
   )
 
-  const selectableRequests = useMemo(
-    () => filteredRequests.filter((item) => item.status === 'SUBMITTED'),
-    [filteredRequests]
-  )
-
+  const selectableRequests = useMemo(() => filteredRequests.filter((item) => item.status === 'SUBMITTED'), [filteredRequests])
   const allSelectableChecked = selectableRequests.length > 0 && selectableRequests.every((item) => selectedRequestIds.includes(item.id))
-
-  useEffect(() => {
-    setSelectedRequestIds((prev) => prev.filter((id) => filteredRequests.some((item) => item.id === id && item.status === 'SUBMITTED')))
-  }, [filteredRequests])
 
   const summary = useMemo(
     () => ({
-      outstanding: requests
-        .filter((item) => item.status !== 'PAID')
-        .reduce((sum, item) => sum + Number(item.amount || 0), 0),
+      outstanding: requests.filter((item) => item.status !== 'PAID').reduce((sum, item) => sum + Number(item.amount || 0), 0),
     }),
     [requests]
   )
@@ -463,10 +412,8 @@ export default function ArklineFinancialManagementPage({
   function closeCreateModal() {
     if (saving) return
     setShowCreateModal(false)
-    setDraft(createDraft())
+    setDraft(createDraft(profile))
     setEditingRequest(null)
-    setExistingDraftAttachments([])
-    setRemovedDraftAttachmentIds([])
   }
 
   function openRequestDetail(item) {
@@ -485,9 +432,6 @@ export default function ArklineFinancialManagementPage({
   function openEditRequest(item) {
     setEditingRequest(item)
     setDraft({
-      payment_basis: item.payment_basis || 'NON_PO_BASED',
-      po_source_type: item.po_source_type || 'GARMENT',
-      linked_po_id: item.po_db_id ? String(item.po_db_id) : '',
       invoice_number: item.invoice_number || '',
       category_id: item.category_id || '',
       amount: formatNumberInput(item.amount || ''),
@@ -497,8 +441,6 @@ export default function ArklineFinancialManagementPage({
       account_number: item.account_number || '',
       attachments: [],
     })
-    setExistingDraftAttachments(getAttachmentsByKind(item, 'SUBMISSION_ATTACHMENT'))
-    setRemovedDraftAttachmentIds([])
     setShowCreateModal(true)
     setSelectedRequest(null)
     setDetailError('')
@@ -510,11 +452,6 @@ export default function ArklineFinancialManagementPage({
 
   function removeDraftFile(targetIndex) {
     setDraft((prev) => ({ ...prev, attachments: prev.attachments.filter((_, index) => index !== targetIndex) }))
-  }
-
-  function removeExistingDraftAttachment(attachmentId) {
-    setExistingDraftAttachments((prev) => prev.filter((item) => item.id !== attachmentId))
-    setRemovedDraftAttachmentIds((prev) => [...prev, attachmentId])
   }
 
   function appendPaymentProofFiles(files) {
@@ -529,23 +466,13 @@ export default function ArklineFinancialManagementPage({
     setError('')
     setSuccess('')
 
-    if (!profile?.email) {
+    if (!profile?.email || !profile?.authenticated_id) {
       setError('Your profile is not ready yet. Please refresh and try again.')
       return
     }
 
-    if (draft.payment_basis === 'PO_BASED' && !draft.linked_po_id) {
-      setError(`Choose a ${draft.po_source_type === 'MATERIAL' ? 'material' : 'garment'} PO first for PO based payment.`)
-      return
-    }
-
-    if (!String(draft.invoice_number || '').trim() || !String(draft.amount || '').trim()) {
-      setError(`Invoice number and payment amount are required${draft.payment_basis === 'NON_PO_BASED' ? ', plus category' : ''}.`)
-      return
-    }
-
-    if (draft.payment_basis === 'NON_PO_BASED' && !String(draft.category_id || '').trim()) {
-      setError('Category is required for non-PO based payment.')
+    if (!String(draft.invoice_number || '').trim() || !String(draft.amount || '').trim() || !String(draft.category_id || '').trim()) {
+      setError('Invoice number, payment amount, and category are required.')
       return
     }
 
@@ -559,69 +486,37 @@ export default function ArklineFinancialManagementPage({
       return
     }
 
-    const selectedPo =
-      draft.payment_basis === 'PO_BASED'
-        ? draft.po_source_type === 'MATERIAL'
-          ? materialPoOptions.find((item) => item.id === draft.linked_po_id)
-          : poOptions.find((item) => item.id === draft.linked_po_id)
-        : null
-
     setSaving(true)
     const uploadedPaths = []
 
     try {
-        const payload = {
-        payment_basis: draft.payment_basis,
-        po_source_type: draft.payment_basis === 'PO_BASED' ? draft.po_source_type : null,
-        po_db_id: draft.payment_basis === 'PO_BASED' && draft.linked_po_id ? Number(draft.linked_po_id) : null,
-        po_number: draft.payment_basis === 'PO_BASED' ? selectedPo?.poNumber || null : null,
-        supplier_name_snapshot:
-          draft.payment_basis === 'PO_BASED'
-            ? draft.po_source_type === 'MATERIAL'
-              ? selectedPo?.poNumber || null
-              : selectedPo?.supplierName || null
-            : null,
+      const payload = {
         invoice_number: normalizeUppercase(draft.invoice_number).trim(),
-        category_id: draft.payment_basis === 'PO_BASED' ? null : Number(draft.category_id),
+        category_id: Number(draft.category_id),
         amount: Number(normalizeDigits(draft.amount)),
         notes: String(draft.notes || '').trim() || null,
-        account_name: normalizeUppercase(draft.account_name).trim(),
+        account_name: normalizeLettersUppercase(draft.account_name).trim(),
         bank_name: normalizeUppercase(draft.bank_name).trim(),
         account_number: normalizeDigits(draft.account_number).trim(),
         status: 'SUBMITTED',
+        employee_authenticated_id: profile.authenticated_id,
+        employee_name_snapshot: profile.display_name || fallbackDisplayName(profile.email),
+        employee_email_snapshot: profile.email,
         created_by: profile.email,
       }
 
       let targetRequest = editingRequest
 
       if (editingRequest) {
-        const { error: updateError } = await supabase.from('arkline_payment').update(payload).eq('id', editingRequest.id)
+        const { error: updateError } = await supabase.from('mob_payment').update(payload).eq('id', editingRequest.id)
         if (updateError) throw new Error(updateError.message)
-
-        if (removedDraftAttachmentIds.length) {
-          const attachmentsToDelete = (editingRequest.attachments || []).filter((item) => removedDraftAttachmentIds.includes(item.id))
-          const storagePathsToDelete = attachmentsToDelete.map((item) => item.storage_path).filter(Boolean)
-
-          if (storagePathsToDelete.length) {
-            const { error: storageDeleteError } = await supabase.storage.from(PAYMENT_REQUEST_BUCKET).remove(storagePathsToDelete)
-            if (storageDeleteError) throw new Error(storageDeleteError.message)
-          }
-
-          const { error: attachmentDeleteError } = await supabase.from('arkline_payment_attachments').delete().in('id', removedDraftAttachmentIds)
-          if (attachmentDeleteError) throw new Error(attachmentDeleteError.message)
-        }
       } else {
         const { data: insertedRequest, error: insertError } = await supabase
-          .from('arkline_payment')
+          .from('mob_payment')
           .insert(payload)
           .select(
             `
               id,
-              payment_basis,
-              po_source_type,
-              po_db_id,
-              po_number,
-              supplier_name_snapshot,
               invoice_number,
               category_id,
               amount,
@@ -630,6 +525,8 @@ export default function ArklineFinancialManagementPage({
               bank_name,
               account_number,
               status,
+              employee_name_snapshot,
+              employee_email_snapshot,
               created_by,
               approved_by,
               approved_at,
@@ -638,7 +535,7 @@ export default function ArklineFinancialManagementPage({
               created_at,
               updated_at,
               category:dir_reimbursement_categories(id, name),
-              attachments:arkline_payment_attachments(
+              attachments:mob_payment_attachments(
                 id,
                 storage_bucket,
                 storage_path,
@@ -653,65 +550,53 @@ export default function ArklineFinancialManagementPage({
           .single()
 
         if (insertError) throw new Error(insertError.message)
-        targetRequest = insertedRequest
+        targetRequest = normalizeRequest(insertedRequest)
       }
 
-      if (draft.attachments.length && targetRequest) {
+      if (draft.attachments.length) {
         const uploadResult = await uploadRequestFiles({
           request: targetRequest,
           files: draft.attachments,
           uploadedBy: profile.email,
           folder: 'submission',
         })
-
         uploadedPaths.push(...uploadResult.uploadedPaths)
 
-        const { error: attachmentInsertError } = await supabase.from('arkline_payment_attachments').insert(uploadResult.attachmentRows)
+        const { error: attachmentInsertError } = await supabase.from('mob_payment_attachments').insert(uploadResult.attachmentRows)
         if (attachmentInsertError) throw new Error(attachmentInsertError.message)
       }
 
-      setSuccess(
-        editingRequest
-          ? `Payment request ${payload.invoice_number} updated.`
-          : `Payment request ${payload.invoice_number} submitted.`
-      )
-      setShowCreateModal(false)
-      setDraft(createDraft())
-      setEditingRequest(null)
-      setExistingDraftAttachments([])
-      setRemovedDraftAttachmentIds([])
-      await loadWorkspace()
+      closeCreateModal()
+      await loadWorkspace(true)
+      setSuccess(editingRequest ? 'MOB payment request updated.' : 'MOB payment request submitted.')
     } catch (saveError) {
       if (uploadedPaths.length) {
-        await supabase.storage.from(PAYMENT_REQUEST_BUCKET).remove(uploadedPaths)
+        await supabase.storage.from(PAYMENT_BUCKET).remove(uploadedPaths)
       }
-      setError(saveError.message || 'Failed to submit payment request.')
+      setError(saveError.message || 'Failed to submit MOB payment request.')
     } finally {
       setSaving(false)
     }
   }
 
   async function handleDeleteRequest(request) {
-    if (!request || request.status !== 'SUBMITTED') return
+    if (!request) return
+    if (typeof window !== 'undefined' && !window.confirm(`Delete request ${request.invoice_number}?`)) return
 
     setActionLoading(true)
     setDetailError('')
-    setSuccess('')
-
-    const storagePaths = (request.attachments || []).map((item) => item.storage_path).filter(Boolean)
-
     try {
-      if (storagePaths.length) {
-        const { error: storageError } = await supabase.storage.from(PAYMENT_REQUEST_BUCKET).remove(storagePaths)
-        if (storageError) throw new Error(storageError.message)
+      const attachmentPaths = (request.attachments || []).map((item) => item.storage_path).filter(Boolean)
+      if (attachmentPaths.length) {
+        await supabase.storage.from(PAYMENT_BUCKET).remove(attachmentPaths)
       }
 
-      const { error: deleteError } = await supabase.from('arkline_payment').delete().eq('id', request.id)
+      const { error: deleteError } = await supabase.from('mob_payment').delete().eq('id', request.id)
       if (deleteError) throw new Error(deleteError.message)
 
-      setSuccess(`Payment request ${request.invoice_number} deleted.`)
       closeRequestDetail()
-      await loadWorkspace()
+      await loadWorkspace(true)
+      setSuccess(`Request ${request.invoice_number} deleted.`)
     } catch (deleteError) {
       setDetailError(deleteError.message || 'Failed to delete payment request.')
     } finally {
@@ -720,27 +605,24 @@ export default function ArklineFinancialManagementPage({
   }
 
   async function handleApproveRequest(request) {
-    if (!canApprove || !request || request.status !== 'SUBMITTED') return
+    if (!request) return
 
     setActionLoading(true)
     setDetailError('')
-    setSuccess('')
-
     try {
-      const { error: updateError } = await supabase
-        .from('arkline_payment')
+      const { error: approveError } = await supabase
+        .from('mob_payment')
         .update({
           status: 'APPROVED',
+          approved_by: profile?.email || '',
           approved_at: new Date().toISOString(),
-          approved_by: profile?.email || null,
         })
         .eq('id', request.id)
 
-      if (updateError) throw new Error(updateError.message)
-
-      setSuccess(`Payment request ${request.invoice_number} approved.`)
+      if (approveError) throw new Error(approveError.message)
+      await loadWorkspace(true)
       closeRequestDetail()
-      await loadWorkspace()
+      setSuccess(`Request ${request.invoice_number} approved.`)
     } catch (approveError) {
       setDetailError(approveError.message || 'Failed to approve payment request.')
     } finally {
@@ -765,20 +647,20 @@ export default function ArklineFinancialManagementPage({
         return
       }
 
-      const { error: updateError } = await supabase
-        .from('arkline_payment')
+      const { error: approveError } = await supabase
+        .from('mob_payment')
         .update({
           status: 'APPROVED',
+          approved_by: profile?.email || '',
           approved_at: new Date().toISOString(),
-          approved_by: profile?.email || null,
         })
         .in('id', selectedSubmittedIds)
 
-      if (updateError) throw new Error(updateError.message)
+      if (approveError) throw new Error(approveError.message)
 
       setSelectedRequestIds([])
+      await loadWorkspace(true)
       setSuccess(`${selectedSubmittedIds.length} payment request${selectedSubmittedIds.length > 1 ? 's' : ''} approved.`)
-      await loadWorkspace({ silent: true })
     } catch (approveError) {
       setError(approveError.message || 'Failed to approve selected payment requests.')
     } finally {
@@ -792,6 +674,7 @@ export default function ArklineFinancialManagementPage({
 
   function toggleSelectAll() {
     if (!selectableRequests.length) return
+
     setSelectedRequestIds((prev) => {
       if (allSelectableChecked) {
         return prev.filter((id) => !selectableRequests.some((item) => item.id === id))
@@ -804,12 +687,9 @@ export default function ArklineFinancialManagementPage({
   }
 
   async function handleMarkPaid(request) {
-    if (!request || request.status !== 'APPROVED') return
-
+    if (!request) return
     setActionLoading(true)
     setDetailError('')
-    setSuccess('')
-
     const uploadedPaths = []
 
     try {
@@ -817,34 +697,32 @@ export default function ArklineFinancialManagementPage({
         const uploadResult = await uploadRequestFiles({
           request,
           files: paymentProofFiles,
-          uploadedBy: profile?.email || null,
+          uploadedBy: profile?.email || '',
           folder: 'payment-proof',
         })
-
         uploadedPaths.push(...uploadResult.uploadedPaths)
 
-        const { error: attachmentInsertError } = await supabase.from('arkline_payment_attachments').insert(uploadResult.attachmentRows)
+        const { error: attachmentInsertError } = await supabase.from('mob_payment_attachments').insert(uploadResult.attachmentRows)
         if (attachmentInsertError) throw new Error(attachmentInsertError.message)
       }
 
-      const { error: updateError } = await supabase
-        .from('arkline_payment')
+      const { error: paidError } = await supabase
+        .from('mob_payment')
         .update({
           status: 'PAID',
+          paid_by: profile?.email || '',
           paid_at: new Date().toISOString(),
-          paid_by: profile?.email || null,
         })
         .eq('id', request.id)
 
-      if (updateError) throw new Error(updateError.message)
+      if (paidError) throw new Error(paidError.message)
 
-      setSuccess(`Payment request ${request.invoice_number} marked as paid.`)
+      await loadWorkspace(true)
       closeRequestDetail()
-      await loadWorkspace()
+      setSuccess(`Request ${request.invoice_number} marked as paid.`)
     } catch (paymentError) {
       if (uploadedPaths.length) {
-        await supabase.storage.from(PAYMENT_REQUEST_BUCKET).remove(uploadedPaths)
-        await supabase.from('arkline_payment_attachments').delete().in('storage_path', uploadedPaths)
+        await supabase.storage.from(PAYMENT_BUCKET).remove(uploadedPaths)
       }
       setDetailError(paymentError.message || 'Failed to mark payment request as paid.')
     } finally {
@@ -853,12 +731,10 @@ export default function ArklineFinancialManagementPage({
   }
 
   async function handleOpenAttachment(attachment) {
+    if (!attachment) return
+
     setDetailError('')
-
-    const { data, error: signedUrlError } = await supabase.storage
-      .from(attachment.storage_bucket)
-      .createSignedUrl(attachment.storage_path, 300)
-
+    const { data, error: signedUrlError } = await supabase.storage.from(attachment.storage_bucket).createSignedUrl(attachment.storage_path, 300)
     if (signedUrlError) {
       setDetailError(signedUrlError.message)
       return
@@ -866,137 +742,106 @@ export default function ArklineFinancialManagementPage({
 
     if (data?.signedUrl) {
       if (isImageAttachment(attachment)) {
-        setImagePreview({ src: data.signedUrl, name: attachment.file_name })
+        setImagePreview({ name: attachment.file_name, src: data.signedUrl })
         return
       }
-
       window.open(data.signedUrl, '_blank', 'noopener,noreferrer')
     }
   }
 
+  const selfModeRows = filteredRequests
+
   return (
-    <div className={embedded ? undefined : styles.page}>
-      <section className={styles.panel}>
+    <section className={styles.page}>
+      <div className={`${styles.panel} ${embedded ? styles.panelEmbedded : ''}`.trim()}>
         {showHeader ? (
           <div className={styles.header}>
-            <div className={styles.headerCopy}>
-              <p className={styles.eyebrow}>{headerEyebrow}</p>
-              <h1 className={styles.title}>{headerTitle}</h1>
-            </div>
+            {!hideHeaderCopy ? (
+              <div className={styles.headerCopy}>
+                <p className={styles.eyebrow}>{hrgaMode ? 'HRGA' : 'MyARKLIFE'}</p>
+                <h1 className={styles.title}>{panelTitle}</h1>
+                {panelSubtitle ? <p className={styles.subtitle}>{panelSubtitle}</p> : null}
+              </div>
+            ) : null}
 
-            <div className={styles.headerActionsInline}>
-              <div className={styles.searchField}>
-                <input
-                  className={styles.input}
-                  value={search}
-                  onChange={(event) => setSearch(event.target.value)}
-                  placeholder="Invoice, PO, payee, bank, or note"
-                />
-              </div>
-              <div className={styles.filterField}>
-                <select className={styles.select} value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
-                  <option value="ALL">All Status</option>
-                  <option value="SUBMITTED">Submitted</option>
-                  <option value="APPROVED">Approved</option>
-                  <option value="PAID">Paid</option>
-                </select>
-              </div>
-              <div className={styles.filterField}>
-                <select className={styles.select} value={requesterFilter} onChange={(event) => setRequesterFilter(event.target.value)}>
-                  <option value="ALL">All Requester</option>
-                  {requesterOptions.map((item) => (
-                    <option key={item.value} value={item.value}>
-                      {item.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className={styles.headerButtonGroup}>
-                {canApprove ? (
+            <div className={styles.headerActions}>
+              <div className={styles.headerActionsInline}>
+                <label className={styles.searchField}>
+                  <span>Search</span>
+                  <input className={styles.input} value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search invoice, person, bank" />
+                </label>
+                <label className={styles.filterField}>
+                  <span className={styles.label}>Requester</span>
+                  <select className={styles.select} value={requesterFilter} onChange={(event) => setRequesterFilter(event.target.value)}>
+                    <option value="ALL">All Requester</option>
+                    {requesterOptions.map((item) => (
+                      <option key={item.value} value={item.value}>
+                        {item.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className={styles.filterField}>
+                  <span className={styles.label}>Status</span>
+                  <select className={styles.select} value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
+                    <option value="ALL">All Status</option>
+                    <option value="SUBMITTED">Submitted</option>
+                    <option value="APPROVED">Approved</option>
+                    <option value="PAID">Paid</option>
+                  </select>
+                </label>
+                {allowCreate ? (
                   <button
                     type="button"
-                    className={styles.compactApproveButton}
-                    onClick={() => void handleApproveSelected()}
-                    disabled={actionLoading || !selectedRequestIds.length}
+                    className={styles.primaryButton}
+                    onClick={() => {
+                      setDraft(createDraft(profile))
+                      setEditingRequest(null)
+                      setShowCreateModal(true)
+                    }}
                   >
-                    {actionLoading ? 'Saving...' : `Approve${selectedRequestIds.length ? ` (${selectedRequestIds.length})` : ''}`}
+                    {createLabel}
                   </button>
-                ) : null}
-                {canSubmit ? (
-                  <button type="button" className={styles.compactPrimaryButton} onClick={() => setShowCreateModal(true)}>
-                    + New Request
-                  </button>
-                ) : null}
+                ) : (
+                  <div className={styles.headerButtonGroup}>
+                    {canApprove ? (
+                      <button
+                        type="button"
+                        className={styles.compactApproveButton}
+                        onClick={() => void handleApproveSelected()}
+                        disabled={actionLoading || !selectedRequestIds.length}
+                      >
+                        {actionLoading ? 'Saving...' : `Approve${selectedRequestIds.length ? ` (${selectedRequestIds.length})` : ''}`}
+                      </button>
+                    ) : null}
+                    <div className={styles.metricCard}>
+                      <span>Outstanding</span>
+                      <strong>{formatCurrency(summary.outstanding)}</strong>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           </div>
-        ) : (
-          <div className={styles.headerActionsInline} style={{ marginBottom: '14px' }}>
-            <div className={styles.searchField}>
-              <input
-                className={styles.input}
-                value={search}
-                onChange={(event) => setSearch(event.target.value)}
-                placeholder="Invoice, PO, payee, bank, or note"
-              />
-            </div>
-            <div className={styles.filterField}>
-              <select className={styles.select} value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
-                <option value="ALL">All Status</option>
-                <option value="SUBMITTED">Submitted</option>
-                <option value="APPROVED">Approved</option>
-                <option value="PAID">Paid</option>
-              </select>
-            </div>
-            <div className={styles.filterField}>
-              <select className={styles.select} value={requesterFilter} onChange={(event) => setRequesterFilter(event.target.value)}>
-                <option value="ALL">All Requester</option>
-                {requesterOptions.map((item) => (
-                  <option key={item.value} value={item.value}>
-                    {item.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className={styles.headerButtonGroup}>
-              {canApprove ? (
-                <button
-                  type="button"
-                  className={styles.compactApproveButton}
-                  onClick={() => void handleApproveSelected()}
-                  disabled={actionLoading || !selectedRequestIds.length}
-                >
-                  {actionLoading ? 'Saving...' : `Approve${selectedRequestIds.length ? ` (${selectedRequestIds.length})` : ''}`}
-                </button>
-              ) : null}
-              {canSubmit ? (
-                <button type="button" className={styles.compactPrimaryButton} onClick={() => setShowCreateModal(true)}>
-                  + New Request
-                </button>
-              ) : null}
-            </div>
-          </div>
-        )}
+        ) : null}
 
         {error ? <p className={shellStyles.errorText}>{error}</p> : null}
         {success ? <p className={shellStyles.successText}>{success}</p> : null}
 
-        {loading || accessLoading ? (
-          <div className={styles.emptyState}>Loading financial management...</div>
-        ) : !canView ? (
-          <div className={styles.emptyState}>Your account does not have Arkline financial management access yet.</div>
-        ) : (
-          <section className={styles.listSection}>
-            <div className={styles.columnHead}>
-              <div className={styles.outstandingWrap}>
-                <span className={styles.outstandingLabel}>Total Outstanding</span>
-                <strong className={styles.outstandingValue}>{formatCurrency(summary.outstanding)}</strong>
+        {loading ? (
+          <div className={shellStyles.emptyState}>Loading MOB payment submission...</div>
+        ) : hrgaMode ? (
+          filteredRequests.length ? (
+            <section className={styles.listSection}>
+              <div className={styles.columnHead}>
+                <div className={styles.outstandingWrap}>
+                  <span className={styles.outstandingLabel}>Total Outstanding</span>
+                  <strong className={styles.outstandingValue}>
+                    {formatCurrency(filteredRequests.filter((item) => item.status !== 'PAID').reduce((sum, item) => sum + Number(item.amount || 0), 0))}
+                  </strong>
+                </div>
               </div>
-            </div>
 
-            {!filteredRequests.length ? (
-              <div className={styles.emptyColumn}>No payment requests match this filter yet.</div>
-            ) : (
               <div className={styles.tableWrap}>
                 <table className={styles.table}>
                   <thead>
@@ -1033,7 +878,7 @@ export default function ArklineFinancialManagementPage({
                         </td>
                         <td>{item.invoice_number || '-'}</td>
                         <td>{formatDateTime(item.created_at)}</td>
-                        <td>{item.created_by_display_name || '-'}</td>
+                        <td>{item.employee_name_snapshot || fallbackDisplayName(item.employee_email_snapshot)}</td>
                         <td>{item.category_name || '-'}</td>
                         <td className={styles.amountCell}>{formatCurrency(item.amount)}</td>
                         <td>
@@ -1062,29 +907,37 @@ export default function ArklineFinancialManagementPage({
                                   >
                                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                                       <path d="m5 12 4.2 4.2L19 6.5" />
-                                  </svg>
-                                </button>
-                              ) : null}
-                              <button type="button" className={styles.iconButton} onClick={() => openRequestDetail(item)} title="View detail">
-                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                                  <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6Z" />
-                                  <circle cx="12" cy="12" r="3" />
-                                </svg>
-                              </button>
-                                <button type="button" className={styles.iconButton} onClick={() => openEditRequest(item)} title="Edit">
+                                    </svg>
+                                  </button>
+                                ) : null}
+                                <button type="button" className={styles.iconButton} onClick={() => openRequestDetail(item)} title="View detail">
                                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                                    <path d="M12 20h9" />
-                                    <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
+                                    <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6Z" />
+                                    <circle cx="12" cy="12" r="3" />
                                   </svg>
                                 </button>
-                                <button type="button" className={`${styles.iconButton} ${styles.iconButtonDanger}`.trim()} onClick={() => void handleDeleteRequest(item)} title="Delete">
+                              </>
+                            ) : item.status === 'APPROVED' ? (
+                              <>
+                                <button type="button" className={styles.iconButton} onClick={() => openRequestDetail(item)} title="View detail">
                                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                                    <path d="M3 6h18" />
-                                    <path d="M8 6V4h8v2" />
-                                    <path d="M19 6l-1 14H6L5 6" />
-                                    <path d="M10 11v6M14 11v6" />
+                                    <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6Z" />
+                                    <circle cx="12" cy="12" r="3" />
                                   </svg>
                                 </button>
+                                {canPay ? (
+                                  <button
+                                    type="button"
+                                    className={`${styles.iconButton} ${styles.iconButtonSuccess}`.trim()}
+                                    onClick={() => void handleMarkPaid(item)}
+                                    title="Mark as paid"
+                                  >
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                      <path d="M12 1v22" />
+                                      <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7H14.5a3.5 3.5 0 0 1 0 7H6" />
+                                    </svg>
+                                  </button>
+                                ) : null}
                               </>
                             ) : (
                               <button type="button" className={styles.iconButton} onClick={() => openRequestDetail(item)} title="View detail">
@@ -1101,10 +954,45 @@ export default function ArklineFinancialManagementPage({
                   </tbody>
                 </table>
               </div>
-            )}
-          </section>
+            </section>
+          ) : (
+            <div className={styles.emptyColumn}>No payment requests match this filter yet.</div>
+          )
+        ) : selfModeRows.length ? (
+          <div className={styles.tableWrap}>
+            <table className={styles.table}>
+              <thead>
+                <tr>
+                  <th>Invoice</th>
+                  <th>Category</th>
+                  <th>Amount</th>
+                  <th>Status</th>
+                  <th>Submitted</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {selfModeRows.map((item) => (
+                  <tr key={item.id}>
+                    <td>{item.invoice_number || '-'}</td>
+                    <td>{item.category_name || '-'}</td>
+                    <td>{formatCurrency(item.amount)}</td>
+                    <td>{item.status || '-'}</td>
+                    <td>{formatDateTime(item.created_at)}</td>
+                    <td>
+                      <button type="button" className={styles.tertiaryButton} onClick={() => openRequestDetail(item)}>
+                        View Detail
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className={styles.emptyColumn}>No payment request yet.</div>
         )}
-      </section>
+      </div>
 
       {showCreateModal ? (
         <div className={shellStyles.modalOverlay} onClick={closeCreateModal}>
@@ -1112,7 +1000,7 @@ export default function ArklineFinancialManagementPage({
             <div className={styles.modalHeader}>
               <div>
                 <p className={styles.eyebrow}>New Request</p>
-                <h2 className={styles.modalTitle}>Payment Request</h2>
+                <h2 className={styles.modalTitle}>MOB Group Payment Request</h2>
               </div>
               <div className={shellStyles.buttonRow}>
                 <button type="button" className={styles.primaryButton} onClick={() => void handleCreateRequest()} disabled={saving}>
@@ -1127,62 +1015,7 @@ export default function ArklineFinancialManagementPage({
             {error ? <p className={shellStyles.errorText}>{error}</p> : null}
 
             <div className={styles.formGrid}>
-              <div className={styles.field}>
-                <label className={styles.label}>Payment Basis *</label>
-                <select
-                  className={styles.select}
-                  value={draft.payment_basis}
-                  onChange={(event) =>
-                    setDraft((prev) => ({
-                      ...prev,
-                      payment_basis: event.target.value,
-                      po_source_type: 'GARMENT',
-                      linked_po_id: '',
-                      category_id: event.target.value === 'PO_BASED' ? '' : prev.category_id,
-                    }))
-                  }
-                >
-                  <option value="NON_PO_BASED">Non-PO Based</option>
-                  <option value="PO_BASED">PO Based</option>
-                </select>
-              </div>
-
-              {draft.payment_basis === 'PO_BASED' ? (
-                <>
-                  <div className={styles.field}>
-                    <label className={styles.label}>PO Type *</label>
-                    <select
-                      className={styles.select}
-                      value={draft.po_source_type}
-                      onChange={(event) => setDraft((prev) => ({ ...prev, po_source_type: event.target.value, linked_po_id: '' }))}
-                    >
-                      <option value="GARMENT">Garment</option>
-                      <option value="MATERIAL">Material</option>
-                    </select>
-                  </div>
-                </>
-              ) : null}
-
-              <div className={`${draft.payment_basis === 'PO_BASED' ? styles.formRowThree : styles.formRowThree} ${styles.fullSpan}`.trim()}>
-                {draft.payment_basis === 'PO_BASED' ? (
-                  <div className={styles.field}>
-                    <label className={styles.label}>{draft.po_source_type === 'MATERIAL' ? 'Material PO *' : 'Garment PO *'}</label>
-                    <select
-                      className={styles.select}
-                      value={draft.linked_po_id}
-                      onChange={(event) => setDraft((prev) => ({ ...prev, linked_po_id: event.target.value }))}
-                    >
-                      <option value="">{draft.po_source_type === 'MATERIAL' ? 'Choose material PO' : 'Choose garment PO'}</option>
-                      {(draft.po_source_type === 'MATERIAL' ? materialPoOptions : poOptions).map((item) => (
-                        <option key={item.id} value={item.id}>
-                          {item.poNumber}
-                          {item.supplierName ? ` - ${item.supplierName}` : ''}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                ) : null}
-
+              <div className={styles.formRowThree}>
                 <div className={styles.field}>
                   <label className={styles.label}>Invoice Number *</label>
                   <input
@@ -1192,23 +1025,17 @@ export default function ArklineFinancialManagementPage({
                   />
                 </div>
 
-                {draft.payment_basis === 'NON_PO_BASED' ? (
-                  <div className={styles.field}>
-                    <label className={styles.label}>Category *</label>
-                    <select
-                      className={styles.select}
-                      value={draft.category_id}
-                      onChange={(event) => setDraft((prev) => ({ ...prev, category_id: event.target.value }))}
-                    >
-                      <option value="">Choose category</option>
-                      {categories.map((item) => (
-                        <option key={item.id} value={item.id}>
-                          {item.name}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                ) : null}
+                <div className={styles.field}>
+                  <label className={styles.label}>Category *</label>
+                  <select className={styles.select} value={draft.category_id} onChange={(event) => setDraft((prev) => ({ ...prev, category_id: event.target.value }))}>
+                    <option value="">Choose category</option>
+                    {categories.map((item) => (
+                      <option key={item.id} value={item.id}>
+                        {item.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
 
                 <div className={styles.field}>
                   <label className={styles.label}>Amount to Pay *</label>
@@ -1222,13 +1049,13 @@ export default function ArklineFinancialManagementPage({
                 </div>
               </div>
 
-              <div className={`${styles.formRowThree} ${styles.fullSpan}`.trim()}>
+              <div className={styles.formRowThree}>
                 <div className={styles.field}>
                   <label className={styles.label}>Bank Name *</label>
                   <input
                     className={styles.input}
                     value={draft.bank_name}
-                    onChange={(event) => setDraft((prev) => ({ ...prev, bank_name: normalizeLettersUppercase(event.target.value) }))}
+                    onChange={(event) => setDraft((prev) => ({ ...prev, bank_name: normalizeUppercase(event.target.value) }))}
                     placeholder="Bank"
                   />
                 </div>
@@ -1271,25 +1098,6 @@ export default function ArklineFinancialManagementPage({
                   <span className={styles.attachmentPlus}>+</span>
                   <span>Add Attachment</span>
                 </button>
-                {existingDraftAttachments.length ? (
-                  <div className={styles.fileList}>
-                    {existingDraftAttachments.map((attachment) => (
-                      <span key={attachment.id} className={styles.fileChip}>
-                        <button
-                          type="button"
-                          className={styles.fileChipLink}
-                          onClick={() => void handleOpenAttachment(attachment)}
-                          title={attachment.file_name}
-                        >
-                          {attachment.file_name}
-                        </button>
-                        <button type="button" className={styles.fileChipRemove} onClick={() => removeExistingDraftAttachment(attachment.id)}>
-                          &times;
-                        </button>
-                      </span>
-                    ))}
-                  </div>
-                ) : null}
                 {draft.attachments.length ? (
                   <div className={styles.fileList}>
                     {draft.attachments.map((file, index) => (
@@ -1310,7 +1118,7 @@ export default function ArklineFinancialManagementPage({
                   className={styles.textarea}
                   value={draft.notes}
                   onChange={(event) => setDraft((prev) => ({ ...prev, notes: event.target.value }))}
-                  placeholder="Add finance context, due date, or supporting notes"
+                  placeholder="Add supporting notes"
                 />
               </div>
             </div>
@@ -1326,7 +1134,7 @@ export default function ArklineFinancialManagementPage({
                 <p className={styles.eyebrow}>Payment Request Detail</p>
                 <h2 className={styles.modalTitle}>{selectedRequest.invoice_number}</h2>
                 <p className={styles.subtitle}>
-                  {selectedRequest.payment_basis === 'PO_BASED' ? selectedRequest.po_number || 'PO Based' : 'NON-PO BASED'} • {selectedRequest.supplier_name_snapshot || selectedRequest.account_name}
+                  {selectedRequest.employee_name_snapshot || '-'} • {selectedRequest.employee_email_snapshot || selectedRequest.account_name}
                 </p>
               </div>
               <span
@@ -1365,7 +1173,7 @@ export default function ArklineFinancialManagementPage({
               </div>
               <div className={styles.metricCard}>
                 <span>Submitted By</span>
-                <strong>{selectedRequest.created_by_display_name || '-'}</strong>
+                <strong>{selectedRequest.employee_name_snapshot || selectedRequest.created_by_display_name || '-'}</strong>
               </div>
               <div className={styles.metricCard}>
                 <span>Approved By</span>
@@ -1459,15 +1267,15 @@ export default function ArklineFinancialManagementPage({
             {detailError ? <p className={shellStyles.errorText}>{detailError}</p> : null}
 
             <div className={shellStyles.buttonRow}>
-              {selectedRequest.status === 'SUBMITTED' ? (
-                <button type="button" className={styles.secondaryButton} onClick={() => openEditRequest(selectedRequest)} disabled={actionLoading}>
-                  Edit
-                </button>
-              ) : null}
-              {selectedRequest.status === 'SUBMITTED' ? (
-                <button type="button" className={styles.secondaryButton} onClick={() => void handleDeleteRequest(selectedRequest)} disabled={actionLoading}>
-                  Delete
-                </button>
+              {!hrgaMode && selectedRequest.status === 'SUBMITTED' ? (
+                <>
+                  <button type="button" className={styles.secondaryButton} onClick={() => openEditRequest(selectedRequest)} disabled={actionLoading}>
+                    Edit
+                  </button>
+                  <button type="button" className={styles.secondaryButton} onClick={() => void handleDeleteRequest(selectedRequest)} disabled={actionLoading}>
+                    Delete
+                  </button>
+                </>
               ) : null}
               {selectedRequest.status === 'SUBMITTED' && canApprove ? (
                 <button type="button" className={styles.primaryButton} onClick={() => void handleApproveRequest(selectedRequest)} disabled={actionLoading}>
@@ -1506,7 +1314,6 @@ export default function ArklineFinancialManagementPage({
           </div>
         </div>
       ) : null}
-    </div>
+    </section>
   )
 }
-

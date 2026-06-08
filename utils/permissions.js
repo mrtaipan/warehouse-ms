@@ -56,7 +56,7 @@ const BASE_PERMISSION_GROUPS = [
       { key: 'announcement', label: 'Announcement', description: 'Kelola broadcast pengumuman internal perusahaan.', actions: ['view', 'add', 'edit', 'delete'] },
       { key: 'people', label: 'People Directory', description: 'Lihat dan ubah data employee directory.', actions: ['view', 'edit'] },
       { key: 'public_request_links', label: 'Public Request Links', description: 'Buat dan kelola link request publik untuk employee.', actions: ['view', 'edit'] },
-      { key: 'benefits', label: 'Benefits Hub', description: 'Lihat benefit dan panel pendukung HRGA.', actions: ['view'] },
+      { key: 'benefits', label: 'Benefits Hub', description: 'Lihat panel leave request, birthday gift request, dan reimbursement claims untuk kebutuhan HRGA.', actions: ['view'] },
     ],
   },
   {
@@ -101,8 +101,8 @@ const BASE_PERMISSION_GROUPS = [
       { key: 'registry', label: 'Registry Storage', description: 'Kelola pencatatan penempatan stok ke lokasi storage.', actions: ['view', 'add', 'edit', 'delete'] },
       { key: 'location', label: 'Storage Location', description: 'Lihat ringkasan dan detail lokasi storage.', actions: ['view'] },
       { key: 'restock_instruction', label: 'Restock Instruction', description: 'Halaman penghubung untuk restock submit dan restock picker.', actions: ['view'] },
-      { key: 'restock_submit', label: 'Restock Submit', description: 'Buat dan ubah permintaan restock internal.', actions: ['view', 'add', 'edit'] },
-      { key: 'restock_picker', label: 'Restock Picker', description: 'Proses pengambilan barang untuk restock instruction.', actions: ['view', 'edit'] },
+      { key: 'restock_instruction.submit', label: 'Restock Submit', codePrefix: 'storage.restock_submit', description: 'Buat dan ubah permintaan restock internal.', actions: ['view', 'add', 'edit'] },
+      { key: 'restock_instruction.picker', label: 'Restock Picker', codePrefix: 'storage.restock_picker', description: 'Proses pengambilan barang untuk restock instruction.', actions: ['view', 'edit'] },
     ],
   },
   {
@@ -123,7 +123,8 @@ const BASE_PERMISSION_GROUPS = [
       { key: 'production_planning.material_fulfillment', label: 'Material Fulfillment', codePrefix: 'arkline.material_fulfillment', description: 'Kelola kebutuhan dan pemenuhan material produksi.', actions: ['view', 'add', 'edit', 'delete'] },
       { key: 'financial_management', label: 'Financial Management', description: 'Pintu masuk halaman financial management Arkline.', actions: ['view'] },
       { key: 'financial_management.payment_submission', label: 'Payment Submission', description: 'Kelola submission pembayaran terhadap PO/material.', actions: ['view', 'add', 'edit'] },
-      { key: 'financial_management.reporting', label: 'Financial Reporting', description: 'Lihat reporting finansial Arkline sekaligus akses live reporting mobile.', actions: ['view', 'add', 'edit'] },
+      { key: 'financial_management.live_reporting', label: 'Live Reporting', description: 'Akses mobile live entry dan history Arkline.', actions: ['view', 'add', 'edit'] },
+      { key: 'financial_management.reporting', label: 'Financial Reporting', description: 'Lihat reporting finansial Arkline.', actions: ['view'] },
     ],
   },
 ]
@@ -172,20 +173,39 @@ export function getPermissionCatalog() {
   return BASE_PERMISSION_GROUPS.map((group) => ({
     key: group.key,
     label: group.label,
-    items: group.items.map((item) => {
-      const codePrefix = item.codePrefix || `${group.key}.${item.key}`
-      return {
-        key: item.key,
-        label: item.label,
-        description: item.description || '',
-        codePrefix,
-        actions: item.actions.map((action) => ({
-          key: action,
-          label: labelizeAction(action),
-          code: `${codePrefix}.${action}`,
-        })),
-      }
-    }),
+    items: [
+      ...group.items
+        .filter((item) => !(group.key === 'arkline' && item.key === 'financial_management.live_reporting'))
+        .map((item) => {
+          const codePrefix = item.codePrefix || `${group.key}.${item.key}`
+          return {
+            key: item.key,
+            label: item.label,
+            description: item.description || '',
+          codePrefix,
+          actions: item.actions.map((action) => ({
+            key: action,
+            label: labelizeAction(action),
+            code: `${codePrefix}.${action}`,
+          })),
+        }
+        }),
+      ...(group.key === 'arkline'
+        ? [
+            {
+              key: 'financial_management.reporting.live_reporting',
+              label: 'Live Reporting',
+              description: 'Akses mobile live entry dan history Arkline.',
+              codePrefix: 'arkline.financial_management.live_reporting',
+              actions: ['view', 'add', 'edit'].map((action) => ({
+                key: action,
+                label: labelizeAction(action),
+                code: `arkline.financial_management.live_reporting.${action}`,
+              })),
+            },
+          ]
+        : []),
+    ],
   }))
 }
 
@@ -386,9 +406,10 @@ const DEFAULT_ROLE_BUNDLES = {
     'arkline.financial_management.payment_submission.view',
     'arkline.financial_management.payment_submission.add',
     'arkline.financial_management.payment_submission.edit',
+    'arkline.financial_management.live_reporting.view',
+    'arkline.financial_management.live_reporting.add',
+    'arkline.financial_management.live_reporting.edit',
     'arkline.financial_management.reporting.view',
-    'arkline.financial_management.reporting.add',
-    'arkline.financial_management.reporting.edit',
   ],
   arkline_host: [
     'dashboard.home.view',
@@ -507,6 +528,9 @@ export function getArklineFeatureAccess(role, permissions = [], isAdmin = false)
       financialManagementPaymentSubmissionView: true,
       financialManagementPaymentSubmissionAdd: true,
       financialManagementPaymentSubmissionEdit: true,
+      financialManagementLiveReportingView: true,
+      financialManagementLiveReportingAdd: true,
+      financialManagementLiveReportingEdit: true,
       financialReporting: true,
       reimbursementView: true,
       reimbursementSubmit: true,
@@ -529,11 +553,8 @@ export function getArklineFeatureAccess(role, permissions = [], isAdmin = false)
   const materialFulfillment = buildFeatureAccess('arkline.material_fulfillment', permissions, isAdmin)
   const financialManagement = buildFeatureAccess('arkline.financial_management', permissions, isAdmin)
   const paymentSubmission = buildFeatureAccess('arkline.financial_management.payment_submission', permissions, isAdmin)
+  const liveReporting = buildFeatureAccess('arkline.financial_management.live_reporting', permissions, isAdmin)
   const financialReporting = buildFeatureAccess('arkline.financial_management.reporting', permissions, isAdmin)
-  const legacyLiveReporting = buildFeatureAccess('arkline.financial_management.live_reporting', permissions, isAdmin)
-  const financialReportingView = financialReporting.view || legacyLiveReporting.view
-  const financialReportingAdd = financialReporting.add || legacyLiveReporting.add
-  const financialReportingEdit = financialReporting.edit || legacyLiveReporting.edit
   const myArklife = hasPermission(permissions, 'myarklife.view', isAdmin)
   const overview = hasPermission(permissions, 'arkline.overview.view', isAdmin)
   const menu =
@@ -551,7 +572,8 @@ export function getArklineFeatureAccess(role, permissions = [], isAdmin = false)
     materialFulfillment.view ||
     financialManagement.view ||
     paymentSubmission.view ||
-    financialReportingView
+    liveReporting.view ||
+    financialReporting.view
 
   let menuHref = '/dashboard'
   if (overview) menuHref = '/dashboard/arkline'
@@ -561,9 +583,10 @@ export function getArklineFeatureAccess(role, permissions = [], isAdmin = false)
 
   let financialManagementHref = '/dashboard/arkline/financial-management'
   if (financialManagement.view || paymentSubmission.view) financialManagementHref = '/dashboard/arkline/financial-management'
-  else if (financialReportingView) financialManagementHref = '/mobile/arkline/live-reporting'
+  else if (liveReporting.view) financialManagementHref = '/mobile/arkline/live-reporting'
+  else if (financialReporting.view) financialManagementHref = '/dashboard/arkline/financial-management/reporting'
 
-  if (menuHref === '/dashboard' && (financialManagement.view || paymentSubmission.view || financialReportingView)) {
+  if (menuHref === '/dashboard' && (financialManagement.view || paymentSubmission.view || liveReporting.view || financialReporting.view)) {
     menuHref = financialManagementHref
   }
 
@@ -598,15 +621,15 @@ export function getArklineFeatureAccess(role, permissions = [], isAdmin = false)
     materialFulfillmentAdd: materialFulfillment.add,
     materialFulfillmentEdit: materialFulfillment.edit,
     materialFulfillmentDelete: materialFulfillment.delete,
-    financialManagement: financialManagement.view || paymentSubmission.view || financialReportingView,
+    financialManagement: financialManagement.view || paymentSubmission.view || liveReporting.view || financialReporting.view,
     financialManagementHref,
     financialManagementPaymentSubmissionView: paymentSubmission.view,
     financialManagementPaymentSubmissionAdd: paymentSubmission.add,
     financialManagementPaymentSubmissionEdit: paymentSubmission.edit,
-    financialManagementLiveReportingView: financialReportingView,
-    financialManagementLiveReportingAdd: financialReportingAdd,
-    financialManagementLiveReportingEdit: financialReportingEdit,
-    financialReporting: financialReportingView,
+    financialManagementLiveReportingView: liveReporting.view,
+    financialManagementLiveReportingAdd: liveReporting.add,
+    financialManagementLiveReportingEdit: liveReporting.edit,
+    financialReporting: financialReporting.view,
     reimbursementView: myArklife,
     reimbursementSubmit: myArklife,
     reimbursementEdit: myArklife,
@@ -781,9 +804,9 @@ const ROUTE_PERMISSION_MAP = [
   { matcher: (pathname) => pathname.startsWith('/dashboard/arkline/production-planning/material-fulfillment'), codes: ['arkline.material_fulfillment.view'] },
   { matcher: (pathname) => pathname.startsWith('/dashboard/arkline/production-planning'), codes: ['arkline.production_planning.view', 'arkline.production_orders.view', 'arkline.material_fulfillment.view'] },
   { matcher: (pathname) => pathname === '/dashboard/arkline/financial-management' || pathname.startsWith('/dashboard/arkline/financial-management?'), codes: ['arkline.financial_management.view', 'arkline.financial_management.payment_submission.view'] },
-  { matcher: (pathname) => pathname.startsWith('/dashboard/arkline/financial-management/live-reporting'), codes: ['arkline.financial_management.reporting.view', 'arkline.financial_management.live_reporting.view'] },
+  { matcher: (pathname) => pathname.startsWith('/dashboard/arkline/financial-management/live-reporting'), codes: ['arkline.financial_management.live_reporting.view'] },
   { matcher: (pathname) => pathname.startsWith('/dashboard/arkline/financial-management/reporting'), codes: ['arkline.financial_management.reporting.view'] },
-  { matcher: (pathname) => pathname.startsWith('/mobile/arkline/live-reporting'), codes: ['arkline.financial_management.reporting.view', 'arkline.financial_management.live_reporting.view'] },
+  { matcher: (pathname) => pathname.startsWith('/mobile/arkline/live-reporting'), codes: ['arkline.financial_management.live_reporting.view'] },
   { matcher: (pathname) => pathname.startsWith('/dashboard/arkline/financial-management'), codes: ['arkline.financial_management.view', 'arkline.financial_management.payment_submission.view', 'arkline.financial_management.reporting.view', 'arkline.financial_management.live_reporting.view'] },
   { matcher: (pathname) => pathname.startsWith('/dashboard/reimbursement'), codes: ['myarklife.view'] },
 ]

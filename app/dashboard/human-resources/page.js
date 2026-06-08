@@ -6,6 +6,7 @@ import { loadAccessContext } from '@/utils/access-control'
 import HumanResourcesAutoRefreshClient from './auto-refresh-client'
 import PeopleDirectoryClient from './people-directory-client'
 import PublicHolidayClient from './public-holiday-client'
+import PaymentArrangementClient from './payment-arrangement-client'
 import { approveBirthdayGiftRequest, approveLeaveRequest } from './actions'
 import RequestPanelsClient from './request-panels-client.js'
 import ReimbursementPanelClient from './reimbursement-panel-client'
@@ -186,6 +187,17 @@ export default async function HumanResourcesPage() {
 
   const malePercent = peopleCount ? Math.round((maleCount / peopleCount) * 100) : 0
   const femalePercent = peopleCount ? Math.max(0, 100 - malePercent) : 0
+  const topActionStyle = {
+    minHeight: '42px',
+    minWidth: '168px',
+    borderRadius: '999px',
+    padding: '0 18px',
+    whiteSpace: 'nowrap',
+    justifyContent: 'center',
+  }
+  const canViewArklinePaymentArrangement =
+    hasPermission(permissions, 'arkline.financial_management.view', isAdmin) ||
+    hasPermission(permissions, 'arkline.financial_management.payment_submission.view', isAdmin)
   return (
     <div className={`${styles.page} ${inter.className}`.trim()}>
       <HumanResourcesAutoRefreshClient />
@@ -212,19 +224,15 @@ export default async function HumanResourcesPage() {
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
-            <PeopleDirectoryClient
-              people={peopleRows}
-              isAdmin={isAdmin}
-              showSummary={false}
-              openCreateOnTrigger
-              triggerClassName={styles.primaryButton}
-              triggerStyle={{ minHeight: '42px', borderRadius: '999px', gap: '8px', padding: '0 20px', whiteSpace: 'nowrap' }}
-              triggerLabel="+ New People"
-            />
             <PublicHolidayClient
               isAdmin={isAdmin}
               triggerClassName={styles.secondaryButton}
-              triggerStyle={{ minHeight: '42px', borderRadius: '999px', padding: '0 18px', whiteSpace: 'nowrap' }}
+              triggerStyle={topActionStyle}
+            />
+            <PaymentArrangementClient
+              triggerClassName={styles.secondaryButton}
+              triggerStyle={topActionStyle}
+              canViewArkline={canViewArklinePaymentArrangement}
             />
           </div>
         </div>
@@ -259,7 +267,18 @@ export default async function HumanResourcesPage() {
                   {peopleCount}
                 </strong>
               </div>
-              <PeopleDirectoryClient people={peopleRows} isAdmin={isAdmin} showSummary={false} />
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                <PeopleDirectoryClient
+                  people={peopleRows}
+                  isAdmin={isAdmin}
+                  showSummary={false}
+                  openCreateOnTrigger
+                  triggerClassName={styles.primaryButton}
+                  triggerStyle={{ ...topActionStyle, minWidth: '140px' }}
+                  triggerLabel="+ New People"
+                />
+                <PeopleDirectoryClient people={peopleRows} isAdmin={isAdmin} showSummary={false} />
+              </div>
             </div>
 
             <details
@@ -526,7 +545,6 @@ export default async function HumanResourcesPage() {
           </div>
         </section>
         ) : null}
-
         <ReimbursementPanelClient />
       </section>
     </div>

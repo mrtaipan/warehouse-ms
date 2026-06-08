@@ -15,6 +15,14 @@
   box-shadow: 0 24px 54px rgba(15, 23, 42, 0.08);
 }
 
+.panelEmbedded {
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
 .header {
   display: flex;
   flex-direction: column;
@@ -35,16 +43,23 @@
 
 .headerActionsInline {
   display: grid;
-  grid-template-columns: minmax(240px, 1fr) minmax(160px, 180px) auto;
+  grid-template-columns: minmax(180px, 260px) minmax(150px, 170px) minmax(170px, 210px) auto;
   gap: 10px;
   align-items: end;
   justify-content: start;
-  width: min(100%, 760px);
+  width: min(100%, 900px);
 }
 
 .filterField {
   display: flex;
   flex-direction: column;
+}
+
+.headerButtonGroup {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
 }
 
 .eyebrow {
@@ -152,6 +167,24 @@
   font-weight: 800;
   cursor: pointer;
   white-space: nowrap;
+}
+
+.compactApproveButton {
+  min-height: 36px;
+  padding: 0 12px;
+  border-radius: 11px;
+  border: 1px solid #bbf7d0;
+  background: #f0fdf4;
+  color: #15803d;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.compactApproveButton:disabled {
+  opacity: 0.52;
+  cursor: not-allowed;
 }
 
 .tertiaryButton {
@@ -267,6 +300,12 @@
   border-bottom: 1px solid #e2e8f0;
   font-size: 12px;
   color: #0f172a;
+}
+
+.checkboxColumn {
+  width: 42px;
+  min-width: 42px;
+  text-align: center !important;
 }
 
 .table th {

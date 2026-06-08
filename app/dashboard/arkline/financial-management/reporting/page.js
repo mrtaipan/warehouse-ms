@@ -371,12 +371,20 @@ export default function ArklineFinancialReportingPage() {
           </div>
 
           <div className={styles.reportingFilters}>
-            <Link href="/mobile/arkline/live-reporting" className={styles.iconActionButton} aria-label="Open live entry">
-              <EntryIcon />
-            </Link>
-            <Link href="/mobile/arkline/live-reporting/history" className={`${styles.iconActionButton} ${styles.iconActionButtonPrimary}`.trim()} aria-label="Open history">
-              <HistoryIcon />
-            </Link>
+            {access.financialManagementLiveReportingView ? (
+              <Link href="/mobile/arkline/live-reporting" className={styles.iconActionButton} aria-label="Open live entry">
+                <EntryIcon />
+              </Link>
+            ) : (
+              <span />
+            )}
+            {access.financialManagementLiveReportingView ? (
+              <Link href="/mobile/arkline/live-reporting/history" className={`${styles.iconActionButton} ${styles.iconActionButtonPrimary}`.trim()} aria-label="Open history">
+                <HistoryIcon />
+              </Link>
+            ) : (
+              <span />
+            )}
             <div className={styles.filterField}>
               <span>Month</span>
               <select className={styles.select} value={monthFilter} onChange={(event) => setMonthFilter(event.target.value)}>

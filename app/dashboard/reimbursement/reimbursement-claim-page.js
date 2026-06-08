@@ -7,6 +7,7 @@ import { ADMIN_EMAIL, expandImpliedPermissions, getArklineFeatureAccess, resolve
 import { getProfileByAuthenticatedUser } from '@/utils/user-profiles'
 
 import styles from '../arkline/arkline.module.css'
+import tableStyles from '../arkline/financial-management/financial-management.module.css'
 
 const supabase = createClient()
 const REIMBURSEMENT_BUCKET = 'reimbursement-claims'
@@ -328,6 +329,9 @@ export default function ReimbursementClaimPage({
   showAccountInfo = true,
   showGroupFilterOnly = false,
   initialGroupFilter = '',
+  initialRequesterFilter = '',
+  onRequesterOptionsChange = null,
+  tableView = false,
 } = {}) {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -342,6 +346,7 @@ export default function ReimbursementClaimPage({
     reimbursementPay: false,
   })
   const [search, setSearch] = useState('')
+  const [requesterFilter, setRequesterFilter] = useState(initialRequesterFilter)
   const [categoryFilter, setCategoryFilter] = useState('')
   const [groupFilter, setGroupFilter] = useState(initialGroupFilter)
   const [monthFilter, setMonthFilter] = useState('')
@@ -352,6 +357,7 @@ export default function ReimbursementClaimPage({
   const [selectedClaim, setSelectedClaim] = useState(null)
   const [selectedApprovedGroup, setSelectedApprovedGroup] = useState(null)
   const [selectedPaidGroup, setSelectedPaidGroup] = useState(null)
+  const [selectedSubmittedClaimIds, setSelectedSubmittedClaimIds] = useState([])
   const [editingClaim, setEditingClaim] = useState(null)
   const [editDraft, setEditDraft] = useState(null)
   const [editFiles, setEditFiles] = useState([])
@@ -498,6 +504,14 @@ export default function ReimbursementClaimPage({
   }, [initialGroupFilter])
 
   useEffect(() => {
+    setRequesterFilter(initialRequesterFilter || '')
+  }, [initialRequesterFilter])
+
+  useEffect(() => {
+    setSelectedSubmittedClaimIds((prev) => prev.filter((id) => claims.some((item) => item.id === id && item.status === 'SUBMITTED')))
+  }, [claims])
+
+  useEffect(() => {
     const intervalId = window.setInterval(() => {
       if (showBatchModal || editingClaim || selectedClaim || selectedApprovedGroup || selectedPaidGroup || saving || actionLoading) return
       void loadWorkspace(true)
@@ -548,6 +562,13 @@ export default function ReimbursementClaimPage({
           .toUpperCase()
           .includes(keyword)
 
+      const matchesRequester =
+        !requesterFilter ||
+        String(item.employee_name_snapshot || item.employee_email_snapshot || '')
+          .trim()
+          .toUpperCase()
+          .includes(String(requesterFilter || '').trim().toUpperCase())
+
       const matchesCategory = !categoryFilter || item.expense_category_id === categoryFilter
       const matchesGroup = !groupFilter || String(item.group || '').toUpperCase() === groupFilter
       const referenceDate = getClaimReferenceDate(item)
@@ -556,15 +577,33 @@ export default function ReimbursementClaimPage({
       const withinRecentPaidWindow =
         item.status !== 'PAID' || monthFilter || yearFilter || (referenceDate ? referenceDate >= sevenDaysAgo : false)
 
-      return matchesKeyword && matchesCategory && matchesGroup && matchesMonth && matchesYear && withinRecentPaidWindow
+      return matchesKeyword && matchesRequester && matchesCategory && matchesGroup && matchesMonth && matchesYear && withinRecentPaidWindow
     })
-  }, [categoryFilter, groupFilter, monthFilter, search, visibleClaims, yearFilter])
+  }, [categoryFilter, groupFilter, monthFilter, requesterFilter, search, visibleClaims, yearFilter])
 
   const groupFilterOptions = useMemo(
     () =>
       Array.from(new Set(visibleClaims.map((item) => String(item.group || '').trim().toUpperCase()).filter(Boolean))).sort((a, b) => a.localeCompare(b)),
     [visibleClaims]
   )
+
+  const requesterFilterOptions = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          visibleClaims
+            .map((item) => String(item.employee_name_snapshot || item.employee_email_snapshot || '').trim())
+            .filter(Boolean)
+        )
+      ).sort((a, b) => a.localeCompare(b, undefined, { numeric: true })),
+    [visibleClaims]
+  )
+
+  useEffect(() => {
+    if (typeof onRequesterOptionsChange === 'function') {
+      onRequesterOptionsChange(requesterFilterOptions)
+    }
+  }, [onRequesterOptionsChange, requesterFilterOptions])
 
   const yearFilterOptions = useMemo(
     () =>
@@ -1048,6 +1087,67 @@ export default function ReimbursementClaimPage({
     await loadWorkspace()
   }
 
+  async function handleApproveSelectedClaims() {
+    const targetClaims = filteredClaims.filter((item) => selectedSubmittedClaimIds.includes(item.id) && item.status === 'SUBMITTED')
+    if (!targetClaims.length) return
+
+    setActionLoading(true)
+    setActionError('')
+    setSuccess('')
+
+    const { error: updateError } = await supabase
+      .from(tableNames.claims)
+      .update({
+        status: 'APPROVED',
+        approved_at: new Date().toISOString(),
+        approved_by: profile?.email || null,
+        comments: null,
+      })
+      .in('id', targetClaims.map((item) => item.id))
+
+    if (updateError) {
+      setActionError(updateError.message)
+      setActionLoading(false)
+      return
+    }
+
+    setSuccess(`${targetClaims.length} claim${targetClaims.length > 1 ? 's' : ''} approved.`)
+    setSelectedSubmittedClaimIds([])
+    setActionLoading(false)
+    await loadWorkspace()
+  }
+
+  function toggleSubmittedClaimSelection(claimId) {
+    setSelectedSubmittedClaimIds((prev) => (prev.includes(claimId) ? prev.filter((item) => item !== claimId) : [...prev, claimId]))
+  }
+
+  function toggleSelectAllSubmittedClaims(items) {
+    const submittedIds = (items || []).filter((item) => item.status === 'SUBMITTED').map((item) => item.id)
+    if (!submittedIds.length) return
+
+    const allSelected = submittedIds.every((id) => selectedSubmittedClaimIds.includes(id))
+    setSelectedSubmittedClaimIds((prev) => {
+      if (allSelected) {
+        return prev.filter((id) => !submittedIds.includes(id))
+      }
+      return Array.from(new Set([...prev, ...submittedIds]))
+    })
+  }
+
+  function toggleSelectAllFilteredSubmittedClaims() {
+    const submittedIds = filteredClaims.filter((item) => item.status === 'SUBMITTED').map((item) => item.id)
+    if (!submittedIds.length) return
+
+    const allSelected = submittedIds.every((id) => selectedSubmittedClaimIds.includes(id))
+    setSelectedSubmittedClaimIds((prev) => {
+      if (allSelected) {
+        return prev.filter((id) => !submittedIds.includes(id))
+      }
+
+      return Array.from(new Set([...prev, ...submittedIds]))
+    })
+  }
+
   async function handleSaveEditClaim() {
     if (!editingClaim || !editDraft) return
 
@@ -1504,6 +1604,25 @@ export default function ReimbursementClaimPage({
           )}
 
           <div className={styles.buttonRow}>
+            {tableView && canApprove ? (
+              <>
+                <button
+                  type="button"
+                  className={styles.ghostButton}
+                  onClick={toggleSelectAllFilteredSubmittedClaims}
+                >
+                  Select All
+                </button>
+                <button
+                  type="button"
+                  className={styles.secondaryButton}
+                  onClick={() => void handleApproveSelectedClaims()}
+                  disabled={actionLoading || !selectedSubmittedClaimIds.length}
+                >
+                  {actionLoading ? 'Saving...' : `Approve${selectedSubmittedClaimIds.length ? ` (${selectedSubmittedClaimIds.length})` : ''}`}
+                </button>
+              </>
+            ) : null}
             <button
               type="button"
               className={styles.ghostButton}
@@ -1582,6 +1701,106 @@ export default function ReimbursementClaimPage({
         <div className={styles.emptyState}>Your account does not have reimbursement access yet.</div>
       ) : !filteredClaims.length ? (
         <div className={styles.emptyState}>No reimbursement claim matches the current filters.</div>
+      ) : tableView ? (
+        <section className={tableStyles.listSection}>
+          <div className={tableStyles.columnHead}>
+            <div className={tableStyles.outstandingWrap}>
+              <span className={tableStyles.outstandingLabel}>Total Reimbursement</span>
+              <strong className={tableStyles.outstandingValue}>{formatCurrency(filteredClaims.reduce((sum, item) => sum + Number(item.total_amount || 0), 0))}</strong>
+            </div>
+          </div>
+
+          <div className={tableStyles.tableWrap}>
+            <table className={tableStyles.table}>
+              <thead>
+                <tr>
+                  <th className={tableStyles.checkboxColumn}>
+                    <input
+                      type="checkbox"
+                      checked={filteredClaims.filter((item) => item.status === 'SUBMITTED').length > 0 && filteredClaims.filter((item) => item.status === 'SUBMITTED').every((item) => selectedSubmittedClaimIds.includes(item.id))}
+                      onChange={toggleSelectAllFilteredSubmittedClaims}
+                      disabled={!canApprove || !filteredClaims.some((item) => item.status === 'SUBMITTED')}
+                      aria-label="Select all submitted claims"
+                    />
+                  </th>
+                  <th>Claim No</th>
+                  <th>Expense Date</th>
+                  <th>Requester</th>
+                  <th>Group</th>
+                  <th>Description</th>
+                  <th>Category</th>
+                  <th>Total Amount</th>
+                  <th>Status</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredClaims.map((item) => (
+                  <tr key={item.id}>
+                    <td className={tableStyles.checkboxColumn}>
+                      <input
+                        type="checkbox"
+                        checked={selectedSubmittedClaimIds.includes(item.id)}
+                        onChange={() => toggleSubmittedClaimSelection(item.id)}
+                        disabled={!canApprove || item.status !== 'SUBMITTED'}
+                        aria-label={`Select ${item.claim_number || 'claim'}`}
+                      />
+                    </td>
+                    <td>{item.claim_number || '-'}</td>
+                    <td>{formatDate(item.expense_date)}</td>
+                    <td>{item.employee_name_snapshot || item.employee_email_snapshot || '-'}</td>
+                    <td>{item.group || '-'}</td>
+                    <td>{item.description || '-'}</td>
+                    <td>{item.expense_category_name || '-'}</td>
+                    <td className={tableStyles.amountCell}>{formatCurrency(item.total_amount)}</td>
+                    <td>
+                      <span
+                        className={`${tableStyles.statusPill} ${
+                          item.status === 'PAID'
+                            ? tableStyles.statusPillPaid
+                            : item.status === 'APPROVED'
+                              ? tableStyles.statusPillApproved
+                              : item.status === 'NEED_REVISION'
+                                ? styles.reimbursementStatusNEED_REVISION
+                                : tableStyles.statusPillSubmitted
+                        }`.trim()}
+                      >
+                        {item.status === 'NEED_REVISION' ? 'Need Revision' : item.status === 'PAID' ? 'Paid' : item.status === 'APPROVED' ? 'Approved' : 'Submitted'}
+                      </span>
+                    </td>
+                    <td>
+                      <div className={tableStyles.actionCell}>
+                        {item.status === 'SUBMITTED' && canApprove ? (
+                          <button
+                            type="button"
+                            className={`${tableStyles.iconButton} ${tableStyles.iconButtonSuccess}`.trim()}
+                            onClick={() => void handleApproveClaim(item)}
+                            title="Approve claim"
+                          >
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                              <path d="m5 12 4.2 4.2L19 6.5" />
+                            </svg>
+                          </button>
+                        ) : null}
+                        <button
+                          type="button"
+                          className={tableStyles.iconButton}
+                          onClick={() => openClaimModal(item)}
+                          title="View claim"
+                        >
+                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                            <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6Z" />
+                            <circle cx="12" cy="12" r="3" />
+                          </svg>
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
       ) : (
         <div className={styles.reimbursementBoard}>
           {claimColumns.map((column) => (
@@ -1591,9 +1810,30 @@ export default function ReimbursementClaimPage({
                   <p className={styles.reimbursementColumnEyebrow}>Status</p>
                   <h2 className={styles.reimbursementColumnTitle}>{column.label}</h2>
                 </div>
-                <span className={`${styles.reimbursementStatus} ${styles[`reimbursementStatus${column.key}`]}`.trim()}>
-                  {column.badgeCount ?? column.items.length}
-                </span>
+                <div className={styles.buttonRow}>
+                  {column.key === 'SUBMITTED' && canApprove ? (
+                    <>
+                      <button
+                        type="button"
+                        className={styles.secondaryButton}
+                        onClick={() => toggleSelectAllSubmittedClaims(column.items)}
+                      >
+                        Select All
+                      </button>
+                      <button
+                        type="button"
+                        className={styles.secondaryButton}
+                        onClick={() => void handleApproveSelectedClaims()}
+                        disabled={actionLoading || !selectedSubmittedClaimIds.length}
+                      >
+                        {actionLoading ? 'Saving...' : `Approve${selectedSubmittedClaimIds.length ? ` (${selectedSubmittedClaimIds.length})` : ''}`}
+                      </button>
+                    </>
+                  ) : null}
+                  <span className={`${styles.reimbursementStatus} ${styles[`reimbursementStatus${column.key}`]}`.trim()}>
+                    {column.badgeCount ?? column.items.length}
+                  </span>
+                </div>
               </div>
 
               {!column.items.length ? (
@@ -1664,24 +1904,51 @@ export default function ReimbursementClaimPage({
                           className={`${styles.reimbursementCard} ${item.status === 'NEED_REVISION' ? styles.reimbursementCardRevision : ''}`.trim()}
                         >
                           <div className={styles.reimbursementCardTop}>
-                            <div>
-                              <p className={styles.reimbursementCardNumber}>{item.claim_number}</p>
-                              <p className={styles.reimbursementCardMeta}>
-                                {[item.employee_name_snapshot || item.employee_email_snapshot, formatDate(item.expense_date), item.group].filter(Boolean).join(' • ')}
-                              </p>
+                            <div className={styles.buttonRow}>
+                              {item.status === 'SUBMITTED' && canApprove ? (
+                                <label className={styles.reimbursementSelectPill}>
+                                  <input
+                                    type="checkbox"
+                                    checked={selectedSubmittedClaimIds.includes(item.id)}
+                                    onChange={() => toggleSubmittedClaimSelection(item.id)}
+                                  />
+                                </label>
+                              ) : null}
+                              <div>
+                                <p className={styles.reimbursementCardNumber}>{item.claim_number}</p>
+                                <p className={styles.reimbursementCardMeta}>
+                                  {[item.employee_name_snapshot || item.employee_email_snapshot, item.group].filter(Boolean).join(' • ')}
+                                </p>
+                              </div>
                             </div>
-                            <button
-                              type="button"
-                              className={styles.reimbursementViewButton}
-                              onClick={() => openClaimModal(item)}
-                              aria-label={`View ${item.claim_number}`}
-                              title="View claim"
-                            >
-                              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                                <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6Z" />
-                                <circle cx="12" cy="12" r="3" />
-                              </svg>
-                            </button>
+                            <div className={styles.buttonRow}>
+                              <button
+                                type="button"
+                                className={styles.reimbursementViewButton}
+                                onClick={() => openClaimModal(item)}
+                                aria-label={`View ${item.claim_number}`}
+                                title="View claim"
+                              >
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                  <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6Z" />
+                                  <circle cx="12" cy="12" r="3" />
+                                </svg>
+                              </button>
+                              {item.status === 'SUBMITTED' && canApprove ? (
+                                <button
+                                  type="button"
+                                  className={styles.reimbursementViewButton}
+                                  onClick={() => void handleApproveClaim(item)}
+                                  aria-label={`Approve ${item.claim_number}`}
+                                  title="Approve claim"
+                                  disabled={actionLoading}
+                                >
+                                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                    <path d="m5 12 4.2 4.2L19 6.5" />
+                                  </svg>
+                                </button>
+                              ) : null}
+                            </div>
                           </div>
 
                           {item.comments ? <p className={styles.reimbursementCardMeta}>Comment: {item.comments}</p> : null}

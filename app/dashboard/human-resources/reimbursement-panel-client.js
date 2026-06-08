@@ -5,7 +5,7 @@ import { useMemo, useState } from 'react'
 import styles from '../arkline/arkline.module.css'
 import ReimbursementClaimPage from '../reimbursement/reimbursement-claim-page'
 
-function ReimbursementDetailModal({ onClose }) {
+function ReimbursementDetailModal({ onClose, initialGroupFilter = '', initialRequesterFilter = '' }) {
   return (
     <div
       style={{
@@ -54,6 +54,9 @@ function ReimbursementDetailModal({ onClose }) {
           showToolbar
           compactToolbar
           showAccountInfo={false}
+          initialGroupFilter={initialGroupFilter}
+          initialRequesterFilter={initialRequesterFilter}
+          tableView
         />
       </div>
     </div>
@@ -63,6 +66,8 @@ function ReimbursementDetailModal({ onClose }) {
 export default function ReimbursementPanelClient() {
   const [openModal, setOpenModal] = useState(false)
   const [groupFilter, setGroupFilter] = useState('')
+  const [requesterFilter, setRequesterFilter] = useState('')
+  const [requesterOptions, setRequesterOptions] = useState([])
   const panelFilterStyle = useMemo(
     () => ({
       minHeight: '28px',
@@ -99,6 +104,19 @@ export default function ReimbursementPanelClient() {
               <option value="WAREHOUSE">WAREHOUSE</option>
               <option value="HQ">HQ</option>
             </select>
+            <select
+              className={styles.select}
+              value={requesterFilter}
+              onChange={(event) => setRequesterFilter(event.target.value)}
+              style={{ minHeight: '28px', minWidth: '150px', width: '190px', borderRadius: '999px', fontSize: '11px', padding: '0 28px 0 12px', backgroundPosition: 'right 10px center' }}
+            >
+              <option value="">All requesters</option>
+              {requesterOptions.map((item) => (
+                <option key={item} value={item}>
+                  {item}
+                </option>
+              ))}
+            </select>
             <button type="button" className={styles.secondaryButton} style={{ minHeight: '28px', borderRadius: '999px', fontSize: '11px' }} onClick={() => setOpenModal(true)}>
               View Detail
             </button>
@@ -115,11 +133,19 @@ export default function ReimbursementPanelClient() {
             showToolbar={false}
             showAccountInfo={false}
             initialGroupFilter={groupFilter}
+            initialRequesterFilter={requesterFilter}
+            onRequesterOptionsChange={setRequesterOptions}
           />
         </div>
       </div>
 
-      {openModal ? <ReimbursementDetailModal onClose={() => setOpenModal(false)} /> : null}
+      {openModal ? (
+        <ReimbursementDetailModal
+          onClose={() => setOpenModal(false)}
+          initialGroupFilter={groupFilter}
+          initialRequesterFilter={requesterFilter}
+        />
+      ) : null}
     </>
   )
 }

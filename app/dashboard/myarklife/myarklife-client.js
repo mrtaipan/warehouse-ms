@@ -4,6 +4,7 @@ import { useMemo, useState, useTransition } from 'react'
 import { submitBirthdayGiftRequest, submitLeaveRequest } from '../human-resources/actions'
 import { updateOwnProfile } from '../profile/actions'
 import MyArklifeReimbursementClient from './myarklife-reimbursement-client'
+import MyArklifeMobPaymentClient from './myarklife-mob-payment-client'
 import styles from './myarklife.module.css'
 
 function toProperCase(value = '') {
@@ -370,7 +371,7 @@ export default function MyArklifeClient({ profile, leaveRows, giftRows, publicHo
         </aside>
 
         <main className={styles.mainPanel}>
-          <MyArklifeReimbursementClient profile={profile} />
+          <MyArklifeReimbursementClient profile={profile} headerActions={<MyArklifeMobPaymentClient />} />
         </main>
       </div>
 

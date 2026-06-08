@@ -43,9 +43,16 @@ export default function useArklineAccess() {
     async function loadAccess() {
       setLoading(true)
 
-      const {
-        data: { user },
-      } = await supabase.auth.getUser()
+      let user = null
+
+      try {
+        const {
+          data: { session },
+        } = await supabase.auth.getSession()
+        user = session?.user || null
+      } catch {
+        user = null
+      }
 
       if (!user) {
         if (active) {

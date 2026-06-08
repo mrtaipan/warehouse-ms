@@ -163,7 +163,7 @@ async function uploadReceiptFile({ file, claimId, claimNumber, uploadedBy }) {
   }
 }
 
-export default function MyArklifeReimbursementClient({ profile }) {
+export default function MyArklifeReimbursementClient({ profile, headerActions = null }) {
   const batchFileInputRef = useRef(null)
   const editFileInputRef = useRef(null)
   const batchFileInputId = 'myarklife-batch-receipt-input'
@@ -214,7 +214,6 @@ export default function MyArklifeReimbursementClient({ profile }) {
     const resolvedTables = probeError?.code === '42P01' ? LEGACY_TABLES : HRGA_TABLES
     setTableNames(resolvedTables)
 
-    const isAdmin = user.email?.toLowerCase() === ADMIN_EMAIL
     const { data: profileRow } = await getProfileByAuthenticatedUser(
       supabase,
       user,
@@ -265,7 +264,7 @@ export default function MyArklifeReimbursementClient({ profile }) {
     }
 
     const ownClaims = (claimRows || [])
-      .filter((item) => isAdmin || String(item.employee_email_snapshot || '').toLowerCase() === currentEmail)
+      .filter((item) => String(item.employee_email_snapshot || '').toLowerCase() === currentEmail)
       .map(normalizeClaim)
 
     setCategories((categoryRows || []).filter((item) => item.is_active !== false))
@@ -657,14 +656,15 @@ export default function MyArklifeReimbursementClient({ profile }) {
               <span>Total Claim Amount</span>
               <strong>{formatCurrency(totalHistoryAmount)}</strong>
             </div>
+            {headerActions}
             <button
               type="button"
-              className={styles.leaveActionButton}
+              className={styles.actionPillButton}
               onClick={openCreateModal}
               aria-label="New claim"
               title="New claim"
             >
-              <span>+</span>
+              + Claim
             </button>
           </div>
         </div>
