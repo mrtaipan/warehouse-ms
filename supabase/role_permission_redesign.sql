@@ -2,7 +2,6 @@ begin;
 
 update public.dir_user_profiles
 set role = case
-  when role = 'hrga_approver' then 'hrga'
   when role = 'arkline_viewer' then 'arkline_staff'
   when role = 'arkline_purchaser' then 'arkline_merchandiser'
   when role in (
@@ -29,7 +28,6 @@ end;
 
 update public.dir_user_roles
 set role = case
-  when role = 'hrga_approver' then 'hrga'
   when role = 'arkline_viewer' then 'arkline_staff'
   when role = 'arkline_purchaser' then 'arkline_merchandiser'
   when role in (
@@ -432,7 +430,7 @@ from (
 ) as seeded(role, permission_code)
 on conflict do nothing;
 
-create or replace function public.reimbursement_is_hrga_approver()
+create or replace function public.reimbursement_is_hrga_reviewer()
 returns boolean
 language sql
 stable
@@ -441,7 +439,7 @@ as $$
     select 1
     from public.dir_user_profiles profile
     where profile.authenticated_id = auth.uid()
-      and profile.role = 'hrga'
+      and profile.role in ('hrga', 'leader')
   );
 $$;
 

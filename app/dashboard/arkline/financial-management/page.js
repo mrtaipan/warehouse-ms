@@ -210,8 +210,8 @@ export default function ArklineFinancialManagementPage({
     access.financialManagementPaymentSubmissionAdd ||
     access.financialManagementPaymentSubmissionEdit
   const canSubmit = allowCreateOverride === null ? (hrgaView ? false : canSubmitBase) : Boolean(allowCreateOverride)
-  const canPay = hrgaView ? role === 'admin' || role === 'hrga_approver' : role === 'admin'
-  const canApprove = hrgaView ? role === 'admin' || role === 'hrga_approver' : role === 'admin'
+  const canPay = hrgaView ? role === 'admin' || role === 'hrga' || role === 'leader' : role === 'admin'
+  const canApprove = hrgaView ? role === 'admin' || role === 'hrga' || role === 'leader' : role === 'admin'
 
   const loadWorkspace = useCallback(async (options = {}) => {
     const { silent = false } = options

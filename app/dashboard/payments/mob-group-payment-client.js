@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { createClient } from '@/utils/supabase/browser'
-import { ADMIN_EMAIL } from '@/utils/permissions'
+import { ADMIN_EMAIL, resolveRole } from '@/utils/permissions'
 import { getProfileByAuthenticatedUser } from '@/utils/user-profiles'
 
 import shellStyles from '../arkline/arkline.module.css'
@@ -246,8 +246,8 @@ export default function MobGroupPaymentClient({
       return
     }
 
-    const role = String(profileRow?.role || '').trim().toLowerCase()
-    const canManageHrga = isAdmin || role === 'hrga' || role === 'hrga_approver'
+    const role = resolveRole(profileRow?.role, isAdmin)
+    const canManageHrga = isAdmin || role === 'hrga' || role === 'leader'
 
     const [{ data: paymentRows, error: paymentError }, { data: categoryRows, error: categoryError }, { data: profileRows }] = await Promise.all([
       (() => {

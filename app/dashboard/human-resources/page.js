@@ -153,7 +153,7 @@ export default async function HumanResourcesPage() {
     redirect('/login')
   }
 
-  const { permissions, isAdmin } = await loadAccessContext(supabase, user, 'role')
+  const { permissions, isAdmin, role } = await loadAccessContext(supabase, user, 'role')
 
   if (!canAccessPeopleManagement(permissions, isAdmin)) {
     redirect('/dashboard')
@@ -196,6 +196,8 @@ export default async function HumanResourcesPage() {
     justifyContent: 'center',
   }
   const canViewArklinePaymentArrangement =
+    role === 'hrga' ||
+    role === 'leader' ||
     hasPermission(permissions, 'arkline.financial_management.view', isAdmin) ||
     hasPermission(permissions, 'arkline.financial_management.payment_submission.view', isAdmin)
   return (

@@ -72,7 +72,7 @@ as $$
       select 1
       from public.dir_user_profiles profile
       where profile.authenticated_id = auth.uid()
-        and profile.role = 'hrga_approver'
+        and profile.role in ('hrga', 'leader')
     )
 $$;
 

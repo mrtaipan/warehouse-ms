@@ -1,6 +1,6 @@
 begin;
 
-create or replace function public.reimbursement_is_hrga_approver()
+create or replace function public.reimbursement_is_hrga_reviewer()
 returns boolean
 language sql
 stable
@@ -9,7 +9,7 @@ as $$
     select 1
     from public.dir_user_profiles profile
     where profile.authenticated_id = auth.uid()
-      and profile.role = 'hrga_approver'
+      and profile.role in ('hrga', 'leader')
   )
 $$;
 
@@ -24,7 +24,7 @@ using (
   or public.reimbursement_has_permission('arkline.finance.reimbursement.view')
   or public.reimbursement_has_permission('arkline.finance.reimbursement.approve')
   or public.reimbursement_has_permission('arkline.finance.reimbursement.pay')
-  or public.reimbursement_is_hrga_approver()
+  or public.reimbursement_is_hrga_reviewer()
   or public.reimbursement_is_claim_owner(created_by, employee_email_snapshot)
 );
 
@@ -75,7 +75,7 @@ using (
         or public.reimbursement_has_permission('arkline.finance.reimbursement.view')
         or public.reimbursement_has_permission('arkline.finance.reimbursement.approve')
         or public.reimbursement_has_permission('arkline.finance.reimbursement.pay')
-        or public.reimbursement_is_hrga_approver()
+        or public.reimbursement_is_hrga_reviewer()
         or public.reimbursement_is_claim_owner(claim_row.created_by, claim_row.employee_email_snapshot)
       )
   )
@@ -99,7 +99,7 @@ using (
         or public.reimbursement_has_permission('arkline.finance.reimbursement.view')
         or public.reimbursement_has_permission('arkline.finance.reimbursement.approve')
         or public.reimbursement_has_permission('arkline.finance.reimbursement.pay')
-        or public.reimbursement_is_hrga_approver()
+        or public.reimbursement_is_hrga_reviewer()
         or public.reimbursement_is_claim_owner(claim_row.created_by, claim_row.employee_email_snapshot)
       )
   )

@@ -23,7 +23,6 @@ export const ROLE_OPTIONS = [
 export const OFFICIAL_ROLE_VALUES = ROLE_OPTIONS.map((item) => item.value)
 
 export const LEGACY_ROLE_MAP = {
-  hrga_approver: 'hrga',
   arkline_viewer: 'arkline_staff',
   arkline_purchaser: 'arkline_merchandiser',
 }
@@ -491,6 +490,8 @@ export function canAccessPeopleManagement(permissions = [], isAdmin = false) {
 }
 
 export function getArklineFeatureAccess(role, permissions = [], isAdmin = false) {
+  const canReviewReimbursement = role === 'hrga' || role === 'leader'
+
   if (isAdmin || role === 'admin') {
     return {
       menu: true,
@@ -630,11 +631,11 @@ export function getArklineFeatureAccess(role, permissions = [], isAdmin = false)
     financialManagementLiveReportingAdd: liveReporting.add,
     financialManagementLiveReportingEdit: liveReporting.edit,
     financialReporting: financialReporting.view,
-    reimbursementView: myArklife,
+    reimbursementView: myArklife || canReviewReimbursement,
     reimbursementSubmit: myArklife,
     reimbursementEdit: myArklife,
-    reimbursementApprove: false,
-    reimbursementPay: false,
+    reimbursementApprove: canReviewReimbursement,
+    reimbursementPay: canReviewReimbursement,
   }
 }
 
