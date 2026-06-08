@@ -481,8 +481,14 @@
 .detailModal,
 .imageModal {
   width: min(980px, calc(100vw - 32px));
-  max-height: calc(100vh - 32px);
-  overflow: auto;
+  max-height: calc(100vh - 24px);
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.detailModal {
+  height: min(920px, calc(100vh - 24px));
+  min-height: 0;
 }
 
 .formGrid {

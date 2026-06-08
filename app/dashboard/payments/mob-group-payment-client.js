@@ -686,6 +686,48 @@ export default function MobGroupPaymentClient({
     })
   }
 
+  const isRequestOwner = useCallback(
+    (request) => {
+      const currentEmail = String(profile?.email || '').trim().toLowerCase()
+      if (!currentEmail) return false
+      return String(request?.created_by || '').trim().toLowerCase() === currentEmail
+    },
+    [profile]
+  )
+
+  async function handleUploadPaymentProof(request) {
+    if (!request || !paymentProofFiles.length) return
+
+    setActionLoading(true)
+    setDetailError('')
+    setSuccess('')
+    const uploadedPaths = []
+
+    try {
+      const uploadResult = await uploadRequestFiles({
+        request,
+        files: paymentProofFiles,
+        uploadedBy: profile?.email || '',
+        folder: 'payment-proof',
+      })
+      uploadedPaths.push(...uploadResult.uploadedPaths)
+
+      const { error: attachmentInsertError } = await supabase.from('mob_payment_attachments').insert(uploadResult.attachmentRows)
+      if (attachmentInsertError) throw new Error(attachmentInsertError.message)
+
+      setPaymentProofFiles([])
+      await loadWorkspace(true)
+      setSuccess(`Payment proof uploaded for ${request.invoice_number}.`)
+    } catch (uploadError) {
+      if (uploadedPaths.length) {
+        await supabase.storage.from(PAYMENT_BUCKET).remove(uploadedPaths)
+      }
+      setDetailError(uploadError.message || 'Failed to upload payment proof.')
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
   async function handleMarkPaid(request) {
     if (!request) return
     setActionLoading(true)
@@ -1232,7 +1274,7 @@ export default function MobGroupPaymentClient({
               )}
             </div>
 
-            {selectedRequest.status === 'APPROVED' && canPay ? (
+            {((selectedRequest.status === 'APPROVED' && canPay) || isRequestOwner(selectedRequest)) ? (
               <div className={styles.detailSection}>
                 <h3 className={styles.sectionTitle}>Add Payment Proof</h3>
                 <input
@@ -1280,6 +1322,11 @@ export default function MobGroupPaymentClient({
               {selectedRequest.status === 'SUBMITTED' && canApprove ? (
                 <button type="button" className={styles.primaryButton} onClick={() => void handleApproveRequest(selectedRequest)} disabled={actionLoading}>
                   {actionLoading ? 'Saving...' : 'Approve'}
+                </button>
+              ) : null}
+              {paymentProofFiles.length && ((selectedRequest.status === 'APPROVED' && canPay) || isRequestOwner(selectedRequest)) ? (
+                <button type="button" className={styles.secondaryButton} onClick={() => void handleUploadPaymentProof(selectedRequest)} disabled={actionLoading}>
+                  {actionLoading ? 'Saving...' : 'Upload Payment Proof'}
                 </button>
               ) : null}
               {selectedRequest.status === 'APPROVED' && canPay ? (

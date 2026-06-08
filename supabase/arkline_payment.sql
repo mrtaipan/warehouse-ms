@@ -24,7 +24,7 @@ create table if not exists public.arkline_payment (
   updated_at timestamptz not null default now(),
   constraint arkline_payment_basis_check check (payment_basis in ('PO_BASED', 'NON_PO_BASED')),
   constraint arkline_payment_po_source_type_check check (po_source_type is null or po_source_type in ('GARMENT', 'MATERIAL')),
-  constraint arkline_payment_status_check check (status in ('SUBMITTED', 'APPROVED', 'PAID')),
+  constraint arkline_payment_status_check check (status in ('SUBMITTED', 'NEED_REVISION', 'APPROVED', 'PAID')),
   constraint arkline_payment_amount_check check (amount >= 0)
 );
 
@@ -62,7 +62,7 @@ begin
 
   alter table public.arkline_payment
     add constraint arkline_payment_status_check
-    check (status in ('SUBMITTED', 'APPROVED', 'PAID'));
+    check (status in ('SUBMITTED', 'NEED_REVISION', 'APPROVED', 'PAID'));
 end
 $$;
 
