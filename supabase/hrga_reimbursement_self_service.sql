@@ -8,7 +8,10 @@ as $$
   select exists (
     select 1
     from public.dir_user_profiles profile
-    where profile.authenticated_id = auth.uid()
+    where (
+        profile.authenticated_id = auth.uid()
+        or lower(coalesce(profile.email, '')) = public.current_user_email()
+      )
       and profile.role in ('hrga', 'leader')
   )
 $$;

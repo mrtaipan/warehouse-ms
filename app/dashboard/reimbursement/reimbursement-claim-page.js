@@ -104,9 +104,26 @@ function getGroupedPaymentProofs(claims) {
   for (const claim of claims || []) {
     for (const attachment of claim.attachments || []) {
       if (attachment.attachment_type !== 'PAYMENT_PROOF') continue
-      const key = `${attachment.file_name || ''}::${attachment.created_at || ''}`
-      if (!uniqueMap.has(key)) {
-        uniqueMap.set(key, attachment)
+      const key = String(attachment.file_name || '').trim().toLowerCase() || attachment.storage_path || `${attachment.created_at || ''}`
+      const existing = uniqueMap.get(key)
+
+      if (!existing) {
+        uniqueMap.set(key, {
+          ...attachment,
+          variants: [attachment],
+        })
+        continue
+      }
+
+      existing.variants.push(attachment)
+
+      const existingDate = new Date(existing.created_at || 0).getTime()
+      const candidateDate = new Date(attachment.created_at || 0).getTime()
+      if (candidateDate >= existingDate) {
+        uniqueMap.set(key, {
+          ...attachment,
+          variants: existing.variants,
+        })
       }
     }
   }
@@ -220,8 +237,29 @@ function getClaimReferenceDate(item) {
 }
 
 function buildClaimStorageFolder(claimNumber, fallbackId) {
-  const safeClaimNumber = sanitizeFileName(String(claimNumber || '').trim()).replace(/\.+/g, '-')
+  const safeClaimNumber = String(claimNumber || '')
+    .trim()
+    .replace(/[\\/:*?"<>]/g, '')
+    .replace(/\s+/g, '-')
+    .replace(/\.+/g, '-')
   return safeClaimNumber || String(fallbackId || 'claim')
+}
+
+function buildPaymentBatchFolder(claimNumbers = []) {
+  const normalized = claimNumbers
+    .map((value) => String(value || '').trim())
+    .filter(Boolean)
+
+  if (!normalized.length) return 'batch'
+  if (normalized.length === 1) return buildClaimStorageFolder(normalized[0], 'batch')
+
+  const [firstClaim, ...restClaims] = normalized
+  const suffixes = restClaims.map((value) => value.split('-').pop() || value)
+  const compact = [firstClaim, ...suffixes].join('|')
+
+  return compact
+    .replace(/[\\/:*?"<>]/g, '')
+    .replace(/\s+/g, '-')
 }
 
 async function compressImageFile(file) {
@@ -279,18 +317,16 @@ async function compressImageFile(file) {
   }
 }
 
-async function uploadClaimFiles({ claimId, claimNumber, files, folder, uploadedBy }) {
+async function uploadFilesToStorage({ files, storageFolderPath }) {
+  const uploadedFiles = []
   const uploadedPaths = []
-  const attachmentRows = []
-  const year = new Date().getFullYear()
-  const claimFolder = buildClaimStorageFolder(claimNumber, claimId)
 
   for (const sourceFile of files) {
     const file = await compressImageFile(sourceFile)
     const extension = String(file?.name || '').split('.').pop()?.toLowerCase() || 'bin'
     const safeName = sanitizeFileName(file?.name || `attachment.${extension}`)
     const fileName = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}-${safeName}`
-    const storagePath = `${year}/${claimFolder}/${folder}/${fileName}`
+    const storagePath = `${storageFolderPath}/${fileName}`
 
     const { error: uploadError } = await supabase.storage.from(REIMBURSEMENT_BUCKET).upload(storagePath, file, { upsert: false })
 
@@ -299,17 +335,45 @@ async function uploadClaimFiles({ claimId, claimNumber, files, folder, uploadedB
     }
 
     uploadedPaths.push(storagePath)
-    attachmentRows.push({
-      claim_id: claimId,
-      attachment_type: folder === 'payment' ? 'PAYMENT_PROOF' : 'SUBMISSION_PROOF',
-      storage_bucket: REIMBURSEMENT_BUCKET,
+    uploadedFiles.push({
       storage_path: storagePath,
       file_name: file.name,
       mime_type: file.type || null,
       file_size: file.size || null,
-      uploaded_by: uploadedBy || null,
     })
   }
+
+  return { uploadedFiles, uploadedPaths }
+}
+
+function buildAttachmentRows({ claimIds, uploadedFiles, attachmentType, uploadedBy }) {
+  return claimIds.flatMap((claimId) =>
+    uploadedFiles.map((file) => ({
+      claim_id: claimId,
+      attachment_type: attachmentType,
+      storage_bucket: REIMBURSEMENT_BUCKET,
+      storage_path: file.storage_path,
+      file_name: file.file_name,
+      mime_type: file.mime_type,
+      file_size: file.file_size,
+      uploaded_by: uploadedBy || null,
+    }))
+  )
+}
+
+async function uploadClaimFiles({ claimId, claimNumber, files, folder, uploadedBy }) {
+  const uploadedPaths = []
+  const year = new Date().getFullYear()
+  const claimFolder = buildClaimStorageFolder(claimNumber, claimId)
+  const storageFolderPath = `${year}/${folder === 'payment' ? 'Payment' : 'Submission'}/${claimFolder}`
+  const { uploadedFiles, uploadedPaths: storedPaths } = await uploadFilesToStorage({ files, storageFolderPath })
+  uploadedPaths.push(...storedPaths)
+  const attachmentRows = buildAttachmentRows({
+    claimIds: [claimId],
+    uploadedFiles,
+    attachmentType: folder === 'payment' ? 'PAYMENT_PROOF' : 'SUBMISSION_PROOF',
+    uploadedBy,
+  })
 
   return { attachmentRows, uploadedPaths }
 }
@@ -1372,20 +1436,22 @@ export default function ReimbursementClaimPage({
         }
       }
 
-      const { error: updateError } = await supabase
-        .from(tableNames.claims)
-        .update({
-          status: 'PAID',
-          paid_at: new Date().toISOString(),
-          paid_by: profile?.email || null,
-        })
-        .eq('id', claim.id)
+      if (claim.status !== 'PAID') {
+        const { error: updateError } = await supabase
+          .from(tableNames.claims)
+          .update({
+            status: 'PAID',
+            paid_at: new Date().toISOString(),
+            paid_by: profile?.email || null,
+          })
+          .eq('id', claim.id)
 
-      if (updateError) {
-        throw new Error(updateError.message)
+        if (updateError) {
+          throw new Error(updateError.message)
+        }
       }
 
-      setSuccess(`Claim ${claim.claim_number} marked as paid.`)
+      setSuccess(paymentFiles.length ? `Payment proof uploaded for ${claim.claim_number}.` : `Claim ${claim.claim_number} marked as paid.`)
       setPaymentFiles([])
       closeClaimModal()
       await loadWorkspace()
@@ -1415,40 +1481,49 @@ export default function ReimbursementClaimPage({
 
     try {
       if (paymentFiles.length) {
-        for (const claim of group.claims) {
-          const uploadResult = await uploadClaimFiles({
-            claimId: claim.id,
-            claimNumber: claim.claim_number,
-            files: paymentFiles,
-            folder: 'payment',
-            uploadedBy: profile?.email || null,
-          })
+        const year = new Date().getFullYear()
+        const paymentBatchFolder = buildPaymentBatchFolder(group.claims.map((claim) => claim.claim_number))
+        const storageFolderPath = `${year}/Payment/${paymentBatchFolder}`
+        const uploadResult = await uploadFilesToStorage({ files: paymentFiles, storageFolderPath })
 
-          uploadedPaths.push(...uploadResult.uploadedPaths)
+        uploadedPaths.push(...uploadResult.uploadedPaths)
 
-          const { error: attachmentInsertError } = await supabase.from(tableNames.attachments).insert(uploadResult.attachmentRows)
+        const attachmentRows = buildAttachmentRows({
+          claimIds: group.claims.map((claim) => claim.id),
+          uploadedFiles: uploadResult.uploadedFiles,
+          attachmentType: 'PAYMENT_PROOF',
+          uploadedBy: profile?.email || null,
+        })
 
-          if (attachmentInsertError) {
-            throw new Error(attachmentInsertError.message)
-          }
+        const { error: attachmentInsertError } = await supabase.from(tableNames.attachments).insert(attachmentRows)
+
+        if (attachmentInsertError) {
+          throw new Error(attachmentInsertError.message)
         }
       }
 
       const claimIds = group.claims.map((item) => item.id)
-      const { error: updateError } = await supabase
-        .from(tableNames.claims)
-        .update({
-          status: 'PAID',
-          paid_at: new Date().toISOString(),
-          paid_by: profile?.email || null,
-        })
-        .in('id', claimIds)
+      const hasUnpaidClaims = group.claims.some((item) => item.status !== 'PAID')
+      if (hasUnpaidClaims) {
+        const { error: updateError } = await supabase
+          .from(tableNames.claims)
+          .update({
+            status: 'PAID',
+            paid_at: new Date().toISOString(),
+            paid_by: profile?.email || null,
+          })
+          .in('id', claimIds)
 
-      if (updateError) {
-        throw new Error(updateError.message)
+        if (updateError) {
+          throw new Error(updateError.message)
+        }
       }
 
-      setSuccess(`${group.claims.length} approved claim${group.claims.length > 1 ? 's' : ''} marked as paid.`)
+      setSuccess(
+        paymentFiles.length
+          ? `Payment proof uploaded for ${group.claims.length} claim${group.claims.length > 1 ? 's' : ''}.`
+          : `${group.claims.length} approved claim${group.claims.length > 1 ? 's' : ''} marked as paid.`
+      )
       setPaymentFiles([])
       closeApprovedGroupModal()
       await loadWorkspace()
@@ -1535,21 +1610,23 @@ export default function ReimbursementClaimPage({
 
   async function handleOpenAttachment(attachment) {
     setActionError('')
+    const candidates = Array.isArray(attachment?.variants) && attachment.variants.length ? attachment.variants : [attachment]
+    let lastError = null
 
-    const { data, error: signedUrlError } = await supabase.storage
-      .from(attachment.storage_bucket)
-      .createSignedUrl(attachment.storage_path, 300)
+    for (const candidate of candidates) {
+      const { data, error: signedUrlError } = await supabase.storage
+        .from(candidate.storage_bucket)
+        .createSignedUrl(candidate.storage_path, 300)
 
-    if (signedUrlError) {
-      setActionError(signedUrlError.message)
-      return
-    }
+      if (signedUrlError || !data?.signedUrl) {
+        lastError = signedUrlError || new Error('Attachment file is no longer available.')
+        continue
+      }
 
-    if (data?.signedUrl) {
-      if (isPreviewableImageAttachment(attachment)) {
+      if (isPreviewableImageAttachment(candidate)) {
         setImagePreview({
           src: data.signedUrl,
-          name: attachment.file_name,
+          name: candidate.file_name,
         })
         setImagePreviewZoom(1)
         setImagePreviewTool('zoom-in')
@@ -1559,7 +1636,10 @@ export default function ReimbursementClaimPage({
       }
 
       window.open(data.signedUrl, '_blank', 'noopener,noreferrer')
+      return
     }
+
+    setActionError(lastError?.message || 'Attachment file is no longer available.')
   }
 
   function handleImagePreviewWrapClick(event) {
@@ -2540,9 +2620,9 @@ export default function ReimbursementClaimPage({
               </section>
             </div>
 
-            {selectedClaim.status === 'APPROVED' && canPay ? (
+            {(selectedClaim.status === 'APPROVED' || selectedClaim.status === 'PAID') && canPay ? (
               <div className={styles.reimbursementDetailSection}>
-                <h3 className={styles.reimbursementSectionTitle}>Mark as Paid</h3>
+                <h3 className={styles.reimbursementSectionTitle}>Add Payment Proof</h3>
                 <input
                   ref={paymentFileInputRef}
                   className={styles.reimbursementHiddenInput}
@@ -2640,14 +2720,14 @@ export default function ReimbursementClaimPage({
                 </button>
               ) : null}
 
-              {selectedClaim.status === 'APPROVED' && canPay ? (
+              {(selectedClaim.status === 'APPROVED' || selectedClaim.status === 'PAID') && canPay ? (
                 <button
                   type="button"
                   className={styles.primaryButton}
                   onClick={() => void handleMarkPaid(selectedClaim)}
-                  disabled={actionLoading}
+                  disabled={actionLoading || (selectedClaim.status === 'PAID' && !paymentFiles.length)}
                 >
-                  {actionLoading ? 'Saving...' : 'Mark as Paid'}
+                  {actionLoading ? 'Saving...' : selectedClaim.status === 'PAID' ? 'Upload Payment Proof' : 'Mark as Paid'}
                 </button>
               ) : null}
 
@@ -2883,7 +2963,58 @@ export default function ReimbursementClaimPage({
               </section>
             </div>
 
+            {canPay ? (
+              <div className={styles.reimbursementDetailSection}>
+                <h3 className={styles.reimbursementSectionTitle}>Add Payment Proof</h3>
+                <input
+                  ref={paymentFileInputRef}
+                  className={styles.reimbursementHiddenInput}
+                  type="file"
+                  multiple
+                  onChange={(event) => {
+                    appendPaymentFiles(Array.from(event.target.files || []))
+                    event.target.value = ''
+                  }}
+                />
+                <button
+                  type="button"
+                  className={styles.reimbursementAttachmentAddButton}
+                  onClick={() => paymentFileInputRef.current?.click()}
+                >
+                  <span className={styles.reimbursementAttachmentPlus}>+</span>
+                  <span>Add Attachment</span>
+                </button>
+                {paymentFiles.length ? (
+                  <div className={styles.reimbursementFileList}>
+                    {paymentFiles.map((file, index) => (
+                      <span key={`${selectedPaidGroup.key}-${file.name}-${file.size}-${index}`} className={styles.reimbursementFileChip}>
+                        {file.name}
+                        <button
+                          type="button"
+                          className={styles.reimbursementFileChipRemove}
+                          onClick={() => removePaymentFile(index)}
+                          aria-label={`Remove ${file.name}`}
+                        >
+                          &times;
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+
             <div className={styles.buttonRow}>
+              {canPay ? (
+                <button
+                  type="button"
+                  className={styles.primaryButton}
+                  onClick={() => void handleMarkPaidGroup(selectedPaidGroup)}
+                  disabled={actionLoading || !paymentFiles.length}
+                >
+                  {actionLoading ? 'Saving...' : 'Upload Payment Proof'}
+                </button>
+              ) : null}
               <button type="button" className={styles.secondaryButton} onClick={closePaidGroupModal}>
                 Close
               </button>

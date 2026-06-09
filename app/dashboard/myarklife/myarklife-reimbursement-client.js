@@ -141,7 +141,7 @@ async function uploadReceiptFile({ file, claimId, claimNumber, uploadedBy }) {
   const year = new Date().getFullYear()
   const fileName = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}-${safeName}`
   const claimFolder = sanitizeFileName(String(claimNumber || claimId))
-  const storagePath = `${year}/${claimFolder}/submission/${fileName}`
+  const storagePath = `${year}/Submission/${claimFolder}/${fileName}`
 
   const { error: uploadError } = await supabase.storage.from(REIMBURSEMENT_BUCKET).upload(storagePath, file, { upsert: false })
   if (uploadError) {

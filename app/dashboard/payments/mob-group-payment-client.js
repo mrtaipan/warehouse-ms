@@ -13,23 +13,42 @@ const supabase = createClient()
 const PAYMENT_BUCKET = 'mob-payments'
 
 async function getCurrentUserSafely() {
-  const userResult = await supabase.auth.getUser()
-  if (!userResult.error) {
-    return userResult
-  }
+  try {
+    const userResult = await supabase.auth.getUser()
+    if (!userResult.error) {
+      return userResult
+    }
 
-  if (!String(userResult.error.message || '').includes('was released because another request stole it')) {
-    return userResult
-  }
+    if (!String(userResult.error.message || '').includes('was released because another request stole it')) {
+      return userResult
+    }
 
-  const sessionResult = await supabase.auth.getSession()
-  if (sessionResult.error) {
-    return userResult
-  }
+    const sessionResult = await supabase.auth.getSession()
+    if (sessionResult.error) {
+      return userResult
+    }
 
-  return {
-    data: { user: sessionResult.data.session?.user ?? null },
-    error: null,
+    return {
+      data: { user: sessionResult.data.session?.user ?? null },
+      error: null,
+    }
+  } catch (error) {
+    if (!String(error?.message || '').includes('was released because another request stole it')) {
+      throw error
+    }
+
+    const sessionResult = await supabase.auth.getSession()
+    if (sessionResult.error) {
+      return {
+        data: { user: null },
+        error,
+      }
+    }
+
+    return {
+      data: { user: sessionResult.data.session?.user ?? null },
+      error: null,
+    }
   }
 }
 
