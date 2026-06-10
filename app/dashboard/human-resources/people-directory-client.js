@@ -171,12 +171,30 @@ export default function PeopleDirectoryClient({
   const [editorSuccess, setEditorSuccess] = useState('')
   const [formError, setFormError] = useState('')
   const [submitting, setSubmitting] = useState(false)
+  const [search, setSearch] = useState('')
   const editableFields = useMemo(() => buildEditableFields(people), [people])
   const groupOptions = useMemo(() => buildGroupOptions(people), [people])
 
   const maleCount = people.filter((person) => normalizeGenderValue(person.gender || person.jenis_kelamin) === 'Male').length
   const femaleCount = people.filter((person) => normalizeGenderValue(person.gender || person.jenis_kelamin) === 'Female').length
   const editingPerson = people.find((person) => person.id === editingId) || null
+  const filteredPeople = useMemo(() => {
+    const keyword = String(search || '').trim().toLowerCase()
+    if (!keyword) return people
+
+    return people.filter((person) =>
+      [
+        person.id,
+        person.display_name,
+        person.email,
+        normalizeGenderValue(person.gender || person.jenis_kelamin),
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase()
+        .includes(keyword)
+    )
+  }, [people, search])
 
   function renderField(field, value, disabled = false) {
     const fieldType = getFieldType(field)
@@ -267,6 +285,7 @@ export default function PeopleDirectoryClient({
     setEditingId(openCreateOnTrigger ? '__new__' : '')
     setEditorSuccess('')
     setFormError('')
+    setSearch('')
   }
 
   async function handleCreateSubmit(event) {
@@ -491,6 +510,16 @@ export default function PeopleDirectoryClient({
             </div>
 
             <div className={styles.directoryListWrap} style={{ flex: '1 1 auto', minHeight: 0, overflow: 'auto', paddingRight: '4px' }}>
+              <div style={{ marginBottom: '12px' }}>
+                <input
+                  className={styles.input}
+                  type="text"
+                  value={search}
+                  onChange={(event) => setSearch(event.target.value)}
+                  placeholder="Search people ID, name, email, or gender"
+                />
+              </div>
+
               <div
                 className={styles.listHead}
                 style={{ gridTemplateColumns: '150px minmax(0, 1.2fr) minmax(0, 1fr) 130px auto' }}
@@ -502,7 +531,7 @@ export default function PeopleDirectoryClient({
                 <span>Action</span>
               </div>
 
-              {people.map((person) => (
+              {filteredPeople.map((person) => (
                 <div
                   key={person.id}
                   className={styles.listRow}
@@ -529,6 +558,12 @@ export default function PeopleDirectoryClient({
                   </div>
                 </div>
               ))}
+
+              {!filteredPeople.length ? (
+                <div className={styles.emptyState} style={{ minHeight: '140px' }}>
+                  No people match the current search.
+                </div>
+              ) : null}
             </div>
           </div>
         </div>

@@ -538,7 +538,6 @@ export default function RequestPanelsClient({
         const bValue = new Date(b.row?.submitted_at || b.row?.created_at || 0).getTime()
         return bValue - aValue
       })
-      .slice(0, 8)
   }, [giftRows, leaveRows, publicHolidayRows])
 
   const allRows = useMemo(() => {
