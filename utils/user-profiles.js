@@ -34,6 +34,6 @@ export async function getProfileByAuthenticatedUser(supabase, user, select = '*'
   return supabase
     .from('dir_user_profiles')
     .select(select)
-    .eq('email', normalizedEmail)
+    .ilike('email', normalizedEmail)
     .maybeSingle()
 }
