@@ -229,6 +229,7 @@ export default function MobGroupPaymentClient({
   embedded = false,
   createLabel = 'New Request',
 }) {
+  const hrgaMode = mode === 'hrga'
   const attachmentInputRef = useRef(null)
   const paymentProofInputRef = useRef(null)
   const [loading, setLoading] = useState(true)
@@ -238,7 +239,7 @@ export default function MobGroupPaymentClient({
   const [requests, setRequests] = useState([])
   const [categories, setCategories] = useState([])
   const [search, setSearch] = useState('')
-  const [statusFilter, setStatusFilter] = useState('ALL')
+  const [statusFilter, setStatusFilter] = useState(hrgaMode ? 'SUBMITTED' : 'ALL')
   const [requesterFilter, setRequesterFilter] = useState('ALL')
   const [selectedRequestIds, setSelectedRequestIds] = useState([])
   const [showCreateModal, setShowCreateModal] = useState(false)
@@ -257,8 +258,6 @@ export default function MobGroupPaymentClient({
   const [canApprove, setCanApprove] = useState(false)
   const [canPay, setCanPay] = useState(false)
   const imagePreviewDragRef = useRef(null)
-
-  const hrgaMode = mode === 'hrga'
 
   const loadWorkspace = useCallback(async (silent = false) => {
     if (!silent) {

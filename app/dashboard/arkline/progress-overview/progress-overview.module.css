@@ -1804,6 +1804,51 @@
   gap: 8px;
 }
 
+.financeTableWrap {
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.96);
+  overflow: hidden;
+}
+
+.financeTable {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.financeTable th,
+.financeTable td {
+  padding: 10px 12px;
+  text-align: left;
+}
+
+.financeTable th {
+  border-bottom: 1px solid #e2e8f0;
+  background: #f8fafc;
+  color: #64748b;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.financeTable td {
+  border-bottom: 1px solid #f1f5f9;
+  color: #0f172a;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.financeTable tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.financeTable th:last-child,
+.financeTable td:last-child {
+  text-align: right;
+}
+
 .eventMeta {
   display: flex;
   align-items: center;

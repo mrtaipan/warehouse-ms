@@ -944,11 +944,12 @@
 
 .orderDraftPriceRow {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(140px, 0.7fr);
+  grid-template-columns: minmax(110px, 0.55fr) minmax(0, 1fr) minmax(140px, 0.75fr);
   gap: 12px;
   align-items: end;
 }
 
+.orderDraftQtyCard,
 .orderDraftAmountCard {
   min-height: 40px;
   padding: 10px 12px;
@@ -959,6 +960,40 @@
   flex-direction: column;
   justify-content: center;
   gap: 4px;
+}
+
+.orderDraftPriceField {
+  min-width: 0;
+  min-height: 40px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid #d7dee7;
+  background: #ffffff;
+  justify-content: center;
+  gap: 4px;
+}
+
+.orderDraftPriceField .label {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #64748b;
+}
+
+.orderDraftPriceField .input {
+  height: auto;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  font-size: 13px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.orderDraftPriceField .input:focus {
+  outline: none;
+  box-shadow: none;
 }
 
 .orderDraftAmountLabel {
@@ -1021,83 +1056,55 @@
   justify-content: flex-end;
 }
 
-.orderDraftQty {
-  min-height: 34px;
-  padding: 0 12px;
-  border-radius: 10px;
-  border: 1px solid #d7dee7;
-  background: #ffffff;
-  display: inline-flex;
-  align-items: center;
-  color: #0f172a;
-  font-size: 12px;
+.orderDraftMoveUpButton {
+  color: #1d4ed8;
+  border-color: #bfdbfe;
+  background: #eff6ff;
+  font-size: 0;
+}
+
+.orderDraftMoveDownButton {
+  color: #7c3aed;
+  border-color: #ddd6fe;
+  background: #f5f3ff;
+  font-size: 0;
+}
+
+.orderDraftMoveUpButton::before,
+.orderDraftMoveDownButton::before {
+  font-size: 13px;
   font-weight: 800;
+  line-height: 1;
 }
 
-.orderDraftHoverWrap {
-  position: relative;
-  width: fit-content;
+.orderDraftMoveUpButton::before {
+  content: '\2191';
+  content: '↑';
 }
 
-.orderDraftSourceBadge {
-  min-height: 28px;
-  padding: 0 10px;
-  border-radius: 999px;
-  border: 1px solid #dbe4ef;
-  background: #ffffff;
-  display: inline-flex;
-  align-items: center;
-  color: #64748b;
-  font-size: 11px;
-  font-weight: 700;
-  cursor: default;
+.orderDraftMoveDownButton::before {
+  content: '\2193';
+  content: '↓';
 }
 
-.orderDraftTooltip {
-  position: absolute;
-  left: 0;
-  top: calc(100% + 8px);
-  min-width: 280px;
-  max-width: min(360px, 72vw);
-  border-radius: 14px;
-  border: 1px solid #dbe4ef;
-  background: rgba(255, 255, 255, 0.98);
-  box-shadow: 0 18px 36px rgba(15, 23, 42, 0.12);
-  padding: 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  opacity: 0;
-  pointer-events: none;
-  transform: translateY(6px);
-  transition: opacity 160ms ease, transform 160ms ease;
-  z-index: 10;
+.orderDraftRemoveButton {
+  color: #b42318;
+  border-color: #f3c4c2;
+  background: #fff1f1;
 }
 
-.orderDraftHoverWrap:hover .orderDraftTooltip {
-  opacity: 1;
-  transform: translateY(0);
-}
-
-.orderDraftTooltip strong {
-  font-size: 11px;
+.orderDraftMoveUpButton:hover,
+.orderDraftMoveDownButton:hover,
+.orderDraftRemoveButton:hover {
   color: #0f172a;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
 }
 
-.orderDraftTooltipList {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+.orderDraftMoveUpButton::before {
+  content: '\2191';
 }
 
-.orderDraftTooltipRow {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 10px;
-  font-size: 12px;
-  color: #475569;
+.orderDraftMoveDownButton::before {
+  content: '\2193';
 }
 
 @media (max-width: 1100px) {

@@ -10,6 +10,7 @@ import styles from './progress-overview.module.css'
 const supabase = createClient()
 
 const BOARD_STATUSES = ['Initiated', 'On Progress', 'Completed']
+const MATERIAL_BOARD_STATUSES = ['Ordered', 'Received', 'Sent']
 const RECEIPT_SIZE_ORDER = ['XS', 'S', 'M', 'L', 'XL', 'XXL']
 const DEFAULT_UPDATE_REASON = 'FABRIC ISSUE'
 const OTHERS_UPDATE_REASON = 'OTHERS'
@@ -49,6 +50,15 @@ function PlusIcon() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true" className={styles.actionIcon}>
       <path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+    </svg>
+  )
+}
+
+function MaterialStackIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className={styles.calendarIcon}>
+      <path d="M5 8.2 12 4l7 4.2-7 4.1-7-4.1Z" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" />
+      <path d="M5 12.2 12 16l7-3.8M5 16.1 12 20l7-3.9" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   )
 }
@@ -119,6 +129,13 @@ function normalizeBoardStatus(value) {
   if (normalized === 'COMPLETED') return 'Completed'
   if (normalized === 'ON PROGRESS' || normalized === 'IN PROGRESS' || normalized === 'ONGOING') return 'On Progress'
   return 'Initiated'
+}
+
+function normalizeMaterialLogStatus(value) {
+  const normalized = String(value || '').trim().toUpperCase()
+  if (normalized === 'SENT') return 'Sent'
+  if (normalized === 'RECEIVED') return 'Received'
+  return 'Ordered'
 }
 
 function getStatusKey(status) {
@@ -411,6 +428,74 @@ async function loadSnapshotRows() {
       }
     })
     .filter((item) => item.poId)
+}
+
+async function loadMaterialProgressRows() {
+  const [
+    { data: headerData, error: headerError },
+    { data: itemData, error: itemError },
+    { data: logData, error: logError },
+  ] = await Promise.all([
+    supabase
+      .from('arkline_po_material_ordered')
+      .select('id, material_po_number, supplier_name_snapshot, garment_po_number, request_delivery_date, status, notes, created_at')
+      .order('created_at', { ascending: false }),
+    supabase
+      .from('arkline_po_material_ordered_items')
+      .select('id, material_po_ordered_id, material_po_number, material_name_snapshot, size_variant, color_variant, unit, qty, notes, source_po_id'),
+    supabase
+      .from('arkline_po_material_logs')
+      .select(
+        'id, material_po_number, material_po_ordered_id, material_name_snapshot, size_variant, color_variant, unit, qty, supplier_name, notes, log_type, event_date, created_at'
+      )
+      .in('log_type', ['RECEIVED', 'SENT'])
+      .order('event_date', { ascending: false }),
+  ])
+
+  if (headerError) throw new Error(headerError.message)
+  if (itemError) throw new Error(itemError.message)
+  if (logError) throw new Error(logError.message)
+
+  const headerById = (headerData || []).reduce((accumulator, row) => {
+    accumulator[String(row?.id || '').trim()] = row
+    return accumulator
+  }, {})
+
+  const orderedRows = (itemData || []).map((row) => {
+    const header = headerById[String(row?.material_po_ordered_id || '').trim()] || null
+    return {
+      id: `ordered:${row.id}`,
+      status: 'Ordered',
+      poNumber: String(row?.material_po_number || header?.material_po_number || '').trim().toUpperCase(),
+      supplier: String(header?.supplier_name_snapshot || '').trim().toUpperCase(),
+      materialName: String(row?.material_name_snapshot || '').trim().toUpperCase() || 'NO MATERIAL',
+      variant: [String(row?.size_variant || '').trim().toUpperCase(), String(row?.color_variant || '').trim().toUpperCase()].filter(Boolean).join(' / ') || '-',
+      unit: String(row?.unit || '').trim().toUpperCase() || '-',
+      qty: Number(row?.qty || 0),
+      date: String(header?.request_delivery_date || header?.created_at || '').slice(0, 10),
+      notes: String(row?.notes || header?.notes || '').trim(),
+      garmentPoNumber: String(row?.source_po_id || header?.garment_po_number || '').trim().toUpperCase(),
+    }
+  })
+
+  const logRows = (logData || []).map((row) => {
+    const header = headerById[String(row?.material_po_ordered_id || '').trim()] || null
+    return {
+      id: `${String(row?.log_type || '').trim().toLowerCase()}:${row.id}`,
+      status: normalizeMaterialLogStatus(row?.log_type),
+      poNumber: String(row?.material_po_number || header?.material_po_number || '').trim().toUpperCase(),
+      supplier: String(row?.supplier_name || header?.supplier_name_snapshot || '').trim().toUpperCase(),
+      materialName: String(row?.material_name_snapshot || '').trim().toUpperCase() || 'NO MATERIAL',
+      variant: [String(row?.size_variant || '').trim().toUpperCase(), String(row?.color_variant || '').trim().toUpperCase()].filter(Boolean).join(' / ') || '-',
+      unit: String(row?.unit || '').trim().toUpperCase() || '-',
+      qty: Number(row?.qty || 0),
+      date: String(row?.event_date || row?.created_at || '').slice(0, 10),
+      notes: String(row?.notes || '').trim(),
+      garmentPoNumber: String(header?.garment_po_number || '').trim().toUpperCase(),
+    }
+  })
+
+  return [...orderedRows, ...logRows]
 }
 
 async function loadUpdateReasons() {
@@ -811,6 +896,7 @@ export default function ArklineProgressOverviewPage() {
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState('')
   const [poRows, setPoRows] = useState([])
+  const [materialRows, setMaterialRows] = useState([])
   const [updateReasons, setUpdateReasons] = useState([])
   const [selectedPoDetail, setSelectedPoDetail] = useState(null)
   const [poDetailSections, setPoDetailSections] = useState({
@@ -848,12 +934,14 @@ export default function ArklineProgressOverviewPage() {
       if (current === 'kanban' && access.progressKanban) return current
       if (current === 'calendar' && access.progressCalendar) return current
       if (current === 'products' && access.progressProducts) return current
+      if (current === 'materials' && access.progressOverview) return current
       if (access.progressKanban) return 'kanban'
       if (access.progressCalendar) return 'calendar'
       if (access.progressProducts) return 'products'
+      if (access.progressOverview) return 'materials'
       return 'calendar'
     })
-  }, [access.progressCalendar, access.progressKanban, access.progressProducts, accessLoading])
+  }, [access.progressCalendar, access.progressKanban, access.progressOverview, access.progressProducts, accessLoading])
 
   useEffect(() => {
     void refreshRows()
@@ -864,9 +952,18 @@ export default function ArklineProgressOverviewPage() {
     setLoadError('')
 
     try {
-      const [rows, reasons] = await Promise.all([loadSnapshotRows(), loadUpdateReasons()])
+      const [rows, reasons, materialResult] = await Promise.all([
+        loadSnapshotRows(),
+        loadUpdateReasons(),
+        loadMaterialProgressRows().catch((error) => ({ __error: error })),
+      ])
       setPoRows(rows)
       setUpdateReasons(reasons)
+      if (materialResult?.__error) {
+        setMaterialRows([])
+      } else {
+        setMaterialRows(materialResult)
+      }
       setLastRefresh(new Date())
     } catch (error) {
       setLoadError(error.message || 'Failed to load Arkline progress snapshot.')
@@ -956,6 +1053,28 @@ export default function ArklineProgressOverviewPage() {
         return accumulator
       }, {}),
     [filteredRows]
+  )
+
+  const filteredMaterialRows = useMemo(() => {
+    const keyword = productFilter.trim().toUpperCase()
+    return materialRows.filter((item) => {
+      if (!keyword) return true
+      return [item.poNumber, item.supplier, item.materialName, item.variant, item.notes, item.garmentPoNumber]
+        .join(' ')
+        .toUpperCase()
+        .includes(keyword)
+    })
+  }, [materialRows, productFilter])
+
+  const materialBoardItemsByStatus = useMemo(
+    () =>
+      MATERIAL_BOARD_STATUSES.reduce((accumulator, status) => {
+        accumulator[status] = filteredMaterialRows
+          .filter((item) => item.status === status)
+          .sort((left, right) => String(right.date || '').localeCompare(String(left.date || '')) || String(left.poNumber || '').localeCompare(String(right.poNumber || '')))
+        return accumulator
+      }, {}),
+    [filteredMaterialRows]
   )
 
   const openProductSnapshot = useMemo(() => {
@@ -1822,6 +1941,15 @@ export default function ArklineProgressOverviewPage() {
               >
                 <ProductListIcon />
               </button>
+              <button
+                type="button"
+                aria-label="Material progress view"
+                data-view-label="Material Progress"
+                className={`${styles.segmentButton} ${view === 'materials' ? styles.segmentButtonActive : ''}`.trim()}
+                onClick={() => setView('materials')}
+              >
+                <MaterialStackIcon />
+              </button>
             </div>
           </div>
 
@@ -2046,6 +2174,45 @@ export default function ArklineProgressOverviewPage() {
               )}
             </div>
           </div>
+        ) : view === 'materials' ? (
+          <div className={styles.boardGrid}>
+            {MATERIAL_BOARD_STATUSES.map((status) => (
+              <section key={status} className={`${styles.boardColumn} ${styles[`boardColumn${status}`] || ''}`.trim()}>
+                <div className={styles.boardColumnHead}>
+                  <div className={styles.boardColumnTitleWrap}>
+                    <span className={styles.boardColumnDot}>{status.slice(0, 1).toUpperCase()}</span>
+                    <h3>{status}</h3>
+                  </div>
+                  <span>{materialBoardItemsByStatus[status]?.length || 0}</span>
+                </div>
+                <div className={styles.boardDropzone}>
+                  {(materialBoardItemsByStatus[status] || []).length ? (
+                    materialBoardItemsByStatus[status].map((item) => (
+                      <article key={item.id} className={`${styles.boardCard} ${styles.boardCardStatic}`.trim()}>
+                        <div className={styles.boardCardTop}>
+                          <div className={styles.boardCardIdentity}>
+                            <strong className={styles.poLinkButton}>{item.poNumber || '-'}</strong>
+                            <span className={styles.boardSupplierLine}>{item.supplier || '-'}</span>
+                          </div>
+                          <span className={styles.boardMethod}>{item.unit || '-'}</span>
+                        </div>
+                        <div className={styles.boardProductSummary}>
+                          <p className={styles.boardProductLine}>{item.materialName || 'NO MATERIAL'}</p>
+                          <p className={styles.boardProductExtra}>{item.variant || '-'}</p>
+                        </div>
+                        <div className={styles.boardFooter}>
+                          <span className={styles.boardQty}>Qty {formatNumber(item.qty || 0)}</span>
+                          <span className={styles.boardQty}>{item.date || '-'}</span>
+                        </div>
+                      </article>
+                    ))
+                  ) : (
+                    <div className={styles.emptyColumn}>No material in this column.</div>
+                  )}
+                </div>
+              </section>
+            ))}
+          </div>
         ) : null}
       </section>
 
@@ -2175,7 +2342,7 @@ export default function ArklineProgressOverviewPage() {
                     const paidValue = (selectedPoDetail.payments || [])
                       .filter((row) => row.status === 'PAID')
                       .reduce((sum, row) => sum + Number(row?.amount || 0), 0)
-                    const progressPct = dueValue > 0 ? Math.min((paidValue / dueValue) * 100, 100) : 0
+                    const outstandingValue = Math.max(dueValue - paidValue, 0)
 
                     return (
                       <>
@@ -2189,24 +2356,30 @@ export default function ArklineProgressOverviewPage() {
                             <strong>{formatNumber(paidValue)}</strong>
                           </div>
                           <div className={styles.modalMetric}>
-                            <span>Progress Payment</span>
-                            <strong>{`${progressPct.toFixed(1)}%`}</strong>
+                            <span>Outstanding</span>
+                            <strong>{formatNumber(outstandingValue)}</strong>
                           </div>
                         </div>
-                        <div className={styles.productDetailRows}>
+                        <div className={styles.financeTableWrap}>
                           {(selectedPoDetail.payments || []).length ? (
-                            selectedPoDetail.payments.map((row) => (
-                              <div key={row.id} className={styles.productDetailRow}>
-                                <div>
-                                  <strong>{row.paymentLabel || 'Payment'}</strong>
-                                  <span>{formatDateLabel(row.paymentDate)}</span>
-                                </div>
-                                <div className={styles.productDetailRowMeta}>
-                                  <strong>{formatNumber(row.amount)}</strong>
-                                  <span>{row.status === 'PAID' ? row.notes || 'Paid' : row.notes || 'Submitted'}</span>
-                                </div>
-                              </div>
-                            ))
+                            <table className={styles.financeTable}>
+                              <thead>
+                                <tr>
+                                  <th>Date</th>
+                                  <th>Invoice No</th>
+                                  <th>Nominal Paid</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {selectedPoDetail.payments.map((row) => (
+                                  <tr key={row.id}>
+                                    <td>{formatDateLabel(row.paymentDate)}</td>
+                                    <td>{row.invoiceNumber || row.paymentLabel || '-'}</td>
+                                    <td>{formatNumber(row.amount)}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
                           ) : (
                             <div className={styles.emptyMini}>No payment rows.</div>
                           )}

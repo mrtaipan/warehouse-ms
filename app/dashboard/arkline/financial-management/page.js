@@ -254,7 +254,7 @@ export default function ArklineFinancialManagementPage({
   const [materialPoOptions, setMaterialPoOptions] = useState([])
   const [categories, setCategories] = useState([])
   const [search, setSearch] = useState('')
-  const [statusFilter, setStatusFilter] = useState('ALL')
+  const [statusFilter, setStatusFilter] = useState(hrgaView ? 'SUBMITTED' : 'ALL')
   const [requesterFilter, setRequesterFilter] = useState('ALL')
   const [selectedRequestIds, setSelectedRequestIds] = useState([])
   const [showCreateModal, setShowCreateModal] = useState(false)

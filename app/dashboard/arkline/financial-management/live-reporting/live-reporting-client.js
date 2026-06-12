@@ -39,14 +39,26 @@ function AddIcon() {
   )
 }
 
+function getTodayDateValue() {
+  const now = new Date()
+  const year = now.getFullYear()
+  const month = String(now.getMonth() + 1).padStart(2, '0')
+  const day = String(now.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
 function createDraft() {
   return {
-    session_date: '',
+    session_date: getTodayDateValue(),
     start_time: '',
     end_time: '',
     session_type: 'STANDALONE',
     partner_profile_id: '',
-    hero_product_id: '',
+    partner_profile_query: '',
+    wearing_product_id: '',
+    wearing_product_query: '',
+    partner_wearing_product_id: '',
+    partner_wearing_product_query: '',
     amount: '',
   }
 }
@@ -84,18 +96,50 @@ function formatMonthLabel(year, month) {
   return new Intl.DateTimeFormat('en-GB', { month: 'long', year: 'numeric' }).format(new Date(Number(year), Number(month) - 1, 1))
 }
 
+function getProductOptionLabel(product) {
+  if (!product) return ''
+  return [product.sku, product.name].filter(Boolean).join(' - ')
+}
+
+function findProductByInput(products, value) {
+  const normalized = String(value || '').trim().toUpperCase()
+  if (!normalized) return null
+
+  return (
+    products.find((item) => item.sku === normalized) ||
+    products.find((item) => getProductOptionLabel(item).toUpperCase() === normalized) ||
+    null
+  )
+}
+
+function getProfileOptionLabel(profile) {
+  if (!profile) return ''
+  return profile.display_name || profile.email || ''
+}
+
+function findProfileByInput(profiles, value) {
+  const normalized = String(value || '').trim().toLowerCase()
+  if (!normalized) return null
+
+  return (
+    profiles.find((item) => String(item.display_name || '').trim().toLowerCase() === normalized) ||
+    profiles.find((item) => String(item.email || '').trim().toLowerCase() === normalized) ||
+    null
+  )
+}
+
 function normalizeSession(row) {
   return {
     id: row?.id || '',
+    host_profile_id: row?.host_profile_id || '',
     session_date: row?.session_date || '',
     start_time: row?.start_time || '',
     end_time: row?.end_time || '',
     session_type: row?.session_type || 'STANDALONE',
-    hero_product_sku: row?.hero_product_sku || '',
-    hero_product_name_snapshot: row?.hero_product_name_snapshot || '',
+    wearing_product_sku: row?.wearing_product_sku || '',
+    partner_wearing_product_sku: row?.partner_wearing_product_sku || '',
     gross_amount: Number(row?.gross_amount || 0),
-    submitted_by: row?.submitted_by || '',
-    submitted_by_display_name: row?.submitted_by_profile?.display_name || row?.submitted_by_display_name_snapshot || row?.submitted_by || '-',
+    host_display_name: row?.host_profile?.display_name || row?.host_display_name_snapshot || '-',
     partner_display_name_snapshot: row?.partner_profile?.display_name || row?.partner_display_name_snapshot || '',
     created_at: row?.created_at || '',
   }
@@ -104,14 +148,15 @@ function normalizeSession(row) {
 function normalizeCredit(row) {
   return {
     id: row?.id || '',
-    participant_display_name: row?.participant_profile?.display_name || row?.participant_display_name_snapshot || row?.participant_email || '-',
+    host_display_name: row?.host_profile?.display_name || row?.host_display_name_snapshot || '-',
     credited_amount: Number(row?.credited_amount || 0),
     session_date: row?.session?.session_date || '',
     session_start_time: row?.session?.start_time || '',
     session_end_time: row?.session?.end_time || '',
     session_type: row?.session?.session_type || 'STANDALONE',
-    hero_product_name_snapshot: row?.session?.hero_product_name_snapshot || '',
-    submitted_by_display_name_snapshot: row?.session?.submitted_by_display_name_snapshot || '',
+    wearing_product_sku: row?.session?.wearing_product_sku || '',
+    partner_wearing_product_sku: row?.session?.partner_wearing_product_sku || '',
+    host_display_name_snapshot: row?.session?.host_display_name_snapshot || '',
     partner_display_name_snapshot: row?.session?.partner_display_name_snapshot || '',
   }
 }
@@ -134,6 +179,32 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
 
   const canView = access.financialManagementLiveReportingView
   const canSubmit = access.financialManagementLiveReportingAdd
+
+  function updateProductDraft(fieldPrefix, value) {
+    const matched = findProductByInput(products, value)
+    setDraft((prev) => ({
+      ...prev,
+      [`${fieldPrefix}_query`]: value,
+      [`${fieldPrefix}_id`]: matched?.sku || '',
+    }))
+  }
+
+  function updatePartnerDraft(value) {
+    const matched = findProfileByInput(profiles, value)
+    setDraft((prev) => ({
+      ...prev,
+      partner_profile_query: value,
+      partner_profile_id: matched?.id || '',
+    }))
+  }
+
+  function clearDraftField(fieldPrefix) {
+    setDraft((prev) => ({
+      ...prev,
+      [`${fieldPrefix}_query`]: '',
+      [`${fieldPrefix}_id`]: '',
+    }))
+  }
 
   async function loadWorkspace() {
     setLoading(true)
@@ -174,25 +245,29 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
       { data: sessionRows, error: sessionError },
       { data: creditRows, error: creditError },
     ] = await Promise.all([
-      supabase.from('dir_user_profiles').select('id, email, display_name').order('display_name', { ascending: true }),
+      supabase
+        .from('dir_user_profiles')
+        .select('id, email, display_name, role')
+        .eq('role', 'arkline_host')
+        .order('display_name', { ascending: true }),
       supabase.from('arkline_dir_products').select('sku_induk, nama_produk').order('nama_produk', { ascending: true }),
       supabase
         .from('arkline_live_reporting_sessions')
         .select(
           `
             id,
+            host_profile_id,
             session_date,
             start_time,
             end_time,
             session_type,
-            hero_product_sku,
-            hero_product_name_snapshot,
+            wearing_product_sku,
+            partner_wearing_product_sku,
             gross_amount,
-            submitted_by,
-            submitted_by_display_name_snapshot,
+            host_display_name_snapshot,
             partner_display_name_snapshot,
             created_at,
-            submitted_by_profile:dir_user_profiles!arkline_live_reporting_sessions_submitted_by_profile_id_fkey(display_name),
+            host_profile:dir_user_profiles!arkline_live_reporting_sessions_host_profile_id_fkey(display_name),
             partner_profile:dir_user_profiles!arkline_live_reporting_sessions_partner_profile_id_fkey(display_name)
           `
         )
@@ -204,16 +279,16 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
           `
             id,
             credited_amount,
-            participant_email,
-            participant_display_name_snapshot,
-            participant_profile:dir_user_profiles!arkline_live_reporting_credits_participant_profile_id_fkey(display_name),
+            host_display_name_snapshot,
+            host_profile:dir_user_profiles!arkline_live_reporting_credits_host_profile_id_fkey(display_name),
             session:arkline_live_reporting_sessions!arkline_live_reporting_credits_session_id_fkey(
               session_date,
               start_time,
               end_time,
               session_type,
-              hero_product_name_snapshot,
-              submitted_by_display_name_snapshot,
+              wearing_product_sku,
+              partner_wearing_product_sku,
+              host_display_name_snapshot,
               partner_display_name_snapshot
             )
           `
@@ -232,7 +307,16 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
       display_name:
         profileRow?.display_name || user.user_metadata?.full_name || user.user_metadata?.name || user.email?.split('@')[0] || 'Team',
     })
-    setProfiles((profileRows || []).map((item) => ({ id: String(item.id), email: String(item.email || '').trim().toLowerCase(), display_name: String(item.display_name || '').trim() })))
+    setProfiles(
+      (profileRows || [])
+        .map((item) => ({
+          id: String(item.id),
+          email: String(item.email || '').trim().toLowerCase(),
+          display_name: String(item.display_name || '').trim(),
+          role: String(item.role || '').trim().toLowerCase(),
+        }))
+        .filter((item) => item.role === 'arkline_host')
+    )
     setProducts(
       (productRows || []).map((item) => ({
         id: String(item.sku_induk || '').trim().toUpperCase(),
@@ -309,17 +393,17 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
   )
 
   const personalSessions = useMemo(() => {
-    const profileEmail = String(profile?.email || '').trim().toLowerCase()
+    const profileId = String(profile?.id || '').trim()
     return filteredSessions.filter((item) => {
-      if (!profileEmail) return false
-      return String(item.submitted_by || '').trim().toLowerCase() === profileEmail
+      if (!profileId) return false
+      return String(item.host_profile_id || '').trim() === profileId
     })
   }, [filteredSessions, profile])
 
   const ranking = useMemo(() => {
     return Array.from(
       filteredCredits.reduce((map, item) => {
-        const key = item.participant_display_name || 'Unknown'
+        const key = item.host_display_name || 'Unknown'
         map.set(key, (map.get(key) || 0) + Number(item.credited_amount || 0))
         return map
       }, new Map())
@@ -354,17 +438,21 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
     }
 
     if (draft.session_type === 'PAIRING' && !draft.partner_profile_id) {
-      setError('Choose the pairing partner first.')
+      setError('Partner must be selected from the dropdown list.')
       return
     }
 
-    if (!draft.hero_product_id) {
-      setError('Choose the hero product first.')
+    if (draft.session_type === 'PAIRING' && !draft.partner_wearing_product_id) {
+      setError('Choose the partner wearing product first.')
+      return
+    }
+
+    if (!draft.wearing_product_id) {
+      setError('Choose the wearing product first.')
       return
     }
 
     const partner = profiles.find((item) => item.id === draft.partner_profile_id)
-    const heroProduct = products.find((item) => item.id === draft.hero_product_id)
     const grossAmount = Number(normalizeDigits(draft.amount))
     const creditedAmount = draft.session_type === 'PAIRING' ? grossAmount / 2 : grossAmount
 
@@ -376,14 +464,12 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
         start_time: `${draft.start_time}:00`,
         end_time: `${draft.end_time}:00`,
         session_type: draft.session_type,
-        submitted_by_profile_id: profile.id,
-        submitted_by: profile.email,
-        submitted_by_display_name_snapshot: profile.display_name || profile.email,
+        host_profile_id: profile.id,
+        host_display_name_snapshot: profile.display_name || profile.email,
         partner_profile_id: draft.session_type === 'PAIRING' ? draft.partner_profile_id : null,
-        partner_email: draft.session_type === 'PAIRING' ? partner?.email || null : null,
         partner_display_name_snapshot: draft.session_type === 'PAIRING' ? partner?.display_name || null : null,
-        hero_product_sku: draft.hero_product_id,
-        hero_product_name_snapshot: heroProduct?.name || null,
+        wearing_product_sku: draft.wearing_product_id,
+        partner_wearing_product_sku: draft.session_type === 'PAIRING' ? draft.partner_wearing_product_id : null,
         gross_amount: grossAmount,
       }
 
@@ -398,9 +484,8 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
       const creditPayload = [
         {
           session_id: insertedSession.id,
-          participant_profile_id: profile.id,
-          participant_email: profile.email,
-          participant_display_name_snapshot: profile.display_name || profile.email,
+          host_profile_id: profile.id,
+          host_display_name_snapshot: profile.display_name || profile.email,
           credited_amount: creditedAmount,
         },
       ]
@@ -408,9 +493,8 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
       if (draft.session_type === 'PAIRING' && partner) {
         creditPayload.push({
           session_id: insertedSession.id,
-          participant_profile_id: partner.id,
-          participant_email: partner.email,
-          participant_display_name_snapshot: partner.display_name || partner.email,
+          host_profile_id: partner.id,
+          host_display_name_snapshot: partner.display_name || partner.email,
           credited_amount: creditedAmount,
         })
       }
@@ -575,12 +659,15 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
                       {personalSessions.map((item) => (
                         <div key={item.id} className={styles.sessionRow}>
                           <div className={styles.sessionMain}>
-                            <strong>{item.hero_product_name_snapshot || item.hero_product_sku || 'No product'}</strong>
+                            <strong>{item.wearing_product_sku || 'No product'}</strong>
                             <span>
                               {formatDate(item.session_date)} • {item.start_time?.slice(0, 5)} - {item.end_time?.slice(0, 5)}
                             </span>
                             <span>
-                              {item.session_type === 'PAIRING' ? `Pairing with ${item.partner_display_name_snapshot || '-'}` : 'Standalone'} • {item.submitted_by_display_name || '-'}
+                              {item.session_type === 'PAIRING'
+                                ? `Pairing with ${item.partner_display_name_snapshot || '-'} | Partner SKU ${item.partner_wearing_product_sku || '-'}`
+                                : `Standalone | ${item.host_display_name || '-'}`
+                              }
                             </span>
                           </div>
                           <div className={styles.sessionAmount}>{formatCurrency(item.gross_amount)}</div>
@@ -603,6 +690,9 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
                             ...prev,
                             session_type: 'STANDALONE',
                             partner_profile_id: '',
+                            partner_profile_query: '',
+                            partner_wearing_product_id: '',
+                            partner_wearing_product_query: '',
                           }))
                         }
                       >
@@ -620,13 +710,13 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
 
                   <div className={styles.field}>
                     <label className={styles.label}>Nominal *</label>
-                    <input
-                      className={styles.input}
-                      inputMode="numeric"
-                      value={draft.amount}
-                      onChange={(event) => setDraft((prev) => ({ ...prev, amount: formatNumberInput(event.target.value) }))}
-                      placeholder="0"
-                    />
+                      <input
+                        className={styles.input}
+                        inputMode="numeric"
+                        value={draft.amount || ''}
+                        onChange={(event) => setDraft((prev) => ({ ...prev, amount: formatNumberInput(event.target.value) }))}
+                        placeholder="0"
+                      />
                   </div>
                 </div>
 
@@ -636,7 +726,7 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
                     <input
                       className={styles.input}
                       type="date"
-                      value={draft.session_date}
+                      value={draft.session_date || ''}
                       onChange={(event) => setDraft((prev) => ({ ...prev, session_date: event.target.value }))}
                     />
                   </div>
@@ -645,7 +735,7 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
                     <input
                       className={styles.input}
                       type="time"
-                      value={draft.start_time}
+                      value={draft.start_time || ''}
                       onChange={(event) => setDraft((prev) => ({ ...prev, start_time: event.target.value }))}
                     />
                   </div>
@@ -654,49 +744,68 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
                     <input
                       className={styles.input}
                       type="time"
-                      value={draft.end_time}
+                      value={draft.end_time || ''}
                       onChange={(event) => setDraft((prev) => ({ ...prev, end_time: event.target.value }))}
                     />
                   </div>
                 </div>
 
-                <div className={styles.formRowTwo}>
-                  <div className={styles.field}>
-                    <label className={styles.label}>Hero Product *</label>
-                    <select
-                      className={styles.select}
-                      value={draft.hero_product_id}
-                      onChange={(event) => setDraft((prev) => ({ ...prev, hero_product_id: event.target.value }))}
-                    >
-                      <option value="">Choose product</option>
-                      {products.map((item) => (
-                        <option key={item.id} value={item.id}>
-                          {item.name}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
+                <div className={styles.field}>
+                  <label className={styles.label}>Wearing Product *</label>
+                  <input
+                    className={styles.input}
+                    list="wearing-product-options"
+                    value={draft.wearing_product_query || ''}
+                    onFocus={() => clearDraftField('wearing_product')}
+                    onChange={(event) => updateProductDraft('wearing_product', event.target.value)}
+                    placeholder="Type SKU or product name"
+                  />
+                  <datalist id="wearing-product-options">
+                    {products.map((item) => (
+                      <option key={item.id} value={getProductOptionLabel(item)} />
+                    ))}
+                  </datalist>
+                </div>
 
-                  {draft.session_type === 'PAIRING' ? (
+                {draft.session_type === 'PAIRING' ? (
+                  <>
                     <div className={styles.field}>
-                      <label className={styles.label}>Pairing With *</label>
-                      <select
-                        className={styles.select}
-                        value={draft.partner_profile_id}
-                        onChange={(event) => setDraft((prev) => ({ ...prev, partner_profile_id: event.target.value }))}
-                      >
-                        <option value="">Choose display name</option>
+                      <label className={styles.label}>Who is your partner? *</label>
+                      <input
+                        className={styles.input}
+                        list="partner-profile-options"
+                        value={draft.partner_profile_query || ''}
+                        onFocus={() => updatePartnerDraft('')}
+                        onChange={(event) => updatePartnerDraft(event.target.value)}
+                        placeholder="Type partner display name"
+                      />
+                      <datalist id="partner-profile-options">
                         {profiles
                           .filter((item) => item.id !== profile?.id)
                           .map((item) => (
-                            <option key={item.id} value={item.id}>
-                              {item.display_name || item.email}
-                            </option>
+                            <option key={item.id} value={getProfileOptionLabel(item)} />
                           ))}
-                      </select>
+                      </datalist>
                     </div>
-                  ) : mobile ? null : <div className={styles.field} />}
-                </div>
+
+                    <div className={styles.field}>
+                      <label className={styles.label}>Partner Wearing Product *</label>
+                      <input
+                        className={styles.input}
+                        list="partner-wearing-product-options"
+                        value={draft.partner_wearing_product_query || ''}
+                        onFocus={() => clearDraftField('partner_wearing_product')}
+                        onChange={(event) => updateProductDraft('partner_wearing_product', event.target.value)}
+                        placeholder="Type SKU or product name"
+                      />
+                      <datalist id="partner-wearing-product-options">
+                        {products.map((item) => (
+                          <option key={item.id} value={getProductOptionLabel(item)} />
+                        ))}
+                      </datalist>
+                    </div>
+                  </>
+                ) : null}
 
                 <div className={`${styles.buttonRow} ${mobile ? styles.mobileButtonRow : ''}`.trim()}>
                   {mobile ? (
@@ -742,15 +851,16 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
                     <th>Date</th>
                     <th>Time</th>
                     <th>Type</th>
-                    <th>Submitted By</th>
+                    <th>Host</th>
                     <th>Pairing</th>
-                    <th>Hero Product</th>
+                    <th>Wearing Product</th>
+                    <th>Partner Product</th>
                     <th>Credit</th>
                   </tr>
                 </thead>
                 <tbody>
                   {filteredCredits
-                    .filter((item) => item.participant_display_name === selectedRanking)
+                    .filter((item) => item.host_display_name === selectedRanking)
                     .map((item) => (
                       <tr key={item.id}>
                         <td>{formatDate(item.session_date)}</td>
@@ -758,9 +868,10 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
                           {item.session_start_time?.slice(0, 5)} - {item.session_end_time?.slice(0, 5)}
                         </td>
                         <td>{item.session_type === 'PAIRING' ? 'Pairing' : 'Standalone'}</td>
-                        <td>{item.submitted_by_display_name_snapshot || '-'}</td>
+                        <td>{item.host_display_name_snapshot || '-'}</td>
                         <td>{item.partner_display_name_snapshot || '-'}</td>
-                        <td>{item.hero_product_name_snapshot || '-'}</td>
+                        <td>{item.wearing_product_sku || '-'}</td>
+                        <td>{item.partner_wearing_product_sku || '-'}</td>
                         <td>{formatCurrency(item.credited_amount)}</td>
                       </tr>
                     ))}
@@ -773,3 +884,5 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
     </div>
   )
 }
+
+

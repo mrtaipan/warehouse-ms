@@ -58,12 +58,20 @@ function formatDate(value) {
 function normalizePaidRow(row) {
   return {
     id: row?.id || '',
-    supplier_name_snapshot: row?.supplier_name_snapshot || '',
-    category_name: row?.category?.name || '',
+    source: 'PAYMENT',
+    category_name: row?.category?.name || row?.supplier_name_snapshot || 'Manual / Unlinked',
     amount: Number(row?.amount || 0),
-    account_name: row?.account_name || '',
-    bank_name: row?.bank_name || '',
-    account_number: row?.account_number || '',
+    paid_at: row?.paid_at || '',
+  }
+}
+
+function normalizeReimbursementRow(row) {
+  return {
+    id: row?.id || '',
+    source: 'REIMBURSEMENT',
+    group: String(row?.group || '').trim(),
+    category_name: row?.category?.name || 'Reimbursement',
+    amount: Number(row?.total_amount || 0),
     paid_at: row?.paid_at || '',
   }
 }
@@ -75,9 +83,10 @@ function normalizeSession(row) {
     start_time: row?.start_time || '',
     end_time: row?.end_time || '',
     session_type: row?.session_type || 'STANDALONE',
-    hero_product_name_snapshot: row?.hero_product_name_snapshot || '',
+    wearing_product_sku: row?.wearing_product_sku || '',
+    partner_wearing_product_sku: row?.partner_wearing_product_sku || '',
     gross_amount: Number(row?.gross_amount || 0),
-    submitted_by_display_name_snapshot: row?.submitted_by_display_name_snapshot || '-',
+    host_display_name_snapshot: row?.host_display_name_snapshot || '-',
     partner_display_name_snapshot: row?.partner_display_name_snapshot || '',
   }
 }
@@ -85,16 +94,19 @@ function normalizeSession(row) {
 function normalizeCredit(row) {
   return {
     id: row?.id || '',
-    participant_display_name: row?.participant_profile?.display_name || row?.participant_display_name_snapshot || row?.participant_email || '-',
+    host_display_name: row?.host_profile?.display_name || row?.host_display_name_snapshot || '-',
     credited_amount: Number(row?.credited_amount || 0),
     session_date: row?.session?.session_date || '',
-    session_start_time: row?.session?.start_time || '',
-    session_end_time: row?.session?.end_time || '',
-    session_type: row?.session?.session_type || 'STANDALONE',
-    hero_product_name_snapshot: row?.session?.hero_product_name_snapshot || '',
-    submitted_by_display_name_snapshot: row?.session?.submitted_by_display_name_snapshot || '',
-    partner_display_name_snapshot: row?.session?.partner_display_name_snapshot || '',
   }
+}
+
+function getDateMatch(dateValue, monthFilter, yearFilter) {
+  if (!dateValue) return false
+  const date = new Date(dateValue)
+  if (Number.isNaN(date.getTime())) return false
+  const matchesMonth = monthFilter === 'all' ? true : String(date.getMonth() + 1).padStart(2, '0') === monthFilter
+  const matchesYear = yearFilter === 'all' ? true : String(date.getFullYear()) === yearFilter
+  return matchesMonth && matchesYear
 }
 
 export default function ArklineFinancialReportingPage() {
@@ -103,7 +115,10 @@ export default function ArklineFinancialReportingPage() {
   const [error, setError] = useState('')
   const [yearFilter, setYearFilter] = useState('all')
   const [monthFilter, setMonthFilter] = useState('all')
+  const [trendGroup, setTrendGroup] = useState('MONTH')
+  const [hoveredTrendKey, setHoveredTrendKey] = useState('')
   const [paidRequests, setPaidRequests] = useState([])
+  const [paidReimbursements, setPaidReimbursements] = useState([])
   const [sessions, setSessions] = useState([])
   const [credits, setCredits] = useState([])
 
@@ -114,16 +129,26 @@ export default function ArklineFinancialReportingPage() {
       supabase
         .from('arkline_payment')
         .select(
-        `
-          id,
-          supplier_name_snapshot,
-          category:dir_reimbursement_categories(name),
-          amount,
-          account_name,
-          bank_name,
-          account_number,
-          paid_at
-        `
+          `
+            id,
+            supplier_name_snapshot,
+            category:dir_reimbursement_categories(name),
+            amount,
+            paid_at
+          `
+        )
+        .eq('status', 'PAID')
+        .order('paid_at', { ascending: false }),
+      supabase
+        .from('hrga_reimbursement_claims')
+        .select(
+          `
+            id,
+            "group",
+            total_amount,
+            paid_at,
+            category:dir_reimbursement_categories(name)
+          `
         )
         .eq('status', 'PAID')
         .order('paid_at', { ascending: false }),
@@ -136,9 +161,10 @@ export default function ArklineFinancialReportingPage() {
             start_time,
             end_time,
             session_type,
-            hero_product_name_snapshot,
+            wearing_product_sku,
+            partner_wearing_product_sku,
             gross_amount,
-            submitted_by_display_name_snapshot,
+            host_display_name_snapshot,
             partner_display_name_snapshot
           `
         )
@@ -150,69 +176,104 @@ export default function ArklineFinancialReportingPage() {
           `
             id,
             credited_amount,
-            participant_email,
-            participant_display_name_snapshot,
-            participant_profile:dir_user_profiles!arkline_live_reporting_credits_participant_profile_id_fkey(display_name),
+            host_display_name_snapshot,
+            host_profile:dir_user_profiles!arkline_live_reporting_credits_host_profile_id_fkey(display_name),
             session:arkline_live_reporting_sessions!arkline_live_reporting_credits_session_id_fkey(
-              session_date,
-              start_time,
-              end_time,
-              session_type,
-              hero_product_name_snapshot,
-              submitted_by_display_name_snapshot,
-              partner_display_name_snapshot
+              session_date
             )
           `
         ),
-    ]).then(([paymentResult, sessionResult, creditResult]) => {
-        if (!active) return
+    ]).then(([paymentResult, reimbursementResult, sessionResult, creditResult]) => {
+      if (!active) return
 
-        if (paymentResult.error || sessionResult.error || creditResult.error) {
-          setError(paymentResult.error?.message || sessionResult.error?.message || creditResult.error?.message || 'Failed to load financial reporting.')
-          setLoading(false)
-          return
-        }
-
-        setPaidRequests((paymentResult.data || []).map(normalizePaidRow))
-        setSessions((sessionResult.data || []).map(normalizeSession))
-        setCredits((creditResult.data || []).map(normalizeCredit))
+      if (paymentResult.error || reimbursementResult.error || sessionResult.error || creditResult.error) {
+        setError(
+          paymentResult.error?.message ||
+            reimbursementResult.error?.message ||
+            sessionResult.error?.message ||
+            creditResult.error?.message ||
+            'Failed to load financial reporting.'
+        )
         setLoading(false)
-      })
+        return
+      }
+
+      setPaidRequests((paymentResult.data || []).map(normalizePaidRow))
+      setPaidReimbursements((reimbursementResult.data || []).map(normalizeReimbursementRow))
+      setSessions((sessionResult.data || []).map(normalizeSession))
+      setCredits((creditResult.data || []).map(normalizeCredit))
+      setLoading(false)
+    })
 
     return () => {
       active = false
     }
   }, [])
 
-  const filteredSessions = useMemo(() => {
-    return sessions.filter((item) => {
-      if (!item.session_date) return false
-      const [year, month] = String(item.session_date).split('-')
-      const matchesMonth = monthFilter === 'all' ? true : month === monthFilter
-      const matchesYear = yearFilter === 'all' ? true : year === yearFilter
-      return matchesMonth && matchesYear
-    })
-  }, [sessions, monthFilter, yearFilter])
+  const allTimelineDates = useMemo(() => {
+    return [
+      ...paidRequests.map((item) => item.paid_at),
+      ...paidReimbursements.map((item) => item.paid_at),
+      ...sessions.map((item) => item.session_date),
+    ]
+      .filter(Boolean)
+      .map((value) => new Date(value))
+      .filter((date) => !Number.isNaN(date.getTime()))
+  }, [paidRequests, paidReimbursements, sessions])
 
-  const filteredCredits = useMemo(() => {
-    return credits.filter((item) => {
-      if (!item.session_date) return false
-      const [year, month] = String(item.session_date).split('-')
-      const matchesMonth = monthFilter === 'all' ? true : month === monthFilter
-      const matchesYear = yearFilter === 'all' ? true : year === yearFilter
-      return matchesMonth && matchesYear
-    })
-  }, [credits, monthFilter, yearFilter])
+  const monthOptions = useMemo(() => {
+    const values = Array.from(new Set(allTimelineDates.map((date) => String(date.getMonth() + 1).padStart(2, '0')))).sort((a, b) => Number(a) - Number(b))
+
+    return values.map((value) => ({
+      value,
+      label: new Intl.DateTimeFormat('en-GB', { month: 'long' }).format(new Date(2026, Number(value) - 1, 1)),
+    }))
+  }, [allTimelineDates])
+
+  const yearOptions = useMemo(() => {
+    const values = Array.from(new Set(allTimelineDates.map((date) => String(date.getFullYear())))).sort((a, b) => Number(b) - Number(a))
+    return values.map((value) => ({ value, label: value }))
+  }, [allTimelineDates])
+
+  const filteredSessions = useMemo(
+    () => sessions.filter((item) => getDateMatch(item.session_date, monthFilter, yearFilter)),
+    [sessions, monthFilter, yearFilter]
+  )
+
+  const filteredCredits = useMemo(
+    () => credits.filter((item) => getDateMatch(item.session_date, monthFilter, yearFilter)),
+    [credits, monthFilter, yearFilter]
+  )
+
+  const filteredPaidRequests = useMemo(
+    () => paidRequests.filter((item) => getDateMatch(item.paid_at, monthFilter, yearFilter)),
+    [paidRequests, monthFilter, yearFilter]
+  )
+
+  const filteredPaidReimbursements = useMemo(
+    () =>
+      paidReimbursements.filter(
+        (item) => String(item.group || '').trim().toUpperCase() === 'ARKLINE' && getDateMatch(item.paid_at, monthFilter, yearFilter)
+      ),
+    [paidReimbursements, monthFilter, yearFilter]
+  )
 
   const totalLiveNominal = useMemo(
     () => filteredSessions.reduce((sum, item) => sum + Number(item.gross_amount || 0), 0),
     [filteredSessions]
   )
 
+  const totalExpenditure = useMemo(
+    () =>
+      filteredPaidRequests.reduce((sum, item) => sum + Number(item.amount || 0), 0) +
+      filteredPaidReimbursements.reduce((sum, item) => sum + Number(item.amount || 0), 0),
+    [filteredPaidRequests, filteredPaidReimbursements]
+  )
+
   const ranking = useMemo(() => {
     return Array.from(
       filteredCredits.reduce((map, item) => {
-        const key = item.participant_display_name || 'Unknown'
+        const key = item.host_display_name || 'Unknown'
         map.set(key, (map.get(key) || 0) + Number(item.credited_amount || 0))
         return map
       }, new Map())
@@ -221,122 +282,67 @@ export default function ArklineFinancialReportingPage() {
       .sort((left, right) => right.amount - left.amount)
   }, [filteredCredits])
 
-  const monthOptions = useMemo(() => {
-    const values = Array.from(
-      new Set(
-        paidRequests
-          .map((item) => {
-            if (!item.paid_at) return ''
-            const date = new Date(item.paid_at)
-            if (Number.isNaN(date.getTime())) return ''
-            return String(date.getMonth() + 1).padStart(2, '0')
-          })
-          .filter(Boolean)
-      )
-    ).sort((a, b) => Number(a) - Number(b))
-
-    return values.map((value) => ({
-      value,
-      label: new Intl.DateTimeFormat('en-GB', { month: 'long' }).format(new Date(2026, Number(value) - 1, 1)),
-    }))
-  }, [paidRequests])
-
-  const yearOptions = useMemo(() => {
-    const values = Array.from(
-      new Set(
-        paidRequests
-          .map((item) => {
-            if (!item.paid_at) return ''
-            const date = new Date(item.paid_at)
-            if (Number.isNaN(date.getTime())) return ''
-            return String(date.getFullYear())
-          })
-          .filter(Boolean)
-      )
-    ).sort((a, b) => Number(b) - Number(a))
-
-    return values.map((value) => ({ value, label: value }))
-  }, [paidRequests])
-
-  const filteredPaidRequests = useMemo(() => {
-    return paidRequests.filter((item) => {
-      if (!item.paid_at) return false
-      const date = new Date(item.paid_at)
-      if (Number.isNaN(date.getTime())) return false
-      const matchesMonth = monthFilter === 'all' ? true : String(date.getMonth() + 1).padStart(2, '0') === monthFilter
-      const matchesYear = yearFilter === 'all' ? true : String(date.getFullYear()) === yearFilter
-      return matchesMonth && matchesYear
-    })
-  }, [monthFilter, paidRequests, yearFilter])
-
-  const totalExpenditure = useMemo(
-    () => filteredPaidRequests.reduce((sum, item) => sum + Number(item.amount || 0), 0),
-    [filteredPaidRequests]
-  )
-
-  const payeeBreakdown = useMemo(() => {
-    const grouped = Array.from(
-      filteredPaidRequests.reduce((map, item) => {
-        const key = item.account_name || 'Unknown account'
-        const existing = map.get(key) || { key, totalAmount: 0, totalPayments: 0, banks: new Set() }
-        existing.totalAmount += Number(item.amount || 0)
-        existing.totalPayments += 1
-        if (item.bank_name || item.account_number) {
-          existing.banks.add([item.bank_name || 'Bank', item.account_number || '-'].join(' - '))
-        }
-        map.set(key, existing)
-        return map
-      }, new Map()).values()
-    )
-      .map((item) => ({ ...item, bankLabels: Array.from(item.banks) }))
-      .sort((a, b) => b.totalAmount - a.totalAmount)
-
-    const maxAmount = grouped[0]?.totalAmount || 0
-    return grouped.map((item) => ({
-      ...item,
-      widthPercent: maxAmount > 0 ? Math.max((item.totalAmount / maxAmount) * 100, 8) : 0,
-    }))
-  }, [filteredPaidRequests])
-
   const categoryBreakdown = useMemo(() => {
-    const grouped = Array.from(
-      filteredPaidRequests.reduce((map, item) => {
-        const key = item.category_name || item.supplier_name_snapshot || 'Manual / Unlinked'
-        const existing = map.get(key) || { key, totalAmount: 0, totalPayments: 0 }
-        existing.totalAmount += Number(item.amount || 0)
-        existing.totalPayments += 1
-        map.set(key, existing)
-        return map
-      }, new Map()).values()
-    ).sort((a, b) => b.totalAmount - a.totalAmount)
+    const grouped = new Map()
 
-    const maxAmount = grouped[0]?.totalAmount || 0
-    return grouped.map((item) => ({
+    filteredPaidRequests.forEach((item) => {
+      const key = item.category_name || 'Manual / Unlinked'
+      const existing = grouped.get(key) || { key, paymentAmount: 0, reimbursementAmount: 0, totalAmount: 0, totalCount: 0 }
+      existing.paymentAmount += Number(item.amount || 0)
+      existing.totalAmount += Number(item.amount || 0)
+      existing.totalCount += 1
+      grouped.set(key, existing)
+    })
+
+    filteredPaidReimbursements.forEach((item) => {
+      const key = item.category_name || 'Reimbursement'
+      const existing = grouped.get(key) || { key, paymentAmount: 0, reimbursementAmount: 0, totalAmount: 0, totalCount: 0 }
+      existing.reimbursementAmount += Number(item.amount || 0)
+      existing.totalAmount += Number(item.amount || 0)
+      existing.totalCount += 1
+      grouped.set(key, existing)
+    })
+
+    const rows = Array.from(grouped.values()).sort((a, b) => b.totalAmount - a.totalAmount)
+    const maxAmount = rows[0]?.totalAmount || 0
+
+    return rows.map((item) => ({
       ...item,
-      widthPercent: maxAmount > 0 ? Math.max((item.totalAmount / maxAmount) * 100, 8) : 0,
+      totalWidthPercent: maxAmount > 0 ? Math.max((item.totalAmount / maxAmount) * 100, 8) : 0,
+      paymentWidthPercent: item.totalAmount > 0 ? (item.paymentAmount / item.totalAmount) * 100 : 0,
+      reimbursementWidthPercent: item.totalAmount > 0 ? (item.reimbursementAmount / item.totalAmount) * 100 : 0,
     }))
-  }, [filteredPaidRequests])
+  }, [filteredPaidRequests, filteredPaidReimbursements])
 
   const trendSeries = useMemo(() => {
-    const grouped = Array.from(
-      filteredPaidRequests.reduce((map, item) => {
-        if (!item.paid_at) return map
-        const date = new Date(item.paid_at)
-        if (Number.isNaN(date.getTime())) return map
-        const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`
-        map.set(key, (map.get(key) || 0) + Number(item.amount || 0))
-        return map
-      }, new Map())
-    )
-      .sort((a, b) => a[0].localeCompare(b[0]))
-      .map(([key, value]) => ({
-        key,
-        label: formatMonthLabel(key),
-        value,
-      }))
+    const grouped = new Map()
+    const rows = [...filteredPaidRequests, ...filteredPaidReimbursements]
 
-    return grouped
-  }, [filteredPaidRequests])
+    rows.forEach((item) => {
+      const date = new Date(item.paid_at)
+      if (Number.isNaN(date.getTime())) return
+
+      let key = ''
+      let label = ''
+
+      if (trendGroup === 'DAY') {
+        key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+        label = new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short' }).format(date)
+      } else if (trendGroup === 'YEAR') {
+        key = String(date.getFullYear())
+        label = key
+      } else {
+        key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`
+        label = formatMonthLabel(key)
+      }
+
+      const existing = grouped.get(key) || { key, label, value: 0 }
+      existing.value += Number(item.amount || 0)
+      grouped.set(key, existing)
+    })
+
+    return Array.from(grouped.values()).sort((a, b) => a.key.localeCompare(b.key))
+  }, [filteredPaidRequests, filteredPaidReimbursements, trendGroup])
 
   const trendChart = useMemo(() => {
     if (!trendSeries.length) return { points: '', labels: [] }
@@ -348,18 +354,22 @@ export default function ArklineFinancialReportingPage() {
     const maxValue = Math.max(...trendSeries.map((item) => item.value), 1)
     const stepX = trendSeries.length > 1 ? (width - paddingX * 2) / (trendSeries.length - 1) : 0
 
-    const points = trendSeries
-      .map((item, index) => {
-        const x = trendSeries.length === 1 ? width / 2 : paddingX + stepX * index
-        const y = height - paddingY - (item.value / maxValue) * (height - paddingY * 2)
-        return { ...item, x, y }
-      })
+    const points = trendSeries.map((item, index) => {
+      const x = trendSeries.length === 1 ? width / 2 : paddingX + stepX * index
+      const y = height - paddingY - (item.value / maxValue) * (height - paddingY * 2)
+      return { ...item, x, y }
+    })
 
     return {
       points: points.map((item) => `${item.x},${item.y}`).join(' '),
       labels: points,
     }
   }, [trendSeries])
+
+  const hoveredTrendPoint = useMemo(
+    () => trendChart.labels.find((item) => item.key === hoveredTrendKey) || null,
+    [trendChart.labels, hoveredTrendKey]
+  )
 
   return (
     <div className={styles.page}>
@@ -475,11 +485,13 @@ export default function ArklineFinancialReportingPage() {
                       <div key={item.id} className={styles.chartRow}>
                         <div className={styles.chartHead}>
                           <div className={styles.reportingRowCopy}>
-                            <p className={styles.reportingRowTitle}>{item.hero_product_name_snapshot || 'No product'}</p>
+                            <p className={styles.reportingRowTitle}>{item.wearing_product_sku || 'No product'}</p>
                             <p className={styles.reportingRowMeta}>
                               {formatDate(item.session_date)} | {item.start_time?.slice(0, 5)} - {item.end_time?.slice(0, 5)} | {item.session_type === 'PAIRING' ? `Pairing with ${item.partner_display_name_snapshot || '-'}` : 'Standalone'}
                             </p>
-                            <p className={styles.reportingRowMeta}>Submitted by {item.submitted_by_display_name_snapshot || '-'}</p>
+                            <p className={styles.reportingRowMeta}>
+                              Host {item.host_display_name_snapshot || '-'}{item.session_type === 'PAIRING' ? ` | Partner SKU ${item.partner_wearing_product_sku || '-'}` : ''}
+                            </p>
                           </div>
                           <strong className={styles.reportingAmount}>{formatCurrency(item.gross_amount)}</strong>
                         </div>
@@ -495,7 +507,20 @@ export default function ArklineFinancialReportingPage() {
                 <div className={styles.reportingCardHead}>
                   <div>
                     <p className={styles.columnEyebrow}>Trend</p>
-                    <h2 className={styles.columnTitle}>Expenditure Over Time</h2>
+                    <h2 className={styles.columnTitle}>Expenditure Trend</h2>
+                  </div>
+
+                  <div className={styles.segmentedControl}>
+                    {['DAY', 'MONTH', 'YEAR'].map((item) => (
+                      <button
+                        key={item}
+                        type="button"
+                        className={`${styles.segmentButton} ${styles.reportingSegmentButton} ${trendGroup === item ? styles.segmentButtonActive : ''}`.trim()}
+                        onClick={() => setTrendGroup(item)}
+                      >
+                        {item === 'DAY' ? 'Day' : item === 'MONTH' ? 'Month' : 'Year'}
+                      </button>
+                    ))}
                   </div>
                 </div>
 
@@ -514,17 +539,45 @@ export default function ArklineFinancialReportingPage() {
                           points={trendChart.points}
                         />
                         {trendChart.labels.map((point) => (
-                          <g key={point.key}>
-                            <circle cx={point.x} cy={point.y} r="5" fill="#2563eb" />
+                          <g key={point.key} onMouseEnter={() => setHoveredTrendKey(point.key)} onMouseLeave={() => setHoveredTrendKey('')}>
+                            <circle cx={point.x} cy={point.y} r={hoveredTrendKey === point.key ? '7' : '5'} fill="#2563eb" />
+                            <text x={point.x} y="212" textAnchor="middle" className={styles.trendAxisLabel}>
+                              {point.label}
+                            </text>
                           </g>
                         ))}
+                        {hoveredTrendPoint ? (
+                          <g className={styles.trendTooltipGroup}>
+                            <rect
+                              x={Math.max(10, Math.min(640 - 130, hoveredTrendPoint.x - 65))}
+                              y={Math.max(10, hoveredTrendPoint.y - 38)}
+                              rx="12"
+                              ry="12"
+                              width="130"
+                              height="28"
+                              className={styles.trendTooltipBox}
+                            />
+                            <text
+                              x={Math.max(10, Math.min(640 - 130, hoveredTrendPoint.x - 65)) + 65}
+                              y={Math.max(10, hoveredTrendPoint.y - 38) + 18}
+                              textAnchor="middle"
+                              className={styles.trendTooltipText}
+                            >
+                              {formatCurrency(hoveredTrendPoint.value)}
+                            </text>
+                          </g>
+                        ) : null}
                       </svg>
                     </div>
-                    <div className={styles.trendLegend}>
+                    <div className={styles.reportingTable}>
                       {trendChart.labels.map((point) => (
-                        <div key={point.key} className={styles.trendLegendItem}>
-                          <span className={styles.trendLegendLabel}>{point.label}</span>
-                          <strong className={styles.reportingAmount}>{formatCurrency(point.value)}</strong>
+                        <div key={point.key} className={styles.trendTableRow}>
+                          <div className={styles.reportingTableCell}>
+                            <span className={styles.trendLegendLabel}>{point.label}</span>
+                          </div>
+                          <div className={styles.reportingTableCellAmount}>
+                            <strong className={styles.reportingAmount}>{formatCurrency(point.value)}</strong>
+                          </div>
                         </div>
                       ))}
                     </div>
@@ -532,69 +585,40 @@ export default function ArklineFinancialReportingPage() {
                 )}
               </section>
 
-              <div className={styles.reportingStack}>
-                <section className={styles.reportingCard}>
-                  <div className={styles.reportingCardHead}>
-                    <div>
-                      <p className={styles.columnEyebrow}>Breakdown</p>
-                      <h2 className={styles.columnTitle}>By Payee</h2>
-                    </div>
+              <section className={styles.reportingCard}>
+                <div className={styles.reportingCardHead}>
+                  <div>
+                    <p className={styles.columnEyebrow}>Combined Spend</p>
+                    <h2 className={styles.columnTitle}>Expense Category</h2>
                   </div>
+                </div>
 
-                  {!payeeBreakdown.length ? (
-                    <div className={styles.emptyColumn}>No paid submissions for the selected period.</div>
-                  ) : (
-                    <div className={styles.chartList}>
-                      {payeeBreakdown.map((item) => (
-                        <div key={item.key} className={styles.chartRow}>
-                          <div className={styles.chartHead}>
-                            <div className={styles.reportingRowCopy}>
-                              <p className={styles.reportingRowTitle}>{item.key}</p>
-                              <p className={styles.reportingRowMeta}>
-                                {item.totalPayments} payment{item.totalPayments > 1 ? 's' : ''} | {item.bankLabels.join(' | ') || 'No account info'}
-                              </p>
-                            </div>
-                            <strong className={styles.reportingAmount}>{formatCurrency(item.totalAmount)}</strong>
+                {!categoryBreakdown.length ? (
+                  <div className={styles.emptyColumn}>No category expenditure found for the selected period.</div>
+                ) : (
+                  <div className={styles.chartList}>
+                    {categoryBreakdown.map((item) => (
+                      <div key={item.key} className={styles.chartRow}>
+                        <div className={styles.chartHead}>
+                          <div className={styles.reportingRowCopy}>
+                            <p className={styles.reportingRowTitle}>{item.key}</p>
+                            <p className={styles.reportingRowMeta}>
+                              Payment {formatCurrency(item.paymentAmount)} | Reimbursement {formatCurrency(item.reimbursementAmount)}
+                            </p>
                           </div>
-                          <div className={styles.chartTrack}>
-                            <div className={`${styles.chartFill} ${styles.chartFillBlue}`.trim()} style={{ width: `${item.widthPercent}%` }} />
+                          <strong className={styles.reportingAmount}>{formatCurrency(item.totalAmount)}</strong>
+                        </div>
+                        <div className={styles.chartTrack} style={{ width: `${item.totalWidthPercent}%` }}>
+                          <div className={styles.chartStack}>
+                            <div className={`${styles.chartFill} ${styles.chartFillBlue}`.trim()} style={{ width: `${item.paymentWidthPercent}%` }} />
+                            <div className={`${styles.chartFill} ${styles.chartFillGreen}`.trim()} style={{ width: `${item.reimbursementWidthPercent}%` }} />
                           </div>
                         </div>
-                      ))}
-                    </div>
-                  )}
-                </section>
-
-                <section className={styles.reportingCard}>
-                  <div className={styles.reportingCardHead}>
-                    <div>
-                      <p className={styles.columnEyebrow}>Category Split</p>
-                      <h2 className={styles.columnTitle}>By Category / Supplier Source</h2>
-                    </div>
+                      </div>
+                    ))}
                   </div>
-
-                  {!categoryBreakdown.length ? (
-                    <div className={styles.emptyColumn}>No expenditure found for the selected period.</div>
-                  ) : (
-                    <div className={styles.chartList}>
-                      {categoryBreakdown.map((item) => (
-                        <div key={item.key} className={styles.chartRow}>
-                          <div className={styles.chartHead}>
-                            <div className={styles.reportingRowCopy}>
-                              <p className={styles.reportingRowTitle}>{item.key}</p>
-                              <p className={styles.reportingRowMeta}>{item.totalPayments} payment record{item.totalPayments > 1 ? 's' : ''}</p>
-                            </div>
-                            <strong className={styles.reportingAmount}>{formatCurrency(item.totalAmount)}</strong>
-                          </div>
-                          <div className={styles.chartTrack}>
-                            <div className={`${styles.chartFill} ${styles.chartFillGreen}`.trim()} style={{ width: `${item.widthPercent}%` }} />
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </section>
-              </div>
+                )}
+              </section>
             </div>
           </>
         )}
