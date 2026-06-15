@@ -10,6 +10,10 @@ const naturalSort = new Intl.Collator(undefined, {
   sensitivity: 'base',
 })
 
+function normalizeFilterValue(value) {
+  return String(value || '').trim().toUpperCase()
+}
+
 function getTodayDateValue() {
   const now = new Date()
   const year = now.getFullYear()
@@ -220,31 +224,35 @@ export default function StorageOverviewPage() {
   const filteredRows = storageRows.filter((entry) => {
     const location = entry.location
     const itemName = String(entry.item_name || '').trim()
+    const normalizedLocationType = normalizeFilterValue(location.location_type)
+    const normalizedLocationName = normalizeFilterValue(location.location_name)
+    const normalizedLocationCode = normalizeFilterValue(location.location_code)
+    const normalizedSubLocation = normalizeFilterValue(location.sub_location)
 
     if (
       filters.locationType &&
-      String(location.location_type || '').toUpperCase() !== filters.locationType.toUpperCase()
+      normalizedLocationType !== normalizeFilterValue(filters.locationType)
     ) {
       return false
     }
 
     if (
       filters.locationName &&
-      !String(location.location_name || '').toUpperCase().includes(filters.locationName.toUpperCase())
+      !normalizedLocationName.includes(normalizeFilterValue(filters.locationName))
     ) {
       return false
     }
 
     if (
       filters.locationCode &&
-      !String(location.location_code).toUpperCase().includes(filters.locationCode.toUpperCase())
+      normalizedLocationCode !== normalizeFilterValue(filters.locationCode)
     ) {
       return false
     }
 
     if (
       filters.subLocation &&
-      !String(location.sub_location).toUpperCase().includes(filters.subLocation.toUpperCase())
+      normalizedSubLocation !== normalizeFilterValue(filters.subLocation)
     ) {
       return false
     }
