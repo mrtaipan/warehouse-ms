@@ -503,18 +503,14 @@ export async function submitBirthdayGiftRequest(formData) {
     throw new Error('Birthday gift can only be claimed once for this birthday period.')
   }
 
-  const noteLines = [`Item Name: ${itemName}`]
-  if (size) {
-    noteLines.push(`Size: ${size}`)
-  }
-
   const { error } = await supabase.from('hrga_birthday_gift').insert({
     employee_authenticated_id: user.id,
     employee_name_snapshot:
       profile?.display_name || user.user_metadata?.full_name || user.user_metadata?.name || user.email?.split('@')[0] || 'Team',
     employee_email_snapshot: String(user.email || '').toLowerCase(),
     request_date: requestDate,
-    notes: noteLines.join('\n'),
+    item_name: itemName,
+    size: size || null,
     status: 'SUBMITTED',
   })
 

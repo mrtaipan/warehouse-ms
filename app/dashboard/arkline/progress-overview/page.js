@@ -615,7 +615,7 @@ function applyInspectorErrorToRejectTotals(qtyB, qtyC, inspectorErrorQty) {
   return { qtyB: nextQtyB, qtyC: nextQtyC }
 }
 
-function buildQcGradeSummary(rows, rejectRows = [], adjustmentRows = []) {
+function buildQcGradeSummary(rows, adjustmentRows = []) {
   const summary = (rows || []).reduce(
     (accumulator, row) => {
       accumulator.qtyA += Number(row?.qty_a || 0)
@@ -625,19 +625,6 @@ function buildQcGradeSummary(rows, rejectRows = [], adjustmentRows = []) {
     },
     { qtyA: 0, qtyB: 0, qtyC: 0 }
   )
-
-  if ((rejectRows || []).length) {
-    summary.qtyB = 0
-    summary.qtyC = 0
-
-    ;(rejectRows || []).forEach((row) => {
-      const grade = String(row?.grade || '').trim().toUpperCase()
-      const qty = Number(row?.qty || 0)
-
-      if (grade === 'B') summary.qtyB += qty
-      if (grade === 'C') summary.qtyC += qty
-    })
-  }
 
   const adjustmentSummary = (adjustmentRows || []).reduce(
     (accumulator, row) => {
@@ -665,7 +652,7 @@ function buildRejectDetailSummary(rows, qcSummary = {}) {
   let identifiedQty = 0
 
   ;(rows || []).forEach((row) => {
-    const reason = String(row?.reason?.reason_name || row?.reason_name || '-').trim() || '-'
+    const reason = String(row?.reason?.reason_name || row?.reason_name || '').trim() || 'Belum dikategorikan'
     const grade = String(row?.grade || '').trim().toUpperCase() || '-'
     const key = `${reason}::${grade}`
     const qty = Number(row?.qty || 0)
@@ -684,7 +671,7 @@ function buildRejectDetailSummary(rows, qcSummary = {}) {
   if (unidentifiedQty > 0) {
     summaryRows.push({
       key: 'unidentified',
-      reason: 'Belum Diidentifikasi',
+      reason: 'Belum dikategorikan',
       grade: 'B/C',
       qty: unidentifiedQty,
     })
@@ -1338,7 +1325,6 @@ export default function ArklineProgressOverviewPage() {
       })
       const qcRows = qcRowsByItem.length ? qcRowsByItem : (qcRowsRaw || []).filter((row) => String(row?.sku_induk || '').trim().toUpperCase() === normalizedSku)
       const qcTaskIds = qcRows.map((row) => row.id).filter(Boolean)
-      const qcModelName = String(qcRows[0]?.model_name || entry.productName || '').trim()
       const rejectDetailRows = await loadOptionalRows(() => {
         let query = supabase
           .from('arkline_qc_reject_details')
@@ -1360,10 +1346,10 @@ export default function ArklineProgressOverviewPage() {
           )
           .order('created_at', { ascending: false })
 
-        if (qcTaskIds.length) {
-          query = query.in('arkline_qc_id', qcTaskIds)
-        } else if (selectedPoDetail.poId && normalizedSku) {
+        if (selectedPoDetail.poId && normalizedSku) {
           query = query.eq('po_id', selectedPoDetail.poId).eq('sku_induk', normalizedSku)
+        } else if (qcTaskIds.length) {
+          query = query.in('arkline_qc_id', qcTaskIds)
         } else {
           query = query.limit(0)
         }
@@ -1378,7 +1364,6 @@ export default function ArklineProgressOverviewPage() {
 
         if (selectedPoDetail.poId && normalizedSku) {
           query = query.eq('po_id', selectedPoDetail.poId).eq('sku_induk', normalizedSku)
-          if (qcModelName) query = query.eq('model_name', qcModelName)
         } else {
           query = query.limit(0)
         }
@@ -1680,7 +1665,6 @@ export default function ArklineProgressOverviewPage() {
       const { jsPDF } = await import('jspdf')
       const qcSummary = buildQcGradeSummary(
         selectedProductDetail.qcRows || [],
-        selectedProductDetail.qcRejectRows || [],
         selectedProductDetail.qcRejectAdjustments || []
       )
       const rejectSummary = buildRejectDetailSummary(selectedProductDetail.qcRejectRows || [], qcSummary)
@@ -2589,7 +2573,6 @@ export default function ArklineProgressOverviewPage() {
                       {(() => {
                         const qcSummary = buildQcGradeSummary(
                           selectedProductDetail.qcRows || [],
-                          selectedProductDetail.qcRejectRows || [],
                           selectedProductDetail.qcRejectAdjustments || []
                         )
                         const rejectSummary = buildRejectDetailSummary(selectedProductDetail.qcRejectRows || [], qcSummary)

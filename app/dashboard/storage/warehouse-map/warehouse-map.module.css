@@ -175,6 +175,8 @@
   top: var(--y);
   width: var(--w);
   height: var(--h);
+  transform: rotate(var(--rotate, 0deg));
+  transform-origin: center;
 }
 
 .mapWall {
@@ -397,6 +399,140 @@
   box-shadow: 0 6px 14px rgba(37, 99, 235, 0.18);
 }
 
+.mapCanvasEditing {
+  outline: 1px dashed #bfdbfe;
+  outline-offset: -8px;
+}
+
+.mapCanvasEditing .mapEditableElement {
+  pointer-events: auto;
+  cursor: move;
+  transform: rotate(var(--rotate));
+  transform-origin: center;
+}
+
+.mapEditableElementSelected {
+  z-index: 8 !important;
+  outline: 2px solid #2563eb;
+  outline-offset: 3px;
+}
+
+.resizeHandle {
+  position: absolute !important;
+  width: 13px !important;
+  height: 13px !important;
+  min-width: 0 !important;
+  min-height: 0 !important;
+  border: 2px solid #ffffff !important;
+  border-radius: 999px !important;
+  background: #2563eb !important;
+  box-shadow: 0 6px 14px rgba(37, 99, 235, 0.28) !important;
+  cursor: nwse-resize !important;
+}
+
+.resizeHandleNW {
+  left: -7px !important;
+  top: -7px !important;
+  cursor: nwse-resize !important;
+}
+
+.resizeHandleNE {
+  right: -7px !important;
+  top: -7px !important;
+  cursor: nesw-resize !important;
+}
+
+.resizeHandleSW {
+  left: -7px !important;
+  bottom: -7px !important;
+  cursor: nesw-resize !important;
+}
+
+.resizeHandleSE {
+  right: -7px !important;
+  bottom: -7px !important;
+  cursor: nwse-resize !important;
+}
+
+.mapEditorLine {
+  position: absolute;
+  left: var(--x);
+  top: var(--y);
+  width: var(--w);
+  height: var(--h);
+  z-index: 2;
+  border-radius: 999px;
+  background: #111827;
+  transform: rotate(var(--rotate, 0deg));
+  transform-origin: center;
+}
+
+.mapEditorFlowArrow {
+  position: absolute;
+  left: var(--x);
+  top: var(--y);
+  width: var(--w);
+  height: var(--h);
+  z-index: 2;
+  color: #475569;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  font-size: 10px;
+  font-weight: 900;
+  line-height: 1;
+  white-space: nowrap;
+  transform: rotate(var(--rotate, 0deg));
+  transform-origin: center;
+}
+
+.mapEditorFlowArrow::before {
+  content: '';
+  flex: 1;
+  height: 2px;
+  border-radius: 999px;
+  background: #475569;
+}
+
+.mapEditorFlowArrow::after {
+  content: '';
+  width: 0;
+  height: 0;
+  border-top: 5px solid transparent;
+  border-bottom: 5px solid transparent;
+  border-left: 8px solid #475569;
+}
+
+.mapEditorFlowArrowLeft {
+  flex-direction: row-reverse;
+}
+
+.mapEditorFlowArrowLeft::after {
+  border-left: 0;
+  border-right: 8px solid #475569;
+}
+
+.mapEditorText {
+  position: absolute;
+  left: var(--x);
+  top: var(--y);
+  width: var(--w);
+  height: var(--h);
+  z-index: 2;
+  color: #0f172a;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3px;
+  font-size: 11px;
+  font-weight: 900;
+  line-height: 1.2;
+  text-align: center;
+  transform: rotate(var(--rotate, 0deg));
+  transform-origin: center;
+}
+
 .loadingText {
   margin: 0;
   color: #64748b;
@@ -446,6 +582,171 @@
   text-transform: uppercase;
 }
 
+.editorPanel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.editorPanel h3 {
+  margin: 4px 0 0;
+  color: #0f172a;
+  font-size: 18px;
+}
+
+.toolGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.toolButton {
+  min-height: 76px;
+  border: 1px solid #d7dee7;
+  border-radius: 12px;
+  background: #ffffff;
+  color: #0f172a;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px;
+  font-size: 12px;
+  font-weight: 900;
+  cursor: grab;
+}
+
+.toolButton:active {
+  cursor: grabbing;
+}
+
+.toolIcon {
+  width: 42px;
+  height: 24px;
+  border-radius: 5px;
+  border: 1px solid #86efac;
+  background: rgba(220, 252, 231, 0.82);
+}
+
+.toolIconBox {
+  border-color: rgba(148, 163, 184, 0.45);
+  background: rgba(248, 250, 252, 0.9);
+}
+
+.toolIconLine {
+  height: 4px;
+  border: none;
+  background: #111827;
+}
+
+.toolIconArrow {
+  position: relative;
+  height: 4px;
+  border: none;
+  background: #475569;
+}
+
+.toolIconArrow::after {
+  content: '';
+  position: absolute;
+  right: -1px;
+  top: -5px;
+  border-top: 7px solid transparent;
+  border-bottom: 7px solid transparent;
+  border-left: 9px solid #475569;
+}
+
+.toolIconText {
+  border-color: transparent;
+  background: transparent;
+}
+
+.toolIconText::before {
+  content: 'Aa';
+  color: #0f172a;
+  font-size: 18px;
+  font-weight: 900;
+}
+
+.editorHint,
+.inspectorEmpty {
+  margin: 0;
+  color: #64748b;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.inspectorPanel {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 14px;
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  background: #f8fafc;
+}
+
+.inspectorHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.inspectorHeader h3 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.deleteButton {
+  min-height: 34px;
+  border: 1px solid #fecaca;
+  border-radius: 10px;
+  background: #fff1f2;
+  color: #be123c;
+  padding: 0 12px;
+  font-size: 12px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.inspectorFields {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.inspectorFields label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: #475569;
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.inspectorFields input,
+.inspectorFields select {
+  min-height: 40px;
+  border: 1px solid #d7dee7;
+  border-radius: 10px;
+  background: #ffffff;
+  color: #0f172a;
+  padding: 0 12px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 800;
+  text-transform: none;
+}
+
+.inspectorGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
 .secondaryButton {
   min-height: 42px;
   border-radius: 12px;
@@ -470,6 +771,35 @@
   align-items: flex-end;
   flex-direction: column;
   gap: 12px;
+}
+
+.builderActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.primaryBuilderButton {
+  min-height: 42px;
+  border: 1px solid #111827;
+  border-radius: 12px;
+  background: #111827;
+  color: #ffffff;
+  padding: 0 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.layoutStatus {
+  margin: 0;
+  color: #0369a1;
+  font-size: 13px;
+  font-weight: 800;
 }
 
 .rackSection {
@@ -1105,6 +1435,18 @@
 
   .mapPanelActions {
     align-items: stretch;
+  }
+
+  .builderActions {
+    justify-content: flex-start;
+  }
+
+  .toolGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .inspectorGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .sectionTitle {

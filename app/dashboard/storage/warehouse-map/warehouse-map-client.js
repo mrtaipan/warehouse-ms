@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 
 import { createClient } from '@/utils/supabase/browser'
@@ -147,6 +147,146 @@ const WAREHOUSES = {
 }
 
 const WAREHOUSE_ORDER = ['LV83', 'LV85', 'LV87']
+const MAP_BUILDER_STORAGE_KEY = 'warehouse-map-builder-layout-v1'
+const SNAP_STEP = 1
+const MIN_ELEMENT_SIZE = 2
+const EDITOR_TOOLS = [
+  { type: 'pallet', label: 'Pallet Rack' },
+  { type: 'box', label: 'Decorative Box' },
+  { type: 'line', label: 'Line' },
+  { type: 'arrow', label: 'Arrow' },
+  { type: 'text', label: 'Text Box' },
+]
+const TOOL_DEFAULTS = {
+  pallet: { w: 8, h: 12 },
+  box: { w: 18, h: 8 },
+  line: { w: 24, h: 1.2 },
+  arrow: { w: 22, h: 4 },
+  text: { w: 18, h: 5 },
+}
+
+function createElementId(type) {
+  return `${type}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+}
+
+function clampNumber(value, min, max) {
+  return Math.min(max, Math.max(min, value))
+}
+
+function snapValue(value) {
+  return Math.round(value / SNAP_STEP) * SNAP_STEP
+}
+
+function normalizeSavedElement(element) {
+  return {
+    ...element,
+    x: Number(element.x || 0),
+    y: Number(element.y || 0),
+    w: Number(element.w || 8),
+    h: Number(element.h || 8),
+    rotation: Number(element.rotation || 0),
+  }
+}
+
+function createDefaultMapElements(warehouse) {
+  return [
+    ...warehouse.walls.map((wall, index) => ({
+      id: `wall-${warehouse.key}-${index}`,
+      type: 'wall',
+      ...wall,
+      rotation: 0,
+    })),
+    ...warehouse.areas.map((area, index) => ({
+      id: `box-${warehouse.key}-${index}`,
+      type: 'box',
+      label: area.label,
+      tone: area.tone,
+      x: area.x,
+      y: area.y,
+      w: area.w,
+      h: area.h,
+      rotation: 0,
+    })),
+    ...(warehouse.arrows || []).map((arrow, index) => ({
+      id: `nav-arrow-${warehouse.key}-${index}`,
+      type: 'nav-arrow',
+      label: arrow.label,
+      targetWarehouseKey: arrow.targetWarehouseKey,
+      direction: arrow.direction,
+      x: arrow.x,
+      y: arrow.y,
+      w: arrow.w,
+      h: arrow.h,
+      rotation: 0,
+    })),
+    ...warehouse.zones.map((zone) => ({
+      id: `pallet-${warehouse.key}-${zone.code}`,
+      type: 'pallet',
+      code: zone.code,
+      variant: zone.variant || 'standard',
+      x: zone.x,
+      y: zone.y,
+      w: zone.w,
+      h: zone.h,
+      rotation: 0,
+    })),
+  ]
+}
+
+function createDefaultLayouts() {
+  return Object.fromEntries(
+    Object.values(WAREHOUSES).map((warehouse) => [
+      warehouse.key,
+      { elements: createDefaultMapElements(warehouse) },
+    ])
+  )
+}
+
+function createDroppedElement(type, x, y, assignedCode = '') {
+  const defaults = TOOL_DEFAULTS[type] || TOOL_DEFAULTS.box
+  const baseElement = {
+    id: createElementId(type),
+    type,
+    x: clampNumber(snapValue(x), 0, 98),
+    y: clampNumber(snapValue(y), 0, 98),
+    w: defaults.w,
+    h: defaults.h,
+    rotation: 0,
+  }
+
+  if (type === 'pallet') {
+    return {
+      ...baseElement,
+      code: assignedCode,
+      variant: 'standard',
+    }
+  }
+
+  if (type === 'box') {
+    return {
+      ...baseElement,
+      label: 'Label',
+      tone: 'room',
+    }
+  }
+
+  if (type === 'text') {
+    return {
+      ...baseElement,
+      label: 'Text',
+    }
+  }
+
+  if (type === 'arrow') {
+    return {
+      ...baseElement,
+      label: 'Flow',
+      direction: 'right',
+    }
+  }
+
+  return baseElement
+}
 
 function normalizeWarehouseValue(value) {
   return String(value || '')
@@ -293,6 +433,13 @@ function getPositionStyle(item) {
     '--y': `${item.y}%`,
     '--w': `${item.w}%`,
     '--h': `${item.h}%`,
+  }
+}
+
+function getElementPositionStyle(item) {
+  return {
+    ...getPositionStyle(item),
+    '--rotate': `${Number(item.rotation || 0)}deg`,
   }
 }
 
@@ -670,12 +817,18 @@ function getDisplayNameByEmail(email, userProfilesByEmail) {
 }
 
 export default function WarehouseMapClient() {
+  const canvasRef = useRef(null)
+  const interactionRef = useRef(null)
   const [selectedWarehouseKey, setSelectedWarehouseKey] = useState(WAREHOUSE_ORDER[0])
   const [selectedZoneCode, setSelectedZoneCode] = useState('')
   const [isRackOpen, setIsRackOpen] = useState(false)
   const [selectedSlotKey, setSelectedSlotKey] = useState('')
   const [selectedSubLocationKey, setSelectedSubLocationKey] = useState(SUBLOCATION_ALL_KEY)
   const [activePanel, setActivePanel] = useState('current')
+  const [editMode, setEditMode] = useState(false)
+  const [mapLayouts, setMapLayouts] = useState({})
+  const [selectedElementId, setSelectedElementId] = useState('')
+  const [layoutStatus, setLayoutStatus] = useState('')
   const [rackLocations, setRackLocations] = useState([])
   const [storageEntries, setStorageEntries] = useState([])
   const [restockHistoryRows, setRestockHistoryRows] = useState([])
@@ -731,6 +884,33 @@ export default function WarehouseMapClient() {
     loadMapData()
   }, [])
 
+  useEffect(() => {
+    try {
+      const savedLayout = window.localStorage.getItem(MAP_BUILDER_STORAGE_KEY)
+
+      if (!savedLayout) {
+        return
+      }
+
+      const parsedLayout = JSON.parse(savedLayout)
+      const nextLayouts = {}
+
+      Object.entries(parsedLayout || {}).forEach(([warehouseKey, layout]) => {
+        if (!WAREHOUSES[warehouseKey] || !Array.isArray(layout?.elements)) {
+          return
+        }
+
+        nextLayouts[warehouseKey] = {
+          elements: layout.elements.map(normalizeSavedElement),
+        }
+      })
+
+      setMapLayouts(nextLayouts)
+    } catch {
+      setLayoutStatus('Saved map layout could not be loaded.')
+    }
+  }, [])
+
   const locationById = useMemo(
     () => new Map(rackLocations.map((location) => [location.id, location])),
     [rackLocations]
@@ -752,6 +932,20 @@ export default function WarehouseMapClient() {
   )
 
   const warehouse = WAREHOUSES[selectedWarehouseKey]
+  const defaultMapLayouts = useMemo(() => createDefaultLayouts(), [])
+  const activeMapElements = useMemo(
+    () => (mapLayouts[warehouse.key]?.elements || defaultMapLayouts[warehouse.key]?.elements || []).map(normalizeSavedElement),
+    [defaultMapLayouts, mapLayouts, warehouse.key]
+  )
+  const wallElements = activeMapElements.filter((element) => element.type === 'wall')
+  const boxElements = activeMapElements.filter((element) => element.type === 'box')
+  const navArrowElements = activeMapElements.filter((element) => element.type === 'nav-arrow')
+  const lineElements = activeMapElements.filter((element) => element.type === 'line')
+  const flowArrowElements = activeMapElements.filter((element) => element.type === 'arrow')
+  const textElements = activeMapElements.filter((element) => element.type === 'text')
+  const palletElements = activeMapElements.filter((element) => element.type === 'pallet')
+  const assignedPalletElements = palletElements.filter((element) => element.code)
+  const selectedElement = activeMapElements.find((element) => element.id === selectedElementId) || null
   const selectedWarehouseIndex = WAREHOUSE_ORDER.indexOf(selectedWarehouseKey)
   const canGoPreviousWarehouse = selectedWarehouseIndex > 0
   const canGoNextWarehouse = selectedWarehouseIndex < WAREHOUSE_ORDER.length - 1
@@ -759,7 +953,7 @@ export default function WarehouseMapClient() {
   const zoneDataByCode = useMemo(() => {
     const dataMap = new Map()
 
-    warehouse.zones.forEach((zone) => {
+    assignedPalletElements.forEach((zone) => {
       const locations = rackLocations.filter(
         (location) => matchesWarehouse(location, warehouse.key) && matchesZone(location, zone.code)
       )
@@ -776,11 +970,11 @@ export default function WarehouseMapClient() {
     })
 
     return dataMap
-  }, [rackLocations, storageRows, warehouse])
+  }, [assignedPalletElements, rackLocations, storageRows, warehouse.key])
 
   const selectedZone = useMemo(
-    () => warehouse.zones.find((zone) => zone.code === selectedZoneCode) || null,
-    [selectedZoneCode, warehouse]
+    () => assignedPalletElements.find((zone) => zone.code === selectedZoneCode) || null,
+    [assignedPalletElements, selectedZoneCode]
   )
   const selectedZoneData = useMemo(() => {
     if (!selectedZone) {
@@ -871,6 +1065,317 @@ export default function WarehouseMapClient() {
     storageEntryById,
     warehouse.key,
   ])
+  const warehouseRackCodes = useMemo(() => {
+    const codes = new Set()
+
+    rackLocations.forEach((location) => {
+      if (!matchesWarehouse(location, warehouse.key)) {
+        return
+      }
+
+      const code = getLocationBaseCode(location.location_code || location.location_name)
+
+      if (code) {
+        codes.add(code)
+      }
+    })
+
+    if (codes.size === 0) {
+      palletElements.forEach((element) => {
+        if (element.code) {
+          codes.add(normalizeLocationCode(element.code))
+        }
+      })
+    }
+
+    return Array.from(codes).sort((left, right) =>
+      new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' }).compare(left, right)
+    )
+  }, [palletElements, rackLocations, warehouse.key])
+  const assignedPalletCodes = useMemo(
+    () =>
+      new Set(
+        palletElements
+          .filter((element) => element.id !== selectedElementId)
+          .map((element) => normalizeLocationCode(element.code))
+          .filter(Boolean)
+      ),
+    [palletElements, selectedElementId]
+  )
+  const availablePalletCodes = useMemo(
+    () => warehouseRackCodes.filter((code) => !assignedPalletCodes.has(normalizeLocationCode(code))),
+    [assignedPalletCodes, warehouseRackCodes]
+  )
+
+  function getCanvasPoint(event) {
+    const rect = canvasRef.current?.getBoundingClientRect()
+
+    if (!rect) {
+      return { x: 0, y: 0 }
+    }
+
+    return {
+      x: clampNumber(((event.clientX - rect.left) / rect.width) * 100, 0, 100),
+      y: clampNumber(((event.clientY - rect.top) / rect.height) * 100, 0, 100),
+    }
+  }
+
+  function updateWarehouseElements(updater) {
+    setLayoutStatus('')
+    setMapLayouts((prev) => {
+      const currentElements = prev[warehouse.key]?.elements || defaultMapLayouts[warehouse.key]?.elements || []
+      const nextElements = typeof updater === 'function' ? updater(currentElements.map(normalizeSavedElement)) : updater
+
+      return {
+        ...prev,
+        [warehouse.key]: {
+          elements: nextElements.map(normalizeSavedElement),
+        },
+      }
+    })
+  }
+
+  function updateSelectedElement(patch) {
+    if (!selectedElement) {
+      return
+    }
+
+    updateWarehouseElements((elements) =>
+      elements.map((element) =>
+        element.id === selectedElement.id
+          ? {
+              ...element,
+              ...patch,
+            }
+          : element
+      )
+    )
+  }
+
+  function deleteSelectedElement() {
+    if (!selectedElementId) {
+      return
+    }
+
+    updateWarehouseElements((elements) => elements.filter((element) => element.id !== selectedElementId))
+    setSelectedElementId('')
+  }
+
+  function handleSaveLayout() {
+    const nextLayouts = {
+      ...defaultMapLayouts,
+      ...mapLayouts,
+    }
+
+    window.localStorage.setItem(MAP_BUILDER_STORAGE_KEY, JSON.stringify(nextLayouts))
+    setLayoutStatus('Layout saved.')
+  }
+
+  function handleResetLayout() {
+    updateWarehouseElements(defaultMapLayouts[warehouse.key]?.elements || [])
+    setSelectedElementId('')
+    setLayoutStatus('Layout reset for this warehouse. Save to keep the reset.')
+  }
+
+  function handleToolDragStart(event, type) {
+    event.dataTransfer.setData('application/warehouse-map-tool', type)
+    event.dataTransfer.effectAllowed = 'copy'
+  }
+
+  function handleCanvasDrop(event) {
+    if (!editMode) {
+      return
+    }
+
+    event.preventDefault()
+
+    const type = event.dataTransfer.getData('application/warehouse-map-tool')
+
+    if (!type || !TOOL_DEFAULTS[type]) {
+      return
+    }
+
+    const point = getCanvasPoint(event)
+    const assignedCode = type === 'pallet' ? availablePalletCodes[0] || '' : ''
+    const nextElement = createDroppedElement(type, point.x, point.y, assignedCode)
+
+    updateWarehouseElements((elements) => [...elements, nextElement])
+    setSelectedElementId(nextElement.id)
+  }
+
+  function startElementMove(event, element) {
+    if (!editMode) {
+      return
+    }
+
+    event.preventDefault()
+    event.stopPropagation()
+    setSelectedElementId(element.id)
+    interactionRef.current = {
+      mode: 'move',
+      id: element.id,
+      startX: event.clientX,
+      startY: event.clientY,
+      original: { ...element },
+    }
+  }
+
+  function startElementResize(event, element, handle = 'se') {
+    if (!editMode) {
+      return
+    }
+
+    event.preventDefault()
+    event.stopPropagation()
+    setSelectedElementId(element.id)
+    interactionRef.current = {
+      mode: 'resize',
+      id: element.id,
+      handle,
+      startX: event.clientX,
+      startY: event.clientY,
+      original: { ...element },
+    }
+  }
+
+  function renderResizeHandles(element) {
+    if (!editMode || selectedElementId !== element.id) {
+      return null
+    }
+
+    return ['nw', 'ne', 'sw', 'se'].map((handle) => (
+      <span
+        key={handle}
+        className={`${styles.resizeHandle} ${styles[`resizeHandle${handle.toUpperCase()}`] || ''}`.trim()}
+        onPointerDown={(event) => startElementResize(event, element, handle)}
+      />
+    ))
+  }
+
+  useEffect(() => {
+    function handlePointerMove(event) {
+      const interaction = interactionRef.current
+      const rect = canvasRef.current?.getBoundingClientRect()
+
+      if (!interaction || !rect) {
+        return
+      }
+
+      const deltaX = ((event.clientX - interaction.startX) / rect.width) * 100
+      const deltaY = ((event.clientY - interaction.startY) / rect.height) * 100
+
+      updateWarehouseElements((elements) =>
+        elements.map((element) => {
+          if (element.id !== interaction.id) {
+            return element
+          }
+
+          if (interaction.mode === 'move') {
+            return {
+              ...element,
+              x: clampNumber(snapValue(interaction.original.x + deltaX), 0, 100 - element.w),
+              y: clampNumber(snapValue(interaction.original.y + deltaY), 0, 100 - element.h),
+            }
+          }
+
+          const nextElement = { ...element }
+          const handle = interaction.handle || 'se'
+
+          if (handle.includes('e')) {
+            nextElement.w = clampNumber(
+              snapValue(interaction.original.w + deltaX),
+              MIN_ELEMENT_SIZE,
+              100 - interaction.original.x
+            )
+          }
+
+          if (handle.includes('s')) {
+            nextElement.h = clampNumber(
+              snapValue(interaction.original.h + deltaY),
+              MIN_ELEMENT_SIZE,
+              100 - interaction.original.y
+            )
+          }
+
+          if (handle.includes('w')) {
+            const nextX = clampNumber(
+              snapValue(interaction.original.x + deltaX),
+              0,
+              interaction.original.x + interaction.original.w - MIN_ELEMENT_SIZE
+            )
+
+            nextElement.x = nextX
+            nextElement.w = clampNumber(
+              snapValue(interaction.original.w + (interaction.original.x - nextX)),
+              MIN_ELEMENT_SIZE,
+              100 - nextX
+            )
+          }
+
+          if (handle.includes('n')) {
+            const nextY = clampNumber(
+              snapValue(interaction.original.y + deltaY),
+              0,
+              interaction.original.y + interaction.original.h - MIN_ELEMENT_SIZE
+            )
+
+            nextElement.y = nextY
+            nextElement.h = clampNumber(
+              snapValue(interaction.original.h + (interaction.original.y - nextY)),
+              MIN_ELEMENT_SIZE,
+              100 - nextY
+            )
+          }
+
+          return nextElement
+        })
+      )
+    }
+
+    function handlePointerUp() {
+      interactionRef.current = null
+    }
+
+    window.addEventListener('pointermove', handlePointerMove)
+    window.addEventListener('pointerup', handlePointerUp)
+
+    return () => {
+      window.removeEventListener('pointermove', handlePointerMove)
+      window.removeEventListener('pointerup', handlePointerUp)
+    }
+  })
+
+  useEffect(() => {
+    function handleKeyDown(event) {
+      if (!editMode || event.key !== 'Delete') {
+        return
+      }
+
+      const activeElement = document.activeElement
+      const activeTag = activeElement?.tagName?.toLowerCase()
+
+      if (activeTag === 'input' || activeTag === 'textarea' || activeTag === 'select') {
+        return
+      }
+
+      deleteSelectedElement()
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown)
+    }
+  })
+
+  useEffect(() => {
+    if (selectedZoneCode && !assignedPalletElements.some((element) => element.code === selectedZoneCode)) {
+      setSelectedZoneCode('')
+      setIsRackOpen(false)
+      setSelectedSlotKey('')
+      setSelectedSubLocationKey(SUBLOCATION_ALL_KEY)
+    }
+  }, [assignedPalletElements, selectedZoneCode])
 
   useEffect(() => {
     if (!isRackOpen || !selectedZone) {
@@ -1041,6 +1546,28 @@ export default function WarehouseMapClient() {
                 <Link href="/dashboard/storage/overview" className={styles.secondaryButton}>
                   Back to Storage Location
                 </Link>
+                <div className={styles.builderActions}>
+                  <button
+                    type="button"
+                    className={editMode ? styles.primaryBuilderButton : styles.secondaryButton}
+                    onClick={() => {
+                      setEditMode((current) => !current)
+                      setSelectedElementId('')
+                    }}
+                  >
+                    {editMode ? 'View Map' : 'Edit Map'}
+                  </button>
+                  {editMode ? (
+                    <>
+                      <button type="button" className={styles.primaryBuilderButton} onClick={handleSaveLayout}>
+                        Save Layout
+                      </button>
+                      <button type="button" className={styles.secondaryButton} onClick={handleResetLayout}>
+                        Reset
+                      </button>
+                    </>
+                  ) : null}
+                </div>
                 <div className={styles.legend} aria-label="Map legend">
                   <span><i className={styles.legendEmpty} /> Empty</span>
                   <span><i className={styles.legendOccupied} /> Occupied</span>
@@ -1051,45 +1578,108 @@ export default function WarehouseMapClient() {
 
           <div className={styles.mapScroll}>
             <div
-              className={`${styles.mapCanvas} ${warehouse.image ? styles.mapCanvasImage : ''}`.trim()}
+              ref={canvasRef}
+              className={`${styles.mapCanvas} ${warehouse.image ? styles.mapCanvasImage : ''} ${editMode ? styles.mapCanvasEditing : ''}`.trim()}
               style={{
                 ...(warehouse.image ? { '--map-image': `url(${warehouse.image})` } : {}),
                 aspectRatio: warehouse.mapRatio,
               }}
+              onDragOver={(event) => {
+                if (editMode) {
+                  event.preventDefault()
+                }
+              }}
+              onDrop={handleCanvasDrop}
+              onPointerDown={() => {
+                if (editMode) {
+                  setSelectedElementId('')
+                }
+              }}
             >
               {!warehouse.image
-                ? warehouse.walls.map((wall, index) => (
-                    <span key={`wall-${index}`} className={styles.mapWall} style={getPositionStyle(wall)} />
-                  ))
-                : null}
-              {!warehouse.image
-                ? warehouse.areas.map((area) => (
+                ? wallElements.map((wall) => (
                     <span
-                      key={area.label}
-                      className={`${styles.mapArea} ${styles[`area${area.tone[0].toUpperCase()}${area.tone.slice(1)}`] || ''}`.trim()}
-                      style={getPositionStyle(area)}
+                      key={wall.id}
+                      className={`${styles.mapWall} ${editMode ? styles.mapEditableElement : ''} ${selectedElementId === wall.id ? styles.mapEditableElementSelected : ''}`.trim()}
+                      style={getElementPositionStyle(wall)}
+                      onPointerDown={(event) => startElementMove(event, wall)}
                     >
-                      {area.label}
+                      {renderResizeHandles(wall)}
                     </span>
                   ))
                 : null}
               {!warehouse.image
-                ? (warehouse.arrows || []).map((arrow) => (
+                ? boxElements.map((area) => (
+                    <span
+                      key={area.id}
+                      className={`${styles.mapArea} ${styles[`area${area.tone?.[0]?.toUpperCase()}${area.tone?.slice(1)}`] || ''} ${editMode ? styles.mapEditableElement : ''} ${selectedElementId === area.id ? styles.mapEditableElementSelected : ''}`.trim()}
+                      style={getElementPositionStyle(area)}
+                      onPointerDown={(event) => startElementMove(event, area)}
+                    >
+                      {area.label}
+                      {renderResizeHandles(area)}
+                    </span>
+                  ))
+                : null}
+              {!warehouse.image
+                ? navArrowElements.map((arrow) => (
                     <button
-                      key={arrow.label}
+                      key={arrow.id}
                       type="button"
-                      className={`${styles.mapDirection} ${styles[`mapDirection${arrow.direction[0].toUpperCase()}${arrow.direction.slice(1)}`] || ''}`.trim()}
-                      style={getPositionStyle(arrow)}
-                      onClick={() => handleWarehouseSelect(arrow.targetWarehouseKey)}
+                      className={`${styles.mapDirection} ${styles[`mapDirection${arrow.direction[0].toUpperCase()}${arrow.direction.slice(1)}`] || ''} ${editMode ? styles.mapEditableElement : ''} ${selectedElementId === arrow.id ? styles.mapEditableElementSelected : ''}`.trim()}
+                      style={getElementPositionStyle(arrow)}
+                      onPointerDown={(event) => editMode && startElementMove(event, arrow)}
+                      onClick={(event) => {
+                        if (editMode) {
+                          event.preventDefault()
+                          setSelectedElementId(arrow.id)
+                          return
+                        }
+
+                        handleWarehouseSelect(arrow.targetWarehouseKey)
+                      }}
                       aria-label={arrow.label}
                     >
                       {arrow.direction === 'left' ? <span aria-hidden="true">&lt;</span> : null}
                       {arrow.label}
                       {arrow.direction === 'right' ? <span aria-hidden="true">&gt;</span> : null}
+                      {renderResizeHandles(arrow)}
                     </button>
                   ))
                 : null}
-              {warehouse.zones.map((zone) => {
+              {lineElements.map((line) => (
+                <span
+                  key={line.id}
+                  className={`${styles.mapEditorLine} ${editMode ? styles.mapEditableElement : ''} ${selectedElementId === line.id ? styles.mapEditableElementSelected : ''}`.trim()}
+                  style={getElementPositionStyle(line)}
+                  onPointerDown={(event) => startElementMove(event, line)}
+                >
+                  {renderResizeHandles(line)}
+                </span>
+              ))}
+              {flowArrowElements.map((arrow) => (
+                <span
+                  key={arrow.id}
+                  className={`${styles.mapEditorFlowArrow} ${styles[`mapEditorFlowArrow${arrow.direction?.[0]?.toUpperCase()}${arrow.direction?.slice(1)}`] || ''} ${editMode ? styles.mapEditableElement : ''} ${selectedElementId === arrow.id ? styles.mapEditableElementSelected : ''}`.trim()}
+                  style={getElementPositionStyle(arrow)}
+                  onPointerDown={(event) => startElementMove(event, arrow)}
+                >
+                  <span>{arrow.label}</span>
+                  {renderResizeHandles(arrow)}
+                </span>
+              ))}
+              {textElements.map((text) => (
+                <span
+                  key={text.id}
+                  className={`${styles.mapEditorText} ${editMode ? styles.mapEditableElement : ''} ${selectedElementId === text.id ? styles.mapEditableElementSelected : ''}`.trim()}
+                  style={getElementPositionStyle(text)}
+                  onPointerDown={(event) => startElementMove(event, text)}
+                >
+                  {text.label}
+                  {renderResizeHandles(text)}
+                </span>
+              ))}
+              {(editMode ? palletElements : assignedPalletElements).map((zone) => {
                 const zoneData = zoneDataByCode.get(zone.code) || {
                   locations: [],
                   entries: [],
@@ -1097,21 +1687,33 @@ export default function WarehouseMapClient() {
                   itemCount: 0,
                 }
                 const isSelected = selectedZoneCode === zone.code
+                const isElementSelected = editMode && selectedElementId === zone.id
+                const zoneLabel = zone.label || zone.code || 'Unassigned'
 
                 return (
                   <button
-                    key={zone.code}
+                    key={zone.id}
                     type="button"
-                    className={getZoneClassName(zone, zoneData, isSelected)}
-                    style={getPositionStyle(zone)}
-                    onClick={() => handleZoneSelect(zone.code)}
-                    aria-pressed={isSelected}
-                    aria-label={`${warehouse.title} pallet ${zone.label || zone.code}, ${zoneData.entries.length > 0 ? 'occupied' : 'empty'}`}
+                    className={`${getZoneClassName(zone, zoneData, isSelected)} ${editMode ? styles.mapEditableElement : ''} ${isElementSelected ? styles.mapEditableElementSelected : ''}`.trim()}
+                    style={getElementPositionStyle(zone)}
+                    onPointerDown={(event) => editMode && startElementMove(event, zone)}
+                    onClick={(event) => {
+                      if (editMode) {
+                        event.preventDefault()
+                        setSelectedElementId(zone.id)
+                        return
+                      }
+
+                      handleZoneSelect(zone.code)
+                    }}
+                    aria-pressed={editMode ? isElementSelected : isSelected}
+                    aria-label={`${warehouse.title} pallet ${zoneLabel}, ${zoneData.entries.length > 0 ? 'occupied' : 'empty'}`}
                   >
-                    <span className={styles.zoneNumber}>{zone.label || zone.code}</span>
+                    <span className={styles.zoneNumber}>{zoneLabel}</span>
                     {zoneData.entries.length > 0 ? (
                       <span className={styles.zoneQty}>{formatNumber(zoneData.totalQty)}</span>
                     ) : null}
+                    {renderResizeHandles(zone)}
                   </button>
                 )
               })}
@@ -1119,10 +1721,148 @@ export default function WarehouseMapClient() {
           </div>
 
           {loading ? <p className={styles.loadingText}>Loading live storage occupancy...</p> : null}
+          {layoutStatus ? <p className={styles.layoutStatus}>{layoutStatus}</p> : null}
         </div>
 
         <aside className={styles.detailPanel}>
-          {!selectedZone || !selectedZoneData ? (
+          {editMode ? (
+            <div className={styles.editorPanel}>
+              <div>
+                <p className={styles.eyebrow}>Map Builder</p>
+                <h3>Drag symbols onto {warehouse.key}</h3>
+              </div>
+
+              <div className={styles.toolGrid} aria-label="Map builder tools">
+                {EDITOR_TOOLS.map((tool) => (
+                  <button
+                    key={tool.type}
+                    type="button"
+                    draggable
+                    className={styles.toolButton}
+                    onDragStart={(event) => handleToolDragStart(event, tool.type)}
+                  >
+                    <span className={`${styles.toolIcon} ${styles[`toolIcon${tool.type[0].toUpperCase()}${tool.type.slice(1)}`] || ''}`} />
+                    {tool.label}
+                  </button>
+                ))}
+              </div>
+
+              <div className={styles.editorHint}>
+                Drag to place. Select an element to move, resize, assign, or delete it.
+              </div>
+
+              <div className={styles.inspectorPanel}>
+                <div className={styles.inspectorHeader}>
+                  <h3>Selected Element</h3>
+                  {selectedElement ? (
+                    <button type="button" className={styles.deleteButton} onClick={deleteSelectedElement}>
+                      Delete
+                    </button>
+                  ) : null}
+                </div>
+
+                {!selectedElement ? (
+                  <p className={styles.inspectorEmpty}>No element selected.</p>
+                ) : (
+                  <div className={styles.inspectorFields}>
+                    <label>
+                      <span>Type</span>
+                      <input value={selectedElement.type} readOnly />
+                    </label>
+
+                    {selectedElement.type === 'pallet' ? (
+                      <label>
+                        <span>Rack / Pallet Number</span>
+                        <select
+                          value={selectedElement.code || ''}
+                          onChange={(event) => updateSelectedElement({ code: event.target.value })}
+                        >
+                          <option value="">Unassigned</option>
+                          {selectedElement.code ? (
+                            <option value={selectedElement.code}>{selectedElement.code}</option>
+                          ) : null}
+                          {availablePalletCodes
+                            .filter((code) => code !== selectedElement.code)
+                            .map((code) => (
+                              <option key={code} value={code}>
+                                {code}
+                              </option>
+                            ))}
+                        </select>
+                      </label>
+                    ) : null}
+
+                    {['box', 'text', 'arrow', 'nav-arrow'].includes(selectedElement.type) ? (
+                      <label>
+                        <span>Label</span>
+                        <input
+                          value={selectedElement.label || ''}
+                          onChange={(event) => updateSelectedElement({ label: event.target.value })}
+                        />
+                      </label>
+                    ) : null}
+
+                    {selectedElement.type === 'arrow' ? (
+                      <label>
+                        <span>Direction</span>
+                        <select
+                          value={selectedElement.direction || 'right'}
+                          onChange={(event) => updateSelectedElement({ direction: event.target.value })}
+                        >
+                          <option value="right">Right</option>
+                          <option value="left">Left</option>
+                        </select>
+                      </label>
+                    ) : null}
+
+                    <div className={styles.inspectorGrid}>
+                      <label>
+                        <span>X</span>
+                        <input
+                          type="number"
+                          value={selectedElement.x}
+                          onChange={(event) => updateSelectedElement({ x: clampNumber(Number(event.target.value || 0), 0, 100) })}
+                        />
+                      </label>
+                      <label>
+                        <span>Y</span>
+                        <input
+                          type="number"
+                          value={selectedElement.y}
+                          onChange={(event) => updateSelectedElement({ y: clampNumber(Number(event.target.value || 0), 0, 100) })}
+                        />
+                      </label>
+                      <label>
+                        <span>W</span>
+                        <input
+                          type="number"
+                          value={selectedElement.w}
+                          onChange={(event) => updateSelectedElement({ w: clampNumber(Number(event.target.value || MIN_ELEMENT_SIZE), MIN_ELEMENT_SIZE, 100) })}
+                        />
+                      </label>
+                      <label>
+                        <span>H</span>
+                        <input
+                          type="number"
+                          value={selectedElement.h}
+                          onChange={(event) => updateSelectedElement({ h: clampNumber(Number(event.target.value || MIN_ELEMENT_SIZE), MIN_ELEMENT_SIZE, 100) })}
+                        />
+                      </label>
+                    </div>
+
+                    <label>
+                      <span>Rotation</span>
+                      <input
+                        type="number"
+                        value={selectedElement.rotation || 0}
+                        onChange={(event) => updateSelectedElement({ rotation: Number(event.target.value || 0) })}
+                      />
+                    </label>
+                  </div>
+                )}
+              </div>
+            </div>
+          ) : !selectedZone || !selectedZoneData ? (
             <div className={styles.emptyInspector}>
               <span className={styles.emptyKicker}>No pallet selected</span>
               <h2>Select a numbered area</h2>

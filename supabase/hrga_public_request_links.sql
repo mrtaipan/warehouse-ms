@@ -35,7 +35,6 @@ declare
   employee_authenticated_id_value uuid;
   employee_name_value text;
   employee_email_value text;
-  note_lines text;
 begin
   if coalesce(trim(p_payload), '') = '' or coalesce(trim(p_signature), '') = '' then
     raise exception 'Invalid request link.';
@@ -105,17 +104,13 @@ begin
       raise exception 'Request date and item name are required.';
     end if;
 
-    note_lines := 'Item Name: ' || trim(p_item_name);
-    if coalesce(trim(p_size), '') <> '' then
-      note_lines := note_lines || E'\nSize: ' || upper(trim(p_size));
-    end if;
-
     insert into public.hrga_birthday_gift (
       employee_authenticated_id,
       employee_name_snapshot,
       employee_email_snapshot,
       request_date,
-      notes,
+      item_name,
+      size,
       status,
       request_link_signature
     )
@@ -124,7 +119,8 @@ begin
       employee_name_value,
       employee_email_value,
       p_request_date,
-      note_lines,
+      trim(p_item_name),
+      nullif(upper(trim(p_size)), ''),
       'SUBMITTED',
       trim(p_signature)
     );

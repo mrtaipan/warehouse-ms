@@ -545,6 +545,7 @@ export default function ArklineFinancialManagementPage({
       const matchesRequester = requesterFilter === 'ALL' ? true : item.created_by === requesterFilter
       const filterDate = getRequestDateForFilter(item)
       const withinDefaultPaidWindow =
+        !hrgaView ||
         item.status !== 'PAID' ||
         (filterDate
           ? filterDate.getFullYear() === todayYear && filterDate.getMonth() === todayMonth && filterDate.getDate() === todayDate
@@ -552,7 +553,7 @@ export default function ArklineFinancialManagementPage({
 
       return matchesKeyword && matchesStatus && matchesRequester && withinDefaultPaidWindow
     })
-  }, [requests, requesterFilter, search, statusFilter])
+  }, [hrgaView, requests, requesterFilter, search, statusFilter])
 
   const requesterOptions = useMemo(
     () =>
