@@ -25,6 +25,56 @@ function normalizeText(value) {
   return String(value || '').trim().toUpperCase()
 }
 
+function getStorageSearchCandidates(value) {
+  const rawValue = String(value || '').trim()
+  const normalizedValue = normalizeText(rawValue)
+  const tokens = normalizedValue
+    .split(/[\s,/|;]+/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+  const skuToken = tokens.find((token) => /[A-Z]/.test(token) && /\d/.test(token) && token.length >= 4)
+  const candidates = [
+    rawValue,
+    skuToken,
+    tokens[0],
+  ]
+    .map((item) => String(item || '').trim())
+    .filter(Boolean)
+
+  return Array.from(new Set(candidates))
+}
+
+async function fetchStorageMatches(searchTerm, requestedSize = '') {
+  const rowsById = new Map()
+  const candidates = getStorageSearchCandidates(searchTerm)
+
+  for (const candidate of candidates) {
+    const { data, error } = await supabase
+      .from('warehouse_storage')
+      .select('id, rack_location_id, item_name, size, qty')
+      .ilike('item_name', `%${candidate}%`)
+      .order('qty', { ascending: false })
+      .limit(50)
+
+    if (error) {
+      throw error
+    }
+
+    ;(data || []).forEach((row) => {
+      rowsById.set(row.id, row)
+    })
+
+    const currentRows = Array.from(rowsById.values())
+    const matchingSizeRows = selectRowsForRequestedSize(currentRows, requestedSize)
+
+    if (matchingSizeRows.length > 0 || (!requestedSize && currentRows.length > 0)) {
+      break
+    }
+  }
+
+  return Array.from(rowsById.values())
+}
+
 function normalizeSizeValue(value) {
   return normalizeText(value).replace(/\s+/g, '')
 }
@@ -98,16 +148,7 @@ async function fetchRackLocationMap() {
 
 async function fetchSourceOptions(row) {
   const searchTerm = row.search_term || row.item_name
-  const { data, error } = await supabase
-    .from('warehouse_storage')
-    .select('id, rack_location_id, item_name, size, qty')
-    .ilike('item_name', `%${searchTerm}%`)
-    .order('qty', { ascending: false })
-    .limit(50)
-
-  if (error) {
-    throw error
-  }
+  const data = await fetchStorageMatches(searchTerm, row.size)
 
   const matchedRows = selectRowsForRequestedSize(data || [], row.size)
   const locationMap = await fetchRackLocationMap()
