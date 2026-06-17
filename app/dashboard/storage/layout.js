@@ -20,7 +20,7 @@ export default async function StorageLayout({ children }) {
     access.overview ? { href: '/dashboard/storage', label: 'Overview', exact: true } : null,
     access.search ? { href: '/dashboard/storage/search', label: 'Search Storage', exact: true } : null,
     access.registry ? { href: '/dashboard/storage/registry', label: 'Registry Storage', exact: true } : null,
-    access.overview ? { href: '/dashboard/storage/overview', label: 'Storage Location', exact: true } : null,
+    access.location ? { href: '/dashboard/storage/overview', label: 'Storage Location', exact: true } : null,
     access.restockSubmit || access.restockPicker
       ? { href: '/dashboard/storage/restock-instruction', label: 'Restock Instruction', exact: true }
       : null,

@@ -794,6 +794,7 @@ export default function QcDashboardPage() {
   const [arklineProductFilter, setArklineProductFilter] = useState('')
   const [brandFilter, setBrandFilter] = useState('')
   const [categoryFilter, setCategoryFilter] = useState('')
+  const [allTime, setAllTime] = useState(false)
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
   const [pauseDetailInspector, setPauseDetailInspector] = useState('')
@@ -980,6 +981,8 @@ export default function QcDashboardPage() {
           size,
           reject_reason_id,
           qty,
+          created_at,
+          updated_at,
           reason:reject_reason_id (
             id,
             reason_name
@@ -1194,31 +1197,30 @@ export default function QcDashboardPage() {
 
   const qcResultSummary = useMemo(() => {
     const grouped = new Map()
-    const arklineDetailByTaskId = new Map()
     const arklineDetailBySummaryKey = new Map()
     const arklineAdjustmentBySummaryKey = new Map()
 
     if (qcMode === 'arkline') {
-      arklineRejectDetails.forEach((detail) => {
-        const current = arklineDetailByTaskId.get(detail.arkline_qc_id) || { qtyB: 0, qtyC: 0 }
-        const summaryKey = getRejectDetailSummaryKey(detail)
-        const summaryCurrent = arklineDetailBySummaryKey.get(summaryKey) || { qtyB: 0, qtyC: 0 }
-        const grade = String(detail.grade || '').toUpperCase()
-        if (grade === 'B') current.qtyB += Number(detail.qty || 0)
-        if (grade === 'C') current.qtyC += Number(detail.qty || 0)
-        if (grade === 'B') summaryCurrent.qtyB += Number(detail.qty || 0)
-        if (grade === 'C') summaryCurrent.qtyC += Number(detail.qty || 0)
-        arklineDetailByTaskId.set(detail.arkline_qc_id, current)
-        arklineDetailBySummaryKey.set(summaryKey, summaryCurrent)
-      })
+      arklineRejectDetails
+        .filter((detail) => hasInvalidDateRange || isWithinDateRange(detail.created_at || detail.updated_at, dateFrom, dateTo))
+        .forEach((detail) => {
+          const key = getRejectDetailSummaryKey(detail)
+          const current = arklineDetailBySummaryKey.get(key) || { qtyB: 0, qtyC: 0 }
+          const grade = String(detail.grade || '').toUpperCase()
+          if (grade === 'B') current.qtyB += Number(detail.qty || 0)
+          if (grade === 'C') current.qtyC += Number(detail.qty || 0)
+          arklineDetailBySummaryKey.set(key, current)
+        })
 
-      arklineRejectAdjustments.forEach((adjustment) => {
-        const key = getAdjustmentSummaryKey(adjustment)
-        const current = arklineAdjustmentBySummaryKey.get(key) || { bcToAQty: 0, inspectorErrorQty: 0 }
-        if (adjustment.adjustment_type === 'bc_to_a') current.bcToAQty += Number(adjustment.qty || 0)
-        if (adjustment.adjustment_type === 'inspector_data_error') current.inspectorErrorQty += Number(adjustment.qty || 0)
-        arklineAdjustmentBySummaryKey.set(key, current)
-      })
+      arklineRejectAdjustments
+        .filter((adjustment) => hasInvalidDateRange || isWithinDateRange(adjustment.created_at || adjustment.updated_at, dateFrom, dateTo))
+        .forEach((adjustment) => {
+          const key = getAdjustmentSummaryKey(adjustment)
+          const current = arklineAdjustmentBySummaryKey.get(key) || { bcToAQty: 0, inspectorErrorQty: 0 }
+          if (adjustment.adjustment_type === 'bc_to_a') current.bcToAQty += Number(adjustment.qty || 0)
+          if (adjustment.adjustment_type === 'inspector_data_error') current.inspectorErrorQty += Number(adjustment.qty || 0)
+          arklineAdjustmentBySummaryKey.set(key, current)
+        })
     }
 
     activeItems.forEach((item) => {
@@ -1241,32 +1243,36 @@ export default function QcDashboardPage() {
           taskRows: [],
           hasRejectDetails: false,
         }
-      const detailQty = arklineDetailByTaskId.get(item.id)
-      const effectiveQtyB = qcMode === 'arkline' && detailQty ? detailQty.qtyB : Number(item.qty_b || 0)
-      const effectiveQtyC = qcMode === 'arkline' && detailQty ? detailQty.qtyC : Number(item.qty_c || 0)
 
       current.qtyA += Number(item.qty_a || 0)
-      current.qtyB += effectiveQtyB
-      current.qtyC += effectiveQtyC
+      current.qtyB += Number(item.qty_b || 0)
+      current.qtyC += Number(item.qty_c || 0)
       current.rejectTargetQty += getRejectQty(item)
+      current.checked += getCheckedQty(item)
       current.photoUrl = current.photoUrl || taskModel.photoUrl
-      current.hasRejectDetails = current.hasRejectDetails || Boolean(detailQty)
       if (qcMode === 'arkline') current.taskRows.push(item)
       grouped.set(key, current)
     })
 
     if (qcMode === 'arkline') {
       grouped.forEach((current, key) => {
-        const adjustment = arklineAdjustmentBySummaryKey.get(key) || { bcToAQty: 0, inspectorErrorQty: 0 }
         const detailSummary = arklineDetailBySummaryKey.get(key)
+        const adjustment = arklineAdjustmentBySummaryKey.get(key)
+
         if (detailSummary) {
-          current.qtyB = detailSummary.qtyB
-          current.qtyC = detailSummary.qtyC
+          current.hasRejectDetails = true
         }
-        current.qtyA += adjustment.bcToAQty
-        const adjustedRejectTotals = applyInspectorErrorToRejectTotals(current.qtyB, current.qtyC, adjustment.inspectorErrorQty)
-        current.qtyB = adjustedRejectTotals.qtyB
-        current.qtyC = adjustedRejectTotals.qtyC
+
+        if (adjustment) {
+          const bcToAQty = Number(adjustment.bcToAQty || 0)
+          const inspectorErrorQty = Number(adjustment.inspectorErrorQty || 0)
+          const adjustedRejectTotals = applyInspectorErrorToRejectTotals(current.qtyB, current.qtyC, bcToAQty + inspectorErrorQty)
+
+          current.qtyA += bcToAQty
+          current.qtyB = adjustedRejectTotals.qtyB
+          current.qtyC = adjustedRejectTotals.qtyC
+        }
+
         current.checked = current.qtyA + current.qtyB + current.qtyC
       })
     }
@@ -1315,7 +1321,17 @@ export default function QcDashboardPage() {
       if (a.category !== b.category) return a.category.localeCompare(b.category)
       return a.model.localeCompare(b.model)
     })
-  }, [activeItems, arklineRejectAdjustments, arklineRejectDetails, filteredAdjustmentRows, filteredReturnAdjustmentRows, qcMode])
+  }, [
+    activeItems,
+    arklineRejectAdjustments,
+    arklineRejectDetails,
+    dateFrom,
+    dateTo,
+    filteredAdjustmentRows,
+    filteredReturnAdjustmentRows,
+    hasInvalidDateRange,
+    qcMode,
+  ])
 
   const arklineRejectDetailQtyBySummary = useMemo(() => {
     const grouped = new Map()
@@ -1323,25 +1339,30 @@ export default function QcDashboardPage() {
 
     qcResultSummary.forEach((summary) => {
       ;(summary.taskRows || []).forEach((row) => {
-        taskSummaryKeyById.set(row.id, getSummaryRejectKey(summary))
+        taskSummaryKeyById.set(String(row.id), getSummaryRejectKey(summary))
       })
     })
 
-    arklineRejectDetails.forEach((detail) => {
-      const key = taskSummaryKeyById.get(detail.arkline_qc_id)
+    arklineRejectDetails
+      .filter((detail) => hasInvalidDateRange || isWithinDateRange(detail.created_at || detail.updated_at, dateFrom, dateTo))
+      .forEach((detail) => {
+      const key = taskSummaryKeyById.get(String(detail.arkline_qc_id))
       if (!key) return
       grouped.set(key, (grouped.get(key) || 0) + Number(detail.qty || 0))
     })
 
     return grouped
-  }, [arklineRejectDetails, qcResultSummary])
+  }, [arklineRejectDetails, dateFrom, dateTo, hasInvalidDateRange, qcResultSummary])
 
   const selectedRejectTaskRows = useMemo(
-    () => (rejectDetailSummary ? activeItems.filter((item) => isTaskInSummary(item, rejectDetailSummary)) : []),
+    () =>
+      rejectDetailSummary
+        ? (rejectDetailSummary.taskRows?.length ? rejectDetailSummary.taskRows : activeItems.filter((item) => isTaskInSummary(item, rejectDetailSummary)))
+        : [],
     [activeItems, rejectDetailSummary]
   )
   const selectedRejectTaskIds = useMemo(
-    () => new Set(selectedRejectTaskRows.map((item) => item.id)),
+    () => new Set(selectedRejectTaskRows.map((item) => String(item.id))),
     [selectedRejectTaskRows]
   )
   const selectedRejectSummaryKey = useMemo(
@@ -1350,10 +1371,12 @@ export default function QcDashboardPage() {
   )
   const selectedRejectExistingDetails = useMemo(
     () =>
-      arklineRejectDetails.filter(
-        (item) => selectedRejectTaskIds.has(item.arkline_qc_id) || getRejectDetailSummaryKey(item) === selectedRejectSummaryKey
-      ),
-    [arklineRejectDetails, selectedRejectSummaryKey, selectedRejectTaskIds]
+      arklineRejectDetails.filter((item) => {
+        const matchesSummary = selectedRejectTaskIds.has(String(item.arkline_qc_id)) || getRejectDetailSummaryKey(item) === selectedRejectSummaryKey
+        const matchesDate = hasInvalidDateRange || isWithinDateRange(item.created_at || item.updated_at, dateFrom, dateTo)
+        return matchesSummary && matchesDate
+      }),
+    [arklineRejectDetails, dateFrom, dateTo, hasInvalidDateRange, selectedRejectSummaryKey, selectedRejectTaskIds]
   )
   const selectedRejectReasonOptions = useMemo(() => {
     const grouped = new Map()
@@ -1381,34 +1404,18 @@ export default function QcDashboardPage() {
   const selectedRejectGap = selectedRejectTargetQty - selectedRejectDetailQty - selectedRejectAdjustmentQty
   const selectedRejectPreviewSummary = useMemo(() => {
     const baseQtyA = selectedRejectTaskRows.reduce((sum, item) => sum + Number(item.qty_a || 0), 0)
-    const baseQtyB = Number(rejectDetailSummary?.qtyB || 0)
-    const baseQtyC = Number(rejectDetailSummary?.qtyC || 0)
+    const baseQtyB = selectedRejectTaskRows.reduce((sum, item) => sum + Number(item.qty_b || 0), 0)
+    const baseQtyC = selectedRejectTaskRows.reduce((sum, item) => sum + Number(item.qty_c || 0), 0)
     const bcToAQty = Number(rejectAdjustmentDraft.bcToAQty || 0)
-
-    let previewQtyB = 0
-    let previewQtyC = 0
-    let hasDraftRejectQty = false
-
-    rejectDraftRows.forEach((row) => {
-      const grade = String(row.grade || '').toUpperCase()
-      const qty = Number(row.qty || 0)
-      if (!qty) return
-      if (grade === 'B') {
-        previewQtyB += qty
-        hasDraftRejectQty = true
-      }
-      if (grade === 'C') {
-        previewQtyC += qty
-        hasDraftRejectQty = true
-      }
-    })
+    const inspectorErrorQty = Number(rejectAdjustmentDraft.inspectorErrorQty || 0)
+    const adjustedRejectTotals = applyInspectorErrorToRejectTotals(baseQtyB, baseQtyC, bcToAQty + inspectorErrorQty)
 
     return {
       qtyA: baseQtyA + bcToAQty,
-      qtyB: hasDraftRejectQty ? previewQtyB : baseQtyB,
-      qtyC: hasDraftRejectQty ? previewQtyC : baseQtyC,
+      qtyB: adjustedRejectTotals.qtyB,
+      qtyC: adjustedRejectTotals.qtyC,
     }
-  }, [rejectAdjustmentDraft.bcToAQty, rejectDetailSummary, rejectDraftRows, selectedRejectTaskRows])
+  }, [rejectAdjustmentDraft.bcToAQty, rejectAdjustmentDraft.inspectorErrorQty, selectedRejectTaskRows])
   const selectedRejectPreviewChecked =
     selectedRejectPreviewSummary.qtyA + selectedRejectPreviewSummary.qtyB + selectedRejectPreviewSummary.qtyC
   const selectedRejectSizeOptions = useMemo(() => {
@@ -1597,17 +1604,20 @@ export default function QcDashboardPage() {
   )
 
   function openRejectDetailModal(summary) {
-    const summaryTaskRows = activeItems.filter((item) => isTaskInSummary(item, summary))
-    const taskIds = new Set(summaryTaskRows.map((item) => item.id))
+    const summaryTaskRows = summary.taskRows?.length ? summary.taskRows : activeItems.filter((item) => isTaskInSummary(item, summary))
+    const taskIds = new Set(summaryTaskRows.map((item) => String(item.id)))
     const summaryKey = getSummaryRejectKey(summary)
-    const existingDetails = arklineRejectDetails.filter(
-      (item) => taskIds.has(item.arkline_qc_id) || getRejectDetailSummaryKey(item) === summaryKey
-    )
+    const existingDetails = arklineRejectDetails.filter((item) => {
+      const matchesSummary = taskIds.has(String(item.arkline_qc_id)) || getRejectDetailSummaryKey(item) === summaryKey
+      const matchesDate = hasInvalidDateRange || isWithinDateRange(item.created_at || item.updated_at, dateFrom, dateTo)
+      return matchesSummary && matchesDate
+    })
     const existingAdjustments = arklineRejectAdjustments.filter((item) => {
       const samePo = String(item.po_id || 'NO PO').trim().toUpperCase() === summary.brand
       const sameSku = String(item.sku_induk || 'NO SKU').trim().toUpperCase() === summary.category
       const sameModel = String(item.model_name || '').trim().toUpperCase() === String(summary.model || '').trim().toUpperCase()
-      return samePo && sameSku && sameModel
+      const matchesDate = hasInvalidDateRange || isWithinDateRange(item.created_at || item.updated_at, dateFrom, dateTo)
+      return samePo && sameSku && sameModel && matchesDate
     })
 
     const summaryRejectTargetQty = Number(summary.rejectTargetQty ?? getRejectQty(summary))
@@ -1799,17 +1809,25 @@ export default function QcDashboardPage() {
 
       const poId = rejectDetailSummary.brand === 'NO PO' ? null : rejectDetailSummary.brand
       const skuInduk = rejectDetailSummary.category === 'NO SKU' ? null : rejectDetailSummary.category
-      let adjustmentDeleteQuery = supabase
-        .from('arkline_qc_reject_adjustments')
-        .delete()
-        .eq('model_name', rejectDetailSummary.model)
+      const existingAdjustmentIds = arklineRejectAdjustments
+        .filter((item) => {
+          const samePo = String(item.po_id || 'NO PO').trim().toUpperCase() === rejectDetailSummary.brand
+          const sameSku = String(item.sku_induk || 'NO SKU').trim().toUpperCase() === rejectDetailSummary.category
+          const sameModel = String(item.model_name || '').trim().toUpperCase() === String(rejectDetailSummary.model || '').trim().toUpperCase()
+          const matchesDate = hasInvalidDateRange || isWithinDateRange(item.created_at || item.updated_at, dateFrom, dateTo)
+          return samePo && sameSku && sameModel && matchesDate
+        })
+        .map((item) => item.id)
+        .filter(Boolean)
 
-      adjustmentDeleteQuery = poId ? adjustmentDeleteQuery.eq('po_id', poId) : adjustmentDeleteQuery.is('po_id', null)
-      adjustmentDeleteQuery = skuInduk ? adjustmentDeleteQuery.eq('sku_induk', skuInduk) : adjustmentDeleteQuery.is('sku_induk', null)
+      if (existingAdjustmentIds.length) {
+        const { error: deleteAdjustmentError } = await supabase
+          .from('arkline_qc_reject_adjustments')
+          .delete()
+          .in('id', existingAdjustmentIds)
 
-      const { error: deleteAdjustmentError } = await adjustmentDeleteQuery
-
-      if (deleteAdjustmentError) throw new Error(deleteAdjustmentError.message)
+        if (deleteAdjustmentError) throw new Error(deleteAdjustmentError.message)
+      }
 
       const adjustmentPayload = [
         {
@@ -1854,6 +1872,8 @@ export default function QcDashboardPage() {
             size,
             reject_reason_id,
             qty,
+            created_at,
+            updated_at,
             reason:reject_reason_id (
               id,
               reason_name
@@ -2011,13 +2031,42 @@ export default function QcDashboardPage() {
 
         <div style={styles.filters}>
           <div style={styles.field}>
-            <label style={styles.label}>Date From</label>
-            <input type="date" value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} style={styles.input} />
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px' }}>
+              <label style={styles.label}>Date From</label>
+              <label style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '12px', fontWeight: '700', color: '#374151' }}>
+                <input
+                  type="checkbox"
+                  checked={allTime}
+                  onChange={(event) => {
+                    const checked = event.target.checked
+                    setAllTime(checked)
+                    if (checked) {
+                      setDateFrom('')
+                      setDateTo('')
+                    }
+                  }}
+                />
+                All Time
+              </label>
+            </div>
+            <input
+              type="date"
+              value={dateFrom}
+              onChange={(event) => setDateFrom(event.target.value)}
+              style={{ ...styles.input, ...(allTime ? { background: '#f3f4f6', color: '#9ca3af', cursor: 'not-allowed' } : {}) }}
+              disabled={allTime}
+            />
           </div>
 
           <div style={styles.field}>
             <label style={styles.label}>Date To</label>
-            <input type="date" value={dateTo} onChange={(event) => setDateTo(event.target.value)} style={styles.input} />
+            <input
+              type="date"
+              value={dateTo}
+              onChange={(event) => setDateTo(event.target.value)}
+              style={{ ...styles.input, ...(allTime ? { background: '#f3f4f6', color: '#9ca3af', cursor: 'not-allowed' } : {}) }}
+              disabled={allTime}
+            />
           </div>
 
           {qcMode === 'arkline' ? (

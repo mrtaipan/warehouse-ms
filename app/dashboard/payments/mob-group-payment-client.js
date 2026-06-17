@@ -11,6 +11,38 @@ import styles from '../arkline/financial-management/financial-management.module.
 
 const supabase = createClient()
 const PAYMENT_BUCKET = 'mob-payments'
+const MOB_PAYMENT_DETAIL_SELECT = `
+  id,
+  invoice_number,
+  category_id,
+  amount,
+  notes,
+  account_name,
+  bank_name,
+  account_number,
+  status,
+  employee_authenticated_id,
+  employee_name_snapshot,
+  employee_email_snapshot,
+  created_by,
+  approved_by,
+  approved_at,
+  paid_by,
+  paid_at,
+  created_at,
+  updated_at,
+  category:dir_reimbursement_categories(id, name),
+  attachments:mob_payment_attachments(
+    id,
+    storage_bucket,
+    storage_path,
+    file_name,
+    mime_type,
+    file_size,
+    uploaded_by,
+    created_at
+  )
+`
 
 async function getCurrentUserSafely() {
   try {
@@ -113,6 +145,12 @@ function formatDateTime(value) {
     hour: '2-digit',
     minute: '2-digit',
   }).format(date)
+}
+
+function getRequestDateForFilter(item) {
+  const source = item?.status === 'PAID' ? item?.paid_at || item?.created_at : item?.created_at
+  const date = source ? new Date(source) : null
+  return date && !Number.isNaN(date.getTime()) ? date : null
 }
 
 const ROMAN_MONTHS = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X', 'XI', 'XII']
@@ -239,8 +277,11 @@ export default function MobGroupPaymentClient({
   const [requests, setRequests] = useState([])
   const [categories, setCategories] = useState([])
   const [search, setSearch] = useState('')
-  const [statusFilter, setStatusFilter] = useState(hrgaMode ? 'SUBMITTED' : 'ALL')
+  const [statusFilter, setStatusFilter] = useState('ALL')
   const [requesterFilter, setRequesterFilter] = useState('ALL')
+  const [monthFilter, setMonthFilter] = useState('')
+  const [dayFilter, setDayFilter] = useState('')
+  const [yearFilter, setYearFilter] = useState('')
   const [selectedRequestIds, setSelectedRequestIds] = useState([])
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [draft, setDraft] = useState(createDraft())
@@ -258,6 +299,39 @@ export default function MobGroupPaymentClient({
   const [canApprove, setCanApprove] = useState(false)
   const [canPay, setCanPay] = useState(false)
   const imagePreviewDragRef = useRef(null)
+
+  const hydrateRequestDisplayNames = useCallback(
+    (row) => {
+      const normalized = normalizeRequest(row)
+      const cachedMatch = requests.find((item) => item.id === normalized.id)
+      return {
+        ...normalized,
+        created_by_display_name:
+          cachedMatch?.created_by_display_name || fallbackDisplayName(normalized.created_by),
+        approved_by_display_name:
+          cachedMatch?.approved_by_display_name || fallbackDisplayName(normalized.approved_by),
+        paid_by_display_name:
+          cachedMatch?.paid_by_display_name || fallbackDisplayName(normalized.paid_by),
+      }
+    },
+    [requests]
+  )
+
+  const refreshSelectedRequestDetail = useCallback(
+    async (requestId) => {
+      if (!requestId) return
+
+      const { data, error } = await supabase.from('mob_payment').select(MOB_PAYMENT_DETAIL_SELECT).eq('id', requestId).maybeSingle()
+      if (error) {
+        throw new Error(error.message)
+      }
+
+      if (data) {
+        setSelectedRequest(hydrateRequestDisplayNames(data))
+      }
+    },
+    [hydrateRequestDisplayNames]
+  )
 
   const loadWorkspace = useCallback(async (silent = false) => {
     if (!silent) {
@@ -302,40 +376,7 @@ export default function MobGroupPaymentClient({
       (() => {
         let paymentQuery = supabase
           .from('mob_payment')
-          .select(
-            `
-              id,
-              invoice_number,
-              category_id,
-              amount,
-              notes,
-              account_name,
-              bank_name,
-              account_number,
-              status,
-              employee_authenticated_id,
-              employee_name_snapshot,
-              employee_email_snapshot,
-              created_by,
-              approved_by,
-              approved_at,
-              paid_by,
-              paid_at,
-              created_at,
-              updated_at,
-              category:dir_reimbursement_categories(id, name),
-              attachments:mob_payment_attachments(
-                id,
-                storage_bucket,
-                storage_path,
-                file_name,
-                mime_type,
-                file_size,
-                uploaded_by,
-                created_at
-              )
-            `
-          )
+          .select(MOB_PAYMENT_DETAIL_SELECT)
           .order('created_at', { ascending: true })
 
         if (!hrgaMode) {
@@ -406,6 +447,11 @@ export default function MobGroupPaymentClient({
 
   const filteredRequests = useMemo(() => {
     const keyword = search.trim().toUpperCase()
+    const today = new Date()
+    const todayYear = today.getFullYear()
+    const todayMonth = today.getMonth()
+    const todayDate = today.getDate()
+
     return requests.filter((item) => {
       const matchesKeyword =
         !keyword ||
@@ -426,9 +472,64 @@ export default function MobGroupPaymentClient({
 
       const matchesStatus = statusFilter === 'ALL' ? true : item.status === statusFilter
       const matchesRequester = requesterFilter === 'ALL' ? true : item.created_by === requesterFilter
-      return matchesKeyword && matchesStatus && matchesRequester
+      const filterDate = getRequestDateForFilter(item)
+      const matchesMonth = !monthFilter || (filterDate ? String(filterDate.getMonth() + 1).padStart(2, '0') === monthFilter : false)
+      const matchesDay = !dayFilter || (filterDate ? String(filterDate.getDate()).padStart(2, '0') === dayFilter : false)
+      const matchesYear = !yearFilter || (filterDate ? String(filterDate.getFullYear()) === yearFilter : false)
+      const withinDefaultPaidWindow =
+        item.status !== 'PAID' ||
+        monthFilter ||
+        dayFilter ||
+        yearFilter ||
+        (filterDate
+          ? filterDate.getFullYear() === todayYear && filterDate.getMonth() === todayMonth && filterDate.getDate() === todayDate
+          : false)
+
+      return matchesKeyword && matchesStatus && matchesRequester && matchesMonth && matchesDay && matchesYear && withinDefaultPaidWindow
     })
-  }, [requests, requesterFilter, search, statusFilter])
+  }, [dayFilter, monthFilter, requests, requesterFilter, search, statusFilter, yearFilter])
+
+  const monthFilterOptions = useMemo(() => {
+    const map = new Map()
+
+    requests.forEach((item) => {
+      const date = getRequestDateForFilter(item)
+      if (!date) return
+      const value = String(date.getMonth() + 1).padStart(2, '0')
+      if (!map.has(value)) {
+        map.set(value, {
+          value,
+          label: date.toLocaleDateString('en-GB', { month: 'long' }),
+        })
+      }
+    })
+
+    return Array.from(map.values()).sort((left, right) => left.value.localeCompare(right.value))
+  }, [requests])
+
+  const dayFilterOptions = useMemo(() => {
+    const values = new Set()
+
+    requests.forEach((item) => {
+      const date = getRequestDateForFilter(item)
+      if (!date) return
+      values.add(String(date.getDate()).padStart(2, '0'))
+    })
+
+    return Array.from(values).sort((left, right) => left.localeCompare(right))
+  }, [requests])
+
+  const yearFilterOptions = useMemo(() => {
+    const values = new Set()
+
+    requests.forEach((item) => {
+      const date = getRequestDateForFilter(item)
+      if (!date) return
+      values.add(String(date.getFullYear()))
+    })
+
+    return Array.from(values).sort((left, right) => right.localeCompare(left))
+  }, [requests])
 
   const requesterOptions = useMemo(
     () =>
@@ -837,6 +938,7 @@ export default function MobGroupPaymentClient({
 
       setPaymentProofFiles([])
       await loadWorkspace(true)
+      await refreshSelectedRequestDetail(request.id)
       setSuccess(`Payment proof uploaded for ${request.invoice_number}.`)
     } catch (uploadError) {
       if (uploadedPaths.length) {
@@ -1028,6 +1130,43 @@ export default function MobGroupPaymentClient({
                     ))}
                   </select>
                 </label>
+                {hrgaMode ? (
+                  <>
+                    <label className={styles.filterField}>
+                      <span className={styles.label}>Month</span>
+                      <select className={styles.select} value={monthFilter} onChange={(event) => setMonthFilter(event.target.value)}>
+                        <option value="">All Months</option>
+                        {monthFilterOptions.map((item) => (
+                          <option key={item.value} value={item.value}>
+                            {item.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className={styles.filterField}>
+                      <span className={styles.label}>Day</span>
+                      <select className={styles.select} value={dayFilter} onChange={(event) => setDayFilter(event.target.value)}>
+                        <option value="">All Days</option>
+                        {dayFilterOptions.map((item) => (
+                          <option key={item} value={item}>
+                            {item}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className={styles.filterField}>
+                      <span className={styles.label}>Year</span>
+                      <select className={styles.select} value={yearFilter} onChange={(event) => setYearFilter(event.target.value)}>
+                        <option value="">All Years</option>
+                        {yearFilterOptions.map((item) => (
+                          <option key={item} value={item}>
+                            {item}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  </>
+                ) : null}
                 {allowCreate ? (
                   <button
                     type="button"
@@ -1062,6 +1201,20 @@ export default function MobGroupPaymentClient({
                         {actionLoading ? 'Saving...' : `Mark as Paid${selectedApprovedCount ? ` (${selectedApprovedCount})` : ''}`}
                       </button>
                     ) : null}
+                    <button
+                      type="button"
+                      className={styles.ghostButton}
+                      onClick={() => {
+                        setSearch('')
+                        setStatusFilter('ALL')
+                        setRequesterFilter('ALL')
+                        setMonthFilter('')
+                        setDayFilter('')
+                        setYearFilter('')
+                      }}
+                    >
+                      Reset
+                    </button>
                   </div>
                 )}
               </div>
@@ -1093,6 +1246,39 @@ export default function MobGroupPaymentClient({
                 ))}
               </select>
             </label>
+            <label className={styles.filterField}>
+              <span className={styles.label}>Month</span>
+              <select className={styles.select} value={monthFilter} onChange={(event) => setMonthFilter(event.target.value)}>
+                <option value="">All Months</option>
+                {monthFilterOptions.map((item) => (
+                  <option key={item.value} value={item.value}>
+                    {item.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className={styles.filterField}>
+              <span className={styles.label}>Day</span>
+              <select className={styles.select} value={dayFilter} onChange={(event) => setDayFilter(event.target.value)}>
+                <option value="">All Days</option>
+                {dayFilterOptions.map((item) => (
+                  <option key={item} value={item}>
+                    {item}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className={styles.filterField}>
+              <span className={styles.label}>Year</span>
+              <select className={styles.select} value={yearFilter} onChange={(event) => setYearFilter(event.target.value)}>
+                <option value="">All Years</option>
+                {yearFilterOptions.map((item) => (
+                  <option key={item} value={item}>
+                    {item}
+                  </option>
+                ))}
+              </select>
+            </label>
             <div className={styles.headerButtonGroup}>
               {canApprove ? (
                 <button
@@ -1114,6 +1300,20 @@ export default function MobGroupPaymentClient({
                   {actionLoading ? 'Saving...' : `Mark as Paid${selectedApprovedCount ? ` (${selectedApprovedCount})` : ''}`}
                 </button>
               ) : null}
+              <button
+                type="button"
+                className={styles.ghostButton}
+                onClick={() => {
+                  setSearch('')
+                  setStatusFilter('ALL')
+                  setRequesterFilter('ALL')
+                  setMonthFilter('')
+                  setDayFilter('')
+                  setYearFilter('')
+                }}
+              >
+                Reset
+              </button>
             </div>
           </div>
         ) : null}
@@ -1126,11 +1326,11 @@ export default function MobGroupPaymentClient({
         ) : hrgaMode ? (
           filteredRequests.length ? (
             <section className={styles.listSection}>
-              <div className={styles.columnHead}>
-                <div className={styles.outstandingWrap}>
-                  <span className={styles.outstandingLabel}>Total Outstanding</span>
-                  <strong className={styles.outstandingValue}>
-                    {formatCurrency(filteredRequests.filter((item) => item.status !== 'PAID').reduce((sum, item) => sum + Number(item.amount || 0), 0))}
+          <div className={styles.columnHead}>
+            <div className={styles.outstandingWrap}>
+              <span className={styles.outstandingLabel}>Total Outstanding</span>
+              <strong className={styles.outstandingValue}>
+                {formatCurrency(filteredRequests.filter((item) => item.status !== 'PAID').reduce((sum, item) => sum + Number(item.amount || 0), 0))}
                   </strong>
                 </div>
               </div>

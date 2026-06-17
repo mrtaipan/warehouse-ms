@@ -677,6 +677,7 @@ export function getStorageFeatureAccess(role, permissions = [], isAdmin = false)
       menu: true,
       menuHref: '/dashboard/storage',
       overview: true,
+      location: true,
       registry: true,
       search: true,
       restockSubmit: true,
@@ -687,21 +688,24 @@ export function getStorageFeatureAccess(role, permissions = [], isAdmin = false)
   const overview = hasPermission(permissions, 'storage.overview.view', isAdmin)
   const registry = hasPermission(permissions, 'storage.registry.view', isAdmin)
   const search = hasPermission(permissions, 'storage.search.view', isAdmin)
+  const location = hasPermission(permissions, 'storage.location.view', isAdmin)
   const restockInstruction = hasPermission(permissions, 'storage.restock_instruction.view', isAdmin)
   const restockSubmit = hasPermission(permissions, 'storage.restock_submit.view', isAdmin)
   const restockPicker = hasPermission(permissions, 'storage.restock_picker.view', isAdmin)
-  const menu = overview || registry || search || restockInstruction || restockSubmit || restockPicker
+  const menu = overview || registry || search || location || restockInstruction || restockSubmit || restockPicker
 
   let menuHref = '/dashboard'
   if (overview) menuHref = '/dashboard/storage'
   else if (search) menuHref = '/dashboard/storage/search'
   else if (registry) menuHref = '/dashboard/storage/registry'
+  else if (location) menuHref = '/dashboard/storage/overview'
   else if (restockInstruction || restockSubmit || restockPicker) menuHref = '/dashboard/storage/restock-instruction'
 
   return {
     menu,
     menuHref,
     overview,
+    location,
     registry,
     search,
     restockInstruction,
@@ -780,6 +784,7 @@ const ROUTE_PERMISSION_MAP = [
   { matcher: (pathname) => pathname.startsWith('/dashboard/storage/search'), codes: ['storage.search.view'] },
   { matcher: (pathname) => pathname.startsWith('/dashboard/storage/registry'), codes: ['storage.registry.view'] },
   { matcher: (pathname) => pathname.startsWith('/dashboard/storage/overview'), codes: ['storage.location.view'] },
+  { matcher: (pathname) => pathname.startsWith('/dashboard/storage/warehouse-map'), codes: ['storage.location.view'] },
   { matcher: (pathname) => pathname.startsWith('/dashboard/storage/restock-instruction'), codes: ['storage.restock_instruction.view', 'storage.restock_submit.view', 'storage.restock_picker.view'] },
   { matcher: (pathname) => pathname.startsWith('/dashboard/storage/restock-request') || pathname === '/restock-request' || pathname.startsWith('/restock-request?'), codes: ['storage.restock_submit.view'] },
   { matcher: (pathname) => pathname === '/take-requests' || pathname.startsWith('/take-requests?'), codes: ['storage.restock_picker.view'] },

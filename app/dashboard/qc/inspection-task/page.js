@@ -596,10 +596,21 @@ export default function QcInspectionTaskPage() {
             ),
             inbound_unload:inbound_unload_id (
               id,
+              brand_id,
+              category_id,
               model_name,
               model_color,
               photo_url,
-              koli_sequence
+              koli_sequence,
+              brands:dir_brands!brand_id (
+                id,
+                brand_name
+              ),
+              categories:dir_categories!category_id (
+                id,
+                category_name,
+                full_name
+              )
             )
           `)
           .eq('assigned_to', normalizedEmail)
@@ -838,10 +849,21 @@ export default function QcInspectionTaskPage() {
         ),
         inbound_unload:inbound_unload_id (
           id,
+          brand_id,
+          category_id,
           model_name,
           model_color,
           photo_url,
-          koli_sequence
+          koli_sequence,
+          brands:dir_brands!brand_id (
+            id,
+            brand_name
+          ),
+          categories:dir_categories!category_id (
+            id,
+            category_name,
+            full_name
+          )
         )
       `)
       .single()
@@ -902,10 +924,21 @@ export default function QcInspectionTaskPage() {
         ),
         inbound_unload:inbound_unload_id (
           id,
+          brand_id,
+          category_id,
           model_name,
           model_color,
           photo_url,
-          koli_sequence
+          koli_sequence,
+          brands:dir_brands!brand_id (
+            id,
+            brand_name
+          ),
+          categories:dir_categories!category_id (
+            id,
+            category_name,
+            full_name
+          )
         )
       `)
       .single()
@@ -1006,10 +1039,21 @@ export default function QcInspectionTaskPage() {
         ),
         inbound_unload:inbound_unload_id (
           id,
+          brand_id,
+          category_id,
           model_name,
           model_color,
           photo_url,
-          koli_sequence
+          koli_sequence,
+          brands:dir_brands!brand_id (
+            id,
+            brand_name
+          ),
+          categories:dir_categories!category_id (
+            id,
+            category_name,
+            full_name
+          )
         )
       `)
       .single()

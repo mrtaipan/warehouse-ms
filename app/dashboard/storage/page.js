@@ -56,7 +56,7 @@ export default async function StoragePage() {
   const cards = workspaceCards.filter((item) => {
     if (item.key === 'search') return access.search
     if (item.key === 'registry') return access.registry
-    if (item.key === 'location') return access.overview
+    if (item.key === 'location') return access.location
     if (item.key === 'restockInstruction') return access.restockSubmit || access.restockPicker
     return false
   })

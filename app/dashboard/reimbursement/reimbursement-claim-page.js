@@ -98,6 +98,23 @@ function buildPaidBatchKey(item) {
   return [buildPayeeGroupKey(item), item.paid_at || 'unpaid'].join('::')
 }
 
+function buildPaidGroupFromClaims(claims) {
+  const rows = Array.isArray(claims) ? claims : []
+  if (!rows.length) return null
+
+  const firstClaim = rows[0]
+  return {
+    key: buildPaidBatchKey(firstClaim),
+    paid_at: firstClaim.paid_at || '',
+    payee_bank_name: firstClaim.payee_bank_name || '',
+    payee_account_name: firstClaim.payee_account_name || '',
+    payee_account_number: firstClaim.payee_account_number || '',
+    payee_label: buildPayeeGroupLabel(firstClaim),
+    total_amount: rows.reduce((sum, item) => sum + Number(item.total_amount || 0), 0),
+    claims: rows,
+  }
+}
+
 function getGroupedPaymentProofs(claims) {
   const uniqueMap = new Map()
 
@@ -255,10 +272,10 @@ function buildPaymentBatchFolder(claimNumbers = []) {
 
   const [firstClaim, ...restClaims] = normalized
   const suffixes = restClaims.map((value) => value.split('-').pop() || value)
-  const compact = [firstClaim, ...suffixes].join('|')
+  const compact = [firstClaim, ...suffixes].join('-')
 
   return compact
-    .replace(/[\\/:*?"<>]/g, '')
+    .replace(/[\\/:*?"<>|]/g, '')
     .replace(/\s+/g, '-')
 }
 
@@ -793,6 +810,69 @@ export default function ReimbursementClaimPage({
       ]
     },
     [filteredClaims]
+  )
+
+  const refreshPaidGroupDetail = useCallback(
+    async (group) => {
+      const claimIds = (group?.claims || []).map((item) => item.id).filter(Boolean)
+      if (!claimIds.length) return
+
+      const { data, error } = await supabase
+        .from(tableNames.claims)
+        .select(
+          `
+            id,
+            claim_number,
+            employee_authenticated_id,
+            employee_email_snapshot,
+            employee_name_snapshot,
+            expense_date,
+            expense_category_id,
+            status,
+            description,
+            "group",
+            comments,
+            total_amount,
+            payee_type,
+            payee_authenticated_id,
+            payee_bank_name,
+            payee_account_name,
+            payee_account_number,
+            submitted_at,
+            approved_at,
+            paid_at,
+            created_by,
+            approved_by,
+            paid_by,
+            created_at,
+            updated_at,
+            category:dir_reimbursement_categories(id, name),
+            attachments:${tableNames.attachments}(
+              id,
+              attachment_type,
+              storage_bucket,
+              storage_path,
+              file_name,
+              mime_type,
+              file_size,
+              uploaded_by,
+              created_at
+            )
+          `
+        )
+        .in('id', claimIds)
+        .order('submitted_at', { ascending: true })
+
+      if (error) {
+        throw new Error(error.message)
+      }
+
+      const nextGroup = buildPaidGroupFromClaims((data || []).map(normalizeClaim))
+      if (nextGroup) {
+        setSelectedPaidGroup(nextGroup)
+      }
+    },
+    [tableNames.attachments, tableNames.claims]
   )
 
   useEffect(() => {
@@ -1525,8 +1605,12 @@ export default function ReimbursementClaimPage({
           : `${group.claims.length} approved claim${group.claims.length > 1 ? 's' : ''} marked as paid.`
       )
       setPaymentFiles([])
-      closeApprovedGroupModal()
       await loadWorkspace()
+      if (hasUnpaidClaims) {
+        closeApprovedGroupModal()
+      } else {
+        await refreshPaidGroupDetail(group)
+      }
     } catch (paymentError) {
       if (uploadedPaths.length) {
         await supabase.storage.from(REIMBURSEMENT_BUCKET).remove(uploadedPaths)
@@ -3003,6 +3087,8 @@ export default function ReimbursementClaimPage({
                 ) : null}
               </div>
             ) : null}
+
+            {actionError ? <p className={styles.errorText}>{actionError}</p> : null}
 
             <div className={styles.buttonRow}>
               {canPay ? (

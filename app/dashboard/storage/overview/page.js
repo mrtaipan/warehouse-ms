@@ -1,5 +1,6 @@
 'use client'
 
+import Link from 'next/link'
 import { useEffect, useMemo, useState } from 'react'
 import { createClient } from '@/utils/supabase/browser'
 
@@ -539,11 +540,16 @@ export default function StorageOverviewPage() {
 
   return (
     <div style={styles.wrapper}>
-      <div>
-        <h1 style={styles.title}>Storage Location</h1>
-        <p style={styles.subtitle}>
-          View all items stored in the warehouse and filter by pallet, carton, or shelving location.
-        </p>
+      <div style={styles.pageHeader}>
+        <div>
+          <h1 style={styles.title}>Storage Location</h1>
+          <p style={styles.subtitle}>
+            View all items stored in the warehouse and filter by pallet, carton, or shelving location.
+          </p>
+        </div>
+        <Link href="/dashboard/storage/warehouse-map" style={styles.mapButton}>
+          Warehouse Map
+        </Link>
       </div>
 
       <div style={styles.kpiCard}>
@@ -872,6 +878,27 @@ const styles = {
     display: 'flex',
     flexDirection: 'column',
     gap: '24px',
+  },
+  pageHeader: {
+    display: 'flex',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: '16px',
+    flexWrap: 'wrap',
+  },
+  mapButton: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: '40px',
+    padding: '0 16px',
+    borderRadius: '10px',
+    background: '#111827',
+    color: '#fff',
+    fontSize: '14px',
+    fontWeight: '700',
+    textDecoration: 'none',
+    whiteSpace: 'nowrap',
   },
   title: {
     margin: 0,

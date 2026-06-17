@@ -11,6 +11,40 @@ import styles from './financial-management.module.css'
 
 const supabase = createClient()
 const PAYMENT_REQUEST_BUCKET = 'arkline-payments'
+const ARKLINE_PAYMENT_DETAIL_SELECT = `
+  id,
+  payment_basis,
+  po_source_type,
+  po_db_id,
+  po_number,
+  supplier_name_snapshot,
+  invoice_number,
+  category_id,
+  amount,
+  notes,
+  account_name,
+  bank_name,
+  account_number,
+  status,
+  created_by,
+  approved_by,
+  approved_at,
+  paid_by,
+  paid_at,
+  created_at,
+  updated_at,
+  category:dir_reimbursement_categories(id, name),
+  attachments:arkline_payment_attachments(
+    id,
+    storage_bucket,
+    storage_path,
+    file_name,
+    mime_type,
+    file_size,
+    uploaded_by,
+    created_at
+  )
+`
 
 async function getCurrentUserSafely() {
   try {
@@ -88,6 +122,12 @@ function formatDateTime(value) {
     hour: '2-digit',
     minute: '2-digit',
   }).format(date)
+}
+
+function getRequestDateForFilter(item) {
+  const source = item?.status === 'PAID' ? item?.paid_at || item?.created_at : item?.created_at
+  const date = source ? new Date(source) : null
+  return date && !Number.isNaN(date.getTime()) ? date : null
 }
 
 function sanitizeFileName(value) {
@@ -254,7 +294,7 @@ export default function ArklineFinancialManagementPage({
   const [materialPoOptions, setMaterialPoOptions] = useState([])
   const [categories, setCategories] = useState([])
   const [search, setSearch] = useState('')
-  const [statusFilter, setStatusFilter] = useState(hrgaView ? 'SUBMITTED' : 'ALL')
+  const [statusFilter, setStatusFilter] = useState('ALL')
   const [requesterFilter, setRequesterFilter] = useState('ALL')
   const [selectedRequestIds, setSelectedRequestIds] = useState([])
   const [showCreateModal, setShowCreateModal] = useState(false)
@@ -285,6 +325,48 @@ export default function ArklineFinancialManagementPage({
   const canReviewAllRequests = hrgaView || role === 'admin' || role === 'hrga' || role === 'leader'
   const canPay = hrgaView ? role === 'admin' || role === 'hrga' || role === 'leader' : role === 'admin'
   const canApprove = hrgaView ? role === 'admin' || role === 'hrga' || role === 'leader' : role === 'admin'
+
+  const hydrateRequestDisplayNames = useCallback(
+    (row) => {
+      const normalized = normalizeRequest(row)
+      const cachedMatch = requests.find((item) => item.id === normalized.id)
+      const currentEmail = String(profile?.email || '').trim().toLowerCase()
+      const currentName = String(profile?.display_name || '').trim()
+
+      return {
+        ...normalized,
+        created_by_display_name:
+          cachedMatch?.created_by_display_name ||
+          (String(normalized.created_by || '').trim().toLowerCase() === currentEmail ? currentName : '') ||
+          fallbackDisplayName(normalized.created_by),
+        approved_by_display_name:
+          cachedMatch?.approved_by_display_name ||
+          (String(normalized.approved_by || '').trim().toLowerCase() === currentEmail ? currentName : '') ||
+          fallbackDisplayName(normalized.approved_by),
+        paid_by_display_name:
+          cachedMatch?.paid_by_display_name ||
+          (String(normalized.paid_by || '').trim().toLowerCase() === currentEmail ? currentName : '') ||
+          fallbackDisplayName(normalized.paid_by),
+      }
+    },
+    [profile?.display_name, profile?.email, requests]
+  )
+
+  const refreshSelectedRequestDetail = useCallback(
+    async (requestId) => {
+      if (!requestId) return
+
+      const { data, error } = await supabase.from('arkline_payment').select(ARKLINE_PAYMENT_DETAIL_SELECT).eq('id', requestId).maybeSingle()
+      if (error) {
+        throw new Error(error.message)
+      }
+
+      if (data) {
+        setSelectedRequest(hydrateRequestDisplayNames(data))
+      }
+    },
+    [hydrateRequestDisplayNames]
+  )
 
   const loadWorkspace = useCallback(async (options = {}) => {
     const { silent = false } = options
@@ -332,42 +414,7 @@ export default function ArklineFinancialManagementPage({
       (() => {
         let paymentQuery = supabase
           .from('arkline_payment')
-          .select(
-          `
-            id,
-            payment_basis,
-            po_source_type,
-            po_db_id,
-            po_number,
-            supplier_name_snapshot,
-            invoice_number,
-            category_id,
-            amount,
-            notes,
-            account_name,
-            bank_name,
-            account_number,
-            status,
-            created_by,
-            approved_by,
-            approved_at,
-            paid_by,
-            paid_at,
-            created_at,
-            updated_at,
-            category:dir_reimbursement_categories(id, name),
-            attachments:arkline_payment_attachments(
-              id,
-              storage_bucket,
-              storage_path,
-              file_name,
-              mime_type,
-              file_size,
-              uploaded_by,
-              created_at
-            )
-          `
-        )
+          .select(ARKLINE_PAYMENT_DETAIL_SELECT)
           .order('created_at', { ascending: true })
 
         if (!canReviewAllRequests) {
@@ -471,6 +518,11 @@ export default function ArklineFinancialManagementPage({
 
   const filteredRequests = useMemo(() => {
     const keyword = search.trim().toUpperCase()
+    const today = new Date()
+    const todayYear = today.getFullYear()
+    const todayMonth = today.getMonth()
+    const todayDate = today.getDate()
+
     return requests.filter((item) => {
       const matchesKeyword =
         !keyword ||
@@ -491,7 +543,14 @@ export default function ArklineFinancialManagementPage({
 
       const matchesStatus = statusFilter === 'ALL' ? true : item.status === statusFilter
       const matchesRequester = requesterFilter === 'ALL' ? true : item.created_by === requesterFilter
-      return matchesKeyword && matchesStatus && matchesRequester
+      const filterDate = getRequestDateForFilter(item)
+      const withinDefaultPaidWindow =
+        item.status !== 'PAID' ||
+        (filterDate
+          ? filterDate.getFullYear() === todayYear && filterDate.getMonth() === todayMonth && filterDate.getDate() === todayDate
+          : false)
+
+      return matchesKeyword && matchesStatus && matchesRequester && withinDefaultPaidWindow
     })
   }, [requests, requesterFilter, search, statusFilter])
 
@@ -713,42 +772,7 @@ export default function ArklineFinancialManagementPage({
         const { data: insertedRequest, error: insertError } = await supabase
           .from('arkline_payment')
           .insert(payload)
-          .select(
-            `
-              id,
-              payment_basis,
-              po_source_type,
-              po_db_id,
-              po_number,
-              supplier_name_snapshot,
-              invoice_number,
-              category_id,
-              amount,
-              notes,
-              account_name,
-              bank_name,
-              account_number,
-              status,
-              created_by,
-              approved_by,
-              approved_at,
-              paid_by,
-              paid_at,
-              created_at,
-              updated_at,
-              category:dir_reimbursement_categories(id, name),
-              attachments:arkline_payment_attachments(
-                id,
-                storage_bucket,
-                storage_path,
-                file_name,
-                mime_type,
-                file_size,
-                uploaded_by,
-                created_at
-              )
-            `
-          )
+          .select(ARKLINE_PAYMENT_DETAIL_SELECT)
           .single()
 
         if (insertError) throw new Error(insertError.message)
@@ -973,6 +997,7 @@ export default function ArklineFinancialManagementPage({
       setPaymentProofFiles([])
       setSuccess(`Payment proof uploaded for ${request.invoice_number}.`)
       await loadWorkspace({ silent: true })
+      await refreshSelectedRequestDetail(request.id)
     } catch (uploadError) {
       if (uploadedPaths.length) {
         await supabase.storage.from(PAYMENT_REQUEST_BUCKET).remove(uploadedPaths)
