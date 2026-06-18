@@ -97,6 +97,10 @@ function normalizeClaim(row) {
   }
 }
 
+function isMissingStorageObjectError(error) {
+  return /object not found|not found/i.test(String(error?.message || ''))
+}
+
 function getStatusTone(value) {
   const normalized = String(value || '').toUpperCase()
   if (normalized === 'APPROVED') return styles.statusApproved
@@ -564,6 +568,25 @@ export default function MyArklifeReimbursementClient({ profile, headerActions = 
     setError('')
     const { data, error: signedUrlError } = await supabase.storage.from(attachment.storage_bucket).createSignedUrl(attachment.storage_path, 300)
     if (signedUrlError) {
+      if (isMissingStorageObjectError(signedUrlError) && attachment?.id) {
+        const { error: deleteError } = await supabase.from(tableNames.attachments).delete().eq('id', attachment.id)
+        if (!deleteError) {
+          const nextClaims = claims.map((claim) =>
+            claim.id === selectedClaim?.id || claim.id === editingClaim?.id || claim.attachments?.some((item) => item.id === attachment.id)
+              ? { ...claim, attachments: (claim.attachments || []).filter((item) => item.id !== attachment.id) }
+              : claim
+          )
+          setClaims(nextClaims)
+          setSelectedClaim((prev) =>
+            prev ? { ...prev, attachments: (prev.attachments || []).filter((item) => item.id !== attachment.id) } : prev
+          )
+          setEditingClaim((prev) =>
+            prev ? { ...prev, attachments: (prev.attachments || []).filter((item) => item.id !== attachment.id) } : prev
+          )
+          setSuccess('Attachment data was stale and has been removed from the list.')
+          return
+        }
+      }
       setError(signedUrlError.message)
       return
     }

@@ -519,9 +519,8 @@ export default function ArklineFinancialManagementPage({
   const filteredRequests = useMemo(() => {
     const keyword = search.trim().toUpperCase()
     const today = new Date()
-    const todayYear = today.getFullYear()
-    const todayMonth = today.getMonth()
-    const todayDate = today.getDate()
+    const paidWindowStart = new Date(today.getFullYear(), today.getMonth(), today.getDate())
+    paidWindowStart.setMonth(paidWindowStart.getMonth() - 1)
 
     return requests.filter((item) => {
       const matchesKeyword =
@@ -547,9 +546,7 @@ export default function ArklineFinancialManagementPage({
       const withinDefaultPaidWindow =
         !hrgaView ||
         item.status !== 'PAID' ||
-        (filterDate
-          ? filterDate.getFullYear() === todayYear && filterDate.getMonth() === todayMonth && filterDate.getDate() === todayDate
-          : false)
+        (filterDate ? filterDate >= paidWindowStart : false)
 
       return matchesKeyword && matchesStatus && matchesRequester && withinDefaultPaidWindow
     })

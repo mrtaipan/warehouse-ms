@@ -152,6 +152,10 @@ function getAttachmentsByType(claim, type) {
   return (claim?.attachments || []).filter((attachment) => attachment.attachment_type === type)
 }
 
+function isMissingStorageObjectError(error) {
+  return /object not found|not found/i.test(String(error?.message || ''))
+}
+
 function formatCurrency(value) {
   return new Intl.NumberFormat('id-ID', {
     style: 'currency',
@@ -1692,6 +1696,76 @@ export default function ReimbursementClaimPage({
     }
   }
 
+  function removeAttachmentsFromLocalState(attachmentIds = []) {
+    const idSet = new Set((attachmentIds || []).filter(Boolean))
+    if (!idSet.size) return
+
+    const pruneAttachments = (items = []) => items.filter((item) => !idSet.has(item.id))
+    const pruneClaim = (claim) => (claim ? { ...claim, attachments: pruneAttachments(claim.attachments || []) } : claim)
+    const pruneGroup = (group) =>
+      group
+        ? {
+            ...group,
+            claims: (group.claims || []).map((claim) => pruneClaim(claim)),
+          }
+        : group
+
+    setClaims((prev) => prev.map((claim) => pruneClaim(claim)))
+    setSelectedClaim((prev) => pruneClaim(prev))
+    setEditingClaim((prev) => pruneClaim(prev))
+    setSelectedApprovedGroup((prev) => pruneGroup(prev))
+    setSelectedPaidGroup((prev) => pruneGroup(prev))
+  }
+
+  async function handleDeleteStoredAttachment(attachment, { suppressSuccess = false } = {}) {
+    if (!attachment?.id) return
+
+    setActionLoading(true)
+    setActionError('')
+    if (!suppressSuccess) {
+      setSuccess('')
+    }
+
+    try {
+      if (attachment.storage_path) {
+        const { error: storageError } = await supabase.storage
+          .from(attachment.storage_bucket || REIMBURSEMENT_BUCKET)
+          .remove([attachment.storage_path])
+
+        if (storageError && !isMissingStorageObjectError(storageError)) {
+          throw new Error(storageError.message)
+        }
+      }
+
+      const { error: deleteError } = await supabase.from(tableNames.attachments).delete().eq('id', attachment.id)
+      if (deleteError) {
+        throw new Error(deleteError.message)
+      }
+
+      removeAttachmentsFromLocalState([attachment.id])
+      if (!suppressSuccess) {
+        setSuccess(`Attachment ${attachment.file_name || ''} removed.`.trim())
+      }
+    } catch (deleteError) {
+      setActionError(deleteError?.message || 'Failed to remove attachment.')
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
+  async function cleanupMissingStoredAttachments(attachments = []) {
+    const validAttachments = (attachments || []).filter((item) => item?.id)
+    if (!validAttachments.length) return
+
+    const attachmentIds = validAttachments.map((item) => item.id)
+    const { error: deleteError } = await supabase.from(tableNames.attachments).delete().in('id', attachmentIds)
+    if (deleteError) {
+      throw new Error(deleteError.message)
+    }
+
+    removeAttachmentsFromLocalState(attachmentIds)
+  }
+
   async function handleOpenAttachment(attachment) {
     setActionError('')
     const candidates = Array.isArray(attachment?.variants) && attachment.variants.length ? attachment.variants : [attachment]
@@ -1721,6 +1795,18 @@ export default function ReimbursementClaimPage({
 
       window.open(data.signedUrl, '_blank', 'noopener,noreferrer')
       return
+    }
+
+    if (isMissingStorageObjectError(lastError)) {
+      try {
+        await cleanupMissingStoredAttachments(candidates)
+        setSuccess('Attachment data was stale and has been removed from the list.')
+        setActionError('')
+        return
+      } catch (cleanupError) {
+        setActionError(cleanupError?.message || 'Failed to clean up missing attachment data.')
+        return
+      }
     }
 
     setActionError(lastError?.message || 'Attachment file is no longer available.')
@@ -2692,9 +2778,21 @@ export default function ReimbursementClaimPage({
                             <p className={styles.reimbursementAttachmentName}>{attachment.file_name}</p>
                             <p className={styles.cellMeta}>{formatDateTime(attachment.created_at)}</p>
                           </div>
-                          <button type="button" className={styles.secondaryButton} onClick={() => void handleOpenAttachment(attachment)}>
-                            {getAttachmentActionLabel(attachment)}
-                          </button>
+                          <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+                            <button type="button" className={styles.secondaryButton} onClick={() => void handleOpenAttachment(attachment)}>
+                              {getAttachmentActionLabel(attachment)}
+                            </button>
+                            {canPay ? (
+                              <button
+                                type="button"
+                                className={styles.dangerButton}
+                                onClick={() => void handleDeleteStoredAttachment(attachment)}
+                                disabled={actionLoading}
+                              >
+                                Remove
+                              </button>
+                            ) : null}
+                          </div>
                         </div>
                       ))}
                   </div>
@@ -3035,9 +3133,21 @@ export default function ReimbursementClaimPage({
                           <p className={styles.reimbursementAttachmentName}>{attachment.file_name}</p>
                           <p className={styles.cellMeta}>{formatDateTime(attachment.created_at)}</p>
                         </div>
-                        <button type="button" className={styles.secondaryButton} onClick={() => void handleOpenAttachment(attachment)}>
-                          Open
-                        </button>
+                        <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+                          <button type="button" className={styles.secondaryButton} onClick={() => void handleOpenAttachment(attachment)}>
+                            Open
+                          </button>
+                          {canPay ? (
+                            <button
+                              type="button"
+                              className={styles.dangerButton}
+                              onClick={() => void handleDeleteStoredAttachment(attachment)}
+                              disabled={actionLoading}
+                            >
+                              Remove
+                            </button>
+                          ) : null}
+                        </div>
                       </div>
                     ))}
                   </div>
