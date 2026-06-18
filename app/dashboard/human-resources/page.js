@@ -105,6 +105,14 @@ function filterVisibleBirthdayGiftRows(rows) {
   })
 }
 
+function sortRowsByRecent(rows) {
+  return [...(rows || [])].sort((left, right) => {
+    const leftValue = new Date(left?.submitted_at || left?.created_at || 0).getTime()
+    const rightValue = new Date(right?.submitted_at || right?.created_at || 0).getTime()
+    return rightValue - leftValue
+  })
+}
+
 function normalizeGenderValue(value) {
   const normalized = String(value || '').trim().toUpperCase()
   if (['M', 'MALE', 'MAN'].includes(normalized)) return 'Male'
@@ -162,7 +170,7 @@ export default async function HumanResourcesPage() {
   const [peopleResult, leaveResult, giftResult, holidayResult] = await Promise.all([
     supabase.from('dir_user_profiles').select('*').order('id', { ascending: true }),
     supabase.from('hrga_leave_requests').select('*').order('submitted_at', { ascending: false }),
-    supabase.from('hrga_birthday_gift').select('*').order('submitted_at', { ascending: false }),
+    supabase.from('hrga_birthday_gift').select('*'),
     supabase.from('hrga_public_holidays').select('*').order('holiday_date', { ascending: true }),
   ])
 
@@ -171,7 +179,8 @@ export default async function HumanResourcesPage() {
   const { rows: giftRowsRaw, missing: giftMissing } = getQueryData(giftResult)
   const { rows: publicHolidayRows, missing: holidayMissing } = getQueryData(holidayResult)
   const leaveRows = filterActiveLeaveRows(leaveRowsRaw)
-  const giftRows = filterVisibleBirthdayGiftRows(giftRowsRaw)
+  const sortedGiftRowsRaw = sortRowsByRecent(giftRowsRaw)
+  const giftRows = filterVisibleBirthdayGiftRows(sortedGiftRowsRaw)
 
   const maleCount = peopleRows.filter((person) => normalizeGenderValue(person.gender || person.jenis_kelamin) === 'Male').length
   const femaleCount = peopleRows.filter((person) => normalizeGenderValue(person.gender || person.jenis_kelamin) === 'Female').length
@@ -366,7 +375,7 @@ export default async function HumanResourcesPage() {
             leaveRowsAll={leaveRowsRaw}
             leaveMissing={leaveMissing}
             giftRows={giftRows}
-            giftRowsAll={giftRowsRaw}
+            giftRowsAll={sortedGiftRowsRaw}
             giftMissing={giftMissing}
             peopleRows={peopleRows}
             publicHolidayRows={publicHolidayRows}

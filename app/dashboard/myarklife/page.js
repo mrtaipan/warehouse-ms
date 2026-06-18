@@ -25,6 +25,14 @@ function filterActiveLeaveRows(rows) {
   })
 }
 
+function sortRowsByRecent(rows) {
+  return [...(rows || [])].sort((left, right) => {
+    const leftValue = new Date(left?.submitted_at || left?.created_at || 0).getTime()
+    const rightValue = new Date(right?.submitted_at || right?.created_at || 0).getTime()
+    return rightValue - leftValue
+  })
+}
+
 export default async function MyArklifePage() {
   const supabase = await createClient()
   const {
@@ -45,15 +53,15 @@ export default async function MyArklifePage() {
     supabase
       .from('hrga_birthday_gift')
       .select('*')
-      .eq('employee_authenticated_id', user.id)
-      .order('submitted_at', { ascending: false }),
+      .eq('employee_authenticated_id', user.id),
     supabase.from('hrga_public_holidays').select('*').order('holiday_date', { ascending: true }),
   ])
 
   const { rows: leaveRowsRaw, missing: leaveMissing } = getQueryData(leaveResult)
-  const { rows: giftRows, missing: giftMissing } = getQueryData(giftResult)
+  const { rows: giftRowsRaw, missing: giftMissing } = getQueryData(giftResult)
   const { rows: publicHolidayRows } = getQueryData(publicHolidayResult)
   const leaveRows = filterActiveLeaveRows(leaveRowsRaw).slice(0, 2)
+  const giftRows = sortRowsByRecent(giftRowsRaw)
 
   return (
     <div className={styles.page}>

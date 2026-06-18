@@ -816,7 +816,7 @@ function getDisplayNameByEmail(email, userProfilesByEmail) {
   return userProfilesByEmail[normalizedEmail] || email
 }
 
-export default function WarehouseMapClient() {
+export default function WarehouseMapClient({ canEditMap = false }) {
   const canvasRef = useRef(null)
   const interactionRef = useRef(null)
   const [selectedWarehouseKey, setSelectedWarehouseKey] = useState(WAREHOUSE_ORDER[0])
@@ -845,6 +845,13 @@ export default function WarehouseMapClient() {
   })
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+
+  useEffect(() => {
+    if (!canEditMap && editMode) {
+      setEditMode(false)
+      setSelectedElementId('')
+    }
+  }, [canEditMap, editMode])
 
   useEffect(() => {
     async function loadMapData() {
@@ -1546,28 +1553,30 @@ export default function WarehouseMapClient() {
                 <Link href="/dashboard/storage/overview" className={styles.secondaryButton}>
                   Back to Storage Location
                 </Link>
-                <div className={styles.builderActions}>
-                  <button
-                    type="button"
-                    className={editMode ? styles.primaryBuilderButton : styles.secondaryButton}
-                    onClick={() => {
-                      setEditMode((current) => !current)
-                      setSelectedElementId('')
-                    }}
-                  >
-                    {editMode ? 'View Map' : 'Edit Map'}
-                  </button>
-                  {editMode ? (
-                    <>
-                      <button type="button" className={styles.primaryBuilderButton} onClick={handleSaveLayout}>
-                        Save Layout
-                      </button>
-                      <button type="button" className={styles.secondaryButton} onClick={handleResetLayout}>
-                        Reset
-                      </button>
-                    </>
-                  ) : null}
-                </div>
+                {canEditMap ? (
+                  <div className={styles.builderActions}>
+                    <button
+                      type="button"
+                      className={editMode ? styles.primaryBuilderButton : styles.secondaryButton}
+                      onClick={() => {
+                        setEditMode((current) => !current)
+                        setSelectedElementId('')
+                      }}
+                    >
+                      {editMode ? 'View Map' : 'Edit Map'}
+                    </button>
+                    {editMode ? (
+                      <>
+                        <button type="button" className={styles.primaryBuilderButton} onClick={handleSaveLayout}>
+                          Save Layout
+                        </button>
+                        <button type="button" className={styles.secondaryButton} onClick={handleResetLayout}>
+                          Reset
+                        </button>
+                      </>
+                    ) : null}
+                  </div>
+                ) : null}
                 <div className={styles.legend} aria-label="Map legend">
                   <span><i className={styles.legendEmpty} /> Empty</span>
                   <span><i className={styles.legendOccupied} /> Occupied</span>

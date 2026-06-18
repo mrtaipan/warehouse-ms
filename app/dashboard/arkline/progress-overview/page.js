@@ -592,10 +592,10 @@ function normalizeFinancePaymentRow(row) {
   }
 }
 
-function applyInspectorErrorToRejectTotals(qtyB, qtyC, inspectorErrorQty) {
+function applySignedAdjustmentToRejectTotals(qtyB, qtyC, adjustmentQty) {
   let nextQtyB = Number(qtyB || 0)
   let nextQtyC = Number(qtyC || 0)
-  const signedQty = Number(inspectorErrorQty || 0)
+  const signedQty = Number(adjustmentQty || 0)
 
   if (!signedQty) {
     return { qtyB: nextQtyB, qtyC: nextQtyC }
@@ -637,7 +637,16 @@ function buildQcGradeSummary(rows, adjustmentRows = []) {
   )
 
   summary.qtyA += adjustmentSummary.bcToAQty
-  const adjustedRejectTotals = applyInspectorErrorToRejectTotals(summary.qtyB, summary.qtyC, adjustmentSummary.inspectorErrorQty)
+  const rejectTotalsAfterGradeAAdjustment = applySignedAdjustmentToRejectTotals(
+    summary.qtyB,
+    summary.qtyC,
+    adjustmentSummary.bcToAQty
+  )
+  const adjustedRejectTotals = applySignedAdjustmentToRejectTotals(
+    rejectTotalsAfterGradeAAdjustment.qtyB,
+    rejectTotalsAfterGradeAAdjustment.qtyC,
+    adjustmentSummary.inspectorErrorQty
+  )
   summary.qtyB = adjustedRejectTotals.qtyB
   summary.qtyC = adjustedRejectTotals.qtyC
 

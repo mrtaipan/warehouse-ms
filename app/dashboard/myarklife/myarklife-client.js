@@ -263,6 +263,7 @@ export default function MyArklifeClient({ profile, leaveRows, giftRows, publicHo
   const [profileError, setProfileError] = useState('')
   const [leaveError, setLeaveError] = useState('')
   const [giftError, setGiftError] = useState('')
+  const [giftSuccess, setGiftSuccess] = useState('')
   const [leaveStartDate, setLeaveStartDate] = useState('')
   const [leaveEndDate, setLeaveEndDate] = useState('')
 
@@ -362,8 +363,18 @@ export default function MyArklifeClient({ profile, leaveRows, giftRows, publicHo
                 <p className={styles.giftTitle}>{birthdayClaimState.eligible ? 'Claim Available' : 'Not Applicable'}</p>
                 <p className={styles.giftText}>{birthdayClaimState.message}</p>
                 {birthdayClaimState.windowLabel ? <p className={styles.giftSubtext}>Window: {birthdayClaimState.windowLabel}</p> : null}
+                {giftSuccess ? <p className={styles.successText}>{giftSuccess}</p> : null}
               </div>
-              <button type="button" className={styles.giftButton} onClick={() => setOpenGiftModal(true)} disabled={!birthdayClaimState.eligible}>
+              <button
+                type="button"
+                className={styles.giftButton}
+                onClick={() => {
+                  setGiftError('')
+                  setGiftSuccess('')
+                  setOpenGiftModal(true)
+                }}
+                disabled={!birthdayClaimState.eligible}
+              >
                 Claim Gift
               </button>
             </div>
@@ -523,6 +534,7 @@ export default function MyArklifeClient({ profile, leaveRows, giftRows, publicHo
             action={(formData) =>
               handleServerAction(submitBirthdayGiftRequest, formData, {
                 onSuccess: () => {
+                  setGiftSuccess('Birthday gift request submitted successfully.')
                   setOpenGiftModal(false)
                 },
                 setModalError: setGiftError,

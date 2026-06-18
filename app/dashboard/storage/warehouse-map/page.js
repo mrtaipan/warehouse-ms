@@ -23,5 +23,5 @@ export default async function WarehouseMapPage() {
     redirect('/dashboard/storage')
   }
 
-  return <WarehouseMapClient />
+  return <WarehouseMapClient canEditMap={isAdmin} />
 }

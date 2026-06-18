@@ -794,7 +794,7 @@ export default function QcDashboardPage() {
   const [arklineProductFilter, setArklineProductFilter] = useState('')
   const [brandFilter, setBrandFilter] = useState('')
   const [categoryFilter, setCategoryFilter] = useState('')
-  const [allTime, setAllTime] = useState(false)
+  const [allTime, setAllTime] = useState(true)
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
   const [pauseDetailInspector, setPauseDetailInspector] = useState('')
