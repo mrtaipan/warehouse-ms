@@ -135,6 +135,23 @@
   color: #ffffff;
 }
 
+.dangerButton {
+  min-height: 34px;
+  padding: 0 12px;
+  border: 1px solid #991b1b;
+  border-radius: 10px;
+  background: #991b1b;
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.dangerButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
 .iconButton {
   width: 34px;
   min-width: 34px;
@@ -175,7 +192,8 @@
 }
 
 .input,
-.select {
+.select,
+.textarea {
   width: 100%;
   min-height: 36px;
   padding: 0 11px;
@@ -187,8 +205,17 @@
   outline: none;
 }
 
+.textarea {
+  min-height: 96px;
+  padding: 10px 11px;
+  resize: vertical;
+  font-family: inherit;
+  line-height: 1.5;
+}
+
 .input:focus,
-.select:focus {
+.select:focus,
+.textarea:focus {
   border-color: #94a3b8;
   box-shadow: 0 0 0 4px rgba(148, 163, 184, 0.12);
 }
@@ -1448,6 +1475,70 @@
 .receivingHistoryTable th:nth-child(1),
 .receivingHistoryTable th:nth-child(3) {
   white-space: nowrap;
+}
+
+.returnHistoryActions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.returnHistoryIconButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid #dbe4f0;
+  border-radius: 9px;
+  background: #ffffff;
+  color: #0f172a;
+  cursor: pointer;
+}
+
+.returnHistoryIconButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+.returnHistoryIconButton .actionIcon {
+  width: 14px;
+  height: 14px;
+}
+
+.returnHistoryDangerButton {
+  border-color: #fecaca;
+  background: #fef2f2;
+  color: #991b1b;
+}
+
+.returnHistoryDetailRow td {
+  padding: 0;
+  background: #f8fafc;
+}
+
+.returnHistoryDetailPanel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border-top: 1px solid #e2e8f0;
+}
+
+.returnHistoryRejectList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.returnHistoryRejectList > span {
+  color: #475569;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 
 .incomingGoodsGroupHead {

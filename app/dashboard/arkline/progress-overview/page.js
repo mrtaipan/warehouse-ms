@@ -1,5 +1,5 @@
 'use client'
-import { useEffect, useMemo, useState } from 'react'
+import { Fragment, useEffect, useMemo, useState } from 'react'
 
 import { createClient } from '@/utils/supabase/browser'
 import useArklineAccess from '../use-arkline-access'
@@ -82,6 +82,15 @@ function CloseIcon() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true" className={styles.actionIcon}>
       <path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+    </svg>
+  )
+}
+
+function SearchIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className={styles.actionIcon}>
+      <circle cx="10.8" cy="10.8" r="5.8" fill="none" stroke="currentColor" strokeWidth="1.8" />
+      <path d="m15.2 15.2 4 4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
     </svg>
   )
 }
@@ -172,6 +181,14 @@ function getProductCardTone(entry, targetDate) {
     return 'watch'
   }
   return tone
+}
+
+function getFinanceQtyForItem(entry) {
+  const status = normalizeBoardStatus(entry?.status)
+  if (status === 'Initiated') {
+    return Number(entry?.qty || entry?.totalQty || 0)
+  }
+  return Number(entry?.actualQty || entry?.actual_qty || 0)
 }
 
 function getLaterIsoDate(...values) {
@@ -273,7 +290,10 @@ async function loadSnapshotRows() {
     supabase
       .from('arkline_po_items')
       .select('id, po_id, sku_induk, nama_produk, total_qty, actual_qty, price, hpp, updated_delivery_date, notes, status'),
-    supabase.from('arkline_po_item_receipts').select('arkline_po_item_id, size, received_qty'),
+    supabase
+      .from('arkline_po_item_receipts')
+      .select('arkline_po_item_id, size, received_qty')
+      .eq('receipt_type', 'INITIAL'),
     supabase.from('arkline_po_item_sizes').select('arkline_po_item_id, size, qty'),
   ])
 
@@ -705,6 +725,46 @@ function buildRepairabilitySummary(rows = []) {
   )
 }
 
+function buildReturnReQcSummary(batch = {}) {
+  return (batch.qcRows || []).reduce(
+    (summary, row) => {
+      summary.a += Number(row?.qty_a || 0)
+      summary.b += Number(row?.qty_b || 0)
+      summary.c += Number(row?.qty_c || 0)
+      return summary
+    },
+    { a: 0, b: 0, c: 0 }
+  )
+}
+
+function formatReturnReQcResult(batch = {}) {
+  const summary = buildReturnReQcSummary(batch)
+  const total = summary.a + summary.b + summary.c
+  if (!total) return '-'
+  return `A ${formatNumber(summary.a)} / B ${formatNumber(summary.b)} / C ${formatNumber(summary.c)}`
+}
+
+function buildReturnReasonSummary(rows = []) {
+  return Array.from(
+    (rows || []).reduce((grouped, row) => {
+      const reason = String(row?.reasonName || row?.reason?.reason_name || 'Reject reason').trim() || 'Reject reason'
+      const grade = String(row?.grade || '-').trim().toUpperCase() || '-'
+      const size = String(row?.size || '-').trim().toUpperCase() || '-'
+      const key = `${reason}::${grade}::${size}`
+      const current = grouped.get(key) || { key, reason, grade, size, qty: 0 }
+      current.qty += Number(row?.qty || 0)
+      grouped.set(key, current)
+      return grouped
+    }, new Map()).values()
+  ).sort((left, right) => {
+    const reasonCompare = left.reason.localeCompare(right.reason)
+    if (reasonCompare) return reasonCompare
+    const gradeCompare = left.grade.localeCompare(right.grade)
+    if (gradeCompare) return gradeCompare
+    return left.size.localeCompare(right.size, undefined, { numeric: true })
+  })
+}
+
 function formatDateLabel(value) {
   const parsed = parseIso(value)
   if (!parsed) return '-'
@@ -909,11 +969,17 @@ export default function ArklineProgressOverviewPage() {
     updateStatus: false,
     finance: false,
     qcSampleReport: false,
+    returnHistory: false,
   })
   const [productActionMessage, setProductActionMessage] = useState('')
   const [productActionError, setProductActionError] = useState('')
   const [printingQcReport, setPrintingQcReport] = useState(false)
+  const [printingReturnHistory, setPrintingReturnHistory] = useState(false)
+  const [expandedReturnBatchId, setExpandedReturnBatchId] = useState('')
   const [savingStatusChange, setSavingStatusChange] = useState(false)
+  const [shortageBatch, setShortageBatch] = useState(null)
+  const [shortageNotes, setShortageNotes] = useState('')
+  const [savingShortage, setSavingShortage] = useState(false)
   const [receiptDraft, setReceiptDraft] = useState({ receiveDate: '', notes: '', sizeQty: {}, isFinal: false, hpp: '' })
   const [statusDraft, setStatusDraft] = useState({
     editingUpdateId: '',
@@ -1193,6 +1259,7 @@ export default function ArklineProgressOverviewPage() {
     setStatusModalOpen(false)
     setProductActionMessage('')
     setProductActionError('')
+    setExpandedReturnBatchId('')
   }
 
   function toggleProductDetailSection(sectionKey) {
@@ -1246,11 +1313,13 @@ export default function ArklineProgressOverviewPage() {
     setProductDetailLoading(true)
     setProductActionMessage('')
     setProductActionError('')
+    setExpandedReturnBatchId('')
     setProductDetailSections({
       receivingHistory: false,
       updateStatus: false,
       finance: false,
       qcSampleReport: false,
+      returnHistory: false,
     })
     setSelectedProductDetail({
       ...entry,
@@ -1277,7 +1346,7 @@ export default function ArklineProgressOverviewPage() {
       notes: '',
     })
     try {
-      const [itemRows, sizeRows, receiptRows, updateRows, paymentRowsRaw, qcRowsRaw] = await Promise.all([
+      const [itemRows, sizeRows, receiptRows, updateRows, paymentRowsRaw, qcRowsRaw, returnBatchRows] = await Promise.all([
         loadOptionalRows(() =>
           supabase
             .from('arkline_po_items')
@@ -1296,6 +1365,7 @@ export default function ArklineProgressOverviewPage() {
             .from('arkline_po_item_receipts')
             .select('id, receipt_group_id, size, received_qty, receive_date, is_final, notes, created_by, created_at')
             .eq('arkline_po_item_id', entry.id)
+            .eq('receipt_type', 'INITIAL')
             .order('receive_date', { ascending: false })
         ),
         loadOptionalRows(() =>
@@ -1319,9 +1389,16 @@ export default function ArklineProgressOverviewPage() {
         loadOptionalRows(() =>
           supabase
             .from('arkline_qc')
-            .select('id, arkline_po_item_id, po_id, sku_induk, assigned_to, allocated_qty, qty_a, qty_b, qty_c, model_name, status, started_at, finished_at, updated_at')
+            .select('id, qc_cycle_id, qc_round_number, qc_type, source_return_batch_id, arkline_po_item_id, po_id, sku_induk, assigned_to, allocated_qty, qty_a, qty_b, qty_c, model_name, status, started_at, finished_at, updated_at')
             .eq('po_id', selectedPoDetail.poId)
             .order('updated_at', { ascending: false })
+        ),
+        loadOptionalRows(() =>
+          supabase
+            .from('arkline_qc_return_batches')
+            .select('*')
+            .eq('arkline_po_item_id', entry.id)
+            .order('return_date', { ascending: false })
         ),
       ])
 
@@ -1355,7 +1432,9 @@ export default function ArklineProgressOverviewPage() {
           )
           .order('created_at', { ascending: false })
 
-        if (selectedPoDetail.poId && normalizedSku) {
+        if (normalizedItemId) {
+          query = query.eq('arkline_po_item_id', normalizedItemId)
+        } else if (selectedPoDetail.poId && normalizedSku) {
           query = query.eq('po_id', selectedPoDetail.poId).eq('sku_induk', normalizedSku)
         } else if (qcTaskIds.length) {
           query = query.in('arkline_qc_id', qcTaskIds)
@@ -1371,13 +1450,64 @@ export default function ArklineProgressOverviewPage() {
           .select('id, po_id, arkline_po_item_id, sku_induk, model_name, adjustment_type, qty, notes, created_at')
           .order('created_at', { ascending: false })
 
-        if (selectedPoDetail.poId && normalizedSku) {
+        if (normalizedItemId) {
+          query = query.eq('arkline_po_item_id', normalizedItemId)
+        } else if (selectedPoDetail.poId && normalizedSku) {
           query = query.eq('po_id', selectedPoDetail.poId).eq('sku_induk', normalizedSku)
         } else {
           query = query.limit(0)
         }
 
         return query
+      })
+
+      const returnBatchIds = (returnBatchRows || []).map((row) => row.id).filter(Boolean)
+      const [returnLineRows, reworkReceiptRows] = returnBatchIds.length
+        ? await Promise.all([
+            loadOptionalRows(() =>
+              supabase
+                .from('arkline_qc_return_batch_lines')
+                .select('*')
+                .in('return_batch_id', returnBatchIds)
+            ),
+            loadOptionalRows(() =>
+              supabase
+                .from('arkline_po_item_receipts')
+                .select('id, source_return_batch_id, source_return_batch_line_id, receipt_group_id, size, received_qty, receive_date, round_number, notes')
+                .in('source_return_batch_id', returnBatchIds)
+                .eq('receipt_type', 'REWORK_RETURN')
+                .order('receive_date', { ascending: false })
+            ),
+          ])
+        : [[], []]
+      const rejectDetailById = new Map((rejectDetailRows || []).map((row) => [String(row.id), row]))
+      const receiptsByBatch = new Map()
+      ;(reworkReceiptRows || []).forEach((receipt) => {
+        const key = String(receipt.source_return_batch_id || '')
+        receiptsByBatch.set(key, [...(receiptsByBatch.get(key) || []), receipt])
+      })
+      const linesByBatch = new Map()
+      ;(returnLineRows || []).forEach((line) => {
+        const detail = rejectDetailById.get(String(line.reject_detail_id)) || {}
+        const key = String(line.return_batch_id || '')
+        linesByBatch.set(key, [
+          ...(linesByBatch.get(key) || []),
+          {
+            ...line,
+            reasonName: detail.reason?.reason_name || 'Reject reason',
+          },
+        ])
+      })
+      const returnHistory = (returnBatchRows || []).map((batch) => {
+        const batchQcRows = qcRows.filter((row) => String(row.source_return_batch_id || '') === String(batch.id))
+        const batchQcIds = new Set(batchQcRows.map((row) => String(row.id)))
+        return {
+          ...batch,
+          lines: linesByBatch.get(String(batch.id)) || [],
+          receipts: receiptsByBatch.get(String(batch.id)) || [],
+          qcRows: batchQcRows,
+          latestRejectRows: (rejectDetailRows || []).filter((row) => batchQcIds.has(String(row.arkline_qc_id))),
+        }
       })
 
       const paymentRows = (paymentRowsRaw || []).map(normalizeFinancePaymentRow)
@@ -1387,6 +1517,13 @@ export default function ArklineProgressOverviewPage() {
       const plannedQty = Number(itemDetail?.total_qty || entry.qty || 0)
       const actualQty = Number(itemDetail?.actual_qty || 0)
       const totalReceived = receiptRows.reduce((sum, row) => sum + Number(row?.received_qty || 0), 0)
+      const financeUnitPrice = price || hpp
+      const actualFinanceQty = actualQty || totalReceived
+      const financeQty = getFinanceQtyForItem({
+        qty: plannedQty,
+        actualQty: actualFinanceQty,
+        status: itemDetail?.status || entry.status,
+      })
       const receivedBySize = receiptRows.reduce((accumulator, row) => {
         const sizeKey = String(row?.size || '').trim().toUpperCase()
         if (!sizeKey) return accumulator
@@ -1427,6 +1564,7 @@ export default function ArklineProgressOverviewPage() {
         qcRows,
         qcRejectRows: rejectDetailRows,
         qcRejectAdjustments: rejectAdjustmentRows,
+        returnHistory,
         sizeBreakdown,
         financeSummary: {
           price,
@@ -1434,8 +1572,8 @@ export default function ArklineProgressOverviewPage() {
           plannedQty,
           actualQty,
           allowancePct: Number(itemDetail?.allowance_pct || 0),
-          plannedValue: (price || hpp) * plannedQty,
-          actualValue: hpp * (actualQty || totalReceived),
+          plannedValue: financeUnitPrice * plannedQty,
+          actualValue: financeUnitPrice * financeQty,
           paidValue: paymentRows.filter((row) => row.status === 'PAID').reduce((sum, row) => sum + Number(row?.amount || 0), 0),
         },
       })
@@ -1663,6 +1801,48 @@ export default function ArklineProgressOverviewPage() {
     }
   }
 
+  async function handleCloseReturnShortage() {
+    if (!shortageBatch || !shortageNotes.trim() || savingShortage) return
+
+    setSavingShortage(true)
+    setProductActionError('')
+    const { data: authData } = await supabase.auth.getUser()
+    const { error: closeError } = await supabase.rpc('close_arkline_return_shortage', {
+      p_return_batch_id: shortageBatch.id,
+      p_notes: shortageNotes.trim(),
+      p_closed_by: authData?.user?.email || '',
+    })
+
+    if (closeError) {
+      setProductActionError(closeError.message)
+      setSavingShortage(false)
+      return
+    }
+
+    setSelectedProductDetail((current) =>
+      current
+        ? {
+            ...current,
+            returnHistory: (current.returnHistory || []).map((batch) =>
+              batch.id === shortageBatch.id
+                ? {
+                    ...batch,
+                    status: 'CLOSED_SHORT',
+                    short_qty: Math.max(0, Number(batch.sent_qty || 0) - Number(batch.returned_qty || 0)),
+                    closed_short_notes: shortageNotes.trim(),
+                  }
+                : batch
+            ),
+          }
+        : current
+    )
+    setShortageBatch(null)
+    setShortageNotes('')
+    setSavingShortage(false)
+    setProductActionMessage('Outstanding return qty closed as shortage.')
+    void refreshRows()
+  }
+
   async function handlePrintQcSampleReport() {
     if (!selectedProductDetail || !(selectedProductDetail.qcRows || []).length || printingQcReport) {
       return
@@ -1806,6 +1986,134 @@ export default function ArklineProgressOverviewPage() {
       setProductActionError(error?.message || 'Failed to generate QC sample report PDF.')
     } finally {
       setPrintingQcReport(false)
+    }
+  }
+
+  async function handlePrintReturnHistory() {
+    const returnHistory = selectedProductDetail?.returnHistory || []
+    if (!selectedProductDetail || !returnHistory.length || printingReturnHistory) {
+      return
+    }
+
+    setProductActionError('')
+    setPrintingReturnHistory(true)
+    try {
+      const { jsPDF } = await import('jspdf')
+      const doc = new jsPDF({ unit: 'mm', format: 'a4' })
+      const pageWidth = doc.internal.pageSize.getWidth()
+      const pageHeight = doc.internal.pageSize.getHeight()
+      const margin = 14
+      let cursorY = 18
+
+      const ensureSpace = (neededHeight = 10) => {
+        if (cursorY + neededHeight <= pageHeight - margin) return
+        doc.addPage()
+        cursorY = 18
+      }
+
+      const drawText = (text, x, y, options = {}) => {
+        const maxWidth = options.maxWidth || pageWidth - margin * 2
+        const lines = doc.splitTextToSize(String(text || '-'), maxWidth)
+        if (options.align) {
+          doc.text(lines, x, y, { align: options.align })
+        } else {
+          doc.text(lines, x, y)
+        }
+        return lines.length
+      }
+
+      doc.setFont('helvetica', 'bold')
+      doc.setFontSize(16)
+      doc.setTextColor(15, 23, 42)
+      doc.text('Return & Rework History', margin, cursorY)
+      cursorY += 8
+
+      doc.setFont('helvetica', 'normal')
+      doc.setFontSize(10)
+      doc.setTextColor(71, 85, 105)
+      doc.text(`PO: ${selectedProductDetail.poId || '-'}`, margin, cursorY)
+      cursorY += 5
+      doc.text(`Product: ${selectedProductDetail.productName || '-'}`, margin, cursorY)
+      cursorY += 5
+      doc.text(`SKU: ${selectedProductDetail.sku || '-'}`, margin, cursorY)
+      cursorY += 9
+
+      returnHistory.forEach((batch, batchIndex) => {
+        ensureSpace(42)
+        const reQcResult = formatReturnReQcResult(batch)
+        const originalReasons = buildReturnReasonSummary(batch.lines || [])
+        const latestReasons = buildReturnReasonSummary(batch.latestRejectRows || [])
+        const returnedDates = Array.from(new Set((batch.receipts || []).map((receipt) => formatDateLabel(receipt.receive_date)).filter((date) => date !== '-'))).join(', ')
+
+        doc.setDrawColor(226, 232, 240)
+        doc.setFillColor(248, 250, 252)
+        doc.roundedRect(margin, cursorY, pageWidth - margin * 2, 26, 3, 3, 'FD')
+        doc.setTextColor(15, 23, 42)
+        doc.setFont('helvetica', 'bold')
+        doc.setFontSize(11)
+        doc.text(`${batchIndex + 1}. ${batch.return_number || 'Return Batch'}`, margin + 4, cursorY + 7)
+        doc.setFont('helvetica', 'normal')
+        doc.setFontSize(8)
+        doc.setTextColor(71, 85, 105)
+        doc.text(`Status: ${String(batch.status || 'SENT').replaceAll('_', ' ')}`, pageWidth - margin - 4, cursorY + 7, { align: 'right' })
+        doc.text(`Return: ${formatDateLabel(batch.return_date)} | Returned: ${returnedDates || '-'}`, margin + 4, cursorY + 14)
+        doc.text(`Sent ${formatNumber(batch.sent_qty)} | Received ${formatNumber(batch.returned_qty)} | Short ${formatNumber(batch.short_qty)} | Re-QC ${reQcResult}`, margin + 4, cursorY + 21)
+        cursorY += 34
+
+        doc.setFont('helvetica', 'bold')
+        doc.setFontSize(9)
+        doc.setTextColor(15, 23, 42)
+        doc.text('Original Reject Reasons', margin, cursorY)
+        cursorY += 5
+        if (!originalReasons.length) {
+          doc.setFont('helvetica', 'normal')
+          doc.setTextColor(100, 116, 139)
+          doc.text('No original reject reason rows.', margin, cursorY)
+          cursorY += 6
+        } else {
+          originalReasons.forEach((row) => {
+            ensureSpace(7)
+            doc.setFont('helvetica', 'normal')
+            doc.setFontSize(8.5)
+            doc.setTextColor(51, 65, 85)
+            const label = `${row.reason} - Grade ${row.grade} - Size ${row.size} - Qty ${formatNumber(row.qty)}`
+            const lineCount = drawText(label, margin + 3, cursorY, { maxWidth: pageWidth - margin * 2 - 6 })
+            cursorY += Math.max(5, lineCount * 4.5)
+          })
+        }
+
+        doc.setFont('helvetica', 'bold')
+        doc.setFontSize(9)
+        doc.setTextColor(15, 23, 42)
+        doc.text('Latest Re-QC Reject Reasons', margin, cursorY)
+        cursorY += 5
+        if (!latestReasons.length) {
+          doc.setFont('helvetica', 'normal')
+          doc.setTextColor(100, 116, 139)
+          doc.text('No reject reason recorded after rework.', margin, cursorY)
+          cursorY += 7
+        } else {
+          latestReasons.forEach((row) => {
+            ensureSpace(7)
+            doc.setFont('helvetica', 'normal')
+            doc.setFontSize(8.5)
+            doc.setTextColor(51, 65, 85)
+            const label = `${row.reason} - Grade ${row.grade} - Size ${row.size} - Qty ${formatNumber(row.qty)}`
+            const lineCount = drawText(label, margin + 3, cursorY, { maxWidth: pageWidth - margin * 2 - 6 })
+            cursorY += Math.max(5, lineCount * 4.5)
+          })
+        }
+
+        cursorY += 5
+      })
+
+      const safePoId = String(selectedProductDetail.poId || 'PO').replace(/[^A-Z0-9_-]+/gi, '-')
+      const safeProduct = String(selectedProductDetail.productName || 'PRODUCT').replace(/[^A-Z0-9_-]+/gi, '-')
+      doc.save(`return-rework-history-${safePoId}-${safeProduct}.pdf`)
+    } catch (error) {
+      setProductActionError(error?.message || 'Failed to generate return and rework history PDF.')
+    } finally {
+      setPrintingReturnHistory(false)
     }
   }
 
@@ -2329,7 +2637,7 @@ export default function ArklineProgressOverviewPage() {
                 <>
                   {(() => {
                     const dueValue = (selectedPoDetail.productEntries || []).reduce(
-                      (sum, entry) => sum + Number(entry?.qty || 0) * Number(entry?.price || entry?.hpp || 0),
+                      (sum, entry) => sum + getFinanceQtyForItem(entry) * Number(entry?.price || entry?.hpp || 0),
                       0
                     )
                     const paidValue = (selectedPoDetail.payments || [])
@@ -2663,9 +2971,207 @@ export default function ArklineProgressOverviewPage() {
                 </div>
                 ) : null}
               </div>
+
+              <div className={styles.productDetailSection}>
+                <div className={styles.productDetailSectionHead}>
+                  <div className={styles.productSectionHeadLeft}>
+                    <h4 className={styles.modalSectionTitle}>Return &amp; Rework History</h4>
+                    <button
+                      type="button"
+                      className={styles.productSectionLaunch}
+                      onClick={() => void handlePrintReturnHistory()}
+                      aria-label="Generate return and rework history PDF"
+                      title="Generate return and rework history PDF"
+                      disabled={printingReturnHistory || !(selectedProductDetail.returnHistory || []).length}
+                    >
+                      <PrintIcon />
+                    </button>
+                  </div>
+                  <button type="button" className={styles.productDetailSectionToggle} onClick={() => toggleProductDetailSection('returnHistory')}>
+                    <span className={styles.productDetailToggleValue}>
+                      <span className={styles.productDetailHint}>
+                        {(selectedProductDetail.returnHistory || []).length} batch(es)
+                      </span>
+                      <ChevronIcon expanded={productDetailSections.returnHistory} />
+                    </span>
+                  </button>
+                </div>
+                {productDetailSections.returnHistory ? (
+                  <div className={styles.productDetailRows}>
+                    {(selectedProductDetail.returnHistory || []).length ? (
+                      <div className={styles.receivingHistoryTableWrap}>
+                        <table className={styles.receivingHistoryTable}>
+                          <thead>
+                            <tr>
+                              <th>Return Date</th>
+                              <th>Batch</th>
+                              <th>Sent</th>
+                              <th>Returned Date</th>
+                              <th>Returned Qty</th>
+                              <th>Short Qty</th>
+                              <th>Status</th>
+                              <th>Action</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {(selectedProductDetail.returnHistory || []).map((batch) => {
+                              const returnedDates = Array.from(
+                                new Set((batch.receipts || []).map((receipt) => formatDateLabel(receipt.receive_date)))
+                              ).join(', ')
+                              const latestRejectSummary = buildReturnReasonSummary(batch.latestRejectRows || [])
+                              const reQcSummary = buildReturnReQcSummary(batch)
+                              const hasReQcDetail = (batch.qcRows || []).length > 0 || latestRejectSummary.length > 0
+                              const canCloseShort =
+                                (role === 'admin' || access.progressKanbanEdit) &&
+                                !['FULLY_RETURNED', 'CLOSED_SHORT'].includes(String(batch.status || 'SENT')) &&
+                                Number(batch.returned_qty || 0) < Number(batch.sent_qty || 0)
+                              const isExpanded = expandedReturnBatchId === batch.id
+                              return (
+                                <Fragment key={batch.id}>
+                                  <tr>
+                                    <td>{formatDateLabel(batch.return_date)}</td>
+                                    <td>{batch.return_number || '-'}</td>
+                                    <td>{formatNumber(batch.sent_qty)}</td>
+                                    <td>{returnedDates || '-'}</td>
+                                    <td>{formatNumber(batch.returned_qty)}</td>
+                                    <td>{formatNumber(batch.short_qty)}</td>
+                                    <td>{String(batch.status || 'SENT').replaceAll('_', ' ')}</td>
+                                    <td>
+                                      <div className={styles.returnHistoryActions}>
+                                        <button
+                                          type="button"
+                                          className={styles.returnHistoryIconButton}
+                                          onClick={() => setExpandedReturnBatchId(isExpanded ? '' : batch.id)}
+                                          aria-label={`${isExpanded ? 'Hide' : 'Show'} Re-QC detail`}
+                                          title={`${isExpanded ? 'Hide' : 'Show'} Re-QC detail`}
+                                          disabled={!hasReQcDetail}
+                                        >
+                                          <SearchIcon />
+                                        </button>
+                                        {canCloseShort ? (
+                                          <button
+                                            type="button"
+                                            className={`${styles.returnHistoryIconButton} ${styles.returnHistoryDangerButton}`.trim()}
+                                            onClick={() => {
+                                              setShortageBatch(batch)
+                                              setShortageNotes('')
+                                              setProductActionError('')
+                                            }}
+                                            aria-label="Close short qty"
+                                            title="Close short qty"
+                                          >
+                                            <CloseIcon />
+                                          </button>
+                                        ) : null}
+                                      </div>
+                                    </td>
+                                  </tr>
+                                  {isExpanded ? (
+                                    <tr className={styles.returnHistoryDetailRow}>
+                                      <td colSpan={8}>
+                                        <div className={styles.returnHistoryDetailPanel}>
+                                          <div className={`${styles.modalGrid} ${styles.compactModalGrid}`.trim()} style={{ gridTemplateColumns: 'repeat(4, minmax(0, 1fr))' }}>
+                                            <div className={`${styles.modalMetric} ${styles.qcGradeAMetric}`.trim()}>
+                                              <span>Grade A</span>
+                                              <strong>{formatNumber(reQcSummary.a)}</strong>
+                                            </div>
+                                            <div className={`${styles.modalMetric} ${styles.qcGradeBMetric}`.trim()}>
+                                              <span>Grade B</span>
+                                              <strong>{formatNumber(reQcSummary.b)}</strong>
+                                            </div>
+                                            <div className={`${styles.modalMetric} ${styles.qcGradeCMetric}`.trim()}>
+                                              <span>Grade C</span>
+                                              <strong>{formatNumber(reQcSummary.c)}</strong>
+                                            </div>
+                                            <div className={`${styles.modalMetric} ${styles.qcTotalMetric}`.trim()}>
+                                              <span>Total Re-QC</span>
+                                              <strong>{formatNumber(reQcSummary.a + reQcSummary.b + reQcSummary.c)}</strong>
+                                            </div>
+                                          </div>
+                                          {latestRejectSummary.length ? (
+                                            <div className={styles.returnHistoryRejectList}>
+                                              <span>Latest Reject Reasons</span>
+                                              {latestRejectSummary.map((row) => (
+                                                <div key={row.key} className={styles.productDetailRow}>
+                                                  <div>
+                                                    <strong>{row.reason}</strong>
+                                                    <span>Grade {row.grade} / Size {row.size}</span>
+                                                  </div>
+                                                  <div className={styles.productDetailRowMeta}>
+                                                    <strong>{formatNumber(row.qty)}</strong>
+                                                  </div>
+                                                </div>
+                                              ))}
+                                            </div>
+                                          ) : (
+                                            <div className={styles.emptyMini}>No reject reason recorded after rework.</div>
+                                          )}
+                                        </div>
+                                      </td>
+                                    </tr>
+                                  ) : null}
+                                </Fragment>
+                              )
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    ) : (
+                      <div className={styles.emptyMini}>No Arkline return or rework history yet.</div>
+                    )}
+                  </div>
+                ) : null}
+              </div>
             </div>
               )
             })()}
+          </div>
+        </div>
+      ) : null}
+
+      {selectedProductDetail && shortageBatch ? (
+        <div className={styles.modalOverlay} onClick={() => !savingShortage && setShortageBatch(null)}>
+          <div className={`${styles.modalCard} ${styles.actionModalCard}`.trim()} onClick={(event) => event.stopPropagation()}>
+            <div className={styles.modalHeader}>
+              <div>
+                <p className={styles.eyebrow}>PO Number: {selectedProductDetail.poId || '-'}</p>
+                <h3 className={styles.modalTitle}>{selectedProductDetail.productName || 'NO PRODUCT'}</h3>
+              </div>
+              <button type="button" className={styles.iconButton} onClick={() => setShortageBatch(null)} disabled={savingShortage} aria-label="Close shortage modal">
+                <CloseIcon />
+              </button>
+            </div>
+            <div className={`${styles.modalGrid} ${styles.compactModalGrid}`.trim()}>
+              <div className={styles.modalMetric}>
+                <span>Product Name</span>
+                <strong>{selectedProductDetail.productName || 'NO PRODUCT'}</strong>
+              </div>
+              <div className={styles.modalMetric}>
+                <span>Return Batch</span>
+                <strong>{shortageBatch.return_number || '-'}</strong>
+              </div>
+              <div className={styles.modalMetric}>
+                <span>Outstanding Qty</span>
+                <strong>{formatNumber(Math.max(0, Number(shortageBatch.sent_qty || 0) - Number(shortageBatch.returned_qty || 0)))}</strong>
+              </div>
+            </div>
+            <label className={styles.filterField}>
+              <span>Decision Notes</span>
+              <textarea
+                className={styles.textarea}
+                value={shortageNotes}
+                onChange={(event) => setShortageNotes(event.target.value)}
+                placeholder="Explain why the remaining qty will not be returned."
+                rows={4}
+              />
+            </label>
+            {productActionError ? <div className={styles.productActionError}>{productActionError}</div> : null}
+            <div className={styles.productHeaderActions}>
+              <button type="button" className={styles.secondaryButton} onClick={() => setShortageBatch(null)} disabled={savingShortage}>Cancel</button>
+              <button type="button" className={styles.dangerButton} onClick={() => void handleCloseReturnShortage()} disabled={savingShortage || !shortageNotes.trim()}>
+                {savingShortage ? 'Saving...' : 'Confirm Closed Short'}
+              </button>
+            </div>
           </div>
         </div>
       ) : null}

@@ -300,6 +300,8 @@ values
   ('MEAL', true),
   ('SUPPLIES', true),
   ('DELIVERY', true),
+  ('GARMENT PRODUCTION', true),
+  ('MATERIAL PROCUREMENT', true),
   ('OTHER', true)
 on conflict (name) do update
 set is_active = excluded.is_active;

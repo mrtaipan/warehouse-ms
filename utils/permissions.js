@@ -79,7 +79,7 @@ const BASE_PERMISSION_GROUPS = [
       { key: 'receiving', label: 'QC Receiving', description: 'Buat dan kelola rencana alokasi QC receiving.', actions: ['view', 'add', 'edit', 'delete'] },
       { key: 'grading_task', label: 'Grading Task', description: 'Halaman kerja inspector untuk menjalankan tugas grading QC.', actions: ['view', 'add', 'edit'] },
       { key: 'confirmation', label: 'QC Confirmation', description: 'Kelola hasil final dan konfirmasi QC.', actions: ['view', 'add', 'edit'] },
-      { key: 'retur_report', label: 'Retur Report', description: 'Lihat laporan retur berdasarkan hasil QC.', actions: ['view'] },
+      { key: 'retur_report', label: 'Return Report', description: 'Kelola return reguler serta siklus return dan Re-QC Arkline.', actions: ['view', 'add', 'edit'] },
     ],
   },
   {
@@ -279,6 +279,8 @@ const DEFAULT_ROLE_BUNDLES = {
     'qc.confirmation.add',
     'qc.confirmation.edit',
     'qc.retur_report.view',
+    'qc.retur_report.add',
+    'qc.retur_report.edit',
   ],
   qc_staff: [
     'dashboard.home.view',
@@ -293,6 +295,8 @@ const DEFAULT_ROLE_BUNDLES = {
     'qc.confirmation.add',
     'qc.confirmation.edit',
     'qc.retur_report.view',
+    'qc.retur_report.add',
+    'qc.retur_report.edit',
   ],
   qc_inspector: [
     'dashboard.home.view',

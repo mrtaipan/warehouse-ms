@@ -152,6 +152,7 @@ const SNAP_STEP = 1
 const MIN_ELEMENT_SIZE = 2
 const EDITOR_TOOLS = [
   { type: 'pallet', label: 'Pallet Rack' },
+  { type: 'shelving', label: 'Shelving' },
   { type: 'box', label: 'Decorative Box' },
   { type: 'line', label: 'Line' },
   { type: 'arrow', label: 'Arrow' },
@@ -159,6 +160,7 @@ const EDITOR_TOOLS = [
 ]
 const TOOL_DEFAULTS = {
   pallet: { w: 8, h: 12 },
+  shelving: { w: 3.2, h: 5 },
   box: { w: 18, h: 8 },
   line: { w: 24, h: 1.2 },
   arrow: { w: 22, h: 4 },
@@ -188,7 +190,96 @@ function normalizeSavedElement(element) {
   }
 }
 
-function createDefaultMapElements(warehouse) {
+function getStorageType(value) {
+  return String(value || '').trim().toUpperCase()
+}
+
+function getShelvingCode(location) {
+  const locationId = String(location?.location_id || '').trim()
+  const locationCode = String(location?.location_code || '').trim()
+
+  return locationId && locationCode ? `${locationId}.${locationCode}` : ''
+}
+
+function getShelvingLabel(element) {
+  const code = String(element?.code || '').trim()
+
+  if (!code) {
+    return 'Shelf'
+  }
+
+  if (Number(element?.w || 0) >= 3 && Number(element?.h || 0) >= 4) {
+    return code
+  }
+
+  return code.split('.').pop() || code
+}
+
+function buildShelvingGroups(rackLocations) {
+  const groupsByCode = new Map()
+
+  ;(rackLocations || []).forEach((location) => {
+    if (getStorageType(location.location_type) !== 'SHELVING') {
+      return
+    }
+
+    const code = getShelvingCode(location)
+
+    if (!code) {
+      return
+    }
+
+    const existing = groupsByCode.get(code) || {
+      code,
+      locationId: String(location.location_id || '').trim(),
+      locationCode: String(location.location_code || '').trim(),
+      locations: [],
+    }
+
+    existing.locations.push(location)
+    groupsByCode.set(code, existing)
+  })
+
+  const sorter = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' })
+
+  return Array.from(groupsByCode.values()).sort((left, right) => {
+    const idCompare = sorter.compare(left.locationId, right.locationId)
+
+    return idCompare || sorter.compare(left.locationCode, right.locationCode)
+  })
+}
+
+function buildDefaultShelvingElements(rackLocations) {
+  const groups = buildShelvingGroups(rackLocations)
+  const rowsByLocationId = new Map()
+
+  groups.forEach((group) => {
+    const existing = rowsByLocationId.get(group.locationId) || []
+    existing.push(group)
+    rowsByLocationId.set(group.locationId, existing)
+  })
+
+  const rowIds = Array.from(rowsByLocationId.keys()).sort((left, right) =>
+    new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' }).compare(left, right)
+  )
+
+  return rowIds.flatMap((locationId, rowIndex) => {
+    const rowGroups = rowsByLocationId.get(locationId) || []
+
+    return rowGroups.map((group, columnIndex) => ({
+      id: `shelving-LV87-${group.code}`,
+      type: 'shelving',
+      code: group.code,
+      x: 12 + columnIndex * 4.2,
+      y: 5 + rowIndex * 6,
+      w: TOOL_DEFAULTS.shelving.w,
+      h: TOOL_DEFAULTS.shelving.h,
+      rotation: 0,
+    }))
+  })
+}
+
+function createDefaultMapElements(warehouse, rackLocations = []) {
   return [
     ...warehouse.walls.map((wall, index) => ({
       id: `wall-${warehouse.key}-${index}`,
@@ -230,14 +321,15 @@ function createDefaultMapElements(warehouse) {
       h: zone.h,
       rotation: 0,
     })),
+    ...(warehouse.key === 'LV87' ? buildDefaultShelvingElements(rackLocations) : []),
   ]
 }
 
-function createDefaultLayouts() {
+function createDefaultLayouts(rackLocations = []) {
   return Object.fromEntries(
     Object.values(WAREHOUSES).map((warehouse) => [
       warehouse.key,
-      { elements: createDefaultMapElements(warehouse) },
+      { elements: createDefaultMapElements(warehouse, rackLocations) },
     ])
   )
 }
@@ -259,6 +351,13 @@ function createDroppedElement(type, x, y, assignedCode = '') {
       ...baseElement,
       code: assignedCode,
       variant: 'standard',
+    }
+  }
+
+  if (type === 'shelving') {
+    return {
+      ...baseElement,
+      code: assignedCode,
     }
   }
 
@@ -425,6 +524,10 @@ function matchesZone(location, zoneCode) {
   const locationName = getLocationBaseCode(location.location_name)
 
   return locationCode === targetCode || locationName === targetCode
+}
+
+function matchesShelving(location, shelvingCode) {
+  return getStorageType(location.location_type) === 'SHELVING' && getShelvingCode(location) === shelvingCode
 }
 
 function getPositionStyle(item) {
@@ -734,6 +837,65 @@ function buildSubLocationSlots(slot) {
   })
 }
 
+function buildShelvingLevels(shelvingData) {
+  const locations = shelvingData?.locations || []
+  const entries = shelvingData?.entries || []
+  const levelByKey = new Map()
+
+  locations.forEach((location) => {
+    const key = String(location.sub_location || '').trim().toUpperCase() || 'LEVEL'
+    const existing = levelByKey.get(key) || {
+      key,
+      location,
+      entries: [],
+      qty: 0,
+    }
+
+    existing.location = location
+    levelByKey.set(key, existing)
+  })
+
+  entries.forEach((entry) => {
+    const key = String(entry.location?.sub_location || '').trim().toUpperCase() || 'LEVEL'
+    const existing = levelByKey.get(key) || {
+      key,
+      location: entry.location,
+      entries: [],
+      qty: 0,
+    }
+
+    existing.entries.push(entry)
+    existing.qty += Number(entry.qty || 0)
+    levelByKey.set(key, existing)
+  })
+
+  return Array.from(levelByKey.values()).sort((left, right) =>
+    new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' }).compare(left.key, right.key)
+  )
+}
+
+function groupShelvingEntriesByLevel(entries) {
+  const groupsByKey = new Map()
+
+  entries.forEach((entry) => {
+    const key = String(entry.location?.sub_location || '').trim().toUpperCase() || 'Level'
+    const existing = groupsByKey.get(key) || []
+    existing.push(entry)
+    groupsByKey.set(key, existing)
+  })
+
+  return Array.from(groupsByKey.entries())
+    .sort(([left], [right]) =>
+      new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' }).compare(left, right)
+    )
+    .map(([key, groupEntries]) => ({
+      key,
+      label: `Level ${key}`,
+      entries: groupEntries,
+      qty: groupEntries.reduce((sum, entry) => sum + Number(entry.qty || 0), 0),
+    }))
+}
+
 function groupEntriesBySubLocation(entries) {
   const groupsByKey = new Map()
 
@@ -821,9 +983,11 @@ export default function WarehouseMapClient({ canEditMap = false }) {
   const interactionRef = useRef(null)
   const [selectedWarehouseKey, setSelectedWarehouseKey] = useState(WAREHOUSE_ORDER[0])
   const [selectedZoneCode, setSelectedZoneCode] = useState('')
+  const [selectedLocationKind, setSelectedLocationKind] = useState('pallet')
   const [isRackOpen, setIsRackOpen] = useState(false)
   const [selectedSlotKey, setSelectedSlotKey] = useState('')
   const [selectedSubLocationKey, setSelectedSubLocationKey] = useState(SUBLOCATION_ALL_KEY)
+  const [selectedShelvingLevelKey, setSelectedShelvingLevelKey] = useState(SUBLOCATION_ALL_KEY)
   const [activePanel, setActivePanel] = useState('current')
   const [editMode, setEditMode] = useState(false)
   const [mapLayouts, setMapLayouts] = useState({})
@@ -901,18 +1065,37 @@ export default function WarehouseMapClient({ canEditMap = false }) {
 
       const parsedLayout = JSON.parse(savedLayout)
       const nextLayouts = {}
+      let removedLv83Shelving = false
 
       Object.entries(parsedLayout || {}).forEach(([warehouseKey, layout]) => {
         if (!WAREHOUSES[warehouseKey] || !Array.isArray(layout?.elements)) {
           return
         }
 
+        const normalizedElements = layout.elements.map(normalizeSavedElement)
+        const elements =
+          warehouseKey === 'LV83'
+            ? normalizedElements.filter((element) => {
+                const shouldKeep = element.type !== 'shelving'
+
+                if (!shouldKeep) {
+                  removedLv83Shelving = true
+                }
+
+                return shouldKeep
+              })
+            : normalizedElements
+
         nextLayouts[warehouseKey] = {
-          elements: layout.elements.map(normalizeSavedElement),
+          elements,
         }
       })
 
       setMapLayouts(nextLayouts)
+
+      if (removedLv83Shelving) {
+        window.localStorage.setItem(MAP_BUILDER_STORAGE_KEY, JSON.stringify(nextLayouts))
+      }
     } catch {
       setLayoutStatus('Saved map layout could not be loaded.')
     }
@@ -939,7 +1122,7 @@ export default function WarehouseMapClient({ canEditMap = false }) {
   )
 
   const warehouse = WAREHOUSES[selectedWarehouseKey]
-  const defaultMapLayouts = useMemo(() => createDefaultLayouts(), [])
+  const defaultMapLayouts = useMemo(() => createDefaultLayouts(rackLocations), [rackLocations])
   const activeMapElements = useMemo(
     () => (mapLayouts[warehouse.key]?.elements || defaultMapLayouts[warehouse.key]?.elements || []).map(normalizeSavedElement),
     [defaultMapLayouts, mapLayouts, warehouse.key]
@@ -952,6 +1135,8 @@ export default function WarehouseMapClient({ canEditMap = false }) {
   const textElements = activeMapElements.filter((element) => element.type === 'text')
   const palletElements = activeMapElements.filter((element) => element.type === 'pallet')
   const assignedPalletElements = palletElements.filter((element) => element.code)
+  const shelvingElements = activeMapElements.filter((element) => element.type === 'shelving')
+  const assignedShelvingElements = shelvingElements.filter((element) => element.code)
   const selectedElement = activeMapElements.find((element) => element.id === selectedElementId) || null
   const selectedWarehouseIndex = WAREHOUSE_ORDER.indexOf(selectedWarehouseKey)
   const canGoPreviousWarehouse = selectedWarehouseIndex > 0
@@ -978,10 +1163,33 @@ export default function WarehouseMapClient({ canEditMap = false }) {
 
     return dataMap
   }, [assignedPalletElements, rackLocations, storageRows, warehouse.key])
+  const shelvingDataByCode = useMemo(() => {
+    const dataMap = new Map()
+
+    assignedShelvingElements.forEach((shelving) => {
+      const locations = rackLocations.filter((location) => matchesShelving(location, shelving.code))
+      const locationIds = new Set(locations.map((location) => location.id))
+      const entries = storageRows.filter((entry) => locationIds.has(entry.rack_location_id))
+      const totalQty = entries.reduce((sum, entry) => sum + Number(entry.qty || 0), 0)
+
+      dataMap.set(shelving.code, {
+        locations,
+        entries,
+        totalQty,
+        itemCount: entries.length,
+      })
+    })
+
+    return dataMap
+  }, [assignedShelvingElements, rackLocations, storageRows])
 
   const selectedZone = useMemo(
     () => assignedPalletElements.find((zone) => zone.code === selectedZoneCode) || null,
     [assignedPalletElements, selectedZoneCode]
+  )
+  const selectedShelving = useMemo(
+    () => assignedShelvingElements.find((shelving) => shelving.code === selectedZoneCode) || null,
+    [assignedShelvingElements, selectedZoneCode]
   )
   const selectedZoneData = useMemo(() => {
     if (!selectedZone) {
@@ -990,6 +1198,38 @@ export default function WarehouseMapClient({ canEditMap = false }) {
 
     return zoneDataByCode.get(selectedZone.code) || { locations: [], entries: [], totalQty: 0, itemCount: 0 }
   }, [selectedZone, zoneDataByCode])
+  const selectedShelvingData = useMemo(() => {
+    if (!selectedShelving) {
+      return null
+    }
+
+    return shelvingDataByCode.get(selectedShelving.code) || { locations: [], entries: [], totalQty: 0, itemCount: 0 }
+  }, [selectedShelving, shelvingDataByCode])
+  const selectedShelvingLevels = useMemo(
+    () => buildShelvingLevels(selectedShelvingData),
+    [selectedShelvingData]
+  )
+  const selectedShelvingLevel = selectedShelvingLevels.find((level) => level.key === selectedShelvingLevelKey) || null
+  const shelvingGoodsGroups = useMemo(() => {
+    if (!selectedShelvingData) {
+      return []
+    }
+
+    if (selectedShelvingLevelKey === SUBLOCATION_ALL_KEY) {
+      return groupShelvingEntriesByLevel(selectedShelvingData.entries)
+    }
+
+    const entries = selectedShelvingLevel?.entries || []
+
+    return entries.length > 0
+      ? [{
+          key: selectedShelvingLevelKey,
+          label: `Level ${selectedShelvingLevelKey}`,
+          entries,
+          qty: entries.reduce((sum, entry) => sum + Number(entry.qty || 0), 0),
+        }]
+      : []
+  }, [selectedShelvingData, selectedShelvingLevel, selectedShelvingLevelKey])
   const rackSlots = useMemo(
     () => buildRackSlots(selectedZoneData || { locations: [], entries: [] }),
     [selectedZoneData]
@@ -1113,6 +1353,74 @@ export default function WarehouseMapClient({ canEditMap = false }) {
     () => warehouseRackCodes.filter((code) => !assignedPalletCodes.has(normalizeLocationCode(code))),
     [assignedPalletCodes, warehouseRackCodes]
   )
+  const warehouseShelvingCodes = useMemo(
+    () => buildShelvingGroups(rackLocations).map((group) => group.code),
+    [rackLocations]
+  )
+  const assignedShelvingCodes = useMemo(
+    () =>
+      new Set(
+        shelvingElements
+          .filter((element) => element.id !== selectedElementId)
+          .map((element) => String(element.code || '').trim())
+          .filter(Boolean)
+      ),
+    [selectedElementId, shelvingElements]
+  )
+  const availableShelvingCodes = useMemo(
+    () => warehouseShelvingCodes.filter((code) => !assignedShelvingCodes.has(code)),
+    [assignedShelvingCodes, warehouseShelvingCodes]
+  )
+
+  useEffect(() => {
+    setMapLayouts((prev) => {
+      const lv83Elements = prev.LV83?.elements
+
+      if (!lv83Elements || !lv83Elements.some((element) => element.type === 'shelving')) {
+        return prev
+      }
+
+      const nextLayouts = {
+        ...prev,
+        LV83: {
+          elements: lv83Elements.filter((element) => element.type !== 'shelving'),
+        },
+      }
+
+      window.localStorage.setItem(
+        MAP_BUILDER_STORAGE_KEY,
+        JSON.stringify({
+          ...defaultMapLayouts,
+          ...nextLayouts,
+        })
+      )
+
+      return nextLayouts
+    })
+  }, [defaultMapLayouts])
+
+  useEffect(() => {
+    const defaultLv87Shelving = (defaultMapLayouts.LV87?.elements || []).filter((element) => element.type === 'shelving')
+
+    if (defaultLv87Shelving.length === 0) {
+      return
+    }
+
+    setMapLayouts((prev) => {
+      const savedLv87Elements = prev.LV87?.elements
+
+      if (!savedLv87Elements || savedLv87Elements.some((element) => element.type === 'shelving')) {
+        return prev
+      }
+
+      return {
+        ...prev,
+        LV87: {
+          elements: [...savedLv87Elements, ...defaultLv87Shelving],
+        },
+      }
+    })
+  }, [defaultMapLayouts])
 
   function getCanvasPoint(event) {
     const rect = canvasRef.current?.getBoundingClientRect()
@@ -1168,6 +1476,37 @@ export default function WarehouseMapClient({ canEditMap = false }) {
     setSelectedElementId('')
   }
 
+  function reorderSelectedElement(action) {
+    if (!selectedElementId) {
+      return
+    }
+
+    updateWarehouseElements((elements) => {
+      const currentIndex = elements.findIndex((element) => element.id === selectedElementId)
+
+      if (currentIndex < 0) {
+        return elements
+      }
+
+      const nextElements = [...elements]
+      const [selected] = nextElements.splice(currentIndex, 1)
+      let nextIndex = currentIndex
+
+      if (action === 'back') {
+        nextIndex = 0
+      } else if (action === 'backward') {
+        nextIndex = Math.max(0, currentIndex - 1)
+      } else if (action === 'forward') {
+        nextIndex = Math.min(nextElements.length, currentIndex + 1)
+      } else if (action === 'front') {
+        nextIndex = nextElements.length
+      }
+
+      nextElements.splice(nextIndex, 0, selected)
+      return nextElements
+    })
+  }
+
   function handleSaveLayout() {
     const nextLayouts = {
       ...defaultMapLayouts,
@@ -1203,7 +1542,12 @@ export default function WarehouseMapClient({ canEditMap = false }) {
     }
 
     const point = getCanvasPoint(event)
-    const assignedCode = type === 'pallet' ? availablePalletCodes[0] || '' : ''
+    const assignedCode =
+      type === 'pallet'
+        ? availablePalletCodes[0] || ''
+        : type === 'shelving'
+          ? availableShelvingCodes[0] || ''
+          : ''
     const nextElement = createDroppedElement(type, point.x, point.y, assignedCode)
 
     updateWarehouseElements((elements) => [...elements, nextElement])
@@ -1376,13 +1720,19 @@ export default function WarehouseMapClient({ canEditMap = false }) {
   })
 
   useEffect(() => {
-    if (selectedZoneCode && !assignedPalletElements.some((element) => element.code === selectedZoneCode)) {
+    const selectedExists =
+      selectedLocationKind === 'shelving'
+        ? assignedShelvingElements.some((element) => element.code === selectedZoneCode)
+        : assignedPalletElements.some((element) => element.code === selectedZoneCode)
+
+    if (selectedZoneCode && !selectedExists) {
       setSelectedZoneCode('')
       setIsRackOpen(false)
       setSelectedSlotKey('')
       setSelectedSubLocationKey(SUBLOCATION_ALL_KEY)
+      setSelectedShelvingLevelKey(SUBLOCATION_ALL_KEY)
     }
-  }, [assignedPalletElements, selectedZoneCode])
+  }, [assignedPalletElements, assignedShelvingElements, selectedLocationKind, selectedZoneCode])
 
   useEffect(() => {
     if (!isRackOpen || !selectedZone) {
@@ -1412,9 +1762,11 @@ export default function WarehouseMapClient({ canEditMap = false }) {
   function handleWarehouseSelect(warehouseKey) {
     setSelectedWarehouseKey(warehouseKey)
     setSelectedZoneCode('')
+    setSelectedLocationKind('pallet')
     setIsRackOpen(false)
     setSelectedSlotKey('')
     setSelectedSubLocationKey(SUBLOCATION_ALL_KEY)
+    setSelectedShelvingLevelKey(SUBLOCATION_ALL_KEY)
     setActivePanel('current')
   }
 
@@ -1434,9 +1786,21 @@ export default function WarehouseMapClient({ canEditMap = false }) {
     const firstOccupiedSlot = nextRackSlots.find((slot) => slot.entries.length > 0)
 
     setSelectedZoneCode(zoneCode)
+    setSelectedLocationKind('pallet')
     setIsRackOpen(true)
     setSelectedSlotKey(firstOccupiedSlot?.key || nextRackSlots[0]?.key || '')
     setSelectedSubLocationKey(SUBLOCATION_ALL_KEY)
+    setSelectedShelvingLevelKey(SUBLOCATION_ALL_KEY)
+    setActivePanel('current')
+  }
+
+  function handleShelvingSelect(shelvingCode) {
+    setSelectedZoneCode(shelvingCode)
+    setSelectedLocationKind('shelving')
+    setIsRackOpen(true)
+    setSelectedSlotKey('')
+    setSelectedSubLocationKey(SUBLOCATION_ALL_KEY)
+    setSelectedShelvingLevelKey(SUBLOCATION_ALL_KEY)
     setActivePanel('current')
   }
 
@@ -1688,6 +2052,44 @@ export default function WarehouseMapClient({ canEditMap = false }) {
                   {renderResizeHandles(text)}
                 </span>
               ))}
+              {(editMode ? shelvingElements : assignedShelvingElements).map((shelving) => {
+                const shelvingData = shelvingDataByCode.get(shelving.code) || {
+                  locations: [],
+                  entries: [],
+                  totalQty: 0,
+                  itemCount: 0,
+                }
+                const isSelected = selectedLocationKind === 'shelving' && selectedZoneCode === shelving.code
+                const isElementSelected = editMode && selectedElementId === shelving.id
+                const shelvingLabel = getShelvingLabel(shelving)
+
+                return (
+                  <button
+                    key={shelving.id}
+                    type="button"
+                    className={`${styles.mapShelving} ${shelvingData.entries.length > 0 ? styles.mapShelvingOccupied : ''} ${isSelected ? styles.mapShelvingSelected : ''} ${editMode ? styles.mapEditableElement : ''} ${isElementSelected ? styles.mapEditableElementSelected : ''}`.trim()}
+                    style={getElementPositionStyle(shelving)}
+                    onPointerDown={(event) => editMode && startElementMove(event, shelving)}
+                    onClick={(event) => {
+                      if (editMode) {
+                        event.preventDefault()
+                        setSelectedElementId(shelving.id)
+                        return
+                      }
+
+                      handleShelvingSelect(shelving.code)
+                    }}
+                    aria-pressed={editMode ? isElementSelected : isSelected}
+                    aria-label={`${warehouse.title} shelving ${shelving.code || 'unassigned'}, ${shelvingData.entries.length > 0 ? 'occupied' : 'empty'}`}
+                  >
+                    <span className={styles.shelvingNumber}>{shelvingLabel}</span>
+                    {shelvingData.entries.length > 0 ? (
+                      <span className={styles.zoneQty}>{formatNumber(shelvingData.totalQty)}</span>
+                    ) : null}
+                    {renderResizeHandles(shelving)}
+                  </button>
+                )
+              })}
               {(editMode ? palletElements : assignedPalletElements).map((zone) => {
                 const zoneData = zoneDataByCode.get(zone.code) || {
                   locations: [],
@@ -1774,6 +2176,21 @@ export default function WarehouseMapClient({ canEditMap = false }) {
                   <p className={styles.inspectorEmpty}>No element selected.</p>
                 ) : (
                   <div className={styles.inspectorFields}>
+                    <div className={styles.layerControls} aria-label="Layer order controls">
+                      <button type="button" onClick={() => reorderSelectedElement('back')}>
+                        Send to Back
+                      </button>
+                      <button type="button" onClick={() => reorderSelectedElement('backward')}>
+                        Move Backward
+                      </button>
+                      <button type="button" onClick={() => reorderSelectedElement('forward')}>
+                        Move Forward
+                      </button>
+                      <button type="button" onClick={() => reorderSelectedElement('front')}>
+                        Bring to Front
+                      </button>
+                    </div>
+
                     <label>
                       <span>Type</span>
                       <input value={selectedElement.type} readOnly />
@@ -1791,6 +2208,28 @@ export default function WarehouseMapClient({ canEditMap = false }) {
                             <option value={selectedElement.code}>{selectedElement.code}</option>
                           ) : null}
                           {availablePalletCodes
+                            .filter((code) => code !== selectedElement.code)
+                            .map((code) => (
+                              <option key={code} value={code}>
+                                {code}
+                              </option>
+                            ))}
+                        </select>
+                      </label>
+                    ) : null}
+
+                    {selectedElement.type === 'shelving' ? (
+                      <label>
+                        <span>Shelving Location</span>
+                        <select
+                          value={selectedElement.code || ''}
+                          onChange={(event) => updateSelectedElement({ code: event.target.value })}
+                        >
+                          <option value="">Unassigned</option>
+                          {selectedElement.code ? (
+                            <option value={selectedElement.code}>{selectedElement.code}</option>
+                          ) : null}
+                          {availableShelvingCodes
                             .filter((code) => code !== selectedElement.code)
                             .map((code) => (
                               <option key={code} value={code}>
@@ -1871,12 +2310,90 @@ export default function WarehouseMapClient({ canEditMap = false }) {
                 )}
               </div>
             </div>
+          ) : selectedLocationKind === 'shelving' && selectedShelving && selectedShelvingData ? (
+            <div className={styles.rackSection}>
+              <div className={styles.rackHeader}>
+                <div>
+                  <p className={styles.eyebrow}>Shelving View</p>
+                  <h3>{warehouse.key} / {selectedShelving.code}</h3>
+                  <p>
+                    {selectedShelvingData.locations.length} level(s), {formatNumber(selectedShelvingData.totalQty)} item qty.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  className={`${styles.subLocationAllButton} ${selectedShelvingLevelKey === SUBLOCATION_ALL_KEY ? styles.subLocationAllButtonActive : ''}`.trim()}
+                  onClick={() => setSelectedShelvingLevelKey(SUBLOCATION_ALL_KEY)}
+                  aria-pressed={selectedShelvingLevelKey === SUBLOCATION_ALL_KEY}
+                >
+                  All Levels
+                </button>
+              </div>
+
+              <div className={styles.shelvingFrame} aria-label={`Shelving layout for ${selectedShelving.code}`}>
+                <span className={styles.shelvingPostLeft} />
+                <span className={styles.shelvingPostRight} />
+                <div className={styles.shelvingLevelGrid}>
+                  {selectedShelvingLevels.length > 0 ? (
+                    selectedShelvingLevels.map((level) => {
+                        const isSelected = selectedShelvingLevelKey === level.key
+                        const isOccupied = level.entries.length > 0
+
+                        return (
+                          <button
+                            key={level.key}
+                            type="button"
+                            className={`${styles.shelvingLevel} ${isOccupied ? styles.shelvingLevelOccupied : ''} ${isSelected ? styles.shelvingLevelSelected : ''}`.trim()}
+                            onClick={() => setSelectedShelvingLevelKey(level.key)}
+                            aria-pressed={isSelected}
+                          >
+                            <span>Level {level.key}</span>
+                            <strong>{isOccupied ? `${formatNumber(level.qty)} qty` : 'Empty'}</strong>
+                          </button>
+                        )
+                      })
+                  ) : (
+                    <p className={styles.subLocationEmptyText}>No shelving levels mapped.</p>
+                  )}
+                </div>
+              </div>
+
+              <div className={styles.storageList}>
+                {shelvingGoodsGroups.length === 0 ? (
+                  <div className={styles.emptyState}>
+                    <p>
+                      No current goods recorded for {selectedShelvingLevelKey === SUBLOCATION_ALL_KEY ? selectedShelving.code : `Level ${selectedShelvingLevelKey}`}.
+                    </p>
+                  </div>
+                ) : (
+                  shelvingGoodsGroups.map((group) => (
+                    <section key={group.key} className={styles.storageGroup}>
+                      <div className={styles.storageGroupHeader}>
+                        <span>{group.label}</span>
+                        <strong>{formatNumber(group.qty)} qty</strong>
+                      </div>
+                      <div className={styles.storageGroupRows}>
+                        {group.entries.map((entry) => (
+                          <article key={entry.id} className={styles.storageRow}>
+                            <div>
+                              <h4>{entry.item_name}</h4>
+                              <p>{entry.size || 'No size'} / {entry.notes || 'No notes'}</p>
+                            </div>
+                            <strong>{formatNumber(entry.qty)}</strong>
+                          </article>
+                        ))}
+                      </div>
+                    </section>
+                  ))
+                )}
+              </div>
+            </div>
           ) : !selectedZone || !selectedZoneData ? (
             <div className={styles.emptyInspector}>
-              <span className={styles.emptyKicker}>No pallet selected</span>
+              <span className={styles.emptyKicker}>No area selected</span>
               <h2>Select a numbered area</h2>
               <p>
-                Pick a pallet from the map to see its rack layout, goods state, and recent storage
+                Pick a pallet or shelving from the map to see its rack layout, goods state, and recent storage
                 activity.
               </p>
             </div>

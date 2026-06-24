@@ -74,6 +74,13 @@ function formatAttachmentCount(count) {
   return `${count} attachment${count === 1 ? '' : 's'} added`
 }
 
+function getClaimReferenceTime(claim) {
+  const value = claim?.submitted_at || claim?.created_at || ''
+  const date = value ? new Date(value) : null
+  if (!date || Number.isNaN(date.getTime())) return null
+  return date.getTime()
+}
+
 function truncateFileLabel(value, maxLength = 28) {
   const text = String(value || '')
   if (text.length <= maxLength) return text
@@ -181,6 +188,7 @@ export default function MyArklifeReimbursementClient({ profile, headerActions = 
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
   const [openBatchModal, setOpenBatchModal] = useState(false)
+  const [openHistoryModal, setOpenHistoryModal] = useState(false)
   const [editingClaim, setEditingClaim] = useState(null)
   const [selectedClaim, setSelectedClaim] = useState(null)
   const [editDraft, setEditDraft] = useState(null)
@@ -191,6 +199,17 @@ export default function MyArklifeReimbursementClient({ profile, headerActions = 
   const profileGroup = getProfileGroup(profile)
   const hqUser = isHeadquarterGroup(profileGroup)
   const totalHistoryAmount = useMemo(() => claims.reduce((sum, item) => sum + Number(item.total_amount || 0), 0), [claims])
+  const visibleClaims = useMemo(() => {
+    const windowStart = new Date()
+    windowStart.setHours(0, 0, 0, 0)
+    windowStart.setMonth(windowStart.getMonth() - 1)
+    const windowStartTime = windowStart.getTime()
+
+    return claims.filter((claim) => {
+      const referenceTime = getClaimReferenceTime(claim)
+      return referenceTime == null || referenceTime >= windowStartTime
+    })
+  }, [claims])
   const activeBatchRow = batchRows.find((item) => item.localId === activeBatchRowId) || batchRows[0] || null
   const availableGroupOptions = useMemo(
     () => (hqUser ? groupOptions.filter((item) => String(item || '').toUpperCase() !== 'HQ') : groupOptions),
@@ -666,6 +685,150 @@ export default function MyArklifeReimbursementClient({ profile, headerActions = 
     }
   }
 
+  function EyeIcon() {
+    return (
+      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6Z" />
+        <circle cx="12" cy="12" r="3" />
+      </svg>
+    )
+  }
+
+  function renderClaimList(items, emptyMessage) {
+    if (!items.length) {
+      return <div className={styles.emptyText}>{emptyMessage}</div>
+    }
+
+    return (
+      <div className={styles.claimList}>
+        {items.map((claim) => (
+          <article key={claim.id} className={styles.claimRow}>
+            <div className={styles.claimRowTop}>
+              <div>
+                <p className={styles.claimRowTitle}>{claim.claim_number || claim.expense_category_name || 'Claim'}</p>
+                <p className={styles.claimRowMeta}>
+                  {claim.expense_category_name || '-'} | {formatDate(claim.expense_date)} | {claim.charge_group || '-'}
+                </p>
+              </div>
+              <strong className={styles.claimAmount}>{formatCurrency(claim.total_amount)}</strong>
+            </div>
+            <p className={styles.claimRowText}>{claim.description || 'No description provided.'}</p>
+            <div className={styles.claimRowSide}>
+              <div className={styles.claimActions}>
+                {claim.status === 'SUBMITTED' || claim.status === 'NEED_REVISION' ? (
+                  <>
+                    {(claim.attachments || []).some((item) => item.attachment_type === 'SUBMISSION_PROOF') ? (
+                      <button
+                        type="button"
+                        className={styles.smallAction}
+                        onClick={() => void handleOpenAttachment((claim.attachments || []).find((item) => item.attachment_type === 'SUBMISSION_PROOF'))}
+                      >
+                        Receipt
+                      </button>
+                    ) : null}
+                    <button type="button" className={styles.smallAction} onClick={() => openEditModal(claim)}>
+                      Edit
+                    </button>
+                    <button type="button" className={styles.smallDanger} onClick={() => void handleDeleteClaim(claim)} disabled={saving}>
+                      Delete
+                    </button>
+                  </>
+                ) : (
+                  <button type="button" className={styles.smallAction} onClick={() => setSelectedClaim(claim)}>
+                    View Details
+                  </button>
+                )}
+              </div>
+              <span className={`${styles.statusBadge} ${getStatusTone(claim.status)}`.trim()}>{claim.status}</span>
+            </div>
+          </article>
+        ))}
+      </div>
+    )
+  }
+
+  function renderHistoryTable(items, emptyMessage) {
+    if (!items.length) {
+      return <div className={styles.emptyText}>{emptyMessage}</div>
+    }
+
+    return (
+      <div style={{ border: '1px solid #e2e8f0', borderRadius: '16px', overflow: 'hidden', background: '#ffffff' }}>
+        <div style={{ maxHeight: '62vh', overflow: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <thead>
+              <tr style={{ background: '#f8fafc' }}>
+                <th style={{ padding: '12px 14px', textAlign: 'left', fontSize: '11px', fontWeight: 800, letterSpacing: '0.06em', textTransform: 'uppercase', color: '#64748b' }}>
+                  Claim
+                </th>
+                <th style={{ padding: '12px 14px', textAlign: 'left', fontSize: '11px', fontWeight: 800, letterSpacing: '0.06em', textTransform: 'uppercase', color: '#64748b' }}>
+                  Date
+                </th>
+                <th style={{ padding: '12px 14px', textAlign: 'left', fontSize: '11px', fontWeight: 800, letterSpacing: '0.06em', textTransform: 'uppercase', color: '#64748b' }}>
+                  Category
+                </th>
+                <th style={{ padding: '12px 14px', textAlign: 'left', fontSize: '11px', fontWeight: 800, letterSpacing: '0.06em', textTransform: 'uppercase', color: '#64748b' }}>
+                  Description
+                </th>
+                <th style={{ padding: '12px 14px', textAlign: 'left', fontSize: '11px', fontWeight: 800, letterSpacing: '0.06em', textTransform: 'uppercase', color: '#64748b' }}>
+                  Group
+                </th>
+                <th style={{ padding: '12px 14px', textAlign: 'right', fontSize: '11px', fontWeight: 800, letterSpacing: '0.06em', textTransform: 'uppercase', color: '#64748b' }}>
+                  Amount
+                </th>
+                <th style={{ padding: '12px 14px', textAlign: 'left', fontSize: '11px', fontWeight: 800, letterSpacing: '0.06em', textTransform: 'uppercase', color: '#64748b' }}>
+                  Status
+                </th>
+                <th style={{ padding: '12px 14px', textAlign: 'left', fontSize: '11px', fontWeight: 800, letterSpacing: '0.06em', textTransform: 'uppercase', color: '#64748b' }}>
+                  Action
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((claim) => (
+                <tr key={claim.id} style={{ borderTop: '1px solid #e2e8f0' }}>
+                  <td style={{ padding: '13px 14px', fontSize: '13px', fontWeight: 700, color: '#0f172a', verticalAlign: 'top' }}>
+                    {claim.claim_number || claim.expense_category_name || 'Claim'}
+                  </td>
+                  <td style={{ padding: '13px 14px', fontSize: '13px', color: '#0f172a', verticalAlign: 'top' }}>{formatDate(claim.expense_date)}</td>
+                  <td style={{ padding: '13px 14px', fontSize: '13px', color: '#0f172a', verticalAlign: 'top' }}>{claim.expense_category_name || '-'}</td>
+                  <td style={{ padding: '13px 14px', fontSize: '13px', lineHeight: 1.45, color: '#475569', verticalAlign: 'top' }}>
+                    {claim.description || 'No description provided.'}
+                  </td>
+                  <td style={{ padding: '13px 14px', fontSize: '13px', color: '#0f172a', verticalAlign: 'top' }}>{claim.charge_group || '-'}</td>
+                  <td style={{ padding: '13px 14px', fontSize: '13px', fontWeight: 700, color: '#0f172a', textAlign: 'right', verticalAlign: 'top', whiteSpace: 'nowrap' }}>
+                    {formatCurrency(claim.total_amount)}
+                  </td>
+                  <td style={{ padding: '13px 14px', verticalAlign: 'top' }}>
+                    <span className={`${styles.statusBadge} ${getStatusTone(claim.status)}`.trim()}>{claim.status}</span>
+                  </td>
+                  <td style={{ padding: '13px 14px', verticalAlign: 'top' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                      {claim.status === 'SUBMITTED' || claim.status === 'NEED_REVISION' ? (
+                        <>
+                          <button type="button" className={styles.smallAction} onClick={() => openEditModal(claim)}>
+                            Edit
+                          </button>
+                          <button type="button" className={styles.smallDanger} onClick={() => void handleDeleteClaim(claim)} disabled={saving}>
+                            Delete
+                          </button>
+                        </>
+                      ) : (
+                        <button type="button" className={styles.smallAction} onClick={() => setSelectedClaim(claim)}>
+                          View Details
+                        </button>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <section className={styles.reimbursementShell}>
       <div className={styles.claimListHeader}>
@@ -678,6 +841,27 @@ export default function MyArklifeReimbursementClient({ profile, headerActions = 
             <div className={styles.claimSummaryInline}>
               <span>Total Claim Amount</span>
               <strong>{formatCurrency(totalHistoryAmount)}</strong>
+              <button
+                type="button"
+                onClick={() => setOpenHistoryModal(true)}
+                aria-label="View all reimbursement history"
+                title="View all reimbursement history"
+                style={{
+                  width: '22px',
+                  height: '22px',
+                  borderRadius: '999px',
+                  border: '1px solid rgba(255, 255, 255, 0.24)',
+                  background: 'transparent',
+                  color: '#ffffff',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  cursor: 'pointer',
+                  padding: 0,
+                }}
+              >
+                <EyeIcon />
+              </button>
             </div>
             {headerActions}
             <button
@@ -699,55 +883,26 @@ export default function MyArklifeReimbursementClient({ profile, headerActions = 
       <div className={styles.claimListSection}>
         {loading ? (
           <div className={styles.emptyText}>Loading claims...</div>
-        ) : claims.length ? (
-          <div className={styles.claimList}>
-            {claims.map((claim) => (
-              <article key={claim.id} className={styles.claimRow}>
-                <div className={styles.claimRowTop}>
-                  <div>
-                    <p className={styles.claimRowTitle}>{claim.claim_number || claim.expense_category_name || 'Claim'}</p>
-                    <p className={styles.claimRowMeta}>
-                      {claim.expense_category_name || '-'} | {formatDate(claim.expense_date)} | {claim.charge_group || '-'}
-                    </p>
-                  </div>
-                  <strong className={styles.claimAmount}>{formatCurrency(claim.total_amount)}</strong>
-                </div>
-                <p className={styles.claimRowText}>{claim.description || 'No description provided.'}</p>
-                <div className={styles.claimRowSide}>
-                  <div className={styles.claimActions}>
-                    {claim.status === 'SUBMITTED' || claim.status === 'NEED_REVISION' ? (
-                      <>
-                        {(claim.attachments || []).some((item) => item.attachment_type === 'SUBMISSION_PROOF') ? (
-                          <button
-                            type="button"
-                            className={styles.smallAction}
-                            onClick={() => void handleOpenAttachment((claim.attachments || []).find((item) => item.attachment_type === 'SUBMISSION_PROOF'))}
-                          >
-                            Receipt
-                          </button>
-                        ) : null}
-                        <button type="button" className={styles.smallAction} onClick={() => openEditModal(claim)}>
-                          Edit
-                        </button>
-                        <button type="button" className={styles.smallDanger} onClick={() => void handleDeleteClaim(claim)} disabled={saving}>
-                          Delete
-                        </button>
-                      </>
-                    ) : (
-                      <button type="button" className={styles.smallAction} onClick={() => setSelectedClaim(claim)}>
-                        View Details
-                      </button>
-                    )}
-                  </div>
-                  <span className={`${styles.statusBadge} ${getStatusTone(claim.status)}`.trim()}>{claim.status}</span>
-                </div>
-              </article>
-            ))}
-          </div>
         ) : (
-          <div className={styles.emptyText}>No reimbursement claim submitted yet.</div>
+          renderClaimList(visibleClaims, 'No reimbursement claim in the last 1 month.')
         )}
       </div>
+
+      {openHistoryModal ? (
+        <div className={styles.modalOverlay} onClick={() => setOpenHistoryModal(false)}>
+          <div className={styles.modalWideCard} onClick={(event) => event.stopPropagation()}>
+            <div className={styles.modalHeader}>
+              <h2 className={styles.modalTitle}>All Reimbursement History</h2>
+              <button type="button" className={styles.modalClose} onClick={() => setOpenHistoryModal(false)}>
+                Close
+              </button>
+            </div>
+            <div className={styles.modalBody}>
+              {renderHistoryTable(claims, 'No reimbursement claim submitted yet.')}
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {openBatchModal ? (
         <div className={styles.modalOverlay} onClick={resetBatchModal}>

@@ -22,7 +22,7 @@ function getStatusLabel(value) {
   return String(value || 'waiting').replaceAll('_', ' ').toUpperCase()
 }
 
-export default function ReturReportClient({ rows }) {
+export default function ReturReportClient({ rows, canAdd = false }) {
   const router = useRouter()
   const supabase = createClient()
   const [selectedIds, setSelectedIds] = useState([])
@@ -255,7 +255,7 @@ export default function ReturReportClient({ rows }) {
           <span style={styles.selectionText}>
             {selectedRows.length ? `${selectedRows.length} row selected • Qty ${totalSelectedQty}` : 'No row selected'}
           </span>
-          <button type="button" style={styles.primaryButton} onClick={openReturModal}>
+          <button type="button" style={{ ...styles.primaryButton, ...(!canAdd ? styles.disabledButton : {}) }} onClick={openReturModal} disabled={!canAdd}>
             Retur
           </button>
         </div>
@@ -467,6 +467,10 @@ const styles = {
     border: 'none',
     fontWeight: '600',
     cursor: 'pointer',
+  },
+  disabledButton: {
+    cursor: 'not-allowed',
+    opacity: 0.45,
   },
   secondaryButton: {
     padding: '10px 16px',

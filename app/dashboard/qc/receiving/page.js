@@ -866,6 +866,8 @@ export default function QcReceivingPage() {
   const [arklinePurchaseOrders, setArklinePurchaseOrders] = useState([])
   const [arklinePoItems, setArklinePoItems] = useState([])
   const [arklineQcItems, setArklineQcItems] = useState([])
+  const [arklineReworkReceipts, setArklineReworkReceipts] = useState([])
+  const [arklineReturnBatches, setArklineReturnBatches] = useState([])
   const [qcItems, setQcItems] = useState([])
   const [qcMembers, setQcMembers] = useState([])
   const [qcMode, setQcMode] = useState('regular')
@@ -879,6 +881,7 @@ export default function QcReceivingPage() {
   const [showArklineProductOptions, setShowArklineProductOptions] = useState(false)
   const [selectedArklinePoId, setSelectedArklinePoId] = useState('')
   const [selectedArklinePoItemKey, setSelectedArklinePoItemKey] = useState('')
+  const [selectedArklineReworkSourceId, setSelectedArklineReworkSourceId] = useState('')
   const [modelRows, setModelRows] = useState([])
   const [allocationOpenRows, setAllocationOpenRows] = useState({})
   const [loading, setLoading] = useState(true)
@@ -926,6 +929,8 @@ export default function QcReceivingPage() {
         { data: modelRows, error: modelError },
         { data: qcRows, error: qcError },
         { data: arklineQcRows, error: arklineQcError },
+        { data: reworkReceiptRows, error: reworkReceiptError },
+        { data: returnBatchRows, error: returnBatchError },
         { data: memberRows, error: memberError },
         { data: rolePermissionRows, error: rolePermissionError },
       ] = await Promise.all([
@@ -947,6 +952,14 @@ export default function QcReceivingPage() {
           .select('*')
           .order('created_at', { ascending: false }),
         supabase
+          .from('arkline_po_item_receipts')
+          .select('*')
+          .eq('receipt_type', 'REWORK_RETURN')
+          .order('receive_date', { ascending: false }),
+        supabase
+          .from('arkline_qc_return_batches')
+          .select('id, return_number, round_number, status'),
+        supabase
           .from('dir_user_profiles')
           .select('id, email, display_name, role, is_qc_active, qc_active_date')
           .eq('is_qc_active', true)
@@ -954,12 +967,23 @@ export default function QcReceivingPage() {
         supabase.from('dir_user_roles').select('role, permission_code').eq('permission_code', 'qc.grading_task.view'),
       ])
 
-      if (inboundError || modelError || qcError || arklineQcError || memberError || rolePermissionError) {
+      if (
+        inboundError ||
+        modelError ||
+        qcError ||
+        arklineQcError ||
+        reworkReceiptError ||
+        returnBatchError ||
+        memberError ||
+        rolePermissionError
+      ) {
         setError(
           inboundError?.message ||
             modelError?.message ||
             qcError?.message ||
             arklineQcError?.message ||
+            reworkReceiptError?.message ||
+            returnBatchError?.message ||
             memberError?.message ||
             rolePermissionError?.message ||
             'Failed to load QC receiving setup.'
@@ -980,6 +1004,8 @@ export default function QcReceivingPage() {
       setProductModels(modelRows || [])
       setQcItems(qcRows || [])
       setArklineQcItems(arklineQcRows || [])
+      setArklineReworkReceipts(reworkReceiptRows || [])
+      setArklineReturnBatches(returnBatchRows || [])
       setQcMembers(eligibleMembers)
       setArklineProducts((arklineProductResult.data || []).map(normalizeArklineProduct).filter(Boolean))
       setArklinePurchaseOrders((arklinePoResult.data || []).map(normalizeArklinePo).filter(Boolean))
@@ -1158,6 +1184,24 @@ export default function QcReceivingPage() {
     () => [...arklinePurchaseOrders].sort((a, b) => a.po_number.localeCompare(b.po_number, undefined, { numeric: true })),
     [arklinePurchaseOrders]
   )
+  const reworkPoItemIds = useMemo(
+    () => new Set(arklineReworkReceipts.map((receipt) => String(receipt.arkline_po_item_id || '')).filter(Boolean)),
+    [arklineReworkReceipts]
+  )
+  const reworkPoIds = useMemo(
+    () =>
+      new Set(
+        arklinePoItems
+          .filter((item) => reworkPoItemIds.has(String(item.id || '')))
+          .map((item) => String(item.po_id || '').trim().toUpperCase())
+          .filter(Boolean)
+      ),
+    [arklinePoItems, reworkPoItemIds]
+  )
+  const visibleArklinePoOptions = useMemo(
+    () => (qcMode === 're_qc' ? arklinePoOptions.filter((po) => reworkPoIds.has(String(po.id).trim().toUpperCase())) : arklinePoOptions),
+    [arklinePoOptions, qcMode, reworkPoIds]
+  )
   const arklinePoItemOptions = useMemo(() => {
     if (!selectedArklinePo) {
       return []
@@ -1172,15 +1216,61 @@ export default function QcReceivingPage() {
         )
           .trim()
           .toUpperCase()
-        return candidatePoId === poId
+        return candidatePoId === poId && (qcMode !== 're_qc' || reworkPoItemIds.has(String(row.id || '')))
       })
       .map((row) => normalizeArklinePoItem(row, arklineProductsById, selectedArklinePo.po_number))
       .filter(Boolean)
       .sort((a, b) => a.model_name.localeCompare(b.model_name))
-  }, [arklinePoItems, arklineProductsById, selectedArklinePo])
+  }, [arklinePoItems, arklineProductsById, qcMode, reworkPoItemIds, selectedArklinePo])
   const selectedArklinePoItem =
     arklinePoItemOptions.find((item) => item.key === selectedArklinePoItemKey) || null
-  const isArklineMode = qcMode === 'arkline'
+  const arklineReturnBatchById = useMemo(
+    () => new Map(arklineReturnBatches.map((batch) => [String(batch.id), batch])),
+    [arklineReturnBatches]
+  )
+  const arklineReworkSources = useMemo(() => {
+    if (!selectedArklinePoItem) return []
+
+    const groups = new Map()
+    arklineReworkReceipts
+      .filter((receipt) => String(receipt.arkline_po_item_id || '') === String(selectedArklinePoItem.id))
+      .forEach((receipt) => {
+        const groupId = String(receipt.receipt_group_id || receipt.id || '')
+        if (!groupId) return
+        const current = groups.get(groupId) || {
+          id: groupId,
+          returnBatchId: receipt.source_return_batch_id || null,
+          roundNumber: Number(receipt.round_number || 2),
+          receiveDate: receipt.receive_date,
+          totalQty: 0,
+        }
+        current.totalQty += Number(receipt.received_qty || 0)
+        groups.set(groupId, current)
+      })
+
+    return Array.from(groups.values())
+      .map((source) => {
+        const sourceTasks = arklineQcItems.filter(
+          (task) => String(task.source_receipt_group_id || '') === source.id
+        )
+        const allocatedQty = sourceTasks.reduce((sum, task) => sum + Number(task.allocated_qty || 0), 0)
+        const queuedQty = sourceTasks
+          .filter((task) => task.status === 'queued')
+          .reduce((sum, task) => sum + Number(task.allocated_qty || 0), 0)
+        const batch = arklineReturnBatchById.get(String(source.returnBatchId || '')) || null
+        return {
+          ...source,
+          returnNumber: batch?.return_number || 'RETURN BATCH',
+          pendingQty: Math.max(0, source.totalQty - allocatedQty),
+          editableQty: Math.max(0, source.totalQty - allocatedQty + queuedQty),
+        }
+      })
+      .sort((a, b) => Number(a.roundNumber || 0) - Number(b.roundNumber || 0))
+  }, [arklineQcItems, arklineReturnBatchById, arklineReworkReceipts, selectedArklinePoItem])
+  const selectedArklineReworkSource =
+    arklineReworkSources.find((source) => source.id === selectedArklineReworkSourceId) || null
+  const isArklineMode = qcMode === 'arkline' || qcMode === 're_qc'
+  const isReQcMode = qcMode === 're_qc'
   const selectedArklineProductSku = String(selectedArklineProduct?.parent_sku || selectedArklineProduct?.id || '')
     .trim()
     .toUpperCase()
@@ -1200,24 +1290,28 @@ export default function QcReceivingPage() {
     return label.toUpperCase().includes(modelSearch.trim().toUpperCase())
   })
   const currentPlanRows = isArklineMode
-    ? arklinePlannerMode === 'product' && selectedArklineProduct
+    ? !isReQcMode && arklinePlannerMode === 'product' && selectedArklineProduct
       ? arklineQcItems.filter(
           (item) =>
             !item.po_id &&
+            String(item.qc_type || 'INITIAL').toUpperCase() !== 'RE_QC' &&
             String(item.sku_induk || '').trim().toUpperCase() === selectedArklineProductSku
         )
       : arklinePlannerMode === 'po' && selectedArklinePoItem
         ? arklineQcItems.filter(
           (item) =>
               String(item.po_id || '').trim().toUpperCase() === selectedArklinePoCode &&
-              String(item.arkline_po_item_id || '').trim() === selectedArklinePoItemId
+              String(item.arkline_po_item_id || '').trim() === selectedArklinePoItemId &&
+              (isReQcMode && selectedArklineReworkSourceId
+                ? String(item.source_receipt_group_id || '') === selectedArklineReworkSourceId
+                : !item.source_receipt_group_id && String(item.qc_type || 'INITIAL').toUpperCase() !== 'RE_QC')
           )
         : []
     : selectedSourceId
       ? qcItems.filter((item) => item.inbound_unload_id === Number(selectedSourceId))
       : []
   const selectedSourceStatus = isArklineMode
-    ? arklinePlannerMode === 'product'
+    ? !isReQcMode && arklinePlannerMode === 'product'
       ? currentPlanRows.some((item) => item.status !== 'queued' && item.status !== 'done')
         ? 'started'
         : 'planned'
@@ -1232,7 +1326,7 @@ export default function QcReceivingPage() {
       ? getSourceStatus(selectedSource, qcItems)
       : 'idle'
   const isSelectedSourceStarted =
-    isArklineMode && arklinePlannerMode === 'product'
+    isArklineMode && !isReQcMode && arklinePlannerMode === 'product'
       ? currentPlanRows.some((item) => item.status !== 'queued' && item.status !== 'done')
       : selectedSourceStatus === 'started' || selectedSourceStatus === 'completed'
   const isSelectedSourceCompleted =
@@ -1255,6 +1349,7 @@ export default function QcReceivingPage() {
 
   function handleQcModeChange(nextMode) {
     setQcMode(nextMode)
+    if (nextMode === 're_qc') setArklinePlannerMode('po')
     setError('')
     setSuccess('')
     setModelRows([])
@@ -1265,6 +1360,7 @@ export default function QcReceivingPage() {
     setShowArklineProductOptions(false)
     setSelectedArklinePoId('')
     setSelectedArklinePoItemKey('')
+    setSelectedArklineReworkSourceId('')
   }
 
   function handleSourceChange(nextSourceKey) {
@@ -1367,7 +1463,10 @@ export default function QcReceivingPage() {
 
     const productSku = String(product.parent_sku || product.id || '').trim().toUpperCase()
     const matchingPlanRows = arklineQcItems.filter(
-      (item) => !item.po_id && String(item.sku_induk || '').trim().toUpperCase() === productSku
+      (item) =>
+        !item.po_id &&
+        String(item.qc_type || 'INITIAL').toUpperCase() !== 'RE_QC' &&
+        String(item.sku_induk || '').trim().toUpperCase() === productSku
     )
     const hydratedPlanRows = hydrateArklinePlanRows(matchingPlanRows, product.model_color || 'ARKLINE PRODUCT')
 
@@ -1391,6 +1490,7 @@ export default function QcReceivingPage() {
   function handleArklinePoChange(poId) {
     setSelectedArklinePoId(poId)
     setSelectedArklinePoItemKey('')
+    setSelectedArklineReworkSourceId('')
     setModelRows([])
     setError('')
     setSuccess('')
@@ -1398,6 +1498,7 @@ export default function QcReceivingPage() {
 
   function handleArklinePoItemChange(itemKey) {
     setSelectedArklinePoItemKey(itemKey)
+    setSelectedArklineReworkSourceId('')
     setError('')
     setSuccess('')
 
@@ -1407,10 +1508,17 @@ export default function QcReceivingPage() {
       return
     }
 
+    if (qcMode === 're_qc') {
+      setModelRows([])
+      return
+    }
+
     const matchingPlanRows = arklineQcItems.filter(
       (planItem) =>
         String(planItem.po_id || '').trim().toUpperCase() === String(selectedArklinePo?.id || '').trim().toUpperCase() &&
-        String(planItem.arkline_po_item_id || '').trim() === String(item.id)
+        String(planItem.arkline_po_item_id || '').trim() === String(item.id) &&
+        String(planItem.qc_type || 'INITIAL').toUpperCase() !== 'RE_QC' &&
+        !planItem.source_receipt_group_id
     )
     const hydratedPlanRows = hydrateArklinePlanRows(matchingPlanRows, item.model_color || `PO ${item.po_label}`)
 
@@ -1424,6 +1532,60 @@ export default function QcReceivingPage() {
         qty_in: Number(item.qty_in || 0),
         qty_qc: String(item.qty_in || 0),
         photo_url: item.photo_url || '',
+        allocations: [],
+      },
+    ]
+
+    setModelRows(buildModelRowsFromPersisted(baseRows, hydratedPlanRows))
+  }
+
+  function handleArklineQcSourceChange(sourceId) {
+    setSelectedArklineReworkSourceId(sourceId)
+    setError('')
+    setSuccess('')
+
+    if (!selectedArklinePoItem) {
+      setModelRows([])
+      return
+    }
+
+    if (!sourceId) {
+      if (qcMode === 're_qc') {
+        setModelRows([])
+      } else {
+        handleArklinePoItemChange(selectedArklinePoItemKey)
+      }
+      return
+    }
+
+    const source = arklineReworkSources.find((item) => item.id === sourceId)
+    if (!source) {
+      setModelRows([])
+      return
+    }
+
+    const matchingPlanRows = arklineQcItems.filter(
+      (task) =>
+        String(task.arkline_po_item_id || '') === String(selectedArklinePoItem.id) &&
+        String(task.source_receipt_group_id || '') === source.id
+    )
+    const hydratedPlanRows = hydrateArklinePlanRows(
+      matchingPlanRows,
+      `RE-QC ROUND ${source.roundNumber}`
+    )
+    const baseRows = [
+      {
+        id: `arkline-rework-${source.id}`,
+        source_id: selectedArklinePoItem.id,
+        source_receipt_group_id: source.id,
+        source_return_batch_id: source.returnBatchId,
+        qc_round_number: source.roundNumber,
+        model_id: '',
+        model_name: selectedArklinePoItem.model_name,
+        model_color: `RE-QC ROUND ${source.roundNumber}`,
+        qty_in: source.totalQty,
+        qty_qc: String(source.editableQty),
+        photo_url: selectedArklinePoItem.photo_url || '',
         allocations: [],
       },
     ]
@@ -1700,6 +1862,7 @@ export default function QcReceivingPage() {
     setShowArklineProductOptions(false)
     setSelectedArklinePoId('')
     setSelectedArklinePoItemKey('')
+    setSelectedArklineReworkSourceId('')
     setModelRows([])
   }
 
@@ -1707,9 +1870,14 @@ export default function QcReceivingPage() {
     setError('')
     setSuccess('')
 
-    if (qcMode === 'arkline') {
+    if (qcMode === 'arkline' || qcMode === 're_qc') {
       if (!modelRows.length) {
-        setError('Choose Arkline product or PO item first.')
+        setError(qcMode === 're_qc' ? 'Choose a returned-goods source first.' : 'Choose Arkline product or PO item first.')
+        return
+      }
+
+      if (qcMode === 're_qc' && !selectedArklineReworkSource) {
+        setError('Choose a Re-QC returned-goods source first.')
         return
       }
 
@@ -1726,8 +1894,23 @@ export default function QcReceivingPage() {
       })
 
       if (invalidRow) {
-        setError('Every Arkline product allocation must have a product, inspector, and qty.')
+        setError('Every allocation must have a product, inspector, and qty.')
         return
+      }
+
+      if (selectedArklineReworkSource) {
+        const committedQty = arklineQcItems
+          .filter(
+            (task) =>
+              String(task.source_receipt_group_id || '') === selectedArklineReworkSource.id &&
+              task.status !== 'queued'
+          )
+          .reduce((sum, task) => sum + Number(task.allocated_qty || 0), 0)
+        const editableCapacity = Math.max(0, selectedArklineReworkSource.totalQty - committedQty)
+        if (allocationTotal > editableCapacity) {
+          setError(`Re-QC allocation cannot exceed the editable returned qty (${editableCapacity}).`)
+          return
+        }
       }
 
       if (!qcMembers.length) {
@@ -1737,6 +1920,7 @@ export default function QcReceivingPage() {
 
       setSaving(true)
 
+      const qcCycleId = currentPlanRows.find((task) => task.qc_cycle_id)?.qc_cycle_id || crypto.randomUUID()
       const referencedPersistedTaskIds = new Set()
       const insertPayload = []
       const updatesForPersistedRows = []
@@ -1771,6 +1955,11 @@ export default function QcReceivingPage() {
             model_name: row.model_name.trim(),
             photo_url: row.photo_url || null,
             locked_qty: lockedQty,
+            source_receipt_group_id: selectedArklineReworkSource?.id || null,
+            source_return_batch_id: selectedArklineReworkSource?.returnBatchId || null,
+            qc_round_number: Number(selectedArklineReworkSource?.roundNumber || 1),
+            qc_type: selectedArklineReworkSource ? 'RE_QC' : 'INITIAL',
+            qc_cycle_id: qcCycleId,
           }
 
           if (persistedRow) {
@@ -1835,11 +2024,12 @@ export default function QcReceivingPage() {
 
       setArklineQcItems(nextQcItems || [])
 
-      if (arklinePlannerMode === 'product' && selectedArklineProduct) {
+      if (qcMode === 'arkline' && arklinePlannerMode === 'product' && selectedArklineProduct) {
         const matchingPlanRows = hydrateArklinePlanRows(
           (nextQcItems || []).filter(
           (item) =>
             !item.po_id &&
+              String(item.qc_type || 'INITIAL').toUpperCase() !== 'RE_QC' &&
               String(item.sku_induk || '').trim().toUpperCase() === selectedArklineProductSku
           ),
           selectedArklineProduct.model_color || 'ARKLINE PRODUCT'
@@ -1870,7 +2060,10 @@ export default function QcReceivingPage() {
           (nextQcItems || []).filter(
             (item) =>
               String(item.po_id || '').trim().toUpperCase() === String(selectedArklinePo?.id || '').trim().toUpperCase() &&
-              String(item.arkline_po_item_id || '').trim() === String(selectedArklinePoItem.id)
+              String(item.arkline_po_item_id || '').trim() === String(selectedArklinePoItem.id) &&
+              (selectedArklineReworkSource
+                ? String(item.source_receipt_group_id || '') === selectedArklineReworkSource.id
+                : !item.source_receipt_group_id && String(item.qc_type || 'INITIAL').toUpperCase() !== 'RE_QC')
           ),
           selectedArklinePoItem.model_color || `PO ${selectedArklinePoItem.po_label}`
         )
@@ -1896,7 +2089,7 @@ export default function QcReceivingPage() {
       }
 
       resetArklinePlanner()
-      setSuccess('Arkline QC plan saved.')
+      setSuccess(qcMode === 're_qc' ? 'Re-QC plan saved.' : 'Arkline QC plan saved.')
       setSaving(false)
       return
     }
@@ -2086,17 +2279,6 @@ export default function QcReceivingPage() {
           </button>
           <button
             type="button"
-            disabled
-            style={{
-              ...styles.modeButton,
-              ...styles.modeButtonDisabled,
-              ...(isMobileLayout ? { flex: 1 } : {}),
-            }}
-          >
-            Re-QC
-          </button>
-          <button
-            type="button"
             onClick={() => handleQcModeChange('arkline')}
             style={{
               ...styles.modeButton,
@@ -2106,40 +2288,57 @@ export default function QcReceivingPage() {
           >
             QC Arkline
           </button>
+          <button
+            type="button"
+            onClick={() => handleQcModeChange('re_qc')}
+            style={{
+              ...styles.modeButton,
+              ...(qcMode === 're_qc' ? styles.modeButtonActive : {}),
+              ...(isMobileLayout ? { flex: 1 } : {}),
+            }}
+          >
+            Re-QC
+          </button>
         </div>
 
-        {qcMode === 'arkline' ? (
+        {qcMode === 'arkline' || qcMode === 're_qc' ? (
           <>
-            <div style={styles.field}>
-              <label style={styles.label}>QC Mode</label>
-            </div>
-            <div style={{ ...styles.modeRow, width: isMobileLayout ? '100%' : 'auto' }}>
-              <button
-                type="button"
-                onClick={() => handleArklinePlannerModeChange('product')}
-                style={{
-                  ...styles.modeButton,
-                  ...(arklinePlannerMode === 'product' ? styles.modeButtonActive : {}),
-                  ...(isMobileLayout ? { flex: 1 } : {}),
-                }}
-              >
-                QC Product Based
-              </button>
+            {qcMode === 'arkline' ? (
+              <>
+                <div style={styles.field}>
+                  <label style={styles.label}>QC Mode</label>
+                </div>
+                <div style={{ ...styles.modeRow, width: isMobileLayout ? '100%' : 'auto' }}>
+                  <button
+                    type="button"
+                    onClick={() => handleArklinePlannerModeChange('product')}
+                    style={{
+                      ...styles.modeButton,
+                      ...(arklinePlannerMode === 'product' ? styles.modeButtonActive : {}),
+                      ...(isMobileLayout ? { flex: 1 } : {}),
+                    }}
+                  >
+                    QC Product Based
+                  </button>
 
-              <button
-                type="button"
-                onClick={() => handleArklinePlannerModeChange('po')}
-                style={{
-                  ...styles.modeButton,
-                  ...(arklinePlannerMode === 'po' ? styles.modeButtonActive : {}),
-                  ...(isMobileLayout ? { flex: 1 } : {}),
-                }}
-              >
-                QC PO Based
-              </button>
-            </div>
+                  <button
+                    type="button"
+                    onClick={() => handleArklinePlannerModeChange('po')}
+                    style={{
+                      ...styles.modeButton,
+                      ...(arklinePlannerMode === 'po' ? styles.modeButtonActive : {}),
+                      ...(isMobileLayout ? { flex: 1 } : {}),
+                    }}
+                  >
+                    QC PO Based
+                  </button>
+                </div>
+              </>
+            ) : (
+              <p style={styles.infoText}>Allocate only returned repair goods that are ready for another QC round.</p>
+            )}
 
-            {arklinePlannerMode === 'product' ? (
+            {qcMode === 'arkline' && arklinePlannerMode === 'product' ? (
               <div style={arklineChoiceGridStyle}>
                 <div style={styles.field}>
                   <label style={styles.label}>Product Category</label>
@@ -2206,8 +2405,14 @@ export default function QcReceivingPage() {
                 <div style={styles.field}>
                   <label style={styles.label}>PO</label>
                   <select value={selectedArklinePoId} onChange={(event) => handleArklinePoChange(event.target.value)} style={styles.select}>
-                    <option value="">{arklinePoOptions.length ? 'Choose PO' : 'No Arkline PO found'}</option>
-                    {arklinePoOptions.map((item) => (
+                    <option value="">
+                      {visibleArklinePoOptions.length
+                        ? 'Choose PO'
+                        : qcMode === 're_qc'
+                          ? 'No returned goods ready for Re-QC'
+                          : 'No Arkline PO found'}
+                    </option>
+                    {visibleArklinePoOptions.map((item) => (
                       <option key={item.id} value={item.id}>
                         {item.po_number}
                       </option>
@@ -2231,8 +2436,48 @@ export default function QcReceivingPage() {
                     ))}
                   </select>
                 </div>
+
+                {qcMode === 're_qc' && selectedArklinePoItem ? (
+                  <div style={styles.field}>
+                    <label style={styles.label}>Returned Goods Source</label>
+                    <select
+                      value={selectedArklineReworkSourceId}
+                      onChange={(event) => handleArklineQcSourceChange(event.target.value)}
+                      style={styles.select}
+                    >
+                      <option value="">Choose returned-goods receipt</option>
+                      {arklineReworkSources.map((source) => (
+                        <option key={source.id} value={source.id} disabled={source.editableQty <= 0}>
+                          Re-QC Round {source.roundNumber} - {source.returnNumber} - {source.editableQty} qty available
+                        </option>
+                      ))}
+                    </select>
+                    <span style={styles.helperText}>
+                      Each receipt remains linked to its return batch and Re-QC round.
+                    </span>
+                  </div>
+                ) : null}
               </div>
             )}
+
+            {qcMode === 're_qc' && selectedArklineReworkSource ? (
+              <div style={arklineSummaryGridStyle}>
+                <div style={styles.summaryCard}>
+                  <span style={styles.summaryLabel}>Returned Qty</span>
+                  <strong style={styles.summaryValue}>{selectedArklineReworkSource.totalQty}</strong>
+                </div>
+                <div style={styles.summaryCard}>
+                  <span style={styles.summaryLabel}>Allocated</span>
+                  <strong style={styles.summaryValue}>
+                    {selectedArklineReworkSource.totalQty - selectedArklineReworkSource.pendingQty}
+                  </strong>
+                </div>
+                <div style={styles.summaryCard}>
+                  <span style={styles.summaryLabel}>Remaining</span>
+                  <strong style={styles.summaryValue}>{selectedArklineReworkSource.pendingQty}</strong>
+                </div>
+              </div>
+            ) : null}
 
             {modelRows.length ? (
               <>
@@ -2731,7 +2976,7 @@ export default function QcReceivingPage() {
             onClick={handleSavePlan}
             disabled={
               saving ||
-              (qcMode === 'arkline'
+              (qcMode !== 'regular'
                 ? !modelRows.length || isSelectedSourceCompleted
                 : !selectedSource || isSelectedSourceCompleted)
             }
@@ -2740,7 +2985,7 @@ export default function QcReceivingPage() {
               ...(isMobileLayout ? { width: '100%' } : {}),
               ...(
                 saving ||
-                (qcMode === 'arkline'
+                (qcMode !== 'regular'
                   ? !modelRows.length || isSelectedSourceCompleted
                   : !selectedSource || isSelectedSourceCompleted)
                   ? styles.buttonDisabled

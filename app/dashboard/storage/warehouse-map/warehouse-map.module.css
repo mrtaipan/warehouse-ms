@@ -169,7 +169,8 @@
 .mapWall,
 .mapArea,
 .mapDirection,
-.mapZone {
+.mapZone,
+.mapShelving {
   position: absolute;
   left: var(--x);
   top: var(--y);
@@ -379,6 +380,73 @@
 .mapZoneSelected .zoneNumber {
   opacity: 1;
   transform: translateY(0);
+}
+
+.mapShelving {
+  z-index: 3;
+  border: 1px solid #86efac;
+  border-radius: 4px;
+  background: rgba(220, 252, 231, 0.82);
+  color: #166534;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1px;
+  transition:
+    transform 180ms ease,
+    box-shadow 180ms ease,
+    background 180ms ease,
+    border-color 180ms ease,
+    color 180ms ease;
+}
+
+.mapShelving:hover {
+  transform: translateY(-1px) scale(1.03);
+  border-color: #64748b;
+  background: #ffffff;
+  box-shadow: 0 10px 18px rgba(15, 23, 42, 0.12);
+}
+
+.mapShelvingOccupied {
+  border-color: #2563eb;
+  background: rgba(219, 234, 254, 0.82);
+  color: #1d4ed8;
+}
+
+.mapShelvingSelected {
+  z-index: 4;
+  border-color: #111827;
+  background: rgba(15, 23, 42, 0.2);
+  color: #111827;
+  box-shadow:
+    0 0 0 4px rgba(15, 23, 42, 0.14),
+    0 14px 24px rgba(15, 23, 42, 0.2);
+}
+
+.shelvingNumber {
+  position: relative;
+  z-index: 1;
+  min-width: 14px;
+  min-height: 13px;
+  padding: 1px 3px;
+  border: 1px solid rgba(15, 23, 42, 0.12);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.9);
+  color: inherit;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 7px;
+  font-weight: 900;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.mapShelvingSelected .shelvingNumber {
+  border-color: rgba(15, 23, 42, 0.16);
+  background: rgba(255, 255, 255, 0.92);
+  color: #111827;
 }
 
 .zoneQty {
@@ -629,6 +697,13 @@
   background: rgba(220, 252, 231, 0.82);
 }
 
+.toolIconShelving {
+  width: 18px;
+  height: 24px;
+  border-color: #cbd5e1;
+  background: rgba(248, 250, 252, 0.94);
+}
+
 .toolIconBox {
   border-color: rgba(148, 163, 184, 0.45);
   background: rgba(248, 250, 252, 0.9);
@@ -715,6 +790,29 @@
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+
+.layerControls {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.layerControls button {
+  min-height: 34px;
+  border: 1px solid #d7dee7;
+  border-radius: 10px;
+  background: #ffffff;
+  color: #0f172a;
+  padding: 0 10px;
+  font-size: 11px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.layerControls button:hover {
+  border-color: #94a3b8;
+  background: #f8fafc;
 }
 
 .inspectorFields label {
@@ -1154,6 +1252,94 @@
   );
   align-self: center;
   margin-top: auto;
+}
+
+.shelvingFrame {
+  position: relative;
+  min-height: 360px;
+  padding: 24px 28px 18px;
+  border: 1px solid #e2e8f0;
+  border-radius: 16px;
+  background:
+    linear-gradient(180deg, transparent calc(100% - 16px), #e2e8f0 calc(100% - 16px)),
+    #ffffff;
+  overflow: hidden;
+}
+
+.shelvingPostLeft,
+.shelvingPostRight {
+  position: absolute;
+  top: 18px;
+  bottom: 16px;
+  width: 10px;
+  border-radius: 5px;
+  background: #075985;
+}
+
+.shelvingPostLeft {
+  left: 14px;
+}
+
+.shelvingPostRight {
+  right: 14px;
+}
+
+.shelvingLevelGrid {
+  position: relative;
+  z-index: 1;
+  min-height: 318px;
+  display: flex;
+  flex-direction: column;
+  justify-content: stretch;
+  gap: 10px;
+}
+
+.shelvingLevel {
+  flex: 1;
+  min-height: 54px;
+  border: 1px dashed #cbd5e1;
+  border-radius: 12px;
+  background: rgba(248, 250, 252, 0.9);
+  color: #475569;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  font-size: 13px;
+  font-weight: 900;
+  cursor: pointer;
+  transition:
+    transform 180ms ease,
+    border-color 180ms ease,
+    box-shadow 180ms ease,
+    background 180ms ease;
+}
+
+.shelvingLevel:hover {
+  transform: translateY(-1px);
+  border-color: #94a3b8;
+  box-shadow: 0 12px 20px rgba(15, 23, 42, 0.08);
+}
+
+.shelvingLevelOccupied {
+  border-style: solid;
+  border-color: #93c5fd;
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.shelvingLevelSelected {
+  border-color: #0369a1;
+  background: #bae6fd;
+  color: #082f49;
+  box-shadow: 0 0 0 4px rgba(3, 105, 161, 0.16);
+}
+
+.shelvingLevel strong {
+  color: inherit;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
 }
 
 .segmentedControl {

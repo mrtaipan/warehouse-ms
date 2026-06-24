@@ -22,7 +22,7 @@ export default async function QcLayout({ children }) {
     access.receiving ? { href: '/mobile/qc/receiving', label: 'Receiving' } : null,
     access.inspectionTask ? { href: '/mobile/qc/inspection-task', label: 'Grading Task' } : null,
     access.confirmation ? { href: '/dashboard/qc/confirmation', label: 'Confirmation' } : null,
-    access.retur ? { href: '/dashboard/qc/retur-report', label: 'Retur Report' } : null,
+    access.retur ? { href: '/dashboard/qc/retur-report', label: 'Return Report' } : null,
   ].filter(Boolean)
 
   return <DashboardSubnav items={items}>{children}</DashboardSubnav>

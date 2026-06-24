@@ -11,6 +11,10 @@ import styles from './financial-management.module.css'
 
 const supabase = createClient()
 const PAYMENT_REQUEST_BUCKET = 'arkline-payments'
+const PO_BASED_CATEGORY_BY_SOURCE = {
+  GARMENT: 'GARMENT PRODUCTION',
+  MATERIAL: 'MATERIAL PROCUREMENT',
+}
 const ARKLINE_PAYMENT_DETAIL_SELECT = `
   id,
   payment_basis,
@@ -156,6 +160,14 @@ function formatNumberInput(value) {
   const digits = normalizeDigits(value)
   if (!digits) return ''
   return new Intl.NumberFormat('id-ID', { maximumFractionDigits: 0 }).format(Number(digits))
+}
+
+function normalizeCategoryName(value) {
+  return String(value || '').trim().toUpperCase()
+}
+
+function getPoBasedCategoryName(poSourceType) {
+  return PO_BASED_CATEGORY_BY_SOURCE[poSourceType] || PO_BASED_CATEGORY_BY_SOURCE.GARMENT
 }
 
 function getPoSortNumber(value) {
@@ -325,6 +337,11 @@ export default function ArklineFinancialManagementPage({
   const canReviewAllRequests = hrgaView || role === 'admin' || role === 'hrga' || role === 'leader'
   const canPay = hrgaView ? role === 'admin' || role === 'hrga' || role === 'leader' : role === 'admin'
   const canApprove = hrgaView ? role === 'admin' || role === 'hrga' || role === 'leader' : role === 'admin'
+  const poBasedCategoryName = getPoBasedCategoryName(draft.po_source_type)
+  const poBasedCategory = useMemo(
+    () => categories.find((item) => normalizeCategoryName(item.name) === poBasedCategoryName) || null,
+    [categories, poBasedCategoryName]
+  )
 
   const hydrateRequestDisplayNames = useCallback(
     (row) => {
@@ -694,6 +711,11 @@ export default function ArklineFinancialManagementPage({
       return
     }
 
+    if (draft.payment_basis === 'PO_BASED' && !poBasedCategory?.id) {
+      setError(`Category ${poBasedCategoryName} is not registered yet. Please add it to reimbursement categories first.`)
+      return
+    }
+
     if ((!draft.no_invoice_number && !String(draft.invoice_number || '').trim()) || !String(draft.amount || '').trim()) {
       setError(`Invoice number and payment amount are required${draft.payment_basis === 'NON_PO_BASED' ? ', plus category' : ''}.`)
       return
@@ -738,7 +760,7 @@ export default function ArklineFinancialManagementPage({
               : selectedPo?.supplierName || null
             : null,
         invoice_number: resolvedInvoiceNumber,
-        category_id: draft.payment_basis === 'PO_BASED' ? null : Number(draft.category_id),
+        category_id: draft.payment_basis === 'PO_BASED' ? Number(poBasedCategory.id) : Number(draft.category_id),
         amount: Number(normalizeDigits(draft.amount)),
         notes: String(draft.notes || '').trim() || null,
         account_name: normalizeUppercase(draft.account_name).trim(),
@@ -1458,6 +1480,10 @@ export default function ArklineFinancialManagementPage({
                       <option value="GARMENT">Garment</option>
                       <option value="MATERIAL">Material</option>
                     </select>
+                  </div>
+                  <div className={styles.field}>
+                    <label className={styles.label}>Category</label>
+                    <input className={styles.input} value={poBasedCategoryName} readOnly />
                   </div>
                 </>
               ) : null}

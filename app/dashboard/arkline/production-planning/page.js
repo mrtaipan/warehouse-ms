@@ -1626,20 +1626,24 @@ export default function ArklineProductionPlanningPage() {
         }
       }
 
-      const itemPayload = poItems.map((item) => ({
-        po_id: header.poId.trim().toUpperCase(),
-        sku_induk: item.skuInduk,
-        nama_produk: item.namaProdukSnapshot,
-        kategori_produk: item.kategoriProdukSnapshot || null,
-        allowance_pct: toNumber(item.allowancePct),
-        total_qty: getLineTotalQty(item),
-        actual_qty: 0,
-        price: toNumber(item.price),
-        hpp: method === 'FOB' ? toNumber(item.price) : null,
-        status: item.status || 'Initiated',
-        notes: item.notes.trim() || null,
-        kategori_pengadaan: item.kategoriPengadaanSnapshot || productBySku[item.skuInduk]?.kategoriPengadaan || null,
-      }))
+      const itemPayload = poItems.map((item) => {
+        const itemPrice = toNumber(item.price)
+
+        return {
+          po_id: header.poId.trim().toUpperCase(),
+          sku_induk: item.skuInduk,
+          nama_produk: item.namaProdukSnapshot,
+          kategori_produk: item.kategoriProdukSnapshot || null,
+          allowance_pct: toNumber(item.allowancePct),
+          total_qty: getLineTotalQty(item),
+          actual_qty: 0,
+          price: itemPrice,
+          hpp: method === 'FOB' ? itemPrice : null,
+          status: item.status || 'Initiated',
+          notes: item.notes.trim() || null,
+          kategori_pengadaan: item.kategoriPengadaanSnapshot || productBySku[item.skuInduk]?.kategoriPengadaan || null,
+        }
+      })
 
       const { data: insertedItems, error: insertItemError } = await supabase
         .from('arkline_po_items')

@@ -959,7 +959,8 @@ export default function QcDashboardPage() {
             assigned_to,
             po_id,
             sku_induk,
-            model_name
+            model_name,
+            qc_type
           )
         `)
         .order('paused_at', { ascending: false }),
@@ -1075,20 +1076,29 @@ export default function QcDashboardPage() {
     () => Array.from(new Set(qcItems.map((item) => item.inbound?.grn_number).filter(Boolean))),
     [qcItems]
   )
+  const arklineModeItems = useMemo(
+    () =>
+      arklineQcItems.filter((item) =>
+        qcMode === 're_qc'
+          ? String(item.qc_type || 'INITIAL').toUpperCase() === 'RE_QC'
+          : String(item.qc_type || 'INITIAL').toUpperCase() !== 'RE_QC'
+      ),
+    [arklineQcItems, qcMode]
+  )
   const poOptions = useMemo(
-    () => Array.from(new Set(arklineQcItems.map((item) => getArklinePoLabel(item)).filter(Boolean))).sort((a, b) => a.localeCompare(b, undefined, { numeric: true })),
-    [arklineQcItems]
+    () => Array.from(new Set(arklineModeItems.map((item) => getArklinePoLabel(item)).filter(Boolean))).sort((a, b) => a.localeCompare(b, undefined, { numeric: true })),
+    [arklineModeItems]
   )
   const arklineProductOptions = useMemo(() => {
     const sourceItems =
       poFilter && poFilter !== 'NO PO'
-        ? arklineQcItems.filter((item) => getArklinePoLabel(item) === poFilter)
-        : arklineQcItems
+        ? arklineModeItems.filter((item) => getArklinePoLabel(item) === poFilter)
+        : arklineModeItems
 
     return Array.from(new Set(sourceItems.map((item) => getArklineProductLabel(item)).filter(Boolean))).sort((a, b) =>
       a.localeCompare(b, undefined, { numeric: true })
     )
-  }, [arklineQcItems, poFilter])
+  }, [arklineModeItems, poFilter])
   const brandOptions = useMemo(
     () => Array.from(new Set(qcItems.map((item) => getBrandLabel(item)).filter(Boolean))).sort((a, b) => a.localeCompare(b)),
     [qcItems]
@@ -1113,13 +1123,13 @@ export default function QcDashboardPage() {
 
   const filteredArklineItems = useMemo(
     () =>
-      arklineQcItems.filter((item) => {
+      arklineModeItems.filter((item) => {
         const matchesDate = hasInvalidDateRange ? true : isWithinDateRange(item.finished_at || item.created_at, dateFrom, dateTo)
         const matchesPo = !poFilter || getArklinePoLabel(item) === poFilter
         const matchesProduct = !arklineProductFilter || getArklineProductLabel(item) === arklineProductFilter
         return matchesDate && matchesPo && matchesProduct
       }),
-    [arklineProductFilter, arklineQcItems, dateFrom, dateTo, hasInvalidDateRange, poFilter]
+    [arklineModeItems, arklineProductFilter, dateFrom, dateTo, hasInvalidDateRange, poFilter]
   )
 
   const filteredAdjustmentRows = useMemo(
@@ -1172,17 +1182,21 @@ export default function QcDashboardPage() {
         const matchesDate = hasInvalidDateRange ? true : isWithinDateRange(item.paused_at, dateFrom, dateTo)
         const matchesPo = !poFilter || getPauseLogArklinePoLabel(item) === poFilter
         const matchesProduct = !arklineProductFilter || getPauseLogArklineProductLabel(item) === arklineProductFilter
-        return Boolean(item.arkline_qc_id) && matchesDate && matchesPo && matchesProduct
+        const matchesQcType =
+          qcMode === 're_qc'
+            ? String(item.arkline_qc?.qc_type || 'INITIAL').toUpperCase() === 'RE_QC'
+            : String(item.arkline_qc?.qc_type || 'INITIAL').toUpperCase() !== 'RE_QC'
+        return Boolean(item.arkline_qc_id) && matchesDate && matchesPo && matchesProduct && matchesQcType
       }),
-    [arklineProductFilter, dateFrom, dateTo, hasInvalidDateRange, pauseLogs, poFilter]
+    [arklineProductFilter, dateFrom, dateTo, hasInvalidDateRange, pauseLogs, poFilter, qcMode]
   )
 
   const activeItems = useMemo(
-    () => (qcMode === 'arkline' ? filteredArklineItems : filteredItems),
+    () => (qcMode !== 'regular' ? filteredArklineItems : filteredItems),
     [filteredArklineItems, filteredItems, qcMode]
   )
   const activePauseLogs = useMemo(
-    () => (qcMode === 'arkline' ? filteredArklinePauseLogs : filteredRegularPauseLogs),
+    () => (qcMode !== 'regular' ? filteredArklinePauseLogs : filteredRegularPauseLogs),
     [filteredArklinePauseLogs, filteredRegularPauseLogs, qcMode]
   )
 
@@ -1199,12 +1213,24 @@ export default function QcDashboardPage() {
     const grouped = new Map()
     const arklineDetailBySummaryKey = new Map()
     const arklineAdjustmentBySummaryKey = new Map()
+    const activeArklineTaskIds = new Set(activeItems.map((item) => String(item.id)))
+    const activeArklineCycleIds = new Set(activeItems.map((item) => String(item.qc_cycle_id || '')).filter(Boolean))
+    const activeArklineTaskById = new Map(activeItems.map((item) => [String(item.id), item]))
+    const activeArklineRoundByCycle = new Map(
+      activeItems.map((item) => [String(item.qc_cycle_id || ''), Number(item.qc_round_number || 2)])
+    )
 
-    if (qcMode === 'arkline') {
+    if (qcMode !== 'regular') {
       arklineRejectDetails
-        .filter((detail) => hasInvalidDateRange || isWithinDateRange(detail.created_at || detail.updated_at, dateFrom, dateTo))
+        .filter(
+          (detail) =>
+            activeArklineTaskIds.has(String(detail.arkline_qc_id)) &&
+            (hasInvalidDateRange || isWithinDateRange(detail.created_at || detail.updated_at, dateFrom, dateTo))
+        )
         .forEach((detail) => {
-          const key = getRejectDetailSummaryKey(detail)
+          const baseKey = getRejectDetailSummaryKey(detail)
+          const task = activeArklineTaskById.get(String(detail.arkline_qc_id))
+          const key = qcMode === 're_qc' ? `${baseKey}|||ROUND:${Number(task?.qc_round_number || 2)}` : baseKey
           const current = arklineDetailBySummaryKey.get(key) || { qtyB: 0, qtyC: 0 }
           const grade = String(detail.grade || '').toUpperCase()
           if (grade === 'B') current.qtyB += Number(detail.qty || 0)
@@ -1213,9 +1239,19 @@ export default function QcDashboardPage() {
         })
 
       arklineRejectAdjustments
-        .filter((adjustment) => hasInvalidDateRange || isWithinDateRange(adjustment.created_at || adjustment.updated_at, dateFrom, dateTo))
+        .filter(
+          (adjustment) =>
+            (adjustment.qc_cycle_id
+              ? activeArklineCycleIds.has(String(adjustment.qc_cycle_id))
+              : qcMode === 'arkline') &&
+            (hasInvalidDateRange || isWithinDateRange(adjustment.created_at || adjustment.updated_at, dateFrom, dateTo))
+        )
         .forEach((adjustment) => {
-          const key = getAdjustmentSummaryKey(adjustment)
+          const baseKey = getAdjustmentSummaryKey(adjustment)
+          const key =
+            qcMode === 're_qc'
+              ? `${baseKey}|||ROUND:${activeArklineRoundByCycle.get(String(adjustment.qc_cycle_id || '')) || 2}`
+              : baseKey
           const current = arklineAdjustmentBySummaryKey.get(key) || { bcToAQty: 0, inspectorErrorQty: 0 }
           if (adjustment.adjustment_type === 'bc_to_a') current.bcToAQty += Number(adjustment.qty || 0)
           if (adjustment.adjustment_type === 'inspector_data_error') current.inspectorErrorQty += Number(adjustment.qty || 0)
@@ -1224,16 +1260,19 @@ export default function QcDashboardPage() {
     }
 
     activeItems.forEach((item) => {
-      const brand = qcMode === 'arkline' ? getArklinePoLabel(item) : getBrandLabel(item)
-      const category = qcMode === 'arkline' ? getArklineCategoryLabel(item) : getCategoryLabel(item)
+      const brand = qcMode !== 'regular' ? getArklinePoLabel(item) : getBrandLabel(item)
+      const category = qcMode !== 'regular' ? getArklineCategoryLabel(item) : getCategoryLabel(item)
       const taskModel = getTaskModelInfo(item)
       const model = taskModel.model
-      const key = `${brand}|||${category}|||${model}`
+      const roundNumber = qcMode === 're_qc' ? Number(item.qc_round_number || 2) : null
+      const baseKey = `${brand}|||${category}|||${model}`
+      const key = qcMode === 're_qc' ? `${baseKey}|||ROUND:${roundNumber}` : baseKey
       const current =
         grouped.get(key) || {
           brand,
           category,
           model,
+          roundNumber,
           photoUrl: taskModel.photoUrl,
           qtyA: 0,
           qtyB: 0,
@@ -1250,11 +1289,11 @@ export default function QcDashboardPage() {
       current.rejectTargetQty += getRejectQty(item)
       current.checked += getCheckedQty(item)
       current.photoUrl = current.photoUrl || taskModel.photoUrl
-      if (qcMode === 'arkline') current.taskRows.push(item)
+      if (qcMode !== 'regular') current.taskRows.push(item)
       grouped.set(key, current)
     })
 
-    if (qcMode === 'arkline') {
+    if (qcMode !== 'regular') {
       grouped.forEach((current, key) => {
         const detailSummary = arklineDetailBySummaryKey.get(key)
         const adjustment = arklineAdjustmentBySummaryKey.get(key)
@@ -1277,7 +1316,7 @@ export default function QcDashboardPage() {
       })
     }
 
-    if (qcMode !== 'arkline') filteredAdjustmentRows.forEach((item) => {
+    if (qcMode === 'regular') filteredAdjustmentRows.forEach((item) => {
       const brand = getConfirmBrandLabel(item)
       const category = getConfirmCategoryLabel(item)
       const model = item.model_name || 'UNKNOWN MODEL'
@@ -1294,7 +1333,7 @@ export default function QcDashboardPage() {
       grouped.set(key, current)
     })
 
-    if (qcMode !== 'arkline') filteredReturnAdjustmentRows.forEach((item) => {
+    if (qcMode === 'regular') filteredReturnAdjustmentRows.forEach((item) => {
       const brand = getReturnBrandLabel(item)
       const category = getReturnCategoryLabel(item)
       const model = item.model_name || 'UNKNOWN MODEL'
@@ -1310,7 +1349,7 @@ export default function QcDashboardPage() {
       grouped.set(key, current)
     })
 
-    if (qcMode !== 'arkline') {
+    if (qcMode === 'regular') {
       grouped.forEach((current) => {
         current.checked = current.qtyA + current.qtyB + current.qtyC
       })
@@ -1333,27 +1372,6 @@ export default function QcDashboardPage() {
     qcMode,
   ])
 
-  const arklineRejectDetailQtyBySummary = useMemo(() => {
-    const grouped = new Map()
-    const taskSummaryKeyById = new Map()
-
-    qcResultSummary.forEach((summary) => {
-      ;(summary.taskRows || []).forEach((row) => {
-        taskSummaryKeyById.set(String(row.id), getSummaryRejectKey(summary))
-      })
-    })
-
-    arklineRejectDetails
-      .filter((detail) => hasInvalidDateRange || isWithinDateRange(detail.created_at || detail.updated_at, dateFrom, dateTo))
-      .forEach((detail) => {
-      const key = taskSummaryKeyById.get(String(detail.arkline_qc_id))
-      if (!key) return
-      grouped.set(key, (grouped.get(key) || 0) + Number(detail.qty || 0))
-    })
-
-    return grouped
-  }, [arklineRejectDetails, dateFrom, dateTo, hasInvalidDateRange, qcResultSummary])
-
   const selectedRejectTaskRows = useMemo(
     () =>
       rejectDetailSummary
@@ -1372,7 +1390,9 @@ export default function QcDashboardPage() {
   const selectedRejectExistingDetails = useMemo(
     () =>
       arklineRejectDetails.filter((item) => {
-        const matchesSummary = selectedRejectTaskIds.has(String(item.arkline_qc_id)) || getRejectDetailSummaryKey(item) === selectedRejectSummaryKey
+        const matchesSummary = selectedRejectTaskIds.size
+          ? selectedRejectTaskIds.has(String(item.arkline_qc_id))
+          : getRejectDetailSummaryKey(item) === selectedRejectSummaryKey
         const matchesDate = hasInvalidDateRange || isWithinDateRange(item.created_at || item.updated_at, dateFrom, dateTo)
         return matchesSummary && matchesDate
       }),
@@ -1487,8 +1507,8 @@ export default function QcDashboardPage() {
         if (workDate) current.daySet.add(workDate)
         current.completedTaskRows.push({
           id: item.id,
-          source: qcMode === 'arkline' ? getArklinePoLabel(item) : item.inbound?.grn_number || '-',
-          category: qcMode === 'arkline' ? getArklineCategoryLabel(item) : getCategoryLabel(item),
+          source: qcMode !== 'regular' ? getArklinePoLabel(item) : item.inbound?.grn_number || '-',
+          category: qcMode !== 'regular' ? getArklineCategoryLabel(item) : getCategoryLabel(item),
           model: getTaskModelInfo(item).model,
           qtyA: Number(item.qty_a || 0),
           qtyB: Number(item.qty_b || 0),
@@ -1508,8 +1528,8 @@ export default function QcDashboardPage() {
         if (item.status === 'in_progress') current.runningTaskCount += 1
         current.activeTaskRows.push({
           id: item.id,
-          source: qcMode === 'arkline' ? getArklinePoLabel(item) : item.inbound?.grn_number || '-',
-          category: qcMode === 'arkline' ? getArklineCategoryLabel(item) : getCategoryLabel(item),
+          source: qcMode !== 'regular' ? getArklinePoLabel(item) : item.inbound?.grn_number || '-',
+          category: qcMode !== 'regular' ? getArklineCategoryLabel(item) : getCategoryLabel(item),
           model: getTaskModelInfo(item).model,
           allocatedQty: Number(item.allocated_qty || 0),
           checkedQty: totalPcs,
@@ -1571,7 +1591,7 @@ export default function QcDashboardPage() {
       .filter((item) => item.status === 'done' || hasQcResult(item))
       .forEach((item) => {
         const speedLabel =
-          qcMode === 'arkline'
+          qcMode !== 'regular'
             ? getTaskModelInfo(item).model
             : item.inbound_unload?.categories?.full_name || item.inbound_unload?.categories?.category_name || 'UNCATEGORIZED'
         const checkedQty = getCheckedQty(item)
@@ -1606,9 +1626,12 @@ export default function QcDashboardPage() {
   function openRejectDetailModal(summary) {
     const summaryTaskRows = summary.taskRows?.length ? summary.taskRows : activeItems.filter((item) => isTaskInSummary(item, summary))
     const taskIds = new Set(summaryTaskRows.map((item) => String(item.id)))
+    const cycleIds = new Set(summaryTaskRows.map((item) => String(item.qc_cycle_id || '')).filter(Boolean))
     const summaryKey = getSummaryRejectKey(summary)
     const existingDetails = arklineRejectDetails.filter((item) => {
-      const matchesSummary = taskIds.has(String(item.arkline_qc_id)) || getRejectDetailSummaryKey(item) === summaryKey
+      const matchesSummary = taskIds.size
+        ? taskIds.has(String(item.arkline_qc_id))
+        : getRejectDetailSummaryKey(item) === summaryKey
       const matchesDate = hasInvalidDateRange || isWithinDateRange(item.created_at || item.updated_at, dateFrom, dateTo)
       return matchesSummary && matchesDate
     })
@@ -1616,8 +1639,9 @@ export default function QcDashboardPage() {
       const samePo = String(item.po_id || 'NO PO').trim().toUpperCase() === summary.brand
       const sameSku = String(item.sku_induk || 'NO SKU').trim().toUpperCase() === summary.category
       const sameModel = String(item.model_name || '').trim().toUpperCase() === String(summary.model || '').trim().toUpperCase()
+      const sameCycle = cycleIds.size ? cycleIds.has(String(item.qc_cycle_id || '')) : !item.qc_cycle_id
       const matchesDate = hasInvalidDateRange || isWithinDateRange(item.created_at || item.updated_at, dateFrom, dateTo)
-      return samePo && sameSku && sameModel && matchesDate
+      return samePo && sameSku && sameModel && sameCycle && matchesDate
     })
 
     const summaryRejectTargetQty = Number(summary.rejectTargetQty ?? getRejectQty(summary))
@@ -1809,13 +1833,17 @@ export default function QcDashboardPage() {
 
       const poId = rejectDetailSummary.brand === 'NO PO' ? null : rejectDetailSummary.brand
       const skuInduk = rejectDetailSummary.category === 'NO SKU' ? null : rejectDetailSummary.category
+      const targetCycleId = selectedRejectTaskRows[0]?.qc_cycle_id || null
       const existingAdjustmentIds = arklineRejectAdjustments
         .filter((item) => {
           const samePo = String(item.po_id || 'NO PO').trim().toUpperCase() === rejectDetailSummary.brand
           const sameSku = String(item.sku_induk || 'NO SKU').trim().toUpperCase() === rejectDetailSummary.category
           const sameModel = String(item.model_name || '').trim().toUpperCase() === String(rejectDetailSummary.model || '').trim().toUpperCase()
+          const sameCycle = targetCycleId
+            ? String(item.qc_cycle_id || '') === String(targetCycleId)
+            : !item.qc_cycle_id
           const matchesDate = hasInvalidDateRange || isWithinDateRange(item.created_at || item.updated_at, dateFrom, dateTo)
-          return samePo && sameSku && sameModel && matchesDate
+          return samePo && sameSku && sameModel && sameCycle && matchesDate
         })
         .map((item) => item.id)
         .filter(Boolean)
@@ -1848,6 +1876,7 @@ export default function QcDashboardPage() {
           arkline_po_item_id: selectedRejectTaskRows[0]?.arkline_po_item_id || null,
           sku_induk: skuInduk,
           model_name: rejectDetailSummary.model,
+          qc_cycle_id: targetCycleId,
         }))
 
       if (adjustmentPayload.length) {
@@ -2015,7 +2044,7 @@ export default function QcDashboardPage() {
               setArklineProductFilter('')
             }}
           >
-            Regular
+            Reguler
           </button>
           <button
             type="button"
@@ -2026,6 +2055,18 @@ export default function QcDashboardPage() {
             }}
           >
             Arkline
+          </button>
+          <button
+            type="button"
+            style={{ ...styles.modeButton, ...(qcMode === 're_qc' ? styles.modeButtonActive : {}) }}
+            onClick={() => {
+              setQcMode('re_qc')
+              setPauseDetailInspector('')
+              setPoFilter('')
+              setArklineProductFilter('')
+            }}
+          >
+            Re-QC
           </button>
         </div>
 
@@ -2069,7 +2110,7 @@ export default function QcDashboardPage() {
             />
           </div>
 
-          {qcMode === 'arkline' ? (
+          {qcMode !== 'regular' ? (
             <>
               <div style={styles.field}>
                 <label style={styles.label}>PO ID</label>
@@ -2192,7 +2233,7 @@ export default function QcDashboardPage() {
       <div style={styles.card}>
         <h2 style={styles.sectionTitle}>QC Result Summary</h2>
         {qcMode === 'regular' && !grnFilter ? <p style={styles.emptyText}>Choose a GRN Number first to see QC result summary for that GRN.</p> : null}
-        {(qcMode === 'arkline' || grnFilter) ? (
+        {(qcMode !== 'regular' || grnFilter) ? (
         <>
         <div style={styles.grid}>
           <div style={styles.summaryCard}>
@@ -2216,26 +2257,25 @@ export default function QcDashboardPage() {
           <table style={styles.table}>
             <thead>
               <tr>
-                {qcMode === 'arkline' ? null : <th style={styles.th}>Photo</th>}
-                <th style={styles.th}>{qcMode === 'arkline' ? 'PO' : 'Brand'}</th>
-                <th style={styles.th}>{qcMode === 'arkline' ? 'SKU' : 'Category'}</th>
+                {qcMode !== 'regular' ? null : <th style={styles.th}>Photo</th>}
+                <th style={styles.th}>{qcMode !== 'regular' ? 'PO' : 'Brand'}</th>
+                <th style={styles.th}>{qcMode !== 'regular' ? 'SKU' : 'Category'}</th>
                 <th style={styles.th}>Model</th>
+                {qcMode === 're_qc' ? <th style={{ ...styles.th, ...styles.thCenter }}>Round</th> : null}
                 <th style={{ ...styles.th, ...styles.thCenter }}>Qty A</th>
                 <th style={{ ...styles.th, ...styles.thCenter }}>Qty B</th>
                 <th style={{ ...styles.th, ...styles.thCenter }}>Qty C</th>
                 <th style={{ ...styles.th, ...styles.thCenter }}>Total Checked</th>
-                {qcMode === 'arkline' ? <th style={{ ...styles.th, ...styles.thCenter }}>Detail</th> : null}
+                {qcMode !== 'regular' ? <th style={{ ...styles.th, ...styles.thCenter }}>Detail</th> : null}
               </tr>
             </thead>
             <tbody>
               {qcResultSummary.length ? (
                 qcResultSummary.map((item) => {
                   const rejectTargetQty = Number(item.rejectTargetQty ?? getRejectQty(item))
-                  const rejectDetailQty = arklineRejectDetailQtyBySummary.get(getSummaryRejectKey(item)) || 0
-
                   return (
-                  <tr key={`${item.brand}-${item.category}-${item.model}`}>
-                    {qcMode === 'arkline' ? null : <td style={styles.td}>
+                  <tr key={`${item.brand}-${item.category}-${item.model}-${item.roundNumber || 'initial'}`}>
+                    {qcMode !== 'regular' ? null : <td style={styles.td}>
                       {item.photoUrl ? (
                         <button type="button" style={styles.previewButton} onClick={() => setPreviewPhoto({ url: item.photoUrl, label: item.model })} title="Preview photo">
                           👁
@@ -2247,11 +2287,12 @@ export default function QcDashboardPage() {
                     <td style={styles.td}>{item.brand}</td>
                     <td style={styles.td}>{item.category}</td>
                     <td style={styles.td}>{item.model}</td>
+                    {qcMode === 're_qc' ? <td style={{ ...styles.td, ...styles.tdCenter }}>Round {item.roundNumber}</td> : null}
                     <td style={{ ...styles.td, ...styles.tdCenter }}>{item.qtyA}</td>
                     <td style={{ ...styles.td, ...styles.tdCenter }}>{item.qtyB}</td>
                     <td style={{ ...styles.td, ...styles.tdCenter }}>{item.qtyC}</td>
                     <td style={{ ...styles.td, ...styles.tdCenter }}>{item.checked}</td>
-                    {qcMode === 'arkline' ? (
+                    {qcMode !== 'regular' ? (
                       <td style={{ ...styles.td, ...styles.tdCenter }}>
                         <button
                           type="button"
@@ -2268,7 +2309,7 @@ export default function QcDashboardPage() {
                 })
               ) : (
                 <tr>
-                  <td style={styles.td} colSpan={qcMode === 'arkline' ? 8 : 9}>
+                  <td style={styles.td} colSpan={qcMode === 're_qc' ? 9 : qcMode === 'arkline' ? 8 : 9}>
                     No QC result found for this filter.
                   </td>
                 </tr>
@@ -2337,12 +2378,12 @@ export default function QcDashboardPage() {
       </div>
 
       <div style={styles.card}>
-        <h2 style={styles.sectionTitle}>{qcMode === 'arkline' ? 'QC Speed Per Product' : 'QC Speed Per Category'}</h2>
+        <h2 style={styles.sectionTitle}>{qcMode !== 'regular' ? 'QC Speed Per Product' : 'QC Speed Per Category'}</h2>
         <div style={styles.tableWrap}>
           <table style={styles.table}>
             <thead>
               <tr>
-                <th style={styles.th}>{qcMode === 'arkline' ? 'Product' : 'Category'}</th>
+                <th style={styles.th}>{qcMode !== 'regular' ? 'Product' : 'Category'}</th>
                 <th style={styles.th}>Seconds / PCS</th>
               </tr>
             </thead>
@@ -2357,7 +2398,7 @@ export default function QcDashboardPage() {
               ) : (
                 <tr>
                   <td style={styles.td} colSpan={2}>
-                    {qcMode === 'arkline' ? 'No product timing data found for this filter.' : 'No category timing data found for this filter.'}
+                    {qcMode !== 'regular' ? 'No product timing data found for this filter.' : 'No category timing data found for this filter.'}
                   </td>
                 </tr>
               )}
@@ -2775,8 +2816,8 @@ export default function QcDashboardPage() {
                       <table style={styles.table}>
                         <thead>
                           <tr>
-                            <th style={{ ...styles.th, ...styles.inspectorTh }}>{qcMode === 'arkline' ? 'PO' : 'GRN'}</th>
-                            <th style={{ ...styles.th, ...styles.inspectorTh }}>{qcMode === 'arkline' ? 'SKU' : 'Category'}</th>
+                            <th style={{ ...styles.th, ...styles.inspectorTh }}>{qcMode !== 'regular' ? 'PO' : 'GRN'}</th>
+                            <th style={{ ...styles.th, ...styles.inspectorTh }}>{qcMode !== 'regular' ? 'SKU' : 'Category'}</th>
                             <th style={{ ...styles.th, ...styles.inspectorTh }}>Model</th>
                             <th style={{ ...styles.th, ...styles.thCenter, ...styles.inspectorTh }}>A</th>
                             <th style={{ ...styles.th, ...styles.thCenter, ...styles.inspectorTh }}>B</th>
@@ -2828,8 +2869,8 @@ export default function QcDashboardPage() {
                       <table style={styles.table}>
                         <thead>
                           <tr>
-                            <th style={{ ...styles.th, ...styles.inspectorTh }}>{qcMode === 'arkline' ? 'PO' : 'GRN'}</th>
-                            <th style={{ ...styles.th, ...styles.inspectorTh }}>{qcMode === 'arkline' ? 'SKU' : 'Category'}</th>
+                            <th style={{ ...styles.th, ...styles.inspectorTh }}>{qcMode !== 'regular' ? 'PO' : 'GRN'}</th>
+                            <th style={{ ...styles.th, ...styles.inspectorTh }}>{qcMode !== 'regular' ? 'SKU' : 'Category'}</th>
                             <th style={{ ...styles.th, ...styles.inspectorTh }}>Model</th>
                             <th style={{ ...styles.th, ...styles.thCenter, ...styles.inspectorTh }}>Allocated</th>
                             <th style={{ ...styles.th, ...styles.thCenter, ...styles.inspectorTh }}>Checked</th>
