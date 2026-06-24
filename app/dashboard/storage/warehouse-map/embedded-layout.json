@@ -1,0 +1,1752 @@
+{
+  "LV87": {
+    "elements": [
+      {
+        "id": "shelving-LV87-2.5",
+        "type": "shelving",
+        "code": "2.5",
+        "x": 73,
+        "y": 1,
+        "w": 3.2,
+        "h": 5,
+        "rotation": 0
+      },
+      {
+        "id": "shelving-LV87-2.4",
+        "type": "shelving",
+        "code": "2.4",
+        "x": 73,
+        "y": 6,
+        "w": 3.2,
+        "h": 5,
+        "rotation": 0
+      },
+      {
+        "id": "shelving-LV87-2.3",
+        "type": "shelving",
+        "code": "2.3",
+        "x": 73,
+        "y": 11,
+        "w": 3.2,
+        "h": 5,
+        "rotation": 0
+      },
+      {
+        "id": "shelving-LV87-2.1",
+        "type": "shelving",
+        "code": "2.1",
+        "x": 73,
+        "y": 21,
+        "w": 3.2,
+        "h": 5,
+        "rotation": 0
+      },
+      {
+        "id": "shelving-LV87-2.2",
+        "type": "shelving",
+        "code": "2.2",
+        "x": 73,
+        "y": 16,
+        "w": 3.2,
+        "h": 5,
+        "rotation": 0
+      },
+      {
+        "id": "wall-LV87-0",
+        "type": "wall",
+        "x": 0,
+        "y": 0,
+        "w": 2,
+        "h": 12,
+        "rotation": 0
+      },
+      {
+        "id": "wall-LV87-1",
+        "type": "wall",
+        "x": 0,
+        "y": 21,
+        "w": 2,
+        "h": 79,
+        "rotation": 0
+      },
+      {
+        "id": "wall-LV87-2",
+        "type": "wall",
+        "x": 42,
+        "y": 77,
+        "w": 3,
+        "h": 22,
+        "rotation": 0
+      },
+      {
+        "id": "wall-LV87-3",
+        "type": "wall",
+        "x": 42,
+        "y": 76,
+        "w": 56,
+        "h": 2,
+        "rotation": 0
+      },
+      {
+        "id": "wall-LV87-4",
+        "type": "wall",
+        "x": 42,
+        "y": 98,
+        "w": 58,
+        "h": 2,
+        "rotation": 0
+      },
+      {
+        "id": "wall-LV87-5",
+        "type": "wall",
+        "x": 97,
+        "y": 76,
+        "w": 3,
+        "h": 23,
+        "rotation": 0
+      },
+      {
+        "id": "box-LV87-0",
+        "type": "box",
+        "label": "Office Area",
+        "tone": "room",
+        "x": 59,
+        "y": 84,
+        "w": 24,
+        "h": 10,
+        "rotation": 0
+      },
+      {
+        "id": "nav-arrow-LV87-0",
+        "type": "nav-arrow",
+        "label": "To Warehouse LV85",
+        "targetWarehouseKey": "LV85",
+        "direction": "left",
+        "x": 2,
+        "y": 14,
+        "w": 27,
+        "h": 3.5,
+        "rotation": 0
+      },
+      {
+        "id": "pallet-LV87-1",
+        "type": "pallet",
+        "code": "1",
+        "variant": "standard",
+        "x": 2.1,
+        "y": 85,
+        "w": 8,
+        "h": 12,
+        "rotation": 0
+      },
+      {
+        "id": "pallet-LV87-38",
+        "type": "pallet",
+        "code": "38",
+        "variant": "standard",
+        "x": 33,
+        "y": 85,
+        "w": 8,
+        "h": 12,
+        "rotation": 0
+      },
+      {
+        "id": "shelving-LV87-1.1",
+        "type": "shelving",
+        "code": "1.1",
+        "x": 69,
+        "y": 21,
+        "w": 3.2,
+        "h": 5,
+        "rotation": 0
+      },
+      {
+        "id": "shelving-LV87-1.2",
+        "type": "shelving",
+        "code": "1.2",
+        "x": 69,
+        "y": 16,
+        "w": 3.2,
+        "h": 5,
+        "rotation": 0
+      },
+      {
+        "id": "shelving-LV87-1.3",
+        "type": "shelving",
+        "code": "1.3",
+        "x": 69,
+        "y": 11,
+        "w": 3.2,
+        "h": 5,
+        "rotation": 0
+      },
+      {
+        "id": "shelving-LV87-1.4",
+        "type": "shelving",
+        "code": "1.4",
+        "x": 69,
+        "y": 6,
+        "w": 3.2,
+        "h": 5,
+        "rotation": 0
+      },
+      {
+        "id": "shelving-LV87-1.5",
+        "type": "shelving",
+        "code": "1.5",
+        "x": 69,
+        "y": 1,
+        "w": 3.2,
+        "h": 5,
+        "rotation": 0
+      },
+      {
+        "id": "shelving-LV87-3.1",
+        "type": "shelving",
+        "code": "3.1",
+        "x": 82,
+        "y": 21,
+        "w": 3.2,
+        "h": 5,
+        "rotation": 0
+      },
+      {
+        "id": "shelving-LV87-3.2",
+        "type": "shelving",
+        "code": "3.2",
+        "x": 82,
+        "y": 16,
+        "w": 3.2,
+        "h": 5,
+        "rotation": 0
+      },
+      {
+        "id": "shelving-LV87-6.1",
+        "type": "shelving",
+        "code": "6.1",
+        "x": 69,
+        "y": 31,
+        "w": 3.2,
+        "h": 5,
+        "rotation": 0
+      },
+      {
+        "id": "shelving-LV87-6.7",
+        "type": "shelving",
+        "code": "6.7",
+        "x": 69,
+        "y": 61,
+        "w": 3.2,
+        "h": 5,
+        "rotation": 0
+      },
+      {
+        "id": "shelving-LV87-7.5",
+        "type": "shelving",
+        "code": "7.5",
+        "x": 73,
+        "y": 51,
+        "w": 3.2,
+        "h": 5,
+        "rotation": 0
+      },
+      {
+        "id": "shelving-LV87-7.6",
+        "type": "shelving",
+        "code": "7.6",
+        "x": 73,
+        "y": 56,
+        "w": 3.2,
+        "h": 5,
+        "rotation": 0
+      },
+      {
+        "id": "shelving-LV87-7.7",
+        "type": "shelving",
+        "code": "7.7",
+        "x": 73,
+        "y": 61,
+        "w": 3.2,
+        "h": 5,
+        "rotation": 0
+      },
+      {
+        "id": "shelving-LV87-9.8",
+        "type": "shelving",
+        "code": "9.8",
+        "x": 86,
+        "y": 66,
+        "w": 3.2,
+        "h": 5,
+        "rotation": 0
+      },
+      {
+        "id": "shelving-LV87-10.8",
+        "type": "shelving",
+        "code": "10.8",
+        "x": 94,
+        "y": 66,
+        "w": 3.2,
+        "h": 5,
+        "rotation": 0
+      },
+      {
+        "id": "shelving-LV87-10.5",
+        "type": "shelving",
+        "code": "10.5",
+        "x": 94,
+        "y": 51,
+        "w": 3.2,
+        "h": 5,
+        "rotation": 0
+      },
+      {
+        "id": "shelving-LV87-10.6",
+        "type": "shelving",
+        "code": "10.6",
+        "x": 94,
+        "y": 56,
+        "w": 3.2,
+        "h": 5,
+        "rotation": 0
+      },
+      {
+        "id": "shelving-LV87-10.7",
+        "type": "shelving",
+        "code": "10.7",
+        "x": 94,
+        "y": 61,
+        "w": 3.2,
+        "h": 5,
+        "rotation": 0
+      },
+      {
+        "id": "shelving-LV87-11.1",
+        "type": "shelving",
+        "code": "11.1",
+        "x": 58,
+        "y": 61,
+        "w": 3.2,
+        "h": 5,
+        "rotation": 0
+      },
+      {
+        "id": "shelving-LV87-11.2",
+        "type": "shelving",
+        "code": "11.2",
+        "x": 58,
+        "y": 56,
+        "w": 3.2,
+        "h": 5,
+        "rotation": 0
+      },
+      {
+        "id": "shelving-LV87-11.3",
+        "type": "shelving",
+        "code": "11.3",
+        "x": 58,
+        "y": 51,
+        "w": 3.2,
+        "h": 5,
+        "rotation": 0
+      },
+      {
+        "id": "shelving-LV87-11.4",
+        "type": "shelving",
+        "code": "11.4",
+        "x": 54,
+        "y": 61,
+        "w": 3.2,
+        "h": 5,
+        "rotation": 0
+      },
+      {
+        "id": "shelving-LV87-11.5",
+        "type": "shelving",
+        "code": "11.5",
+        "x": 54,
+        "y": 56,
+        "w": 3.2,
+        "h": 5,
+        "rotation": 0
+      },
+      {
+        "id": "shelving-LV87-11.6",
+        "type": "shelving",
+        "code": "11.6",
+        "x": 54,
+        "y": 51,
+        "w": 3.2,
+        "h": 5,
+        "rotation": 0
+      },
+      {
+        "id": "shelving-LV87-11.7",
+        "type": "shelving",
+        "code": "11.7",
+        "x": 43,
+        "y": 51,
+        "w": 3.2,
+        "h": 5,
+        "rotation": 0
+      },
+      {
+        "id": "shelving-LV87-11.8",
+        "type": "shelving",
+        "code": "11.8",
+        "x": 43,
+        "y": 56,
+        "w": 3.2,
+        "h": 5,
+        "rotation": 0
+      },
+      {
+        "id": "shelving-LV87-11.9",
+        "type": "shelving",
+        "code": "11.9",
+        "x": 43,
+        "y": 61,
+        "w": 3.2,
+        "h": 5,
+        "rotation": 0
+      },
+      {
+        "id": "shelving-LV87-11.11",
+        "type": "shelving",
+        "code": "11.11",
+        "x": 82,
+        "y": 66,
+        "w": 3.2,
+        "h": 5,
+        "rotation": 0
+      },
+      {
+        "id": "box-1782271341097-97vwxy",
+        "type": "box",
+        "x": 42,
+        "y": 71,
+        "w": 55,
+        "h": 5,
+        "rotation": 0,
+        "label": "Label",
+        "tone": "room"
+      },
+      {
+        "id": "pallet-LV87-37",
+        "type": "pallet",
+        "code": "37",
+        "variant": "standard",
+        "x": 33,
+        "y": 73,
+        "w": 8,
+        "h": 12,
+        "rotation": 0
+      },
+      {
+        "id": "pallet-LV87-2",
+        "type": "pallet",
+        "code": "2",
+        "variant": "standard",
+        "x": 2.1,
+        "y": 73,
+        "w": 8,
+        "h": 12,
+        "rotation": 0
+      },
+      {
+        "id": "pallet-LV87-3",
+        "type": "pallet",
+        "code": "3",
+        "variant": "standard",
+        "x": 2,
+        "y": 61,
+        "w": 8,
+        "h": 12,
+        "rotation": 0
+      },
+      {
+        "id": "pallet-LV87-4",
+        "type": "pallet",
+        "code": "4",
+        "variant": "standard",
+        "x": 2.1,
+        "y": 49,
+        "w": 8,
+        "h": 12,
+        "rotation": 0
+      },
+      {
+        "id": "pallet-LV87-5",
+        "type": "pallet",
+        "code": "5",
+        "variant": "standard",
+        "x": 2.1,
+        "y": 37,
+        "w": 8,
+        "h": 12,
+        "rotation": 0
+      },
+      {
+        "id": "pallet-LV87-6",
+        "type": "pallet",
+        "code": "6",
+        "variant": "standard",
+        "x": 2.1,
+        "y": 25,
+        "w": 8,
+        "h": 12,
+        "rotation": 0
+      },
+      {
+        "id": "line-1782272298253-gpjr8v",
+        "type": "line",
+        "x": 98,
+        "y": 0,
+        "w": 2,
+        "h": 77,
+        "rotation": 0
+      },
+      {
+        "id": "shelving-1782272693026-qd11pu",
+        "type": "shelving",
+        "x": 71,
+        "y": 65,
+        "w": 3.2,
+        "h": 5,
+        "rotation": 90,
+        "code": "11.10"
+      },
+      {
+        "id": "shelving-1782272812879-u1sltd",
+        "type": "shelving",
+        "x": 58,
+        "y": 41,
+        "w": 3.2,
+        "h": 5,
+        "rotation": 0,
+        "code": ""
+      },
+      {
+        "id": "shelving-1782272820627-d68ysa",
+        "type": "shelving",
+        "x": 58,
+        "y": 46,
+        "w": 3.2,
+        "h": 5,
+        "rotation": 0,
+        "code": ""
+      },
+      {
+        "id": "shelving-1782272833757-e9alo4",
+        "type": "shelving",
+        "x": 58,
+        "y": 36,
+        "w": 3.2,
+        "h": 5,
+        "rotation": 0,
+        "code": ""
+      },
+      {
+        "id": "shelving-1782272837562-m2k155",
+        "type": "shelving",
+        "x": 58,
+        "y": 31,
+        "w": 3.2,
+        "h": 5,
+        "rotation": 0,
+        "code": ""
+      },
+      {
+        "id": "shelving-1782272848987-nwah9z",
+        "type": "shelving",
+        "x": 58,
+        "y": 1,
+        "w": 3.2,
+        "h": 5,
+        "rotation": 0,
+        "code": ""
+      },
+      {
+        "id": "shelving-1782272858778-xo17y7",
+        "type": "shelving",
+        "x": 58,
+        "y": 6,
+        "w": 3.2,
+        "h": 5,
+        "rotation": 0,
+        "code": ""
+      },
+      {
+        "id": "shelving-1782272862518-mz06j8",
+        "type": "shelving",
+        "x": 58,
+        "y": 11,
+        "w": 3.2,
+        "h": 5,
+        "rotation": 0,
+        "code": ""
+      },
+      {
+        "id": "shelving-1782272865207-bmaa52",
+        "type": "shelving",
+        "x": 58,
+        "y": 16,
+        "w": 3.2,
+        "h": 5,
+        "rotation": 0,
+        "code": ""
+      },
+      {
+        "id": "shelving-1782272868340-ezr1bm",
+        "type": "shelving",
+        "x": 58,
+        "y": 21,
+        "w": 3.2,
+        "h": 5,
+        "rotation": 0,
+        "code": ""
+      },
+      {
+        "id": "shelving-1782272892338-rnhlrx",
+        "type": "shelving",
+        "x": 47,
+        "y": 1,
+        "w": 3.2,
+        "h": 5,
+        "rotation": 0,
+        "code": ""
+      },
+      {
+        "id": "shelving-1782272898344-mhcf70",
+        "type": "shelving",
+        "x": 47,
+        "y": 6,
+        "w": 3.2,
+        "h": 5,
+        "rotation": 0,
+        "code": ""
+      },
+      {
+        "id": "shelving-1782272901340-tdit7v",
+        "type": "shelving",
+        "x": 47,
+        "y": 16,
+        "w": 3.2,
+        "h": 5,
+        "rotation": 0,
+        "code": ""
+      },
+      {
+        "id": "line-1782272934065-8nl9bq",
+        "type": "line",
+        "x": 76,
+        "y": 0,
+        "w": 24,
+        "h": 1.2,
+        "rotation": 0
+      },
+      {
+        "id": "line-1782272946653-kbg01u",
+        "type": "line",
+        "x": 53,
+        "y": 0,
+        "w": 24,
+        "h": 1.2,
+        "rotation": 0
+      },
+      {
+        "id": "line-1782272953652-tqkwzy",
+        "type": "line",
+        "x": 43,
+        "y": 0,
+        "w": 24,
+        "h": 1.2,
+        "rotation": 0
+      },
+      {
+        "id": "shelving-1782272989343-x7tako",
+        "type": "shelving",
+        "x": 47,
+        "y": 21,
+        "w": 3.2,
+        "h": 5,
+        "rotation": 0,
+        "code": ""
+      },
+      {
+        "id": "shelving-LV87-10.4",
+        "type": "shelving",
+        "code": "10.4",
+        "x": 94,
+        "y": 46,
+        "w": 3.2,
+        "h": 5,
+        "rotation": 0
+      },
+      {
+        "id": "shelving-LV87-10.3",
+        "type": "shelving",
+        "code": "10.3",
+        "x": 94,
+        "y": 41,
+        "w": 3.2,
+        "h": 5,
+        "rotation": 0
+      },
+      {
+        "id": "shelving-LV87-10.2",
+        "type": "shelving",
+        "code": "10.2",
+        "x": 94,
+        "y": 36,
+        "w": 3.2,
+        "h": 5,
+        "rotation": 0
+      },
+      {
+        "id": "shelving-LV87-10.1",
+        "type": "shelving",
+        "code": "10.1",
+        "x": 94,
+        "y": 31,
+        "w": 3.2,
+        "h": 5,
+        "rotation": 0
+      },
+      {
+        "id": "shelving-1782273394296-j2jqv0",
+        "type": "shelving",
+        "x": 94,
+        "y": 26,
+        "w": 3,
+        "h": 5,
+        "rotation": 0,
+        "code": "MIDDLE.MIDDLE"
+      },
+      {
+        "id": "shelving-LV87-5.5",
+        "type": "shelving",
+        "code": "5.5",
+        "x": 94,
+        "y": 21,
+        "w": 3.2,
+        "h": 5,
+        "rotation": 0
+      },
+      {
+        "id": "shelving-LV87-5.4",
+        "type": "shelving",
+        "code": "5.4",
+        "x": 94,
+        "y": 16,
+        "w": 3.2,
+        "h": 5,
+        "rotation": 0
+      },
+      {
+        "id": "shelving-LV87-5.3",
+        "type": "shelving",
+        "code": "5.3",
+        "x": 94,
+        "y": 11,
+        "w": 3.2,
+        "h": 5,
+        "rotation": 0
+      },
+      {
+        "id": "shelving-LV87-5.2",
+        "type": "shelving",
+        "code": "5.2",
+        "x": 94,
+        "y": 6,
+        "w": 3.2,
+        "h": 5,
+        "rotation": 0
+      },
+      {
+        "id": "shelving-LV87-5.1",
+        "type": "shelving",
+        "code": "5.1",
+        "x": 94,
+        "y": 1,
+        "w": 3.2,
+        "h": 5,
+        "rotation": 0
+      },
+      {
+        "id": "shelving-LV87-9.7",
+        "type": "shelving",
+        "code": "9.7",
+        "x": 86,
+        "y": 61,
+        "w": 3.2,
+        "h": 5,
+        "rotation": 0
+      },
+      {
+        "id": "shelving-LV87-9.6",
+        "type": "shelving",
+        "code": "9.6",
+        "x": 86,
+        "y": 56,
+        "w": 3.2,
+        "h": 5,
+        "rotation": 0
+      },
+      {
+        "id": "shelving-LV87-9.5",
+        "type": "shelving",
+        "code": "9.5",
+        "x": 86,
+        "y": 51,
+        "w": 3.2,
+        "h": 5,
+        "rotation": 0
+      },
+      {
+        "id": "shelving-LV87-9.4",
+        "type": "shelving",
+        "code": "9.4",
+        "x": 86,
+        "y": 46,
+        "w": 3.2,
+        "h": 5,
+        "rotation": 0
+      },
+      {
+        "id": "shelving-LV87-9.3",
+        "type": "shelving",
+        "code": "9.3",
+        "x": 86,
+        "y": 41,
+        "w": 3.2,
+        "h": 5,
+        "rotation": 0
+      },
+      {
+        "id": "shelving-LV87-9.2",
+        "type": "shelving",
+        "code": "9.2",
+        "x": 86,
+        "y": 36,
+        "w": 3.2,
+        "h": 5,
+        "rotation": 0
+      },
+      {
+        "id": "shelving-LV87-9.1",
+        "type": "shelving",
+        "code": "9.1",
+        "x": 86,
+        "y": 31,
+        "w": 3.2,
+        "h": 5,
+        "rotation": 0
+      },
+      {
+        "id": "shelving-LV87-4.1",
+        "type": "shelving",
+        "code": "4.1",
+        "x": 86,
+        "y": 21,
+        "w": 3.2,
+        "h": 5,
+        "rotation": 0
+      },
+      {
+        "id": "shelving-LV87-4.2",
+        "type": "shelving",
+        "code": "4.2",
+        "x": 86,
+        "y": 16,
+        "w": 3.2,
+        "h": 5,
+        "rotation": 0
+      },
+      {
+        "id": "shelving-LV87-4.3",
+        "type": "shelving",
+        "code": "4.3",
+        "x": 86,
+        "y": 11,
+        "w": 3.2,
+        "h": 5,
+        "rotation": 0
+      },
+      {
+        "id": "shelving-LV87-4.4",
+        "type": "shelving",
+        "code": "4.4",
+        "x": 86,
+        "y": 6,
+        "w": 3.2,
+        "h": 5,
+        "rotation": 0
+      },
+      {
+        "id": "shelving-LV87-4.5",
+        "type": "shelving",
+        "code": "4.5",
+        "x": 86,
+        "y": 1,
+        "w": 3.2,
+        "h": 5,
+        "rotation": 0
+      },
+      {
+        "id": "shelving-LV87-3.3",
+        "type": "shelving",
+        "code": "3.3",
+        "x": 82,
+        "y": 11,
+        "w": 3.2,
+        "h": 5,
+        "rotation": 0
+      },
+      {
+        "id": "shelving-LV87-3.4",
+        "type": "shelving",
+        "code": "3.4",
+        "x": 82,
+        "y": 6,
+        "w": 3.2,
+        "h": 5,
+        "rotation": 0
+      },
+      {
+        "id": "shelving-LV87-3.5",
+        "type": "shelving",
+        "code": "3.5",
+        "x": 82,
+        "y": 1,
+        "w": 3.2,
+        "h": 5,
+        "rotation": 0
+      },
+      {
+        "id": "shelving-LV87-8.7",
+        "type": "shelving",
+        "code": "8.7",
+        "x": 82,
+        "y": 61,
+        "w": 3.2,
+        "h": 5,
+        "rotation": 0
+      },
+      {
+        "id": "shelving-LV87-8.6",
+        "type": "shelving",
+        "code": "8.6",
+        "x": 82,
+        "y": 56,
+        "w": 3.2,
+        "h": 5,
+        "rotation": 0
+      },
+      {
+        "id": "shelving-LV87-8.5",
+        "type": "shelving",
+        "code": "8.5",
+        "x": 82,
+        "y": 51,
+        "w": 3.2,
+        "h": 5,
+        "rotation": 0
+      },
+      {
+        "id": "shelving-LV87-8.4",
+        "type": "shelving",
+        "code": "8.4",
+        "x": 82,
+        "y": 46,
+        "w": 3.2,
+        "h": 5,
+        "rotation": 0
+      },
+      {
+        "id": "shelving-LV87-8.3",
+        "type": "shelving",
+        "code": "8.3",
+        "x": 82,
+        "y": 41,
+        "w": 3.2,
+        "h": 5,
+        "rotation": 0
+      },
+      {
+        "id": "shelving-LV87-8.2",
+        "type": "shelving",
+        "code": "8.2",
+        "x": 82,
+        "y": 36,
+        "w": 3.2,
+        "h": 5,
+        "rotation": 0
+      },
+      {
+        "id": "shelving-LV87-8.1",
+        "type": "shelving",
+        "code": "8.1",
+        "x": 82,
+        "y": 31,
+        "w": 3.2,
+        "h": 5,
+        "rotation": 0
+      },
+      {
+        "id": "shelving-LV87-7.4",
+        "type": "shelving",
+        "code": "7.4",
+        "x": 73,
+        "y": 46,
+        "w": 3.2,
+        "h": 5,
+        "rotation": 0
+      },
+      {
+        "id": "shelving-LV87-7.3",
+        "type": "shelving",
+        "code": "7.3",
+        "x": 73,
+        "y": 41,
+        "w": 3.2,
+        "h": 5,
+        "rotation": 0
+      },
+      {
+        "id": "shelving-LV87-7.2",
+        "type": "shelving",
+        "code": "7.2",
+        "x": 73,
+        "y": 36,
+        "w": 3.2,
+        "h": 5,
+        "rotation": 0
+      },
+      {
+        "id": "shelving-LV87-7.1",
+        "type": "shelving",
+        "code": "7.1",
+        "x": 73,
+        "y": 31,
+        "w": 3.2,
+        "h": 5,
+        "rotation": 0
+      },
+      {
+        "id": "shelving-LV87-6.6",
+        "type": "shelving",
+        "code": "6.6",
+        "x": 69,
+        "y": 56,
+        "w": 3.2,
+        "h": 5,
+        "rotation": 0
+      },
+      {
+        "id": "shelving-LV87-6.5",
+        "type": "shelving",
+        "code": "6.5",
+        "x": 69,
+        "y": 51,
+        "w": 3.2,
+        "h": 5,
+        "rotation": 0
+      },
+      {
+        "id": "shelving-LV87-6.4",
+        "type": "shelving",
+        "code": "6.4",
+        "x": 69,
+        "y": 46,
+        "w": 3.2,
+        "h": 5,
+        "rotation": 0
+      },
+      {
+        "id": "shelving-LV87-6.3",
+        "type": "shelving",
+        "code": "6.3",
+        "x": 69,
+        "y": 41,
+        "w": 3.2,
+        "h": 5,
+        "rotation": 0
+      },
+      {
+        "id": "shelving-LV87-6.2",
+        "type": "shelving",
+        "code": "6.2",
+        "x": 69,
+        "y": 36,
+        "w": 3.2,
+        "h": 5,
+        "rotation": 0
+      }
+    ]
+  },
+  "LV85": {
+    "elements": [
+      {
+        "id": "wall-LV85-0",
+        "type": "wall",
+        "x": 8,
+        "y": 5,
+        "w": 1.5,
+        "h": 66,
+        "rotation": 0
+      },
+      {
+        "id": "wall-LV85-1",
+        "type": "wall",
+        "x": 8,
+        "y": 71,
+        "w": 50,
+        "h": 1.3,
+        "rotation": 0
+      },
+      {
+        "id": "wall-LV85-2",
+        "type": "wall",
+        "x": 8,
+        "y": 71,
+        "w": 1.5,
+        "h": 25,
+        "rotation": 0
+      },
+      {
+        "id": "wall-LV85-3",
+        "type": "wall",
+        "x": 58,
+        "y": 71,
+        "w": 1.5,
+        "h": 25,
+        "rotation": 0
+      },
+      {
+        "id": "wall-LV85-4",
+        "type": "wall",
+        "x": 8,
+        "y": 95,
+        "w": 50,
+        "h": 1.3,
+        "rotation": 0
+      },
+      {
+        "id": "wall-LV85-5",
+        "type": "wall",
+        "x": 96,
+        "y": 6,
+        "w": 1.5,
+        "h": 89,
+        "rotation": 0
+      },
+      {
+        "id": "wall-LV85-6",
+        "type": "wall",
+        "x": 8,
+        "y": 0,
+        "w": 82,
+        "h": 1.2,
+        "rotation": 0
+      },
+      {
+        "id": "box-LV85-0",
+        "type": "box",
+        "label": "Inbound Area",
+        "tone": "room",
+        "x": 21,
+        "y": 78,
+        "w": 24,
+        "h": 10,
+        "rotation": 0
+      },
+      {
+        "id": "box-LV85-1",
+        "type": "box",
+        "label": "QC Area",
+        "tone": "room",
+        "x": 78,
+        "y": 6,
+        "w": 12,
+        "h": 65,
+        "rotation": 0
+      },
+      {
+        "id": "nav-arrow-LV85-0",
+        "type": "nav-arrow",
+        "label": "To Warehouse LV83",
+        "targetWarehouseKey": "LV83",
+        "direction": "left",
+        "x": 4,
+        "y": 1.4,
+        "w": 24,
+        "h": 3.5,
+        "rotation": 0
+      },
+      {
+        "id": "nav-arrow-LV85-1",
+        "type": "nav-arrow",
+        "label": "To Warehouse LV87",
+        "targetWarehouseKey": "LV87",
+        "direction": "right",
+        "x": 75,
+        "y": 2,
+        "w": 22,
+        "h": 4,
+        "rotation": 0
+      },
+      {
+        "id": "pallet-LV85-21",
+        "type": "pallet",
+        "code": "21",
+        "variant": "standard",
+        "x": 11,
+        "y": 6,
+        "w": 8,
+        "h": 13,
+        "rotation": 0
+      },
+      {
+        "id": "pallet-LV85-20",
+        "type": "pallet",
+        "code": "20",
+        "variant": "standard",
+        "x": 11,
+        "y": 19,
+        "w": 8,
+        "h": 13,
+        "rotation": 0
+      },
+      {
+        "id": "pallet-LV85-19",
+        "type": "pallet",
+        "code": "19",
+        "variant": "standard",
+        "x": 11,
+        "y": 32,
+        "w": 8,
+        "h": 13,
+        "rotation": 0
+      },
+      {
+        "id": "pallet-LV85-18",
+        "type": "pallet",
+        "code": "18",
+        "variant": "standard",
+        "x": 11,
+        "y": 45,
+        "w": 8,
+        "h": 13,
+        "rotation": 0
+      },
+      {
+        "id": "pallet-LV85-17",
+        "type": "pallet",
+        "code": "17",
+        "variant": "standard",
+        "x": 11,
+        "y": 58,
+        "w": 8,
+        "h": 13,
+        "rotation": 0
+      },
+      {
+        "id": "pallet-LV85-12",
+        "type": "pallet",
+        "code": "12",
+        "variant": "standard",
+        "x": 39,
+        "y": 6,
+        "w": 8,
+        "h": 13,
+        "rotation": 0
+      },
+      {
+        "id": "pallet-LV85-13",
+        "type": "pallet",
+        "code": "13",
+        "variant": "standard",
+        "x": 39,
+        "y": 19,
+        "w": 8,
+        "h": 13,
+        "rotation": 0
+      },
+      {
+        "id": "pallet-LV85-14",
+        "type": "pallet",
+        "code": "14",
+        "variant": "standard",
+        "x": 39,
+        "y": 32,
+        "w": 8,
+        "h": 13,
+        "rotation": 0
+      },
+      {
+        "id": "pallet-LV85-15",
+        "type": "pallet",
+        "code": "15",
+        "variant": "standard",
+        "x": 39,
+        "y": 45,
+        "w": 8,
+        "h": 13,
+        "rotation": 0
+      },
+      {
+        "id": "pallet-LV85-16",
+        "type": "pallet",
+        "code": "16",
+        "variant": "standard",
+        "x": 39,
+        "y": 58,
+        "w": 8,
+        "h": 13,
+        "rotation": 0
+      },
+      {
+        "id": "pallet-LV85-7",
+        "type": "pallet",
+        "code": "7",
+        "variant": "standard",
+        "x": 47,
+        "y": 6,
+        "w": 8,
+        "h": 13,
+        "rotation": 0
+      },
+      {
+        "id": "pallet-LV85-8",
+        "type": "pallet",
+        "code": "8",
+        "variant": "standard",
+        "x": 47,
+        "y": 19,
+        "w": 8,
+        "h": 13,
+        "rotation": 0
+      },
+      {
+        "id": "pallet-LV85-9",
+        "type": "pallet",
+        "code": "9",
+        "variant": "standard",
+        "x": 47,
+        "y": 32,
+        "w": 8,
+        "h": 13,
+        "rotation": 0
+      },
+      {
+        "id": "pallet-LV85-10",
+        "type": "pallet",
+        "code": "10",
+        "variant": "standard",
+        "x": 47,
+        "y": 45,
+        "w": 8,
+        "h": 13,
+        "rotation": 0
+      },
+      {
+        "id": "pallet-LV85-11",
+        "type": "pallet",
+        "code": "11",
+        "variant": "standard",
+        "x": 47,
+        "y": 58,
+        "w": 8,
+        "h": 13,
+        "rotation": 0
+      },
+      {
+        "id": "line-1782205983206-y5jeed",
+        "type": "line",
+        "x": 76,
+        "y": 0,
+        "w": 24,
+        "h": 1.2,
+        "rotation": 0
+      },
+      {
+        "id": "line-1782205987248-esjica",
+        "type": "line",
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 1.2,
+        "rotation": 0
+      }
+    ]
+  },
+  "LV83": {
+    "elements": [
+      {
+        "id": "wall-LV83-0",
+        "type": "wall",
+        "x": 0,
+        "y": 0,
+        "w": 1.3,
+        "h": 96,
+        "rotation": 0
+      },
+      {
+        "id": "wall-LV83-1",
+        "type": "wall",
+        "x": 91.8,
+        "y": 5,
+        "w": 1.5,
+        "h": 61,
+        "rotation": 0
+      },
+      {
+        "id": "wall-LV83-2",
+        "type": "wall",
+        "x": 39,
+        "y": 66,
+        "w": 53,
+        "h": 1.3,
+        "rotation": 0
+      },
+      {
+        "id": "wall-LV83-3",
+        "type": "wall",
+        "x": 39,
+        "y": 66,
+        "w": 1.5,
+        "h": 30,
+        "rotation": 0
+      },
+      {
+        "id": "wall-LV83-4",
+        "type": "wall",
+        "x": 92,
+        "y": 66,
+        "w": 1.5,
+        "h": 30,
+        "rotation": 0
+      },
+      {
+        "id": "wall-LV83-5",
+        "type": "wall",
+        "x": 39,
+        "y": 95,
+        "w": 53,
+        "h": 1.3,
+        "rotation": 0
+      },
+      {
+        "id": "box-LV83-0",
+        "type": "box",
+        "label": "Arkline Picker Area",
+        "tone": "room",
+        "x": 54,
+        "y": 77.5,
+        "w": 24,
+        "h": 10,
+        "rotation": 0
+      },
+      {
+        "id": "nav-arrow-LV83-0",
+        "type": "nav-arrow",
+        "label": "To Warehouse LV85",
+        "targetWarehouseKey": "LV85",
+        "direction": "right",
+        "x": 75,
+        "y": 1,
+        "w": 25,
+        "h": 3.5,
+        "rotation": 0
+      },
+      {
+        "id": "pallet-LV83-7",
+        "type": "pallet",
+        "code": "7",
+        "variant": "standard",
+        "x": 1.5,
+        "y": 5,
+        "w": 8,
+        "h": 12,
+        "rotation": 0
+      },
+      {
+        "id": "pallet-LV83-6",
+        "type": "pallet",
+        "code": "6",
+        "variant": "standard",
+        "x": 1.5,
+        "y": 17,
+        "w": 8,
+        "h": 12,
+        "rotation": 0
+      },
+      {
+        "id": "pallet-LV83-5",
+        "type": "pallet",
+        "code": "5",
+        "variant": "standard",
+        "x": 1.5,
+        "y": 29,
+        "w": 8,
+        "h": 12,
+        "rotation": 0
+      },
+      {
+        "id": "pallet-LV83-4",
+        "type": "pallet",
+        "code": "4",
+        "variant": "standard",
+        "x": 1.5,
+        "y": 41,
+        "w": 8,
+        "h": 12,
+        "rotation": 0
+      },
+      {
+        "id": "pallet-LV83-3",
+        "type": "pallet",
+        "code": "3",
+        "variant": "standard",
+        "x": 1.5,
+        "y": 53,
+        "w": 8,
+        "h": 12,
+        "rotation": 0
+      },
+      {
+        "id": "pallet-LV83-2",
+        "type": "pallet",
+        "code": "2",
+        "variant": "standard",
+        "x": 1.5,
+        "y": 65,
+        "w": 8,
+        "h": 12,
+        "rotation": 0
+      },
+      {
+        "id": "pallet-LV83-1",
+        "type": "pallet",
+        "code": "1",
+        "variant": "standard",
+        "x": 1.5,
+        "y": 77,
+        "w": 8,
+        "h": 12,
+        "rotation": 0
+      },
+      {
+        "id": "pallet-LV83-36",
+        "type": "pallet",
+        "code": "36",
+        "variant": "standard",
+        "x": 47,
+        "y": 5,
+        "w": 8,
+        "h": 12,
+        "rotation": 0
+      },
+      {
+        "id": "pallet-LV83-35",
+        "type": "pallet",
+        "code": "35",
+        "variant": "standard",
+        "x": 47,
+        "y": 17,
+        "w": 8,
+        "h": 12,
+        "rotation": 0
+      },
+      {
+        "id": "pallet-LV83-34",
+        "type": "pallet",
+        "code": "34",
+        "variant": "standard",
+        "x": 47,
+        "y": 29,
+        "w": 8,
+        "h": 12,
+        "rotation": 0
+      },
+      {
+        "id": "pallet-LV83-33",
+        "type": "pallet",
+        "code": "33",
+        "variant": "standard",
+        "x": 47,
+        "y": 41,
+        "w": 8,
+        "h": 12,
+        "rotation": 0
+      },
+      {
+        "id": "pallet-LV83-32",
+        "type": "pallet",
+        "code": "32",
+        "variant": "standard",
+        "x": 47,
+        "y": 53,
+        "w": 8,
+        "h": 12,
+        "rotation": 0
+      },
+      {
+        "id": "pallet-LV83-31",
+        "type": "pallet",
+        "code": "31",
+        "variant": "standard",
+        "x": 55,
+        "y": 5,
+        "w": 8,
+        "h": 12,
+        "rotation": 0
+      },
+      {
+        "id": "pallet-LV83-30",
+        "type": "pallet",
+        "code": "30",
+        "variant": "standard",
+        "x": 55,
+        "y": 17,
+        "w": 8,
+        "h": 12,
+        "rotation": 0
+      },
+      {
+        "id": "pallet-LV83-29",
+        "type": "pallet",
+        "code": "29",
+        "variant": "standard",
+        "x": 55,
+        "y": 29,
+        "w": 8,
+        "h": 12,
+        "rotation": 0
+      },
+      {
+        "id": "pallet-LV83-28",
+        "type": "pallet",
+        "code": "28",
+        "variant": "standard",
+        "x": 55,
+        "y": 41,
+        "w": 8,
+        "h": 12,
+        "rotation": 0
+      },
+      {
+        "id": "pallet-LV83-27",
+        "type": "pallet",
+        "code": "27",
+        "variant": "standard",
+        "x": 55,
+        "y": 53,
+        "w": 8,
+        "h": 12,
+        "rotation": 0
+      },
+      {
+        "id": "pallet-LV83-26",
+        "type": "pallet",
+        "code": "26",
+        "variant": "standard",
+        "x": 83.5,
+        "y": 5,
+        "w": 8,
+        "h": 12,
+        "rotation": 0
+      },
+      {
+        "id": "pallet-LV83-25",
+        "type": "pallet",
+        "code": "25",
+        "variant": "standard",
+        "x": 83.5,
+        "y": 17,
+        "w": 8,
+        "h": 12,
+        "rotation": 0
+      },
+      {
+        "id": "pallet-LV83-24",
+        "type": "pallet",
+        "code": "24",
+        "variant": "standard",
+        "x": 83.5,
+        "y": 29,
+        "w": 8,
+        "h": 12,
+        "rotation": 0
+      },
+      {
+        "id": "pallet-LV83-23",
+        "type": "pallet",
+        "code": "23",
+        "variant": "standard",
+        "x": 83.5,
+        "y": 41,
+        "w": 8,
+        "h": 12,
+        "rotation": 0
+      },
+      {
+        "id": "pallet-LV83-22",
+        "type": "pallet",
+        "code": "22",
+        "variant": "standard",
+        "x": 83.5,
+        "y": 53,
+        "w": 8,
+        "h": 12,
+        "rotation": 0
+      },
+      {
+        "id": "line-1782205922353-6xoulg",
+        "type": "line",
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 1.2,
+        "rotation": 0
+      },
+      {
+        "id": "line-1782205925578-4jolj8",
+        "type": "line",
+        "x": 21,
+        "y": 0,
+        "w": 24,
+        "h": 1.2,
+        "rotation": 0
+      },
+      {
+        "id": "line-1782205929314-xnokcm",
+        "type": "line",
+        "x": 42,
+        "y": 0,
+        "w": 24,
+        "h": 1.2,
+        "rotation": 0
+      },
+      {
+        "id": "line-1782205939687-7vg89r",
+        "type": "line",
+        "x": 62,
+        "y": 0,
+        "w": 24,
+        "h": 1.2,
+        "rotation": 0
+      },
+      {
+        "id": "line-1782205943087-ykhzvv",
+        "type": "line",
+        "x": 76,
+        "y": 0,
+        "w": 24,
+        "h": 1.2,
+        "rotation": 0
+      }
+    ]
+  }
+}

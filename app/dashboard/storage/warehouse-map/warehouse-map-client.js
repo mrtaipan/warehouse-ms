@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 
 import { createClient } from '@/utils/supabase/browser'
+import embeddedMapLayouts from './embedded-layout.json'
 import styles from './warehouse-map.module.css'
 
 const supabase = createClient()
@@ -147,7 +148,8 @@ const WAREHOUSES = {
 }
 
 const WAREHOUSE_ORDER = ['LV83', 'LV85', 'LV87']
-const MAP_BUILDER_STORAGE_KEY = 'warehouse-map-builder-layout-v1'
+const MAP_BUILDER_STORAGE_KEY = 'warehouse-map-builder-layout-v2'
+const EMBEDDED_MAP_LAYOUTS = embeddedMapLayouts
 const SNAP_STEP = 1
 const MIN_ELEMENT_SIZE = 2
 const EDITOR_TOOLS = [
@@ -280,6 +282,12 @@ function buildDefaultShelvingElements(rackLocations) {
 }
 
 function createDefaultMapElements(warehouse, rackLocations = []) {
+  const embeddedLayout = EMBEDDED_MAP_LAYOUTS[warehouse.key]
+
+  if (Array.isArray(embeddedLayout?.elements)) {
+    return embeddedLayout.elements
+  }
+
   return [
     ...warehouse.walls.map((wall, index) => ({
       id: `wall-${warehouse.key}-${index}`,
