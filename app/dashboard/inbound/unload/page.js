@@ -479,7 +479,7 @@ const styles = {
   },
   metricGrid: {
     display: 'grid',
-    gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+    gridTemplateColumns: 'repeat(4, minmax(0, 1fr))',
     gap: '10px',
   },
   metricBox: {
@@ -2115,7 +2115,7 @@ export default function UnloadPage() {
   const totalReturnQty = returnRows
     .reduce((sum, row) => sum + Number(row.qty || 0), 0)
   const totalInboundQty =
-    unloadRows.reduce((sum, row) => sum + Number(row.qty || 0), 0) + totalReturnQty
+    unloadRows.reduce((sum, row) => sum + Number(row.qty || 0), 0)
   const sjQty = Number(selectedInbound?.total_claimed_qty || 0)
   const remainingQty = totalInboundQty - sjQty
   const remainingQtyStyle =
@@ -2135,7 +2135,25 @@ export default function UnloadPage() {
     isSample ||
     isReturn
   )
-  const recentProductOptions = useMemo(() => {
+  const recentProductOptions = (() => {
+    function getRecentProductKey(row) {
+      const matchingVariant = getVariantForRow(row)
+
+      if (matchingVariant?.id) {
+        return `variant:${matchingVariant.id}`
+      }
+
+      const variantIdentity = normalizeVariantLookupValue(getRowVariantIdentifier(row))
+      const fallbackIdentity = variantIdentity || normalizeVariantLookupValue(row.photo_url)
+
+      return [
+        row.brand_id || '',
+        row.category_id || '',
+        normalizeVariantLookupValue(row.model_name),
+        fallbackIdentity,
+      ].join('|')
+    }
+
     const sourceRows = [
       ...currentKoliItems.map((row, index) => ({ ...row, sortKey: 1000000 + index })),
       ...unloadRows.map((row) => ({ ...row, sortKey: Number(row.id || 0) })),
@@ -2148,24 +2166,18 @@ export default function UnloadPage() {
     const options = []
 
     for (const row of sourceRows) {
-      const variantIdentity = getRowVariantIdentifier(row) || row.photo_url || ''
-      const key = [
-        row.brand_id || '',
-        row.category_id || '',
-        row.model_name || '',
-        variantIdentity,
-      ].join('|')
+      const key = getRecentProductKey(row)
 
       if (seen.has(key)) continue
 
       seen.add(key)
-      options.push(row)
+      options.push({ ...row, recentProductKey: key })
 
       if (options.length >= 3) break
     }
 
-    return options
-  }, [currentKoliItems, returnRows, unloadRows])
+    return options.slice(0, 3)
+  })()
   const resultRows = [
     ...unloadRows.map((row) => ({ ...row, rowType: row.is_sample ? 'sample' : 'koli' })),
     ...returnRows.map((row) => ({ ...row, rowType: 'return', is_sample: false, koli_sequence: null })),
@@ -3528,6 +3540,10 @@ export default function UnloadPage() {
                   <span style={styles.infoLabel}>Intake Qty</span>
                   <strong style={styles.metricValue}>{totalInboundQty}</strong>
                 </div>
+                <div style={styles.metricBox}>
+                  <span style={styles.infoLabel}>Retur Qty</span>
+                  <strong style={styles.metricValue}>{totalReturnQty}</strong>
+                </div>
               </div>
             </div>
           </section>
@@ -3695,7 +3711,6 @@ export default function UnloadPage() {
                           <td style={{ ...styles.td, ...styles.koliGroupTd }}>{category?.full_name || category?.category_name || '-'}</td>
                           <td style={{ ...styles.td, ...styles.koliGroupTd }}>
                             <strong>{group.model_name || '-'}</strong>
-                            {group.sample_qty ? <span style={styles.itemMeta}> Sample {group.sample_qty}</span> : null}
                           </td>
                           <td style={{ ...styles.td, ...styles.koliGroupTd }}>{variantName || '-'}</td>
                           <td style={{ ...styles.td, ...styles.koliGroupTd }}>{group.total_qty || 0}</td>
@@ -3773,14 +3788,14 @@ export default function UnloadPage() {
               <span style={styles.shortcutTitle}>Recent Chosen Product</span>
             </div>
             <div style={styles.shortcutGrid}>
-              {recentProductOptions.map((row) => {
+              {recentProductOptions.slice(0, 3).map((row) => {
                 const category = categoryMaps.byId.get(Number(row.category_id))
                 const modelLabel = getModelVariantLabelForRow(row)
                 const photoUrl = getVariantPhotoForRow(row)
 
                 return (
                   <button
-                    key={`${row.brand_id}-${row.category_id}-${row.model_name}-${getRowVariantIdentifier(row)}`}
+                    key={row.recentProductKey || `${row.brand_id}-${row.category_id}-${row.model_name}-${getRowVariantIdentifier(row)}`}
                     type="button"
                     onClick={() => selectProductShortcut(row)}
                     style={styles.shortcutCard}
