@@ -940,7 +940,7 @@ export default function QcReceivingPage() {
           .order('created_at', { ascending: false }),
         supabase
           .from('dir_product_models')
-          .select('id, model_name, model_color, photo_url')
+          .select('id, model_name')
           .eq('is_active', true)
           .order('model_name', { ascending: true }),
         supabase
@@ -1812,12 +1812,10 @@ export default function QcReceivingPage() {
       .insert([
         {
           model_name: modelDraft.model_name.trim().toUpperCase(),
-          model_color: modelDraft.model_color.trim().toUpperCase() || null,
-          photo_url: photoUrl || null,
           is_active: true,
         },
       ])
-      .select('id, model_name, model_color, photo_url')
+      .select('id, model_name')
       .single()
 
     if (insertError) {
@@ -1831,8 +1829,8 @@ export default function QcReceivingPage() {
       updateModelRow(activeModelRowId, {
         model_id: String(insertedModel.id),
         model_name: insertedModel.model_name,
-        model_color: insertedModel.model_color || '',
-        photo_url: insertedModel.photo_url || '',
+        model_color: modelDraft.model_color.trim().toUpperCase() || '',
+        photo_url: photoUrl || '',
       })
     }
 

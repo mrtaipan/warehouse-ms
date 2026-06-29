@@ -158,9 +158,8 @@ function CombinedRequestTableModal({ rows, onClose }) {
     >
       <div
         style={{
-          width: 'min(100%, 1180px)',
-          maxHeight: '85vh',
-          overflow: 'auto',
+          width: 'min(100%, 1400px)',
+          height: 'min(92vh, 1040px)',
           background: '#ffffff',
           border: '1px solid #e2e8f0',
           borderRadius: '20px',
@@ -168,6 +167,7 @@ function CombinedRequestTableModal({ rows, onClose }) {
           display: 'flex',
           flexDirection: 'column',
           gap: '14px',
+          overflow: 'hidden',
         }}
         onClick={(event) => event.stopPropagation()}
       >
@@ -181,8 +181,16 @@ function CombinedRequestTableModal({ rows, onClose }) {
         {!rows.length ? (
           <div className={styles.emptyState}>No request data found.</div>
         ) : (
-          <div style={{ border: '1px solid #e2e8f0', borderRadius: '16px', overflow: 'hidden' }}>
+          <div style={{ border: '1px solid #e2e8f0', borderRadius: '16px', overflow: 'hidden', flex: '1 1 auto', minHeight: 0, display: 'flex' }}>
+            <div style={{ flex: '1 1 auto', minHeight: 0, overflow: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed' }}>
+              <colgroup>
+                <col style={{ width: '120px' }} />
+                <col style={{ width: '300px' }} />
+                <col style={{ width: '300px' }} />
+                <col />
+                <col style={{ width: '170px' }} />
+              </colgroup>
               <thead style={{ background: '#f8fafc' }}>
                 <tr>
                   <th style={{ padding: '12px 14px', textAlign: 'left', fontSize: '11px', fontWeight: 800, letterSpacing: '0.06em', textTransform: 'uppercase', color: '#64748b' }}>
@@ -210,14 +218,17 @@ function CombinedRequestTableModal({ rows, onClose }) {
                     </td>
                     <td style={{ padding: '13px 14px', fontSize: '13px', fontWeight: 700, color: '#0f172a', verticalAlign: 'top' }}>{row.name}</td>
                     <td style={{ padding: '13px 14px', fontSize: '13px', color: '#0f172a', verticalAlign: 'top' }}>{row.dateLabel}</td>
-                    <td style={{ padding: '13px 14px', fontSize: '13px', lineHeight: 1.45, color: '#475569', verticalAlign: 'top' }}>{row.note}</td>
-                    <td style={{ padding: '13px 14px', verticalAlign: 'top' }}>
+                    <td style={{ padding: '13px 14px', fontSize: '13px', lineHeight: 1.45, color: '#475569', verticalAlign: 'top', overflowWrap: 'anywhere', wordBreak: 'break-word' }}>
+                      {row.note}
+                    </td>
+                    <td style={{ padding: '13px 14px', verticalAlign: 'top', whiteSpace: 'nowrap' }}>
                       <StatusPill value={row.status} />
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
+            </div>
           </div>
         )}
       </div>

@@ -355,7 +355,7 @@ export default function PackingListReceivingPage() {
           .order('validated_at', { ascending: false }),
         supabase
         .from('dir_product_models')
-          .select('id, model_name, model_color, photo_url')
+          .select('id, model_name')
           .eq('is_active', true)
           .order('model_name', { ascending: true }),
       ])

@@ -2,7 +2,9 @@
 
 import Image from 'next/image'
 import { useEffect, useMemo, useState } from 'react'
+import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import { createClient } from '@/utils/supabase/browser'
+import { getProfileByAuthenticatedUser } from '@/utils/user-profiles'
 
 const supabase = createClient()
 
@@ -48,6 +50,28 @@ function buildCategoryMaps(categories) {
   }
 }
 
+function getModelDisplayLabel(modelName, modelColor, variantLabel) {
+  const baseLabel = modelColor ? `${modelName} / ${modelColor}` : modelName || '-'
+  return variantLabel ? `${baseLabel} | Product ID ${variantLabel}` : baseLabel
+}
+
+function getVariantProductId(variant) {
+  return String(variant?.variant_code || variant?.variant_label || '').trim()
+}
+
+function getVariantDisplayName(variant) {
+  return String(variant?.variant_name || variant?.variant_label || variant?.variant_code || 'Variant').trim()
+}
+
+function getBrandDisplayLabel(brand) {
+  if (!brand) return ''
+  return `${brand.brand_name || '-'}${brand.brand_code ? ` (${brand.brand_code})` : ''}`
+}
+
+function getCategoryDisplayLabel(category) {
+  return category?.full_name || category?.category_name || '-'
+}
+
 function readFileAsDataUrl(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
@@ -57,13 +81,110 @@ function readFileAsDataUrl(file) {
   })
 }
 
-function normalizeText(value) {
-  return String(value || '').trim().toUpperCase()
+function loadImageFromUrl(url) {
+  return new Promise((resolve, reject) => {
+    const image = new window.Image()
+    image.onload = () => resolve(image)
+    image.onerror = () => reject(new Error('Failed to load image for compression.'))
+    image.src = url
+  })
 }
 
-function getModelDisplayLabel(modelName, modelColor, variantLabel) {
-  const baseLabel = modelColor ? `${modelName} / ${modelColor}` : modelName || '-'
-  return variantLabel ? `${baseLabel} | Product ID ${variantLabel}` : baseLabel
+async function compressImageFile(file) {
+  if (!file?.type?.startsWith('image/')) {
+    throw new Error('Please choose an image file.')
+  }
+
+  const objectUrl = URL.createObjectURL(file)
+
+  try {
+    const image = await loadImageFromUrl(objectUrl)
+    const maxSize = 1280
+    const scale = Math.min(1, maxSize / Math.max(image.width, image.height))
+    const width = Math.max(1, Math.round(image.width * scale))
+    const height = Math.max(1, Math.round(image.height * scale))
+    const canvas = document.createElement('canvas')
+    canvas.width = width
+    canvas.height = height
+    const context = canvas.getContext('2d')
+
+    if (!context) {
+      throw new Error('Image compression is not available in this browser.')
+    }
+
+    context.drawImage(image, 0, 0, width, height)
+
+    const blob = await new Promise((resolve) => {
+      canvas.toBlob(resolve, 'image/jpeg', 0.78)
+    })
+
+    if (!blob) {
+      throw new Error('Failed to compress image.')
+    }
+
+    const baseName = file.name.replace(/\.[^.]+$/, '') || 'variant-photo'
+    const compressedFile = new File([blob], `${baseName}.jpg`, {
+      type: 'image/jpeg',
+      lastModified: Date.now(),
+    })
+    const dataUrl = await readFileAsDataUrl(compressedFile)
+
+    return { file: compressedFile, dataUrl }
+  } finally {
+    URL.revokeObjectURL(objectUrl)
+  }
+}
+
+function createModelDraft() {
+  return {
+    model_id: '',
+    model_name: '',
+    model_notes: '',
+    is_new_model: false,
+    variant_name: '',
+    variant_notes: '',
+    variant_photo_url: '',
+  }
+}
+
+function formatNumber(value) {
+  return new Intl.NumberFormat('en-US').format(Number(value || 0))
+}
+
+function getDisplayName(user, profile) {
+  return (
+    String(profile?.display_name || '').trim() ||
+    String(user?.user_metadata?.display_name || '').trim() ||
+    String(user?.user_metadata?.full_name || '').trim() ||
+    String(user?.user_metadata?.name || '').trim() ||
+    String(user?.email || '').split('@')[0] ||
+    'Inbound Staff'
+  )
+}
+
+function getFirstName(name) {
+  return String(name || '').trim().split(/\s+/)[0] || '-'
+}
+
+function ArrowLeftIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M19 12H5" />
+      <path d="m12 19-7-7 7-7" />
+    </svg>
+  )
+}
+
+function BuilderIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M8 4h8" />
+      <path d="M9 2h6l1 3H8z" />
+      <path d="M6 5h12a2 2 0 0 1 2 2v13H4V7a2 2 0 0 1 2-2z" />
+      <path d="M8 11h8" />
+      <path d="M8 15h5" />
+    </svg>
+  )
 }
 
 const styles = {
@@ -71,6 +192,103 @@ const styles = {
     display: 'flex',
     flexDirection: 'column',
     gap: '20px',
+  },
+  mobileWrapper: {
+    minHeight: '100dvh',
+    width: '100%',
+    maxWidth: '520px',
+    margin: '0 auto',
+    background: '#fff',
+    borderLeft: '1px solid #e2e8f0',
+    borderRight: '1px solid #e2e8f0',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '14px',
+  },
+  mobileTopBar: {
+    minHeight: '80px',
+    display: 'grid',
+    gridTemplateColumns: '48px minmax(0, 1fr) auto',
+    alignItems: 'center',
+    gap: '12px',
+    padding: '16px 24px',
+    borderBottom: '1px solid #e5e7eb',
+    background: '#fff',
+  },
+  mobileInfoBand: {
+    display: 'grid',
+    gridTemplateColumns: 'minmax(0, 1.35fr) minmax(0, 0.85fr) minmax(0, 0.85fr) minmax(0, 1fr)',
+    gap: '8px',
+    padding: '14px 16px',
+    background: '#fafafa',
+    borderBottom: '1px solid #e5e7eb',
+  },
+  mobileDetailBand: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(132px, 1fr))',
+    gap: '10px',
+    padding: '14px 24px',
+    background: '#fff',
+    borderBottom: '1px solid #e5e7eb',
+  },
+  mobileInfoBox: {
+    minWidth: 0,
+  },
+  mobileInfoRight: {
+    minWidth: 0,
+    textAlign: 'right',
+  },
+  mobileInfoLabel: {
+    display: 'block',
+    color: '#71717a',
+    fontSize: '12px',
+    fontWeight: '850',
+    letterSpacing: 0,
+  },
+  mobileInfoValue: {
+    display: 'block',
+    marginTop: '4px',
+    color: '#18181b',
+    fontSize: '15px',
+    fontWeight: '900',
+    lineHeight: 1.25,
+    wordBreak: 'break-word',
+    fontVariantNumeric: 'tabular-nums',
+  },
+  mobileInfoLabelTight: {
+    fontSize: '10px',
+    whiteSpace: 'nowrap',
+  },
+  mobileInfoValueTight: {
+    fontSize: '13px',
+    whiteSpace: 'nowrap',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    wordBreak: 'normal',
+  },
+  mobileRemainingNegative: {
+    color: '#dc2626',
+  },
+  mobileRemainingZero: {
+    color: '#16a34a',
+  },
+  mobileRemainingPositive: {
+    color: '#f97316',
+  },
+  mobileInlineMessage: {
+    margin: '0 24px',
+  },
+  backButton: {
+    width: '48px',
+    height: '48px',
+    borderRadius: '14px',
+    border: '1px solid #cbd5e1',
+    background: '#fff',
+    color: '#111827',
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    cursor: 'pointer',
   },
   header: {
     display: 'flex',
@@ -81,11 +299,299 @@ const styles = {
   },
   title: {
     margin: 0,
+    color: '#0f172a',
     fontSize: '28px',
+    fontWeight: '900',
+    lineHeight: 1.05,
+    letterSpacing: 0,
   },
   subtitle: {
     margin: '6px 0 0',
     color: '#6b7280',
+  },
+  overviewPanel: {
+    background: '#fff',
+    border: '1px solid #e5e7eb',
+    borderRadius: '12px',
+    padding: '20px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '16px',
+  },
+  eyebrow: {
+    margin: 0,
+    color: '#64748b',
+    fontSize: '10px',
+    fontWeight: '800',
+    letterSpacing: 0,
+    textTransform: 'uppercase',
+  },
+  formTopBar: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    gap: '16px',
+    flexWrap: 'wrap',
+  },
+  overviewActions: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '10px',
+    flexWrap: 'wrap',
+  },
+  contentGrid: {
+    display: 'grid',
+    gridTemplateColumns: '1fr',
+    gap: '16px',
+    alignItems: 'start',
+  },
+  headerColumn: {
+    minWidth: 0,
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 320px), 1fr))',
+    gap: '12px',
+    alignItems: 'stretch',
+  },
+  breakdownColumn: {
+    minWidth: 0,
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '12px',
+  },
+  grnCard: {
+    border: '1px solid #cbd5e1',
+    borderRadius: '14px',
+    padding: '14px 16px',
+    background: '#f8fafc',
+    boxShadow: 'inset 0 1px 0 rgba(255, 255, 255, 0.9)',
+    display: 'flex',
+    flexDirection: 'column',
+    justifyContent: 'center',
+  },
+  grnLabel: {
+    display: 'block',
+    color: '#64748b',
+    fontSize: '10px',
+    fontWeight: '800',
+    letterSpacing: 0,
+    textTransform: 'uppercase',
+    marginBottom: '6px',
+  },
+  grnValue: {
+    display: 'block',
+    color: '#0f172a',
+    fontSize: '28px',
+    fontWeight: '900',
+    lineHeight: 1.05,
+    fontVariantNumeric: 'tabular-nums',
+    wordBreak: 'break-word',
+  },
+  grnItemBlock: {
+    marginTop: '12px',
+    paddingTop: '12px',
+    borderTop: '1px solid #e2e8f0',
+  },
+  headerInfoColumn: {
+    minWidth: 0,
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '10px',
+  },
+  infoGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 180px), 1fr))',
+    gap: '10px',
+  },
+  grnChip: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    minHeight: '34px',
+    padding: '0 12px',
+    borderRadius: '999px',
+    background: '#eef6ff',
+    color: '#1e3a8a',
+    fontSize: '14px',
+    fontWeight: '900',
+    fontVariantNumeric: 'tabular-nums',
+    whiteSpace: 'nowrap',
+  },
+  infoBox: {
+    minHeight: '52px',
+    padding: '10px 12px',
+    border: '1px solid #e2e8f0',
+    borderRadius: '10px',
+    background: '#f8fafc',
+  },
+  infoLabel: {
+    display: 'block',
+    color: '#64748b',
+    fontSize: '10px',
+    fontWeight: '800',
+    textTransform: 'uppercase',
+  },
+  infoValue: {
+    display: 'block',
+    marginTop: '4px',
+    color: '#0f172a',
+    fontSize: '14px',
+    fontWeight: '800',
+    lineHeight: 1.25,
+    wordBreak: 'break-word',
+  },
+  metricGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+    gap: '10px',
+  },
+  metricBox: {
+    minWidth: 0,
+    minHeight: '52px',
+    padding: '10px 12px',
+    border: '1px solid #dbeafe',
+    borderRadius: '10px',
+    background: '#eff6ff',
+  },
+  metricValue: {
+    display: 'block',
+    marginTop: '4px',
+    color: '#0f172a',
+    fontSize: '16px',
+    fontWeight: '900',
+    lineHeight: 1.15,
+    fontVariantNumeric: 'tabular-nums',
+    wordBreak: 'break-word',
+  },
+  segmentWrap: {
+    display: 'inline-flex',
+    alignSelf: 'flex-start',
+    padding: '4px',
+    gap: '4px',
+    borderRadius: '12px',
+    background: '#f1f5f9',
+    border: '1px solid #e2e8f0',
+  },
+  segmentButton: {
+    height: '32px',
+    padding: '0 14px',
+    border: 'none',
+    borderRadius: '9px',
+    background: 'transparent',
+    color: '#64748b',
+    fontSize: '12px',
+    fontWeight: '850',
+    cursor: 'pointer',
+  },
+  segmentButtonActive: {
+    background: '#fff',
+    color: '#0f172a',
+    boxShadow: '0 1px 3px rgba(15, 23, 42, 0.08)',
+  },
+  modeSegmentWrap: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+    gap: '6px',
+    padding: '4px',
+    borderRadius: '12px',
+    border: '1px solid #e2e8f0',
+    background: '#f1f5f9',
+  },
+  modeSegmentButton: {
+    minWidth: 0,
+    height: '38px',
+    border: '1px solid transparent',
+    borderRadius: '9px',
+    background: 'transparent',
+    color: '#64748b',
+    fontSize: '12px',
+    fontWeight: '850',
+    cursor: 'pointer',
+  },
+  modeSegmentRegularActive: {
+    border: '1px solid #99f6e4',
+    background: '#ccfbf1',
+    color: '#115e59',
+  },
+  modeSegmentSampleActive: {
+    border: '1px solid #fed7aa',
+    background: '#fff7ed',
+    color: '#9a3412',
+  },
+  modeSegmentReturnActive: {
+    border: '1px solid #fecaca',
+    background: '#fef2f2',
+    color: '#991b1b',
+  },
+  itemStack: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '6px',
+  },
+  itemLine: {
+    display: 'grid',
+    gridTemplateColumns: 'minmax(0, 1fr) auto',
+    gap: '10px',
+    alignItems: 'center',
+  },
+  itemMeta: {
+    color: '#64748b',
+    fontSize: '12px',
+    fontWeight: '650',
+    lineHeight: 1.35,
+  },
+  qtyPill: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    minWidth: '44px',
+    height: '28px',
+    padding: '0 10px',
+    borderRadius: '999px',
+    background: '#eef2ff',
+    color: '#3730a3',
+    fontSize: '12px',
+    fontWeight: '900',
+    fontVariantNumeric: 'tabular-nums',
+  },
+  builderButton: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: '8px',
+    minHeight: '40px',
+    padding: '0 14px',
+    border: 'none',
+    borderRadius: '10px',
+    background: '#0f766e',
+    color: '#fff',
+    fontSize: '13px',
+    fontWeight: '850',
+    cursor: 'pointer',
+    boxShadow: '0 8px 18px rgba(15, 118, 110, 0.16)',
+  },
+  iconOnlyButton: {
+    width: '40px',
+    minWidth: '40px',
+    height: '40px',
+    padding: 0,
+    borderRadius: '10px',
+  },
+  closeIconButton: {
+    width: '40px',
+    minWidth: '40px',
+    height: '40px',
+    padding: 0,
+    border: '1px solid #fecaca',
+    borderRadius: '10px',
+    background: '#fff',
+    color: '#dc2626',
+    fontSize: '15px',
+    fontWeight: '900',
+    cursor: 'pointer',
+  },
+  closeIconGlyph: {
+    color: '#dc2626',
+    fontWeight: '950',
+    lineHeight: 1,
   },
   card: {
     background: '#fff',
@@ -95,6 +601,14 @@ const styles = {
     display: 'flex',
     flexDirection: 'column',
     gap: '18px',
+  },
+  helperBox: {
+    padding: '14px 16px',
+    borderRadius: '12px',
+    background: '#f9fafb',
+    border: '1px solid #e5e7eb',
+    color: '#6b7280',
+    fontSize: '14px',
   },
   sectionTitle: {
     margin: 0,
@@ -107,8 +621,82 @@ const styles = {
   },
   grid: {
     display: 'grid',
-    gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 240px), 1fr))',
     gap: '16px',
+  },
+  unloadWorkspace: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 360px), 1fr))',
+    gap: '16px',
+    alignItems: 'start',
+  },
+  workPanel: {
+    background: '#fff',
+    border: '1px solid #e5e7eb',
+    borderRadius: '12px',
+    padding: '16px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '16px',
+  },
+  panelHeader: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    gap: '12px',
+    flexWrap: 'wrap',
+  },
+  panelEyebrow: {
+    margin: 0,
+    fontSize: '11px',
+    fontWeight: '800',
+    color: '#64748b',
+    letterSpacing: '0.08em',
+    textTransform: 'uppercase',
+  },
+  panelTitle: {
+    margin: '4px 0 0',
+    color: '#0f172a',
+    fontSize: '18px',
+    fontWeight: '800',
+  },
+  compactGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 220px), 1fr))',
+    gap: '12px',
+  },
+  mobileSingleGrid: {
+    display: 'grid',
+    gridTemplateColumns: '1fr',
+    gap: '12px',
+  },
+  addPanel: {
+    background: '#fff',
+    border: '1px solid #cbd5e1',
+    borderRadius: '12px',
+    padding: '14px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '14px',
+  },
+  addActionButton: {
+    width: '100%',
+    minHeight: '44px',
+  },
+  currentKoliPanel: {
+    background: '#fff',
+    border: '1px solid #e2e8f0',
+    borderRadius: '12px',
+    padding: '16px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '14px',
+  },
+  modelActionRow: {
+    display: 'flex',
+    gap: '8px',
+    alignItems: 'center',
+    flexWrap: 'wrap',
   },
   field: {
     display: 'flex',
@@ -134,6 +722,35 @@ const styles = {
     gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))',
     gap: '12px',
   },
+  modelGroupList: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '18px',
+  },
+  modelGroup: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '10px',
+  },
+  modelGroupHeader: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'baseline',
+    gap: '10px',
+    padding: '0 2px',
+  },
+  modelGroupTitle: {
+    color: '#0f172a',
+    fontSize: '14px',
+    fontWeight: '900',
+  },
+  modelGroupMeta: {
+    color: '#64748b',
+    fontSize: '11px',
+    fontWeight: '750',
+    textAlign: 'right',
+    lineHeight: 1.3,
+  },
   modelOptionCard: {
     display: 'flex',
     flexDirection: 'column',
@@ -144,6 +761,41 @@ const styles = {
     background: '#fff',
     cursor: 'pointer',
     textAlign: 'left',
+  },
+  modelOptionActions: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: '8px',
+    marginTop: '2px',
+  },
+  variantEditButton: {
+    height: '30px',
+    padding: '0 10px',
+    border: '1px solid #cbd5e1',
+    borderRadius: '8px',
+    background: '#fff',
+    color: '#0f172a',
+    fontSize: '12px',
+    fontWeight: '850',
+    cursor: 'pointer',
+  },
+  selectedVariantBadge: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    height: '24px',
+    padding: '0 8px',
+    borderRadius: '999px',
+    background: '#dcfce7',
+    color: '#166534',
+    fontSize: '10px',
+    fontWeight: '900',
+    textTransform: 'uppercase',
+  },
+  tapHint: {
+    color: '#94a3b8',
+    fontSize: '11px',
+    fontWeight: '750',
   },
   modelOptionTitle: {
     fontSize: '14px',
@@ -159,6 +811,10 @@ const styles = {
     fontWeight: '600',
     color: '#111827',
   },
+  requiredMark: {
+    color: '#dc2626',
+    fontWeight: '900',
+  },
   helperText: {
     fontSize: '12px',
     color: '#6b7280',
@@ -168,8 +824,60 @@ const styles = {
     padding: '0 12px',
     border: '1px solid #d1d5db',
     borderRadius: '8px',
+    background: '#fff',
+    color: '#111827',
     fontSize: '14px',
     width: '100%',
+  },
+  readOnlyInput: {
+    background: '#f8fafc',
+    color: '#64748b',
+    cursor: 'default',
+  },
+  qtyInput: {
+    border: '1px solid #94a3b8',
+    background: '#fff',
+    color: '#0f172a',
+    fontWeight: '800',
+  },
+  searchPicker: {
+    position: 'relative',
+  },
+  searchResults: {
+    position: 'absolute',
+    top: 'calc(100% + 6px)',
+    left: 0,
+    right: 0,
+    zIndex: 30,
+    maxHeight: '220px',
+    overflowY: 'auto',
+    border: '1px solid #d1d5db',
+    borderRadius: '10px',
+    background: '#fff',
+    boxShadow: '0 16px 36px rgba(15, 23, 42, 0.14)',
+    padding: '6px',
+  },
+  searchOption: {
+    width: '100%',
+    minHeight: '38px',
+    padding: '8px 10px',
+    border: 'none',
+    borderRadius: '8px',
+    background: '#fff',
+    color: '#111827',
+    cursor: 'pointer',
+    fontSize: '14px',
+    fontWeight: '600',
+    textAlign: 'left',
+  },
+  searchOptionActive: {
+    background: '#f1f5f9',
+  },
+  searchEmpty: {
+    margin: 0,
+    padding: '10px',
+    color: '#64748b',
+    fontSize: '13px',
   },
   select: {
     height: '42px',
@@ -214,6 +922,335 @@ const styles = {
     fontSize: '16px',
     fontWeight: '700',
     cursor: 'pointer',
+  },
+  compactButton: {
+    height: '42px',
+    padding: '0 12px',
+    border: '1px solid #d1d5db',
+    borderRadius: '8px',
+    background: '#fff',
+    color: '#111827',
+    fontSize: '13px',
+    fontWeight: '700',
+    cursor: 'pointer',
+    whiteSpace: 'nowrap',
+  },
+  photoChoiceGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+    gap: '8px',
+  },
+  photoChoiceButton: {
+    height: '42px',
+    padding: '0 12px',
+    border: '1px solid #d1d5db',
+    borderRadius: '8px',
+    background: '#fff',
+    color: '#111827',
+    fontSize: '13px',
+    fontWeight: '800',
+    cursor: 'pointer',
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    textAlign: 'center',
+  },
+  hiddenFileInput: {
+    display: 'none',
+  },
+  registryFormGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 220px), 1fr))',
+    gap: '16px',
+    alignItems: 'start',
+  },
+  registryPhotoColumn: {
+    position: 'relative',
+    minWidth: 0,
+  },
+  registryPhotoFrame: {
+    position: 'relative',
+    width: '100%',
+    aspectRatio: '1 / 1',
+    border: '1px dashed #94a3b8',
+    borderRadius: '16px',
+    background: '#f8fafc',
+    overflow: 'hidden',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    cursor: 'pointer',
+    padding: 0,
+  },
+  registryPhotoFrameError: {
+    border: '1px dashed #dc2626',
+    background: '#fff7f7',
+  },
+  registryPhotoImage: {
+    width: '100%',
+    height: '100%',
+    objectFit: 'cover',
+  },
+  registryPhotoEmpty: {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: '6px',
+    color: '#64748b',
+    textAlign: 'center',
+    padding: '18px',
+  },
+  registryPhotoEmptyTitle: {
+    color: '#0f172a',
+    fontSize: '15px',
+    fontWeight: '900',
+  },
+  registryPhotoEmptySub: {
+    color: '#64748b',
+    fontSize: '12px',
+    fontWeight: '700',
+  },
+  registryPhotoRemove: {
+    position: 'absolute',
+    top: '10px',
+    right: '10px',
+    width: '34px',
+    height: '34px',
+    borderRadius: '999px',
+    border: '1px solid #fecaca',
+    background: '#fff',
+    color: '#dc2626',
+    fontSize: '16px',
+    fontWeight: '950',
+    cursor: 'pointer',
+    boxShadow: '0 8px 18px rgba(15, 23, 42, 0.12)',
+  },
+  registryPhotoActions: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    top: 'calc(100% + 8px)',
+    display: 'grid',
+    gridTemplateColumns: '1fr',
+    gap: '8px',
+    padding: '8px',
+    border: '1px solid #e2e8f0',
+    borderRadius: '14px',
+    background: '#fff',
+    boxShadow: '0 18px 34px rgba(15, 23, 42, 0.18)',
+    zIndex: 6,
+  },
+  registryPhotoAction: {
+    minHeight: '40px',
+    border: '1px solid #d1d5db',
+    borderRadius: '10px',
+    background: '#fff',
+    color: '#0f172a',
+    fontSize: '13px',
+    fontWeight: '900',
+    cursor: 'pointer',
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  registryFieldsStack: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '14px',
+    minWidth: 0,
+  },
+  newModelAction: {
+    width: '100%',
+    minHeight: '38px',
+    border: '1px solid #0f766e',
+    borderRadius: '10px',
+    background: '#ecfdf5',
+    color: '#0f766e',
+    fontSize: '13px',
+    fontWeight: '900',
+    cursor: 'pointer',
+  },
+  shortcutBlock: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '8px',
+  },
+  shortcutHeader: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: '8px',
+  },
+  shortcutTitle: {
+    color: '#475569',
+    fontSize: '12px',
+    fontWeight: '800',
+  },
+  shortcutGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+    gap: '8px',
+  },
+  shortcutCard: {
+    minWidth: 0,
+    padding: '8px',
+    border: '1px solid #e2e8f0',
+    borderRadius: '10px',
+    background: '#fff',
+    cursor: 'pointer',
+    textAlign: 'left',
+  },
+  shortcutImage: {
+    width: '100%',
+    aspectRatio: '1 / 1',
+    objectFit: 'cover',
+    borderRadius: '8px',
+    border: '1px solid #e5e7eb',
+    background: '#f8fafc',
+  },
+  shortcutPlaceholder: {
+    width: '100%',
+    aspectRatio: '1 / 1',
+    borderRadius: '8px',
+    border: '1px solid #e5e7eb',
+    background: '#f8fafc',
+    color: '#94a3b8',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    fontSize: '10px',
+    fontWeight: '800',
+  },
+  shortcutName: {
+    display: 'block',
+    marginTop: '7px',
+    color: '#0f172a',
+    fontSize: '11px',
+    fontWeight: '850',
+    lineHeight: 1.25,
+    wordBreak: 'break-word',
+  },
+  shortcutMeta: {
+    display: 'block',
+    marginTop: '3px',
+    color: '#64748b',
+    fontSize: '10px',
+    fontWeight: '700',
+    lineHeight: 1.25,
+  },
+  modelLabelRow: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: '10px',
+  },
+  modalTitleRow: {
+    display: 'grid',
+    gridTemplateColumns: 'minmax(0, 1fr) auto',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: '12px',
+  },
+  registryModalTitle: {
+    minWidth: 0,
+    fontSize: '18px',
+    lineHeight: 1.18,
+  },
+  modalTitleActions: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: '8px',
+    flexWrap: 'nowrap',
+  },
+  modalTitleButton: {
+    height: '38px',
+    padding: '0 12px',
+    fontSize: '13px',
+  },
+  categoryHint: {
+    color: '#64748b',
+    fontSize: '11px',
+    fontWeight: '700',
+    lineHeight: 1.25,
+    textAlign: 'right',
+  },
+  selectedModelCard: {
+    position: 'relative',
+    width: '112px',
+    minWidth: '112px',
+    height: '112px',
+    padding: 0,
+    border: '1px solid #cbd5e1',
+    borderRadius: '14px',
+    background: '#fff',
+    cursor: 'pointer',
+    overflow: 'hidden',
+    flex: '0 0 112px',
+  },
+  selectedModelThumb: {
+    width: '100%',
+    height: '100%',
+    objectFit: 'cover',
+    background: '#f8fafc',
+  },
+  selectedModelPlaceholder: {
+    width: '100%',
+    height: '100%',
+    background: '#f8fafc',
+    color: '#94a3b8',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    textAlign: 'center',
+    padding: '10px',
+    fontSize: '11px',
+    fontWeight: '800',
+  },
+  selectedModelBadge: {
+    position: 'absolute',
+    left: '8px',
+    right: '8px',
+    bottom: '8px',
+    minHeight: '24px',
+    borderRadius: '999px',
+    background: 'rgba(255, 255, 255, 0.92)',
+    color: '#0f172a',
+    fontSize: '10px',
+    fontWeight: '900',
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: '0 8px',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+  },
+  koliImage: {
+    width: '48px',
+    height: '48px',
+    borderRadius: '8px',
+    border: '1px solid #e2e8f0',
+    objectFit: 'cover',
+    background: '#f8fafc',
+  },
+  koliImagePlaceholder: {
+    width: '48px',
+    height: '48px',
+    borderRadius: '8px',
+    border: '1px solid #e2e8f0',
+    background: '#f8fafc',
+    color: '#94a3b8',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    fontSize: '9px',
+    fontWeight: '800',
+  },
+  disabledSegment: {
+    opacity: 0.48,
+    cursor: 'not-allowed',
   },
   summaryGrid: {
     display: 'grid',
@@ -459,14 +1496,34 @@ const styles = {
     inset: 0,
     background: 'rgba(17, 24, 39, 0.4)',
     display: 'flex',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     justifyContent: 'center',
     padding: '24px',
     zIndex: 40,
+    overflowY: 'auto',
+  },
+  mobileOverlay: {
+    alignItems: 'flex-end',
+    padding: 0,
+    background: 'rgba(15, 23, 42, 0.46)',
+    overflow: 'hidden',
+  },
+  centeredOverlay: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  centeredMobileOverlay: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: '16px',
+    background: 'rgba(15, 23, 42, 0.46)',
+    overflowY: 'auto',
   },
   modal: {
     width: '100%',
     maxWidth: '560px',
+    maxHeight: 'calc(100dvh - 48px)',
+    overflowY: 'auto',
     background: '#fff',
     borderRadius: '16px',
     padding: '24px',
@@ -474,6 +1531,52 @@ const styles = {
     display: 'flex',
     flexDirection: 'column',
     gap: '18px',
+  },
+  mobileModal: {
+    width: '100%',
+    maxWidth: '520px',
+    height: 'auto',
+    maxHeight: 'calc(100dvh - 12px)',
+    minHeight: 0,
+    overflowY: 'auto',
+    WebkitOverflowScrolling: 'touch',
+    overscrollBehavior: 'contain',
+    borderRadius: '22px 22px 0 0',
+    padding: '20px 20px max(24px, env(safe-area-inset-bottom))',
+    gap: '16px',
+  },
+  chooseModal: {
+    maxWidth: '640px',
+    maxHeight: 'calc(100dvh - 48px)',
+  },
+  centeredMobileModal: {
+    width: '100%',
+    maxWidth: '520px',
+    maxHeight: 'calc(100dvh - 32px)',
+    minHeight: 0,
+    overflowY: 'auto',
+    WebkitOverflowScrolling: 'touch',
+    overscrollBehavior: 'contain',
+    borderRadius: '20px',
+    padding: '20px',
+    gap: '16px',
+  },
+  modalFooter: {
+    position: 'sticky',
+    bottom: 0,
+    margin: '4px -20px calc(-1 * max(24px, env(safe-area-inset-bottom)))',
+    padding: '12px 20px max(16px, env(safe-area-inset-bottom))',
+    background: '#fff',
+    borderTop: '1px solid #e5e7eb',
+    zIndex: 2,
+  },
+  modalHandle: {
+    width: '44px',
+    height: '5px',
+    borderRadius: '999px',
+    background: '#cbd5e1',
+    alignSelf: 'center',
+    marginBottom: '2px',
   },
   imagePreview: {
     width: '96px',
@@ -514,22 +1617,28 @@ const styles = {
 }
 
 export default function UnloadPage() {
+  const router = useRouter()
+  const pathname = usePathname()
+  const searchParams = useSearchParams()
+  const grnParam = searchParams.get('grn') || ''
+  const isBuilderMode = pathname.startsWith('/mobile/inbound/unload')
+  const [user, setUser] = useState(null)
+  const [profile, setProfile] = useState(null)
   const [inbounds, setInbounds] = useState([])
   const [brands, setBrands] = useState([])
   const [categories, setCategories] = useState([])
   const [productModels, setProductModels] = useState([])
   const [productModelVariants, setProductModelVariants] = useState([])
   const [selectedInboundId, setSelectedInboundId] = useState('')
-  const [roSearch, setRoSearch] = useState('')
-  const [brandSearch, setBrandSearch] = useState('')
   const [selectedBrandId, setSelectedBrandId] = useState('')
+  const [brandSearch, setBrandSearch] = useState('')
+  const [showBrandResults, setShowBrandResults] = useState(false)
   const [level0Id, setLevel0Id] = useState('')
   const [level1Id, setLevel1Id] = useState('')
   const [level2Id, setLevel2Id] = useState('')
   const [selectedModel, setSelectedModel] = useState(null)
   const [selectedVariantLabel, setSelectedVariantLabel] = useState('')
   const [qty, setQty] = useState('')
-  const [picName, setPicName] = useState('')
   const [isSample, setIsSample] = useState(false)
   const [isReturn, setIsReturn] = useState(false)
   const [currentKoliItems, setCurrentKoliItems] = useState([])
@@ -537,21 +1646,51 @@ export default function UnloadPage() {
   const [returnRows, setReturnRows] = useState([])
   const [showChooseModelModal, setShowChooseModelModal] = useState(false)
   const [showModelModal, setShowModelModal] = useState(false)
-  const [modelDraft, setModelDraft] = useState({
-    model_name: '',
-    model_color: '',
-    photo_url: '',
-  })
-  const [modelPhotoFile, setModelPhotoFile] = useState(null)
+  const [modelDraft, setModelDraft] = useState(createModelDraft)
+  const [editingVariantContext, setEditingVariantContext] = useState(null)
+  const [variantPhotoFile, setVariantPhotoFile] = useState(null)
+  const [showVariantPhotoOptions, setShowVariantPhotoOptions] = useState(false)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
   const [modelModalError, setModelModalError] = useState('')
   const [previewImage, setPreviewImage] = useState(null)
-  const [showProcessedTooltip, setShowProcessedTooltip] = useState(false)
   const [supportsUnloadVariant, setSupportsUnloadVariant] = useState(false)
   const [supportsReturnVariant, setSupportsReturnVariant] = useState(false)
+  const [breakdownMode, setBreakdownMode] = useState('koli')
+  const displayName = user ? getDisplayName(user, profile) : 'Loading...'
+  const addMode = isReturn ? 'return' : isSample ? 'sample' : 'regular'
+
+  useEffect(() => {
+    let isMounted = true
+
+    async function loadAuthenticatedUser() {
+      const {
+        data: { user: authUser },
+      } = await supabase.auth.getUser()
+
+      if (!isMounted) return
+
+      if (!authUser) {
+        router.push('/login')
+        return
+      }
+
+      const profileResult = await getProfileByAuthenticatedUser(supabase, authUser, 'id, email, display_name, role')
+
+      if (!isMounted) return
+
+      setUser(authUser)
+      setProfile(profileResult.data || null)
+    }
+
+    loadAuthenticatedUser()
+
+    return () => {
+      isMounted = false
+    }
+  }, [router])
 
   useEffect(() => {
     async function loadInitialData() {
@@ -581,7 +1720,7 @@ export default function UnloadPage() {
           .order('full_code', { ascending: true }),
         supabase
           .from('dir_product_models')
-          .select('id, brand_id, category_id, model_name, model_color, photo_url')
+          .select('id, brand_id, category_id, model_code, model_name, model_notes')
           .eq('is_active', true)
           .order('model_name', { ascending: true }),
         supabase
@@ -610,6 +1749,11 @@ export default function UnloadPage() {
       setProductModels(modelRows || [])
       setProductModelVariants(productVariantRows || [])
 
+      if (grnParam) {
+        const selectedInbound = (inboundRows || []).find((item) => item.grn_number === grnParam)
+        setSelectedInboundId(selectedInbound ? String(selectedInbound.id) : '')
+      }
+
       const [{ error: unloadVariantError }, { error: returnVariantError }] = await Promise.all([
         supabase.from('inbound_unload').select('variant_label').limit(1),
         supabase.from('warehouse_returns').select('variant_label').limit(1),
@@ -621,7 +1765,7 @@ export default function UnloadPage() {
     }
 
     loadInitialData()
-  }, [])
+  }, [grnParam])
 
   useEffect(() => {
     async function loadUnloadRows() {
@@ -680,6 +1824,15 @@ export default function UnloadPage() {
 
   const selectedInbound =
     inbounds.find((item) => item.id === Number(selectedInboundId)) || null
+  const builderGridStyle = isBuilderMode ? styles.mobileSingleGrid : styles.compactGrid
+  const overlayStyle = isBuilderMode ? { ...styles.overlay, ...styles.mobileOverlay } : styles.overlay
+  const modalStyle = isBuilderMode ? { ...styles.modal, ...styles.mobileModal } : styles.modal
+  const chooseOverlayStyle = isBuilderMode
+    ? { ...styles.overlay, ...styles.centeredMobileOverlay }
+    : { ...styles.overlay, ...styles.centeredOverlay }
+  const chooseModalStyle = isBuilderMode
+    ? { ...styles.modal, ...styles.centeredMobileModal }
+    : { ...styles.modal, ...styles.chooseModal }
 
   const selectedCategoryId =
     requiresLevel1 && !level1Id
@@ -691,6 +1844,29 @@ export default function UnloadPage() {
     ? categoryMaps.byId.get(Number(selectedCategoryId)) || null
     : null
 
+  const selectedBrand = selectedBrandId
+    ? brands.find((brand) => Number(brand.id) === Number(selectedBrandId)) || null
+    : null
+
+  const filteredBrandOptions = useMemo(() => {
+    const query = brandSearch.trim().toLowerCase()
+    const normalizedBrands = [...brands].sort((a, b) =>
+      getBrandDisplayLabel(a).localeCompare(getBrandDisplayLabel(b))
+    )
+
+    if (!query) {
+      return normalizedBrands.slice(0, 12)
+    }
+
+    return normalizedBrands
+      .filter((brand) => {
+        const label = getBrandDisplayLabel(brand).toLowerCase()
+        const code = String(brand.brand_code || '').toLowerCase()
+        return label.includes(query) || code.includes(query)
+      })
+      .slice(0, 12)
+  }, [brandSearch, brands])
+
   const filteredModelOptions = productModels
     .filter((item) => {
       if (!selectedBrandId || !selectedCategory) return false
@@ -701,10 +1877,55 @@ export default function UnloadPage() {
       )
     })
     .sort((a, b) => {
-      const aLabel = a.model_color ? `${a.model_name} ${a.model_color}` : a.model_name
-      const bLabel = b.model_color ? `${b.model_name} ${b.model_color}` : b.model_name
-      return aLabel.localeCompare(bLabel)
+      return String(a.model_name || '').localeCompare(String(b.model_name || ''))
     })
+  const isEditingVariant = Boolean(editingVariantContext?.variant?.id)
+  const registryUsesNewModel = !isEditingVariant && (modelDraft.is_new_model || filteredModelOptions.length === 0)
+  const registrySelectedModel = modelDraft.model_id
+    ? editingVariantContext?.model ||
+      filteredModelOptions.find((item) => String(item.id) === String(modelDraft.model_id)) ||
+      null
+    : null
+  const filteredVariantOptions = useMemo(
+    () =>
+      filteredModelOptions
+        .flatMap((model) =>
+          productModelVariants
+            .filter((variant) => Number(variant.product_model_id || 0) === Number(model.id || 0))
+            .map((variant) => ({
+              model,
+              variant,
+              photoUrl: variant.variant_photo_url || '',
+              label: getModelDisplayLabel(model.model_name, '', getVariantProductId(variant)),
+            }))
+        )
+        .sort((a, b) => {
+          const aIndex = Number(a.variant.variant_index ?? 0)
+          const bIndex = Number(b.variant.variant_index ?? 0)
+          const modelCompare = String(a.model.model_name || '').localeCompare(String(b.model.model_name || ''))
+
+          if (modelCompare !== 0) return modelCompare
+          return aIndex - bIndex
+        }),
+    [filteredModelOptions, productModelVariants]
+  )
+  const filteredVariantGroups = useMemo(() => {
+    const variantsByModelId = new Map()
+
+    filteredVariantOptions.forEach((option) => {
+      const modelId = String(option.model.id)
+      const currentItems = variantsByModelId.get(modelId) || []
+      currentItems.push(option)
+      variantsByModelId.set(modelId, currentItems)
+    })
+
+    return filteredModelOptions
+      .map((model) => ({
+        model,
+        variants: variantsByModelId.get(String(model.id)) || [],
+      }))
+      .filter((group) => group.variants.length > 0)
+  }, [filteredModelOptions, filteredVariantOptions])
 
   const selectedModelVariants = useMemo(
     () =>
@@ -713,21 +1934,72 @@ export default function UnloadPage() {
         .sort((a, b) => Number(a.variant_index ?? 0) - Number(b.variant_index ?? 0)),
     [productModelVariants, selectedModel]
   )
+  const selectedVariant =
+    selectedModelVariants.find(
+      (item) =>
+        String(getVariantProductId(item) || '') === String(selectedVariantLabel || '') ||
+        String(item.variant_label || '') === String(selectedVariantLabel || '')
+    ) ||
+    selectedModelVariants.find((item) => item.is_main_variant) ||
+    selectedModelVariants[0] ||
+    null
+  const selectedModelPhoto = selectedVariant?.variant_photo_url || selectedModel?.photo_url || ''
+  const selectedCategoryLabel = selectedCategory ? getCategoryDisplayLabel(selectedCategory) : ''
 
-  const nextKoliSequence =
-    unloadRows.filter((row) => !row.is_sample).reduce(
-      (max, row) => Math.max(max, Number(row.koli_sequence || 0)),
-      0
-    ) + 1
-  const totalKoli = new Set(unloadRows.filter((row) => !row.is_sample).map((row) => Number(row.koli_sequence || 0))).size
-  const totalSampleQty = unloadRows
-    .filter((row) => row.is_sample)
-    .reduce((sum, row) => sum + Number(row.qty || 0), 0)
-  const totalProcessedQty = unloadRows.reduce((sum, row) => sum + Number(row.qty || 0), 0)
   const totalReturnQty = returnRows
     .reduce((sum, row) => sum + Number(row.qty || 0), 0)
   const totalInboundQty =
     unloadRows.reduce((sum, row) => sum + Number(row.qty || 0), 0) + totalReturnQty
+  const sjQty = Number(selectedInbound?.total_claimed_qty || 0)
+  const remainingQty = totalInboundQty - sjQty
+  const remainingQtyStyle =
+    remainingQty < 0
+      ? styles.mobileRemainingNegative
+      : remainingQty > 0
+        ? styles.mobileRemainingPositive
+        : styles.mobileRemainingZero
+  const displayFirstName = getFirstName(displayName)
+  const currentKoliQty = currentKoliItems.reduce((sum, row) => sum + Number(row.qty || 0), 0)
+  const isModeLocked = currentKoliItems.length > 0
+  const hasUnloadDraft = isBuilderMode && Boolean(
+    selectedBrandId ||
+    selectedModel ||
+    qty ||
+    currentKoliItems.length ||
+    isSample ||
+    isReturn
+  )
+  const recentProductOptions = useMemo(() => {
+    const sourceRows = [
+      ...currentKoliItems.map((row, index) => ({ ...row, sortKey: 1000000 + index })),
+      ...unloadRows.map((row) => ({ ...row, sortKey: Number(row.id || 0) })),
+      ...returnRows.map((row) => ({ ...row, sortKey: Number(row.id || 0) })),
+    ]
+      .filter((row) => row.brand_id && row.category_id && row.model_name)
+      .sort((a, b) => b.sortKey - a.sortKey)
+
+    const seen = new Set()
+    const options = []
+
+    for (const row of sourceRows) {
+      const key = [
+        row.brand_id || '',
+        row.category_id || '',
+        row.model_name || '',
+        row.model_color || '',
+        row.variant_label || '',
+      ].join('|')
+
+      if (seen.has(key)) continue
+
+      seen.add(key)
+      options.push(row)
+
+      if (options.length >= 3) break
+    }
+
+    return options
+  }, [currentKoliItems, returnRows, unloadRows])
   const resultRows = [
     ...unloadRows.map((row) => ({ ...row, rowType: row.is_sample ? 'sample' : 'koli' })),
     ...returnRows.map((row) => ({ ...row, rowType: 'return', is_sample: false, koli_sequence: null })),
@@ -776,7 +2048,7 @@ export default function UnloadPage() {
       variantRows[0] ||
       null
 
-    return mainVariant?.variant_label || ''
+    return getVariantProductId(mainVariant)
   }
 
   for (const row of unloadRows) {
@@ -799,61 +2071,270 @@ export default function UnloadPage() {
   }
 
   const summaryRows = [...summaryMap.values()]
+  const modelGroups = useMemo(() => {
+    const grouped = new Map()
 
-  function handleRoSearchChange(value) {
-    setRoSearch(value)
-    const match = inbounds.find((item) => item.grn_number === value)
-    setSelectedInboundId(match ? String(match.id) : '')
-    setCurrentKoliItems([])
+    unloadRows.forEach((row) => {
+      const key = [
+        row.brand_id || '',
+        row.category_id || '',
+        row.model_name || '',
+        row.model_color || '',
+        row.variant_label || '',
+      ].join('|')
+      const current = grouped.get(key) || {
+        key,
+        brand_id: row.brand_id,
+        category_id: row.category_id,
+        model_name: row.model_name,
+        model_color: row.model_color,
+        variant_label: row.variant_label,
+        photo_url: row.photo_url || '',
+        total_qty: 0,
+        sample_qty: 0,
+        koli_sequences: new Set(),
+        pic_names: new Set(),
+      }
+
+      current.total_qty += Number(row.qty || 0)
+      if (row.is_sample) {
+        current.sample_qty += Number(row.qty || 0)
+      }
+      if (!row.is_sample && row.koli_sequence != null) {
+        current.koli_sequences.add(Number(row.koli_sequence))
+      }
+      if (row.pic_name) {
+        current.pic_names.add(row.pic_name)
+      }
+      if (!current.photo_url && row.photo_url) {
+        current.photo_url = row.photo_url
+      }
+      grouped.set(key, current)
+    })
+
+    return Array.from(grouped.values())
+      .sort((a, b) => getModelDisplayLabel(a.model_name, a.model_color, a.variant_label).localeCompare(getModelDisplayLabel(b.model_name, b.model_color, b.variant_label)))
+      .map((group) => ({
+        ...group,
+        koli_list: Array.from(group.koli_sequences).sort((a, b) => a - b),
+        pic_list: Array.from(group.pic_names),
+      }))
+  }, [unloadRows])
+
+  const sampleRows = unloadRows.filter((row) => row.is_sample)
+  const sampleBreakdownGroup = sampleRows.length
+    ? {
+        label: 'Sample',
+        items: sampleRows,
+        total_qty: sampleRows.reduce((sum, row) => sum + Number(row.qty || 0), 0),
+        pic_list: [...new Set(sampleRows.map((row) => row.pic_name).filter(Boolean))],
+        rowType: 'sample',
+      }
+    : null
+  const returnBreakdownGroup = returnRows.length
+    ? {
+        label: 'Retur',
+        items: returnRows,
+        total_qty: returnRows.reduce((sum, row) => sum + Number(row.qty || 0), 0),
+        pic_list: [...new Set(returnRows.map((row) => row.pic_name).filter(Boolean))],
+        rowType: 'return',
+      }
+    : null
+  const nonKoliGroups = [sampleBreakdownGroup, returnBreakdownGroup].filter(Boolean)
+
+  useEffect(() => {
+    if (!hasUnloadDraft || saving) return undefined
+
+    function handleBeforeUnload(event) {
+      event.preventDefault()
+      event.returnValue = ''
+    }
+
+    window.addEventListener('beforeunload', handleBeforeUnload)
+
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload)
+    }
+  }, [hasUnloadDraft, saving])
+
+  function getCategoryPathIds(categoryId) {
+    const path = []
+    let current = categoryMaps.byId.get(Number(categoryId))
+
+    while (current) {
+      path.unshift(String(current.id))
+      current = current.parent_id ? categoryMaps.byId.get(Number(current.parent_id)) : null
+    }
+
+    return path
+  }
+
+  function selectProductShortcut(row) {
+    const nextBrand = brands.find((brand) => Number(brand.id) === Number(row.brand_id)) || null
+    const [rootId = '', levelOneId = '', levelTwoId = ''] = getCategoryPathIds(row.category_id)
+    const matchingModel =
+      productModels.find((model) =>
+        Number(model.brand_id || 0) === Number(row.brand_id || 0) &&
+        Number(model.category_id || 0) === Number(row.category_id || 0) &&
+        String(model.model_name || '') === String(row.model_name || '')
+      ) ||
+      {
+        brand_id: row.brand_id,
+        category_id: row.category_id,
+        model_name: row.model_name,
+        photo_url: row.photo_url || '',
+      }
+
+    setSelectedBrandId(row.brand_id ? String(row.brand_id) : '')
+    setBrandSearch(nextBrand ? getBrandDisplayLabel(nextBrand) : '')
+    setShowBrandResults(false)
+    setLevel0Id(rootId)
+    setLevel1Id(levelOneId)
+    setLevel2Id(levelTwoId)
+    setSelectedModel({
+      ...matchingModel,
+      photo_url: row.photo_url || matchingModel.photo_url || '',
+    })
+    setSelectedVariantLabel(row.variant_label || getDefaultVariantLabelForModel(matchingModel))
+    setError('')
     setSuccess('')
   }
 
-  function handleBrandSearchChange(value) {
-    setBrandSearch(value)
-    const normalizedValue = normalizeText(value)
-    const match = brands.find((item) => {
-      const optionLabel = `${item.brand_name}${item.brand_code ? ` (${item.brand_code})` : ''}`
-      return (
-        normalizeText(optionLabel) === normalizedValue ||
-        normalizeText(item.brand_name) === normalizedValue ||
-        normalizeText(item.brand_code) === normalizedValue
-      )
-    })
-    setSelectedBrandId(match ? String(match.id) : '')
+  function handleOpenBuilder() {
+    const query = selectedInbound?.grn_number || grnParam
+    router.push(query ? `/mobile/inbound/unload?grn=${encodeURIComponent(query)}` : '/mobile/inbound/unload')
+  }
+
+  function handleBackToSorting() {
+    if (hasUnloadDraft && !window.confirm('Are you sure you want to discard this unload input?')) {
+      return
+    }
+
+    const query = selectedInbound?.grn_number || grnParam
+    router.push(query ? `/dashboard/inbound/unload?grn=${encodeURIComponent(query)}` : '/dashboard/inbound/unload')
+  }
+
+  function handleCloseSorting() {
+    router.push('/dashboard/inbound/receiving')
+  }
+
+  function handleModeChange(mode) {
+    if (isModeLocked) {
+      setError('Post or remove the current Koli items before changing mode.')
+      return
+    }
+
+    setIsReturn(mode === 'return')
+    setIsSample(mode === 'sample')
     setSelectedModel(null)
     setSelectedVariantLabel('')
-  }
+    setQty('')
 
-  async function handleModelPhotoChange(event) {
-    const file = event.target.files?.[0]
-    if (!file) return
-
-    try {
-      setModelPhotoFile(file)
-      const dataUrl = await readFileAsDataUrl(file)
-      setModelDraft((prev) => ({
-        ...prev,
-        photo_url: dataUrl,
-      }))
-    } catch (photoError) {
-      setModelModalError(photoError.message)
+    if (mode === 'return') {
+      setLevel0Id('')
+      setLevel1Id('')
+      setLevel2Id('')
     }
+
+    setError('')
+    setSuccess('')
   }
 
-  function resetAddForm({ keepPicName = false } = {}) {
-    setBrandSearch('')
-    setSelectedBrandId('')
+  function handleBrandSelectChange(value) {
+    const nextBrand = brands.find((brand) => String(brand.id) === String(value)) || null
+    setSelectedBrandId(value)
+    setBrandSearch(nextBrand ? getBrandDisplayLabel(nextBrand) : '')
+    setShowBrandResults(false)
     setLevel0Id('')
     setLevel1Id('')
     setLevel2Id('')
     setSelectedModel(null)
     setSelectedVariantLabel('')
-    setQty('')
-    if (!keepPicName) {
-      setPicName('')
+  }
+
+  function resetEntryForm({ keepPath = true, keepBrandOnly = false } = {}) {
+    if (!keepPath && !keepBrandOnly) {
+      setSelectedBrandId('')
+      setBrandSearch('')
     }
-    setIsSample(false)
-    setIsReturn(false)
+
+    if (!keepPath || keepBrandOnly) {
+      setLevel0Id('')
+      setLevel1Id('')
+      setLevel2Id('')
+    }
+
+    setShowBrandResults(false)
+    setSelectedModel(null)
+    setSelectedVariantLabel('')
+    setQty('')
+  }
+
+  async function handleVariantPhotoChange(event) {
+    const file = event.target.files?.[0]
+    if (!file) return
+
+    try {
+      setModelModalError('')
+      const compressed = await compressImageFile(file)
+      setVariantPhotoFile(compressed.file)
+      setModelDraft((prev) => ({
+        ...prev,
+        variant_photo_url: compressed.dataUrl,
+      }))
+      setShowVariantPhotoOptions(false)
+    } catch (photoError) {
+      setModelModalError(photoError.message)
+    } finally {
+      event.target.value = ''
+    }
+  }
+
+  function handleRemoveVariantPhoto() {
+    setVariantPhotoFile(null)
+    setModelDraft((prev) => ({
+      ...prev,
+      variant_photo_url: '',
+    }))
+    setShowVariantPhotoOptions(false)
+  }
+
+  function resetRegistryModal(nextDraft = createModelDraft()) {
+    setModelDraft(nextDraft)
+    setEditingVariantContext(null)
+    setVariantPhotoFile(null)
+    setModelModalError('')
+    setShowVariantPhotoOptions(false)
+  }
+
+  function selectVariantOption(model, variant, photoUrl) {
+    setSelectedModel({
+      ...model,
+      photo_url: photoUrl,
+    })
+    setSelectedVariantLabel(getVariantProductId(variant))
+    setShowChooseModelModal(false)
+  }
+
+  function openVariantEditor(model, variant) {
+    const variantProductId = getVariantProductId(variant)
+
+    setEditingVariantContext({ model, variant })
+    setModelDraft({
+      ...createModelDraft(),
+      model_id: String(model.id || ''),
+      model_name: model.model_name || '',
+      model_notes: model.model_notes || '',
+      is_new_model: false,
+      variant_name: String(variant.variant_name || variantProductId || '').toUpperCase(),
+      variant_notes: variant.variant_notes || '',
+      variant_photo_url: variant.variant_photo_url || '',
+    })
+    setVariantPhotoFile(null)
+    setModelModalError('')
+    setShowVariantPhotoOptions(false)
+    setShowChooseModelModal(false)
+    setShowModelModal(true)
   }
 
   async function refreshUnloadData(inboundId) {
@@ -1167,7 +2648,7 @@ export default function UnloadPage() {
           <div class="summaryValue">${selectedInbound.total_received_qty || 0}</div>
         </div>
         <div class="summaryCard">
-          <div class="summaryLabel">Jumlah Inbound</div>
+          <div class="summaryLabel">Inbound Qty</div>
           <div class="summaryValue">${totalInboundQty}</div>
         </div>
       </div>
@@ -1202,28 +2683,86 @@ export default function UnloadPage() {
   function handleSaveModel() {
     setModelModalError('')
 
-    if (!modelDraft.model_name.trim()) {
+    const chosenExistingModel = registryUsesNewModel ? null : registrySelectedModel
+    const normalizedModelName = registryUsesNewModel
+      ? modelDraft.model_name.trim().toUpperCase()
+      : String(chosenExistingModel?.model_name || '').trim().toUpperCase()
+    const normalizedVariantName = modelDraft.variant_name.trim().toUpperCase()
+
+    if (!selectedBrandId || !selectedCategory) {
+      setModelModalError('Choose brand and category first before registering a variant.')
+      return
+    }
+
+    if (!isEditingVariant && !modelDraft.variant_photo_url) {
+      setModelModalError('Variant photo is required.')
+      return
+    }
+
+    if (!isEditingVariant && !registryUsesNewModel && !chosenExistingModel) {
+      setModelModalError('Choose a model from the list, or add a new model.')
+      return
+    }
+
+    if (!isEditingVariant && !normalizedModelName) {
       setModelModalError('Model name is required.')
       return
     }
 
-    if (!selectedBrandId || !selectedCategory) {
-      setModelModalError('Choose brand and category first before adding a new model.')
+    if (!normalizedVariantName) {
+      setModelModalError('Variant name is required.')
       return
     }
 
     const saveModel = async () => {
       setSaving(true)
 
-      let photoUrl = modelDraft.photo_url || ''
-      if (modelPhotoFile) {
-        const fileExt = modelPhotoFile.name.split('.').pop()?.toLowerCase() || 'jpg'
+      let savedModel = chosenExistingModel
+
+      if (!savedModel) {
+        savedModel = productModels.find(
+          (model) =>
+            Number(model.brand_id || 0) === Number(selectedBrandId) &&
+            Number(model.category_id || 0) === Number(selectedCategory.id) &&
+            String(model.model_name || '').trim().toUpperCase() === normalizedModelName
+        )
+      }
+
+      if (!savedModel) {
+        const nextModel = {
+          brand_id: Number(selectedBrandId),
+          category_id: selectedCategory.id,
+          model_name: normalizedModelName,
+          model_notes: modelDraft.model_notes.trim() || null,
+          is_active: true,
+        }
+
+        const { data: insertedModel, error: insertError } = await supabase
+          .from('dir_product_models')
+          .insert([nextModel])
+          .select('id, brand_id, category_id, model_code, model_name, model_notes')
+          .single()
+
+        if (insertError) {
+          setModelModalError(insertError.message)
+          setSaving(false)
+          return
+        }
+
+        savedModel = insertedModel
+        setProductModels((prev) => [...prev, insertedModel])
+      }
+
+      let variantPhotoUrl = ''
+
+      if (variantPhotoFile) {
+        const fileExt = variantPhotoFile.name.split('.').pop()?.toLowerCase() || 'jpg'
         const fileName = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}.${fileExt}`
-        const filePath = `${selectedBrandId}/${selectedCategory.id}/${fileName}`
+        const filePath = `${selectedBrandId}/${selectedCategory.id}/variants/${fileName}`
 
         const { error: uploadError } = await supabase.storage
           .from('product-photos')
-          .upload(filePath, modelPhotoFile, { upsert: false })
+          .upload(filePath, variantPhotoFile, { upsert: false })
 
         if (uploadError) {
           setModelModalError(uploadError.message)
@@ -1235,44 +2774,98 @@ export default function UnloadPage() {
           .from('product-photos')
           .getPublicUrl(filePath)
 
-        photoUrl = publicUrlData.publicUrl || ''
+        variantPhotoUrl = publicUrlData.publicUrl || ''
+      } else if (modelDraft.variant_photo_url) {
+        variantPhotoUrl = modelDraft.variant_photo_url
       }
 
-      const nextModel = {
-        brand_id: Number(selectedBrandId),
-        category_id: selectedCategory.id,
-        model_name: modelDraft.model_name.trim().toUpperCase(),
-        model_color: modelDraft.model_color.trim().toUpperCase(),
-        photo_url: photoUrl,
-        is_active: true,
-      }
+      if (isEditingVariant) {
+        const variantPayload = {
+          variant_name: normalizedVariantName,
+          variant_notes: modelDraft.variant_notes.trim() || null,
+          variant_photo_url: variantPhotoUrl || null,
+          updated_at: new Date().toISOString(),
+        }
 
-      const { data: insertedModel, error: insertError } = await supabase
-      .from('dir_product_models')
-        .insert([nextModel])
-        .select('id, brand_id, category_id, model_name, model_color, photo_url')
-        .single()
+        const { data: updatedVariant, error: updateVariantError } = await supabase
+          .from('dir_product_model_variants')
+          .update(variantPayload)
+          .eq('id', editingVariantContext.variant.id)
+          .select('*')
+          .single()
 
-      if (insertError) {
-        setModelModalError(insertError.message)
+        if (updateVariantError) {
+          setModelModalError(updateVariantError.message)
+          setSaving(false)
+          return
+        }
+
+        const editedModel = editingVariantContext.model
+        const editedVariantProductId = getVariantProductId(updatedVariant)
+
+        setProductModelVariants((prev) =>
+          prev.map((variant) => (Number(variant.id) === Number(updatedVariant.id) ? updatedVariant : variant))
+        )
+        setSelectedModel({
+          ...editedModel,
+          photo_url: updatedVariant.variant_photo_url || '',
+        })
+        setSelectedVariantLabel(editedVariantProductId)
+        setModelDraft(createModelDraft())
+        setEditingVariantContext(null)
+        setVariantPhotoFile(null)
+        setShowModelModal(false)
+        setShowChooseModelModal(false)
+        setModelModalError('')
+        setError('')
+        setSuccess('Variant updated successfully.')
         setSaving(false)
         return
       }
 
-      setProductModels((prev) => [...prev, insertedModel])
-      setSelectedModel(insertedModel)
-      setSelectedVariantLabel('')
-      setModelDraft({
-        model_name: '',
-        model_color: '',
-        photo_url: '',
+      const siblingVariants = productModelVariants.filter(
+        (variant) => Number(variant.product_model_id || 0) === Number(savedModel.id || 0)
+      )
+      const nextVariantIndex =
+        siblingVariants.reduce((max, variant) => Math.max(max, Number(variant.variant_index ?? -1)), -1) + 1
+      const automaticVariantLabel = `VAR${nextVariantIndex + 1}`
+      const nextVariant = {
+        product_model_id: savedModel.id,
+        variant_index: nextVariantIndex,
+        variant_label: automaticVariantLabel,
+        variant_name: normalizedVariantName,
+        variant_notes: modelDraft.variant_notes.trim() || null,
+        variant_photo_url: variantPhotoUrl || null,
+        is_main_variant: siblingVariants.length === 0,
+        is_active: true,
+      }
+
+      const { data: insertedVariant, error: variantError } = await supabase
+        .from('dir_product_model_variants')
+        .insert([nextVariant])
+        .select('*')
+        .single()
+
+      if (variantError) {
+        setModelModalError(variantError.message)
+        setSaving(false)
+        return
+      }
+
+      setProductModelVariants((prev) => [...prev, insertedVariant])
+      const insertedVariantProductId = getVariantProductId(insertedVariant) || automaticVariantLabel
+      setSelectedModel({
+        ...savedModel,
+        photo_url: insertedVariant.variant_photo_url || savedModel.photo_url || '',
       })
-      setModelPhotoFile(null)
+      setSelectedVariantLabel(insertedVariantProductId)
+      setModelDraft(createModelDraft())
+      setVariantPhotoFile(null)
       setShowModelModal(false)
       setShowChooseModelModal(false)
       setModelModalError('')
       setError('')
-      setSuccess('Model saved successfully.')
+      setSuccess('Variant saved successfully.')
       setSaving(false)
     }
 
@@ -1288,7 +2881,12 @@ export default function UnloadPage() {
       return
     }
 
-    if (!isReturn && !selectedBrandId) {
+    if (!user) {
+      setError('Loading user profile. Please wait a moment.')
+      return
+    }
+
+    if (!selectedBrandId) {
       setError('Please choose a brand.')
       return
     }
@@ -1308,11 +2906,6 @@ export default function UnloadPage() {
       return
     }
 
-    if (!picName.trim()) {
-      setError('PIC is required.')
-      return
-    }
-
     setSaving(true)
 
     const payload = {
@@ -1320,11 +2913,11 @@ export default function UnloadPage() {
       brand_id: selectedBrandId ? Number(selectedBrandId) : null,
       category_id: selectedCategory?.id || null,
       model_name: selectedModel?.model_name || null,
-      model_color: selectedModel?.model_color || null,
+      model_color: null,
       variant_label: selectedVariantLabel || null,
       qty: Number(qty),
-      pic_name: picName.trim().toUpperCase(),
-      photo_url: selectedModel?.photo_url || null,
+      pic_name: displayName,
+      photo_url: selectedModelPhoto || selectedModel?.photo_url || null,
     }
 
     if (!isReturn && !isSample) {
@@ -1335,8 +2928,8 @@ export default function UnloadPage() {
           ...payload,
         },
       ])
-      resetAddForm({ keepPicName: true })
-      setSuccess(`Item added to Current Koli ${nextKoliSequence}.`)
+      resetEntryForm({ keepPath: true })
+      setSuccess('Item added to this Koli.')
       setSaving(false)
       return
     }
@@ -1378,7 +2971,7 @@ export default function UnloadPage() {
       return
     }
 
-    resetAddForm()
+    resetEntryForm({ keepPath: !isReturn, keepBrandOnly: isReturn })
     setSuccess(isReturn ? 'Return row added successfully.' : 'Sample row added successfully.')
     setSaving(false)
   }
@@ -1397,7 +2990,33 @@ export default function UnloadPage() {
       return
     }
 
+    const shouldPost = window.confirm(
+      `Post this Koli with ${currentKoliItems.length} item${currentKoliItems.length > 1 ? 's' : ''}, total qty ${currentKoliQty}?`
+    )
+
+    if (!shouldPost) {
+      return
+    }
+
     setSaving(true)
+
+    const { data: latestKoliRows, error: sequenceError } = await supabase
+      .from('inbound_unload')
+      .select('koli_sequence')
+      .eq('inbound_id', selectedInbound.id)
+      .eq('is_sample', false)
+
+    if (sequenceError) {
+      setError(sequenceError.message)
+      setSaving(false)
+      return
+    }
+
+    const assignedKoliSequence =
+      (latestKoliRows || []).reduce(
+        (max, row) => Math.max(max, Number(row.koli_sequence || 0)),
+        0
+      ) + 1
 
     const payload = currentKoliItems.map((item) => ({
       inbound_id: item.inbound_id,
@@ -1410,7 +3029,7 @@ export default function UnloadPage() {
       pic_name: item.pic_name,
       photo_url: item.photo_url,
       is_sample: false,
-      koli_sequence: nextKoliSequence,
+      koli_sequence: assignedKoliSequence,
     }))
 
     const { error: insertError } = await supabase.from('inbound_unload').insert(payload)
@@ -1430,8 +3049,8 @@ export default function UnloadPage() {
     }
 
     setCurrentKoliItems([])
-    resetAddForm()
-    setSuccess(`Current Koli ${nextKoliSequence} posted successfully.`)
+    resetEntryForm({ keepPath: true })
+    setSuccess('Koli posted successfully.')
     setSaving(false)
   }
 
@@ -1439,260 +3058,567 @@ export default function UnloadPage() {
     setCurrentKoliItems((prev) => prev.filter((item) => item.tempId !== tempId))
   }
 
+  function handleAddShortcut(event) {
+    if (event.key !== 'Enter') return
+
+    event.preventDefault()
+    handleAddToUnload()
+  }
+
   return (
-    <div style={styles.wrapper}>
-      <div style={styles.header}>
-        <div>
-          <h1 style={styles.title}>Unload</h1>
-          <p style={styles.subtitle}>Break each GRN into brand, category, model, and per-koli unload lines.</p>
-        </div>
-      </div>
-
-      <div style={styles.card}>
-        <div>
-          <h2 style={styles.sectionTitle}>Unload Header</h2>
-          <p style={styles.sectionSubtitle}>Choose the GRN first, then continue with the unload breakdown.</p>
-        </div>
-
-        {loading ? <p style={styles.emptyText}>Loading unload setup...</p> : null}
-
-        <div style={styles.grid}>
-          <div style={styles.field}>
-            <label style={styles.label}>GRN Number</label>
-            <input
-              list="inbound-ro-options"
-              value={roSearch}
-              onChange={(event) => handleRoSearchChange(event.target.value)}
-              style={styles.input}
-              placeholder="Type or choose GRN Number"
-            />
-            <datalist id="inbound-ro-options">
-              {inbounds.map((item) => (
-                <option key={item.id} value={item.grn_number} />
-              ))}
-            </datalist>
+    <div style={isBuilderMode ? styles.mobileWrapper : styles.wrapper}>
+      {isBuilderMode ? (
+        <header style={styles.mobileTopBar}>
+          <button type="button" onClick={handleBackToSorting} style={styles.backButton} aria-label="Back to sorting">
+            <ArrowLeftIcon />
+          </button>
+          <div>
+            <p style={styles.eyebrow}>Inbound</p>
+            <h1 style={{ ...styles.title, fontSize: '22px' }}>Intake</h1>
           </div>
+          <span style={styles.grnChip}>{selectedInbound?.grn_number || grnParam || '-'}</span>
+        </header>
+      ) : null}
 
-          <div style={styles.field}>
-            <label style={styles.label}>Qty Surat Jalan</label>
-            <div style={styles.readonlyBox}>{selectedInbound?.total_claimed_qty || 0}</div>
-          </div>
-
-          <div style={styles.field}>
-            <label style={styles.label}>Qty Bongkar</label>
-            <div style={styles.readonlyBox}>{selectedInbound?.total_received_qty || 0}</div>
-          </div>
-        </div>
+      {isBuilderMode ? (
+      <>
+        {loading ? <p style={{ ...styles.emptyText, ...styles.mobileInlineMessage }}>Loading unload setup...</p> : null}
+        {error && !selectedInbound ? <p style={{ ...styles.errorText, ...styles.mobileInlineMessage }}>{error}</p> : null}
 
         {selectedInbound ? (
-          <div style={styles.headerSummaryGrid}>
-            <div style={styles.summaryCard}>
-              <span style={styles.summaryLabel}>Inbound Date</span>
-              <strong style={styles.summaryValue}>{formatDateDisplay(selectedInbound.inbound_date)}</strong>
+          <>
+            <section style={styles.mobileInfoBand}>
+              <div style={styles.mobileInfoBox}>
+                <span style={{ ...styles.mobileInfoLabel, ...styles.mobileInfoLabelTight }}>Supplier</span>
+                <strong style={{ ...styles.mobileInfoValue, ...styles.mobileInfoValueTight }}>{selectedInbound.suppliers?.supplier_name || '-'}</strong>
+              </div>
+              <div style={styles.mobileInfoBox}>
+                <span style={{ ...styles.mobileInfoLabel, ...styles.mobileInfoLabelTight }}>Input As</span>
+                <strong style={{ ...styles.mobileInfoValue, ...styles.mobileInfoValueTight }}>{displayFirstName}</strong>
+              </div>
+              <div style={styles.mobileInfoRight}>
+                <span style={{ ...styles.mobileInfoLabel, ...styles.mobileInfoLabelTight }}>Sorted Qty</span>
+                <strong style={{ ...styles.mobileInfoValue, ...styles.mobileInfoValueTight }}>{formatNumber(totalInboundQty)}</strong>
+              </div>
+              <div style={styles.mobileInfoRight}>
+                <span style={{ ...styles.mobileInfoLabel, ...styles.mobileInfoLabelTight }}>Remaining Qty</span>
+                <strong style={{ ...styles.mobileInfoValue, ...styles.mobileInfoValueTight, ...remainingQtyStyle }}>{formatNumber(remainingQty)}</strong>
+              </div>
+            </section>
+          </>
+        ) : !loading ? (
+          <section style={styles.mobileDetailBand}>
+            <div style={{ ...styles.mobileInfoBox, gridColumn: '1 / -1' }}>
+              <span style={styles.mobileInfoLabel}>GRN Number</span>
+              <strong style={styles.mobileInfoValue}>{grnParam || '-'}</strong>
+              <p style={styles.emptyText}>Selected GRN is not available.</p>
             </div>
-            <div style={styles.summaryCard}>
-              <span style={styles.summaryLabel}>Supplier</span>
-              <strong style={styles.summaryValue}>{selectedInbound.suppliers?.supplier_name || '-'}</strong>
-            </div>
-            <div style={styles.summaryCard}>
-              <span style={styles.summaryLabel}>Barang</span>
-              <strong style={styles.summaryValue}>{selectedInbound.item_name || '-'}</strong>
-            </div>
-            <div style={styles.summaryCard}>
-              <span style={styles.summaryLabel}>GRN Selected</span>
-              <strong style={styles.summaryValue}>{selectedInbound.grn_number}</strong>
-            </div>
+          </section>
+        ) : null}
+      </>
+      ) : (
+      <div style={styles.overviewPanel}>
+        <div style={styles.formTopBar}>
+          <div>
+            <p style={styles.eyebrow}>Inbound</p>
+            <h1 style={styles.title}>Sorting & Breakdown</h1>
           </div>
-        ) : (
-          <p style={styles.emptyText}>Choose a GRN number to start unloading.</p>
-        )}
-      </div>
-
-      <div style={styles.card}>
-        <div>
-          <h2 style={styles.sectionTitle}>Add To Unload</h2>
-          <p style={styles.sectionSubtitle}>Regular items go into the current koli builder first. Sample and retur stay outside koli and can be added directly.</p>
+          <div style={styles.overviewActions}>
+            <button type="button" onClick={handlePrintUnloadDocument} style={styles.secondaryButton}>
+              Print
+            </button>
+            <button
+              type="button"
+              onClick={handleOpenBuilder}
+              style={{ ...styles.builderButton, ...styles.iconOnlyButton }}
+              aria-label="Open unload builder"
+              title="Builder"
+            >
+              <BuilderIcon />
+            </button>
+            <button
+              type="button"
+              onClick={handleCloseSorting}
+              style={styles.closeIconButton}
+              aria-label="Close sorting"
+              title="Close"
+            >
+              <span style={styles.closeIconGlyph}>X</span>
+            </button>
+          </div>
         </div>
 
-        {!isReturn && !isSample ? (
-          <div style={styles.summaryCard}>
-            <span style={styles.summaryLabel}>Current Koli</span>
-            <strong style={styles.summaryValue}>Koli {nextKoliSequence}</strong>
-            <span style={styles.helperText}>
-              Add multiple items here, then post them together as one koli.
-            </span>
+        {loading ? <p style={styles.emptyText}>Loading sorting setup...</p> : null}
+        {error ? <p style={styles.errorText}>{error}</p> : null}
+
+        <div style={styles.contentGrid}>
+          <section style={styles.headerColumn}>
+            <div style={styles.grnCard}>
+              <span style={styles.grnLabel}>GRN Number</span>
+              <strong style={styles.grnValue}>{selectedInbound?.grn_number || '-'}</strong>
+              <div style={styles.grnItemBlock}>
+                <span style={styles.grnLabel}>Item Name</span>
+                <strong style={styles.infoValue}>{selectedInbound?.item_name || '-'}</strong>
+              </div>
+            </div>
+
+            <div style={styles.headerInfoColumn}>
+              <div style={styles.infoGrid}>
+                <div style={styles.infoBox}>
+                  <span style={styles.infoLabel}>Inbound Date</span>
+                  <strong style={styles.infoValue}>{formatDateDisplay(selectedInbound?.inbound_date)}</strong>
+                </div>
+                <div style={styles.infoBox}>
+                  <span style={styles.infoLabel}>Supplier</span>
+                  <strong style={styles.infoValue}>{selectedInbound?.suppliers?.supplier_name || '-'}</strong>
+                </div>
+              </div>
+
+              <div style={styles.metricGrid}>
+                <div style={styles.metricBox}>
+                  <span style={styles.infoLabel}>SJ Qty</span>
+                  <strong style={styles.metricValue}>{selectedInbound?.total_claimed_qty || 0}</strong>
+                </div>
+                <div style={styles.metricBox}>
+                  <span style={styles.infoLabel}>Received Qty</span>
+                  <strong style={styles.metricValue}>{selectedInbound?.total_received_qty || 0}</strong>
+                </div>
+                <div style={styles.metricBox}>
+                  <span style={styles.infoLabel}>Sorted Qty</span>
+                  <strong style={styles.metricValue}>{totalInboundQty}</strong>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section style={styles.breakdownColumn}>
+            <div style={styles.segmentWrap} aria-label="Breakdown view">
+              <button
+                type="button"
+                onClick={() => setBreakdownMode('koli')}
+                style={{
+                  ...styles.segmentButton,
+                  ...(breakdownMode === 'koli' ? styles.segmentButtonActive : {}),
+                }}
+              >
+                Koli
+              </button>
+              <button
+                type="button"
+                onClick={() => setBreakdownMode('model')}
+                style={{
+                  ...styles.segmentButton,
+                  ...(breakdownMode === 'model' ? styles.segmentButtonActive : {}),
+                }}
+              >
+                Model
+              </button>
+            </div>
+
+            {!selectedInbound ? (
+              <div style={styles.helperBox}>
+                <p style={styles.emptyText}>Choose a GRN number to see sorting data.</p>
+              </div>
+            ) : breakdownMode === 'koli' ? (
+              koliGroups.length || nonKoliGroups.length ? (
+                <div style={styles.tableWrap}>
+                  <table style={styles.table}>
+                    <thead>
+                      <tr>
+                        <th style={{ ...styles.th, ...styles.koliHeader }}>Koli</th>
+                        <th style={styles.th}>Inside</th>
+                        <th style={styles.th}>Total Qty</th>
+                        <th style={styles.th}>PIC</th>
+                        <th style={styles.th}>Action</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {koliGroups.map((group) => (
+                        <tr key={`koli-${group.koli_sequence}`}>
+                          <td style={{ ...styles.td, ...styles.koliCell }}>Koli {group.koli_sequence}</td>
+                          <td style={styles.td}>
+                            <div style={styles.itemStack}>
+                              {group.items.map((row) => {
+                                const brand = brands.find((item) => item.id === row.brand_id)
+                                const category = categoryMaps.byId.get(row.category_id)
+                                const modelLabel = getModelDisplayLabel(row.model_name, row.model_color, row.variant_label)
+
+                                return (
+                                  <div key={row.id} style={styles.itemLine}>
+                                    <span>
+                                      <strong>{modelLabel || '-'}</strong>
+                                      <span style={styles.itemMeta}> {brand?.brand_name || '-'} / {category?.category_name || '-'}</span>
+                                    </span>
+                                    <span style={styles.qtyPill}>{row.qty || 0}</span>
+                                  </div>
+                                )
+                              })}
+                            </div>
+                          </td>
+                          <td style={styles.td}>{group.total_qty || 0}</td>
+                          <td style={styles.td}>{group.pic_list.join(', ') || '-'}</td>
+                          <td style={styles.td}>
+                            <button type="button" onClick={() => handlePrintKoli(group)} style={styles.printButton}>
+                              Print
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                      {nonKoliGroups.map((group) => (
+                        <tr key={group.rowType}>
+                          <td style={{ ...styles.td, ...styles.koliCell }}>
+                            {group.rowType === 'sample' ? <span style={styles.sampleBadge}>Sample</span> : <span style={styles.returnBadge}>Retur</span>}
+                          </td>
+                          <td style={styles.td}>
+                            <div style={styles.itemStack}>
+                              {group.items.map((row) => {
+                                const brand = brands.find((item) => item.id === row.brand_id)
+                                const category = categoryMaps.byId.get(row.category_id)
+                                const modelLabel = getModelDisplayLabel(row.model_name, row.model_color, row.variant_label)
+
+                                return (
+                                  <div key={`${group.rowType}-${row.id}`} style={styles.itemLine}>
+                                    <span>
+                                      <strong>{modelLabel || '-'}</strong>
+                                      <span style={styles.itemMeta}> {brand?.brand_name || '-'} / {category?.category_name || '-'}</span>
+                                    </span>
+                                    <span style={styles.qtyPill}>{row.qty || 0}</span>
+                                  </div>
+                                )
+                              })}
+                            </div>
+                          </td>
+                          <td style={styles.td}>{group.total_qty || 0}</td>
+                          <td style={styles.td}>{group.pic_list.join(', ') || '-'}</td>
+                          <td style={styles.td}>-</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <div style={styles.helperBox}>
+                  <p style={styles.emptyText}>No sorting rows yet.</p>
+                </div>
+              )
+            ) : modelGroups.length ? (
+              <div style={styles.tableWrap}>
+                <table style={styles.table}>
+                  <thead>
+                    <tr>
+                      <th style={styles.th}>Model</th>
+                      <th style={styles.th}>Brand</th>
+                      <th style={styles.th}>Category</th>
+                      <th style={styles.th}>Koli</th>
+                      <th style={styles.th}>Total Qty</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {modelGroups.map((group) => {
+                      const brand = brands.find((item) => item.id === group.brand_id)
+                      const category = categoryMaps.byId.get(group.category_id)
+                      const modelLabel = getModelDisplayLabel(group.model_name, group.model_color, group.variant_label)
+
+                      return (
+                        <tr key={group.key}>
+                          <td style={styles.td}>
+                            <strong>{modelLabel || '-'}</strong>
+                            {group.sample_qty ? <span style={styles.itemMeta}> Sample {group.sample_qty}</span> : null}
+                          </td>
+                          <td style={styles.td}>{brand?.brand_name || '-'}</td>
+                          <td style={styles.td}>{category?.full_name || category?.category_name || '-'}</td>
+                          <td style={styles.td}>{group.koli_list.length ? group.koli_list.map((item) => `Koli ${item}`).join(', ') : '-'}</td>
+                          <td style={styles.td}>{group.total_qty || 0}</td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div style={styles.helperBox}>
+                <p style={styles.emptyText}>No model rows yet.</p>
+              </div>
+            )}
+          </section>
+        </div>
+      </div>
+      )}
+
+      {isBuilderMode && selectedInbound ? (
+      <div style={styles.card}>
+        <div style={styles.unloadWorkspace}>
+          <div style={styles.workPanel}>
+        <div style={styles.field}>
+          <label style={styles.label}>Mode</label>
+          <div style={styles.modeSegmentWrap} role="tablist" aria-label="Unload mode">
+            <button
+              type="button"
+              onClick={() => handleModeChange('regular')}
+              disabled={isModeLocked}
+              style={{
+                ...styles.modeSegmentButton,
+                ...(addMode === 'regular' ? styles.modeSegmentRegularActive : {}),
+                ...(isModeLocked ? styles.disabledSegment : {}),
+              }}
+              aria-selected={addMode === 'regular'}
+              role="tab"
+            >
+              Regular
+            </button>
+            <button
+              type="button"
+              onClick={() => handleModeChange('sample')}
+              disabled={isModeLocked}
+              style={{
+                ...styles.modeSegmentButton,
+                ...(addMode === 'sample' ? styles.modeSegmentSampleActive : {}),
+                ...(isModeLocked ? styles.disabledSegment : {}),
+              }}
+              aria-selected={addMode === 'sample'}
+              role="tab"
+            >
+              Sample
+            </button>
+            <button
+              type="button"
+              onClick={() => handleModeChange('return')}
+              disabled={isModeLocked}
+              style={{
+                ...styles.modeSegmentButton,
+                ...(addMode === 'return' ? styles.modeSegmentReturnActive : {}),
+                ...(isModeLocked ? styles.disabledSegment : {}),
+              }}
+              aria-selected={addMode === 'return'}
+              role="tab"
+            >
+              Retur
+            </button>
+          </div>
+        </div>
+
+        {!isReturn && recentProductOptions.length ? (
+          <div style={styles.shortcutBlock}>
+            <div style={styles.shortcutHeader}>
+              <span style={styles.shortcutTitle}>Recent Chosen Product</span>
+            </div>
+            <div style={styles.shortcutGrid}>
+              {recentProductOptions.map((row) => {
+                const category = categoryMaps.byId.get(Number(row.category_id))
+                const modelLabel = getModelDisplayLabel(row.model_name, row.model_color, row.variant_label)
+
+                return (
+                  <button
+                    key={`${row.brand_id}-${row.category_id}-${row.model_name}-${row.model_color || ''}-${row.variant_label || ''}`}
+                    type="button"
+                    onClick={() => selectProductShortcut(row)}
+                    style={styles.shortcutCard}
+                  >
+                    {row.photo_url ? (
+                      <Image
+                        src={row.photo_url}
+                        alt={modelLabel}
+                        width={96}
+                        height={96}
+                        unoptimized
+                        style={styles.shortcutImage}
+                      />
+                    ) : (
+                      <span style={styles.shortcutPlaceholder}>NO PHOTO</span>
+                    )}
+                    <span style={styles.shortcutName}>{modelLabel}</span>
+                    <span style={styles.shortcutMeta}>{getCategoryDisplayLabel(category)}</span>
+                  </button>
+                )
+              })}
+            </div>
           </div>
         ) : null}
 
-        <div style={styles.field}>
-          <label style={styles.label}>Retur</label>
-          <div style={styles.toggleWrap}>
-            <button
-              type="button"
-              onClick={() => {
-                const nextValue = !isReturn
-                setIsReturn(nextValue)
-                if (nextValue) {
-                  setIsSample(false)
-                }
-              }}
-              style={styles.toggleButton}
-              aria-pressed={isReturn}
-              aria-label={isReturn ? 'Disable retur mode' : 'Enable retur mode'}
-              title={isReturn ? 'Retur active' : 'Retur inactive'}
-            >
-              <span
-                style={{
-                  ...styles.toggleTrack,
-                  backgroundColor: isReturn ? '#22c55e' : '#cbd5e1',
-                }}
-              >
-                <span
-                  style={{
-                    ...styles.toggleThumb,
-                    transform: isReturn ? 'translateX(20px)' : 'translateX(0)',
-                  }}
-                />
-              </span>
-            </button>
-            <span>{isReturn ? 'Retur active' : 'Retur inactive'}</span>
-          </div>
-          <span style={styles.helperText}>
-            If retur is active, brand, category, and model can be left empty. Qty still must be filled.
-          </span>
-        </div>
-
-        <div style={styles.grid}>
+        <div style={builderGridStyle}>
           <div style={styles.field}>
             <label style={styles.label}>Brand</label>
-            <input
-              list="brand-options"
-              value={brandSearch}
-              onChange={(event) => handleBrandSearchChange(event.target.value)}
-              style={styles.input}
-              placeholder="Type and filter brand"
-            />
-            <datalist id="brand-options">
-              {brands.map((brand) => (
-                <option
-                  key={brand.id}
-                  value={`${brand.brand_name}${brand.brand_code ? ` (${brand.brand_code})` : ''}`}
-                />
-              ))}
-            </datalist>
-          </div>
-
-          <div style={styles.field}>
-            <label style={styles.label}>Category Level 0</label>
-            <select
-              value={level0Id}
-              onChange={(event) => {
-                setLevel0Id(event.target.value)
-                setLevel1Id('')
-                setLevel2Id('')
-                setSelectedModel(null)
-                setSelectedVariantLabel('')
-              }}
-              style={styles.select}
-            >
-              <option value="">Choose Level 0</option>
-              {level0Options.map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.category_name}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div style={styles.field}>
-            <label style={styles.label}>Category Level 1</label>
-            <select
-              value={level1Id}
-              onChange={(event) => {
-                setLevel1Id(event.target.value)
-                setLevel2Id('')
-                setSelectedModel(null)
-                setSelectedVariantLabel('')
-              }}
-              style={styles.select}
-              disabled={!level0Id || level1Options.length === 0}
-            >
-              <option value="">
-                {level0Id
-                  ? level1Options.length === 0
-                    ? 'No Level 1'
-                    : 'Choose Level 1'
-                  : 'Choose Level 0 first'}
-              </option>
-              {level1Options.map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.category_name}
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
-
-        <div style={styles.grid}>
-          <div style={styles.field}>
-            <label style={styles.label}>Category Level 2</label>
-            <select
-              value={level2Id}
-              onChange={(event) => {
-                setLevel2Id(event.target.value)
-                setSelectedModel(null)
-                setSelectedVariantLabel('')
-              }}
-              style={styles.select}
-              disabled={!level1Id || level2Options.length === 0}
-            >
-              <option value="">
-                {level1Id
-                  ? level2Options.length === 0
-                    ? 'No Level 2'
-                    : 'Choose Level 2'
-                  : 'Choose Level 1 first'}
-              </option>
-              {level2Options.map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.category_name}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div style={styles.field}>
-            <label style={styles.label}>Model</label>
-            <div style={styles.inlineRow}>
-              <div style={styles.readonlyBox}>
-                {selectedModel
-                  ? getModelDisplayLabel(
-                      selectedModel.model_name,
-                      selectedModel.model_color,
-                      selectedVariantLabel || ''
-                    )
-                  : 'No model selected'}
-              </div>
-              <button
-                type="button"
-                onClick={() => {
-                  if (!selectedBrandId || !selectedCategory) {
-                    setError('Choose brand and category first before selecting a model.')
-                    return
-                  }
-
-                  setShowChooseModelModal(true)
-                  setError('')
+            <div style={styles.searchPicker}>
+              <input
+                value={brandSearch}
+                onChange={(event) => {
+                  setBrandSearch(event.target.value)
+                  setSelectedBrandId('')
+                  setLevel0Id('')
+                  setLevel1Id('')
+                  setLevel2Id('')
+                  setSelectedModel(null)
+                  setSelectedVariantLabel('')
+                  setShowBrandResults(true)
                 }}
-                style={styles.iconButton}
-                aria-label="Choose model"
-                title="Choose model"
-              >
-                ⌕
-              </button>
+                onFocus={() => setShowBrandResults(true)}
+                onBlur={() => {
+                  window.setTimeout(() => setShowBrandResults(false), 120)
+                }}
+                style={styles.input}
+                placeholder="Search brand"
+                autoComplete="off"
+              />
+              {showBrandResults ? (
+                <div style={styles.searchResults}>
+                  {filteredBrandOptions.length ? (
+                    filteredBrandOptions.map((brand) => {
+                      const isSelected = Number(brand.id) === Number(selectedBrand?.id || 0)
+
+                      return (
+                        <button
+                          key={brand.id}
+                          type="button"
+                          onMouseDown={(event) => event.preventDefault()}
+                          onClick={() => handleBrandSelectChange(String(brand.id))}
+                          style={{
+                            ...styles.searchOption,
+                            ...(isSelected ? styles.searchOptionActive : {}),
+                          }}
+                        >
+                          {getBrandDisplayLabel(brand)}
+                        </button>
+                      )
+                    })
+                  ) : (
+                    <p style={styles.searchEmpty}>No brand found.</p>
+                  )}
+                </div>
+              ) : null}
             </div>
           </div>
 
+          {!isReturn && selectedBrandId ? (
+            <div style={styles.field}>
+              <label style={styles.label}>Category</label>
+              <select
+                value={level0Id}
+                onChange={(event) => {
+                  setLevel0Id(event.target.value)
+                  setLevel1Id('')
+                  setLevel2Id('')
+                  setSelectedModel(null)
+                  setSelectedVariantLabel('')
+                }}
+                style={styles.select}
+              >
+                <option value="">Choose category</option>
+                {level0Options.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.category_name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          ) : null}
+
+          {!isReturn && level0Id && level1Options.length ? (
+            <div style={styles.field}>
+              <label style={styles.label}>Subcategory</label>
+              <select
+                value={level1Id}
+                onChange={(event) => {
+                  setLevel1Id(event.target.value)
+                  setLevel2Id('')
+                  setSelectedModel(null)
+                  setSelectedVariantLabel('')
+                }}
+                style={styles.select}
+              >
+                <option value="">Choose subcategory</option>
+                {level1Options.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.category_name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          ) : null}
+        </div>
+
+        <div style={builderGridStyle}>
+          {!isReturn && level1Id && level2Options.length ? (
+            <div style={styles.field}>
+              <label style={styles.label}>Item Type</label>
+              <select
+                value={level2Id}
+                onChange={(event) => {
+                  setLevel2Id(event.target.value)
+                  setSelectedModel(null)
+                  setSelectedVariantLabel('')
+                }}
+                style={styles.select}
+              >
+                <option value="">Choose item type</option>
+                {level2Options.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.category_name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          ) : null}
+
+          {!isReturn && selectedCategory ? (
+          <div style={styles.field}>
+            <div style={styles.modelLabelRow}>
+              <label style={styles.label}>Model</label>
+              <span style={styles.categoryHint}>{selectedCategoryLabel}</span>
+            </div>
+            <div style={styles.modelActionRow}>
+              {selectedModel ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowChooseModelModal(true)
+                    setError('')
+                  }}
+                  style={styles.selectedModelCard}
+                  aria-label="Change selected variant"
+                  title="Change selected variant"
+                >
+                  {selectedModelPhoto ? (
+                    <Image
+                      src={selectedModelPhoto}
+                      alt={getModelDisplayLabel(selectedModel.model_name, '', selectedVariantLabel || '')}
+                      width={64}
+                      height={64}
+                      unoptimized
+                      style={styles.selectedModelThumb}
+                    />
+                  ) : (
+                    <span style={styles.selectedModelPlaceholder}>NO PHOTO</span>
+                  )}
+                  {selectedVariantLabel ? <span style={styles.selectedModelBadge}>{selectedVariantLabel}</span> : null}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!selectedBrandId || !selectedCategory) {
+                      setError('Choose brand and category first before selecting a model.')
+                      return
+                    }
+
+                    setShowChooseModelModal(true)
+                    setError('')
+                  }}
+                  style={styles.selectedModelCard}
+                  aria-label="Choose variant"
+                  title="Choose variant"
+                >
+                  <span style={styles.selectedModelPlaceholder}>Choose Variant</span>
+                </button>
+              )}
+            </div>
+          </div>
+          ) : null}
+
+        </div>
+          </div>
+
+          <div style={styles.addPanel}>
+        <div style={builderGridStyle}>
           <div style={styles.field}>
             <label style={styles.label}>Qty</label>
             <input
@@ -1700,70 +3626,18 @@ export default function UnloadPage() {
               min="1"
               value={qty}
               onChange={(event) => setQty(event.target.value)}
-              style={styles.input}
+              onWheel={(event) => event.currentTarget.blur()}
+              onKeyDown={(event) => {
+                if (['-', '+', 'e', 'E'].includes(event.key)) {
+                  event.preventDefault()
+                  return
+                }
+
+                handleAddShortcut(event)
+              }}
+              style={{ ...styles.input, ...styles.qtyInput }}
               placeholder="0"
             />
-          </div>
-        </div>
-
-        <div style={styles.grid}>
-          <div style={styles.field}>
-            <label style={styles.label}>PIC</label>
-            <input
-              value={picName}
-              onChange={(event) => setPicName(event.target.value.toUpperCase())}
-              style={styles.input}
-              placeholder="PIC NAME"
-            />
-          </div>
-
-          <div style={styles.field}>
-            <label style={styles.label}>Product ID Variant</label>
-            {selectedModel ? (
-              selectedModelVariants.length ? (
-                <select
-                  value={selectedVariantLabel}
-                  onChange={(event) => setSelectedVariantLabel(event.target.value)}
-                  style={styles.select}
-                >
-                  {selectedModelVariants.map((item) => (
-                    <option key={item.id || item.variant_label} value={item.variant_label || ''}>
-                      {item.variant_label || '-'}{item.variant_name ? ` - ${item.variant_name}` : ''}
-                    </option>
-                  ))}
-                </select>
-              ) : (
-                <div style={styles.readonlyBox}>No saved variant yet for this model</div>
-              )
-            ) : (
-              <div style={styles.readonlyBox}>Choose model first</div>
-            )}
-            <span style={styles.helperText}>
-              Kalau model ini sudah pernah punya variant dari Packing List, tinggal pilih variant yang sesuai.
-            </span>
-          </div>
-
-          <div style={styles.field}>
-            <label style={styles.label}>Add Type</label>
-            <label style={styles.checkboxWrap}>
-              <input
-                type="checkbox"
-                checked={isSample}
-                onChange={(event) => setIsSample(event.target.checked)}
-                disabled={isReturn}
-              />
-              Sample?
-            </label>
-            <span style={styles.helperText}>
-              Checked sample rows go to Sample, not to Koli numbering.
-            </span>
-          </div>
-
-          <div style={styles.field}>
-            <label style={styles.label}>Selected Category</label>
-            <div style={styles.readonlyBox}>
-              {selectedCategory?.full_name || selectedCategory?.category_name || '-'}
-            </div>
           </div>
         </div>
 
@@ -1774,19 +3648,24 @@ export default function UnloadPage() {
               type="button"
               onClick={handleAddToUnload}
               disabled={saving || loading}
-              style={styles.primaryButton}
+              style={{
+                ...styles.primaryButton,
+                ...styles.addActionButton,
+                ...(saving || loading ? { opacity: 0.6, cursor: 'not-allowed' } : {}),
+              }}
             >
-              {saving ? 'Adding...' : isReturn ? 'Add Return' : isSample ? 'Add Sample' : 'Add Item to Current Koli'}
+              {saving ? 'Adding...' : isReturn ? 'Add Retur' : isSample ? 'Add Sample' : 'Add Item to Koli'}
             </button>
           </div>
         </div>
+        </div>
 
         {!isReturn && !isSample ? (
-          <div style={styles.card}>
+          <div style={styles.currentKoliPanel}>
             <div style={styles.header}>
               <div>
-                <h2 style={styles.sectionTitle}>Current Koli Items</h2>
-                <p style={styles.sectionSubtitle}>These items will be posted together into Koli {nextKoliSequence}.</p>
+                <h2 style={styles.sectionTitle}>Koli Basket</h2>
+                <p style={styles.sectionSubtitle}>Review the items for this Koli, then post when complete.</p>
               </div>
               <button
                 type="button"
@@ -1797,22 +3676,20 @@ export default function UnloadPage() {
                   ...(saving || !currentKoliItems.length ? { opacity: 0.6, cursor: 'not-allowed' } : {}),
                 }}
               >
-                {saving ? 'Posting...' : `Post Current Koli ${nextKoliSequence}`}
+                {saving ? 'Posting...' : 'Post'}
               </button>
             </div>
 
             {currentKoliItems.length === 0 ? (
-              <p style={styles.emptyText}>No item in the current koli yet.</p>
+              <p style={styles.emptyText}>No item in the Koli basket yet.</p>
             ) : (
               <div style={styles.tableWrap}>
                 <table style={styles.table}>
                   <thead>
                     <tr>
-                      <th style={styles.th}>Brand</th>
-                      <th style={styles.th}>Category</th>
-                      <th style={styles.th}>Model</th>
+                      <th style={styles.th}>Photo</th>
+                      <th style={styles.th}>Model Name</th>
                       <th style={styles.th}>Qty</th>
-                      <th style={styles.th}>PIC</th>
                       <th style={styles.th}>Action</th>
                     </tr>
                   </thead>
@@ -1824,11 +3701,25 @@ export default function UnloadPage() {
 
                       return (
                         <tr key={row.tempId}>
-                          <td style={styles.td}>{brand?.brand_name || '-'}</td>
-                          <td style={styles.td}>{category?.full_name || category?.category_name || '-'}</td>
-                          <td style={styles.td}>{modelLabel || '-'}</td>
+                          <td style={styles.td}>
+                            {row.photo_url ? (
+                              <Image
+                                src={row.photo_url}
+                                alt={modelLabel || 'Product photo'}
+                                width={48}
+                                height={48}
+                                unoptimized
+                                style={styles.koliImage}
+                              />
+                            ) : (
+                              <span style={styles.koliImagePlaceholder}>NO PHOTO</span>
+                            )}
+                          </td>
+                          <td style={styles.td}>
+                            <strong>{modelLabel || '-'}</strong>
+                            <span style={styles.itemMeta}> {brand?.brand_name || '-'} / {getCategoryDisplayLabel(category)}</span>
+                          </td>
                           <td style={styles.td}>{row.qty || 0}</td>
-                          <td style={styles.td}>{row.pic_name || '-'}</td>
                           <td style={styles.td}>
                             <button
                               type="button"
@@ -1847,282 +3738,365 @@ export default function UnloadPage() {
             )}
           </div>
         ) : null}
-
-      <div style={styles.card}>
-        <div style={styles.header}>
-          <div>
-            <h2 style={styles.sectionTitle}>Unload Result</h2>
-            <p style={styles.sectionSubtitle}>Posted koli rows appear here. Samples and retur stay outside koli but still count in inbound totals.</p>
-            </div>
-          <button
-            type="button"
-            onClick={handlePrintUnloadDocument}
-            style={styles.secondaryButton}
-          >
-            Print Unload Document
-          </button>
-        </div>
-
-        <div style={styles.summaryGrid}>
-          <div style={styles.summaryCard}>
-            <span style={styles.summaryLabel}>Jumlah Koli</span>
-            <strong style={styles.summaryValue}>{totalKoli}</strong>
-          </div>
-          <div style={styles.summaryCard}>
-            <span style={styles.summaryLabel}>Jumlah Sample</span>
-            <strong style={styles.summaryValue}>{totalSampleQty}</strong>
-          </div>
-          <div style={styles.summaryCard}>
-            <div style={styles.summaryLabelRow}>
-              <span style={styles.summaryLabel}>Jumlah Diproses</span>
-              <span style={styles.tooltipWrap}>
-                <button
-                  type="button"
-                  style={styles.tooltipButton}
-                  aria-label="Jumlah Diproses info"
-                  title="Jumlah Diproses info"
-                  onMouseEnter={() => setShowProcessedTooltip(true)}
-                  onMouseLeave={() => setShowProcessedTooltip(false)}
-                  onFocus={() => setShowProcessedTooltip(true)}
-                  onBlur={() => setShowProcessedTooltip(false)}
-                >
-                  i
-                </button>
-                <span
-                  style={{
-                    ...styles.tooltipBox,
-                    opacity: showProcessedTooltip ? 1 : 0,
-                    visibility: showProcessedTooltip ? 'visible' : 'hidden',
-                    transform: showProcessedTooltip ? 'translateY(0)' : 'translateY(-4px)',
-                  }}
-                >
-                  Jumlah barang yang dilanjutkan ke proses berikutnya, termasuk sample.
-                </span>
-              </span>
-            </div>
-            <strong style={styles.summaryValue}>{totalProcessedQty}</strong>
-          </div>
-          <div style={styles.summaryCard}>
-            <span style={styles.summaryLabel}>Jumlah Retur</span>
-            <strong style={styles.summaryValue}>{totalReturnQty}</strong>
-          </div>
-          <div style={styles.summaryCard}>
-            <span style={styles.summaryLabel}>Jumlah Inbound</span>
-            <strong style={styles.summaryValue}>{totalInboundQty}</strong>
-          </div>
-        </div>
-
-        {resultRows.length === 0 ? (
-          <p style={styles.emptyText}>No unload rows yet.</p>
-        ) : (
-          <div style={styles.tableWrap}>
-            <table style={styles.table}>
-              <thead>
-                <tr>
-                  <th style={{ ...styles.th, ...styles.koliHeader }}>Koli</th>
-                  <th style={styles.th}>Brand</th>
-                  <th style={styles.th}>Category</th>
-                  <th style={styles.th}>Model</th>
-                  <th style={styles.th}>Qty</th>
-                  <th style={styles.th}>PIC</th>
-                </tr>
-              </thead>
-              <tbody>
-                {resultRows.map((row) => {
-                  const brand = brands.find((item) => item.id === row.brand_id)
-                  const category = categoryMaps.byId.get(row.category_id)
-                  const modelLabel = getModelDisplayLabel(row.model_name, row.model_color, row.variant_label)
-
-                  return (
-                    <tr key={row.id}>
-                      <td style={{ ...styles.td, ...styles.koliCell }}>
-                        {row.rowType === 'return' ? (
-                          <span style={styles.returnBadge}>Retur</span>
-                        ) : row.rowType === 'sample' ? (
-                          <span style={styles.sampleBadge}>Sample</span>
-                        ) : (
-                          `Koli ${row.koli_sequence}`
-                        )}
-                      </td>
-                      <td style={styles.td}>{brand?.brand_name || '-'}</td>
-                      <td style={styles.td}>{category?.full_name || category?.category_name || '-'}</td>
-                      <td style={styles.td}>{modelLabel || '-'}</td>
-                      <td style={styles.td}>{row.qty || 0}</td>
-                      <td style={styles.td}>
-                        <div style={styles.actionInline}>
-                          <span>{row.pic_name || '-'}</span>
-                          {row.rowType === 'koli' ? (
-                            <button
-                              type="button"
-                              onClick={() => handlePrintKoli(koliGroups.find((item) => Number(item.koli_sequence) === Number(row.koli_sequence)))}
-                              style={styles.printButton}
-                            >
-                              Print
-                            </button>
-                          ) : null}
-                        </div>
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
       </div>
+      ) : null}
 
 
       {showModelModal ? (
-        <div style={styles.overlay}>
-          <div style={styles.modal}>
-            <div>
-              <h2 style={styles.sectionTitle}>Add New Model</h2>
-              <p style={styles.sectionSubtitle}>Save the model info for this unload session, then use it in the list.</p>
+        <div style={overlayStyle}>
+          <div style={modalStyle}>
+            {isBuilderMode ? <span style={styles.modalHandle} /> : null}
+            <div style={styles.modalTitleRow}>
+              <h2 style={{ ...styles.sectionTitle, ...styles.registryModalTitle }}>
+                {isEditingVariant ? 'Edit Variant' : 'Registry New Model-Variant'}
+              </h2>
+              <div style={styles.modalTitleActions}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowModelModal(false)
+                    resetRegistryModal()
+                  }}
+                  style={{ ...styles.secondaryButton, ...styles.modalTitleButton }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSaveModel}
+                  disabled={saving}
+                  style={{
+                    ...styles.primaryButton,
+                    ...styles.modalTitleButton,
+                    ...(saving ? { opacity: 0.6, cursor: 'not-allowed' } : {}),
+                  }}
+                >
+                  {saving ? 'Saving...' : 'Save Variant'}
+                </button>
+              </div>
             </div>
 
-            <div style={styles.field}>
-              <label style={styles.label}>Nama Model</label>
-              <input
-                value={modelDraft.model_name}
-                onChange={(event) =>
-                  setModelDraft((prev) => ({
-                    ...prev,
-                    model_name: event.target.value.toUpperCase(),
-                  }))
-                }
-                style={styles.input}
-                placeholder="MODEL NAME"
-              />
-            </div>
+            <div style={styles.registryFormGrid}>
+              <div style={styles.registryPhotoColumn}>
+                <div
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => setShowVariantPhotoOptions((prev) => !prev)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault()
+                      setShowVariantPhotoOptions((prev) => !prev)
+                    }
+                  }}
+                  style={{
+                    ...styles.registryPhotoFrame,
+                    ...(modelModalError === 'Variant photo is required.' ? styles.registryPhotoFrameError : {}),
+                  }}
+                  aria-label="Choose variant photo"
+                  title="Choose variant photo"
+                >
+                  {modelDraft.variant_photo_url ? (
+                    <Image
+                      src={modelDraft.variant_photo_url}
+                      alt="Variant preview"
+                      width={320}
+                      height={320}
+                      unoptimized
+                      style={styles.registryPhotoImage}
+                    />
+                  ) : (
+                    <div style={styles.registryPhotoEmpty}>
+                      <span style={styles.registryPhotoEmptyTitle}>
+                        Variant Photo {!isEditingVariant ? <span style={styles.requiredMark}>*</span> : null}
+                      </span>
+                      <span style={styles.registryPhotoEmptySub}>Tap to choose</span>
+                    </div>
+                  )}
 
-            <div style={styles.field}>
-              <label style={styles.label}>Warna Model</label>
-              <input
-                value={modelDraft.model_color}
-                onChange={(event) =>
-                  setModelDraft((prev) => ({
-                    ...prev,
-                    model_color: event.target.value.toUpperCase(),
-                  }))
-                }
-                style={styles.input}
-                placeholder="MODEL COLOR"
-              />
-            </div>
+                  {modelDraft.variant_photo_url ? (
+                    <button
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        handleRemoveVariantPhoto()
+                      }}
+                      style={styles.registryPhotoRemove}
+                      aria-label="Remove variant photo"
+                      title="Remove variant photo"
+                    >
+                      X
+                    </button>
+                  ) : null}
+                </div>
 
-            <div style={styles.field}>
-              <label style={styles.label}>Foto Produk</label>
-              <input type="file" accept="image/*" capture="environment" onChange={handleModelPhotoChange} style={styles.input} />
-              <span style={styles.helperText}>Can choose from gallery or take photo directly from camera on mobile.</span>
+                {showVariantPhotoOptions ? (
+                  <div style={styles.registryPhotoActions}>
+                    <label style={styles.registryPhotoAction}>
+                      Camera
+                      <input
+                        type="file"
+                        accept="image/*"
+                        capture="environment"
+                        onChange={handleVariantPhotoChange}
+                        style={styles.hiddenFileInput}
+                      />
+                    </label>
+                    <label style={styles.registryPhotoAction}>
+                      Gallery / File
+                      <input
+                        type="file"
+                        accept="image/*"
+                        onChange={handleVariantPhotoChange}
+                        style={styles.hiddenFileInput}
+                      />
+                    </label>
+                  </div>
+                ) : null}
+              </div>
+
+              <div style={styles.registryFieldsStack}>
+                <div style={styles.field}>
+                  <div style={styles.modelLabelRow}>
+                    <label style={styles.label}>
+                      Model Name {!isEditingVariant ? <span style={styles.requiredMark}>*</span> : null}
+                    </label>
+                    {!isEditingVariant && registryUsesNewModel && filteredModelOptions.length ? (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setModelDraft((prev) => ({
+                            ...prev,
+                            model_id: '',
+                            model_name: '',
+                            model_notes: '',
+                            is_new_model: false,
+                          }))
+                        }
+                        style={{ ...styles.secondaryButton, minHeight: '32px', padding: '0 10px' }}
+                      >
+                        Use Existing
+                      </button>
+                    ) : null}
+                  </div>
+
+                  {isEditingVariant ? (
+                    <input
+                      value={modelDraft.model_name}
+                      readOnly
+                      style={{ ...styles.input, ...styles.readOnlyInput }}
+                      placeholder="MODEL NAME"
+                    />
+                  ) : registryUsesNewModel ? (
+                    <>
+                      <input
+                        value={modelDraft.model_name}
+                        onChange={(event) =>
+                          setModelDraft((prev) => ({
+                            ...prev,
+                            model_name: event.target.value.toUpperCase(),
+                          }))
+                        }
+                        style={styles.input}
+                        placeholder="MODEL NAME"
+                      />
+                      <textarea
+                        value={modelDraft.model_notes}
+                        onChange={(event) =>
+                          setModelDraft((prev) => ({
+                            ...prev,
+                            model_notes: event.target.value,
+                          }))
+                        }
+                        style={{ ...styles.textarea, minHeight: '74px' }}
+                        placeholder="Model notes"
+                      />
+                    </>
+                  ) : (
+                    <>
+                      <select
+                        value={modelDraft.model_id}
+                        onChange={(event) => {
+                          const nextModel = filteredModelOptions.find((item) => String(item.id) === String(event.target.value))
+                          setModelDraft((prev) => ({
+                            ...prev,
+                            model_id: event.target.value,
+                            model_name: nextModel?.model_name || '',
+                            model_notes: nextModel?.model_notes || '',
+                          }))
+                        }}
+                        style={styles.select}
+                      >
+                        <option value="">Choose model</option>
+                        {filteredModelOptions.map((model) => (
+                          <option key={model.id} value={model.id}>
+                            {model.model_code ? `${model.model_code} - ` : ''}{model.model_name}
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setModelDraft((prev) => ({
+                            ...prev,
+                            model_id: '',
+                            model_name: '',
+                            model_notes: '',
+                            is_new_model: true,
+                          }))
+                        }
+                        style={styles.newModelAction}
+                      >
+                        + Add New Model
+                      </button>
+                    </>
+                  )}
+                </div>
+
+                <div style={styles.field}>
+                  <label style={styles.label}>
+                    Variant Name <span style={styles.requiredMark}>*</span>
+                  </label>
+                  <input
+                    value={modelDraft.variant_name}
+                    onChange={(event) =>
+                      setModelDraft((prev) => ({
+                        ...prev,
+                        variant_name: event.target.value.toUpperCase(),
+                      }))
+                    }
+                    style={styles.input}
+                    placeholder="e.g. COLOR"
+                  />
+                </div>
+
+                <textarea
+                  value={modelDraft.variant_notes}
+                  onChange={(event) =>
+                    setModelDraft((prev) => ({
+                      ...prev,
+                      variant_notes: event.target.value,
+                    }))
+                  }
+                  style={styles.textarea}
+                  placeholder="Variant notes"
+                />
+              </div>
             </div>
 
             {modelModalError ? <p style={styles.errorText}>{modelModalError}</p> : null}
-
-            {modelDraft.photo_url ? (
-              <Image
-                src={modelDraft.photo_url}
-                alt="Model preview"
-                width={96}
-                height={96}
-                unoptimized
-                style={styles.imagePreview}
-              />
-            ) : null}
-
-            <div style={styles.buttonRow}>
-              <button
-                type="button"
-                onClick={() => {
-                  setShowModelModal(false)
-                  setModelDraft({
-                    model_name: '',
-                    model_color: '',
-                    photo_url: '',
-                  })
-                  setModelPhotoFile(null)
-                  setModelModalError('')
-                }}
-                style={styles.secondaryButton}
-              >
-                Cancel
-              </button>
-              <button type="button" onClick={handleSaveModel} style={styles.primaryButton}>
-                Save Model
-              </button>
-            </div>
           </div>
         </div>
       ) : null}
 
       {showChooseModelModal ? (
-        <div style={styles.overlay}>
-          <div style={styles.modal}>
+        <div style={chooseOverlayStyle}>
+          <div style={chooseModalStyle}>
             <div>
-              <h2 style={styles.sectionTitle}>Choose Existing Model</h2>
+              <h2 style={styles.sectionTitle}>Choose Variant</h2>
               <p style={styles.sectionSubtitle}>
-                Showing models filtered by the selected brand and category only.
+                Showing variants filtered by the selected brand and category only.
               </p>
             </div>
 
             <div style={styles.modelPickerCard}>
               {!selectedBrandId || !selectedCategory ? (
-                <p style={styles.emptyText}>Choose brand and category first to see matching models.</p>
-              ) : filteredModelOptions.length === 0 ? (
-                <p style={styles.emptyText}>No existing model found for this brand and category yet.</p>
+                <p style={styles.emptyText}>Choose brand and category first to see matching variants.</p>
+              ) : filteredVariantOptions.length === 0 ? (
+                <p style={styles.emptyText}>No existing variant found for this brand and category yet.</p>
               ) : (
-                <div style={styles.modelGrid}>
-                  {filteredModelOptions.map((item, index) => {
-                    const label = item.model_color
-                      ? `${item.model_name} / ${item.model_color}`
-                      : item.model_name
-                    const isSelected =
-                      selectedModel?.model_name === item.model_name &&
-                      (selectedModel?.model_color || '') === (item.model_color || '')
+                <div style={styles.modelGroupList}>
+                  {filteredVariantGroups.map((group, groupIndex) => (
+                    <section key={group.model.id} style={styles.modelGroup}>
+                      <div style={styles.modelGroupHeader}>
+                        <span style={styles.modelGroupTitle}>Model {groupIndex + 1}</span>
+                        <span style={styles.modelGroupMeta}>
+                          {group.model.model_code ? `${group.model.model_code} / ` : ''}{group.model.model_name}
+                        </span>
+                      </div>
 
-                    return (
-                      <button
-                        key={`${item.model_name}-${item.model_color || ''}-${index}`}
-                        type="button"
-                        onClick={() => {
-                          setSelectedModel(item)
-                          setSelectedVariantLabel(getDefaultVariantLabelForModel(item))
-                          setShowChooseModelModal(false)
-                        }}
-                        style={{
-                          ...styles.modelOptionCard,
-                          borderColor: isSelected ? '#111827' : '#d1d5db',
-                          boxShadow: isSelected ? '0 0 0 2px rgba(17, 24, 39, 0.08)' : 'none',
-                        }}
-                      >
-                        {item.photo_url ? (
-                          <Image
-                            src={item.photo_url}
-                            alt={label}
-                            width={180}
-                            height={120}
-                            unoptimized
-                            style={styles.modelThumb}
-                          />
-                        ) : (
-                          <div
-                            style={{
-                              ...styles.modelThumb,
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                              color: '#9ca3af',
-                              fontSize: '12px',
-                              fontWeight: '600',
-                            }}
-                          >
-                            NO PHOTO
-                          </div>
-                        )}
-                        <span style={styles.modelOptionTitle}>{item.model_name}</span>
-                        <span style={styles.modelOptionMeta}>{item.model_color || 'NO COLOR'}</span>
-                      </button>
-                    )
-                  })}
+                      <div style={styles.modelGrid}>
+                        {group.variants.map(({ model, variant, photoUrl, label }) => {
+                          const variantProductId = getVariantProductId(variant)
+                          const variantName = getVariantDisplayName(variant)
+                          const isSelected =
+                            Number(selectedModel?.id || 0) === Number(model.id || 0) &&
+                            (String(selectedVariantLabel || '') === String(variantProductId || '') ||
+                              String(selectedVariantLabel || '') === String(variant.variant_label || ''))
+
+                          return (
+                            <div
+                              key={variant.id || `${model.id}-${variantProductId || variant.variant_index}`}
+                              role="button"
+                              tabIndex={0}
+                              aria-label={`Select ${label}`}
+                              onClick={() => selectVariantOption(model, variant, photoUrl)}
+                              onKeyDown={(event) => {
+                                if (event.key === 'Enter' || event.key === ' ') {
+                                  event.preventDefault()
+                                  selectVariantOption(model, variant, photoUrl)
+                                }
+                              }}
+                              style={{
+                                ...styles.modelOptionCard,
+                                border: `1px solid ${isSelected ? '#111827' : '#d1d5db'}`,
+                                boxShadow: isSelected ? '0 0 0 2px rgba(17, 24, 39, 0.08)' : 'none',
+                              }}
+                            >
+                              {photoUrl ? (
+                                <Image
+                                  src={photoUrl}
+                                  alt={label}
+                                  width={180}
+                                  height={120}
+                                  unoptimized
+                                  style={styles.modelThumb}
+                                />
+                              ) : (
+                                <div
+                                  style={{
+                                    ...styles.modelThumb,
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    color: '#9ca3af',
+                                    fontSize: '12px',
+                                    fontWeight: '600',
+                                  }}
+                                >
+                                  NO PHOTO
+                                </div>
+                              )}
+                              <span style={styles.modelOptionTitle}>{variantName}</span>
+                              <span style={styles.modelOptionMeta}>
+                                {variantProductId ? `Product ID ${variantProductId}` : 'No Product ID'}
+                              </span>
+                              {variant.variant_notes ? (
+                                <span style={styles.modelOptionMeta}>{variant.variant_notes}</span>
+                              ) : null}
+                              <div style={styles.modelOptionActions}>
+                                <button
+                                  type="button"
+                                  onClick={(event) => {
+                                    event.stopPropagation()
+                                    openVariantEditor(model, variant)
+                                  }}
+                                  onKeyDown={(event) => event.stopPropagation()}
+                                  style={styles.variantEditButton}
+                                >
+                                  Edit
+                                </button>
+                                {isSelected ? (
+                                  <span style={styles.selectedVariantBadge}>Selected</span>
+                                ) : (
+                                  <span style={styles.tapHint}>Tap to choose</span>
+                                )}
+                              </div>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </section>
+                  ))}
                 </div>
               )}
             </div>
@@ -2133,11 +4107,15 @@ export default function UnloadPage() {
                 onClick={() => {
                   setShowChooseModelModal(false)
                   setShowModelModal(true)
+                  resetRegistryModal({
+                    ...createModelDraft(),
+                    is_new_model: filteredModelOptions.length === 0,
+                  })
                   setModelModalError('')
                 }}
                 style={styles.secondaryButton}
               >
-                + Add New Model
+                Registry New Model
               </button>
               <button
                 type="button"
@@ -2152,8 +4130,9 @@ export default function UnloadPage() {
       ) : null}
 
       {previewImage ? (
-        <div style={styles.overlay}>
-          <div style={styles.modal}>
+        <div style={overlayStyle}>
+          <div style={modalStyle}>
+            {isBuilderMode ? <span style={styles.modalHandle} /> : null}
             <div style={styles.header}>
               <div>
                 <h2 style={styles.sectionTitle}>Model Photo Preview</h2>

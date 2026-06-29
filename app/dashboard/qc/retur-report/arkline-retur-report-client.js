@@ -30,6 +30,7 @@ export default function ArklineReturReportClient({ eligibleRows, batches, userEm
   const [selectedIds, setSelectedIds] = useState([])
   const [activeReturnTab, setActiveReturnTab] = useState('arrangement')
   const [repairabilityFilter, setRepairabilityFilter] = useState('all')
+  const [rejectReasonFilter, setRejectReasonFilter] = useState('')
   const [poFilter, setPoFilter] = useState('')
   const [productFilter, setProductFilter] = useState('')
   const [returnModalOpen, setReturnModalOpen] = useState(false)
@@ -56,6 +57,18 @@ export default function ArklineReturReportClient({ eligibleRows, batches, userEm
     const source = poFilter ? eligibleRows.filter((row) => row.poId === poFilter) : eligibleRows
     return Array.from(new Set(source.map((row) => row.modelName).filter(Boolean))).sort((a, b) => a.localeCompare(b))
   }, [eligibleRows, poFilter])
+  const rejectReasonOptions = useMemo(() => {
+    const grouped = new Map()
+    eligibleRows.forEach((row) => {
+      const reasonKey = String(row.reasonId || row.reasonName || '').trim()
+      if (!reasonKey) return
+      grouped.set(reasonKey, row.reasonName || reasonKey)
+    })
+
+    return Array.from(grouped.entries())
+      .map(([id, name]) => ({ id, name }))
+      .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }))
+  }, [eligibleRows])
   const filteredEligibleRows = useMemo(
     () =>
       eligibleRows
@@ -63,9 +76,11 @@ export default function ArklineReturReportClient({ eligibleRows, batches, userEm
           const matchesRepairability =
             repairabilityFilter === 'all' ||
             (repairabilityFilter === 'repairable' ? row.isRepairable : !row.isRepairable)
+          const rowReasonKey = String(row.reasonId || row.reasonName || '').trim()
+          const matchesRejectReason = !rejectReasonFilter || rowReasonKey === rejectReasonFilter
           const matchesPo = !poFilter || row.poId === poFilter
           const matchesProduct = !productFilter || row.modelName === productFilter
-          return matchesRepairability && matchesPo && matchesProduct
+          return matchesRepairability && matchesRejectReason && matchesPo && matchesProduct
         })
         .sort((a, b) => {
           const reasonCompare = String(a.reasonName || '').localeCompare(String(b.reasonName || ''), undefined, { numeric: true })
@@ -76,7 +91,7 @@ export default function ArklineReturReportClient({ eligibleRows, batches, userEm
           if (productCompare) return productCompare
           return String(a.size || '').localeCompare(String(b.size || ''), undefined, { numeric: true })
         }),
-    [eligibleRows, poFilter, productFilter, repairabilityFilter]
+    [eligibleRows, poFilter, productFilter, rejectReasonFilter, repairabilityFilter]
   )
   const selectedSummary = useMemo(() => {
     const sizeMap = new Map()
@@ -337,6 +352,21 @@ export default function ArklineReturReportClient({ eligibleRows, batches, userEm
               <option value="all">All reject types</option>
               <option value="repairable">Repairable</option>
               <option value="non_repairable">Non-repairable</option>
+            </select>
+          </div>
+          <div className={styles.field}>
+            <label htmlFor="return-reject-reason-filter">Reject Reason</label>
+            <select
+              id="return-reject-reason-filter"
+              className={styles.input}
+              value={rejectReasonFilter}
+              onChange={(event) => {
+                setRejectReasonFilter(event.target.value)
+                setSelectedIds([])
+              }}
+            >
+              <option value="">All reject reasons</option>
+              {rejectReasonOptions.map((reason) => <option key={reason.id} value={reason.id}>{reason.name}</option>)}
             </select>
           </div>
           <div className={styles.field}>

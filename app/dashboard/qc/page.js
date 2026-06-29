@@ -10,24 +10,88 @@ const styles = {
   wrapper: {
     display: 'flex',
     flexDirection: 'column',
-    gap: '20px',
+    gap: '18px',
+    padding: '18px',
+    border: '1px solid #dbe4f0',
+    borderRadius: '22px',
+    background: 'linear-gradient(180deg, rgba(255, 255, 255, 0.99) 0%, rgba(245, 248, 252, 0.97) 100%)',
+    boxShadow: '0 24px 54px rgba(15, 23, 42, 0.08)',
   },
   card: {
     background: '#fff',
-    border: '1px solid #e5e7eb',
-    borderRadius: '14px',
+    border: '1px solid #e2e8f0',
+    borderRadius: '16px',
     padding: '24px',
     display: 'flex',
     flexDirection: 'column',
     gap: '18px',
   },
+  flatSection: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '18px',
+    padding: '4px 0 18px',
+    borderBottom: '1px solid #e2e8f0',
+  },
+  flatSectionLast: {
+    borderBottom: 'none',
+    paddingBottom: 0,
+  },
+  summaryHeaderGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'minmax(260px, 1fr) minmax(420px, 0.95fr)',
+    gap: '24px',
+    alignItems: 'start',
+  },
+  summaryHeaderLeft: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '14px',
+  },
+  summaryMetricGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(3, minmax(120px, 1fr))',
+    gap: '10px',
+  },
+  compactMetricCard: {
+    minWidth: 0,
+    background: '#fff',
+    border: '1px solid #e2e8f0',
+    borderRadius: '12px',
+    padding: '12px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '4px',
+  },
+  compactMetricValue: {
+    fontSize: '20px',
+  },
+  eyebrow: {
+    margin: 0,
+    color: '#64748b',
+    fontSize: '10px',
+    fontWeight: '800',
+    letterSpacing: 0,
+    textTransform: 'uppercase',
+  },
   title: {
     margin: 0,
+    color: '#0f172a',
     fontSize: '28px',
+    fontWeight: '900',
+    lineHeight: 1.05,
+    letterSpacing: 0,
+  },
+  titleRow: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '10px',
   },
   subtitle: {
     margin: '6px 0 0',
-    color: '#6b7280',
+    color: '#64748b',
+    fontSize: '13px',
+    lineHeight: 1.5,
   },
   buttonRow: {
     display: 'flex',
@@ -45,39 +109,143 @@ const styles = {
   },
   sectionTitle: {
     margin: 0,
-    fontSize: '20px',
+    color: '#0f172a',
+    fontSize: '22px',
+    fontWeight: '900',
+    letterSpacing: 0,
   },
   grid: {
     display: 'grid',
-    gridTemplateColumns: 'repeat(4, minmax(0, 1fr))',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))',
     gap: '16px',
   },
   modeRow: {
-    display: 'flex',
-    gap: '12px',
-    flexWrap: 'wrap',
+    display: 'inline-flex',
+    alignSelf: 'flex-start',
+    alignItems: 'center',
+    gap: '3px',
+    padding: '3px',
+    border: '1px solid #dbe4f0',
+    borderRadius: '10px',
+    background: 'rgba(255, 255, 255, 0.9)',
+    boxShadow: 'inset 0 1px 0 rgba(255, 255, 255, 0.8)',
   },
   modeButton: {
-    minHeight: '42px',
-    padding: '0 16px',
-    borderWidth: '1px',
+    minHeight: '30px',
+    minWidth: '82px',
+    padding: '0 12px',
+    borderWidth: 0,
     borderStyle: 'solid',
-    borderColor: '#d1d5db',
+    borderColor: 'transparent',
     borderRadius: '8px',
-    background: '#fff',
-    color: '#111827',
-    fontSize: '14px',
-    fontWeight: '700',
+    background: 'transparent',
+    color: '#64748b',
+    fontSize: '12px',
+    fontWeight: '800',
     cursor: 'pointer',
   },
   modeButtonActive: {
-    background: '#111827',
+    background: '#0f172a',
     color: '#fff',
-    borderColor: '#111827',
+    boxShadow: '0 10px 18px rgba(15, 23, 42, 0.14)',
+  },
+  summaryTabs: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 0,
+    position: 'relative',
+    isolation: 'isolate',
+  },
+  summaryTabList: {
+    position: 'relative',
+    zIndex: 2,
+    display: 'inline-flex',
+    alignSelf: 'flex-start',
+    alignItems: 'flex-end',
+    gap: '2px',
+    marginBottom: '-1px',
+  },
+  summaryTabButton: {
+    minHeight: '42px',
+    minWidth: '150px',
+    padding: '0 14px',
+    borderTopWidth: 0,
+    borderRightWidth: 0,
+    borderBottomWidth: 0,
+    borderLeftWidth: 0,
+    borderTopStyle: 'solid',
+    borderRightStyle: 'solid',
+    borderBottomStyle: 'solid',
+    borderLeftStyle: 'solid',
+    borderTopColor: 'transparent',
+    borderRightColor: 'transparent',
+    borderBottomColor: 'transparent',
+    borderLeftColor: 'transparent',
+    borderRadius: '16px 16px 0 0',
+    background: 'transparent',
+    color: '#94a3b8',
+    cursor: 'pointer',
+    display: 'flex',
+    position: 'relative',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  summaryTabLabel: {
+    fontSize: '13px',
+    fontWeight: '750',
+    lineHeight: 1.1,
+  },
+  summaryTabButtonActive: {
+    borderTopWidth: '1px',
+    borderRightWidth: '1px',
+    borderLeftWidth: '1px',
+    borderTopColor: '#e2e8f0',
+    borderRightColor: '#e2e8f0',
+    borderLeftColor: '#e2e8f0',
+    background: 'rgba(255, 255, 255, 0.98)',
+    color: '#111827',
+    boxShadow: 'inset 0 1px 0 rgba(255, 255, 255, 0.9)',
+  },
+  summaryTabUnderline: {
+    position: 'absolute',
+    right: '16px',
+    bottom: '8px',
+    left: '16px',
+    height: '2px',
+    borderRadius: '999px',
+    background: '#111827',
+  },
+  summaryTabPanel: {
+    position: 'relative',
+    zIndex: 1,
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '20px',
+    padding: '20px 22px 22px',
+    border: '1px solid #e2e8f0',
+    borderRadius: '0 26px 26px 26px',
+    background: 'rgba(255, 255, 255, 0.98)',
+    boxShadow: '0 18px 40px rgba(15, 23, 42, 0.06)',
+  },
+  panelHeader: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    gap: '16px',
+    paddingBottom: '18px',
+    borderBottom: '1px solid #eef2f7',
+  },
+  panelEyebrow: {
+    margin: '0 0 3px',
+    color: '#64748b',
+    fontSize: '13px',
+    fontWeight: '850',
+    letterSpacing: '0.22em',
+    textTransform: 'uppercase',
   },
   summaryCard: {
-    background: '#f9fafb',
-    border: '1px solid #e5e7eb',
+    background: '#f8fafc',
+    border: '1px solid #e2e8f0',
     borderRadius: '12px',
     padding: '16px',
     display: 'flex',
@@ -85,10 +253,11 @@ const styles = {
     gap: '6px',
   },
   summaryLabel: {
-    fontSize: '12px',
-    fontWeight: '700',
+    fontSize: '10px',
+    fontWeight: '800',
     textTransform: 'uppercase',
-    color: '#6b7280',
+    color: '#64748b',
+    letterSpacing: 0,
   },
   infoIcon: {
     display: 'inline-flex',
@@ -131,11 +300,14 @@ const styles = {
     fontSize: '24px',
     fontWeight: '800',
     color: '#111827',
+    fontVariantNumeric: 'tabular-nums',
   },
   filters: {
     display: 'grid',
-    gridTemplateColumns: 'repeat(5, minmax(0, 1fr))',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(176px, 1fr))',
     gap: '16px',
+    paddingTop: '20px',
+    borderTop: '1px solid #eef2f7',
   },
   field: {
     display: 'flex',
@@ -143,48 +315,58 @@ const styles = {
     gap: '8px',
   },
   label: {
-    fontSize: '14px',
-    fontWeight: '600',
-    color: '#111827',
+    fontSize: '12px',
+    fontWeight: '750',
+    color: '#334155',
   },
   input: {
-    height: '42px',
-    padding: '0 12px',
-    border: '1px solid #d1d5db',
-    borderRadius: '8px',
-    fontSize: '14px',
+    height: '40px',
+    padding: '0 11px',
+    border: '1px solid #cbd5e1',
+    borderRadius: '9px',
+    fontSize: '13px',
     width: '100%',
+    background: '#fff',
+    color: '#111827',
   },
   select: {
-    height: '42px',
-    padding: '0 12px',
-    border: '1px solid #d1d5db',
-    borderRadius: '8px',
-    fontSize: '14px',
+    height: '40px',
+    padding: '0 11px',
+    border: '1px solid #cbd5e1',
+    borderRadius: '9px',
+    fontSize: '13px',
     background: '#fff',
     width: '100%',
+    color: '#111827',
   },
   tableWrap: {
+    background: '#fff',
+    border: '1px solid #e2e8f0',
+    borderRadius: '12px',
     overflowX: 'auto',
   },
   table: {
     width: '100%',
+    minWidth: '880px',
     borderCollapse: 'collapse',
   },
   th: {
     textAlign: 'left',
-    fontSize: '13px',
-    fontWeight: '700',
-    color: '#374151',
-    padding: '12px 14px',
-    background: '#f9fafb',
-    borderBottom: '1px solid #e5e7eb',
+    fontSize: '11px',
+    fontWeight: '800',
+    color: '#64748b',
+    padding: '11px 12px',
+    background: '#f8fafc',
+    textTransform: 'uppercase',
+    letterSpacing: 0,
+    whiteSpace: 'nowrap',
   },
   td: {
-    padding: '12px 14px',
-    fontSize: '14px',
-    color: '#111827',
-    borderBottom: '1px solid #f1f5f9',
+    padding: '12px',
+    fontSize: '13px',
+    color: '#1e293b',
+    borderTop: '1px solid #eef2f7',
+    verticalAlign: 'middle',
   },
   thCenter: {
     textAlign: 'center',
@@ -194,7 +376,8 @@ const styles = {
   },
   emptyText: {
     margin: 0,
-    color: '#6b7280',
+    color: '#64748b',
+    fontSize: '13px',
   },
   previewButton: {
     width: '36px',
@@ -240,12 +423,13 @@ const styles = {
   overlay: {
     position: 'fixed',
     inset: 0,
-    background: 'rgba(17, 24, 39, 0.4)',
+    background: 'rgba(15, 23, 42, 0.46)',
+    backdropFilter: 'blur(4px)',
     display: 'flex',
     alignItems: 'flex-start',
     justifyContent: 'center',
     padding: '24px',
-    zIndex: 40,
+    zIndex: 80,
     overflowY: 'auto',
   },
   modal: {
@@ -253,9 +437,10 @@ const styles = {
     maxWidth: '520px',
     maxHeight: 'calc(100vh - 48px)',
     background: '#fff',
-    borderRadius: '16px',
+    borderRadius: '18px',
     padding: '24px',
-    border: '1px solid #e5e7eb',
+    border: '1px solid #e2e8f0',
+    boxShadow: '0 24px 64px rgba(15, 23, 42, 0.2)',
     display: 'flex',
     flexDirection: 'column',
     gap: '16px',
@@ -267,7 +452,7 @@ const styles = {
   },
   rejectDetailGrid: {
     display: 'grid',
-    gridTemplateColumns: 'repeat(5, minmax(0, 1fr))',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(136px, 1fr))',
     gap: '10px',
   },
   compactSummaryCard: {
@@ -307,7 +492,7 @@ const styles = {
   },
   modalGrid: {
     display: 'grid',
-    gridTemplateColumns: 'repeat(4, minmax(0, 1fr))',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))',
     gap: '12px',
   },
   rejectRowGrid: {
@@ -346,7 +531,7 @@ const styles = {
   },
   adjustmentGrid: {
     display: 'grid',
-    gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
     gap: '12px',
   },
   smallButton: {
@@ -361,26 +546,197 @@ const styles = {
     cursor: 'pointer',
   },
   primaryButton: {
-    height: '42px',
-    padding: '0 16px',
-    border: 'none',
-    borderRadius: '8px',
+    height: '40px',
+    padding: '0 15px',
+    border: '1px solid #111827',
+    borderRadius: '9px',
     background: '#111827',
     color: '#fff',
-    fontSize: '14px',
-    fontWeight: '700',
+    fontSize: '13px',
+    fontWeight: '750',
     cursor: 'pointer',
   },
   secondaryButton: {
-    height: '42px',
-    padding: '0 16px',
-    border: '1px solid #d1d5db',
-    borderRadius: '8px',
+    height: '40px',
+    padding: '0 13px',
+    border: '1px solid #cbd5e1',
+    borderRadius: '9px',
     background: '#fff',
+    color: '#334155',
+    fontSize: '13px',
+    fontWeight: '750',
+    cursor: 'pointer',
+  },
+  dangerButton: {
+    height: '40px',
+    padding: '0 15px',
+    border: '1px solid #b91c1c',
+    borderRadius: '9px',
+    background: '#b91c1c',
+    color: '#fff',
+    fontSize: '13px',
+    fontWeight: '750',
+    cursor: 'pointer',
+  },
+  pauseIconButton: {
+    width: '34px',
+    height: '34px',
+    border: '1px solid #b91c1c',
+    borderRadius: '10px',
+    background: '#b91c1c',
+    color: '#fff',
+    fontSize: '16px',
+    fontWeight: '900',
+    lineHeight: 1,
+    cursor: 'pointer',
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  checkboxLabel: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '6px',
+    color: '#64748b',
+    fontSize: '12px',
+    fontWeight: '800',
+  },
+  disabledInput: {
+    background: '#f1f5f9',
+    color: '#94a3b8',
+    cursor: 'not-allowed',
+  },
+  errorText: {
+    margin: 0,
+    padding: '12px 14px',
+    borderRadius: '10px',
+    background: '#fef2f2',
+    color: '#b91c1c',
+    fontSize: '13px',
+  },
+  successText: {
+    margin: 0,
+    padding: '12px 14px',
+    borderRadius: '10px',
+    background: '#f0fdf4',
+    color: '#166534',
+    fontSize: '13px',
+  },
+  inspectorCardGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+    gap: '12px',
+  },
+  inspectorInsightCard: {
+    background: '#fff',
+    border: '1px solid #eef2f7',
+    borderRadius: '12px',
+    padding: '14px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '12px',
+  },
+  performanceGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+    gap: '24px',
+    alignItems: 'start',
+  },
+  performanceColumn: {
+    minWidth: 0,
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '12px',
+  },
+  performanceColumnDivider: {
+    borderLeft: '2px solid #cbd5e1',
+    paddingLeft: '24px',
+  },
+  performanceSubtitle: {
+    margin: 0,
+    color: '#0f172a',
+    fontSize: '16px',
+    fontWeight: '850',
+    letterSpacing: 0,
+  },
+  inspectorTitleWrap: {
+    minWidth: 0,
+    flex: 1,
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '4px',
+  },
+  inspectorCardName: {
+    margin: 0,
     color: '#111827',
     fontSize: '14px',
+    fontWeight: '750',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+  },
+  idleBadge: {
+    alignSelf: 'flex-start',
+    padding: '3px 8px',
+    border: '1px solid #dbeafe',
+    borderRadius: '999px',
+    background: '#eff6ff',
+    color: '#1d4ed8',
+    fontSize: '11px',
     fontWeight: '700',
-    cursor: 'pointer',
+  },
+  inspectorStatsGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+    gap: '8px',
+  },
+  inspectorStatBox: {
+    minWidth: 0,
+    padding: '0',
+  },
+  inspectorStatLabel: {
+    margin: '0 0 5px',
+    color: '#94a3b8',
+    fontSize: '10px',
+    fontWeight: '750',
+    lineHeight: 1,
+  },
+  inspectorStatValue: {
+    margin: 0,
+    color: '#1e293b',
+    fontSize: '14px',
+    fontWeight: '800',
+    fontVariantNumeric: 'tabular-nums',
+  },
+  barRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '12px',
+  },
+  barLabel: {
+    minWidth: 0,
+    flex: 1,
+    color: '#475569',
+    fontSize: '13px',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+  },
+  barTrack: {
+    width: '140px',
+    height: '8px',
+    borderRadius: '999px',
+    background: '#f1f5f9',
+    overflow: 'hidden',
+    flex: '0 0 auto',
+  },
+  barValue: {
+    width: '54px',
+    color: '#64748b',
+    fontSize: '13px',
+    textAlign: 'right',
+    fontVariantNumeric: 'tabular-nums',
+    flex: '0 0 auto',
   },
   warningBox: {
     padding: '12px 14px',
@@ -400,7 +756,7 @@ const styles = {
   },
   noteGrid: {
     display: 'grid',
-    gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
     gap: '12px',
   },
   noteCard: {
@@ -731,21 +1087,35 @@ function buildGroupedRejectDraftRows(rows = []) {
 }
 
 function getSummaryRejectKey(item) {
-  return `${item.brand}|||${item.category}|||${item.model}`
+  const po = String(item?.brand || 'NO PO').trim().toUpperCase() || 'NO PO'
+  const sku = String(item?.category || 'NO SKU').trim().toUpperCase() || 'NO SKU'
+  const model = String(item?.model || 'UNKNOWN MODEL').trim().toUpperCase() || 'UNKNOWN MODEL'
+  return `${po}|||${sku}|||${model}`
 }
 
 function getAdjustmentSummaryKey(item) {
   const po = String(item.po_id || 'NO PO').trim().toUpperCase() || 'NO PO'
   const sku = String(item.sku_induk || 'NO SKU').trim().toUpperCase() || 'NO SKU'
-  const model = String(item.model_name || 'UNKNOWN MODEL').trim() || 'UNKNOWN MODEL'
+  const model = String(item.model_name || 'UNKNOWN MODEL').trim().toUpperCase() || 'UNKNOWN MODEL'
   return `${po}|||${sku}|||${model}`
 }
 
 function getRejectDetailSummaryKey(item) {
   const po = String(item?.po_id || 'NO PO').trim().toUpperCase() || 'NO PO'
   const sku = String(item?.sku_induk || 'NO SKU').trim().toUpperCase() || 'NO SKU'
-  const model = String(item?.model_name || 'UNKNOWN MODEL').trim() || 'UNKNOWN MODEL'
+  const model = String(item?.model_name || 'UNKNOWN MODEL').trim().toUpperCase() || 'UNKNOWN MODEL'
   return `${po}|||${sku}|||${model}`
+}
+
+function getAggregatedRejectAdjustment(rows = [], adjustmentType) {
+  const matchedRows = rows.filter((item) => item.adjustment_type === adjustmentType)
+  const qty = matchedRows.reduce((sum, item) => sum + Number(item.qty || 0), 0)
+  const notes = matchedRows
+    .map((item) => String(item.notes || '').trim())
+    .filter(Boolean)
+    .join('\n')
+
+  return { qty, notes }
 }
 
 function InfoHint({ text }) {
@@ -767,6 +1137,14 @@ function InfoHint({ text }) {
   )
 }
 
+function getThroughputBarColor(seconds, categoryAverageSeconds) {
+  const safeSeconds = Number(seconds || 0)
+  const safeAverage = Number(categoryAverageSeconds || 0)
+  if (!safeAverage || safeSeconds <= safeAverage) return '#10b981'
+  if (safeSeconds <= safeAverage * 1.1) return '#f59e0b'
+  return '#f43f5e'
+}
+
 export default function QcDashboardPage() {
   const today = getTodayLocalDate()
   const [clockTick, setClockTick] = useState(Date.now())
@@ -778,6 +1156,7 @@ export default function QcDashboardPage() {
   const [showPauseConfirm, setShowPauseConfirm] = useState(false)
   const [previewPhoto, setPreviewPhoto] = useState(null)
   const [qcMode, setQcMode] = useState('regular')
+  const [summaryTab, setSummaryTab] = useState('result-summary')
   const [qcItems, setQcItems] = useState([])
   const [arklineQcItems, setArklineQcItems] = useState([])
   const [qcConfirmRows, setQcConfirmRows] = useState([])
@@ -1265,7 +1644,7 @@ export default function QcDashboardPage() {
       const taskModel = getTaskModelInfo(item)
       const model = taskModel.model
       const roundNumber = qcMode === 're_qc' ? Number(item.qc_round_number || 2) : null
-      const baseKey = `${brand}|||${category}|||${model}`
+      const baseKey = getSummaryRejectKey({ brand, category, model })
       const key = qcMode === 're_qc' ? `${baseKey}|||ROUND:${roundNumber}` : baseKey
       const current =
         grouped.get(key) || {
@@ -1584,27 +1963,46 @@ export default function QcDashboardPage() {
       })
   }, [activeItems, activePauseLogs, clockTick, memberNameMap, qcMode])
 
-  const categoryTimes = useMemo(() => {
+  const productThroughputRows = useMemo(() => {
     const grouped = new Map()
 
     activeItems
       .filter((item) => item.status === 'done' || hasQcResult(item))
       .forEach((item) => {
-        const speedLabel =
+        const categoryLabel =
           qcMode !== 'regular'
-            ? getTaskModelInfo(item).model
+            ? getArklineCategoryLabel(item)
             : item.inbound_unload?.categories?.full_name || item.inbound_unload?.categories?.category_name || 'UNCATEGORIZED'
+        const productLabel = getTaskModelInfo(item).model || 'UNKNOWN PRODUCT'
+        const key = `${categoryLabel}|||${productLabel}`
         const checkedQty = getCheckedQty(item)
-        const current = grouped.get(speedLabel) || { label: speedLabel, totalSeconds: 0, totalPcs: 0 }
+        const current = grouped.get(key) || { category: categoryLabel, label: productLabel, totalSeconds: 0, totalPcs: 0 }
         current.totalSeconds += Number(item.stopwatch_seconds || 0)
         current.totalPcs += checkedQty
-        grouped.set(speedLabel, current)
+        grouped.set(key, current)
       })
 
-    return Array.from(grouped.values()).map((item) => ({
+    const rows = Array.from(grouped.values()).map((item) => ({
+      category: item.category,
       label: item.label,
       secondsPerPcs: item.totalPcs ? Math.round((item.totalSeconds / item.totalPcs) * 100) / 100 : 0,
     }))
+
+    const categoryAverageMap = new Map()
+    rows.forEach((item) => {
+      const current = categoryAverageMap.get(item.category) || { totalSecondsPerPcs: 0, count: 0 }
+      current.totalSecondsPerPcs += Number(item.secondsPerPcs || 0)
+      current.count += 1
+      categoryAverageMap.set(item.category, current)
+    })
+
+    return rows.map((item) => {
+      const categoryAverage = categoryAverageMap.get(item.category)
+      return {
+        ...item,
+        categoryAverageSeconds: categoryAverage?.count ? Math.round((categoryAverage.totalSecondsPerPcs / categoryAverage.count) * 100) / 100 : 0,
+      }
+    })
   }, [activeItems, qcMode])
 
   const totalAllocated = activeItems.reduce((sum, item) => sum + Number(item.allocated_qty || 0), 0)
@@ -1613,6 +2011,12 @@ export default function QcDashboardPage() {
   const totalGradeA = qcResultSummary.reduce((sum, item) => sum + Number(item.qtyA || 0), 0)
   const totalGradeB = qcResultSummary.reduce((sum, item) => sum + Number(item.qtyB || 0), 0)
   const totalGradeC = qcResultSummary.reduce((sum, item) => sum + Number(item.qtyC || 0), 0)
+  const rankedInspectorPerformance = [...inspectorPerformance].sort((a, b) => b.totalPcs - a.totalPcs)
+  const rankedProductThroughputRows = productThroughputRows
+    .filter((item) => Number(item.secondsPerPcs || 0) > 0)
+    .sort((a, b) => Number(a.secondsPerPcs || 0) - Number(b.secondsPerPcs || 0))
+  const maxProductThroughputSeconds = rankedProductThroughputRows.reduce((max, item) => Math.max(max, Number(item.secondsPerPcs || 0)), 0)
+  const activeSummaryLabel = qcMode === 'regular' ? 'Reguler' : qcMode === 're_qc' ? 'Re-QC' : 'Arkline'
   const selectedInspectorPerformance = inspectorPerformance.find((item) => item.inspectorKey === pauseDetailInspector)
   const selectedInspectorPauseLogs = selectedInspectorPerformance?.pauseLogs || []
   const selectedInspectorCompletedTaskRows = selectedInspectorPerformance?.completedTaskRows || []
@@ -1627,6 +2031,7 @@ export default function QcDashboardPage() {
     const summaryTaskRows = summary.taskRows?.length ? summary.taskRows : activeItems.filter((item) => isTaskInSummary(item, summary))
     const taskIds = new Set(summaryTaskRows.map((item) => String(item.id)))
     const cycleIds = new Set(summaryTaskRows.map((item) => String(item.qc_cycle_id || '')).filter(Boolean))
+    const summaryParts = getSummaryTaskKeyParts(summary)
     const summaryKey = getSummaryRejectKey(summary)
     const existingDetails = arklineRejectDetails.filter((item) => {
       const matchesSummary = taskIds.size
@@ -1636,10 +2041,11 @@ export default function QcDashboardPage() {
       return matchesSummary && matchesDate
     })
     const existingAdjustments = arklineRejectAdjustments.filter((item) => {
-      const samePo = String(item.po_id || 'NO PO').trim().toUpperCase() === summary.brand
-      const sameSku = String(item.sku_induk || 'NO SKU').trim().toUpperCase() === summary.category
-      const sameModel = String(item.model_name || '').trim().toUpperCase() === String(summary.model || '').trim().toUpperCase()
-      const sameCycle = cycleIds.size ? cycleIds.has(String(item.qc_cycle_id || '')) : !item.qc_cycle_id
+      const samePo = String(item.po_id || 'NO PO').trim().toUpperCase() === summaryParts.brand
+      const sameSku = String(item.sku_induk || 'NO SKU').trim().toUpperCase() === summaryParts.category
+      const sameModel = String(item.model_name || '').trim().toUpperCase() === summaryParts.model
+      const adjustmentCycleId = String(item.qc_cycle_id || '')
+      const sameCycle = !cycleIds.size || !adjustmentCycleId || cycleIds.has(adjustmentCycleId)
       const matchesDate = hasInvalidDateRange || isWithinDateRange(item.created_at || item.updated_at, dateFrom, dateTo)
       return samePo && sameSku && sameModel && sameCycle && matchesDate
     })
@@ -1653,17 +2059,17 @@ export default function QcDashboardPage() {
           ...(!summaryRejectTargetQty ? [createRejectDraftRow()] : []),
         ]
 
-    const bcToAAdjustment = existingAdjustments.find((item) => item.adjustment_type === 'bc_to_a')
-    const inspectorErrorAdjustment = existingAdjustments.find((item) => item.adjustment_type === 'inspector_data_error')
+    const bcToAAdjustment = getAggregatedRejectAdjustment(existingAdjustments, 'bc_to_a')
+    const inspectorErrorAdjustment = getAggregatedRejectAdjustment(existingAdjustments, 'inspector_data_error')
 
     setRejectDetailSummary(summary)
     setRejectDetailError('')
     setRejectDraftRows(initialRows.length ? initialRows : [createRejectDraftRow()])
     setRejectAdjustmentDraft({
-      bcToAQty: bcToAAdjustment?.qty ? String(bcToAAdjustment.qty) : '',
-      bcToANotes: bcToAAdjustment?.notes || '',
-      inspectorErrorQty: inspectorErrorAdjustment?.qty ? String(inspectorErrorAdjustment.qty) : '',
-      inspectorErrorNotes: inspectorErrorAdjustment?.notes || '',
+      bcToAQty: bcToAAdjustment.qty ? String(bcToAAdjustment.qty) : '',
+      bcToANotes: bcToAAdjustment.notes,
+      inspectorErrorQty: inspectorErrorAdjustment.qty ? String(inspectorErrorAdjustment.qty) : '',
+      inspectorErrorNotes: inspectorErrorAdjustment.notes,
     })
   }
 
@@ -1833,15 +2239,16 @@ export default function QcDashboardPage() {
 
       const poId = rejectDetailSummary.brand === 'NO PO' ? null : rejectDetailSummary.brand
       const skuInduk = rejectDetailSummary.category === 'NO SKU' ? null : rejectDetailSummary.category
+      const rejectSummaryParts = getSummaryTaskKeyParts(rejectDetailSummary)
       const targetCycleId = selectedRejectTaskRows[0]?.qc_cycle_id || null
+      const selectedRejectCycleIds = new Set(selectedRejectTaskRows.map((item) => String(item.qc_cycle_id || '')).filter(Boolean))
       const existingAdjustmentIds = arklineRejectAdjustments
         .filter((item) => {
-          const samePo = String(item.po_id || 'NO PO').trim().toUpperCase() === rejectDetailSummary.brand
-          const sameSku = String(item.sku_induk || 'NO SKU').trim().toUpperCase() === rejectDetailSummary.category
-          const sameModel = String(item.model_name || '').trim().toUpperCase() === String(rejectDetailSummary.model || '').trim().toUpperCase()
-          const sameCycle = targetCycleId
-            ? String(item.qc_cycle_id || '') === String(targetCycleId)
-            : !item.qc_cycle_id
+          const samePo = String(item.po_id || 'NO PO').trim().toUpperCase() === rejectSummaryParts.brand
+          const sameSku = String(item.sku_induk || 'NO SKU').trim().toUpperCase() === rejectSummaryParts.category
+          const sameModel = String(item.model_name || '').trim().toUpperCase() === rejectSummaryParts.model
+          const adjustmentCycleId = String(item.qc_cycle_id || '')
+          const sameCycle = !selectedRejectCycleIds.size || !adjustmentCycleId || selectedRejectCycleIds.has(adjustmentCycleId)
           const matchesDate = hasInvalidDateRange || isWithinDateRange(item.created_at || item.updated_at, dateFrom, dateTo)
           return samePo && sameSku && sameModel && sameCycle && matchesDate
         })
@@ -2008,73 +2415,105 @@ export default function QcDashboardPage() {
 
   return (
     <div style={styles.wrapper}>
-      <div style={styles.card}>
-        <div style={styles.headerRow}>
-          <div>
-            <h1 style={styles.title}>QC Summary</h1>
-          </div>
-          <button
-            type="button"
-            onClick={() => setShowPauseConfirm(true)}
-            disabled={pausingAll}
-            style={{
-              height: '42px',
-              padding: '0 16px',
-              border: 'none',
-              borderRadius: '8px',
-              background: '#dc2626',
-              color: '#fff',
-              fontSize: '14px',
-              fontWeight: '700',
-              cursor: 'pointer',
-              opacity: pausingAll ? 0.6 : 1,
-            }}
-          >
-            {pausingAll ? 'Pausing...' : 'Pause All QC'}
-          </button>
-        </div>
+      <div style={styles.flatSection}>
+        <div style={styles.summaryHeaderGrid}>
+          <div style={styles.summaryHeaderLeft}>
+            <div style={styles.headerRow}>
+              <div>
+                <p style={styles.eyebrow}>Quality Control</p>
+                <div style={styles.titleRow}>
+                  <h1 style={styles.title}>Summary</h1>
+                  <button
+                    type="button"
+                    onClick={() => setShowPauseConfirm(true)}
+                    disabled={pausingAll}
+                    style={{
+                      ...styles.pauseIconButton,
+                      opacity: pausingAll ? 0.6 : 1,
+                      cursor: pausingAll ? 'not-allowed' : 'pointer',
+                    }}
+                    title="Pause All QC"
+                    aria-label="Pause All QC"
+                  >
+                    {pausingAll ? '...' : '⏸'}
+                  </button>
+                </div>
+              </div>
+            </div>
 
-        <div style={styles.modeRow}>
-          <button
-            type="button"
-            style={{ ...styles.modeButton, ...(qcMode === 'regular' ? styles.modeButtonActive : {}) }}
-            onClick={() => {
-              setQcMode('regular')
-              setPauseDetailInspector('')
-              setArklineProductFilter('')
-            }}
-          >
-            Reguler
-          </button>
-          <button
-            type="button"
-            style={{ ...styles.modeButton, ...(qcMode === 'arkline' ? styles.modeButtonActive : {}) }}
-            onClick={() => {
-              setQcMode('arkline')
-              setPauseDetailInspector('')
-            }}
-          >
-            Arkline
-          </button>
-          <button
-            type="button"
-            style={{ ...styles.modeButton, ...(qcMode === 're_qc' ? styles.modeButtonActive : {}) }}
-            onClick={() => {
-              setQcMode('re_qc')
-              setPauseDetailInspector('')
-              setPoFilter('')
-              setArklineProductFilter('')
-            }}
-          >
-            Re-QC
-          </button>
+            <div style={styles.modeRow}>
+              <button
+                type="button"
+                style={{ ...styles.modeButton, ...(qcMode === 'regular' ? styles.modeButtonActive : {}) }}
+                onClick={() => {
+                  setQcMode('regular')
+                  setPauseDetailInspector('')
+                  setArklineProductFilter('')
+                }}
+              >
+                Reguler
+              </button>
+              <button
+                type="button"
+                style={{ ...styles.modeButton, ...(qcMode === 'arkline' ? styles.modeButtonActive : {}) }}
+                onClick={() => {
+                  setQcMode('arkline')
+                  setPauseDetailInspector('')
+                }}
+              >
+                Arkline
+              </button>
+              <button
+                type="button"
+                style={{ ...styles.modeButton, ...(qcMode === 're_qc' ? styles.modeButtonActive : {}) }}
+                onClick={() => {
+                  setQcMode('re_qc')
+                  setPauseDetailInspector('')
+                  setPoFilter('')
+                  setArklineProductFilter('')
+                }}
+              >
+                Re-QC
+              </button>
+            </div>
+          </div>
+
+          <div style={styles.summaryMetricGrid}>
+            <div style={styles.compactMetricCard}>
+              <span style={styles.summaryLabel}>Allocation</span>
+              <strong style={{ ...styles.summaryValue, ...styles.compactMetricValue }}>{totalAllocated}</strong>
+            </div>
+            <div style={styles.compactMetricCard}>
+              <span style={styles.summaryLabel}>
+                Graded Qty
+                <InfoHint text="Qty yang sudah di QC oleh Grader." />
+              </span>
+              <strong style={{ ...styles.summaryValue, ...styles.compactMetricValue }}>{totalLocked}</strong>
+            </div>
+            <div style={styles.compactMetricCard}>
+              <span style={styles.summaryLabel}>
+                Allocation Gap
+                <InfoHint text="Perbedaan Qty antara Qty yang dialokasikan dan Qty yang diQC oleh Grader." />
+              </span>
+              <strong
+                style={{
+                  ...styles.summaryValue,
+                  ...styles.compactMetricValue,
+                  color: totalRemaining > 0 ? '#16a34a' : totalRemaining < 0 ? '#dc2626' : '#111827',
+                }}
+              >
+                {totalRemaining > 0 ? '+' : ''}
+                {totalRemaining}
+              </strong>
+            </div>
+          </div>
         </div>
 
         <div style={styles.filters}>
           <div style={styles.field}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px' }}>
               <label style={styles.label}>Date From</label>
-              <label style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '12px', fontWeight: '700', color: '#374151' }}>
+              <label style={styles.checkboxLabel}>
                 <input
                   type="checkbox"
                   checked={allTime}
@@ -2094,7 +2533,7 @@ export default function QcDashboardPage() {
               type="date"
               value={dateFrom}
               onChange={(event) => setDateFrom(event.target.value)}
-              style={{ ...styles.input, ...(allTime ? { background: '#f3f4f6', color: '#9ca3af', cursor: 'not-allowed' } : {}) }}
+              style={{ ...styles.input, ...(allTime ? styles.disabledInput : {}) }}
               disabled={allTime}
             />
           </div>
@@ -2105,7 +2544,7 @@ export default function QcDashboardPage() {
               type="date"
               value={dateTo}
               onChange={(event) => setDateTo(event.target.value)}
-              style={{ ...styles.input, ...(allTime ? { background: '#f3f4f6', color: '#9ca3af', cursor: 'not-allowed' } : {}) }}
+              style={{ ...styles.input, ...(allTime ? styles.disabledInput : {}) }}
               disabled={allTime}
             />
           </div>
@@ -2117,6 +2556,12 @@ export default function QcDashboardPage() {
                 <input
                   list="qc-dashboard-po-options"
                   value={poFilter}
+                  onClick={() => {
+                    if (poFilter) {
+                      setPoFilter('')
+                      setArklineProductFilter('')
+                    }
+                  }}
                   onChange={(event) => {
                     setPoFilter(event.target.value)
                     setArklineProductFilter('')
@@ -2136,6 +2581,9 @@ export default function QcDashboardPage() {
                 <input
                   list="qc-dashboard-arkline-product-options"
                   value={arklineProductFilter}
+                  onClick={() => {
+                    if (arklineProductFilter) setArklineProductFilter('')
+                  }}
                   onChange={(event) => setArklineProductFilter(event.target.value)}
                   style={styles.input}
                   placeholder={poFilter && poFilter !== 'NO PO' ? 'Product in selected PO' : 'All Arkline product'}
@@ -2200,38 +2648,41 @@ export default function QcDashboardPage() {
           )}
         </div>
 
-        {hasInvalidDateRange ? <p style={{ color: '#dc2626', margin: 0 }}>Date From cannot be later than Date To.</p> : null}
+        {hasInvalidDateRange ? <p style={styles.errorText}>Date From cannot be later than Date To.</p> : null}
 
-        {error ? <p style={{ color: '#dc2626', margin: 0 }}>{error}</p> : null}
-        {success ? <p style={{ color: '#16a34a', margin: 0 }}>{success}</p> : null}
+        {error ? <p style={styles.errorText}>{error}</p> : null}
+        {success ? <p style={styles.successText}>{success}</p> : null}
 
-        <div style={styles.grid}>
-          <div style={styles.summaryCard}>
-            <span style={styles.summaryLabel}>Allocation</span>
-            <strong style={styles.summaryValue}>{totalAllocated}</strong>
-          </div>
-          <div style={styles.summaryCard}>
-            <span style={styles.summaryLabel}>
-              Graded Qty
-              <InfoHint text="Qty yang sudah di QC oleh Grader." />
-            </span>
-            <strong style={styles.summaryValue}>{totalLocked}</strong>
-          </div>
-          <div style={styles.summaryCard}>
-            <span style={styles.summaryLabel}>
-              Allocation Gap
-              <InfoHint text="Perbedaan Qty antara Qty yang dialokasikan dan Qty yang diQC oleh Grader." />
-            </span>
-            <strong style={{ ...styles.summaryValue, color: totalRemaining > 0 ? '#16a34a' : totalRemaining < 0 ? '#dc2626' : '#111827' }}>
-              {totalRemaining > 0 ? '+' : ''}
-              {totalRemaining}
-            </strong>
-          </div>
-        </div>
       </div>
 
-      <div style={styles.card}>
-        <h2 style={styles.sectionTitle}>QC Result Summary</h2>
+      <div style={styles.summaryTabs}>
+        <div style={styles.summaryTabList}>
+          <button
+            type="button"
+            onClick={() => setSummaryTab('result-summary')}
+            style={{ ...styles.summaryTabButton, ...(summaryTab === 'result-summary' ? styles.summaryTabButtonActive : {}) }}
+          >
+            <span style={styles.summaryTabLabel}>Result Summary</span>
+            {summaryTab === 'result-summary' ? <span style={styles.summaryTabUnderline} /> : null}
+          </button>
+          <button
+            type="button"
+            onClick={() => setSummaryTab('inspector-insights')}
+            style={{ ...styles.summaryTabButton, ...(summaryTab === 'inspector-insights' ? styles.summaryTabButtonActive : {}) }}
+          >
+            <span style={styles.summaryTabLabel}>Performance Breakdown</span>
+            {summaryTab === 'inspector-insights' ? <span style={styles.summaryTabUnderline} /> : null}
+          </button>
+        </div>
+
+      {summaryTab === 'result-summary' ? (
+        <div style={styles.summaryTabPanel}>
+          <div style={styles.panelHeader}>
+            <div>
+              <p style={styles.panelEyebrow}>{activeSummaryLabel}</p>
+              <h2 style={styles.sectionTitle}>Result Summary</h2>
+            </div>
+          </div>
         {qcMode === 'regular' && !grnFilter ? <p style={styles.emptyText}>Choose a GRN Number first to see QC result summary for that GRN.</p> : null}
         {(qcMode !== 'regular' || grnFilter) ? (
         <>
@@ -2249,7 +2700,7 @@ export default function QcDashboardPage() {
             <strong style={styles.summaryValue}>{totalGradeC}</strong>
           </div>
           <div style={styles.summaryCard}>
-            <span style={styles.summaryLabel}>Checked Total</span>
+            <span style={styles.summaryLabel}>Total Inspected</span>
             <strong style={styles.summaryValue}>{totalChecked}</strong>
           </div>
         </div>
@@ -2265,7 +2716,7 @@ export default function QcDashboardPage() {
                 <th style={{ ...styles.th, ...styles.thCenter }}>Qty A</th>
                 <th style={{ ...styles.th, ...styles.thCenter }}>Qty B</th>
                 <th style={{ ...styles.th, ...styles.thCenter }}>Qty C</th>
-                <th style={{ ...styles.th, ...styles.thCenter }}>Total Checked</th>
+                <th style={{ ...styles.th, ...styles.thCenter }}>Total Inspected</th>
                 {qcMode !== 'regular' ? <th style={{ ...styles.th, ...styles.thCenter }}>Detail</th> : null}
               </tr>
             </thead>
@@ -2284,7 +2735,7 @@ export default function QcDashboardPage() {
                         '-'
                       )}
                     </td>}
-                    <td style={styles.td}>{item.brand}</td>
+                    <td style={styles.td}>{qcMode !== 'regular' && String(item.brand || '').trim().toUpperCase() === 'NO PO' ? '-' : item.brand}</td>
                     <td style={styles.td}>{item.category}</td>
                     <td style={styles.td}>{item.model}</td>
                     {qcMode === 're_qc' ? <td style={{ ...styles.td, ...styles.tdCenter }}>Round {item.roundNumber}</td> : null}
@@ -2319,92 +2770,96 @@ export default function QcDashboardPage() {
         </div>
         </>
         ) : null}
-      </div>
+        </div>
+      ) : null}
 
-      <div style={styles.card}>
-        <h2 style={styles.sectionTitle}>Inspector Performance</h2>
-        <div style={styles.tableWrap}>
-          <table style={styles.table}>
-            <thead>
-              <tr>
-                <th style={styles.th}>Inspector</th>
-                <th style={styles.th}>Total PCS</th>
-                <th style={styles.th}>Average PCS / Day</th>
-                <th style={styles.th}>QC Rate PCS / Minute</th>
-                <th style={styles.th}>Non-Productive Minutes</th>
-                <th style={styles.th}>Detail</th>
-              </tr>
-            </thead>
-            <tbody>
-              {inspectorPerformance.length ? (
-                inspectorPerformance.map((item) => (
-                  <tr key={item.inspectorKey}>
-                    <td style={styles.td}>
-                      <div style={styles.inspectorNameCell}>
-                        <span>{item.inspector}</span>
-                        {item.runningTaskCount ? (
-                          <span style={styles.liveTimerBadge} title={`${item.runningTaskCount} running task${item.runningTaskCount > 1 ? 's' : ''}`}>
-                            {formatCompactTimer(item.activeLiveSeconds)}
-                          </span>
-                        ) : null}
+      {summaryTab === 'inspector-insights' ? (
+        <div style={styles.summaryTabPanel}>
+        <div style={styles.performanceGrid}>
+          <div style={styles.performanceColumn}>
+            <div>
+              <p style={styles.panelEyebrow}>{activeSummaryLabel}</p>
+              <h2 style={styles.performanceSubtitle}>Inspector Performance</h2>
+            </div>
+            {rankedInspectorPerformance.length ? (
+              <div style={styles.inspectorCardGrid}>
+                {rankedInspectorPerformance.map((item) => (
+                  <div key={item.inspectorKey} style={styles.inspectorInsightCard}>
+                    <div style={styles.inspectorTitleWrap}>
+                      <p style={styles.inspectorCardName}>{item.inspector}</p>
+                      <span style={styles.idleBadge}>
+                        {item.nonProductiveHours} mins idle
+                        {item.runningTaskCount ? ` | ${formatCompactTimer(item.activeLiveSeconds)} running` : ''}
+                      </span>
+                    </div>
+
+                    <div style={styles.inspectorStatsGrid}>
+                      <div style={styles.inspectorStatBox}>
+                        <p style={styles.inspectorStatLabel}>Total pcs</p>
+                        <p style={styles.inspectorStatValue}>{item.totalPcs.toLocaleString()}</p>
                       </div>
-                    </td>
-                    <td style={styles.td}>{item.totalPcs}</td>
-                    <td style={styles.td}>{item.avgPerDay}</td>
-                    <td style={styles.td}>{item.rate}</td>
-                    <td style={styles.td}>{item.nonProductiveHours}</td>
-                    <td style={styles.td}>
-                      <button
-                        type="button"
-                        style={styles.detailButton}
-                        onClick={() => setPauseDetailInspector(item.inspectorKey)}
-                        disabled={!item.pauseLogs.length && !item.completedTaskRows.length && !item.activeTaskRows.length}
-                      >
-                        Detail
-                      </button>
-                    </td>
-                  </tr>
-                ))
-              ) : (
-                <tr>
-                  <td style={styles.td} colSpan={6}>
-                    No inspector data found for this filter.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
+                      <div style={styles.inspectorStatBox}>
+                        <p style={styles.inspectorStatLabel}>Avg / day</p>
+                        <p style={styles.inspectorStatValue}>{item.avgPerDay}</p>
+                      </div>
+                      <div style={styles.inspectorStatBox}>
+                        <p style={styles.inspectorStatLabel}>Pcs / min</p>
+                        <p style={styles.inspectorStatValue}>{Number(item.rate || 0).toFixed(2)}</p>
+                      </div>
+                    </div>
 
-      <div style={styles.card}>
-        <h2 style={styles.sectionTitle}>{qcMode !== 'regular' ? 'QC Speed Per Product' : 'QC Speed Per Category'}</h2>
-        <div style={styles.tableWrap}>
-          <table style={styles.table}>
-            <thead>
-              <tr>
-                <th style={styles.th}>{qcMode !== 'regular' ? 'Product' : 'Category'}</th>
-                <th style={styles.th}>Seconds / PCS</th>
-              </tr>
-            </thead>
-            <tbody>
-              {categoryTimes.length ? (
-                categoryTimes.map((item) => (
-                  <tr key={item.label}>
-                    <td style={styles.td}>{item.label}</td>
-                    <td style={styles.td}>{item.secondsPerPcs}</td>
-                  </tr>
-                ))
-              ) : (
-                <tr>
-                  <td style={styles.td} colSpan={2}>
-                    {qcMode !== 'regular' ? 'No product timing data found for this filter.' : 'No category timing data found for this filter.'}
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
+                    <button
+                      type="button"
+                      style={styles.secondaryButton}
+                      onClick={() => setPauseDetailInspector(item.inspectorKey)}
+                      disabled={!item.pauseLogs.length && !item.completedTaskRows.length && !item.activeTaskRows.length}
+                    >
+                      Detail
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p style={styles.emptyText}>No inspector data found for this filter.</p>
+            )}
+          </div>
+
+          <div style={{ ...styles.performanceColumn, ...styles.performanceColumnDivider }}>
+            <div>
+              <p style={styles.panelEyebrow}>{activeSummaryLabel}</p>
+              <h2 style={styles.performanceSubtitle}>Product Throughput</h2>
+            </div>
+            {rankedProductThroughputRows.length ? (
+              rankedProductThroughputRows.map((item) => {
+                const pct = maxProductThroughputSeconds ? Math.max(6, Math.round((Number(item.secondsPerPcs || 0) / maxProductThroughputSeconds) * 100)) : 0
+                return (
+                  <div key={`${item.category}-${item.label}`} style={styles.barRow}>
+                    <span style={styles.barLabel} title={`${item.category} average: ${item.categoryAverageSeconds}s`}>
+                      {item.label}
+                    </span>
+                    <div style={styles.barTrack}>
+                      <div
+                        style={{
+                          width: `${pct}%`,
+                          height: '100%',
+                          borderRadius: '999px',
+                          background: getThroughputBarColor(item.secondsPerPcs, item.categoryAverageSeconds),
+                        }}
+                      />
+                    </div>
+                    <span style={styles.barValue}>{item.secondsPerPcs}s</span>
+                  </div>
+                )
+              })
+            ) : (
+              <p style={styles.emptyText}>
+                {qcMode !== 'regular' ? 'No product timing data found for this filter.' : 'No category timing data found for this filter.'}
+              </p>
+            )}
+          </div>
         </div>
+        </div>
+      ) : null}
       </div>
 
       {showPauseConfirm ? (
@@ -2415,10 +2870,10 @@ export default function QcDashboardPage() {
               <p style={styles.subtitle}>All running QC stopwatches will be paused first, then each inspector can resume individually later.</p>
             </div>
             <div style={styles.buttonRow}>
-              <button type="button" onClick={() => setShowPauseConfirm(false)} style={{ height: '42px', padding: '0 16px', border: '1px solid #d1d5db', borderRadius: '8px', background: '#fff', color: '#111827', fontSize: '14px', fontWeight: '700', cursor: 'pointer' }}>
+              <button type="button" onClick={() => setShowPauseConfirm(false)} style={styles.secondaryButton}>
                 Cancel
               </button>
-              <button type="button" onClick={handlePauseAllQc} style={{ height: '42px', padding: '0 16px', border: 'none', borderRadius: '8px', background: '#dc2626', color: '#fff', fontSize: '14px', fontWeight: '700', cursor: 'pointer' }}>
+              <button type="button" onClick={handlePauseAllQc} style={styles.dangerButton}>
                 {pausingAll ? 'Pausing...' : 'Pause All QC'}
               </button>
             </div>
@@ -2434,7 +2889,7 @@ export default function QcDashboardPage() {
             </div>
             <Image src={previewPhoto.url} alt={previewPhoto.label} width={720} height={720} unoptimized style={styles.previewImage} />
             <div style={styles.buttonRow}>
-              <button type="button" onClick={() => setPreviewPhoto(null)} style={{ height: '42px', padding: '0 16px', border: '1px solid #d1d5db', borderRadius: '8px', background: '#fff', color: '#111827', fontSize: '14px', fontWeight: '700', cursor: 'pointer' }}>
+              <button type="button" onClick={() => setPreviewPhoto(null)} style={styles.secondaryButton}>
                 Close
               </button>
             </div>

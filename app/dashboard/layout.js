@@ -18,7 +18,7 @@ export default async function DashboardLayout({ children }) {
   const { role, permissions, isAdmin } = await loadAccessContext(supabase, user, 'role, display_name')
   const menus = getAllowedMenus(role, permissions, isAdmin)
   const navItems = [
-    { href: '/dashboard/inbound', label: 'Inbound', icon: 'inbound', show: menus.inbound },
+    { href: '/dashboard/inbound/receiving', label: 'Inbound', icon: 'inbound', show: menus.inbound },
     {
       href: menus.qcHref,
       label: menus.qcInspectorOnly ? 'Inspection Task' : 'Quality Control',

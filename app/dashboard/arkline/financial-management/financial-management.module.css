@@ -481,14 +481,24 @@
 .detailModal,
 .imageModal {
   max-height: calc(100vh - 24px);
-  overflow-y: auto;
-  overflow-x: hidden;
+  overflow: hidden;
 }
 
 .detailModal {
-  width: min(1360px, calc(100vw - 24px));
-  height: auto;
-  min-height: min(860px, calc(100vh - 24px));
+  width: min(1440px, calc(100vw - 20px));
+  height: min(92vh, 1040px);
+  min-height: min(920px, calc(100vh - 20px));
+}
+
+.detailModalBody {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding-right: 6px;
 }
 
 .imageModal {

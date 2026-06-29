@@ -1661,7 +1661,11 @@ export default function ArklineFinancialManagementPage({
 
       {selectedRequest ? (
         <div className={shellStyles.modalOverlay} onClick={closeRequestDetail}>
-          <div className={`${shellStyles.modalCard} ${styles.detailModal}`.trim()} onClick={(event) => event.stopPropagation()}>
+          <div
+            className={`${shellStyles.modalCard} ${styles.detailModal}`.trim()}
+            style={{ width: 'min(96vw, 1560px)', height: 'min(92vh, 1040px)', minHeight: 'min(920px, calc(100vh - 20px))' }}
+            onClick={(event) => event.stopPropagation()}
+          >
             <div className={styles.modalHeader}>
               <div>
                 <p className={styles.eyebrow}>Payment Request Detail</p>
@@ -1683,6 +1687,7 @@ export default function ArklineFinancialManagementPage({
               </span>
             </div>
 
+            <div className={styles.detailModalBody}>
             <div className={styles.detailGrid}>
               <div className={styles.metricCard}>
                 <span>Amount</span>
@@ -1828,6 +1833,7 @@ export default function ArklineFinancialManagementPage({
               <button type="button" className={styles.secondaryButton} onClick={closeRequestDetail} disabled={actionLoading}>
                 Close
               </button>
+            </div>
             </div>
           </div>
         </div>

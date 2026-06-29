@@ -82,9 +82,25 @@ function createInitialHeader() {
     supplierName: '',
     requestDeliveryDate: '',
     paymentTerms: '',
+    includePpn: true,
     status: 'Initiated',
     notes: '',
   }
+}
+
+function normalizeBoolean(value, fallback = true) {
+  if (value === null || value === undefined) return fallback
+  if (typeof value === 'boolean') return value
+  const normalized = String(value).trim().toLowerCase()
+  if (['true', '1', 'yes', 'y'].includes(normalized)) return true
+  if (['false', '0', 'no', 'n'].includes(normalized)) return false
+  return fallback
+}
+
+function isMissingColumnError(error, columnName) {
+  const normalizedColumn = String(columnName || '').trim().toLowerCase()
+  const message = `${error?.message || ''} ${error?.details || ''} ${error?.hint || ''}`.toLowerCase()
+  return Boolean(normalizedColumn && message.includes(normalizedColumn) && message.includes('column'))
 }
 
 function normalizeProduct(row) {
@@ -422,8 +438,9 @@ async function createPurchaseOrderPreviewHtml(bundle) {
     }
   })
 
+  const includePpn = bundle.header.includePpn !== false
   const subtotal = printableItems.reduce((sum, item) => sum + item.amount, 0)
-  const ppn = subtotal * 0.11
+  const ppn = includePpn ? subtotal * 0.11 : 0
   const total = subtotal + ppn
   const remarks =
     String(bundle.header.notes || '').trim() ||
@@ -508,13 +525,13 @@ async function createPurchaseOrderPreviewHtml(bundle) {
           </div>
         </div>
 
-        <div class="flex w-[55%] flex-col items-end">
+        <div class="flex w-[55%] -mt-2 flex-col items-end">
           <div class="w-full max-w-[320px] text-left">
-            <div class="mb-1 inline-flex bg-white p-1">
+            <div class="mb-2 h-[34px] w-[230px] overflow-hidden bg-white">
               <img
                 src="${escapeHtml(logoUrl)}"
                 alt="Arkline"
-                class="block h-auto max-w-[220px] object-contain"
+                class="block h-auto w-[230px] max-w-none -translate-y-[26px] object-contain"
               />
             </div>
             <div class="mb-2 mt-1 text-[11pt] font-semibold tracking-wide">
@@ -548,8 +565,8 @@ async function createPurchaseOrderPreviewHtml(bundle) {
         </tbody>
       </table>
 
-      <div class="print:break-inside-avoid flex items-end justify-between">
-        <div class="flex min-h-[280px] w-[50%] flex-col justify-between">
+      <div class="print:break-inside-avoid flex min-h-[360px] items-end justify-between">
+        <div class="flex min-h-[360px] w-[50%] flex-col justify-between pb-6">
           <div class="m-0 p-0">
             <div class="mb-1 text-[7pt] font-bold uppercase tracking-widest text-gray-500">Remarks</div>
             <div class="max-w-[90%] text-[9pt] leading-relaxed text-gray-600">
@@ -557,22 +574,26 @@ async function createPurchaseOrderPreviewHtml(bundle) {
             </div>
           </div>
 
-          <div class="mt-auto text-[36pt] font-bold leading-[0.95] tracking-tighter text-black">
+          <div class="mt-16 text-[36pt] font-bold leading-[0.95] tracking-tighter text-black">
             PURCHASE<br />ORDER
           </div>
         </div>
 
-        <div class="flex min-h-[280px] w-[45%] flex-col justify-between">
+        <div class="flex min-h-[360px] w-[45%] flex-col justify-between pb-6">
           <table class="w-full text-[9.5pt]">
             <tbody>
               <tr>
                 <td class="py-2 text-[7pt] font-bold uppercase tracking-widest text-gray-400">Subtotal</td>
                 <td class="py-2 text-right text-gray-700">${escapeHtml(formatIdr(subtotal))}</td>
               </tr>
-              <tr>
-                <td class="py-2 text-[7pt] font-bold uppercase tracking-widest text-gray-400">PPN 11%</td>
-                <td class="py-2 text-right text-gray-700">${escapeHtml(formatIdr(ppn))}</td>
-              </tr>
+              ${
+                includePpn
+                  ? `<tr>
+                      <td class="py-2 text-[7pt] font-bold uppercase tracking-widest text-gray-400">PPN 11%</td>
+                      <td class="py-2 text-right text-gray-700">${escapeHtml(formatIdr(ppn))}</td>
+                    </tr>`
+                  : ''
+              }
               <tr class="border-t-[1.5px] border-black text-[11.5pt] font-bold">
                 <td class="pt-3 text-[7pt] font-bold uppercase tracking-widest text-black">Total</td>
                 <td class="pt-3 text-right text-black">${escapeHtml(formatIdr(total))}</td>
@@ -580,7 +601,7 @@ async function createPurchaseOrderPreviewHtml(bundle) {
             </tbody>
           </table>
 
-          <div class="mt-auto pt-12 text-right">
+          <div class="mt-20 text-right">
             <div class="mb-2 inline-block w-[180px] border-b border-black"></div>
             <div class="text-[10.5pt] font-semibold tracking-wide text-black">Aditya C. S.</div>
             <div class="text-[8.5pt] font-medium text-gray-500">President Director</div>
@@ -1223,7 +1244,7 @@ export default function ArklineProductionPlanningPage() {
   }
 
   function handleHeaderChange(event) {
-    const { name, value } = event.target
+    const { name, value, type, checked } = event.target
 
     if (name === 'poSuffix') {
       setHeader((prev) => ({
@@ -1249,7 +1270,7 @@ export default function ArklineProductionPlanningPage() {
 
     setHeader((prev) => ({
       ...prev,
-      [name]: value,
+      [name]: type === 'checkbox' ? checked : value,
     }))
     setIsPlanningDirty(true)
     setError('')
@@ -1488,6 +1509,7 @@ export default function ArklineProductionPlanningPage() {
         supplierName: String(bundle.po.supplier_name || '').trim().toUpperCase(),
         requestDeliveryDate: String(bundle.po.request_delivery_date || '').slice(0, 10),
         paymentTerms: String(bundle.po.payment_terms || ''),
+        includePpn: normalizeBoolean(bundle.po.include_ppn, true),
         status: String(bundle.po.status || 'Draft'),
         notes: String(bundle.po.notes || ''),
       }
@@ -1570,13 +1592,16 @@ export default function ArklineProductionPlanningPage() {
         supplier_name: header.supplierName || null,
         request_delivery_date: header.requestDeliveryDate || null,
         payment_terms: String(header.paymentTerms || '').trim() || null,
+        include_ppn: header.includePpn !== false,
         status: header.status || 'Draft',
         notes: header.notes.trim() || null,
         updated_by: userEmail,
       }
+      const headerPayloadWithoutPpn = { ...headerPayload }
+      delete headerPayloadWithoutPpn.include_ppn
 
       if (!poDbId) {
-        const { data: insertedPo, error: insertPoError } = await supabase
+        let { data: insertedPo, error: insertPoError } = await supabase
           .from('arkline_pos')
           .insert({
             ...headerPayload,
@@ -1585,13 +1610,31 @@ export default function ArklineProductionPlanningPage() {
           .select('*')
           .single()
 
+        if (insertPoError && isMissingColumnError(insertPoError, 'include_ppn')) {
+          const retryResult = await supabase
+            .from('arkline_pos')
+            .insert({
+              ...headerPayloadWithoutPpn,
+              created_by: userEmail,
+            })
+            .select('*')
+            .single()
+          insertedPo = retryResult.data
+          insertPoError = retryResult.error
+        }
+
         if (insertPoError) {
           throw new Error(insertPoError.message)
         }
 
         poDbId = insertedPo.id
       } else {
-        const { error: updatePoError } = await supabase.from('arkline_pos').update(headerPayload).eq('id', poDbId)
+        let { error: updatePoError } = await supabase.from('arkline_pos').update(headerPayload).eq('id', poDbId)
+
+        if (updatePoError && isMissingColumnError(updatePoError, 'include_ppn')) {
+          const retryResult = await supabase.from('arkline_pos').update(headerPayloadWithoutPpn).eq('id', poDbId)
+          updatePoError = retryResult.error
+        }
 
         if (updatePoError) {
           throw new Error(updatePoError.message)
@@ -1930,9 +1973,12 @@ export default function ArklineProductionPlanningPage() {
               </div>
             </div>
 
-            <div className={styles.field}>
-              <label className={styles.label}>Planning Method</label>
-              <div className={styles.controlStackInline}>
+            <div className={`${styles.field} ${styles.methodTaxField}`.trim()}>
+              <div className={styles.methodTaxLabels}>
+                <label className={styles.label}>Planning Method</label>
+                <span className={styles.label}>{header.includePpn ? 'With PPN' : 'Without PPN'}</span>
+              </div>
+              <div className={styles.methodTaxControls}>
                 <div className={styles.methodGroup}>
                   {METHOD_OPTIONS.map((option) => (
                     <button
@@ -1945,6 +1991,25 @@ export default function ArklineProductionPlanningPage() {
                     </button>
                   ))}
                 </div>
+                <label
+                  className={[
+                    styles.taxToggleCompact,
+                    header.includePpn ? styles.taxToggleCompactActive : '',
+                    isExistingModeLocked ? styles.taxToggleCompactDisabled : '',
+                  ]
+                    .filter(Boolean)
+                    .join(' ')}
+                  aria-label={header.includePpn ? 'With PPN' : 'Without PPN'}
+                >
+                  <input
+                    type="checkbox"
+                    name="includePpn"
+                    checked={header.includePpn}
+                    onChange={handleHeaderChange}
+                    disabled={isExistingModeLocked}
+                  />
+                  <span className={styles.taxToggleKnob} aria-hidden="true" />
+                </label>
               </div>
             </div>
 
@@ -2338,7 +2403,14 @@ export default function ArklineProductionPlanningPage() {
             <div className={styles.emptyState}>No product line has been added to this PO yet.</div>
           ) : (
             <div className={styles.tableWrap}>
-              <table className={styles.table}>
+              <table className={`${styles.table} ${styles.productLinesTable}`.trim()}>
+                <colgroup>
+                  <col className={styles.productLineProductColumn} />
+                  <col className={styles.productLineQtyColumn} />
+                  <col className={styles.productLinePriceColumn} />
+                  <col className={styles.productLineSizeColumn} />
+                  <col className={styles.productLineActionColumn} />
+                </colgroup>
                 <thead>
                   <tr>
                     <th>Product</th>

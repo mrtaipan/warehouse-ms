@@ -1,18 +1,71 @@
 import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { createClient } from '@/utils/supabase/server'
+import ReceivingFiltersClient from './receiving-filters-client'
 
-function formatDateDisplay(value) {
-  if (!value) return '-'
+const PAGE_SIZE = 25
 
-  return new Intl.DateTimeFormat('en-GB', {
-    day: '2-digit',
-    month: 'short',
-    year: 'numeric',
-  }).format(new Date(value))
+function getSingleValue(value) {
+  return Array.isArray(value) ? value[0] : value
 }
 
-export default async function InboundReceivingPage() {
+function getPage(value) {
+  const parsed = Number.parseInt(getSingleValue(value) || '1', 10)
+  return Number.isNaN(parsed) || parsed < 1 ? 1 : parsed
+}
+
+function sanitizeSearch(value) {
+  return String(value || '').trim().replace(/[%,()]/g, ' ')
+}
+
+function formatDateValue(date) {
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}-${String(date.getUTCDate()).padStart(2, '0')}`
+}
+
+function getDefaultInboundStartDate() {
+  const jakartaParts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Jakarta',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(new Date())
+  const day = Number(jakartaParts.find((part) => part.type === 'day')?.value || 1)
+  const month = Number(jakartaParts.find((part) => part.type === 'month')?.value || 1)
+  const year = Number(jakartaParts.find((part) => part.type === 'year')?.value || 1970)
+  const date = new Date(Date.UTC(year, month - 1, day))
+  date.setUTCDate(date.getUTCDate() - 30)
+
+  return formatDateValue(date)
+}
+
+function getMonthBounds(value) {
+  const month = String(value || '').trim()
+
+  if (!/^\d{4}-\d{2}$/.test(month)) {
+    return null
+  }
+
+  const [year, monthNumber] = month.split('-').map(Number)
+  const start = `${year}-${String(monthNumber).padStart(2, '0')}-01`
+  const nextMonthDate = new Date(Date.UTC(year, monthNumber, 1))
+  const next = `${nextMonthDate.getUTCFullYear()}-${String(nextMonthDate.getUTCMonth() + 1).padStart(2, '0')}-01`
+
+  return { start, next }
+}
+
+function createOverviewHref({ supplierId, month, search, page }) {
+  const params = new URLSearchParams()
+
+  if (search) params.set('search', search)
+  if (!search && supplierId) params.set('supplier', supplierId)
+  if (!search && month) params.set('month', month)
+  if (page > 1) params.set('page', String(page))
+
+  const query = params.toString()
+  return query ? `/dashboard/inbound/receiving?${query}` : '/dashboard/inbound/receiving'
+}
+
+export default async function InboundReceivingPage({ searchParams }) {
   const supabase = await createClient()
 
   const {
@@ -23,18 +76,70 @@ export default async function InboundReceivingPage() {
     redirect('/login')
   }
 
-  const { data: orders, error } = await supabase
+  const params = await searchParams
+  const search = sanitizeSearch(getSingleValue(params?.search))
+  const supplierId = search ? '' : (getSingleValue(params?.supplier) || '').trim()
+  const month = search ? '' : (getSingleValue(params?.month) || '').trim()
+  const currentPage = getPage(params?.page)
+  const from = (currentPage - 1) * PAGE_SIZE
+  const to = from + PAGE_SIZE - 1
+  const monthBounds = getMonthBounds(month)
+  const defaultInboundStartDate = getDefaultInboundStartDate()
+
+  const supplierQuery = supabase
+    .from('dir_suppliers')
+    .select('id, supplier_name, group')
+    .eq('is_active', true)
+    .ilike('group', 'MOB')
+    .order('supplier_name', { ascending: true })
+
+  let ordersQuery = supabase
     .from('inbound')
-    .select('*, suppliers:dir_suppliers!supplier_id (supplier_name)')
+    .select('*, suppliers:dir_suppliers!supplier_id (supplier_name)', { count: 'exact' })
     .in('status', ['draft', 'inbound'])
+    .order('inbound_date', { ascending: false })
     .order('created_at', { ascending: false })
 
+  if (!search && supplierId) {
+    ordersQuery = ordersQuery.eq('supplier_id', Number(supplierId))
+  }
+
+  if (search) {
+    ordersQuery = ordersQuery.or(`grn_number.ilike.%${search}%,item_name.ilike.%${search}%`)
+  }
+
+  if (!search) {
+    if (monthBounds) {
+      ordersQuery = ordersQuery.gte('inbound_date', monthBounds.start).lt('inbound_date', monthBounds.next)
+    } else {
+      ordersQuery = ordersQuery.gte('inbound_date', defaultInboundStartDate)
+    }
+  }
+
+  const [
+    { data: suppliers, error: supplierError },
+    { data: orders, error, count },
+  ] = await Promise.all([
+    supplierQuery,
+    ordersQuery.range(from, to),
+  ])
+
+  const totalItems = count || 0
+  const totalPages = totalItems > 0 ? Math.ceil(totalItems / PAGE_SIZE) : 1
+
+  if (totalItems > 0 && currentPage > totalPages) {
+    redirect(createOverviewHref({ supplierId, month, search, page: totalPages }))
+  }
+
+  const safeCurrentPage = Math.min(currentPage, totalPages)
+
   return (
-    <div style={styles.wrapper}>
+    <section style={styles.panel}>
       <div style={styles.header}>
         <div>
-          <h1 style={styles.title}>Receiving</h1>
-          <p style={styles.subtitle}>Create and continue receiving records from one place.</p>
+          <p style={styles.eyebrow}>Inbound</p>
+          <h1 style={styles.title}>Overview</h1>
+          <p style={styles.subtitle}>Track recent receiving records, find older GRNs by search, and continue inbound work from one place.</p>
         </div>
 
         <Link href="/dashboard/inbound/new" style={styles.primaryButton}>
@@ -42,131 +147,90 @@ export default async function InboundReceivingPage() {
         </Link>
       </div>
 
-      {error ? (
-        <div style={styles.card}>
-          <p style={styles.errorText}>Error: {error.message}</p>
-        </div>
-      ) : orders?.length === 0 ? (
-        <div style={styles.card}>
-          <p style={styles.emptyText}>No receiving records yet. Create your first receiving entry.</p>
-        </div>
-      ) : (
-        <div style={styles.tableWrap}>
-          <table style={styles.table}>
-            <thead>
-              <tr style={styles.headRow}>
-                <th style={th}>GRN Number</th>
-                <th style={th}>Inbound Date</th>
-                <th style={th}>Supplier</th>
-                <th style={th}>Barang</th>
-                <th style={th}>Pay on Site</th>
-                <th style={th}>Qty Surat Jalan</th>
-                <th style={th}>Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              {orders.map((order) => (
-                <tr key={order.id} style={styles.bodyRow}>
-                  <td style={td}>
-                    <strong>{order.grn_number}</strong>
-                  </td>
-                  <td style={td}>{formatDateDisplay(order.inbound_date)}</td>
-                  <td style={td}>{order.suppliers?.supplier_name || '-'}</td>
-                  <td style={td}>{order.item_name || '-'}</td>
-                  <td style={td}>{order.payment_on_site ? 'Yes' : 'No'}</td>
-                  <td style={td}>{order.total_claimed_qty || 0}</td>
-                  <td style={td}>
-                    <div style={styles.actionGroup}>
-                      <Link
-                        href={`/dashboard/inbound/${order.id}`}
-                        style={styles.iconButton}
-                        aria-label={`Preview ${order.grn_number}`}
-                        title="Preview"
-                      >
-                        👁
-                      </Link>
-                      <Link
-                        href={`/dashboard/inbound/${order.id}/edit`}
-                        style={styles.iconButton}
-                        aria-label={`Edit ${order.grn_number}`}
-                        title="Edit"
-                      >
-                        ✎
-                      </Link>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </div>
+      <ReceivingFiltersClient
+        key={`${supplierId}-${month}-${search}`}
+        suppliers={suppliers || []}
+        initialOrders={orders || []}
+        initialTotalItems={totalItems}
+        initialFilters={{ supplierId, month, search, page: safeCurrentPage }}
+        initialError={supplierError?.message || error?.message || ''}
+      />
+    </section>
   )
 }
 
-const th = {
-  padding: '12px 16px',
-  textAlign: 'left',
-  fontSize: '14px',
-  fontWeight: '600',
-  color: '#374151',
-}
-
-const td = {
-  padding: '12px 16px',
-  fontSize: '14px',
-  color: '#111827',
-  verticalAlign: 'top',
-}
-
 const styles = {
-  wrapper: {
+  panel: {
+    background: '#f7f9fb',
+    border: '1px solid #e2e8f0',
+    borderRadius: '22px',
+    padding: '18px',
     display: 'flex',
     flexDirection: 'column',
-    gap: '24px',
+    gap: '16px',
   },
   header: {
     display: 'flex',
     justifyContent: 'space-between',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     gap: '16px',
     flexWrap: 'wrap',
   },
-  title: {
+  eyebrow: {
     margin: 0,
+    fontSize: '11px',
+    fontWeight: 800,
+    letterSpacing: '0.08em',
+    textTransform: 'uppercase',
+    color: '#64748b',
+  },
+  title: {
+    margin: '4px 0 0',
     fontSize: '28px',
+    lineHeight: 1.05,
+    fontWeight: 900,
+    color: '#0f172a',
+    letterSpacing: '-0.02em',
   },
   subtitle: {
-    color: '#6b7280',
-    margin: '4px 0 0',
+    margin: '6px 0 0',
+    color: '#475569',
+    fontSize: '13px',
+    lineHeight: 1.45,
+    maxWidth: '640px',
   },
   primaryButton: {
-    padding: '10px 16px',
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: '40px',
+    padding: '0 16px',
     background: '#111827',
     color: '#fff',
-    borderRadius: '8px',
+    borderRadius: '999px',
     textDecoration: 'none',
-    fontWeight: '600',
+    fontSize: '13px',
+    fontWeight: '800',
+    whiteSpace: 'nowrap',
   },
-  card: {
+  emptyBox: {
     background: '#fff',
-    border: '1px solid #e5e7eb',
-    borderRadius: '12px',
-    padding: '24px',
+    border: '1px solid #e2e8f0',
+    borderRadius: '18px',
+    padding: '18px',
   },
   tableWrap: {
     background: '#fff',
-    border: '1px solid #e5e7eb',
-    borderRadius: '12px',
-    overflow: 'hidden',
+    border: '1px solid #e2e8f0',
+    borderRadius: '18px',
+    overflowX: 'auto',
   },
   table: {
     width: '100%',
     borderCollapse: 'collapse',
   },
   headRow: {
-    background: '#f9fafb',
+    background: '#f8fafc',
   },
   bodyRow: {
     borderTop: '1px solid #f1f5f9',
@@ -175,6 +239,7 @@ const styles = {
     display: 'flex',
     alignItems: 'center',
     gap: '8px',
+    flexWrap: 'nowrap',
   },
   iconButton: {
     display: 'inline-flex',
@@ -182,13 +247,43 @@ const styles = {
     justifyContent: 'center',
     width: '36px',
     height: '36px',
-    borderRadius: '8px',
-    background: '#ffffff',
-    color: '#111827',
-    border: '1px solid #d1d5db',
+    borderRadius: '10px',
+    background: '#fff',
+    color: '#0f172a',
+    border: '1px solid #cbd5e1',
     textDecoration: 'none',
-    fontSize: '16px',
-    fontWeight: '600',
+  },
+  pagination: {
+    display: 'flex',
+    justifyContent: 'flex-end',
+    alignItems: 'center',
+    gap: '10px',
+    flexWrap: 'wrap',
+  },
+  pageButton: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    color: '#0f172a',
+    textDecoration: 'none',
+    fontSize: '13px',
+    fontWeight: '800',
+    lineHeight: 1.4,
+  },
+  pageButtonDisabled: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    color: '#94a3b8',
+    fontSize: '13px',
+    fontWeight: '800',
+    lineHeight: 1.4,
+  },
+  pageMeta: {
+    color: '#64748b',
+    fontSize: '13px',
+    fontWeight: '700',
+    lineHeight: 1.4,
   },
   emptyText: {
     margin: 0,
