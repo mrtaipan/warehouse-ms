@@ -314,22 +314,14 @@ export default function ReceivingFiltersClient({
                           >
                             <ActionIcon kind="receiving" />
                           </Link>
-                        <Link
-                          href={`/dashboard/inbound/unload?grn=${encodeURIComponent(order.grn_number || '')}`}
-                          style={styles.iconButton}
-                          aria-label={`Sorting ${order.grn_number}`}
-                          title="Sorting"
-                        >
-                          <ActionIcon kind="unload" />
-                        </Link>
-                        <Link
-                          href={`/dashboard/inbound?grn=${encodeURIComponent(order.grn_number || '')}`}
-                          style={styles.iconButton}
-                          aria-label={`Summary ${order.grn_number}`}
-                          title="Summary"
-                        >
-                          <ActionIcon kind="dashboard" />
-                        </Link>
+                          <Link
+                            href={`/dashboard/inbound/unload?grn=${encodeURIComponent(order.grn_number || '')}`}
+                            style={styles.iconButton}
+                            aria-label={`Sorting ${order.grn_number}`}
+                            title="Sorting"
+                          >
+                            <ActionIcon kind="unload" />
+                          </Link>
                       </div>
                     </td>
                   </tr>

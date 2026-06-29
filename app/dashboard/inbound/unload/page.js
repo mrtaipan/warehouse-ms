@@ -1,7 +1,7 @@
 'use client'
 
 import Image from 'next/image'
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import { createClient } from '@/utils/supabase/browser'
 import { getProfileByAuthenticatedUser } from '@/utils/user-profiles'
@@ -50,17 +50,38 @@ function buildCategoryMaps(categories) {
   }
 }
 
-function getModelDisplayLabel(modelName, modelColor, variantLabel) {
-  const baseLabel = modelColor ? `${modelName} / ${modelColor}` : modelName || '-'
-  return variantLabel ? `${baseLabel} | Product ID ${variantLabel}` : baseLabel
-}
-
 function getVariantProductId(variant) {
   return String(variant?.variant_code || variant?.variant_label || '').trim()
 }
 
 function getVariantDisplayName(variant) {
   return String(variant?.variant_name || variant?.variant_label || variant?.variant_code || 'Variant').trim()
+}
+
+function normalizeVariantLookupValue(value) {
+  return String(value ?? '').trim().toLowerCase()
+}
+
+function getVariantLookupValues(variant) {
+  return [variant?.variant_code, variant?.variant_label, variant?.variant_name]
+    .map((value) => normalizeVariantLookupValue(value))
+    .filter(Boolean)
+}
+
+function getRowVariantIdentifier(row) {
+  return row?.variant_code || row?.variant_label || row?.variant_name || ''
+}
+
+function getNextVariantCode(model, variants) {
+  const prefix = `${model?.model_code || `MODEL-${model?.id || ''}`}-VAR`
+  const nextNumber =
+    variants.reduce((max, variant) => {
+      const code = String(variant.variant_code || variant.variant_label || '')
+      const match = code.match(new RegExp(`^${prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(\\d+)$`, 'i'))
+      return match ? Math.max(max, Number(match[1] || 0)) : max
+    }, 0) + 1
+
+  return `${prefix}${nextNumber}`
 }
 
 function getBrandDisplayLabel(brand) {
@@ -183,6 +204,24 @@ function BuilderIcon() {
       <path d="M6 5h12a2 2 0 0 1 2 2v13H4V7a2 2 0 0 1 2-2z" />
       <path d="M8 11h8" />
       <path d="M8 15h5" />
+    </svg>
+  )
+}
+
+function PencilIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M12 20h9" />
+      <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
+    </svg>
+  )
+}
+
+function XIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M18 6 6 18" />
+      <path d="m6 6 12 12" />
     </svg>
   )
 }
@@ -531,6 +570,29 @@ const styles = {
     gridTemplateColumns: 'minmax(0, 1fr) auto',
     gap: '10px',
     alignItems: 'center',
+  },
+  tableLineStack: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '8px',
+  },
+  tablePhotoLine: {
+    minHeight: '48px',
+    display: 'flex',
+    alignItems: 'center',
+  },
+  tableDetailLine: {
+    minHeight: '48px',
+    display: 'flex',
+    flexDirection: 'column',
+    justifyContent: 'center',
+    gap: '3px',
+  },
+  tableQtyLine: {
+    minHeight: '48px',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   itemMeta: {
     color: '#64748b',
@@ -1235,6 +1297,15 @@ const styles = {
     objectFit: 'cover',
     background: '#f8fafc',
   },
+  koliImageButton: {
+    width: '48px',
+    height: '48px',
+    padding: 0,
+    border: 'none',
+    background: 'transparent',
+    cursor: 'pointer',
+    display: 'inline-flex',
+  },
   koliImagePlaceholder: {
     width: '48px',
     height: '48px',
@@ -1247,6 +1318,40 @@ const styles = {
     justifyContent: 'center',
     fontSize: '9px',
     fontWeight: '800',
+  },
+  koliActionRow: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '6px',
+    whiteSpace: 'nowrap',
+  },
+  koliIconButton: {
+    width: '34px',
+    height: '34px',
+    padding: 0,
+    border: '1px solid #cbd5e1',
+    borderRadius: '8px',
+    background: '#fff',
+    color: '#0f172a',
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    cursor: 'pointer',
+  },
+  koliDeleteButton: {
+    border: '1px solid #fecaca',
+    color: '#dc2626',
+  },
+  koliModelStack: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '3px',
+  },
+  koliVariantText: {
+    color: '#64748b',
+    fontSize: '12px',
+    fontWeight: '750',
+    lineHeight: 1.25,
   },
   disabledSegment: {
     opacity: 0.48,
@@ -1415,6 +1520,16 @@ const styles = {
     fontSize: '14px',
     color: '#111827',
     verticalAlign: 'top',
+  },
+  koliGroupTd: {
+    borderTop: '2px solid #cbd5e1',
+  },
+  centerHeader: {
+    textAlign: 'center',
+  },
+  middleCenterCell: {
+    textAlign: 'center',
+    verticalAlign: 'middle',
   },
   sampleBadge: {
     display: 'inline-flex',
@@ -1657,7 +1772,11 @@ export default function UnloadPage() {
   const [modelModalError, setModelModalError] = useState('')
   const [previewImage, setPreviewImage] = useState(null)
   const [supportsUnloadVariant, setSupportsUnloadVariant] = useState(false)
+  const [supportsUnloadVariantCode, setSupportsUnloadVariantCode] = useState(false)
+  const [supportsUnloadVariantName, setSupportsUnloadVariantName] = useState(false)
   const [supportsReturnVariant, setSupportsReturnVariant] = useState(false)
+  const [supportsReturnVariantCode, setSupportsReturnVariantCode] = useState(false)
+  const [supportsReturnVariantName, setSupportsReturnVariantName] = useState(false)
   const [breakdownMode, setBreakdownMode] = useState('koli')
   const displayName = user ? getDisplayName(user, profile) : 'Loading...'
   const addMode = isReturn ? 'return' : isSample ? 'sample' : 'regular'
@@ -1727,7 +1846,7 @@ export default function UnloadPage() {
           .from('dir_product_model_variants')
           .select('*')
           .eq('is_active', true)
-          .order('variant_label', { ascending: true }),
+          .order('variant_code', { ascending: true }),
       ])
 
       if (inboundError || brandError || categoryError || modelError || productVariantError) {
@@ -1754,13 +1873,28 @@ export default function UnloadPage() {
         setSelectedInboundId(selectedInbound ? String(selectedInbound.id) : '')
       }
 
-      const [{ error: unloadVariantError }, { error: returnVariantError }] = await Promise.all([
+      const [
+        { error: unloadVariantError },
+        { error: unloadVariantCodeError },
+        { error: unloadVariantNameError },
+        { error: returnVariantError },
+        { error: returnVariantCodeError },
+        { error: returnVariantNameError },
+      ] = await Promise.all([
         supabase.from('inbound_unload').select('variant_label').limit(1),
+        supabase.from('inbound_unload').select('variant_code').limit(1),
+        supabase.from('inbound_unload').select('variant_name').limit(1),
         supabase.from('warehouse_returns').select('variant_label').limit(1),
+        supabase.from('warehouse_returns').select('variant_code').limit(1),
+        supabase.from('warehouse_returns').select('variant_name').limit(1),
       ])
 
       setSupportsUnloadVariant(!unloadVariantError)
+      setSupportsUnloadVariantCode(!unloadVariantCodeError)
+      setSupportsUnloadVariantName(!unloadVariantNameError)
       setSupportsReturnVariant(!returnVariantError)
+      setSupportsReturnVariantCode(!returnVariantCodeError)
+      setSupportsReturnVariantName(!returnVariantNameError)
       setLoading(false)
     }
 
@@ -1782,22 +1916,41 @@ export default function UnloadPage() {
       ] = await Promise.all([
         supabase
           .from('inbound_unload')
-          .select(
-            supportsUnloadVariant
-              ? 'id, inbound_id, brand_id, category_id, model_name, model_color, qty, pic_name, is_sample, koli_sequence, photo_url, variant_label'
-              : 'id, inbound_id, brand_id, category_id, model_name, model_color, qty, pic_name, is_sample, koli_sequence, photo_url'
-          )
+          .select([
+            'id',
+            'inbound_id',
+            'brand_id',
+            'category_id',
+            'model_name',
+            'qty',
+            'pic_name',
+            'is_sample',
+            'koli_sequence',
+            'photo_url',
+            supportsUnloadVariant ? 'variant_label' : null,
+            supportsUnloadVariantCode ? 'variant_code' : null,
+            supportsUnloadVariantName ? 'variant_name' : null,
+          ].filter(Boolean).join(', '))
           .eq('inbound_id', selectedInboundId)
           .order('is_sample', { ascending: true })
           .order('koli_sequence', { ascending: true })
           .order('id', { ascending: true }),
         supabase
           .from('warehouse_returns')
-          .select(
-            supportsReturnVariant
-              ? 'id, inbound_id, source_phase, brand_id, category_id, model_name, model_color, qty, pic_name, created_at, variant_label'
-              : 'id, inbound_id, source_phase, brand_id, category_id, model_name, model_color, qty, pic_name, created_at'
-          )
+          .select([
+            'id',
+            'inbound_id',
+            'source_phase',
+            'brand_id',
+            'category_id',
+            'model_name',
+            'qty',
+            'pic_name',
+            'created_at',
+            supportsReturnVariant ? 'variant_label' : null,
+            supportsReturnVariantCode ? 'variant_code' : null,
+            supportsReturnVariantName ? 'variant_name' : null,
+          ].filter(Boolean).join(', '))
           .eq('inbound_id', selectedInboundId)
           .eq('source_phase', 'inbound')
           .order('created_at', { ascending: true }),
@@ -1813,7 +1966,15 @@ export default function UnloadPage() {
     }
 
     loadUnloadRows()
-  }, [selectedInboundId, supportsReturnVariant, supportsUnloadVariant])
+  }, [
+    selectedInboundId,
+    supportsReturnVariant,
+    supportsReturnVariantCode,
+    supportsReturnVariantName,
+    supportsUnloadVariant,
+    supportsUnloadVariantCode,
+    supportsUnloadVariantName,
+  ])
 
   const categoryMaps = buildCategoryMaps(categories)
   const level0Options = categoryMaps.roots
@@ -1896,16 +2057,17 @@ export default function UnloadPage() {
               model,
               variant,
               photoUrl: variant.variant_photo_url || '',
-              label: getModelDisplayLabel(model.model_name, '', getVariantProductId(variant)),
+              label: `${model.model_name || '-'} / ${getVariantDisplayName(variant)}`,
             }))
         )
         .sort((a, b) => {
-          const aIndex = Number(a.variant.variant_index ?? 0)
-          const bIndex = Number(b.variant.variant_index ?? 0)
           const modelCompare = String(a.model.model_name || '').localeCompare(String(b.model.model_name || ''))
+          const variantCompare = String(getVariantProductId(a.variant) || getVariantDisplayName(a.variant)).localeCompare(
+            String(getVariantProductId(b.variant) || getVariantDisplayName(b.variant))
+          )
 
           if (modelCompare !== 0) return modelCompare
-          return aIndex - bIndex
+          return variantCompare
         }),
     [filteredModelOptions, productModelVariants]
   )
@@ -1931,19 +2093,23 @@ export default function UnloadPage() {
     () =>
       productModelVariants
         .filter((item) => Number(item.product_model_id || 0) === Number(selectedModel?.id || 0))
-        .sort((a, b) => Number(a.variant_index ?? 0) - Number(b.variant_index ?? 0)),
+        .sort((a, b) =>
+          String(getVariantProductId(a) || getVariantDisplayName(a)).localeCompare(
+            String(getVariantProductId(b) || getVariantDisplayName(b))
+          )
+        ),
     [productModelVariants, selectedModel]
   )
+  const exactSelectedVariant = selectedModel
+    ? findVariantForModel(selectedModel, selectedVariantLabel, '')
+    : null
   const selectedVariant =
-    selectedModelVariants.find(
-      (item) =>
-        String(getVariantProductId(item) || '') === String(selectedVariantLabel || '') ||
-        String(item.variant_label || '') === String(selectedVariantLabel || '')
-    ) ||
-    selectedModelVariants.find((item) => item.is_main_variant) ||
-    selectedModelVariants[0] ||
-    null
+    exactSelectedVariant ||
+    (!selectedVariantLabel ? selectedModelVariants[0] || null : null)
   const selectedModelPhoto = selectedVariant?.variant_photo_url || selectedModel?.photo_url || ''
+  const selectedVariantDisplayName = selectedVariant
+    ? getVariantDisplayName(selectedVariant)
+    : selectedVariantLabel || ''
   const selectedCategoryLabel = selectedCategory ? getCategoryDisplayLabel(selectedCategory) : ''
 
   const totalReturnQty = returnRows
@@ -1982,12 +2148,12 @@ export default function UnloadPage() {
     const options = []
 
     for (const row of sourceRows) {
+      const variantIdentity = getRowVariantIdentifier(row) || row.photo_url || ''
       const key = [
         row.brand_id || '',
         row.category_id || '',
         row.model_name || '',
-        row.model_color || '',
-        row.variant_label || '',
+        variantIdentity,
       ].join('|')
 
       if (seen.has(key)) continue
@@ -2035,61 +2201,60 @@ export default function UnloadPage() {
   }, [unloadRows])
   const summaryMap = new Map()
 
-  function getDefaultVariantLabelForModel(model) {
-    if (!model) return ''
-
-    const variantRows = productModelVariants
-      .filter((item) => Number(item.product_model_id || 0) === Number(model.id || 0))
-      .sort((a, b) => Number(a.variant_index ?? 0) - Number(b.variant_index ?? 0))
-
-    const mainVariant =
-      variantRows.find((item) => item.is_main_variant) ||
-      variantRows.find((item) => Number(item.variant_index ?? 0) === 0) ||
-      variantRows[0] ||
-      null
-
-    return getVariantProductId(mainVariant)
-  }
-
   for (const row of unloadRows) {
-    const label = getModelDisplayLabel(row.model_name, row.model_color, row.variant_label)
+    const matchingVariant = getVariantForRow(row)
+    const variantKey = matchingVariant?.id
+      ? `variant:${matchingVariant.id}`
+      : `fallback:${row.brand_id || ''}|${row.category_id || ''}|${row.model_name || ''}|${getRowVariantIdentifier(row)}|${row.photo_url || ''}`
+    const label = getModelVariantLabelForRow(row)
+    const photoUrl = getVariantPhotoForRow(row)
+    const brandName = brands.find((item) => item.id === row.brand_id)?.brand_name || '-'
+    const category = categoryMaps.byId.get(row.category_id)
+    const categoryLabel = category?.full_name || category?.category_name || '-'
 
-    if (!summaryMap.has(label)) {
-      summaryMap.set(label, {
+    if (!summaryMap.has(variantKey)) {
+      summaryMap.set(variantKey, {
+        brandName,
+        categoryLabel,
         modelLabel: label,
         modelQty: 0,
-        photoUrl: row.photo_url || '',
+        photoUrl,
       })
     }
 
-    const currentValue = summaryMap.get(label)
+    const currentValue = summaryMap.get(variantKey)
     currentValue.modelQty += Number(row.qty || 0)
 
-    if (!currentValue.photoUrl && row.photo_url) {
-      currentValue.photoUrl = row.photo_url
+    if (!currentValue.photoUrl && photoUrl) {
+      currentValue.photoUrl = photoUrl
     }
   }
 
   const summaryRows = [...summaryMap.values()]
-  const modelGroups = useMemo(() => {
+  const modelGroups = (() => {
     const grouped = new Map()
 
     unloadRows.forEach((row) => {
+      const matchingVariant = getVariantForRow(row)
+      const resolvedVariantName = matchingVariant ? getVariantDisplayName(matchingVariant) : row.variant_name || row.variant_label || row.variant_code || ''
+      const resolvedVariantKey = matchingVariant?.id
+        ? `variant:${matchingVariant.id}`
+        : `fallback:${getRowVariantIdentifier(row)}|${row.photo_url || ''}`
       const key = [
         row.brand_id || '',
         row.category_id || '',
         row.model_name || '',
-        row.model_color || '',
-        row.variant_label || '',
+        resolvedVariantKey,
       ].join('|')
       const current = grouped.get(key) || {
         key,
         brand_id: row.brand_id,
         category_id: row.category_id,
         model_name: row.model_name,
-        model_color: row.model_color,
-        variant_label: row.variant_label,
-        photo_url: row.photo_url || '',
+        variant_code: matchingVariant ? getVariantProductId(matchingVariant) : row.variant_code || row.variant_label || '',
+        variant_label: matchingVariant ? getVariantProductId(matchingVariant) : row.variant_label,
+        variant_name: resolvedVariantName,
+        photo_url: getVariantPhotoForRow(row),
         total_qty: 0,
         sample_qty: 0,
         koli_sequences: new Set(),
@@ -2106,20 +2271,21 @@ export default function UnloadPage() {
       if (row.pic_name) {
         current.pic_names.add(row.pic_name)
       }
-      if (!current.photo_url && row.photo_url) {
-        current.photo_url = row.photo_url
+      const resolvedPhotoUrl = getVariantPhotoForRow(row)
+      if (!current.photo_url && resolvedPhotoUrl) {
+        current.photo_url = resolvedPhotoUrl
       }
       grouped.set(key, current)
     })
 
     return Array.from(grouped.values())
-      .sort((a, b) => getModelDisplayLabel(a.model_name, a.model_color, a.variant_label).localeCompare(getModelDisplayLabel(b.model_name, b.model_color, b.variant_label)))
+      .sort((a, b) => getModelVariantLabelForRow(a).localeCompare(getModelVariantLabelForRow(b)))
       .map((group) => ({
         ...group,
         koli_list: Array.from(group.koli_sequences).sort((a, b) => a - b),
         pic_list: Array.from(group.pic_names),
       }))
-  }, [unloadRows])
+  })()
 
   const sampleRows = unloadRows.filter((row) => row.is_sample)
   const sampleBreakdownGroup = sampleRows.length
@@ -2141,6 +2307,70 @@ export default function UnloadPage() {
       }
     : null
   const nonKoliGroups = [sampleBreakdownGroup, returnBreakdownGroup].filter(Boolean)
+  function getMatchingModelForRow(row) {
+    const rowModelName = normalizeVariantLookupValue(row.model_name)
+
+    return productModels.find((model) =>
+      Number(model.brand_id || 0) === Number(row.brand_id || 0) &&
+      Number(model.category_id || 0) === Number(row.category_id || 0) &&
+      normalizeVariantLookupValue(model.model_name) === rowModelName
+    )
+  }
+
+  function findVariantForModel(model, variantValue, photoUrl = '') {
+    if (!model?.id) return null
+
+    const variantRows = productModelVariants.filter(
+      (variant) => Number(variant.product_model_id || 0) === Number(model.id || 0)
+    )
+    const normalizedVariantValue = normalizeVariantLookupValue(variantValue)
+
+    if (normalizedVariantValue) {
+      const matchedVariant = variantRows.find((variant) =>
+        getVariantLookupValues(variant).includes(normalizedVariantValue)
+      )
+
+      if (matchedVariant) return matchedVariant
+    }
+
+    const normalizedPhotoUrl = String(photoUrl || '').trim()
+
+    if (normalizedPhotoUrl) {
+      const matchedPhotoVariant = variantRows.find(
+        (variant) => String(variant.variant_photo_url || '').trim() === normalizedPhotoUrl
+      )
+
+      if (matchedPhotoVariant) return matchedPhotoVariant
+    }
+
+    return !normalizedVariantValue && variantRows.length === 1 ? variantRows[0] : null
+  }
+
+  function getVariantForRow(row) {
+    const matchingModel = getMatchingModelForRow(row)
+    return findVariantForModel(matchingModel, getRowVariantIdentifier(row), row.photo_url)
+  }
+
+  function getVariantNameForRow(row) {
+    const matchingVariant = getVariantForRow(row)
+
+    return matchingVariant ? getVariantDisplayName(matchingVariant) : row.variant_name || row.variant_label || row.variant_code || ''
+  }
+
+  function getVariantPhotoForRow(row) {
+    const matchingVariant = getVariantForRow(row)
+    return matchingVariant?.variant_photo_url || row.photo_url || ''
+  }
+
+  function getModelVariantLabelForRow(row) {
+    const variantName = getVariantNameForRow(row)
+    return variantName ? `${row.model_name || '-'} - ${variantName}` : row.model_name || '-'
+  }
+
+  function formatPicFirstNames(picList) {
+    const firstNames = [...new Set((picList || []).map((name) => getFirstName(name)).filter(Boolean))]
+    return firstNames.length ? firstNames.join(', ') : '-'
+  }
 
   useEffect(() => {
     if (!hasUnloadDraft || saving) return undefined
@@ -2169,21 +2399,33 @@ export default function UnloadPage() {
     return path
   }
 
+  function getItemTypeSubcategoryLabel(categoryId) {
+    const pathIds = getCategoryPathIds(categoryId)
+    const itemType = categoryMaps.byId.get(Number(pathIds[pathIds.length - 1]))
+    const subCategory = pathIds.length > 1
+      ? categoryMaps.byId.get(Number(pathIds[pathIds.length - 2]))
+      : null
+
+    if (itemType && subCategory) {
+      return `${itemType.category_name || '-'} / ${subCategory.category_name || '-'}`
+    }
+
+    return itemType?.category_name || '-'
+  }
+
   function selectProductShortcut(row) {
     const nextBrand = brands.find((brand) => Number(brand.id) === Number(row.brand_id)) || null
     const [rootId = '', levelOneId = '', levelTwoId = ''] = getCategoryPathIds(row.category_id)
     const matchingModel =
-      productModels.find((model) =>
-        Number(model.brand_id || 0) === Number(row.brand_id || 0) &&
-        Number(model.category_id || 0) === Number(row.category_id || 0) &&
-        String(model.model_name || '') === String(row.model_name || '')
-      ) ||
+      getMatchingModelForRow(row) ||
       {
         brand_id: row.brand_id,
         category_id: row.category_id,
         model_name: row.model_name,
         photo_url: row.photo_url || '',
       }
+    const matchingVariant = findVariantForModel(matchingModel, getRowVariantIdentifier(row), row.photo_url)
+    const variantIdentifier = getVariantProductId(matchingVariant) || getRowVariantIdentifier(row)
 
     setSelectedBrandId(row.brand_id ? String(row.brand_id) : '')
     setBrandSearch(nextBrand ? getBrandDisplayLabel(nextBrand) : '')
@@ -2193,9 +2435,9 @@ export default function UnloadPage() {
     setLevel2Id(levelTwoId)
     setSelectedModel({
       ...matchingModel,
-      photo_url: row.photo_url || matchingModel.photo_url || '',
+      photo_url: matchingVariant?.variant_photo_url || row.photo_url || matchingModel.photo_url || '',
     })
-    setSelectedVariantLabel(row.variant_label || getDefaultVariantLabelForModel(matchingModel))
+    setSelectedVariantLabel(variantIdentifier)
     setError('')
     setSuccess('')
   }
@@ -2337,29 +2579,48 @@ export default function UnloadPage() {
     setShowModelModal(true)
   }
 
-  async function refreshUnloadData(inboundId) {
+  const refreshUnloadData = useCallback(async (inboundId) => {
     const [
       { data: refreshedUnloadRows, error: refreshUnloadError },
       { data: refreshedReturnRows, error: refreshReturnError },
     ] = await Promise.all([
       supabase
         .from('inbound_unload')
-        .select(
-          supportsUnloadVariant
-            ? 'id, inbound_id, brand_id, category_id, model_name, model_color, qty, pic_name, is_sample, koli_sequence, photo_url, variant_label'
-            : 'id, inbound_id, brand_id, category_id, model_name, model_color, qty, pic_name, is_sample, koli_sequence, photo_url'
-        )
+        .select([
+          'id',
+          'inbound_id',
+          'brand_id',
+          'category_id',
+          'model_name',
+          'qty',
+          'pic_name',
+          'is_sample',
+          'koli_sequence',
+          'photo_url',
+          supportsUnloadVariant ? 'variant_label' : null,
+          supportsUnloadVariantCode ? 'variant_code' : null,
+          supportsUnloadVariantName ? 'variant_name' : null,
+        ].filter(Boolean).join(', '))
         .eq('inbound_id', inboundId)
         .order('is_sample', { ascending: true })
         .order('koli_sequence', { ascending: true })
         .order('id', { ascending: true }),
       supabase
         .from('warehouse_returns')
-        .select(
-          supportsReturnVariant
-            ? 'id, inbound_id, source_phase, brand_id, category_id, model_name, model_color, qty, pic_name, created_at, variant_label'
-            : 'id, inbound_id, source_phase, brand_id, category_id, model_name, model_color, qty, pic_name, created_at'
-        )
+        .select([
+          'id',
+          'inbound_id',
+          'source_phase',
+          'brand_id',
+          'category_id',
+          'model_name',
+          'qty',
+          'pic_name',
+          'created_at',
+          supportsReturnVariant ? 'variant_label' : null,
+          supportsReturnVariantCode ? 'variant_code' : null,
+          supportsReturnVariantName ? 'variant_name' : null,
+        ].filter(Boolean).join(', '))
         .eq('inbound_id', inboundId)
         .eq('source_phase', 'inbound')
         .order('created_at', { ascending: true }),
@@ -2371,11 +2632,69 @@ export default function UnloadPage() {
 
     setUnloadRows(refreshedUnloadRows || [])
     setReturnRows(refreshedReturnRows || [])
-  }
+  }, [
+    supportsReturnVariant,
+    supportsReturnVariantCode,
+    supportsReturnVariantName,
+    supportsUnloadVariant,
+    supportsUnloadVariantCode,
+    supportsUnloadVariantName,
+  ])
+
+  useEffect(() => {
+    if (!selectedInboundId || isBuilderMode || saving) return undefined
+
+    let isActive = true
+
+    async function silentlyRefreshUnloadRows() {
+      if (!isActive || document.visibilityState === 'hidden') return
+
+      try {
+        await refreshUnloadData(selectedInboundId)
+      } catch {
+        // Keep the overview stable; manual actions still surface errors.
+      }
+    }
+
+    const refreshTimer = window.setInterval(silentlyRefreshUnloadRows, 15000)
+    window.addEventListener('focus', silentlyRefreshUnloadRows)
+
+    return () => {
+      isActive = false
+      window.clearInterval(refreshTimer)
+      window.removeEventListener('focus', silentlyRefreshUnloadRows)
+    }
+  }, [isBuilderMode, refreshUnloadData, saving, selectedInboundId])
 
   function openImagePreview({ src, title }) {
     if (!src) return
     setPreviewImage({ src, title })
+  }
+
+  function renderProductPhotoFrame(row) {
+    const photoUrl = getVariantPhotoForRow(row)
+    const title = getModelVariantLabelForRow(row)
+
+    return photoUrl ? (
+      <button
+        type="button"
+        onClick={() => openImagePreview({ src: photoUrl, title })}
+        style={styles.koliImageButton}
+        aria-label={`Preview ${title}`}
+        title={`Preview ${title}`}
+      >
+        <Image
+          src={photoUrl}
+          alt={title}
+          width={48}
+          height={48}
+          unoptimized
+          style={styles.koliImage}
+        />
+      </button>
+    ) : (
+      <span style={styles.koliImagePlaceholder}>NO PHOTO</span>
+    )
   }
 
   function closeImagePreview() {
@@ -2397,7 +2716,7 @@ export default function UnloadPage() {
     const rowsHtml = koliGroup.items
       .map((row) => {
         const brand = brands.find((item) => item.id === row.brand_id)
-        const modelLabel = getModelDisplayLabel(row.model_name, row.model_color, row.variant_label)
+        const modelLabel = getModelVariantLabelForRow(row)
 
         return `
           <tr>
@@ -2460,7 +2779,7 @@ export default function UnloadPage() {
         <thead>
           <tr>
             <th>Brand</th>
-            <th>Model Name</th>
+            <th>Model - Variant</th>
             <th>Qty</th>
           </tr>
         </thead>
@@ -2502,16 +2821,6 @@ export default function UnloadPage() {
     }
 
     const supplierName = selectedInbound.suppliers?.supplier_name || '-'
-    const uniqueBrands = [...new Set(
-      [...unloadRows, ...returnRows]
-        .map((row) => brands.find((item) => item.id === row.brand_id)?.brand_name)
-        .filter(Boolean)
-    )]
-    const uniqueCategories = [...new Set(
-      [...unloadRows, ...returnRows]
-        .map((row) => categoryMaps.byId.get(row.category_id)?.full_name || categoryMaps.byId.get(row.category_id)?.category_name)
-        .filter(Boolean)
-    )]
 
     const summaryRowsHtml = summaryRows
       .map(
@@ -2520,6 +2829,8 @@ export default function UnloadPage() {
             <td class="photoCell">
               ${row.photoUrl ? `<img src="${row.photoUrl}" alt="${row.modelLabel}" class="modelPhoto" />` : '<div class="photoPlaceholder">NO PHOTO</div>'}
             </td>
+            <td>${row.brandName || '-'}</td>
+            <td>${row.categoryLabel || '-'}</td>
             <td>${row.modelLabel}</td>
             <td class="qty">${row.modelQty}</td>
           </tr>`
@@ -2597,7 +2908,7 @@ export default function UnloadPage() {
       }
       .qty {
         width: 120px;
-        text-align: right;
+        text-align: center;
         font-weight: 700;
       }
       .photoCell {
@@ -2625,6 +2936,17 @@ export default function UnloadPage() {
         color: #9ca3af;
         background: #f9fafb;
       }
+      .totalRow td {
+        background: #f8fafc;
+        border-top: 2px solid #111827;
+      }
+      .totalLabel {
+        font-size: 16px;
+      }
+      .totalQty strong {
+        font-size: 22px;
+        line-height: 1;
+      }
     </style>
   </head>
   <body>
@@ -2634,21 +2956,20 @@ export default function UnloadPage() {
       <div class="meta">
         <div class="label">No GRN</div><div class="value">${selectedInbound.grn_number || '-'}</div>
         <div class="label">Supplier</div><div class="value">${supplierName}</div>
-        <div class="label">Merek</div><div class="value">${uniqueBrands.length ? uniqueBrands.join(', ') : '-'}</div>
-        <div class="label">Categories Name</div><div class="value">${uniqueCategories.length ? uniqueCategories.join(', ') : '-'}</div>
+        <div class="label">Item Name</div><div class="value">${selectedInbound.item_name || '-'}</div>
       </div>
 
       <div class="summary">
         <div class="summaryCard">
-          <div class="summaryLabel">Total SJ</div>
+          <div class="summaryLabel">Total SJ Qty</div>
           <div class="summaryValue">${selectedInbound.total_claimed_qty || 0}</div>
         </div>
         <div class="summaryCard">
-          <div class="summaryLabel">Total Bongkar (Receiving)</div>
+          <div class="summaryLabel">Total Receiving Qty</div>
           <div class="summaryValue">${selectedInbound.total_received_qty || 0}</div>
         </div>
         <div class="summaryCard">
-          <div class="summaryLabel">Inbound Qty</div>
+          <div class="summaryLabel">Total Intake Qty</div>
           <div class="summaryValue">${totalInboundQty}</div>
         </div>
       </div>
@@ -2658,15 +2979,17 @@ export default function UnloadPage() {
         <thead>
           <tr>
             <th>Photo</th>
-            <th>Model Name</th>
+            <th>Brand Name</th>
+            <th>Categories</th>
+            <th>Model - Variant</th>
             <th class="qty">Qty</th>
           </tr>
         </thead>
         <tbody>
           ${summaryRowsHtml}
-          <tr>
-            <td><strong>Total</strong></td>
-            <td class="qty"><strong>${totalInboundQty}</strong></td>
+          <tr class="totalRow">
+            <td colspan="4"><strong class="totalLabel">Total Intake Qty</strong></td>
+            <td class="qty totalQty"><strong>${totalInboundQty}</strong></td>
           </tr>
         </tbody>
       </table>
@@ -2826,17 +3149,13 @@ export default function UnloadPage() {
       const siblingVariants = productModelVariants.filter(
         (variant) => Number(variant.product_model_id || 0) === Number(savedModel.id || 0)
       )
-      const nextVariantIndex =
-        siblingVariants.reduce((max, variant) => Math.max(max, Number(variant.variant_index ?? -1)), -1) + 1
-      const automaticVariantLabel = `VAR${nextVariantIndex + 1}`
+      const automaticVariantCode = getNextVariantCode(savedModel, siblingVariants)
       const nextVariant = {
         product_model_id: savedModel.id,
-        variant_index: nextVariantIndex,
-        variant_label: automaticVariantLabel,
+        variant_code: automaticVariantCode,
         variant_name: normalizedVariantName,
         variant_notes: modelDraft.variant_notes.trim() || null,
         variant_photo_url: variantPhotoUrl || null,
-        is_main_variant: siblingVariants.length === 0,
         is_active: true,
       }
 
@@ -2853,7 +3172,7 @@ export default function UnloadPage() {
       }
 
       setProductModelVariants((prev) => [...prev, insertedVariant])
-      const insertedVariantProductId = getVariantProductId(insertedVariant) || automaticVariantLabel
+      const insertedVariantProductId = getVariantProductId(insertedVariant) || automaticVariantCode
       setSelectedModel({
         ...savedModel,
         photo_url: insertedVariant.variant_photo_url || savedModel.photo_url || '',
@@ -2913,8 +3232,9 @@ export default function UnloadPage() {
       brand_id: selectedBrandId ? Number(selectedBrandId) : null,
       category_id: selectedCategory?.id || null,
       model_name: selectedModel?.model_name || null,
-      model_color: null,
-      variant_label: selectedVariantLabel || null,
+      variant_code: selectedVariant ? getVariantProductId(selectedVariant) || selectedVariantLabel || null : selectedVariantLabel || null,
+      variant_label: selectedVariant ? getVariantProductId(selectedVariant) || selectedVariantLabel || null : selectedVariantLabel || null,
+      variant_name: selectedVariant ? getVariantDisplayName(selectedVariant) : selectedVariantDisplayName || null,
       qty: Number(qty),
       pic_name: displayName,
       photo_url: selectedModelPhoto || selectedModel?.photo_url || null,
@@ -2941,8 +3261,9 @@ export default function UnloadPage() {
             brand_id: payload.brand_id,
             category_id: payload.category_id,
             model_name: payload.model_name,
-            model_color: payload.model_color,
             ...(supportsReturnVariant ? { variant_label: payload.variant_label } : {}),
+            ...(supportsReturnVariantCode ? { variant_code: payload.variant_code } : {}),
+            ...(supportsReturnVariantName ? { variant_name: payload.variant_name } : {}),
             qty: payload.qty,
             pic_name: payload.pic_name,
             source_phase: 'inbound',
@@ -2950,8 +3271,16 @@ export default function UnloadPage() {
         ])
       : await supabase.from('inbound_unload').insert([
           {
-            ...payload,
+            inbound_id: payload.inbound_id,
+            brand_id: payload.brand_id,
+            category_id: payload.category_id,
+            model_name: payload.model_name,
             ...(supportsUnloadVariant ? { variant_label: payload.variant_label } : {}),
+            ...(supportsUnloadVariantCode ? { variant_code: payload.variant_code } : {}),
+            ...(supportsUnloadVariantName ? { variant_name: payload.variant_name } : {}),
+            qty: payload.qty,
+            pic_name: payload.pic_name,
+            photo_url: payload.photo_url,
             is_sample: true,
             koli_sequence: null,
           },
@@ -3023,8 +3352,9 @@ export default function UnloadPage() {
       brand_id: item.brand_id,
       category_id: item.category_id,
       model_name: item.model_name,
-      model_color: item.model_color,
       ...(supportsUnloadVariant ? { variant_label: item.variant_label || null } : {}),
+      ...(supportsUnloadVariantCode ? { variant_code: item.variant_code || item.variant_label || null } : {}),
+      ...(supportsUnloadVariantName ? { variant_name: item.variant_name || null } : {}),
       qty: item.qty,
       pic_name: item.pic_name,
       photo_url: item.photo_url,
@@ -3056,6 +3386,15 @@ export default function UnloadPage() {
 
   function handleRemoveCurrentKoliItem(tempId) {
     setCurrentKoliItems((prev) => prev.filter((item) => item.tempId !== tempId))
+  }
+
+  function handleEditCurrentKoliItem(row) {
+    selectProductShortcut(row)
+    setQty(row.qty ? String(row.qty) : '')
+    setIsReturn(false)
+    setIsSample(false)
+    setCurrentKoliItems((prev) => prev.filter((item) => item.tempId !== row.tempId))
+    setSuccess('Item moved back to input for editing.')
   }
 
   function handleAddShortcut(event) {
@@ -3097,7 +3436,7 @@ export default function UnloadPage() {
                 <strong style={{ ...styles.mobileInfoValue, ...styles.mobileInfoValueTight }}>{displayFirstName}</strong>
               </div>
               <div style={styles.mobileInfoRight}>
-                <span style={{ ...styles.mobileInfoLabel, ...styles.mobileInfoLabelTight }}>Sorted Qty</span>
+                <span style={{ ...styles.mobileInfoLabel, ...styles.mobileInfoLabelTight }}>Intake Qty</span>
                 <strong style={{ ...styles.mobileInfoValue, ...styles.mobileInfoValueTight }}>{formatNumber(totalInboundQty)}</strong>
               </div>
               <div style={styles.mobileInfoRight}>
@@ -3124,9 +3463,11 @@ export default function UnloadPage() {
             <h1 style={styles.title}>Sorting & Breakdown</h1>
           </div>
           <div style={styles.overviewActions}>
-            <button type="button" onClick={handlePrintUnloadDocument} style={styles.secondaryButton}>
-              Print
-            </button>
+            {breakdownMode === 'model' ? (
+              <button type="button" onClick={handlePrintUnloadDocument} style={styles.secondaryButton}>
+                Print
+              </button>
+            ) : null}
             <button
               type="button"
               onClick={handleOpenBuilder}
@@ -3184,7 +3525,7 @@ export default function UnloadPage() {
                   <strong style={styles.metricValue}>{selectedInbound?.total_received_qty || 0}</strong>
                 </div>
                 <div style={styles.metricBox}>
-                  <span style={styles.infoLabel}>Sorted Qty</span>
+                  <span style={styles.infoLabel}>Intake Qty</span>
                   <strong style={styles.metricValue}>{totalInboundQty}</strong>
                 </div>
               </div>
@@ -3226,38 +3567,52 @@ export default function UnloadPage() {
                     <thead>
                       <tr>
                         <th style={{ ...styles.th, ...styles.koliHeader }}>Koli</th>
+                        <th style={styles.th}>Picture</th>
                         <th style={styles.th}>Inside</th>
-                        <th style={styles.th}>Total Qty</th>
-                        <th style={styles.th}>PIC</th>
-                        <th style={styles.th}>Action</th>
+                        <th style={{ ...styles.th, ...styles.centerHeader }}>Qty</th>
+                        <th style={{ ...styles.th, ...styles.centerHeader }}>PIC</th>
+                        <th style={{ ...styles.th, ...styles.centerHeader }}>Action</th>
                       </tr>
                     </thead>
                     <tbody>
                       {koliGroups.map((group) => (
                         <tr key={`koli-${group.koli_sequence}`}>
-                          <td style={{ ...styles.td, ...styles.koliCell }}>Koli {group.koli_sequence}</td>
-                          <td style={styles.td}>
-                            <div style={styles.itemStack}>
+                          <td style={{ ...styles.td, ...styles.koliGroupTd, ...styles.koliCell }}>Koli {group.koli_sequence}</td>
+                          <td style={{ ...styles.td, ...styles.koliGroupTd }}>
+                            <div style={styles.tableLineStack}>
+                              {group.items.map((row) => (
+                                <div key={`photo-${row.id}`} style={styles.tablePhotoLine}>
+                                  {renderProductPhotoFrame(row)}
+                                </div>
+                              ))}
+                            </div>
+                          </td>
+                          <td style={{ ...styles.td, ...styles.koliGroupTd }}>
+                            <div style={styles.tableLineStack}>
                               {group.items.map((row) => {
                                 const brand = brands.find((item) => item.id === row.brand_id)
-                                const category = categoryMaps.byId.get(row.category_id)
-                                const modelLabel = getModelDisplayLabel(row.model_name, row.model_color, row.variant_label)
 
                                 return (
-                                  <div key={row.id} style={styles.itemLine}>
-                                    <span>
-                                      <strong>{modelLabel || '-'}</strong>
-                                      <span style={styles.itemMeta}> {brand?.brand_name || '-'} / {category?.category_name || '-'}</span>
-                                    </span>
-                                    <span style={styles.qtyPill}>{row.qty || 0}</span>
+                                  <div key={row.id} style={styles.tableDetailLine}>
+                                    <strong>{brand?.brand_name || '-'}</strong>
+                                    <span style={styles.itemMeta}>{getItemTypeSubcategoryLabel(row.category_id)}</span>
+                                    <span style={styles.itemMeta}>{getModelVariantLabelForRow(row)}</span>
                                   </div>
                                 )
                               })}
                             </div>
                           </td>
-                          <td style={styles.td}>{group.total_qty || 0}</td>
-                          <td style={styles.td}>{group.pic_list.join(', ') || '-'}</td>
-                          <td style={styles.td}>
+                          <td style={{ ...styles.td, ...styles.koliGroupTd, ...styles.middleCenterCell }}>
+                            <div style={styles.tableLineStack}>
+                              {group.items.map((row) => (
+                                <div key={`qty-${row.id}`} style={styles.tableQtyLine}>
+                                  <span style={styles.qtyPill}>{row.qty || 0}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </td>
+                          <td style={{ ...styles.td, ...styles.koliGroupTd, ...styles.middleCenterCell }}>{formatPicFirstNames(group.pic_list)}</td>
+                          <td style={{ ...styles.td, ...styles.koliGroupTd, ...styles.middleCenterCell }}>
                             <button type="button" onClick={() => handlePrintKoli(group)} style={styles.printButton}>
                               Print
                             </button>
@@ -3266,31 +3621,44 @@ export default function UnloadPage() {
                       ))}
                       {nonKoliGroups.map((group) => (
                         <tr key={group.rowType}>
-                          <td style={{ ...styles.td, ...styles.koliCell }}>
+                          <td style={{ ...styles.td, ...styles.koliGroupTd, ...styles.koliCell }}>
                             {group.rowType === 'sample' ? <span style={styles.sampleBadge}>Sample</span> : <span style={styles.returnBadge}>Retur</span>}
                           </td>
-                          <td style={styles.td}>
-                            <div style={styles.itemStack}>
+                          <td style={{ ...styles.td, ...styles.koliGroupTd }}>
+                            <div style={styles.tableLineStack}>
+                              {group.items.map((row) => (
+                                <div key={`${group.rowType}-photo-${row.id}`} style={styles.tablePhotoLine}>
+                                  {renderProductPhotoFrame(row)}
+                                </div>
+                              ))}
+                            </div>
+                          </td>
+                          <td style={{ ...styles.td, ...styles.koliGroupTd }}>
+                            <div style={styles.tableLineStack}>
                               {group.items.map((row) => {
                                 const brand = brands.find((item) => item.id === row.brand_id)
-                                const category = categoryMaps.byId.get(row.category_id)
-                                const modelLabel = getModelDisplayLabel(row.model_name, row.model_color, row.variant_label)
 
                                 return (
-                                  <div key={`${group.rowType}-${row.id}`} style={styles.itemLine}>
-                                    <span>
-                                      <strong>{modelLabel || '-'}</strong>
-                                      <span style={styles.itemMeta}> {brand?.brand_name || '-'} / {category?.category_name || '-'}</span>
-                                    </span>
-                                    <span style={styles.qtyPill}>{row.qty || 0}</span>
+                                  <div key={`${group.rowType}-${row.id}`} style={styles.tableDetailLine}>
+                                    <strong>{brand?.brand_name || '-'}</strong>
+                                    <span style={styles.itemMeta}>{getItemTypeSubcategoryLabel(row.category_id)}</span>
+                                    <span style={styles.itemMeta}>{getModelVariantLabelForRow(row)}</span>
                                   </div>
                                 )
                               })}
                             </div>
                           </td>
-                          <td style={styles.td}>{group.total_qty || 0}</td>
-                          <td style={styles.td}>{group.pic_list.join(', ') || '-'}</td>
-                          <td style={styles.td}>-</td>
+                          <td style={{ ...styles.td, ...styles.koliGroupTd, ...styles.middleCenterCell }}>
+                            <div style={styles.tableLineStack}>
+                              {group.items.map((row) => (
+                                <div key={`${group.rowType}-qty-${row.id}`} style={styles.tableQtyLine}>
+                                  <span style={styles.qtyPill}>{row.qty || 0}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </td>
+                          <td style={{ ...styles.td, ...styles.koliGroupTd, ...styles.middleCenterCell }}>{formatPicFirstNames(group.pic_list)}</td>
+                          <td style={{ ...styles.td, ...styles.koliGroupTd, ...styles.middleCenterCell }}>-</td>
                         </tr>
                       ))}
                     </tbody>
@@ -3306,10 +3674,11 @@ export default function UnloadPage() {
                 <table style={styles.table}>
                   <thead>
                     <tr>
-                      <th style={styles.th}>Model</th>
                       <th style={styles.th}>Brand</th>
+                      <th style={styles.th}>Picture</th>
                       <th style={styles.th}>Category</th>
-                      <th style={styles.th}>Koli</th>
+                      <th style={styles.th}>Model</th>
+                      <th style={styles.th}>Variant</th>
                       <th style={styles.th}>Total Qty</th>
                     </tr>
                   </thead>
@@ -3317,18 +3686,19 @@ export default function UnloadPage() {
                     {modelGroups.map((group) => {
                       const brand = brands.find((item) => item.id === group.brand_id)
                       const category = categoryMaps.byId.get(group.category_id)
-                      const modelLabel = getModelDisplayLabel(group.model_name, group.model_color, group.variant_label)
+                      const variantName = getVariantNameForRow(group)
 
                       return (
                         <tr key={group.key}>
-                          <td style={styles.td}>
-                            <strong>{modelLabel || '-'}</strong>
+                          <td style={{ ...styles.td, ...styles.koliGroupTd }}>{brand?.brand_name || '-'}</td>
+                          <td style={{ ...styles.td, ...styles.koliGroupTd }}>{renderProductPhotoFrame(group)}</td>
+                          <td style={{ ...styles.td, ...styles.koliGroupTd }}>{category?.full_name || category?.category_name || '-'}</td>
+                          <td style={{ ...styles.td, ...styles.koliGroupTd }}>
+                            <strong>{group.model_name || '-'}</strong>
                             {group.sample_qty ? <span style={styles.itemMeta}> Sample {group.sample_qty}</span> : null}
                           </td>
-                          <td style={styles.td}>{brand?.brand_name || '-'}</td>
-                          <td style={styles.td}>{category?.full_name || category?.category_name || '-'}</td>
-                          <td style={styles.td}>{group.koli_list.length ? group.koli_list.map((item) => `Koli ${item}`).join(', ') : '-'}</td>
-                          <td style={styles.td}>{group.total_qty || 0}</td>
+                          <td style={{ ...styles.td, ...styles.koliGroupTd }}>{variantName || '-'}</td>
+                          <td style={{ ...styles.td, ...styles.koliGroupTd }}>{group.total_qty || 0}</td>
                         </tr>
                       )
                     })}
@@ -3405,18 +3775,19 @@ export default function UnloadPage() {
             <div style={styles.shortcutGrid}>
               {recentProductOptions.map((row) => {
                 const category = categoryMaps.byId.get(Number(row.category_id))
-                const modelLabel = getModelDisplayLabel(row.model_name, row.model_color, row.variant_label)
+                const modelLabel = getModelVariantLabelForRow(row)
+                const photoUrl = getVariantPhotoForRow(row)
 
                 return (
                   <button
-                    key={`${row.brand_id}-${row.category_id}-${row.model_name}-${row.model_color || ''}-${row.variant_label || ''}`}
+                    key={`${row.brand_id}-${row.category_id}-${row.model_name}-${getRowVariantIdentifier(row)}`}
                     type="button"
                     onClick={() => selectProductShortcut(row)}
                     style={styles.shortcutCard}
                   >
-                    {row.photo_url ? (
+                    {photoUrl ? (
                       <Image
-                        src={row.photo_url}
+                        src={photoUrl}
                         alt={modelLabel}
                         width={96}
                         height={96}
@@ -3580,7 +3951,7 @@ export default function UnloadPage() {
                   {selectedModelPhoto ? (
                     <Image
                       src={selectedModelPhoto}
-                      alt={getModelDisplayLabel(selectedModel.model_name, '', selectedVariantLabel || '')}
+                      alt={selectedVariantDisplayName ? `${selectedModel.model_name || 'Model'} / ${selectedVariantDisplayName}` : selectedModel.model_name || 'Selected variant'}
                       width={64}
                       height={64}
                       unoptimized
@@ -3589,7 +3960,7 @@ export default function UnloadPage() {
                   ) : (
                     <span style={styles.selectedModelPlaceholder}>NO PHOTO</span>
                   )}
-                  {selectedVariantLabel ? <span style={styles.selectedModelBadge}>{selectedVariantLabel}</span> : null}
+                  {selectedVariantDisplayName ? <span style={styles.selectedModelBadge}>{selectedVariantDisplayName}</span> : null}
                 </button>
               ) : (
                 <button
@@ -3665,7 +4036,6 @@ export default function UnloadPage() {
             <div style={styles.header}>
               <div>
                 <h2 style={styles.sectionTitle}>Koli Basket</h2>
-                <p style={styles.sectionSubtitle}>Review the items for this Koli, then post when complete.</p>
               </div>
               <button
                 type="button"
@@ -3695,39 +4065,62 @@ export default function UnloadPage() {
                   </thead>
                   <tbody>
                     {currentKoliItems.map((row) => {
-                      const brand = brands.find((item) => item.id === row.brand_id)
-                      const category = categoryMaps.byId.get(row.category_id)
-                      const modelLabel = getModelDisplayLabel(row.model_name, row.model_color, row.variant_label)
+                      const variantName = getVariantNameForRow(row)
+                      const photoUrl = getVariantPhotoForRow(row)
+                      const previewTitle = variantName ? `${row.model_name || 'Product'} / ${variantName}` : row.model_name || 'Product photo'
 
                       return (
                         <tr key={row.tempId}>
                           <td style={styles.td}>
-                            {row.photo_url ? (
-                              <Image
-                                src={row.photo_url}
-                                alt={modelLabel || 'Product photo'}
-                                width={48}
-                                height={48}
-                                unoptimized
-                                style={styles.koliImage}
-                              />
+                            {photoUrl ? (
+                              <button
+                                type="button"
+                                onClick={() => openImagePreview({ src: photoUrl, title: previewTitle })}
+                                style={styles.koliImageButton}
+                                aria-label="Preview product photo"
+                                title="Preview product photo"
+                              >
+                                <Image
+                                  src={photoUrl}
+                                  alt={previewTitle}
+                                  width={48}
+                                  height={48}
+                                  unoptimized
+                                  style={styles.koliImage}
+                                />
+                              </button>
                             ) : (
                               <span style={styles.koliImagePlaceholder}>NO PHOTO</span>
                             )}
                           </td>
                           <td style={styles.td}>
-                            <strong>{modelLabel || '-'}</strong>
-                            <span style={styles.itemMeta}> {brand?.brand_name || '-'} / {getCategoryDisplayLabel(category)}</span>
+                            <span style={styles.koliModelStack}>
+                              <strong>{row.model_name || '-'}</strong>
+                              {variantName ? <span style={styles.koliVariantText}>{variantName}</span> : null}
+                            </span>
                           </td>
                           <td style={styles.td}>{row.qty || 0}</td>
                           <td style={styles.td}>
-                            <button
-                              type="button"
-                              onClick={() => handleRemoveCurrentKoliItem(row.tempId)}
-                              style={styles.secondaryButton}
-                            >
-                              Remove
-                            </button>
+                            <span style={styles.koliActionRow}>
+                              <button
+                                type="button"
+                                onClick={() => handleEditCurrentKoliItem(row)}
+                                style={styles.koliIconButton}
+                                aria-label="Edit item"
+                                title="Edit item"
+                              >
+                                <PencilIcon />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleRemoveCurrentKoliItem(row.tempId)}
+                                style={{ ...styles.koliIconButton, ...styles.koliDeleteButton }}
+                                aria-label="Remove item"
+                                title="Remove item"
+                              >
+                                <XIcon />
+                              </button>
+                            </span>
                           </td>
                         </tr>
                       )
@@ -4020,12 +4413,11 @@ export default function UnloadPage() {
                           const variantName = getVariantDisplayName(variant)
                           const isSelected =
                             Number(selectedModel?.id || 0) === Number(model.id || 0) &&
-                            (String(selectedVariantLabel || '') === String(variantProductId || '') ||
-                              String(selectedVariantLabel || '') === String(variant.variant_label || ''))
+                            getVariantLookupValues(variant).includes(normalizeVariantLookupValue(selectedVariantLabel))
 
                           return (
                             <div
-                              key={variant.id || `${model.id}-${variantProductId || variant.variant_index}`}
+                              key={variant.id || `${model.id}-${variantProductId || variantName}`}
                               role="button"
                               tabIndex={0}
                               aria-label={`Select ${label}`}
