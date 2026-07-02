@@ -156,10 +156,31 @@
 
 @media (max-width: 720px) {
   .overviewGrid {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
   }
 
   .overviewCard {
-    min-height: 460px;
+    min-height: 300px;
+    padding: 12px 12px 14px;
+    border-radius: 20px;
+  }
+
+  .overviewNumber {
+    font-size: clamp(2.75rem, 15vw, 4.1rem);
+    margin-top: 0;
+  }
+
+  .overviewCardContent {
+    gap: 8px;
+  }
+
+  .overviewCardKicker,
+  .overviewCardText {
+    font-size: 10px;
+  }
+
+  .overviewCardTitle {
+    font-size: clamp(0.98rem, 4.5vw, 1.18rem);
   }
 }

@@ -3,7 +3,6 @@
 import { useMemo, useState } from 'react'
 import Link from 'next/link'
 
-import overviewStyles from '../arkline/arkline.module.css'
 import styles from './storage.module.css'
 
 function RestockInstructionModal({ open, onClose, canSubmit, canPick }) {
@@ -66,29 +65,29 @@ export default function StorageOverviewClient({ cards, canRestockSubmit, canRest
 
   return (
     <>
-      <section className={overviewStyles.overviewGrid}>
+      <section className={styles.overviewGrid}>
         {displayCards.map((card) =>
           card.isRestockInstruction ? (
             <button
               key={card.key}
               type="button"
-              className={`${overviewStyles.overviewCard} ${styles.overviewButtonCard}`.trim()}
+              className={`${styles.overviewCard} ${styles.overviewButtonCard}`.trim()}
               onClick={() => setIsRestockModalOpen(true)}
             >
-              <span className={overviewStyles.overviewNumber}>{card.number}</span>
-              <div className={overviewStyles.overviewCardContent}>
-                <p className={overviewStyles.overviewCardKicker}>{card.kicker}</p>
-                <h2 className={overviewStyles.overviewCardTitle}>{card.title}</h2>
-                <p className={overviewStyles.overviewCardText}>{card.text}</p>
+              <span className={styles.overviewNumber}>{card.number}</span>
+              <div className={styles.overviewCardContent}>
+                <p className={styles.overviewCardKicker}>{card.kicker}</p>
+                <h2 className={styles.overviewCardTitle}>{card.title}</h2>
+                <p className={styles.overviewCardText}>{card.text}</p>
               </div>
             </button>
           ) : (
-            <Link key={card.key} href={card.href} className={overviewStyles.overviewCard}>
-              <span className={overviewStyles.overviewNumber}>{card.number}</span>
-              <div className={overviewStyles.overviewCardContent}>
-                <p className={overviewStyles.overviewCardKicker}>{card.kicker}</p>
-                <h2 className={overviewStyles.overviewCardTitle}>{card.title}</h2>
-                <p className={overviewStyles.overviewCardText}>{card.text}</p>
+            <Link key={card.key} href={card.href} className={styles.overviewCard}>
+              <span className={styles.overviewNumber}>{card.number}</span>
+              <div className={styles.overviewCardContent}>
+                <p className={styles.overviewCardKicker}>{card.kicker}</p>
+                <h2 className={styles.overviewCardTitle}>{card.title}</h2>
+                <p className={styles.overviewCardText}>{card.text}</p>
               </div>
             </Link>
           )

@@ -111,12 +111,16 @@ function GearIcon() {
 export default function SidebarClient({ navItems, settingHref }) {
   const [isMobileExpanded, setIsMobileExpanded] = useState(false)
 
+  function collapseMobileSidebarOnNavigate() {
+    setIsMobileExpanded(false)
+  }
+
   return (
     <aside
       className={`${styles.sidebar} ${isMobileExpanded ? styles.sidebarMobileExpanded : styles.sidebarMobileCollapsed}`.trim()}
     >
       <div className={styles.mobileSidebarHeader}>
-        <Link href="/dashboard" className={styles.brandLink} title="Dashboard">
+        <Link href="/dashboard" className={styles.brandLink} title="Dashboard" onClick={collapseMobileSidebarOnNavigate}>
         <div className={styles.brand}>
           <div className={styles.brandMark}>
             <Image src="/mob-text-logo.png" alt="MOB" width={40} height={18} className={styles.brandLogo} priority />
@@ -153,7 +157,13 @@ export default function SidebarClient({ navItems, settingHref }) {
       <div className={styles.sidebarInner}>
         <nav className={styles.nav}>
           {navItems.map((item) => (
-            <Link key={item.href} href={item.href} className={styles.navLink} title={item.label}>
+            <Link
+              key={item.href}
+              href={item.href}
+              className={styles.navLink}
+              title={item.label}
+              onClick={collapseMobileSidebarOnNavigate}
+            >
               <span className={styles.navIcon}>
                 <NavIcon kind={item.icon} />
               </span>
@@ -168,7 +178,7 @@ export default function SidebarClient({ navItems, settingHref }) {
           ))}
 
           {settingHref ? (
-            <Link href={settingHref} className={styles.navLink} title="Setting">
+            <Link href={settingHref} className={styles.navLink} title="Setting" onClick={collapseMobileSidebarOnNavigate}>
               <span className={styles.navIcon}>
                 <GearIcon />
               </span>

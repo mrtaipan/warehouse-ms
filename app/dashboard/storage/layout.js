@@ -2,7 +2,7 @@ import { redirect } from 'next/navigation'
 import { createClient } from '@/utils/supabase/server'
 import { getStorageFeatureAccess } from '@/utils/permissions'
 import { loadAccessContext } from '@/utils/access-control'
-import DashboardSubnav from '@/components/dashboardsubnav'
+import StorageSubnavClient from './storage-subnav-client'
 
 export default async function StorageLayout({ children }) {
   const supabase = await createClient()
@@ -26,5 +26,5 @@ export default async function StorageLayout({ children }) {
       : null,
   ].filter(Boolean)
 
-  return <DashboardSubnav items={items}>{children}</DashboardSubnav>
+  return <StorageSubnavClient items={items}>{children}</StorageSubnavClient>
 }
