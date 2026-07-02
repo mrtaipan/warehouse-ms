@@ -331,6 +331,221 @@
   line-height: 1.7;
 }
 
+.grnSummaryForm {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: end;
+  margin-top: 16px;
+}
+
+.grnSummaryField {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.grnSummaryField span {
+  color: #475569;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.grnSummaryInput {
+  width: 100%;
+  min-height: 44px;
+  border: 1px solid #dbe4ef;
+  border-radius: 16px;
+  background: #ffffff;
+  color: #111827;
+  font-size: 14px;
+  font-weight: 600;
+  padding: 0 14px;
+  outline: none;
+}
+
+.grnSummaryInput:focus {
+  border-color: #94a3b8;
+  box-shadow: 0 0 0 4px rgba(148, 163, 184, 0.16);
+}
+
+.grnSummaryButton {
+  min-height: 44px;
+  border: 1px solid #111827;
+  border-radius: 16px;
+  background: #111827;
+  color: #ffffff;
+  font-size: 13px;
+  font-weight: 800;
+  padding: 0 16px;
+  cursor: pointer;
+}
+
+.grnSummaryMeta {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 16px;
+  padding: 14px 16px;
+  border: 1px solid #edf0f4;
+  border-radius: 18px;
+  background: #fafbfc;
+}
+
+.grnSummaryMeta strong {
+  color: #111827;
+  font-size: 16px;
+}
+
+.grnSummaryMeta span {
+  color: #64748b;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.grnMetricGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.grnMetricCard {
+  min-height: 126px;
+  border: 1px solid #edf0f4;
+  border-radius: 20px;
+  background: #ffffff;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.grnMetricCard span {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.grnMetricCard strong {
+  color: #111827;
+  font-size: 34px;
+  line-height: 1;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+.grnMetricCard small {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.grnSummaryEmpty,
+.grnSummaryError {
+  margin: 16px 0 0;
+  border-radius: 18px;
+  padding: 14px 16px;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.5;
+}
+
+.grnSummaryEmpty {
+  border: 1px solid #edf0f4;
+  background: #fafbfc;
+  color: #64748b;
+}
+
+.grnSummaryError {
+  border: 1px solid #fecaca;
+  background: #fef2f2;
+  color: #991b1b;
+}
+
+.grnBreakdownWrap {
+  margin-top: 16px;
+  border: 1px solid #edf0f4;
+  border-radius: 20px;
+  background: #ffffff;
+  overflow: hidden;
+}
+
+.grnBreakdownHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  border-bottom: 1px solid #edf0f4;
+  background: #fafbfc;
+}
+
+.grnBreakdownHeader strong {
+  color: #111827;
+  font-size: 15px;
+}
+
+.grnBreakdownHeader span {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.grnBreakdownTableWrap {
+  width: 100%;
+  overflow-x: auto;
+}
+
+.grnBreakdownTable {
+  width: 100%;
+  min-width: 760px;
+  border-collapse: collapse;
+}
+
+.grnBreakdownTable th,
+.grnBreakdownTable td {
+  padding: 12px 14px;
+  border-bottom: 1px solid #edf0f4;
+  text-align: left;
+  vertical-align: top;
+  font-size: 13px;
+}
+
+.grnBreakdownTable th {
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  background: #ffffff;
+}
+
+.grnBreakdownTable td {
+  color: #111827;
+  font-weight: 600;
+}
+
+.grnBreakdownTable th:nth-child(4),
+.grnBreakdownTable th:nth-child(5),
+.grnBreakdownTable th:nth-child(6),
+.grnBreakdownTable td:nth-child(4),
+.grnBreakdownTable td:nth-child(5),
+.grnBreakdownTable td:nth-child(6) {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.grnBreakdownTable tbody tr:last-child td {
+  border-bottom: 0;
+}
+
 @media (min-width: 900px) {
   .heroCard {
     padding: 26px;
@@ -375,5 +590,14 @@
 
   .sectionTitle {
     font-size: 20px;
+  }
+
+  .grnSummaryForm,
+  .grnMetricGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .grnSummaryButton {
+    width: 100%;
   }
 }

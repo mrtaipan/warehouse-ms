@@ -357,15 +357,9 @@ const DEFAULT_ROLE_BUNDLES = {
     'dashboard.home.view',
     'myarklife.view',
     'inbound.overview.view',
-    'inbound.new.view',
-    'inbound.new.add',
     'inbound.detail.view',
-    'inbound.edit.view',
-    'inbound.edit.edit',
     'inbound.unload.view',
-    'inbound.unload.edit',
     'inbound.receiving.view',
-    'inbound.receiving.edit',
     'inbound.qc.view',
   ],
   arkline_staff: [
@@ -719,7 +713,9 @@ export function getStorageFeatureAccess(role, permissions = [], isAdmin = false)
 }
 
 export function getLandingPath(role, permissions = [], isAdmin = false) {
-  if (isAdmin || role === 'admin') return '/dashboard'
+  const resolvedRole = resolveRole(role, isAdmin)
+  if (isAdmin || resolvedRole === 'admin') return '/dashboard'
+  if (resolvedRole === 'inbound_coordinator' || resolvedRole === 'inbound_staff') return '/dashboard'
   if (hasPermission(permissions, 'dashboard.home.view', isAdmin)) return '/dashboard'
 
   const qcAccess = getQcFeatureAccess(permissions, isAdmin, role)
@@ -736,7 +732,9 @@ export function getLandingPath(role, permissions = [], isAdmin = false) {
 }
 
 export function getAllowedMenus(role, permissions = [], isAdmin = false) {
-  if (isAdmin || role === 'admin') {
+  const resolvedRole = resolveRole(role, isAdmin)
+
+  if (isAdmin || resolvedRole === 'admin') {
     return {
       humanResources: true,
       humanResourcesHref: '/dashboard/human-resources',
@@ -767,7 +765,10 @@ export function getAllowedMenus(role, permissions = [], isAdmin = false) {
     myArklifeHref: '/dashboard/myarklife',
     arkline: arklineAccess.menu,
     arklineHref: arklineAccess.menuHref,
-    inbound: hasPermission(permissions, 'inbound.overview.view', isAdmin),
+    inbound:
+      resolvedRole === 'inbound_coordinator' ||
+      resolvedRole === 'inbound_staff' ||
+      hasPermission(permissions, 'inbound.overview.view', isAdmin),
     qc: qcAccess.menu,
     qcHref: qcAccess.menuHref,
     qcInspectorOnly: qcAccess.inspectionTaskOnly,
@@ -803,6 +804,8 @@ const ROUTE_PERMISSION_MAP = [
   { matcher: (pathname) => pathname.startsWith('/dashboard/inbound/receiving'), codes: ['inbound.receiving.view'] },
   { matcher: (pathname) => pathname.startsWith('/dashboard/inbound/qc'), codes: ['inbound.qc.view'] },
   { matcher: (pathname) => pathname.startsWith('/dashboard/inbound/'), codes: ['inbound.detail.view', 'inbound.edit.view'] },
+  { matcher: (pathname) => pathname.startsWith('/mobile/inbound/receiving'), codes: ['inbound.receiving.view'] },
+  { matcher: (pathname) => pathname.startsWith('/mobile/inbound/unload'), codes: ['inbound.unload.view'] },
   { matcher: (pathname) => pathname === '/dashboard/packing-list' || pathname.startsWith('/dashboard/packing-list?'), codes: ['packing.overview.view'] },
   { matcher: (pathname) => pathname.startsWith('/dashboard/packing-list/receiving'), codes: ['packing.receiving.view'] },
   { matcher: (pathname) => pathname.startsWith('/dashboard/packing-list/size-breakdown'), codes: ['packing.size_breakdown.view'] },
@@ -822,8 +825,10 @@ const ROUTE_PERMISSION_MAP = [
 ]
 
 export function canAccessPath(pathname, role, permissions = [], isAdmin = false) {
+  const resolvedRole = resolveRole(role, isAdmin)
+
   if (pathname.startsWith('/dashboard/user-access')) {
-    return isAdmin || role === 'admin'
+    return isAdmin || resolvedRole === 'admin'
   }
 
   if (
@@ -834,10 +839,28 @@ export function canAccessPath(pathname, role, permissions = [], isAdmin = false)
     pathname.startsWith('/dashboard/skus') ||
     pathname.startsWith('/dashboard/rack-locations')
   ) {
-    return isAdmin || role === 'admin'
+    return isAdmin || resolvedRole === 'admin'
   }
 
-  if (isAdmin || role === 'admin') return true
+  if (isAdmin || resolvedRole === 'admin') return true
+
+  if (resolvedRole === 'inbound_coordinator') {
+    if (pathname === '/dashboard') return true
+    if (pathname === '/dashboard/inbound' || pathname.startsWith('/dashboard/inbound/')) return true
+    if (pathname.startsWith('/mobile/inbound/')) return true
+  }
+
+  if (resolvedRole === 'inbound_staff') {
+    if (pathname === '/dashboard') return true
+    if (pathname === '/dashboard/inbound' || pathname.startsWith('/dashboard/inbound?')) return true
+    if (pathname.startsWith('/dashboard/inbound/receiving')) return true
+    if (pathname.startsWith('/dashboard/inbound/new')) return false
+    if (pathname.startsWith('/dashboard/inbound/unload')) return false
+    if (/^\/dashboard\/inbound\/[^/]+\/edit/.test(pathname)) return false
+    if (/^\/dashboard\/inbound\/[^/]+\/input/.test(pathname)) return true
+    if (pathname.startsWith('/mobile/inbound/receiving')) return true
+    if (pathname.startsWith('/mobile/inbound/unload')) return true
+  }
 
   const matched = ROUTE_PERMISSION_MAP.find((item) => item.matcher(pathname))
   if (!matched) return false

@@ -316,8 +316,15 @@ const styles = {
 function getTaskModelInfo(task) {
   return {
     modelName: task.model_name || task.inbound_unload?.model_name || 'UNKNOWN MODEL',
-    modelColor: task.model_color || task.inbound_unload?.model_color || '',
+    modelColor: task.variant_name || task.model_color || task.inbound_unload?.variant_name || task.inbound_unload?.model_color || '',
     photoUrl: task.photo_url || task.inbound_unload?.photo_url || '',
+  }
+}
+
+function normalizeRegularTask(item) {
+  return {
+    ...item,
+    model_color: item.variant_name || item.model_color || '',
   }
 }
 
@@ -568,7 +575,7 @@ export default function QcInspectionTaskPage() {
       }
 
       const permissionSet = expandImpliedPermissions((rolePermissionRows || []).map((item) => item.permission_code))
-      const canDoQcInspection = permissionSet.has('qc.grading_task.view')
+      const canDoQcInspection = isAdmin || resolvedRole === 'admin' || permissionSet.has('qc.grading_task.view')
       const isActiveInspector =
         canDoQcInspection &&
         Boolean(profileRow?.is_qc_active) &&
@@ -599,7 +606,6 @@ export default function QcInspectionTaskPage() {
               brand_id,
               category_id,
               model_name,
-              model_color,
               photo_url,
               koli_sequence,
               brands:dir_brands!brand_id (
@@ -635,7 +641,7 @@ export default function QcInspectionTaskPage() {
       }
 
     const normalizedRegularTasks = (regularTaskResult.data || []).map((item) => ({
-          ...item,
+          ...normalizeRegularTask(item),
           source_type: 'regular',
         }))
       const normalizedArklineTasks = (arklineTaskResult.data || []).map((item) => ({
@@ -721,7 +727,7 @@ export default function QcInspectionTaskPage() {
 
     const permissionSet = expandImpliedPermissions((rolePermissionRows || []).map((item) => item.permission_code))
 
-    if (!permissionSet.has('qc.grading_task.view')) {
+    if (!isAdmin && resolvedRole !== 'admin' && !permissionSet.has('qc.grading_task.view')) {
       setError('This role does not have permission `qc.grading_task.view`, so it cannot activate grading task.')
       setProfileRole(resolvedRole)
       setCanActivateQcTask(false)
@@ -852,7 +858,6 @@ export default function QcInspectionTaskPage() {
           brand_id,
           category_id,
           model_name,
-          model_color,
           photo_url,
           koli_sequence,
           brands:dir_brands!brand_id (
@@ -927,7 +932,6 @@ export default function QcInspectionTaskPage() {
           brand_id,
           category_id,
           model_name,
-          model_color,
           photo_url,
           koli_sequence,
           brands:dir_brands!brand_id (
@@ -1042,7 +1046,6 @@ export default function QcInspectionTaskPage() {
           brand_id,
           category_id,
           model_name,
-          model_color,
           photo_url,
           koli_sequence,
           brands:dir_brands!brand_id (

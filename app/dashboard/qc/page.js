@@ -3,8 +3,16 @@
 import Image from 'next/image'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { createClient } from '@/utils/supabase/browser'
+import { ADMIN_EMAIL } from '@/utils/permissions'
 
 const supabase = createClient()
+
+function normalizeQcItemRow(item) {
+  return {
+    ...item,
+    model_color: item.variant_name || item.model_color || '',
+  }
+}
 
 const styles = {
   wrapper: {
@@ -777,6 +785,44 @@ const styles = {
     border: '1px solid #e5e7eb',
     background: '#fff',
   },
+  photoPreviewOverlay: {
+    position: 'fixed',
+    inset: 0,
+    zIndex: 90,
+    background: 'rgba(17, 24, 39, 0.72)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: '24px',
+  },
+  photoPreviewWrap: {
+    position: 'relative',
+    display: 'inline-flex',
+  },
+  photoPreviewImage: {
+    maxWidth: 'calc(100vw - 48px)',
+    maxHeight: 'calc(100vh - 48px)',
+    width: 'auto',
+    height: 'auto',
+    objectFit: 'contain',
+  },
+  photoPreviewClose: {
+    position: 'absolute',
+    top: '8px',
+    right: '8px',
+    width: '32px',
+    height: '32px',
+    border: 'none',
+    borderRadius: '999px',
+    background: 'rgba(17, 24, 39, 0.72)',
+    color: '#fff',
+    fontSize: '18px',
+    fontWeight: '800',
+    cursor: 'pointer',
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   modalTableWrap: {
     maxHeight: '360px',
     overflow: 'auto',
@@ -879,6 +925,7 @@ function getDateOnly(value) {
 function getTaskModelInfo(item) {
   return {
     model: item.model_name || 'UNKNOWN MODEL',
+    variant: item.model_color || item.variant_name || '',
     photoUrl: item.photo_url || '',
   }
 }
@@ -898,11 +945,17 @@ function getArklineProductLabel(item) {
 }
 
 function getBrandLabel(item) {
-  return item.inbound_unload?.brands?.brand_name || 'UNBRANDED'
+  return item.product_model?.brands?.brand_name || item.inbound_unload?.brands?.brand_name || 'UNBRANDED'
 }
 
 function getCategoryLabel(item) {
-  return item.inbound_unload?.categories?.full_name || item.inbound_unload?.categories?.category_name || 'UNCATEGORIZED'
+  return (
+    item.product_model?.categories?.full_name ||
+    item.product_model?.categories?.category_name ||
+    item.inbound_unload?.categories?.full_name ||
+    item.inbound_unload?.categories?.category_name ||
+    'UNCATEGORIZED'
+  )
 }
 
 function getConfirmBrandLabel(item) {
@@ -1232,6 +1285,20 @@ export default function QcDashboardPage() {
               category_name,
               full_name
             )
+          ),
+          product_model:product_model_id (
+            id,
+            brand_id,
+            category_id,
+            brands:dir_brands!brand_id (
+              id,
+              brand_name
+            ),
+            categories:dir_categories!category_id (
+              id,
+              category_name,
+              full_name
+            )
           )
         `)
         .order('created_at', { ascending: false }),
@@ -1272,7 +1339,7 @@ export default function QcDashboardPage() {
           id,
           inbound_id,
           model_name,
-          model_color,
+          variant_name,
           qty,
           grade,
           is_adjustment,
@@ -1413,13 +1480,16 @@ export default function QcDashboardPage() {
     const allowedRoles = new Set((rolePermissionRows || []).map((item) => item.role))
     const allProfiles = memberRows || []
     const eligibleMembers = allProfiles.filter(
-      (item) => allowedRoles.has(item.role) && item.is_qc_active === true && getDateOnly(item.qc_active_date) === today
+      (item) =>
+        (allowedRoles.has(item.role) || item.role === 'admin' || String(item.email || '').trim().toLowerCase() === ADMIN_EMAIL) &&
+        item.is_qc_active === true &&
+        getDateOnly(item.qc_active_date) === today
     )
 
-    setQcItems(qcRows || [])
+    setQcItems((qcRows || []).map(normalizeQcItemRow))
     setArklineQcItems(arklineRows || [])
     setQcConfirmRows(confirmRows || [])
-    setReturnRows(returnData || [])
+    setReturnRows((returnData || []).map((row) => ({ ...row, model_color: row.variant_name || '' })))
     setQcMembers(eligibleMembers)
     setQcProfiles(allProfiles)
     setPauseLogs(pauseLogRows || [])
@@ -1643,14 +1713,16 @@ export default function QcDashboardPage() {
       const category = qcMode !== 'regular' ? getArklineCategoryLabel(item) : getCategoryLabel(item)
       const taskModel = getTaskModelInfo(item)
       const model = taskModel.model
+      const variant = qcMode === 'regular' ? taskModel.variant : ''
       const roundNumber = qcMode === 're_qc' ? Number(item.qc_round_number || 2) : null
-      const baseKey = getSummaryRejectKey({ brand, category, model })
+      const baseKey = qcMode === 'regular' ? `${brand}|||${category}|||${model}|||${variant}` : getSummaryRejectKey({ brand, category, model })
       const key = qcMode === 're_qc' ? `${baseKey}|||ROUND:${roundNumber}` : baseKey
       const current =
         grouped.get(key) || {
           brand,
           category,
           model,
+          variant,
           roundNumber,
           photoUrl: taskModel.photoUrl,
           qtyA: 0,
@@ -1699,8 +1771,9 @@ export default function QcDashboardPage() {
       const brand = getConfirmBrandLabel(item)
       const category = getConfirmCategoryLabel(item)
       const model = item.model_name || 'UNKNOWN MODEL'
-      const key = `${brand}|||${category}|||${model}`
-      const current = grouped.get(key) || { brand, category, model, photoUrl: item.photo_url || '', qtyA: 0, qtyB: 0, qtyC: 0, checked: 0 }
+      const variant = item.model_color || item.variant_name || ''
+      const key = `${brand}|||${category}|||${model}|||${variant}`
+      const current = grouped.get(key) || { brand, category, model, variant, photoUrl: item.photo_url || '', qtyA: 0, qtyB: 0, qtyC: 0, checked: 0 }
       const grade = String(item.grade || 'A').toUpperCase()
       const qty = Number(item.qty || 0)
 
@@ -1716,8 +1789,9 @@ export default function QcDashboardPage() {
       const brand = getReturnBrandLabel(item)
       const category = getReturnCategoryLabel(item)
       const model = item.model_name || 'UNKNOWN MODEL'
-      const key = `${brand}|||${category}|||${model}`
-      const current = grouped.get(key) || { brand, category, model, photoUrl: '', qtyA: 0, qtyB: 0, qtyC: 0, checked: 0 }
+      const variant = item.model_color || item.variant_name || ''
+      const key = `${brand}|||${category}|||${model}|||${variant}`
+      const current = grouped.get(key) || { brand, category, model, variant, photoUrl: '', qtyA: 0, qtyB: 0, qtyC: 0, checked: 0 }
       const grade = String(item.grade || 'A').toUpperCase()
       const qty = Number(item.qty || 0)
 
@@ -1737,7 +1811,8 @@ export default function QcDashboardPage() {
     return Array.from(grouped.values()).sort((a, b) => {
       if (a.brand !== b.brand) return a.brand.localeCompare(b.brand)
       if (a.category !== b.category) return a.category.localeCompare(b.category)
-      return a.model.localeCompare(b.model)
+      if (a.model !== b.model) return a.model.localeCompare(b.model)
+      return String(a.variant || '').localeCompare(String(b.variant || ''))
     })
   }, [
     activeItems,
@@ -2712,6 +2787,7 @@ export default function QcDashboardPage() {
                 <th style={styles.th}>{qcMode !== 'regular' ? 'PO' : 'Brand'}</th>
                 <th style={styles.th}>{qcMode !== 'regular' ? 'SKU' : 'Category'}</th>
                 <th style={styles.th}>Model</th>
+                {qcMode === 'regular' ? <th style={styles.th}>Variant</th> : null}
                 {qcMode === 're_qc' ? <th style={{ ...styles.th, ...styles.thCenter }}>Round</th> : null}
                 <th style={{ ...styles.th, ...styles.thCenter }}>Qty A</th>
                 <th style={{ ...styles.th, ...styles.thCenter }}>Qty B</th>
@@ -2725,7 +2801,7 @@ export default function QcDashboardPage() {
                 qcResultSummary.map((item) => {
                   const rejectTargetQty = Number(item.rejectTargetQty ?? getRejectQty(item))
                   return (
-                  <tr key={`${item.brand}-${item.category}-${item.model}-${item.roundNumber || 'initial'}`}>
+                  <tr key={`${item.brand}-${item.category}-${item.model}-${item.variant || ''}-${item.roundNumber || 'initial'}`}>
                     {qcMode !== 'regular' ? null : <td style={styles.td}>
                       {item.photoUrl ? (
                         <button type="button" style={styles.previewButton} onClick={() => setPreviewPhoto({ url: item.photoUrl, label: item.model })} title="Preview photo">
@@ -2738,6 +2814,7 @@ export default function QcDashboardPage() {
                     <td style={styles.td}>{qcMode !== 'regular' && String(item.brand || '').trim().toUpperCase() === 'NO PO' ? '-' : item.brand}</td>
                     <td style={styles.td}>{item.category}</td>
                     <td style={styles.td}>{item.model}</td>
+                    {qcMode === 'regular' ? <td style={styles.td}>{item.variant || '-'}</td> : null}
                     {qcMode === 're_qc' ? <td style={{ ...styles.td, ...styles.tdCenter }}>Round {item.roundNumber}</td> : null}
                     <td style={{ ...styles.td, ...styles.tdCenter }}>{item.qtyA}</td>
                     <td style={{ ...styles.td, ...styles.tdCenter }}>{item.qtyB}</td>
@@ -2760,7 +2837,7 @@ export default function QcDashboardPage() {
                 })
               ) : (
                 <tr>
-                  <td style={styles.td} colSpan={qcMode === 're_qc' ? 9 : qcMode === 'arkline' ? 8 : 9}>
+                  <td style={styles.td} colSpan={qcMode === 're_qc' ? 9 : qcMode === 'arkline' ? 8 : 10}>
                     No QC result found for this filter.
                   </td>
                 </tr>
@@ -2882,17 +2959,25 @@ export default function QcDashboardPage() {
       ) : null}
 
       {previewPhoto ? (
-        <div style={styles.overlay}>
-          <div style={styles.modal}>
-            <div>
-              <h2 style={styles.sectionTitle}>{previewPhoto.label}</h2>
-            </div>
-            <Image src={previewPhoto.url} alt={previewPhoto.label} width={720} height={720} unoptimized style={styles.previewImage} />
-            <div style={styles.buttonRow}>
-              <button type="button" onClick={() => setPreviewPhoto(null)} style={styles.secondaryButton}>
-                Close
-              </button>
-            </div>
+        <div style={styles.photoPreviewOverlay}>
+          <div style={styles.photoPreviewWrap}>
+            <Image
+              src={previewPhoto.url}
+              alt={previewPhoto.label}
+              width={1000}
+              height={1000}
+              unoptimized
+              style={styles.photoPreviewImage}
+            />
+            <button
+              type="button"
+              onClick={() => setPreviewPhoto(null)}
+              style={styles.photoPreviewClose}
+              aria-label="Close preview"
+              title="Close preview"
+            >
+              x
+            </button>
           </div>
         </div>
       ) : null}

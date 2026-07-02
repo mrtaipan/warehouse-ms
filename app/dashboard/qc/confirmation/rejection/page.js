@@ -255,15 +255,32 @@ const styles = {
 }
 
 function getSourceKey(item) {
+  const variantName = item.variant_name || item.model_color || ''
+
   return `${Number(item.brand_id || 0)}::${Number(item.category_id || 0)}::${String(item.model_name || '').trim().toUpperCase()}::${String(
-    item.model_color || ''
+    variantName
   )
     .trim()
     .toUpperCase()}::${String(item.grade || '').trim().toUpperCase()}`
 }
 
 function getModelLabel(item) {
-  return item.model_color ? `${item.model_name} / ${item.model_color}` : item.model_name
+  const variantName = item.variant_name || item.model_color || ''
+  return variantName ? `${item.model_name} / ${variantName}` : item.model_name
+}
+
+function normalizeReturnRow(item) {
+  return {
+    ...item,
+    model_color: item.variant_name || '',
+  }
+}
+
+function normalizeQcItemRow(item) {
+  return {
+    ...item,
+    model_color: item.variant_name || item.model_color || '',
+  }
 }
 
 export default function QcConfirmationRejectionPage() {
@@ -328,7 +345,7 @@ export default function QcConfirmationRejectionPage() {
           .order('koli_sequence', { ascending: true }),
         supabase
           .from('warehouse_returns')
-          .select('id, inbound_id, source_phase, brand_id, category_id, model_name, model_color, qty, koli_sequence, grade, is_adjustment')
+          .select('id, inbound_id, source_phase, brand_id, category_id, model_name, variant_name, qty, koli_sequence, grade, is_adjustment')
           .eq('source_phase', 'qc')
           .order('koli_sequence', { ascending: true }),
         supabase
@@ -344,9 +361,9 @@ export default function QcConfirmationRejectionPage() {
         return
       }
 
-      setQcItems(qcData || [])
+      setQcItems((qcData || []).map(normalizeQcItemRow))
       setConfirmRows(confirmData || [])
-      setReturnRows(returnsData || [])
+      setReturnRows((returnsData || []).map(normalizeReturnRow))
       setProductModels(productModelData || [])
       setLoading(false)
     }
@@ -633,7 +650,7 @@ export default function QcConfirmationRejectionPage() {
       brand_id: item.brand_id,
       category_id: item.category_id,
       model_name: item.model_name,
-      model_color: item.model_color || null,
+      variant_name: item.model_color || null,
       qty: Number(item.qty || 0),
       koli_sequence: nextKoliSequence,
       grade: item.grade,
@@ -644,7 +661,7 @@ export default function QcConfirmationRejectionPage() {
     const { data, error: insertError } = await supabase
       .from('warehouse_returns')
       .insert(payload)
-      .select('id, inbound_id, source_phase, brand_id, category_id, model_name, model_color, qty, koli_sequence, grade, is_adjustment')
+      .select('id, inbound_id, source_phase, brand_id, category_id, model_name, variant_name, qty, koli_sequence, grade, is_adjustment')
 
     if (insertError) {
       setError(insertError.message)
@@ -652,7 +669,7 @@ export default function QcConfirmationRejectionPage() {
       return
     }
 
-    setReturnRows((prev) => [...prev, ...(data || [])])
+    setReturnRows((prev) => [...prev, ...(data || []).map(normalizeReturnRow)])
     setCurrentReturnKoliItems([])
     setSuccess(`Return koli ${nextKoliSequence} posted to returns.`)
     setSavingReturn(false)

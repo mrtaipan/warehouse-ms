@@ -121,6 +121,8 @@ export default function ReceivingFiltersClient({
   initialTotalItems = 0,
   initialFilters = {},
   initialError = '',
+  canEditReceiving = true,
+  isInboundStaff = false,
 }) {
   const requestIdRef = useRef(0)
   const didMountRef = useRef(false)
@@ -296,6 +298,17 @@ export default function ReceivingFiltersClient({
               </thead>
               <tbody>
                 {orders.map((order) => (
+                  (() => {
+                    const grnValue = order.grn_number || ''
+                    const receivingHref = canEditReceiving
+                      ? `/dashboard/inbound/${order.id}/edit`
+                      : `/mobile/inbound/receiving/${order.id}`
+                    const sortingHref = isInboundStaff
+                      ? `/mobile/inbound/unload?grn=${encodeURIComponent(grnValue)}`
+                      : `/dashboard/inbound/unload?grn=${encodeURIComponent(grnValue)}`
+                    const sortingTitle = isInboundStaff ? 'Inbound Intake Input' : 'Sorting'
+
+                    return (
                     <tr key={order.id} style={styles.bodyRow}>
                       <td style={td}>
                         <strong>{order.grn_number}</strong>
@@ -307,24 +320,26 @@ export default function ReceivingFiltersClient({
                       <td style={{ ...td, whiteSpace: 'nowrap' }}>
                         <div style={styles.actionGroup}>
                           <Link
-                            href={`/dashboard/inbound/${order.id}/edit`}
+                            href={receivingHref}
                             style={styles.iconButton}
                             aria-label={`Receiving ${order.grn_number}`}
-                            title="Receiving"
+                            title={canEditReceiving ? 'Receiving' : 'Receiving Input'}
                           >
                             <ActionIcon kind="receiving" />
                           </Link>
                           <Link
-                            href={`/dashboard/inbound/unload?grn=${encodeURIComponent(order.grn_number || '')}`}
+                            href={sortingHref}
                             style={styles.iconButton}
-                            aria-label={`Sorting ${order.grn_number}`}
-                            title="Sorting"
+                            aria-label={`${sortingTitle} ${order.grn_number}`}
+                            title={sortingTitle}
                           >
                             <ActionIcon kind="unload" />
                           </Link>
                       </div>
                     </td>
                   </tr>
+                    )
+                  })()
                 ))}
               </tbody>
             </table>

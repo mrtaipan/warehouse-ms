@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import { createClient } from '@/utils/supabase/browser'
 import { getProfileByAuthenticatedUser } from '@/utils/user-profiles'
+import { ADMIN_EMAIL, resolveRole } from '@/utils/permissions'
 
 const supabase = createClient()
 
@@ -226,6 +227,27 @@ function XIcon() {
   )
 }
 
+function ResetIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M3 12a9 9 0 1 0 3-6.7" />
+      <path d="M3 4v5h5" />
+    </svg>
+  )
+}
+
+function PerformanceIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M4 19V5" />
+      <path d="M4 19h16" />
+      <path d="m7 15 3-4 4 3 4-7" />
+      <path d="M18 7h-4" />
+      <path d="M18 7v4" />
+    </svg>
+  )
+}
+
 const styles = {
   wrapper: {
     display: 'flex',
@@ -276,6 +298,10 @@ const styles = {
   mobileInfoRight: {
     minWidth: 0,
     textAlign: 'right',
+  },
+  mobileInfoMetric: {
+    minWidth: 0,
+    textAlign: 'left',
   },
   mobileInfoLabel: {
     display: 'block',
@@ -525,6 +551,76 @@ const styles = {
     color: '#0f172a',
     boxShadow: '0 1px 3px rgba(15, 23, 42, 0.08)',
   },
+  breakdownToolbar: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: '12px',
+    flexWrap: 'wrap',
+  },
+  breakdownFilters: {
+    display: 'grid',
+    gridTemplateColumns: 'minmax(150px, 1.2fr) minmax(260px, 1.55fr) minmax(170px, 1.3fr) minmax(190px, 1fr) 34px',
+    gap: '8px',
+    alignItems: 'center',
+    flex: '1 1 720px',
+    minWidth: 0,
+  },
+  filterSelect: {
+    width: '100%',
+    minWidth: 0,
+    height: '34px',
+    padding: '0 10px',
+    border: '1px solid #cbd5e1',
+    borderRadius: '9px',
+    background: '#fff',
+    color: '#0f172a',
+    fontSize: '12px',
+    fontWeight: '750',
+    outline: 'none',
+  },
+  qtyFilterGroup: {
+    display: 'grid',
+    gridTemplateColumns: 'minmax(126px, 1fr) 56px',
+    gap: '6px',
+    minWidth: 0,
+  },
+  filterNumberInput: {
+    width: '100%',
+    minWidth: 0,
+    height: '34px',
+    padding: '0 10px',
+    border: '1px solid #cbd5e1',
+    borderRadius: '9px',
+    background: '#fff',
+    color: '#0f172a',
+    fontSize: '12px',
+    fontWeight: '800',
+    fontVariantNumeric: 'tabular-nums',
+    outline: 'none',
+  },
+  filterNumberInputDisabled: {
+    background: '#f8fafc',
+    color: '#94a3b8',
+    cursor: 'not-allowed',
+  },
+  resetFilterButton: {
+    width: '34px',
+    height: '34px',
+    padding: 0,
+    border: '1px solid #cbd5e1',
+    borderRadius: '9px',
+    background: '#fff',
+    color: '#475569',
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    cursor: 'pointer',
+  },
+  resetFilterButtonDisabled: {
+    opacity: 0.42,
+    cursor: 'not-allowed',
+  },
   modeSegmentWrap: {
     display: 'grid',
     gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
@@ -613,6 +709,31 @@ const styles = {
     fontSize: '12px',
     fontWeight: '900',
     fontVariantNumeric: 'tabular-nums',
+  },
+  qtyPillQcShort: {
+    background: '#fee2e2',
+    color: '#991b1b',
+    border: '1px solid #fecaca',
+  },
+  qtyPillQcOver: {
+    background: '#ffedd5',
+    color: '#9a3412',
+    border: '1px solid #fed7aa',
+  },
+  performanceButton: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: '8px',
+    minHeight: '40px',
+    padding: '0 14px',
+    border: '1px solid #bfdbfe',
+    borderRadius: '10px',
+    background: '#eff6ff',
+    color: '#1d4ed8',
+    fontSize: '13px',
+    fontWeight: '850',
+    cursor: 'pointer',
   },
   builderButton: {
     display: 'inline-flex',
@@ -1606,6 +1727,63 @@ const styles = {
     fontWeight: '700',
     cursor: 'pointer',
   },
+  performanceSummaryGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 150px), 1fr))',
+    gap: '10px',
+  },
+  performanceMetric: {
+    minWidth: 0,
+    padding: '12px',
+    border: '1px solid #e2e8f0',
+    borderRadius: '10px',
+    background: '#f8fafc',
+  },
+  performanceMetricValue: {
+    display: 'block',
+    marginTop: '4px',
+    color: '#0f172a',
+    fontSize: '20px',
+    fontWeight: '900',
+    fontVariantNumeric: 'tabular-nums',
+  },
+  performanceMetricDanger: {
+    background: '#fef2f2',
+    border: '1px solid #fecaca',
+  },
+  performanceMetricWarning: {
+    background: '#fff7ed',
+    border: '1px solid #fed7aa',
+  },
+  performanceMetricSuccess: {
+    background: '#f0fdf4',
+    border: '1px solid #bbf7d0',
+  },
+  performanceBadge: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    minWidth: '56px',
+    height: '28px',
+    padding: '0 10px',
+    borderRadius: '999px',
+    background: '#ecfdf5',
+    color: '#166534',
+    fontSize: '12px',
+    fontWeight: '900',
+    fontVariantNumeric: 'tabular-nums',
+  },
+  performanceBadgeDanger: {
+    background: '#fee2e2',
+    color: '#991b1b',
+  },
+  performanceBadgeWarning: {
+    background: '#ffedd5',
+    color: '#9a3412',
+  },
+  performanceModal: {
+    maxWidth: '720px',
+  },
   overlay: {
     position: 'fixed',
     inset: 0,
@@ -1676,6 +1854,18 @@ const styles = {
     padding: '20px',
     gap: '16px',
   },
+  registryCenteredModal: {
+    width: '100%',
+    maxWidth: '760px',
+    maxHeight: 'calc(100dvh - 32px)',
+    minHeight: 0,
+    overflowY: 'auto',
+    WebkitOverflowScrolling: 'touch',
+    overscrollBehavior: 'contain',
+    borderRadius: '20px',
+    padding: '20px',
+    gap: '16px',
+  },
   modalFooter: {
     position: 'sticky',
     bottom: 0,
@@ -1699,6 +1889,44 @@ const styles = {
     borderRadius: '12px',
     objectFit: 'cover',
     border: '1px solid #e5e7eb',
+  },
+  photoPreviewOverlay: {
+    position: 'fixed',
+    inset: 0,
+    zIndex: 60,
+    background: 'rgba(17, 24, 39, 0.72)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: '24px',
+  },
+  photoPreviewWrap: {
+    position: 'relative',
+    display: 'inline-flex',
+  },
+  photoPreviewImage: {
+    maxWidth: 'calc(100vw - 48px)',
+    maxHeight: 'calc(100vh - 48px)',
+    width: 'auto',
+    height: 'auto',
+    objectFit: 'contain',
+  },
+  photoPreviewClose: {
+    position: 'absolute',
+    top: '8px',
+    right: '8px',
+    width: '32px',
+    height: '32px',
+    border: 'none',
+    borderRadius: '999px',
+    background: 'rgba(17, 24, 39, 0.72)',
+    color: '#fff',
+    fontSize: '18px',
+    fontWeight: '800',
+    cursor: 'pointer',
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   modelThumb: {
     width: '100%',
@@ -1758,9 +1986,11 @@ export default function UnloadPage() {
   const [isReturn, setIsReturn] = useState(false)
   const [currentKoliItems, setCurrentKoliItems] = useState([])
   const [unloadRows, setUnloadRows] = useState([])
+  const [qcItemRows, setQcItemRows] = useState([])
   const [returnRows, setReturnRows] = useState([])
   const [showChooseModelModal, setShowChooseModelModal] = useState(false)
   const [showModelModal, setShowModelModal] = useState(false)
+  const [showPerformanceModal, setShowPerformanceModal] = useState(false)
   const [modelDraft, setModelDraft] = useState(createModelDraft)
   const [editingVariantContext, setEditingVariantContext] = useState(null)
   const [variantPhotoFile, setVariantPhotoFile] = useState(null)
@@ -1778,8 +2008,36 @@ export default function UnloadPage() {
   const [supportsReturnVariantCode, setSupportsReturnVariantCode] = useState(false)
   const [supportsReturnVariantName, setSupportsReturnVariantName] = useState(false)
   const [breakdownMode, setBreakdownMode] = useState('koli')
+  const [breakdownFilters, setBreakdownFilters] = useState({
+    brandId: '',
+    categoryId: '',
+    modelName: '',
+    qtyMode: '',
+    qtyValue: '',
+  })
   const displayName = user ? getDisplayName(user, profile) : 'Loading...'
+  const userRole = resolveRole(profile?.role, user?.email?.toLowerCase() === ADMIN_EMAIL)
+  const canRegistryModelVariant = userRole === 'admin' || userRole === 'inbound_coordinator'
   const addMode = isReturn ? 'return' : isSample ? 'sample' : 'regular'
+
+  const loadQcItemsForUnloadRows = useCallback(async (rows) => {
+    const unloadIds = (rows || []).map((row) => row.id).filter(Boolean)
+
+    if (!unloadIds.length) {
+      return []
+    }
+
+    const { data, error: qcError } = await supabase
+      .from('qc_items')
+      .select('id, inbound_unload_id, qty_in, allocated_qty, model_replaced')
+      .in('inbound_unload_id', unloadIds)
+
+    if (qcError) {
+      throw new Error(qcError.message || 'Failed to load QC in rows.')
+    }
+
+    return data || []
+  }, [])
 
   useEffect(() => {
     let isMounted = true
@@ -1905,6 +2163,7 @@ export default function UnloadPage() {
     async function loadUnloadRows() {
       if (!selectedInboundId) {
         setUnloadRows([])
+        setQcItemRows([])
         setReturnRows([])
         setCurrentKoliItems([])
         return
@@ -1946,6 +2205,7 @@ export default function UnloadPage() {
             'model_name',
             'qty',
             'pic_name',
+            'koli_sequence',
             'created_at',
             supportsReturnVariant ? 'variant_label' : null,
             supportsReturnVariantCode ? 'variant_code' : null,
@@ -1953,6 +2213,7 @@ export default function UnloadPage() {
           ].filter(Boolean).join(', '))
           .eq('inbound_id', selectedInboundId)
           .eq('source_phase', 'inbound')
+          .order('koli_sequence', { ascending: true })
           .order('created_at', { ascending: true }),
       ])
 
@@ -1961,12 +2222,22 @@ export default function UnloadPage() {
         return
       }
 
+      let qcRows = []
+
+      try {
+        qcRows = await loadQcItemsForUnloadRows(unloadData || [])
+      } catch (qcLoadError) {
+        setError(qcLoadError.message || 'Failed to load QC in rows.')
+      }
+
       setUnloadRows(unloadData || [])
+      setQcItemRows(qcRows)
       setReturnRows(returnsData || [])
     }
 
     loadUnloadRows()
   }, [
+    loadQcItemsForUnloadRows,
     selectedInboundId,
     supportsReturnVariant,
     supportsReturnVariantCode,
@@ -1986,8 +2257,10 @@ export default function UnloadPage() {
   const selectedInbound =
     inbounds.find((item) => item.id === Number(selectedInboundId)) || null
   const builderGridStyle = isBuilderMode ? styles.mobileSingleGrid : styles.compactGrid
-  const overlayStyle = isBuilderMode ? { ...styles.overlay, ...styles.mobileOverlay } : styles.overlay
-  const modalStyle = isBuilderMode ? { ...styles.modal, ...styles.mobileModal } : styles.modal
+  const registryOverlayStyle = isBuilderMode
+    ? { ...styles.overlay, ...styles.centeredMobileOverlay }
+    : { ...styles.overlay, ...styles.centeredOverlay }
+  const registryModalStyle = { ...styles.modal, ...styles.registryCenteredModal }
   const chooseOverlayStyle = isBuilderMode
     ? { ...styles.overlay, ...styles.centeredMobileOverlay }
     : { ...styles.overlay, ...styles.centeredOverlay }
@@ -2124,6 +2397,80 @@ export default function UnloadPage() {
       : remainingQty > 0
         ? styles.mobileRemainingPositive
         : styles.mobileRemainingZero
+  const qcQtyByUnloadId = useMemo(() => {
+    const qtyMap = new Map()
+
+    qcItemRows.forEach((row) => {
+      const unloadId = Number(row.inbound_unload_id || 0)
+      if (!unloadId) return
+
+      qtyMap.set(unloadId, Number(qtyMap.get(unloadId) || 0) + Number(row.qty_in || 0))
+    })
+
+    return qtyMap
+  }, [qcItemRows])
+  const modelErrorQtyByUnloadId = useMemo(() => {
+    const qtyMap = new Map()
+
+    qcItemRows
+      .filter((row) => row.model_replaced)
+      .forEach((row) => {
+        const unloadId = Number(row.inbound_unload_id || 0)
+        if (!unloadId) return
+
+        const modelErrorQty = Number(row.allocated_qty ?? row.qty_in ?? 0)
+        qtyMap.set(unloadId, Number(qtyMap.get(unloadId) || 0) + modelErrorQty)
+      })
+
+    return qtyMap
+  }, [qcItemRows])
+  const performanceRows = useMemo(() => {
+    const grouped = new Map()
+
+    unloadRows
+      .filter((row) => row.is_sample || row.koli_sequence != null)
+      .forEach((row) => {
+        if (!qcQtyByUnloadId.has(Number(row.id || 0))) {
+          return
+        }
+
+        const picName = getFirstName(row.pic_name) || 'Unknown'
+        const current = grouped.get(picName) || {
+          picName,
+          statedQty: 0,
+          qcQty: 0,
+          modelErrorQty: 0,
+          rowCount: 0,
+        }
+        const statedQty = Number(row.qty || 0)
+        const qcQty = Number(qcQtyByUnloadId.get(Number(row.id || 0)) || 0)
+        const modelErrorQty = Number(modelErrorQtyByUnloadId.get(Number(row.id || 0)) || 0)
+
+        current.statedQty += statedQty
+        current.qcQty += qcQty
+        current.modelErrorQty += modelErrorQty
+        current.rowCount += 1
+        grouped.set(picName, current)
+      })
+
+    return Array.from(grouped.values())
+      .map((row) => ({
+        ...row,
+        variance: row.qcQty - row.statedQty,
+      }))
+      .sort((a, b) => b.modelErrorQty - a.modelErrorQty || Math.abs(b.variance) - Math.abs(a.variance) || a.picName.localeCompare(b.picName))
+  }, [modelErrorQtyByUnloadId, qcQtyByUnloadId, unloadRows])
+  const performanceTotals = useMemo(() => {
+    return performanceRows.reduce(
+      (total, row) => ({
+        statedQty: total.statedQty + row.statedQty,
+        qcQty: total.qcQty + row.qcQty,
+        modelErrorQty: total.modelErrorQty + row.modelErrorQty,
+        variance: total.variance + row.variance,
+      }),
+      { statedQty: 0, qcQty: 0, modelErrorQty: 0, variance: 0 }
+    )
+  }, [performanceRows])
   const displayFirstName = getFirstName(displayName)
   const currentKoliQty = currentKoliItems.reduce((sum, row) => sum + Number(row.qty || 0), 0)
   const isModeLocked = currentKoliItems.length > 0
@@ -2178,10 +2525,6 @@ export default function UnloadPage() {
 
     return options.slice(0, 3)
   })()
-  const resultRows = [
-    ...unloadRows.map((row) => ({ ...row, rowType: row.is_sample ? 'sample' : 'koli' })),
-    ...returnRows.map((row) => ({ ...row, rowType: 'return', is_sample: false, koli_sequence: null })),
-  ]
   const koliGroups = useMemo(() => {
     const grouped = new Map()
 
@@ -2211,38 +2554,6 @@ export default function UnloadPage() {
         pic_list: Array.from(group.pic_names),
       }))
   }, [unloadRows])
-  const summaryMap = new Map()
-
-  for (const row of unloadRows) {
-    const matchingVariant = getVariantForRow(row)
-    const variantKey = matchingVariant?.id
-      ? `variant:${matchingVariant.id}`
-      : `fallback:${row.brand_id || ''}|${row.category_id || ''}|${row.model_name || ''}|${getRowVariantIdentifier(row)}|${row.photo_url || ''}`
-    const label = getModelVariantLabelForRow(row)
-    const photoUrl = getVariantPhotoForRow(row)
-    const brandName = brands.find((item) => item.id === row.brand_id)?.brand_name || '-'
-    const category = categoryMaps.byId.get(row.category_id)
-    const categoryLabel = category?.full_name || category?.category_name || '-'
-
-    if (!summaryMap.has(variantKey)) {
-      summaryMap.set(variantKey, {
-        brandName,
-        categoryLabel,
-        modelLabel: label,
-        modelQty: 0,
-        photoUrl,
-      })
-    }
-
-    const currentValue = summaryMap.get(variantKey)
-    currentValue.modelQty += Number(row.qty || 0)
-
-    if (!currentValue.photoUrl && photoUrl) {
-      currentValue.photoUrl = photoUrl
-    }
-  }
-
-  const summaryRows = [...summaryMap.values()]
   const modelGroups = (() => {
     const grouped = new Map()
 
@@ -2319,6 +2630,139 @@ export default function UnloadPage() {
       }
     : null
   const nonKoliGroups = [sampleBreakdownGroup, returnBreakdownGroup].filter(Boolean)
+  const sortedBrandFilterOptions = [...new Map(
+    modelGroups
+      .filter((group) => matchesBreakdownFilters(group, group.total_qty, 'brandId'))
+      .map((group) => [String(group.brand_id || ''), brands.find((item) => Number(item.id) === Number(group.brand_id))])
+      .filter(([id, brand]) => id && brand)
+  ).values()]
+    .sort((a, b) => String(a.brand_name || '').localeCompare(String(b.brand_name || '')))
+  const sortedCategoryFilterOptions = [...new Map(
+    modelGroups
+      .filter((group) => matchesBreakdownFilters(group, group.total_qty, 'categoryId'))
+      .map((group) => {
+        const category = categoryMaps.byId.get(Number(group.category_id))
+        return [String(group.category_id || ''), category]
+      })
+      .filter(([id, category]) => id && category)
+  ).values()]
+    .sort((a, b) =>
+      String(a.full_name || a.category_name || '').localeCompare(String(b.full_name || b.category_name || ''))
+    )
+  const sortedModelFilterOptions = [...new Set(
+    modelGroups
+      .filter((group) => matchesBreakdownFilters(group, group.total_qty, 'modelName'))
+      .map((group) => String(group.model_name || '').trim())
+      .filter(Boolean)
+  )]
+    .sort((a, b) => a.localeCompare(b))
+  const filteredModelGroups = modelGroups.filter((group) => matchesBreakdownFilters(group, group.total_qty))
+  const filteredKoliGroups = koliGroups
+    .map((group) => {
+      const items = group.items.filter((row) => matchesBreakdownFilters(row, Number(row.qty || 0)))
+      const picNames = new Set(items.map((row) => row.pic_name).filter(Boolean))
+
+      return {
+        ...group,
+        items,
+        total_qty: items.reduce((sum, row) => sum + Number(row.qty || 0), 0),
+        pic_list: Array.from(picNames),
+      }
+    })
+    .filter((group) => group.items.length > 0)
+  const filteredNonKoliGroups = nonKoliGroups
+    .map((group) => {
+      const items = group.items.filter((row) => matchesBreakdownFilters(row, Number(row.qty || 0)))
+      const picNames = new Set(items.map((row) => row.pic_name).filter(Boolean))
+
+      return {
+        ...group,
+        items,
+        total_qty: items.reduce((sum, row) => sum + Number(row.qty || 0), 0),
+        pic_list: Array.from(picNames),
+      }
+    })
+    .filter((group) => group.items.length > 0)
+  const filteredSummaryRows = filteredModelGroups.map((group) => {
+    const brand = brands.find((item) => Number(item.id) === Number(group.brand_id))
+    const category = categoryMaps.byId.get(Number(group.category_id))
+
+    return {
+      brandName: brand?.brand_name || '-',
+      categoryLabel: category?.full_name || category?.category_name || '-',
+      modelLabel: getModelVariantLabelForRow(group),
+      modelQty: group.total_qty || 0,
+      photoUrl: getVariantPhotoForRow(group),
+    }
+  })
+  const filteredPrintTotalQty = filteredSummaryRows.reduce((sum, row) => sum + Number(row.modelQty || 0), 0)
+  const hasBreakdownFilters = Boolean(
+    breakdownFilters.brandId ||
+    breakdownFilters.categoryId ||
+    breakdownFilters.modelName ||
+    breakdownFilters.qtyMode ||
+    breakdownFilters.qtyValue
+  )
+
+  function updateBreakdownFilter(name, value) {
+    setBreakdownFilters((current) => ({
+      ...current,
+      [name]: value,
+      ...(name === 'brandId' ? { categoryId: '', modelName: '' } : {}),
+      ...(name === 'categoryId' ? { modelName: '' } : {}),
+    }))
+  }
+
+  function resetBreakdownFilters() {
+    setBreakdownFilters({
+      brandId: '',
+      categoryId: '',
+      modelName: '',
+      qtyMode: '',
+      qtyValue: '',
+    })
+  }
+
+  function matchesQtyFilter(qty) {
+    const filterQty = Number(breakdownFilters.qtyValue)
+
+    if (!breakdownFilters.qtyMode || breakdownFilters.qtyValue === '' || !Number.isFinite(filterQty)) {
+      return true
+    }
+
+    const currentQty = Number(qty || 0)
+
+    if (breakdownFilters.qtyMode === 'lt') return currentQty < filterQty
+    if (breakdownFilters.qtyMode === 'eq') return currentQty === filterQty
+    if (breakdownFilters.qtyMode === 'gt') return currentQty > filterQty
+
+    return true
+  }
+
+  function matchesBreakdownFilters(row, qty, ignoredFilter = '') {
+    if (ignoredFilter !== 'brandId' && breakdownFilters.brandId && String(row.brand_id || '') !== breakdownFilters.brandId) {
+      return false
+    }
+
+    if (ignoredFilter !== 'categoryId' && breakdownFilters.categoryId && String(row.category_id || '') !== breakdownFilters.categoryId) {
+      return false
+    }
+
+    if (
+      ignoredFilter !== 'modelName' &&
+      breakdownFilters.modelName &&
+      normalizeVariantLookupValue(row.model_name) !== normalizeVariantLookupValue(breakdownFilters.modelName)
+    ) {
+      return false
+    }
+
+    if (ignoredFilter === 'qty') {
+      return true
+    }
+
+    return matchesQtyFilter(qty)
+  }
+
   function getMatchingModelForRow(row) {
     const rowModelName = normalizeVariantLookupValue(row.model_name)
 
@@ -2363,6 +2807,24 @@ export default function UnloadPage() {
     return findVariantForModel(matchingModel, getRowVariantIdentifier(row), row.photo_url)
   }
 
+  function getProductAggregationKey(row) {
+    const matchingVariant = getVariantForRow(row)
+
+    if (matchingVariant?.id) {
+      return `variant:${matchingVariant.id}`
+    }
+
+    const variantIdentity = normalizeVariantLookupValue(getRowVariantIdentifier(row))
+    const fallbackIdentity = variantIdentity || normalizeVariantLookupValue(row.photo_url)
+
+    return [
+      row.brand_id || '',
+      row.category_id || '',
+      normalizeVariantLookupValue(row.model_name),
+      fallbackIdentity,
+    ].join('|')
+  }
+
   function getVariantNameForRow(row) {
     const matchingVariant = getVariantForRow(row)
 
@@ -2382,6 +2844,71 @@ export default function UnloadPage() {
   function formatPicFirstNames(picList) {
     const firstNames = [...new Set((picList || []).map((name) => getFirstName(name)).filter(Boolean))]
     return firstNames.length ? firstNames.join(', ') : '-'
+  }
+
+  function formatSignedQty(value) {
+    const numericValue = Number(value || 0)
+
+    return numericValue > 0 ? `+${formatNumber(numericValue)}` : formatNumber(numericValue)
+  }
+
+  function getQcQtyForUnloadRow(row) {
+    return Number(qcQtyByUnloadId.get(Number(row.id || 0)) || 0)
+  }
+
+  function getQcVarianceForUnloadRow(row) {
+    return getQcQtyForUnloadRow(row) - Number(row.qty || 0)
+  }
+
+  function getQtyPillQcStyle(row) {
+    if (!qcQtyByUnloadId.has(Number(row.id || 0))) {
+      return {}
+    }
+
+    const variance = getQcVarianceForUnloadRow(row)
+
+    if (variance < 0) return styles.qtyPillQcShort
+    if (variance > 0) return styles.qtyPillQcOver
+
+    return {}
+  }
+
+  function getQcVarianceTitle(row) {
+    if (!qcQtyByUnloadId.has(Number(row.id || 0))) {
+      return 'Belum masuk QC In, jadi belum dihitung sebagai performance inbound.'
+    }
+
+    const statedQty = Number(row.qty || 0)
+    const qcQty = getQcQtyForUnloadRow(row)
+    const variance = qcQty - statedQty
+
+    if (variance < 0) {
+      return `QC In kurang ${formatNumber(Math.abs(variance))} dari stated intake qty (${formatNumber(qcQty)} / ${formatNumber(statedQty)}).`
+    }
+
+    if (variance > 0) {
+      return `QC In lebih ${formatSignedQty(variance)} dari stated intake qty (${formatNumber(qcQty)} / ${formatNumber(statedQty)}).`
+    }
+
+    return `QC In sesuai stated intake qty (${formatNumber(qcQty)} / ${formatNumber(statedQty)}).`
+  }
+
+  function getVarianceBadgeStyle(value) {
+    const numericValue = Number(value || 0)
+
+    if (numericValue < 0) return { ...styles.performanceBadge, ...styles.performanceBadgeDanger }
+    if (numericValue > 0) return { ...styles.performanceBadge, ...styles.performanceBadgeWarning }
+
+    return styles.performanceBadge
+  }
+
+  function getPerformanceMetricStyle(value) {
+    const numericValue = Number(value || 0)
+
+    if (numericValue < 0) return { ...styles.performanceMetric, ...styles.performanceMetricDanger }
+    if (numericValue > 0) return { ...styles.performanceMetric, ...styles.performanceMetricWarning }
+
+    return { ...styles.performanceMetric, ...styles.performanceMetricSuccess }
   }
 
   useEffect(() => {
@@ -2571,6 +3098,11 @@ export default function UnloadPage() {
   }
 
   function openVariantEditor(model, variant) {
+    if (!canRegistryModelVariant) {
+      setModelModalError('This role can choose existing variants, but cannot register or edit model variants.')
+      return
+    }
+
     const variantProductId = getVariantProductId(variant)
 
     setEditingVariantContext({ model, variant })
@@ -2626,25 +3158,31 @@ export default function UnloadPage() {
           'brand_id',
           'category_id',
           'model_name',
-          'qty',
-          'pic_name',
-          'created_at',
-          supportsReturnVariant ? 'variant_label' : null,
-          supportsReturnVariantCode ? 'variant_code' : null,
-          supportsReturnVariantName ? 'variant_name' : null,
-        ].filter(Boolean).join(', '))
-        .eq('inbound_id', inboundId)
-        .eq('source_phase', 'inbound')
-        .order('created_at', { ascending: true }),
+            'qty',
+            'pic_name',
+            'koli_sequence',
+            'created_at',
+            supportsReturnVariant ? 'variant_label' : null,
+            supportsReturnVariantCode ? 'variant_code' : null,
+            supportsReturnVariantName ? 'variant_name' : null,
+          ].filter(Boolean).join(', '))
+          .eq('inbound_id', inboundId)
+          .eq('source_phase', 'inbound')
+          .order('koli_sequence', { ascending: true })
+          .order('created_at', { ascending: true }),
     ])
 
     if (refreshUnloadError || refreshReturnError) {
       throw new Error(refreshUnloadError?.message || refreshReturnError?.message || 'Failed to refresh unload rows.')
     }
 
+    const refreshedQcRows = await loadQcItemsForUnloadRows(refreshedUnloadRows || [])
+
     setUnloadRows(refreshedUnloadRows || [])
+    setQcItemRows(refreshedQcRows)
     setReturnRows(refreshedReturnRows || [])
   }, [
+    loadQcItemsForUnloadRows,
     supportsReturnVariant,
     supportsReturnVariantCode,
     supportsReturnVariantName,
@@ -2820,8 +3358,8 @@ export default function UnloadPage() {
       return
     }
 
-    if (resultRows.length === 0) {
-      setError('No unload rows available to print yet.')
+    if (filteredSummaryRows.length === 0) {
+      setError('No model rows match the selected filters.')
       return
     }
 
@@ -2834,7 +3372,7 @@ export default function UnloadPage() {
 
     const supplierName = selectedInbound.suppliers?.supplier_name || '-'
 
-    const summaryRowsHtml = summaryRows
+    const summaryRowsHtml = filteredSummaryRows
       .map(
         (row) => `
           <tr>
@@ -3000,8 +3538,8 @@ export default function UnloadPage() {
         <tbody>
           ${summaryRowsHtml}
           <tr class="totalRow">
-            <td colspan="4"><strong class="totalLabel">Total Intake Qty</strong></td>
-            <td class="qty totalQty"><strong>${totalInboundQty}</strong></td>
+            <td colspan="4"><strong class="totalLabel">Shown Qty</strong></td>
+            <td class="qty totalQty"><strong>${filteredPrintTotalQty}</strong></td>
           </tr>
         </tbody>
       </table>
@@ -3017,6 +3555,11 @@ export default function UnloadPage() {
 
   function handleSaveModel() {
     setModelModalError('')
+
+    if (!canRegistryModelVariant) {
+      setModelModalError('This role can choose existing variants, but cannot register or edit model variants.')
+      return
+    }
 
     const chosenExistingModel = registryUsesNewModel ? null : registrySelectedModel
     const normalizedModelName = registryUsesNewModel
@@ -3253,6 +3796,30 @@ export default function UnloadPage() {
     }
 
     if (!isReturn && !isSample) {
+      const payloadProductKey = getProductAggregationKey(payload)
+      const existingItem = currentKoliItems.find((item) => getProductAggregationKey(item) === payloadProductKey)
+
+      if (existingItem) {
+        const shouldAggregate = window.confirm('Product yang sama sudah ada di Koli ini. Mau digabungkan qty-nya?')
+
+        if (!shouldAggregate) {
+          setSaving(false)
+          return
+        }
+
+        setCurrentKoliItems((prev) =>
+          prev.map((item) =>
+            item.tempId === existingItem.tempId
+              ? { ...item, qty: Number(item.qty || 0) + Number(payload.qty || 0) }
+              : item
+          )
+        )
+        resetEntryForm({ keepPath: true })
+        setSuccess('Qty aggregated with the existing item.')
+        setSaving(false)
+        return
+      }
+
       setCurrentKoliItems((prev) => [
         ...prev,
         {
@@ -3266,37 +3833,62 @@ export default function UnloadPage() {
       return
     }
 
-    const { error: insertError } = isReturn
-      ? await supabase.from('warehouse_returns').insert([
-          {
-            inbound_id: payload.inbound_id,
-            brand_id: payload.brand_id,
-            category_id: payload.category_id,
-            model_name: payload.model_name,
-            ...(supportsReturnVariant ? { variant_label: payload.variant_label } : {}),
-            ...(supportsReturnVariantCode ? { variant_code: payload.variant_code } : {}),
-            ...(supportsReturnVariantName ? { variant_name: payload.variant_name } : {}),
-            qty: payload.qty,
-            pic_name: payload.pic_name,
-            source_phase: 'inbound',
-          },
-        ])
-      : await supabase.from('inbound_unload').insert([
-          {
-            inbound_id: payload.inbound_id,
-            brand_id: payload.brand_id,
-            category_id: payload.category_id,
-            model_name: payload.model_name,
-            ...(supportsUnloadVariant ? { variant_label: payload.variant_label } : {}),
-            ...(supportsUnloadVariantCode ? { variant_code: payload.variant_code } : {}),
-            ...(supportsUnloadVariantName ? { variant_name: payload.variant_name } : {}),
-            qty: payload.qty,
-            pic_name: payload.pic_name,
-            photo_url: payload.photo_url,
-            is_sample: true,
-            koli_sequence: null,
-          },
-        ])
+    let insertResult = null
+
+    if (isReturn) {
+      const { data: latestReturnRows, error: sequenceError } = await supabase
+        .from('warehouse_returns')
+        .select('koli_sequence')
+        .eq('inbound_id', selectedInbound.id)
+        .eq('source_phase', 'inbound')
+
+      if (sequenceError) {
+        setError(sequenceError.message)
+        setSaving(false)
+        return
+      }
+
+      const assignedReturnSequence =
+        (latestReturnRows || []).reduce(
+          (max, row) => Math.max(max, Number(row.koli_sequence || 0)),
+          0
+        ) + 1
+
+      insertResult = await supabase.from('warehouse_returns').insert([
+        {
+          inbound_id: payload.inbound_id,
+          brand_id: payload.brand_id,
+          category_id: payload.category_id,
+          model_name: payload.model_name,
+          ...(supportsReturnVariant ? { variant_label: payload.variant_label } : {}),
+          ...(supportsReturnVariantCode ? { variant_code: payload.variant_code } : {}),
+          ...(supportsReturnVariantName ? { variant_name: payload.variant_name } : {}),
+          qty: payload.qty,
+          pic_name: payload.pic_name,
+          source_phase: 'inbound',
+          koli_sequence: assignedReturnSequence,
+        },
+      ])
+    } else {
+      insertResult = await supabase.from('inbound_unload').insert([
+        {
+          inbound_id: payload.inbound_id,
+          brand_id: payload.brand_id,
+          category_id: payload.category_id,
+          model_name: payload.model_name,
+          ...(supportsUnloadVariant ? { variant_label: payload.variant_label } : {}),
+          ...(supportsUnloadVariantCode ? { variant_code: payload.variant_code } : {}),
+          ...(supportsUnloadVariantName ? { variant_name: payload.variant_name } : {}),
+          qty: payload.qty,
+          pic_name: payload.pic_name,
+          photo_url: payload.photo_url,
+          is_sample: true,
+          koli_sequence: null,
+        },
+      ])
+    }
+
+    const insertError = insertResult?.error
 
     if (insertError) {
       setError(insertError.message)
@@ -3425,7 +4017,7 @@ export default function UnloadPage() {
           </button>
           <div>
             <p style={styles.eyebrow}>Inbound</p>
-            <h1 style={{ ...styles.title, fontSize: '22px' }}>Intake</h1>
+            <h1 style={{ ...styles.title, fontSize: '22px' }}>Intake Input</h1>
           </div>
           <span style={styles.grnChip}>{selectedInbound?.grn_number || grnParam || '-'}</span>
         </header>
@@ -3447,11 +4039,11 @@ export default function UnloadPage() {
                 <span style={{ ...styles.mobileInfoLabel, ...styles.mobileInfoLabelTight }}>Input As</span>
                 <strong style={{ ...styles.mobileInfoValue, ...styles.mobileInfoValueTight }}>{displayFirstName}</strong>
               </div>
-              <div style={styles.mobileInfoRight}>
+              <div style={styles.mobileInfoMetric}>
                 <span style={{ ...styles.mobileInfoLabel, ...styles.mobileInfoLabelTight }}>Intake Qty</span>
                 <strong style={{ ...styles.mobileInfoValue, ...styles.mobileInfoValueTight }}>{formatNumber(totalInboundQty)}</strong>
               </div>
-              <div style={styles.mobileInfoRight}>
+              <div style={styles.mobileInfoMetric}>
                 <span style={{ ...styles.mobileInfoLabel, ...styles.mobileInfoLabelTight }}>Remaining Qty</span>
                 <strong style={{ ...styles.mobileInfoValue, ...styles.mobileInfoValueTight, ...remainingQtyStyle }}>{formatNumber(remainingQty)}</strong>
               </div>
@@ -3475,6 +4067,16 @@ export default function UnloadPage() {
             <h1 style={styles.title}>Sorting & Breakdown</h1>
           </div>
           <div style={styles.overviewActions}>
+            <button
+              type="button"
+              onClick={() => setShowPerformanceModal(true)}
+              style={styles.performanceButton}
+              aria-label="Show inbound performance"
+              title="Inbound performance"
+            >
+              <PerformanceIcon />
+              Performance
+            </button>
             {breakdownMode === 'model' ? (
               <button type="button" onClick={handlePrintUnloadDocument} style={styles.secondaryButton}>
                 Print
@@ -3549,27 +4151,114 @@ export default function UnloadPage() {
           </section>
 
           <section style={styles.breakdownColumn}>
-            <div style={styles.segmentWrap} aria-label="Breakdown view">
-              <button
-                type="button"
-                onClick={() => setBreakdownMode('koli')}
-                style={{
-                  ...styles.segmentButton,
-                  ...(breakdownMode === 'koli' ? styles.segmentButtonActive : {}),
-                }}
-              >
-                Koli
-              </button>
-              <button
-                type="button"
-                onClick={() => setBreakdownMode('model')}
-                style={{
-                  ...styles.segmentButton,
-                  ...(breakdownMode === 'model' ? styles.segmentButtonActive : {}),
-                }}
-              >
-                Model
-              </button>
+            <div style={styles.breakdownToolbar}>
+              <div style={styles.segmentWrap} aria-label="Breakdown view">
+                <button
+                  type="button"
+                  onClick={() => setBreakdownMode('koli')}
+                  style={{
+                    ...styles.segmentButton,
+                    ...(breakdownMode === 'koli' ? styles.segmentButtonActive : {}),
+                  }}
+                >
+                  Koli
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setBreakdownMode('model')}
+                  style={{
+                    ...styles.segmentButton,
+                    ...(breakdownMode === 'model' ? styles.segmentButtonActive : {}),
+                  }}
+                >
+                  Model
+                </button>
+              </div>
+
+              <div style={styles.breakdownFilters}>
+                <select
+                  value={breakdownFilters.brandId}
+                  onChange={(event) => updateBreakdownFilter('brandId', event.target.value)}
+                  style={styles.filterSelect}
+                  aria-label="Filter by brand"
+                >
+                  <option value="">All Brands</option>
+                  {sortedBrandFilterOptions.map((brand) => (
+                    <option key={brand.id} value={String(brand.id)}>
+                      {brand.brand_name || '-'}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  value={breakdownFilters.categoryId}
+                  onChange={(event) => updateBreakdownFilter('categoryId', event.target.value)}
+                  style={styles.filterSelect}
+                  aria-label="Filter by category"
+                >
+                  <option value="">All Categories</option>
+                  {sortedCategoryFilterOptions.map((category) => (
+                    <option key={category.id} value={String(category.id)}>
+                      {category.full_name || category.category_name || '-'}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  value={breakdownFilters.modelName}
+                  onChange={(event) => updateBreakdownFilter('modelName', event.target.value)}
+                  style={styles.filterSelect}
+                  aria-label="Filter by model"
+                >
+                  <option value="">All Models</option>
+                  {sortedModelFilterOptions.map((modelName) => (
+                    <option key={modelName} value={modelName}>
+                      {modelName}
+                    </option>
+                  ))}
+                </select>
+                <div style={styles.qtyFilterGroup}>
+                  <select
+                    value={breakdownFilters.qtyMode}
+                    onChange={(event) => {
+                      updateBreakdownFilter('qtyMode', event.target.value)
+                      if (!event.target.value) {
+                        updateBreakdownFilter('qtyValue', '')
+                      }
+                    }}
+                    style={styles.filterSelect}
+                    aria-label="Filter quantity comparison"
+                  >
+                    <option value="">Qty</option>
+                    <option value="lt">Less than</option>
+                    <option value="eq">Equal</option>
+                    <option value="gt">Greater than</option>
+                  </select>
+                  <input
+                    value={breakdownFilters.qtyValue}
+                    onChange={(event) => updateBreakdownFilter('qtyValue', event.target.value.replace(/[^\d]/g, ''))}
+                    disabled={!breakdownFilters.qtyMode}
+                    style={{
+                      ...styles.filterNumberInput,
+                      ...(!breakdownFilters.qtyMode ? styles.filterNumberInputDisabled : {}),
+                    }}
+                    inputMode="numeric"
+                    placeholder="0"
+                    aria-label="Filter quantity number"
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={resetBreakdownFilters}
+                  disabled={!hasBreakdownFilters}
+                  style={{
+                    ...styles.resetFilterButton,
+                    ...(!hasBreakdownFilters ? styles.resetFilterButtonDisabled : {}),
+                  }}
+                  aria-label="Reset filters"
+                  title="Reset filters"
+                >
+                  <ResetIcon />
+                </button>
+              </div>
             </div>
 
             {!selectedInbound ? (
@@ -3577,7 +4266,7 @@ export default function UnloadPage() {
                 <p style={styles.emptyText}>Choose a GRN number to see sorting data.</p>
               </div>
             ) : breakdownMode === 'koli' ? (
-              koliGroups.length || nonKoliGroups.length ? (
+              filteredKoliGroups.length || filteredNonKoliGroups.length ? (
                 <div style={styles.tableWrap}>
                   <table style={styles.table}>
                     <thead>
@@ -3591,7 +4280,7 @@ export default function UnloadPage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {koliGroups.map((group) => (
+                      {filteredKoliGroups.map((group) => (
                         <tr key={`koli-${group.koli_sequence}`}>
                           <td style={{ ...styles.td, ...styles.koliGroupTd, ...styles.koliCell }}>Koli {group.koli_sequence}</td>
                           <td style={{ ...styles.td, ...styles.koliGroupTd }}>
@@ -3622,7 +4311,12 @@ export default function UnloadPage() {
                             <div style={styles.tableLineStack}>
                               {group.items.map((row) => (
                                 <div key={`qty-${row.id}`} style={styles.tableQtyLine}>
-                                  <span style={styles.qtyPill}>{row.qty || 0}</span>
+                                  <span
+                                    style={{ ...styles.qtyPill, ...getQtyPillQcStyle(row) }}
+                                    title={getQcVarianceTitle(row)}
+                                  >
+                                    {row.qty || 0}
+                                  </span>
                                 </div>
                               ))}
                             </div>
@@ -3635,7 +4329,7 @@ export default function UnloadPage() {
                           </td>
                         </tr>
                       ))}
-                      {nonKoliGroups.map((group) => (
+                      {filteredNonKoliGroups.map((group) => (
                         <tr key={group.rowType}>
                           <td style={{ ...styles.td, ...styles.koliGroupTd, ...styles.koliCell }}>
                             {group.rowType === 'sample' ? <span style={styles.sampleBadge}>Sample</span> : <span style={styles.returnBadge}>Retur</span>}
@@ -3668,7 +4362,15 @@ export default function UnloadPage() {
                             <div style={styles.tableLineStack}>
                               {group.items.map((row) => (
                                 <div key={`${group.rowType}-qty-${row.id}`} style={styles.tableQtyLine}>
-                                  <span style={styles.qtyPill}>{row.qty || 0}</span>
+                                  <span
+                                    style={{
+                                      ...styles.qtyPill,
+                                      ...(group.rowType === 'sample' ? getQtyPillQcStyle(row) : {}),
+                                    }}
+                                    title={group.rowType === 'sample' ? getQcVarianceTitle(row) : undefined}
+                                  >
+                                    {row.qty || 0}
+                                  </span>
                                 </div>
                               ))}
                             </div>
@@ -3682,10 +4384,10 @@ export default function UnloadPage() {
                 </div>
               ) : (
                 <div style={styles.helperBox}>
-                  <p style={styles.emptyText}>No sorting rows yet.</p>
+                  <p style={styles.emptyText}>No sorting rows match the selected filters.</p>
                 </div>
               )
-            ) : modelGroups.length ? (
+            ) : filteredModelGroups.length ? (
               <div style={styles.tableWrap}>
                 <table style={styles.table}>
                   <thead>
@@ -3699,7 +4401,7 @@ export default function UnloadPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {modelGroups.map((group) => {
+                    {filteredModelGroups.map((group) => {
                       const brand = brands.find((item) => item.id === group.brand_id)
                       const category = categoryMaps.byId.get(group.category_id)
                       const variantName = getVariantNameForRow(group)
@@ -3722,7 +4424,7 @@ export default function UnloadPage() {
               </div>
             ) : (
               <div style={styles.helperBox}>
-                <p style={styles.emptyText}>No model rows yet.</p>
+                <p style={styles.emptyText}>No model rows match the selected filters.</p>
               </div>
             )}
           </section>
@@ -3837,7 +4539,16 @@ export default function UnloadPage() {
                   setSelectedVariantLabel('')
                   setShowBrandResults(true)
                 }}
-                onFocus={() => setShowBrandResults(true)}
+                onFocus={() => {
+                  setBrandSearch('')
+                  setSelectedBrandId('')
+                  setLevel0Id('')
+                  setLevel1Id('')
+                  setLevel2Id('')
+                  setSelectedModel(null)
+                  setSelectedVariantLabel('')
+                  setShowBrandResults(true)
+                }}
                 onBlur={() => {
                   window.setTimeout(() => setShowBrandResults(false), 120)
                 }}
@@ -4151,9 +4862,8 @@ export default function UnloadPage() {
 
 
       {showModelModal ? (
-        <div style={overlayStyle}>
-          <div style={modalStyle}>
-            {isBuilderMode ? <span style={styles.modalHandle} /> : null}
+        <div style={registryOverlayStyle}>
+          <div style={registryModalStyle}>
             <div style={styles.modalTitleRow}>
               <h2 style={{ ...styles.sectionTitle, ...styles.registryModalTitle }}>
                 {isEditingVariant ? 'Edit Variant' : 'Registry New Model-Variant'}
@@ -4481,17 +5191,19 @@ export default function UnloadPage() {
                                 <span style={styles.modelOptionMeta}>{variant.variant_notes}</span>
                               ) : null}
                               <div style={styles.modelOptionActions}>
-                                <button
-                                  type="button"
-                                  onClick={(event) => {
-                                    event.stopPropagation()
-                                    openVariantEditor(model, variant)
-                                  }}
-                                  onKeyDown={(event) => event.stopPropagation()}
-                                  style={styles.variantEditButton}
-                                >
-                                  Edit
-                                </button>
+                                {canRegistryModelVariant ? (
+                                  <button
+                                    type="button"
+                                    onClick={(event) => {
+                                      event.stopPropagation()
+                                      openVariantEditor(model, variant)
+                                    }}
+                                    onKeyDown={(event) => event.stopPropagation()}
+                                    style={styles.variantEditButton}
+                                  >
+                                    Edit
+                                  </button>
+                                ) : null}
                                 {isSelected ? (
                                   <span style={styles.selectedVariantBadge}>Selected</span>
                                 ) : (
@@ -4509,21 +5221,23 @@ export default function UnloadPage() {
             </div>
 
             <div style={styles.buttonRow}>
-              <button
-                type="button"
-                onClick={() => {
-                  setShowChooseModelModal(false)
-                  setShowModelModal(true)
-                  resetRegistryModal({
-                    ...createModelDraft(),
-                    is_new_model: filteredModelOptions.length === 0,
-                  })
-                  setModelModalError('')
-                }}
-                style={styles.secondaryButton}
-              >
-                Registry New Model
-              </button>
+              {canRegistryModelVariant ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowChooseModelModal(false)
+                    setShowModelModal(true)
+                    resetRegistryModal({
+                      ...createModelDraft(),
+                      is_new_model: filteredModelOptions.length === 0,
+                    })
+                    setModelModalError('')
+                  }}
+                  style={styles.secondaryButton}
+                >
+                  Registry New Model
+                </button>
+              ) : null}
               <button
                 type="button"
                 onClick={() => setShowChooseModelModal(false)}
@@ -4536,36 +5250,106 @@ export default function UnloadPage() {
         </div>
       ) : null}
 
-      {previewImage ? (
-        <div style={overlayStyle}>
-          <div style={modalStyle}>
-            {isBuilderMode ? <span style={styles.modalHandle} /> : null}
-            <div style={styles.header}>
+      {showPerformanceModal ? (
+        <div style={{ ...styles.overlay, ...styles.centeredOverlay }}>
+          <div style={{ ...styles.modal, ...styles.performanceModal }}>
+            <div style={styles.modalTitleRow}>
               <div>
-                <h2 style={styles.sectionTitle}>Model Photo Preview</h2>
-                <p style={styles.sectionSubtitle}>{previewImage.title}</p>
+                <h2 style={styles.sectionTitle}>Inbound Performance</h2>
+                <p style={styles.sectionSubtitle}>
+                  QC In variance by PIC against the stated intake qty.
+                </p>
               </div>
-              <button type="button" onClick={closeImagePreview} style={styles.secondaryButton}>
+              <button
+                type="button"
+                onClick={() => setShowPerformanceModal(false)}
+                style={styles.secondaryButton}
+              >
                 Close
               </button>
             </div>
 
+            <div style={styles.performanceSummaryGrid}>
+              <div style={styles.performanceMetric}>
+                <span style={styles.infoLabel}>Stated Intake Qty</span>
+                <strong style={styles.performanceMetricValue}>{formatNumber(performanceTotals.statedQty)}</strong>
+              </div>
+              <div style={styles.performanceMetric}>
+                <span style={styles.infoLabel}>QC In Qty</span>
+                <strong style={styles.performanceMetricValue}>{formatNumber(performanceTotals.qcQty)}</strong>
+              </div>
+              <div style={getPerformanceMetricStyle(performanceTotals.modelErrorQty)}>
+                <span style={styles.infoLabel}>Model Error</span>
+                <strong style={styles.performanceMetricValue}>{formatNumber(performanceTotals.modelErrorQty)}</strong>
+              </div>
+              <div style={getPerformanceMetricStyle(performanceTotals.variance)}>
+                <span style={styles.infoLabel}>Total Error</span>
+                <strong style={styles.performanceMetricValue}>{formatSignedQty(performanceTotals.variance)}</strong>
+              </div>
+            </div>
+
+            {performanceRows.length ? (
+              <div style={styles.tableWrap}>
+                <table style={styles.table}>
+                  <thead>
+                    <tr>
+                      <th style={styles.th}>PIC</th>
+                      <th style={{ ...styles.th, ...styles.centerHeader }}>Stated Qty</th>
+                      <th style={{ ...styles.th, ...styles.centerHeader }}>QC In Qty</th>
+                      <th style={{ ...styles.th, ...styles.centerHeader }}>Model Error</th>
+                      <th style={{ ...styles.th, ...styles.centerHeader }}>Error</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {performanceRows.map((row) => (
+                      <tr key={row.picName}>
+                        <td style={styles.td}>
+                          <strong>{row.picName}</strong>
+                        </td>
+                        <td style={{ ...styles.td, ...styles.middleCenterCell }}>{formatNumber(row.statedQty)}</td>
+                        <td style={{ ...styles.td, ...styles.middleCenterCell }}>{formatNumber(row.qcQty)}</td>
+                        <td style={{ ...styles.td, ...styles.middleCenterCell }}>
+                          <span style={row.modelErrorQty > 0 ? getVarianceBadgeStyle(row.modelErrorQty) : styles.performanceBadge}>
+                            {formatNumber(row.modelErrorQty)}
+                          </span>
+                        </td>
+                        <td style={{ ...styles.td, ...styles.middleCenterCell }}>
+                          <span style={getVarianceBadgeStyle(row.variance)}>{formatSignedQty(row.variance)}</span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div style={styles.helperBox}>
+                <p style={styles.emptyText}>No posted Koli rows yet.</p>
+              </div>
+            )}
+          </div>
+        </div>
+      ) : null}
+
+      {previewImage ? (
+        <div style={styles.photoPreviewOverlay}>
+          <div style={styles.photoPreviewWrap}>
             <Image
               src={previewImage.src}
               alt={previewImage.title}
-              width={520}
-              height={520}
+              width={1000}
+              height={1000}
               unoptimized
-              style={{
-                width: '100%',
-                height: 'auto',
-                maxHeight: '70vh',
-                objectFit: 'contain',
-                borderRadius: '12px',
-                border: '1px solid #e5e7eb',
-                background: '#fff',
-              }}
+              style={styles.photoPreviewImage}
             />
+            <button
+              type="button"
+              onClick={closeImagePreview}
+              style={styles.photoPreviewClose}
+              aria-label="Close preview"
+              title="Close preview"
+            >
+              x
+            </button>
           </div>
         </div>
       ) : null}

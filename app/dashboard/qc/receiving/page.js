@@ -2,8 +2,9 @@
 
 import Image from 'next/image'
 import { usePathname } from 'next/navigation'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { createClient } from '@/utils/supabase/browser'
+import { ADMIN_EMAIL } from '@/utils/permissions'
 import { readFileAsDataUrl } from '../shared'
 
 const supabase = createClient()
@@ -46,6 +47,161 @@ function getDateOnly(value) {
   return `${values.year}-${values.month}-${values.day}`
 }
 
+function formatVariantValue(value) {
+  if (Array.isArray(value)) {
+    return value.map((item) => String(item || '').trim()).filter(Boolean).join(', ')
+  }
+
+  if (value && typeof value === 'object') {
+    return Object.values(value).map((item) => String(item || '').trim()).filter(Boolean).join(', ')
+  }
+
+  return String(value || '').trim()
+}
+
+function getRegularVariantLabel(row = {}) {
+  return (
+    formatVariantValue(row.variant_names) ||
+    formatVariantValue(row.variant_name) ||
+    formatVariantValue(row.variant_label) ||
+    formatVariantValue(row.variant_code) ||
+    formatVariantValue(row.model_color) ||
+    ''
+  )
+}
+
+function getCatalogVariantLabel(variant = {}) {
+  return (
+    formatVariantValue(variant.variant_name) ||
+    formatVariantValue(variant.variant_label) ||
+    formatVariantValue(variant.variant_code) ||
+    'VARIANT'
+  )
+}
+
+function getRegularBrandLabel(row = {}) {
+  return String(row.brand_name || row.brands?.brand_name || row.brand || '').trim().toUpperCase()
+}
+
+function getRegularCategoryLabel(row = {}) {
+  return String(
+    row.item_type_sub_category ||
+      row.sub_category_name ||
+      row.category_name ||
+      row.categories?.full_name ||
+      row.categories?.category_name ||
+      row.category ||
+      ''
+  )
+    .trim()
+    .toUpperCase()
+}
+
+function getRegularModelVariantLabel(row = {}) {
+  const modelName = String(row.model_name || '').trim().toUpperCase()
+  const variantName = String(row.model_color || getRegularVariantLabel(row) || '').trim().toUpperCase()
+  if (!modelName && !variantName) return 'Choose model'
+  if (!variantName) return modelName
+  if (!modelName) return variantName
+  return `${modelName} - ${variantName}`
+}
+
+function getRegularModelName(row = {}) {
+  return String(row.model_name || '').trim().toUpperCase() || 'CHOOSE MODEL'
+}
+
+function getRegularVariantName(row = {}) {
+  return String(row.model_color || getRegularVariantLabel(row) || '').trim().toUpperCase() || 'NO VARIANT'
+}
+
+function getCategoryPath(categoryId, categoryMap) {
+  const path = []
+  let current = categoryMap.get(Number(categoryId))
+
+  while (current) {
+    path.unshift(current)
+    current = current.parent_id ? categoryMap.get(Number(current.parent_id)) : null
+  }
+
+  return path
+}
+
+function getItemTypeSubcategoryLabel(categoryId, categoryMap, fallback = '') {
+  const path = getCategoryPath(categoryId, categoryMap)
+  const itemType = path[path.length - 1] || null
+  const subCategory = path.length > 1 ? path[path.length - 2] : null
+
+  if (itemType && subCategory) {
+    return `${itemType.category_name || ''} ${subCategory.category_name || ''}`.trim().toUpperCase()
+  }
+
+  return String(itemType?.category_name || fallback || '').trim().toUpperCase()
+}
+
+function getRegularProductIdentityLabel(row = {}) {
+  return [row.brand_name, row.category_name].map((item) => String(item || '').trim()).filter(Boolean).join(' ') || 'NO PRODUCT IDENTITY'
+}
+
+function normalizeInboundUnloadRow(row = {}) {
+  return {
+    ...row,
+    brand_name: getRegularBrandLabel(row),
+    category_name: getRegularCategoryLabel(row),
+    model_color: getRegularVariantLabel(row).trim().toUpperCase(),
+  }
+}
+
+function normalizeQcItemRow(row = {}) {
+  return {
+    ...row,
+    model_color: String(row.variant_name || row.model_color || '').trim().toUpperCase(),
+    original_model_color: String(row.original_variant_name || row.original_model_color || '').trim().toUpperCase(),
+  }
+}
+
+function getExpectedRowKey(row = {}) {
+  const baseKey = getModelKey(row.model_name, row.model_color)
+  return row.model_color ? baseKey : `${baseKey}::SOURCE:${row.id || row.source_id || ''}`
+}
+
+async function loadInboundUnloadRows(inboundId) {
+  const coreSelect = 'id, inbound_id, brand_id, category_id, model_name, qty, pic_name, is_sample, koli_sequence, photo_url'
+  const relationSelect = `${coreSelect}, brands:dir_brands!brand_id(id, brand_name), categories:dir_categories!category_id(id, category_name, full_name)`
+  const selectCandidates = [
+    `${relationSelect}, variant_name`,
+    relationSelect,
+    `${coreSelect}, variant_name`,
+    coreSelect,
+    `${relationSelect}, variant_names, variant_name, variant_label, variant_code`,
+    `${relationSelect}, variant_name, variant_label, variant_code`,
+    `${relationSelect}, variant_names, variant_name`,
+    `${relationSelect}, variant_names`,
+    `${relationSelect}, variant_label, variant_code`,
+    `${coreSelect}, variant_names, variant_name, variant_label, variant_code`,
+    `${coreSelect}, variant_name, variant_label, variant_code`,
+    `${coreSelect}, variant_names, variant_name`,
+    `${coreSelect}, variant_names`,
+    `${coreSelect}, variant_label, variant_code`,
+  ]
+  let lastError = null
+
+  for (const selectClause of selectCandidates) {
+    const result = await supabase
+      .from('inbound_unload')
+      .select(selectClause)
+      .eq('inbound_id', inboundId)
+      .order('koli_sequence', { ascending: true })
+
+    if (!result.error) {
+      return { data: (result.data || []).map(normalizeInboundUnloadRow), error: null }
+    }
+
+    lastError = result.error
+  }
+
+  return { data: [], error: lastError }
+}
+
 const styles = {
   wrapper: {
     display: 'flex',
@@ -55,7 +211,7 @@ const styles = {
   card: {
     background: '#fff',
     border: '1px solid #e5e7eb',
-    borderRadius: '18px',
+    borderRadius: '12px',
     padding: '18px',
     display: 'flex',
     flexDirection: 'column',
@@ -326,40 +482,82 @@ const styles = {
   },
   sourceList: {
     display: 'flex',
-    flexWrap: 'wrap',
-    gap: '8px',
+    flexWrap: 'nowrap',
+    gap: '14px',
+    overflowX: 'auto',
+    padding: '0 4px 0 0',
+    borderBottomWidth: '1px',
+    borderBottomStyle: 'solid',
+    borderBottomColor: '#e5e7eb',
+    scrollbarWidth: 'thin',
+    WebkitOverflowScrolling: 'touch',
+  },
+  sourceListWrap: {
+    position: 'relative',
+  },
+  sourceListArrow: {
+    position: 'absolute',
+    top: 0,
+    bottom: '1px',
+    width: '32px',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    pointerEvents: 'none',
+    color: '#64748b',
+    fontSize: '20px',
+    fontWeight: '800',
+  },
+  sourceListArrowLeft: {
+    left: 0,
+    background: 'linear-gradient(90deg, #ffffff 42%, rgba(255,255,255,0))',
+  },
+  sourceListArrowRight: {
+    right: 0,
+    background: 'linear-gradient(90deg, rgba(255,255,255,0), #ffffff 58%)',
   },
   sourceChip: {
+    position: 'relative',
+    flex: '0 0 auto',
     minHeight: '34px',
-    padding: '0 12px',
-    borderRadius: '999px',
-    borderWidth: '1px',
-    borderStyle: 'solid',
-    borderColor: '#d1d5db',
-    background: '#fff',
-    color: '#111827',
-    fontSize: '12px',
+    padding: '0 0 7px',
+    borderTopWidth: 0,
+    borderRightWidth: 0,
+    borderLeftWidth: 0,
+    borderBottomWidth: '3px',
+    borderTopStyle: 'solid',
+    borderRightStyle: 'solid',
+    borderBottomStyle: 'solid',
+    borderLeftStyle: 'solid',
+    borderTopColor: 'transparent',
+    borderRightColor: 'transparent',
+    borderBottomColor: 'transparent',
+    borderLeftColor: 'transparent',
+    background: 'transparent',
+    color: '#8a817a',
+    fontSize: '13px',
     fontWeight: '700',
     cursor: 'pointer',
   },
   sourceChipActive: {
-    background: '#111827',
-    borderColor: '#111827',
-    color: '#fff',
+    borderBottomColor: '#f59e0b',
+    color: '#9a3412',
+    fontWeight: '800',
   },
   sourceChipDone: {
-    background: '#dcfce7',
-    borderColor: '#86efac',
-    color: '#166534',
+    background: 'transparent',
+    borderBottomColor: 'transparent',
+    color: '#64748b',
   },
   sourceChipDoneActive: {
-    background: '#16a34a',
-    borderColor: '#16a34a',
-    color: '#fff',
+    background: 'transparent',
+    borderBottomColor: '#f59e0b',
+    color: '#9a3412',
+    fontWeight: '800',
   },
   sourceChipDisabled: {
-    background: '#f3f4f6',
-    borderColor: '#e5e7eb',
+    background: 'transparent',
+    borderBottomColor: 'transparent',
     color: '#9ca3af',
     cursor: 'not-allowed',
   },
@@ -378,6 +576,7 @@ const styles = {
     flexWrap: 'wrap',
   },
   modelRow: {
+    position: 'relative',
     display: 'flex',
     flexDirection: 'column',
     gap: '12px',
@@ -388,9 +587,19 @@ const styles = {
   },
   modelRowTop: {
     display: 'grid',
-    gridTemplateColumns: '96px 1.4fr 0.9fr 0.9fr auto',
-    gap: '12px',
+    gridTemplateColumns: '96px 1.4fr 1fr',
+    columnGap: '20px',
+    rowGap: '12px',
     alignItems: 'center',
+    paddingRight: '76px',
+  },
+  modelRowActions: {
+    position: 'absolute',
+    top: '12px',
+    right: '12px',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
   },
   allocationWrap: {
     display: 'flex',
@@ -420,6 +629,14 @@ const styles = {
     fontSize: '12px',
     fontWeight: '700',
   },
+  thumbButton: {
+    width: '84px',
+    height: '84px',
+    border: 'none',
+    background: 'transparent',
+    padding: 0,
+    cursor: 'pointer',
+  },
   modelMeta: {
     display: 'flex',
     flexDirection: 'column',
@@ -429,6 +646,29 @@ const styles = {
     fontWeight: '700',
     color: '#111827',
     fontSize: '15px',
+  },
+  modelVariantLine: {
+    margin: 0,
+    color: '#111827',
+    fontSize: '15px',
+    fontWeight: '800',
+    lineHeight: 1.4,
+  },
+  variantBadge: {
+    alignSelf: 'flex-start',
+    padding: '3px 8px',
+    borderRadius: '7px',
+    border: '1px solid #e5e7eb',
+    background: '#f9fafb',
+    color: '#8a817a',
+    fontSize: '11px',
+    fontWeight: '800',
+    letterSpacing: '0.04em',
+  },
+  qtyPair: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+    gap: '10px',
   },
   infoText: {
     margin: 0,
@@ -479,7 +719,7 @@ const styles = {
   },
   modalGrid: {
     display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))',
+    gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))',
     gap: '12px',
   },
   modelCardButton: {
@@ -493,6 +733,44 @@ const styles = {
     cursor: 'pointer',
     textAlign: 'left',
   },
+  photoPreviewOverlay: {
+    position: 'fixed',
+    inset: 0,
+    zIndex: 60,
+    background: 'rgba(17, 24, 39, 0.72)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: '24px',
+  },
+  photoPreviewWrap: {
+    position: 'relative',
+    display: 'inline-flex',
+  },
+  photoPreviewImage: {
+    maxWidth: 'calc(100vw - 48px)',
+    maxHeight: 'calc(100vh - 48px)',
+    width: 'auto',
+    height: 'auto',
+    objectFit: 'contain',
+  },
+  photoPreviewClose: {
+    position: 'absolute',
+    top: '8px',
+    right: '8px',
+    width: '32px',
+    height: '32px',
+    border: 'none',
+    borderRadius: '999px',
+    background: 'rgba(17, 24, 39, 0.72)',
+    color: '#fff',
+    fontSize: '18px',
+    fontWeight: '800',
+    cursor: 'pointer',
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
 }
 
 function createDefaultModelRow(expectedRow) {
@@ -502,6 +780,12 @@ function createDefaultModelRow(expectedRow) {
     model_id: '',
     model_name: expectedRow.model_name || '',
     model_color: expectedRow.model_color || '',
+    original_model_name: expectedRow.model_name || '',
+    original_model_color: expectedRow.model_color || '',
+    brand_name: expectedRow.brand_name || '',
+    category_name: expectedRow.category_name || '',
+    pic_name: expectedRow.pic_name || '',
+    model_replaced: false,
     qty_in: Number(expectedRow.qty || 0),
     qty_qc: String(expectedRow.qty || 0),
     photo_url: expectedRow.photo_url || '',
@@ -684,22 +968,6 @@ function getArklineProductLabel(product) {
   return product.model_name || ''
 }
 
-function getTaskKey(values) {
-  return `${String(values.assigned_to || values.member_email || '').trim().toLowerCase()}::${getModelKey(
-    values.model_name,
-    values.model_color
-  )}`
-}
-
-function getArklineTaskKey(values) {
-  return [
-    String(values.assigned_to || values.member_email || '').trim().toLowerCase(),
-    String(values.po_id || '').trim().toUpperCase(),
-    String(values.arkline_po_item_id || '').trim(),
-    String(values.sku_induk || '').trim().toUpperCase(),
-  ].join('::')
-}
-
 function hydrateArklinePlanRows(rows, fallbackColor) {
   return (rows || []).map((item) => ({
     ...item,
@@ -751,7 +1019,7 @@ function buildArklineProductRows(baseRows, existingPlanRows) {
           locked_qty: Number(planRow.locked_qty || 0),
         },
       ]
-    } else if (planRow.status === 'in_progress' || planRow.status === 'paused') {
+    } else {
       existingRow.startedAllocations = [
         ...(existingRow.startedAllocations || []),
         {
@@ -771,18 +1039,45 @@ function buildArklineProductRows(baseRows, existingPlanRows) {
   return Array.from(rowMap.values()).sort((a, b) => getModelKey(a.model_name, a.model_color).localeCompare(getModelKey(b.model_name, b.model_color)))
 }
 
-function getSourceStatus(source, qcItems) {
+function getSourceTasks(source, qcItems) {
   if (!source?.sourceId) {
-    return 'idle'
+    return []
   }
 
-  const sourceTasks = (qcItems || []).filter((item) => Number(item.inbound_unload_id) === Number(source.sourceId))
+  const sourceRowIds = new Set((source.rows || []).map((row) => Number(row.id)).filter(Boolean))
+  sourceRowIds.add(Number(source.sourceId))
+  return (qcItems || []).filter((item) => sourceRowIds.has(Number(item.inbound_unload_id)))
+}
+
+function getSourceAllocationCoverage(source, qcItems) {
+  const sourceTasks = getSourceTasks(source, qcItems)
+  const plannedQtyByProduct = new Map()
+
+  sourceTasks.forEach((item) => {
+    const identityKey = [
+      Number(item.inbound_unload_id || 0),
+      getModelKey(item.model_name, item.model_color || item.variant_name),
+    ].join('::')
+    plannedQtyByProduct.set(identityKey, Math.max(Number(plannedQtyByProduct.get(identityKey) || 0), Number(item.qty_in || 0)))
+  })
+
+  return {
+    sourceTasks,
+    allocatedQty: sourceTasks.reduce((sum, item) => sum + Number(item.allocated_qty || 0), 0),
+    plannedQty: Array.from(plannedQtyByProduct.values()).reduce((sum, qty) => sum + Number(qty || 0), 0),
+  }
+}
+
+function getSourceStatus(source, qcItems) {
+  const { sourceTasks, allocatedQty, plannedQty } = getSourceAllocationCoverage(source, qcItems)
 
   if (!sourceTasks.length) {
     return 'idle'
   }
 
-  if (sourceTasks.every((item) => item.status === 'done')) {
+  const isFullyAllocated = plannedQty > 0 && allocatedQty >= plannedQty
+
+  if (isFullyAllocated && sourceTasks.every((item) => item.status === 'done')) {
     return 'completed'
   }
 
@@ -800,15 +1095,23 @@ function buildModelRowsForSource(source, unloadRows, qcItems) {
 
   const rowMap = new Map()
   const expectedRows = source.rows || []
-  const existingPlanRows = (qcItems || []).filter((item) => item.inbound_unload_id === source.sourceId)
+  const sourceRowIds = new Set(expectedRows.map((row) => Number(row.id)).filter(Boolean))
+  sourceRowIds.add(Number(source.sourceId))
+  const existingPlanRows = (qcItems || []).filter((item) => sourceRowIds.has(Number(item.inbound_unload_id)))
+  const savedSourceRowIds = new Set(existingPlanRows.map((row) => Number(row.inbound_unload_id || 0)).filter(Boolean))
 
   expectedRows.forEach((row) => {
-    const key = getModelKey(row.model_name, row.model_color)
+    if (savedSourceRowIds.has(Number(row.id || 0))) {
+      return
+    }
+
+    const key = getExpectedRowKey(row)
     const existingRow = rowMap.get(key) || {
       ...createDefaultModelRow(row),
       id: `expected-${source.sourceId}-${key}`,
       qty_in: 0,
       qty_qc: String(row.qty || 0),
+      has_saved_qc_in: false,
       allocations: [],
     }
 
@@ -819,36 +1122,82 @@ function buildModelRowsForSource(source, unloadRows, qcItems) {
   })
 
   existingPlanRows.forEach((planRow) => {
-    const key = getModelKey(planRow.model_name, planRow.model_color)
+    const planModelKey = getModelKey(planRow.model_name, planRow.model_color)
+    const exactExpectedRow = expectedRows.find((row) => Number(row.id) === Number(planRow.inbound_unload_id)) || null
+    const modelExpectedRow = expectedRows.find((row) => getModelKey(row.model_name, row.model_color) === planModelKey) || null
+    const isExactSameModel =
+      exactExpectedRow && getModelKey(exactExpectedRow.model_name, exactExpectedRow.model_color) === planModelKey
+    const matchingExpectedRow =
+      isExactSameModel
+        ? exactExpectedRow
+        : planRow.model_replaced
+          ? exactExpectedRow || null
+          : modelExpectedRow || exactExpectedRow || null
+    const key = isExactSameModel
+      ? getExpectedRowKey(exactExpectedRow)
+      : `saved:${Number(planRow.inbound_unload_id || 0)}:${planModelKey}`
     const existingRow =
       rowMap.get(key) ||
       {
         id: `saved-${planRow.id}`,
-        source_id: source.sourceId,
-        model_id: '',
+        source_id: matchingExpectedRow?.id || planRow.inbound_unload_id || source.sourceId,
+        model_id: planRow.product_model_id ? String(planRow.product_model_id) : '',
+        product_model_variant_id: planRow.product_model_variant_id || null,
         model_name: planRow.model_name || '',
         model_color: planRow.model_color || '',
-        qty_in: 0,
+        original_model_name: planRow.original_model_name || matchingExpectedRow?.model_name || planRow.model_name || '',
+        original_model_color: planRow.original_model_color || matchingExpectedRow?.model_color || planRow.model_color || '',
+        brand_name: matchingExpectedRow?.brand_name || planRow.brand_name || '',
+        category_name: matchingExpectedRow?.category_name || planRow.category_name || '',
+        pic_name: matchingExpectedRow?.pic_name || planRow.pic_name || '',
+        model_replaced: Boolean(planRow.model_replaced),
+        qty_in: Number(matchingExpectedRow?.qty || 0),
         qty_qc: String(planRow.qty_in || 0),
-        photo_url: planRow.photo_url || '',
+        has_saved_qc_in: true,
+        photo_url: planRow.photo_url || matchingExpectedRow?.photo_url || '',
         allocations: [],
+        startedAllocations: [],
       }
 
-    existingRow.model_name = existingRow.model_name || planRow.model_name || ''
-    existingRow.model_color = existingRow.model_color || planRow.model_color || ''
-    existingRow.photo_url = existingRow.photo_url || planRow.photo_url || ''
-    existingRow.qty_qc = String(Math.max(Number(existingRow.qty_qc || 0), Number(planRow.qty_in || 0)))
-    existingRow.allocations = [
-      ...(existingRow.allocations || []),
-      {
-        id: `alloc-saved-${planRow.id}`,
-        task_id: planRow.id,
-        member_email: planRow.assigned_to || '',
-        qty: String(planRow.allocated_qty || 0),
-        existing_status: planRow.status || 'queued',
-        locked_qty: Number(planRow.locked_qty || 0),
-      },
-    ]
+    existingRow.model_id = existingRow.model_id || (planRow.product_model_id ? String(planRow.product_model_id) : '')
+    existingRow.product_model_variant_id = existingRow.product_model_variant_id || planRow.product_model_variant_id || null
+    existingRow.model_name = planRow.model_name || existingRow.model_name || ''
+    existingRow.model_color = planRow.model_color || existingRow.model_color || ''
+    existingRow.original_model_name =
+      planRow.original_model_name || existingRow.original_model_name || matchingExpectedRow?.model_name || planRow.model_name || ''
+    existingRow.original_model_color =
+      planRow.original_model_color || existingRow.original_model_color || matchingExpectedRow?.model_color || planRow.model_color || ''
+    existingRow.model_replaced = Boolean(existingRow.model_replaced || planRow.model_replaced)
+    existingRow.photo_url = planRow.photo_url || existingRow.photo_url || matchingExpectedRow?.photo_url || ''
+    existingRow.qty_qc = existingRow.has_saved_qc_in
+      ? String(Math.max(Number(existingRow.qty_qc || 0), Number(planRow.qty_in || 0)))
+      : String(Number(planRow.qty_in || 0))
+    existingRow.has_saved_qc_in = true
+    if (planRow.status === 'queued') {
+      existingRow.allocations = [
+        ...(existingRow.allocations || []),
+        {
+          id: `alloc-saved-${planRow.id}`,
+          task_id: planRow.id,
+          member_email: planRow.assigned_to || '',
+          qty: String(planRow.allocated_qty || 0),
+          existing_status: planRow.status || 'queued',
+          locked_qty: Number(planRow.locked_qty || 0),
+        },
+      ]
+    } else {
+      existingRow.startedAllocations = [
+        ...(existingRow.startedAllocations || []),
+        {
+          id: `alloc-started-${planRow.id}`,
+          task_id: planRow.id,
+          member_email: planRow.assigned_to || '',
+          qty: String(planRow.allocated_qty || 0),
+          existing_status: planRow.status || 'queued',
+          locked_qty: Number(planRow.locked_qty || 0),
+        },
+      ]
+    }
 
     rowMap.set(key, existingRow)
   })
@@ -858,10 +1207,14 @@ function buildModelRowsForSource(source, unloadRows, qcItems) {
 
 export default function QcReceivingPage() {
   const pathname = usePathname()
+  const sourceListRef = useRef(null)
   const [viewportWidth, setViewportWidth] = useState(1280)
   const [inbounds, setInbounds] = useState([])
   const [unloadRows, setUnloadRows] = useState([])
+  const [brands, setBrands] = useState([])
+  const [categories, setCategories] = useState([])
   const [productModels, setProductModels] = useState([])
+  const [productModelVariants, setProductModelVariants] = useState([])
   const [arklineProducts, setArklineProducts] = useState([])
   const [arklinePurchaseOrders, setArklinePurchaseOrders] = useState([])
   const [arklinePoItems, setArklinePoItems] = useState([])
@@ -893,6 +1246,13 @@ export default function QcReceivingPage() {
   const [activeModelRowId, setActiveModelRowId] = useState('')
   const [modelSearch, setModelSearch] = useState('')
   const [modelModalError, setModelModalError] = useState('')
+  const [sourceLoading, setSourceLoading] = useState(false)
+  const [sourceScrollState, setSourceScrollState] = useState({
+    hasOverflow: false,
+    canScrollLeft: false,
+    canScrollRight: false,
+  })
+  const [previewPhoto, setPreviewPhoto] = useState(null)
   const [modelDraft, setModelDraft] = useState({
     model_name: '',
     model_color: '',
@@ -926,7 +1286,10 @@ export default function QcReceivingPage() {
 
       const [
         { data: inboundRows, error: inboundError },
+        { data: brandRows, error: brandError },
+        { data: categoryRows, error: categoryError },
         { data: modelRows, error: modelError },
+        { data: productVariantRows },
         { data: qcRows, error: qcError },
         { data: arklineQcRows, error: arklineQcError },
         { data: reworkReceiptRows, error: reworkReceiptError },
@@ -939,10 +1302,23 @@ export default function QcReceivingPage() {
           .select('id, grn_number, inbound_date, item_name, suppliers:dir_suppliers!supplier_id (supplier_name)')
           .order('created_at', { ascending: false }),
         supabase
+          .from('dir_brands')
+          .select('id, brand_name')
+          .order('brand_name', { ascending: true }),
+        supabase
+          .from('dir_categories')
+          .select('id, category_name, parent_id, full_name')
+          .order('category_name', { ascending: true }),
+        supabase
           .from('dir_product_models')
-          .select('id, model_name')
+          .select('id, brand_id, category_id, model_name')
           .eq('is_active', true)
           .order('model_name', { ascending: true }),
+        supabase
+          .from('dir_product_model_variants')
+          .select('*')
+          .eq('is_active', true)
+          .order('variant_code', { ascending: true }),
         supabase
           .from('qc_items')
           .select('*')
@@ -969,6 +1345,8 @@ export default function QcReceivingPage() {
 
       if (
         inboundError ||
+        brandError ||
+        categoryError ||
         modelError ||
         qcError ||
         arklineQcError ||
@@ -979,6 +1357,8 @@ export default function QcReceivingPage() {
       ) {
         setError(
           inboundError?.message ||
+            brandError?.message ||
+            categoryError?.message ||
             modelError?.message ||
             qcError?.message ||
             arklineQcError?.message ||
@@ -995,14 +1375,17 @@ export default function QcReceivingPage() {
       const allowedRoles = new Set((rolePermissionRows || []).map((item) => item.role))
       const eligibleMembers = (memberRows || []).filter(
         (item) =>
-          allowedRoles.has(item.role) &&
+          (allowedRoles.has(item.role) || item.role === 'admin' || String(item.email || '').trim().toLowerCase() === ADMIN_EMAIL) &&
           item.is_qc_active === true &&
           getDateOnly(item.qc_active_date) === today
       )
 
       setInbounds(inboundRows || [])
+      setBrands(brandRows || [])
+      setCategories(categoryRows || [])
       setProductModels(modelRows || [])
-      setQcItems(qcRows || [])
+      setProductModelVariants(productVariantRows || [])
+      setQcItems((qcRows || []).map(normalizeQcItemRow))
       setArklineQcItems(arklineQcRows || [])
       setArklineReworkReceipts(reworkReceiptRows || [])
       setArklineReturnBatches(returnBatchRows || [])
@@ -1019,32 +1402,45 @@ export default function QcReceivingPage() {
   useEffect(() => {
     async function loadUnloadRows() {
       if (!selectedInboundId) {
+        setSourceLoading(false)
         setUnloadRows([])
         setSelectedSourceKey('')
         return
       }
 
-      const { data, error: unloadError } = await supabase
-        .from('inbound_unload')
-        .select('id, inbound_id, model_name, model_color, qty, pic_name, is_sample, koli_sequence, photo_url')
-        .eq('inbound_id', selectedInboundId)
-        .order('koli_sequence', { ascending: true })
+      setSourceLoading(true)
+      const { data, error: unloadError } = await loadInboundUnloadRows(selectedInboundId)
 
       if (unloadError) {
         setError(unloadError.message)
+        setSourceLoading(false)
         return
       }
 
-      setUnloadRows(data || [])
+      const brandMap = new Map((brands || []).map((brand) => [Number(brand.id), String(brand.brand_name || '').trim().toUpperCase()]))
+      const categoryMap = new Map(
+        (categories || []).map((category) => [
+          Number(category.id),
+          category,
+        ])
+      )
+      setUnloadRows(
+        (data || []).map((row) => ({
+          ...row,
+          brand_name: row.brand_name || brandMap.get(Number(row.brand_id)) || '',
+          category_name: getItemTypeSubcategoryLabel(row.category_id, categoryMap, row.category_name),
+        }))
+      )
+      setSourceLoading(false)
     }
 
     loadUnloadRows()
-  }, [selectedInboundId])
+  }, [brands, categories, selectedInboundId])
 
   const isMobileApp = pathname?.startsWith('/mobile/')
   const isMobileLayout = isMobileApp || viewportWidth <= 820
   const isTabletLayout = isMobileApp || viewportWidth <= 1120
-  const shellCardStyle = isMobileLayout ? { ...styles.card, padding: '14px', borderRadius: '16px' } : styles.card
+  const shellCardStyle = isMobileLayout ? { ...styles.card, padding: '14px', borderRadius: '12px' } : styles.card
   const headerStyle = isMobileLayout
     ? { ...styles.header, flexDirection: 'column', alignItems: 'stretch', gap: '12px' }
     : styles.header
@@ -1052,7 +1448,7 @@ export default function QcReceivingPage() {
     ? { display: 'grid', gridTemplateColumns: '1fr', gap: '12px' }
     : isTabletLayout
       ? { display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '12px' }
-      : styles.grid
+      : { ...styles.grid, gridTemplateColumns: 'repeat(2, minmax(0, 1fr))' }
   const arklineChoiceGridStyle = isMobileLayout
     ? { display: 'grid', gridTemplateColumns: '1fr', gap: '12px' }
     : { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '16px' }
@@ -1069,9 +1465,6 @@ export default function QcReceivingPage() {
   const allocationGridStyle = isMobileLayout
     ? { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 72px 68px', gap: '6px', alignItems: 'center' }
     : { display: 'grid', gridTemplateColumns: '140px 78px 68px', gap: '6px', alignItems: 'center' }
-  const summaryGridStyle = isMobileLayout
-    ? { ...styles.summaryGrid, gridTemplateColumns: 'repeat(2, minmax(0, 1fr))' }
-    : styles.summaryGrid
   const arklineSummaryGridStyle = isMobileLayout
     ? { ...styles.summaryGrid, gridTemplateColumns: 'repeat(2, minmax(0, 1fr))' }
     : { ...styles.summaryGrid, gridTemplateColumns: 'repeat(3, minmax(0, 1fr))' }
@@ -1115,8 +1508,7 @@ export default function QcReceivingPage() {
       groupedKoli.get(key).rows.push(row)
     })
 
-    const result = Array.from(groupedKoli.values()).sort((a, b) => a.label.localeCompare(b.label, undefined, { numeric: true }))
-
+    const result = []
     if (sampleRows.length) {
       result.push({
         key: 'sample',
@@ -1127,11 +1519,51 @@ export default function QcReceivingPage() {
       })
     }
 
+    result.push(...Array.from(groupedKoli.values()).sort((a, b) => a.label.localeCompare(b.label, undefined, { numeric: true })))
+
     return result
   }, [unloadRows])
   const selectedSource = sourceOptions.find((item) => item.key === selectedSourceKey) || null
-  const selectedSourceRows = selectedSource?.rows || []
   const selectedSourceId = selectedSource?.sourceId || null
+
+  useEffect(() => {
+    function updateSourceScrollState() {
+      const element = sourceListRef.current
+
+      if (!element) {
+        setSourceScrollState({
+          hasOverflow: false,
+          canScrollLeft: false,
+          canScrollRight: false,
+        })
+        return
+      }
+
+      const maxScrollLeft = Math.max(0, element.scrollWidth - element.clientWidth)
+      const nextState = {
+        hasOverflow: maxScrollLeft > 1,
+        canScrollLeft: element.scrollLeft > 1,
+        canScrollRight: element.scrollLeft < maxScrollLeft - 1,
+      }
+
+      setSourceScrollState((current) =>
+        current.hasOverflow === nextState.hasOverflow &&
+        current.canScrollLeft === nextState.canScrollLeft &&
+        current.canScrollRight === nextState.canScrollRight
+          ? current
+          : nextState
+      )
+    }
+
+    const frame = window.requestAnimationFrame(updateSourceScrollState)
+    window.addEventListener('resize', updateSourceScrollState)
+
+    return () => {
+      window.cancelAnimationFrame(frame)
+      window.removeEventListener('resize', updateSourceScrollState)
+    }
+  }, [selectedInboundId, selectedSourceKey, sourceOptions.length, viewportWidth])
+
   const arklineProductsById = useMemo(
     () =>
       arklineProducts.reduce((result, item) => {
@@ -1284,11 +1716,78 @@ export default function QcReceivingPage() {
       (row.allocations || []).reduce((allocationSum, split) => allocationSum + Number(split.qty || 0), 0),
     0
   )
-  const modelOptions = productModels.filter((item) => {
-    if (!modelSearch.trim()) return true
-    const label = item.model_color ? `${item.model_name} / ${item.model_color}` : item.model_name
-    return label.toUpperCase().includes(modelSearch.trim().toUpperCase())
-  })
+  const inboundModelLookup = useMemo(() => {
+    const lookup = new Map()
+    unloadRows.forEach((row) => {
+      const modelName = String(row.model_name || '').trim().toUpperCase()
+      if (!modelName) return
+      const current = lookup.get(modelName) || []
+      current.push(row)
+      lookup.set(modelName, current)
+    })
+    return lookup
+  }, [unloadRows])
+  const catalogBrandNameById = useMemo(
+    () => new Map(brands.map((brand) => [Number(brand.id), String(brand.brand_name || '').trim().toUpperCase()])),
+    [brands]
+  )
+  const catalogCategoryById = useMemo(
+    () => new Map(categories.map((category) => [Number(category.id), category])),
+    [categories]
+  )
+  const modelOptions = productModels
+    .flatMap((model) => {
+      const variants = productModelVariants.filter((variant) => Number(variant.product_model_id || 0) === Number(model.id || 0))
+      const inboundMatches = inboundModelLookup.get(String(model.model_name || '').trim().toUpperCase()) || []
+      const compatibleInboundMatches = inboundMatches.filter((row) => {
+        const brandMatches = !row.brand_id || !model.brand_id || Number(row.brand_id) === Number(model.brand_id)
+        const categoryMatches = !row.category_id || !model.category_id || Number(row.category_id) === Number(model.category_id)
+        return brandMatches && categoryMatches
+      })
+      if (selectedInboundId && !compatibleInboundMatches.length) {
+        return []
+      }
+
+      const firstInboundMatch = compatibleInboundMatches[0] || inboundMatches[0] || {}
+      const catalogBrandName = catalogBrandNameById.get(Number(model.brand_id)) || firstInboundMatch.brand_name || ''
+      const catalogCategoryName = getItemTypeSubcategoryLabel(model.category_id, catalogCategoryById, firstInboundMatch.category_name)
+
+      if (!variants.length) {
+        return [
+          {
+            ...model,
+            option_id: `model-${model.id}`,
+            model_id: model.id,
+            model_color: '',
+            photo_url: firstInboundMatch.photo_url || '',
+            brand_name: catalogBrandName,
+            category_name: catalogCategoryName,
+            pic_name: firstInboundMatch.pic_name || '',
+          },
+        ]
+      }
+
+      return variants.map((variant) => ({
+        ...model,
+        option_id: `variant-${variant.id}`,
+        model_id: model.id,
+        variant_id: variant.id,
+        model_color: getCatalogVariantLabel(variant).toUpperCase(),
+        photo_url: variant.variant_photo_url || firstInboundMatch.photo_url || '',
+        brand_name: catalogBrandName,
+        category_name: catalogCategoryName,
+        pic_name: firstInboundMatch.pic_name || '',
+      }))
+    })
+    .filter((item) => {
+      if (selectedInboundId && !inboundModelLookup.has(String(item.model_name || '').trim().toUpperCase())) {
+        return false
+      }
+      if (!modelSearch.trim()) return true
+      const label = item.model_color ? `${item.model_name} / ${item.model_color}` : item.model_name
+      const metaLabel = [label, item.brand_name, item.category_name].filter(Boolean).join(' ')
+      return metaLabel.toUpperCase().includes(modelSearch.trim().toUpperCase())
+    })
   const currentPlanRows = isArklineMode
     ? !isReQcMode && arklinePlannerMode === 'product' && selectedArklineProduct
       ? arklineQcItems.filter(
@@ -1308,7 +1807,11 @@ export default function QcReceivingPage() {
           )
         : []
     : selectedSourceId
-      ? qcItems.filter((item) => item.inbound_unload_id === Number(selectedSourceId))
+      ? qcItems.filter((item) => {
+          const sourceRowIds = new Set((selectedSource?.rows || []).map((row) => Number(row.id)).filter(Boolean))
+          sourceRowIds.add(Number(selectedSourceId))
+          return sourceRowIds.has(Number(item.inbound_unload_id))
+        })
       : []
   const selectedSourceStatus = isArklineMode
     ? !isReQcMode && arklinePlannerMode === 'product'
@@ -1333,14 +1836,11 @@ export default function QcReceivingPage() {
     isArklineMode ? false : selectedSourceStatus === 'completed'
   const canEditSavedPlan = isArklineMode ? true : !isSelectedSourceStarted
   const canAdjustAllocations = isArklineMode ? true : !isSelectedSourceCompleted
-  const persistedTaskRows = new Map(
-    currentPlanRows.map((item) => [isArklineMode ? getArklineTaskKey(item) : getTaskKey(item), item])
-  )
-
   function handleGrnChange(value) {
     setGrnSearch(value)
     const match = inbounds.find((item) => item.grn_number === value)
     setSelectedInboundId(match ? String(match.id) : '')
+    setSourceLoading(Boolean(match))
     setSelectedSourceKey('')
     setModelRows([])
     setError('')
@@ -1594,23 +2094,102 @@ export default function QcReceivingPage() {
   }
 
   function addModelRow() {
+    if (!canEditSavedPlan) {
+      return
+    }
+
+    const rowId = `new-${Date.now()}-${modelRows.length}`
+    const sourceRow = selectedSource?.rows?.[0] || null
     setModelRows((prev) => [
       ...prev,
       {
-        id: `new-${Date.now()}-${prev.length}`,
+        id: rowId,
+        source_id: sourceRow?.id || selectedSourceId || '',
         model_id: '',
+        product_model_variant_id: null,
         model_name: '',
         model_color: '',
+        original_model_name: sourceRow?.model_name || '',
+        original_model_color: sourceRow?.model_color || '',
+        brand_name: sourceRow?.brand_name || '',
+        category_name: sourceRow?.category_name || '',
+        pic_name: sourceRow?.pic_name || '',
+        model_replaced: false,
         qty_in: 0,
         qty_qc: '',
         photo_url: '',
         allocations: [],
       },
     ])
+    setActiveModelRowId(rowId)
+    setModelSearch('')
+    setShowChooseModelModal(true)
+  }
+
+  function handleCloseChooseModelModal() {
+    if (activeModelRowId) {
+      setModelRows((prev) =>
+        prev.filter((row) => {
+          if (row.id !== activeModelRowId || !String(row.id || '').startsWith('new-')) {
+            return true
+          }
+
+          return Boolean(
+            row.model_id ||
+              row.model_name ||
+              row.model_color ||
+              row.photo_url ||
+              Number(row.qty_in || 0) > 0 ||
+              Number(row.qty_qc || 0) > 0 ||
+              (row.allocations || []).length
+          )
+        })
+      )
+    }
+
+    setShowChooseModelModal(false)
+    setActiveModelRowId('')
+    setModelSearch('')
   }
 
   function updateModelRow(rowId, updates) {
     setModelRows((prev) => prev.map((row) => (row.id === rowId ? { ...row, ...updates } : row)))
+  }
+
+  function handleChooseModel(item) {
+    if (!activeModelRowId) return
+
+    setModelRows((prev) =>
+      prev.map((row) => {
+        if (row.id !== activeModelRowId) return row
+
+        const nextModelName = String(item.model_name || '').trim().toUpperCase()
+        const nextModelColor = String(item.model_color || '').trim().toUpperCase()
+        const originalModelName = row.original_model_name || row.model_name || nextModelName
+        const originalModelColor = row.original_model_color || row.model_color || nextModelColor
+        const isReplacement =
+          Boolean(originalModelName || originalModelColor) &&
+          (String(originalModelName || '').trim().toUpperCase() !== nextModelName ||
+            String(originalModelColor || '').trim().toUpperCase() !== nextModelColor)
+
+        return {
+          ...row,
+          model_id: String(item.model_id || item.id),
+          product_model_variant_id: item.variant_id || null,
+          model_name: nextModelName,
+          model_color: nextModelColor,
+          original_model_name: originalModelName,
+          original_model_color: originalModelColor,
+          brand_name: item.brand_name || row.brand_name || '',
+          category_name: item.category_name || row.category_name || '',
+          pic_name: item.pic_name || row.pic_name || '',
+          model_replaced: row.model_replaced || isReplacement,
+          photo_url: item.photo_url || row.photo_url || '',
+        }
+      })
+    )
+    setShowChooseModelModal(false)
+    setActiveModelRowId('')
   }
 
   function isAllocationRowOpen(row) {
@@ -1637,7 +2216,7 @@ export default function QcReceivingPage() {
     }
 
     if (!qcMembers.length) {
-      setError('No active QC user found with permission `qc.grading_task.view` for today. Activate QC task from Grading Task or User Access.')
+      setError('No active QC user found')
       return
     }
 
@@ -1671,7 +2250,7 @@ export default function QcReceivingPage() {
     }
 
     if (!qcMembers.length) {
-      setError('No active QC user found with permission `qc.grading_task.view` for today. Activate QC task from Grading Task or User Access.')
+      setError('No active QC user found')
       return
     }
 
@@ -1733,7 +2312,7 @@ export default function QcReceivingPage() {
   }
 
   function canEditAllocationQty(split) {
-    return canAdjustAllocations && split.existing_status !== 'done'
+    return canAdjustAllocations && (!split.existing_status || split.existing_status === 'queued')
   }
 
   function canRemoveAllocationSplit(split) {
@@ -1752,7 +2331,24 @@ export default function QcReceivingPage() {
     return (row.startedAllocations || []).filter((split) => !isDoneAllocation(split))
   }
 
+  function getEditableAllocationTotal(row) {
+    return (row.allocations || []).reduce((sum, split) => sum + Number(split.qty || 0), 0)
+  }
+
+  function getStartedAllocationTotal(row) {
+    return (row.startedAllocations || []).reduce((sum, split) => sum + Number(split.qty || 0), 0)
+  }
+
+  function getAllocationTotalForRow(row) {
+    return getEditableAllocationTotal(row) + getStartedAllocationTotal(row)
+  }
+
   function removeModelRow(rowId) {
+    const rowIndex = modelRows.findIndex((row) => row.id === rowId)
+    if (rowIndex <= 0 || modelRows.length <= 1) {
+      return
+    }
+
     if (typeof window !== 'undefined') {
       const confirmed = window.confirm('Remove this model row?')
       if (!confirmed) return
@@ -1880,11 +2476,13 @@ export default function QcReceivingPage() {
       }
 
       const invalidRow = modelRows.find((row) => {
+        const rowQcIn = Number(row.qty_qc || 0)
         const hasInvalidSplit = (row.allocations || []).some(
           (split) => !String(split.member_email || '').trim() || Number(split.qty || 0) <= 0
         )
+        const exceedsQcIn = rowQcIn > 0 && getAllocationTotalForRow(row) > rowQcIn
 
-        if (!row.model_name.trim() || hasInvalidSplit) {
+        if (!row.model_name.trim() || hasInvalidSplit || exceedsQcIn) {
           return true
         }
 
@@ -1892,7 +2490,7 @@ export default function QcReceivingPage() {
       })
 
       if (invalidRow) {
-        setError('Every allocation must have a product, inspector, and qty.')
+        setError('Every allocation must have a product, inspector, and qty. Allocated qty cannot be greater than QC In.')
         return
       }
 
@@ -1912,7 +2510,7 @@ export default function QcReceivingPage() {
       }
 
       if (!qcMembers.length) {
-        setError('No active QC user found with permission `qc.grading_task.view` for today. Activate QC task from Grading Task or User Access.')
+        setError('No active QC user found')
         return
       }
 
@@ -2098,7 +2696,7 @@ export default function QcReceivingPage() {
     }
 
     const invalidRow = modelRows.find((row) => {
-      const splitTotal = (row.allocations || []).reduce((sum, split) => sum + Number(split.qty || 0), 0)
+      const splitTotal = getAllocationTotalForRow(row)
       const hasInvalidSplit = (row.allocations || []).some(
         (split) => !String(split.member_email || '').trim() || Number(split.qty || 0) <= 0
       )
@@ -2116,13 +2714,12 @@ export default function QcReceivingPage() {
     }
 
     if (!qcMembers.length) {
-      setError('No active QC user found with permission `qc.grading_task.view` for today. Activate QC task from Grading Task or User Access.')
+      setError('No active QC user found')
       return
     }
 
     setSaving(true)
 
-    const activeTaskKeys = new Set()
     const insertPayload = []
     const updatesForPersistedRows = []
     let blockingError = ''
@@ -2134,16 +2731,15 @@ export default function QcReceivingPage() {
         if (!split.member_email || Number(split.qty || 0) <= 0) {
           return
         }
-        const taskKey = getTaskKey({
-          member_email: split.member_email,
-          model_name: row.model_name,
-          model_color: row.model_color,
-        })
-        activeTaskKeys.add(taskKey)
 
-        const persistedRow = persistedTaskRows.get(taskKey) || null
+        const persistedRow = split.task_id ? currentPlanRows.find((item) => item.id === split.task_id) || null : null
         const lockedQty = Number(persistedRow?.locked_qty ?? split.locked_qty ?? 0)
         const allocatedQty = Number(split.qty || 0)
+
+        if (persistedRow && persistedRow.status !== 'queued') {
+          blockingError = `Allocation for ${split.member_email} on ${row.model_name} has already started and cannot be changed.`
+          return
+        }
 
         if (allocatedQty < lockedQty) {
           blockingError = `Allocated qty for ${split.member_email} on ${row.model_name} cannot be less than the committed qty (${lockedQty}).`
@@ -2152,13 +2748,18 @@ export default function QcReceivingPage() {
 
         const basePayload = {
           inbound_id: selectedInbound.id,
-          inbound_unload_id: selectedSourceId,
+          inbound_unload_id: row.source_id || selectedSourceId,
           assigned_to: String(split.member_email || '').trim().toLowerCase(),
           allocated_qty: allocatedQty,
           expected_qty: Number(row.qty_in || 0),
           qty_in: Number(row.qty_qc || 0),
           model_name: row.model_name.trim(),
-          model_color: row.model_color.trim() || null,
+          variant_name: row.model_color.trim() || null,
+          product_model_id: Number(row.model_id || 0) || null,
+          product_model_variant_id: Number(row.product_model_variant_id || 0) || null,
+          original_model_name: row.model_replaced ? row.original_model_name || null : null,
+          original_variant_name: row.model_replaced ? row.original_model_color || null : null,
+          model_replaced: Boolean(row.model_replaced),
           photo_url: row.photo_url || null,
           locked_qty: lockedQty,
         }
@@ -2203,7 +2804,7 @@ export default function QcReceivingPage() {
         return
       }
 
-      insertedRows = insertResponse.data || []
+      insertedRows = (insertResponse.data || []).map(normalizeQcItemRow)
     }
 
     const updatedRows = []
@@ -2218,7 +2819,12 @@ export default function QcReceivingPage() {
           expected_qty: row.expected_qty,
           qty_in: row.qty_in,
           model_name: row.model_name,
-          model_color: row.model_color,
+          variant_name: row.variant_name,
+          product_model_id: row.product_model_id,
+          product_model_variant_id: row.product_model_variant_id,
+          original_model_name: row.original_model_name,
+          original_variant_name: row.original_variant_name,
+          model_replaced: row.model_replaced,
           photo_url: row.photo_url,
           locked_qty: row.locked_qty,
           status: row.status,
@@ -2237,7 +2843,7 @@ export default function QcReceivingPage() {
         return
       }
 
-      updatedRows.push(updatedRow)
+      updatedRows.push(normalizeQcItemRow(updatedRow))
     }
 
     const nextQcItems = [
@@ -2489,6 +3095,7 @@ export default function QcReceivingPage() {
 
                     </div>
 
+                    {canAdjustAllocations ? (
                     <div style={{ ...styles.field, ...styles.allocationWrap }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
                         <label style={styles.label}>Allocation</label>
@@ -2558,7 +3165,13 @@ export default function QcReceivingPage() {
                               }}
                               onChange={(event) => updateAllocationSplit(row.id, split.id, { qty: event.target.value })}
                               onBlur={(event) => {
+                                const otherTotal = (row.allocations || [])
+                                  .filter((item) => item.id !== split.id)
+                                  .reduce((sum, item) => sum + Number(item.qty || 0), 0)
+                                const startedTotal = getStartedAllocationTotal(row)
                                 const minAllowed = Number(split.locked_qty || 0)
+                                const rowQcIn = Number(row.qty_qc || 0)
+                                const maxAllowed = rowQcIn > 0 ? Math.max(minAllowed, rowQcIn - startedTotal - otherTotal) : null
                                 const rawValue = event.target.value
 
                                 if (rawValue === '') {
@@ -2570,7 +3183,7 @@ export default function QcReceivingPage() {
 
                                 const nextValue = Number(rawValue || 0)
                                 updateAllocationSplit(row.id, split.id, {
-                                  qty: String(Math.max(minAllowed, nextValue)),
+                                  qty: String(Math.max(minAllowed, maxAllowed === null ? nextValue : Math.min(nextValue, maxAllowed))),
                                 })
                               }}
                               style={{
@@ -2610,17 +3223,15 @@ export default function QcReceivingPage() {
                         ))}
 
                         <span style={styles.helperText}>
-                          {`Allocated: ${getVisibleAllocations(row).reduce((sum, split) => sum + Number(split.qty || 0), 0)}`}
+                          {`Allocated: ${getAllocationTotalForRow(row)}${Number(row.qty_qc || 0) > 0 ? ` / ${Number(row.qty_qc || 0)}` : ''}`}
                         </span>
                       </div>
                       ) : null}
                     </div>
+                    ) : null}
                   </div>
                 ))}
 
-                {!qcMembers.length ? (
-                  <p style={styles.emptyText}>No active QC user found with permission `qc.grading_task.view` for today. Activate QC task from Grading Task or User Access.</p>
-                ) : null}
               </>
             ) : (
               <p style={styles.emptyText}>
@@ -2657,7 +3268,9 @@ export default function QcReceivingPage() {
                 style={{ ...styles.select, ...(!selectedInboundId ? styles.selectDisabled : {}) }}
                 disabled={!selectedInboundId}
               >
-                <option value="">{selectedInboundId ? 'Choose Koli / Sample' : 'Choose GRN first'}</option>
+                <option value="">
+                  {sourceLoading ? 'Loading Koli / Sample...' : selectedInboundId ? 'Choose Koli / Sample' : 'Choose GRN first'}
+                </option>
                 {sourceOptions.map((row) => (
                   <option
                     key={row.key}
@@ -2674,38 +3287,67 @@ export default function QcReceivingPage() {
               </select>
           </div>
 
-          <div style={styles.field}>
-            <label style={styles.label}>Barang</label>
-            <div style={styles.readonlyBox}>{selectedInbound?.item_name || '-'}</div>
-          </div>
         </div>
+
+        {selectedInboundId && sourceLoading ? (
+          <p style={styles.helperText}>Loading Koli / Sample...</p>
+        ) : null}
+
+        {selectedInboundId && sourceOptions.length ? (
+            <div style={styles.sourceListWrap}>
+              <div
+                ref={sourceListRef}
+                style={styles.sourceList}
+                onScroll={(event) => {
+                  const element = event.currentTarget
+                  const maxScrollLeft = Math.max(0, element.scrollWidth - element.clientWidth)
+                  const nextState = {
+                    hasOverflow: maxScrollLeft > 1,
+                    canScrollLeft: element.scrollLeft > 1,
+                    canScrollRight: element.scrollLeft < maxScrollLeft - 1,
+                  }
+                  setSourceScrollState((current) =>
+                    current.hasOverflow === nextState.hasOverflow &&
+                    current.canScrollLeft === nextState.canScrollLeft &&
+                    current.canScrollRight === nextState.canScrollRight
+                      ? current
+                      : nextState
+                  )
+                }}
+              >
+                {sourceOptions.map((row) => {
+                  const rowStatus = getSourceStatus(row, qcItems)
+                  const isActive = row.key === selectedSourceKey
+
+                  return (
+                    <button
+                      key={row.key}
+                      type="button"
+                      onClick={() => handleSourceChange(row.key)}
+                      style={{
+                        ...styles.sourceChip,
+                        ...(!selectedInboundId ? styles.sourceChipDisabled : {}),
+                        ...(rowStatus === 'completed' ? styles.sourceChipDone : {}),
+                        ...(isActive ? (rowStatus === 'completed' ? styles.sourceChipDoneActive : styles.sourceChipActive) : {}),
+                      }}
+                      disabled={!selectedInboundId}
+                    >
+                      {row.label}
+                    </button>
+                  )
+                })}
+              </div>
+              {sourceScrollState.hasOverflow && sourceScrollState.canScrollLeft ? (
+                <span style={{ ...styles.sourceListArrow, ...styles.sourceListArrowLeft }}>‹</span>
+              ) : null}
+              {sourceScrollState.hasOverflow && sourceScrollState.canScrollRight ? (
+                <span style={{ ...styles.sourceListArrow, ...styles.sourceListArrowRight }}>›</span>
+              ) : null}
+            </div>
+        ) : null}
 
         {selectedSource ? (
           <>
-            <div style={styles.sourceList}>
-              {sourceOptions.map((row) => {
-                const rowStatus = getSourceStatus(row, qcItems)
-                const isActive = row.key === selectedSourceKey
-
-                return (
-                  <button
-                    key={row.key}
-                    type="button"
-                    onClick={() => handleSourceChange(row.key)}
-                    style={{
-                      ...styles.sourceChip,
-                      ...(!selectedInboundId ? styles.sourceChipDisabled : {}),
-                      ...(rowStatus === 'completed' ? styles.sourceChipDone : {}),
-                      ...(isActive ? (rowStatus === 'completed' ? styles.sourceChipDoneActive : styles.sourceChipActive) : {}),
-                    }}
-                    disabled={!selectedInboundId}
-                  >
-                    {row.label}
-                  </button>
-                )
-              })}
-            </div>
-
             {isSelectedSourceCompleted ? (
               <div style={styles.sourceStatusBanner}>
                 <span>KOLI SUDAH SELESAI DIQC</span>
@@ -2719,85 +3361,102 @@ export default function QcReceivingPage() {
               </div>
             ) : null}
 
-            {sourceDetailsExpanded ? modelRows.map((row) => (
-              <div key={row.id} style={styles.modelRow}>
-                <div style={rowTopGridStyle}>
-                {row.photo_url ? (
-                  <Image
-                    src={row.photo_url}
-                    alt={row.model_name || 'QC model'}
-                    width={84}
-                    height={84}
-                    unoptimized
-                    style={styles.thumb}
-                  />
-                ) : (
-                  <div style={styles.thumbEmpty}>NO PHOTO</div>
-                )}
+            {sourceDetailsExpanded ? modelRows.map((row, rowIndex) => {
+              const canRemoveThisRow =
+                rowIndex > 0 &&
+                canEditSavedPlan &&
+                !(row.allocations || []).some((split) => Number(split.locked_qty || 0) > 0)
 
-                <div style={{ ...styles.modelMeta, ...(isMobileLayout ? { gridColumn: '2 / -1' } : {}) }}>
-                  <div style={styles.modelName}>{row.model_name || 'Choose model'}</div>
-                  <p style={styles.infoText}>{row.model_color || 'NO COLOR'}</p>
-                  <div style={styles.buttonRow}>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setActiveModelRowId(row.id)
-                        setShowChooseModelModal(true)
-                      }}
-                      style={{ ...styles.iconButton, ...(!canEditSavedPlan ? styles.iconButtonDisabled : {}) }}
-                      disabled={!canEditSavedPlan}
-                      title="Choose model"
-                      aria-label="Choose model"
-                    >
-                      +
-                    </button>
+              return (
+              <div key={row.id} style={styles.modelRow}>
+                <div style={styles.modelRowActions}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActiveModelRowId(row.id)
+                      setModelSearch('')
+                      setShowChooseModelModal(true)
+                    }}
+                    style={{ ...styles.iconButton, ...(!canEditSavedPlan ? styles.iconButtonDisabled : {}) }}
+                    disabled={!canEditSavedPlan}
+                    title="Replace model"
+                    aria-label="Replace model"
+                  >
+                    ↔
+                  </button>
+                  {rowIndex > 0 ? (
                     <button
                       type="button"
                       onClick={() => removeModelRow(row.id)}
                       style={{
                         ...styles.iconButton,
-                        ...(!canEditSavedPlan ||
-                        modelRows.length === 1 ||
-                        (row.allocations || []).some((split) => Number(split.locked_qty || 0) > 0)
-                          ? styles.iconButtonDisabled
-                          : {}),
+                        ...(!canRemoveThisRow ? styles.iconButtonDisabled : {}),
                       }}
-                      disabled={
-                        !canEditSavedPlan ||
-                        modelRows.length === 1 ||
-                        (row.allocations || []).some((split) => Number(split.locked_qty || 0) > 0)
-                      }
+                      disabled={!canRemoveThisRow}
                       title="Remove row"
                       aria-label="Remove row"
                     >
                       x
                     </button>
+                  ) : null}
+                </div>
+                <div style={rowTopGridStyle}>
+                {row.photo_url ? (
+                  <button
+                    type="button"
+                    onClick={() => setPreviewPhoto({ src: row.photo_url, alt: row.model_name || 'QC model' })}
+                    style={styles.thumbButton}
+                    title="Preview photo"
+                    aria-label="Preview photo"
+                  >
+                    <Image
+                      src={row.photo_url}
+                      alt={row.model_name || 'QC model'}
+                      width={84}
+                      height={84}
+                      unoptimized
+                      style={styles.thumb}
+                    />
+                  </button>
+                ) : (
+                  <div style={styles.thumbEmpty}>NO PHOTO</div>
+                )}
+
+                <div style={{ ...styles.modelMeta, ...(isMobileLayout ? { gridColumn: '2 / -1' } : {}) }}>
+                  <div style={styles.modelName}>{getRegularProductIdentityLabel(row)}</div>
+                  <div style={styles.modelVariantLine}>{getRegularModelName(row)}</div>
+                  <span style={styles.variantBadge}>{getRegularVariantName(row)}</span>
+                  {row.model_replaced ? (
+                    <p style={styles.infoText}>This one is replacement goods.</p>
+                  ) : null}
+                </div>
+
+                <div style={{ ...styles.qtyPair, ...(isMobileLayout ? { gridColumn: '1 / -1' } : {}) }}>
+                  <div style={styles.field}>
+                    <label style={styles.label}>Inbound Qty</label>
+                    <div style={styles.readonlyBox}>{row.qty_in || 0}</div>
+                  </div>
+
+                  <div style={styles.field}>
+                    <label style={styles.label}>QC In</label>
+                    <input
+                      type="number"
+                      min="0"
+                      value={row.qty_qc}
+                      onChange={(event) =>
+                        updateModelRow(row.id, {
+                          qty_qc: event.target.value,
+                        })
+                      }
+                      style={{ ...styles.input, ...(!canEditSavedPlan ? styles.inputDisabled : {}) }}
+                      disabled={!canEditSavedPlan}
+                    />
                   </div>
                 </div>
 
-                <div style={{ ...styles.field, ...(isMobileLayout ? { gridColumn: '1 / -1' } : {}) }}>
-                  <label style={styles.label}>Inbound Qty</label>
-                  <div style={styles.readonlyBox}>{row.qty_in || 0}</div>
                 </div>
 
-                <div style={{ ...styles.field, ...(isMobileLayout ? { gridColumn: '1 / -1' } : {}) }}>
-                  <label style={styles.label}>QC In</label>
-                  <input
-                    type="number"
-                    min="0"
-                    value={row.qty_qc}
-                    onChange={(event) =>
-                      updateModelRow(row.id, {
-                        qty_qc: event.target.value,
-                      })
-                    }
-                    style={{ ...styles.input, ...(!canEditSavedPlan ? styles.inputDisabled : {}) }}
-                    disabled={!canEditSavedPlan}
-                  />
-                </div>
-                </div>
-
+                {canAdjustAllocations ? (
                 <div style={{ ...styles.field, ...styles.allocationWrap }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
                     <label style={styles.label}>Allocation</label>
@@ -2811,6 +3470,27 @@ export default function QcReceivingPage() {
                   </div>
                   {isAllocationRowOpen(row) ? (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    {getVisibleStartedAllocations(row).length ? (
+                      <>
+                        <span style={{ ...styles.helperText, fontWeight: '700', color: '#6b7280' }}>Started Batch</span>
+                        <div style={{ ...allocationGridStyle, gap: '8px' }}>
+                          <span style={{ ...styles.helperText, fontWeight: '700', color: '#111827' }}>Inspector</span>
+                          <span style={{ ...styles.helperText, fontWeight: '700', color: '#111827' }}>Qty</span>
+                          <span style={{ ...styles.helperText, fontWeight: '700', color: '#111827' }}>Status</span>
+                        </div>
+                        {getVisibleStartedAllocations(row).map((split) => (
+                          <div key={split.id} style={allocationGridStyle}>
+                            <div style={{ ...styles.readonlyBox, minHeight: '32px', fontSize: '11px', padding: '0 8px' }}>
+                              {qcMembers.find((member) => member.email === split.member_email)?.display_name || split.member_email || '-'}
+                            </div>
+                            <div style={{ ...styles.readonlyBox, minHeight: '32px', fontSize: '11px', padding: '0 8px' }}>{split.qty || 0}</div>
+                            <div style={{ ...styles.readonlyBox, minHeight: '32px', fontSize: '11px', padding: '0 8px' }}>{split.existing_status || '-'}</div>
+                          </div>
+                        ))}
+                      </>
+                    ) : null}
+
+                    <span style={{ ...styles.helperText, fontWeight: '700', color: '#6b7280' }}>New / Queued Batch</span>
                     {getVisibleAllocations(row).length ? (
                       <div style={{ ...allocationGridStyle, gap: '8px' }}>
                         <span style={{ ...styles.helperText, fontWeight: '700', color: '#111827' }}>Inspector</span>
@@ -2831,14 +3511,6 @@ export default function QcReceivingPage() {
                         >
                           <option value="">Choose inspector</option>
                           {qcMembers
-                            .filter(
-                              (member) =>
-                                member.email === split.member_email ||
-                                !(row.allocations || []).some(
-                                  (allocation) =>
-                                    allocation.id !== split.id && allocation.member_email === member.email
-                                )
-                            )
                             .map((member) => (
                               <option key={member.id} value={member.email}>
                                 {member.display_name || member.email}
@@ -2861,8 +3533,9 @@ export default function QcReceivingPage() {
                             const otherTotal = (row.allocations || [])
                               .filter((item) => item.id !== split.id)
                               .reduce((sum, item) => sum + Number(item.qty || 0), 0)
+                            const startedTotal = getStartedAllocationTotal(row)
                             const minAllowed = Number(split.locked_qty || 0)
-                            const maxAllowed = Math.max(minAllowed, Number(row.qty_qc || 0) - otherTotal)
+                            const maxAllowed = Math.max(minAllowed, Number(row.qty_qc || 0) - startedTotal - otherTotal)
                             const rawValue = event.target.value
 
                             if (rawValue === '') {
@@ -2911,16 +3584,28 @@ export default function QcReceivingPage() {
                         </div>
                       </div>
                     ))}
+                    {!getVisibleAllocations(row).length ? (
+                      <button
+                        type="button"
+                        onClick={() => addAllocationSplit(row.id)}
+                        style={{ ...styles.secondaryButton, ...(!canAdjustAllocations ? styles.buttonDisabled : {}) }}
+                        disabled={!canAdjustAllocations}
+                      >
+                        +
+                      </button>
+                    ) : null}
                     <span style={styles.helperText}>
-                      Allocated: {getVisibleAllocations(row).reduce((sum, split) => sum + Number(split.qty || 0), 0)} / {Number(row.qty_qc || 0)}
+                      Allocated: {getAllocationTotalForRow(row)} / {Number(row.qty_qc || 0)}
                     </span>
                   </div>
                   ) : null}
                 </div>
+                ) : null}
               </div>
-            )) : null}
+              )
+            }) : null}
 
-            {sourceDetailsExpanded ? (
+            {sourceDetailsExpanded && !isSelectedSourceCompleted ? (
               <div style={styles.buttonRow}>
                 <button
                   type="button"
@@ -2928,37 +3613,11 @@ export default function QcReceivingPage() {
                   style={{ ...styles.secondaryButton, ...(!canEditSavedPlan ? styles.buttonDisabled : {}) }}
                   disabled={!canEditSavedPlan}
                 >
-                  + Add Model Row
+                  +
                 </button>
               </div>
             ) : null}
 
-            {sourceDetailsExpanded ? (
-            <div>
-              <h3 style={styles.sectionTitle}>Model Allocation</h3>
-              <p style={styles.sectionSubtitle}>
-                Each model row can be allocated to one or more inspectors.
-              </p>
-              <p style={styles.sectionSubtitle}>
-                  After QC has started, the running batch moves out of editable allocation. You can send a new batch again anytime.
-              </p>
-            </div>
-            ) : null}
-
-            {!qcMembers.length ? (
-              <p style={styles.emptyText}>
-                No active QC user found with permission `qc.grading_task.view` for today. Activate QC task from Grading Task or User Access.
-              </p>
-            ) : null}
-
-            <div style={summaryGridStyle}>
-              <div style={styles.summaryCard}>
-                <span style={styles.summaryLabel}>Inbound Qty</span>
-                <strong style={styles.summaryValue}>
-                  {selectedSourceRows.reduce((sum, row) => sum + Number(row.qty || 0), 0)}
-                </strong>
-              </div>
-            </div>
             </>
           ) : (
             <p style={styles.emptyText}>Choose GRN and Koli/Sample first to start QC planning.</p>
@@ -2969,30 +3628,20 @@ export default function QcReceivingPage() {
         <div style={bottomBarStyle}>
           {error ? <p style={styles.errorText}>{error}</p> : null}
           {success ? <p style={styles.successText}>{success}</p> : null}
-          <button
-            type="button"
-            onClick={handleSavePlan}
-            disabled={
-              saving ||
-              (qcMode !== 'regular'
-                ? !modelRows.length || isSelectedSourceCompleted
-                : !selectedSource || isSelectedSourceCompleted)
-            }
-            style={{
-              ...styles.primaryButton,
-              ...(isMobileLayout ? { width: '100%' } : {}),
-              ...(
-                saving ||
-                (qcMode !== 'regular'
-                  ? !modelRows.length || isSelectedSourceCompleted
-                  : !selectedSource || isSelectedSourceCompleted)
-                  ? styles.buttonDisabled
-                  : {}
-              ),
-            }}
-          >
-            {saving ? 'Saving...' : 'Save QC Plan'}
-          </button>
+          {!isSelectedSourceCompleted ? (
+            <button
+              type="button"
+              onClick={handleSavePlan}
+              disabled={saving || (qcMode !== 'regular' ? !modelRows.length : !selectedSource)}
+              style={{
+                ...styles.primaryButton,
+                ...(isMobileLayout ? { width: '100%' } : {}),
+                ...(saving || (qcMode !== 'regular' ? !modelRows.length : !selectedSource) ? styles.buttonDisabled : {}),
+              }}
+            >
+              {saving ? 'Saving...' : 'Save QC Plan'}
+            </button>
+          ) : null}
         </div>
       </div>
 
@@ -3001,7 +3650,7 @@ export default function QcReceivingPage() {
           <div style={styles.modal}>
             <div>
               <h2 style={styles.sectionTitle}>Choose Model</h2>
-              <p style={styles.sectionSubtitle}>Select the model from the photo list. If it does not exist yet, add a new one.</p>
+              <p style={styles.sectionSubtitle}>Select a model listed under the same GRN number.</p>
             </div>
 
             <div style={styles.field}>
@@ -3015,53 +3664,94 @@ export default function QcReceivingPage() {
             </div>
 
             <div style={styles.modalGrid}>
-              {modelOptions.map((item) => {
+              {modelOptions.length ? modelOptions.map((item) => {
                 const label = item.model_color ? `${item.model_name} / ${item.model_color}` : item.model_name
 
                 return (
-                  <button
-                    key={item.id}
-                    type="button"
-                    onClick={() => {
-                      if (activeModelRowId) {
-                        updateModelRow(activeModelRowId, {
-                          model_id: String(item.id),
-                          model_name: item.model_name,
-                          model_color: item.model_color || '',
-                          photo_url: item.photo_url || '',
-                        })
+                  <div
+                    key={item.option_id || item.id}
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => handleChooseModel(item)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault()
+                        handleChooseModel(item)
                       }
-                      setShowChooseModelModal(false)
                     }}
                     style={styles.modelCardButton}
                   >
                     {item.photo_url ? (
-                      <Image
-                        src={item.photo_url}
-                        alt={label}
-                        width={170}
-                        height={120}
-                        unoptimized
-                        style={{ ...styles.thumb, width: '100%', height: '120px' }}
-                      />
+                      <span
+                        role="button"
+                        tabIndex={0}
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          setPreviewPhoto({ src: item.photo_url, alt: label })
+                        }}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter' || event.key === ' ') {
+                            event.preventDefault()
+                            event.stopPropagation()
+                            setPreviewPhoto({ src: item.photo_url, alt: label })
+                          }
+                        }}
+                        style={{ display: 'block', width: '100%', cursor: 'zoom-in' }}
+                      >
+                        <Image
+                          src={item.photo_url}
+                          alt={label}
+                          width={150}
+                          height={76}
+                          unoptimized
+                          style={{ ...styles.thumb, width: '100%', height: '76px', borderRadius: '10px' }}
+                        />
+                      </span>
                     ) : (
-                      <div style={{ ...styles.thumbEmpty, width: '100%', height: '120px' }}>NO PHOTO</div>
+                      <div style={{ ...styles.thumbEmpty, width: '100%', height: '76px', borderRadius: '10px' }}>NO PHOTO</div>
                     )}
-                    <strong>{item.model_name}</strong>
-                    <span>{item.model_color || 'NO COLOR'}</span>
-                  </button>
+                    <strong>{getRegularProductIdentityLabel(item)}</strong>
+                    <span>{label}</span>
+                  </div>
                 )
-              })}
+              }) : (
+                <p style={styles.emptyText}>No matching model found for this GRN.</p>
+              )}
             </div>
 
             <div style={styles.buttonRow}>
-              <button type="button" onClick={() => setShowModelModal(true)} style={styles.secondaryButton}>
-                + Add New Model
-              </button>
-              <button type="button" onClick={() => setShowChooseModelModal(false)} style={styles.secondaryButton}>
+              <button type="button" onClick={handleCloseChooseModelModal} style={styles.secondaryButton}>
                 Close
               </button>
             </div>
+          </div>
+        </div>
+      ) : null}
+
+      {previewPhoto ? (
+        <div
+          style={styles.photoPreviewOverlay}
+          onClick={() => setPreviewPhoto(null)}
+          role="presentation"
+        >
+          <div style={styles.photoPreviewWrap} onClick={(event) => event.stopPropagation()} role="presentation">
+            <Image
+              src={previewPhoto.src}
+              alt={previewPhoto.alt || 'Product photo'}
+              width={1000}
+              height={1000}
+              unoptimized
+              style={styles.photoPreviewImage}
+            />
+            <button
+              type="button"
+              onClick={() => setPreviewPhoto(null)}
+              style={styles.photoPreviewClose}
+              aria-label="Close preview"
+              title="Close preview"
+            >
+              x
+            </button>
           </div>
         </div>
       ) : null}
@@ -3090,7 +3780,7 @@ export default function QcReceivingPage() {
             </div>
 
             <div style={styles.field}>
-              <label style={styles.label}>Warna Model</label>
+              <label style={styles.label}>Variant</label>
               <input
                 value={modelDraft.model_color}
                 onChange={(event) =>
@@ -3100,7 +3790,7 @@ export default function QcReceivingPage() {
                   }))
                 }
                 style={styles.input}
-                placeholder="MODEL COLOR"
+                placeholder="VARIANT"
               />
             </div>
 

@@ -183,6 +183,54 @@
   box-shadow: 0 18px 40px rgba(15, 23, 42, 0.06);
 }
 
+.regularArrangementPanel {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding: 20px 22px 22px;
+  overflow: hidden;
+  border: 1px solid #e2e8f0;
+  border-radius: 26px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98) 0%, rgba(248, 250, 252, 0.96) 100%);
+  box-shadow: 0 18px 40px rgba(15, 23, 42, 0.06);
+}
+
+.regularArrangementPanel .filterGrid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.regularHeaderActions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+.regularSelectedTotal {
+  min-width: 132px;
+  padding: 8px 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #f8fafc;
+}
+
+.regularSelectedTotal span {
+  display: block;
+  margin-bottom: 3px;
+  color: #64748b;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.regularSelectedTotal strong {
+  color: #111827;
+  font-size: 18px;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
 .card {
   padding: 24px;
   border: 1px solid #e2e8f0;
@@ -461,6 +509,7 @@
   border: 1px solid #cbd5e1;
   background: #fff;
   color: #334155;
+  text-decoration: none;
 }
 
 .primaryButton:disabled,
@@ -676,6 +725,19 @@
 
   .filterGrid {
     grid-template-columns: 1fr;
+  }
+
+  .regularArrangementPanel .filterGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .regularHeaderActions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .regularSelectedTotal {
+    width: 100%;
   }
 
   .filteredSummary {

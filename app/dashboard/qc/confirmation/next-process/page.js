@@ -293,6 +293,13 @@ function getModelLabel(item) {
   return item.model_color ? `${item.model_name} / ${item.model_color}` : item.model_name
 }
 
+function normalizeQcItemRow(item) {
+  return {
+    ...item,
+    model_color: item.variant_name || item.model_color || '',
+  }
+}
+
 export default function QcConfirmationNextProcessPage() {
   const draftIdRef = useRef(1)
   const [loading, setLoading] = useState(true)
@@ -360,7 +367,7 @@ export default function QcConfirmationNextProcessPage() {
         return
       }
 
-      setQcItems(qcData || [])
+      setQcItems((qcData || []).map(normalizeQcItemRow))
       setConfirmRows(confirmData || [])
       setProductModels(productModelData || [])
       setLoading(false)

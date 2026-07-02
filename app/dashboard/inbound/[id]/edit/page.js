@@ -657,6 +657,12 @@ export default function EditReceivingPage() {
       unload_pic: row.unload_pic || '',
     }))
     const role = resolveRole(profileResult.data?.role, emailAdmin)
+
+    if (!emailAdmin && role === 'inbound_staff') {
+      router.replace(`/mobile/inbound/receiving/${inboundId}`)
+      return
+    }
+
     const nextForm = {
       grn_number: inboundRow.grn_number || '',
       inbound_date: normalizeDateInput(inboundRow.inbound_date),

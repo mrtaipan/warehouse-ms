@@ -1,6 +1,8 @@
 import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { createClient } from '@/utils/supabase/server'
+import { hasPermission } from '@/utils/permissions'
+import { loadAccessContext } from '@/utils/access-control'
 import ReceivingFiltersClient from './receiving-filters-client'
 
 const PAGE_SIZE = 25
@@ -76,6 +78,15 @@ export default async function InboundReceivingPage({ searchParams }) {
     redirect('/login')
   }
 
+  const { role, permissions, isAdmin } = await loadAccessContext(supabase, user, 'role')
+  const isInboundStaff = role === 'inbound_staff'
+  const canCreateReceiving =
+    !isInboundStaff &&
+    (isAdmin || role === 'admin' || role === 'inbound_coordinator' || hasPermission(permissions, 'inbound.new.add', isAdmin))
+  const canEditReceiving =
+    !isInboundStaff &&
+    (isAdmin || role === 'admin' || role === 'inbound_coordinator' || hasPermission(permissions, 'inbound.edit.edit', isAdmin))
+
   const params = await searchParams
   const search = sanitizeSearch(getSingleValue(params?.search))
   const supplierId = search ? '' : (getSingleValue(params?.supplier) || '').trim()
@@ -142,9 +153,11 @@ export default async function InboundReceivingPage({ searchParams }) {
           <p style={styles.subtitle}>Track recent receiving records, find older GRNs by search, and continue inbound work from one place.</p>
         </div>
 
-        <Link href="/dashboard/inbound/new" style={styles.primaryButton}>
-          + New Receiving
-        </Link>
+        {canCreateReceiving ? (
+          <Link href="/dashboard/inbound/new" style={styles.primaryButton}>
+            + New Receiving
+          </Link>
+        ) : null}
       </div>
 
       <ReceivingFiltersClient
@@ -154,6 +167,8 @@ export default async function InboundReceivingPage({ searchParams }) {
         initialTotalItems={totalItems}
         initialFilters={{ supplierId, month, search, page: safeCurrentPage }}
         initialError={supplierError?.message || error?.message || ''}
+        canEditReceiving={canEditReceiving}
+        isInboundStaff={isInboundStaff}
       />
     </section>
   )

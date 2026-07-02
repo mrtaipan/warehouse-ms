@@ -30,6 +30,10 @@ function getDisplayName(user, profile) {
   )
 }
 
+function getFirstName(value) {
+  return String(value || '').trim().split(/\s+/)[0] || '-'
+}
+
 function buildRows(totalKoli, detailRows) {
   const rowCount = Math.max(Number(totalKoli || 0), 1)
   const rowsBySequence = new Map(
@@ -100,6 +104,7 @@ export default function ReceivingInputPage() {
   const [success, setSuccess] = useState('')
 
   const displayName = getDisplayName(user, profile)
+  const displayFirstName = getFirstName(displayName)
   const submittedCount = rows.filter((row) => String(row.unload_pic || '').trim()).length
   const totalKoli = Math.max(Number(inbound?.total_koli || 0), 1)
   const isCompleted = submittedCount >= totalKoli
@@ -388,7 +393,7 @@ export default function ReceivingInputPage() {
           </div>
           <div style={styles.infoMiddle}>
             <span style={styles.infoLabel}>Input As</span>
-            <strong style={styles.infoValue}>{displayName}</strong>
+            <strong style={styles.infoValue}>{displayFirstName}</strong>
           </div>
           <div style={styles.infoRight}>
             <span style={styles.infoLabel}>SJ Qty</span>

@@ -2,7 +2,8 @@ import { redirect } from 'next/navigation'
 import { createClient } from '@/utils/supabase/server'
 
 function getModelLabel(item) {
-  return item.model_color ? `${item.model_name} / ${item.model_color}` : item.model_name
+  const variantName = item.variant_name || item.variant_label || item.variant_code || item.model_color || ''
+  return variantName ? `${item.model_name} / ${variantName}` : item.model_name
 }
 
 function formatDateDisplay(value) {
