@@ -720,7 +720,7 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
                   </div>
                 </div>
 
-                <div className={styles.formRowThree}>
+                <div className={`${styles.formRowThree} ${styles.dateTimeRow}`.trim()}>
                   <div className={styles.field}>
                     <label className={styles.label}>Date *</label>
                     <input
