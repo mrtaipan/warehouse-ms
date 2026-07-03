@@ -281,6 +281,9 @@ const styles = {
     width: '100%',
     backgroundColor: '#fff',
     color: '#111827',
+    WebkitTextFillColor: '#111827',
+    caretColor: '#111827',
+    colorScheme: 'light',
   },
   inputReadonly: {
     height: '40px',
@@ -293,11 +296,14 @@ const styles = {
     width: '100%',
     backgroundColor: '#f8fafc',
     color: '#475569',
+    WebkitTextFillColor: '#475569',
+    colorScheme: 'light',
   },
   disabledControl: {
     backgroundColor: '#f8fafc',
     borderColor: '#e2e8f0',
     color: '#64748b',
+    WebkitTextFillColor: '#64748b',
     cursor: 'not-allowed',
     boxShadow: 'inset 0 1px 0 rgba(255, 255, 255, 0.72)',
   },
@@ -305,6 +311,7 @@ const styles = {
     backgroundColor: '#f8fafc',
     borderColor: '#e2e8f0',
     color: '#64748b',
+    WebkitTextFillColor: '#64748b',
     cursor: 'not-allowed',
   },
   select: {
@@ -318,6 +325,8 @@ const styles = {
     width: '100%',
     backgroundColor: '#fff',
     color: '#111827',
+    WebkitTextFillColor: '#111827',
+    colorScheme: 'light',
   },
   textarea: {
     minHeight: '80px',
@@ -330,6 +339,9 @@ const styles = {
     width: '100%',
     backgroundColor: '#fff',
     color: '#111827',
+    WebkitTextFillColor: '#111827',
+    caretColor: '#111827',
+    colorScheme: 'light',
     resize: 'vertical',
   },
   itemTextarea: {
@@ -746,13 +758,16 @@ export default function EditReceivingPage() {
   const totalSampleQty = koliRows.reduce((sum, row) => sum + Number(row.sample_qty || 0), 0)
   const totalUnloadedQty = koliRows.reduce((sum, row) => sum + Number(row.bongkar_qty || 0), 0)
   const totalSupplierQty = koliRows.reduce((sum, row) => sum + Number(row.supplier_qty || 0), 0)
-  const sjQty = Number(form.qty_surat_jalan || 0)
+  const hasSjQty = !isBlank(form.qty_surat_jalan)
+  const sjQty = hasSjQty ? Number(form.qty_surat_jalan || 0) : null
   const totalItemsReceived = totalUnloadedQty + totalSampleQty
-  const totalVariance = totalItemsReceived - sjQty
+  const totalVariance = hasSjQty ? totalItemsReceived - sjQty : null
   const supplierVariance = totalItemsReceived - totalSupplierQty
   const showSupplierVariance = koliRows.length > 0 && koliRows.every((row) => String(row.unload_pic || '').trim())
-  const supplierQtyDiffersFromSj = showSupplierVariance && totalSupplierQty !== sjQty
-  const totalVarianceStyle = getVarianceStyle(totalVariance)
+  const supplierQtyDiffersFromSj = hasSjQty && showSupplierVariance && totalSupplierQty !== sjQty
+  const totalVarianceStyle = hasSjQty
+    ? getVarianceStyle(totalVariance)
+    : { color: '#64748b', backgroundColor: '#f8fafc', borderColor: '#e2e8f0' }
   const supplierVarianceStyle = getVarianceStyle(supplierVariance)
   const contentGridStyle = isCompactLayout
     ? { ...styles.contentGrid, gridTemplateColumns: '1fr' }
@@ -782,9 +797,11 @@ export default function EditReceivingPage() {
     },
     {
       label: `Total Variance${supplierQtyDiffersFromSj ? ' *' : ''}`,
-      value: formatSignedNumber(totalVariance),
+      value: hasSjQty ? formatSignedNumber(totalVariance) : 'No data',
       secondaryValue: showSupplierVariance ? formatSignedNumber(supplierVariance) : undefined,
-      title: showSupplierVariance
+      title: !hasSjQty
+        ? 'SJ Qty belum diisi, jadi variance terhadap SJ belum bisa dihitung.'
+        : showSupplierVariance
         ? 'Nilai pertama: total barang diterima dibanding SJ Qty. Nilai kedua: total barang diterima dibanding total Supplier Qty. Tanda * berarti total Supplier Qty berbeda dari SJ Qty.'
         : 'Selisih antara total barang diterima dan SJ Qty. Nilai pembanding Supplier Qty ditampilkan setelah semua koli memiliki Unload PIC.',
       valueStyle: { color: totalVarianceStyle.color },
@@ -828,11 +845,10 @@ export default function EditReceivingPage() {
     if (
       isBlank(form.inbound_date) ||
       isBlank(form.item_name) ||
-      isBlank(form.qty_surat_jalan) ||
       isBlank(form.payment_on_site) ||
       isBlank(form.total_koli)
     ) {
-      setError('Inbound Date, Item Name, SJ Qty, Paid on Site, and Koli Qty are required.')
+      setError('Inbound Date, Item Name, Paid on Site, and Koli Qty are required.')
       return
     }
 
@@ -861,7 +877,7 @@ export default function EditReceivingPage() {
         inbound_date: form.inbound_date,
         item_name: form.item_name.trim().toUpperCase(),
         payment_on_site: form.payment_on_site === 'yes',
-        total_claimed_qty: Number(form.qty_surat_jalan || 0),
+        total_claimed_qty: isBlank(form.qty_surat_jalan) ? null : Number(form.qty_surat_jalan),
         total_received_qty: totalReceivedQty,
         total_koli: totalKoli,
         status: nextStatus,
@@ -1090,7 +1106,6 @@ export default function EditReceivingPage() {
                     inputMode="numeric"
                     pattern="[0-9]*"
                     style={inputStyle}
-                    required
                   />
                 </div>
 

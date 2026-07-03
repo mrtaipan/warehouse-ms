@@ -316,7 +316,7 @@ export default function ReceivingFiltersClient({
                       <td style={td}>{formatDateDisplay(order.inbound_date)}</td>
                       <td style={td}>{order.suppliers?.supplier_name || '-'}</td>
                       <td style={td}>{order.item_name || '-'}</td>
-                      <td style={{ ...td, textAlign: 'right' }}>{order.total_claimed_qty || 0}</td>
+                      <td style={{ ...td, textAlign: 'right' }}>{order.total_claimed_qty ?? 'No data'}</td>
                       <td style={{ ...td, whiteSpace: 'nowrap' }}>
                         <div style={styles.actionGroup}>
                           <Link

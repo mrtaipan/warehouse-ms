@@ -397,7 +397,7 @@ export default function ReceivingInputPage() {
           </div>
           <div style={styles.infoRight}>
             <span style={styles.infoLabel}>SJ Qty</span>
-            <strong style={styles.infoValue}>{formatNumber(inbound.total_claimed_qty || 0)}</strong>
+            <strong style={styles.infoValue}>{inbound.total_claimed_qty == null ? 'No data' : formatNumber(inbound.total_claimed_qty)}</strong>
           </div>
         </section>
 
@@ -675,12 +675,16 @@ const styles = {
     fontSize: '22px',
     fontWeight: '650',
     color: '#18181b',
+    WebkitTextFillColor: '#18181b',
+    caretColor: '#18181b',
+    colorScheme: 'light',
     background: '#fff',
   },
   inputDisabled: {
     background: '#f8fafc',
     borderColor: '#e2e8f0',
     color: '#94a3b8',
+    WebkitTextFillColor: '#94a3b8',
     cursor: 'not-allowed',
   },
   autoGrid: {

@@ -211,6 +211,9 @@ const styles = {
     width: '100%',
     background: '#fff',
     color: '#111827',
+    WebkitTextFillColor: '#111827',
+    caretColor: '#111827',
+    colorScheme: 'light',
   },
   inputReadonly: {
     height: '40px',
@@ -221,6 +224,8 @@ const styles = {
     width: '100%',
     backgroundColor: '#f8fafc',
     color: '#475569',
+    WebkitTextFillColor: '#475569',
+    colorScheme: 'light',
   },
   select: {
     height: '40px',
@@ -231,6 +236,8 @@ const styles = {
     width: '100%',
     backgroundColor: '#fff',
     color: '#111827',
+    WebkitTextFillColor: '#111827',
+    colorScheme: 'light',
   },
   textarea: {
     minHeight: '80px',
@@ -239,7 +246,11 @@ const styles = {
     borderRadius: '9px',
     fontSize: '13px',
     width: '100%',
+    backgroundColor: '#fff',
     color: '#111827',
+    WebkitTextFillColor: '#111827',
+    caretColor: '#111827',
+    colorScheme: 'light',
     resize: 'vertical',
   },
   itemTextarea: {
@@ -516,8 +527,11 @@ export default function NewInboundPage() {
   const totalSampleQty = koliRows.reduce((sum, row) => sum + Number(row.sample_qty || 0), 0)
   const totalUnloadedQty = koliRows.reduce((sum, row) => sum + Number(row.bongkar_qty || 0), 0)
   const totalItemsReceived = totalUnloadedQty + totalSampleQty
-  const totalVariance = totalItemsReceived - Number(form.qty_surat_jalan || 0)
-  const totalVarianceStyle = getVarianceStyle(totalVariance)
+  const hasSjQty = !isBlank(form.qty_surat_jalan)
+  const totalVariance = hasSjQty ? totalItemsReceived - Number(form.qty_surat_jalan || 0) : null
+  const totalVarianceStyle = hasSjQty
+    ? getVarianceStyle(totalVariance)
+    : { color: '#64748b', background: '#f8fafc', borderColor: '#e2e8f0' }
   const contentGridStyle = isCompactLayout
     ? { ...styles.contentGrid, gridTemplateColumns: '1fr' }
     : styles.contentGrid
@@ -546,8 +560,10 @@ export default function NewInboundPage() {
     },
     {
       label: 'Total Variance',
-      value: totalVariance > 0 ? `+${totalVariance}` : totalVariance,
-      title: 'Selisih antara total barang diterima dan SJ Qty. Minus berarti barang diterima lebih sedikit dari SJ.',
+      value: hasSjQty ? (totalVariance > 0 ? `+${totalVariance}` : totalVariance) : 'No data',
+      title: hasSjQty
+        ? 'Selisih antara total barang diterima dan SJ Qty. Minus berarti barang diterima lebih sedikit dari SJ.'
+        : 'SJ Qty belum diisi, jadi variance terhadap SJ belum bisa dihitung.',
       valueStyle: { color: totalVarianceStyle.color },
       cardStyle: totalVarianceStyle,
     },
@@ -568,11 +584,10 @@ export default function NewInboundPage() {
     if (
       isBlank(form.inbound_date) ||
       isBlank(form.item_name) ||
-      isBlank(form.qty_surat_jalan) ||
       isBlank(form.payment_on_site) ||
       isBlank(form.total_koli)
     ) {
-      setError('Inbound Date, Item / Item Name, SJ Qty, Paid on Site, and Koli Qty are required.')
+      setError('Inbound Date, Item / Item Name, Paid on Site, and Koli Qty are required.')
       return
     }
 
@@ -603,7 +618,7 @@ export default function NewInboundPage() {
           inbound_date: form.inbound_date,
           item_name: form.item_name.trim().toUpperCase(),
           payment_on_site: form.payment_on_site === 'yes',
-          total_claimed_qty: Number(form.qty_surat_jalan || 0),
+          total_claimed_qty: isBlank(form.qty_surat_jalan) ? null : Number(form.qty_surat_jalan),
           total_received_qty: totalReceivedQty,
           total_koli: totalKoli,
           status: nextStatus,
@@ -721,7 +736,6 @@ export default function NewInboundPage() {
                     inputMode="numeric"
                     pattern="[0-9]*"
                     style={styles.input}
-                    required
                   />
                 </div>
 

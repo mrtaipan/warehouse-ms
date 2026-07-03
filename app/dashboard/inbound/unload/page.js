@@ -260,6 +260,8 @@ const styles = {
     maxWidth: '520px',
     margin: '0 auto',
     background: '#fff',
+    color: '#111827',
+    colorScheme: 'light',
     borderLeft: '1px solid #e2e8f0',
     borderRight: '1px solid #e2e8f0',
     display: 'flex',
@@ -1009,18 +1011,23 @@ const styles = {
     borderRadius: '8px',
     background: '#fff',
     color: '#111827',
+    WebkitTextFillColor: '#111827',
+    caretColor: '#111827',
+    colorScheme: 'light',
     fontSize: '14px',
     width: '100%',
   },
   readOnlyInput: {
     background: '#f8fafc',
     color: '#64748b',
+    WebkitTextFillColor: '#64748b',
     cursor: 'default',
   },
   qtyInput: {
     border: '1px solid #94a3b8',
     background: '#fff',
     color: '#0f172a',
+    WebkitTextFillColor: '#0f172a',
     fontWeight: '800',
   },
   searchPicker: {
@@ -1069,6 +1076,9 @@ const styles = {
     borderRadius: '8px',
     fontSize: '14px',
     background: '#fff',
+    color: '#111827',
+    WebkitTextFillColor: '#111827',
+    colorScheme: 'light',
     width: '100%',
   },
   textarea: {
@@ -1077,6 +1087,11 @@ const styles = {
     border: '1px solid #d1d5db',
     borderRadius: '8px',
     fontSize: '14px',
+    background: '#fff',
+    color: '#111827',
+    WebkitTextFillColor: '#111827',
+    caretColor: '#111827',
+    colorScheme: 'light',
     resize: 'vertical',
   },
   readonlyBox: {
@@ -2389,10 +2404,13 @@ export default function UnloadPage() {
     .reduce((sum, row) => sum + Number(row.qty || 0), 0)
   const totalInboundQty =
     unloadRows.reduce((sum, row) => sum + Number(row.qty || 0), 0)
-  const sjQty = Number(selectedInbound?.total_claimed_qty || 0)
-  const remainingQty = totalInboundQty - sjQty
+  const hasSelectedSjQty = selectedInbound?.total_claimed_qty != null
+  const sjQty = hasSelectedSjQty ? Number(selectedInbound.total_claimed_qty || 0) : null
+  const remainingQty = hasSelectedSjQty ? totalInboundQty - sjQty : null
   const remainingQtyStyle =
-    remainingQty < 0
+    !hasSelectedSjQty
+      ? { color: '#64748b' }
+      : remainingQty < 0
       ? styles.mobileRemainingNegative
       : remainingQty > 0
         ? styles.mobileRemainingPositive
@@ -2946,7 +2964,7 @@ export default function UnloadPage() {
       : null
 
     if (itemType && subCategory) {
-      return `${itemType.category_name || '-'} / ${subCategory.category_name || '-'}`
+      return `${itemType.category_name || '-'} ${subCategory.category_name || '-'}`.trim()
     }
 
     return itemType?.category_name || '-'
@@ -3512,7 +3530,7 @@ export default function UnloadPage() {
       <div class="summary">
         <div class="summaryCard">
           <div class="summaryLabel">Total SJ Qty</div>
-          <div class="summaryValue">${selectedInbound.total_claimed_qty || 0}</div>
+          <div class="summaryValue">${selectedInbound.total_claimed_qty ?? 'No data'}</div>
         </div>
         <div class="summaryCard">
           <div class="summaryLabel">Total Receiving Qty</div>
@@ -4045,7 +4063,9 @@ export default function UnloadPage() {
               </div>
               <div style={styles.mobileInfoMetric}>
                 <span style={{ ...styles.mobileInfoLabel, ...styles.mobileInfoLabelTight }}>Remaining Qty</span>
-                <strong style={{ ...styles.mobileInfoValue, ...styles.mobileInfoValueTight, ...remainingQtyStyle }}>{formatNumber(remainingQty)}</strong>
+                <strong style={{ ...styles.mobileInfoValue, ...styles.mobileInfoValueTight, ...remainingQtyStyle }}>
+                  {hasSelectedSjQty ? formatNumber(remainingQty) : 'No data'}
+                </strong>
               </div>
             </section>
           </>
@@ -4132,7 +4152,7 @@ export default function UnloadPage() {
               <div style={styles.metricGrid}>
                 <div style={styles.metricBox}>
                   <span style={styles.infoLabel}>SJ Qty</span>
-                  <strong style={styles.metricValue}>{selectedInbound?.total_claimed_qty || 0}</strong>
+                  <strong style={styles.metricValue}>{selectedInbound?.total_claimed_qty ?? 'No data'}</strong>
                 </div>
                 <div style={styles.metricBox}>
                   <span style={styles.infoLabel}>Received Qty</span>

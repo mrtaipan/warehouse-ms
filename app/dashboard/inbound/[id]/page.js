@@ -95,7 +95,7 @@ export default async function ReceivingDetailPage({ params }) {
         </div>
         <div style={styles.summaryCard}>
           <span style={styles.summaryLabel}>Qty Surat Jalan</span>
-          <strong style={styles.summaryValue}>{order.total_claimed_qty || 0}</strong>
+          <strong style={styles.summaryValue}>{order.total_claimed_qty ?? 'No data'}</strong>
         </div>
         <div style={styles.summaryCard}>
           <span style={styles.summaryLabel}>Qty Supplier</span>

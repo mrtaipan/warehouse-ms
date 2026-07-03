@@ -1,9 +1,20 @@
 'use client'
 
+import Link from 'next/link'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createClient } from '@/utils/supabase/browser'
 
 const supabase = createClient()
+
+function formatDateDisplay(value) {
+  if (!value) return '-'
+
+  return new Intl.DateTimeFormat('en-GB', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+  }).format(new Date(value))
+}
 
 const styles = {
   wrapper: {
@@ -24,6 +35,94 @@ const styles = {
     display: 'flex',
     flexDirection: 'column',
     gap: '18px',
+  },
+  topBar: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: '14px',
+    flexWrap: 'wrap',
+  },
+  backButton: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: '8px',
+    minHeight: '38px',
+    padding: '0 12px',
+    border: '1px solid #cbd5e1',
+    borderRadius: '9px',
+    background: '#fff',
+    color: '#0f172a',
+    textDecoration: 'none',
+    fontSize: '13px',
+    fontWeight: '800',
+  },
+  contentGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'minmax(220px, 0.8fr) minmax(360px, 1.2fr)',
+    gap: '16px',
+    alignItems: 'stretch',
+  },
+  grnCard: {
+    background: '#fff',
+    border: '1px solid #e2e8f0',
+    borderRadius: '16px',
+    padding: '18px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '12px',
+  },
+  grnLabel: {
+    color: '#64748b',
+    fontSize: '11px',
+    fontWeight: '800',
+    textTransform: 'uppercase',
+  },
+  infoValue: {
+    color: '#0f172a',
+    fontSize: '14px',
+    fontWeight: '800',
+    lineHeight: 1.35,
+  },
+  headerInfoColumn: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '12px',
+  },
+  infoGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+    gap: '12px',
+  },
+  infoBox: {
+    background: '#fff',
+    border: '1px solid #e2e8f0',
+    borderRadius: '14px',
+    padding: '14px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '6px',
+  },
+  metricGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(4, minmax(0, 1fr))',
+    gap: '12px',
+  },
+  metricBox: {
+    background: '#f8fafc',
+    border: '1px solid #e2e8f0',
+    borderRadius: '14px',
+    padding: '14px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '6px',
+  },
+  metricValue: {
+    color: '#111827',
+    fontSize: '22px',
+    fontWeight: '900',
+    fontVariantNumeric: 'tabular-nums',
   },
   eyebrow: {
     margin: 0,
@@ -290,7 +389,9 @@ export default function QcConfirmationRejectionPage() {
   const [savingReturn, setSavingReturn] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
-  const [grnFilter, setGrnFilter] = useState('')
+  const [grnFilter, setGrnFilter] = useState(() =>
+    typeof window === 'undefined' ? '' : new URLSearchParams(window.location.search).get('grn') || ''
+  )
   const [qcItems, setQcItems] = useState([])
   const [confirmRows, setConfirmRows] = useState([])
   const [returnRows, setReturnRows] = useState([])
@@ -319,7 +420,12 @@ export default function QcConfirmationRejectionPage() {
             *,
             inbound:inbound_id (
               id,
-              grn_number
+              grn_number,
+              item_name,
+              inbound_date,
+              suppliers:dir_suppliers!supplier_id (
+                supplier_name
+              )
             ),
             inbound_unload:inbound_unload_id (
               id,
@@ -467,6 +573,16 @@ export default function QcConfirmationRejectionPage() {
       ),
     [sourceRows]
   )
+  const totalRejectKoli = useMemo(() => {
+    const sequences = new Set()
+    confirmRows
+      .filter((item) => Number(item.inbound_id) === Number(selectedInbound?.id))
+      .forEach((item) => sequences.add(`take-${Number(item.koli_sequence || 0)}`))
+    returnRows
+      .filter((item) => Number(item.inbound_id) === Number(selectedInbound?.id))
+      .forEach((item) => sequences.add(`return-${Number(item.koli_sequence || 0)}`))
+    return sequences.size
+  }, [confirmRows, returnRows, selectedInbound?.id])
   const adjustmentModelOptions = useMemo(
     () => productModels.map((item) => ({
       ...item,
@@ -682,63 +798,81 @@ export default function QcConfirmationRejectionPage() {
   return (
     <div style={styles.wrapper}>
       <div style={styles.card}>
-        <div>
-          <p style={styles.eyebrow}>Quality Control</p>
-          <h1 style={styles.title}>Confirmation - Rejection</h1>
-          <p style={styles.subtitle}>Grade B dan Grade C diputuskan di sini: diambil ke next process atau masuk retur.</p>
-        </div>
-
-        <div style={styles.field}>
-          <label style={styles.label}>GRN Number</label>
-          <input
-            list="qc-confirmation-rejection-grn-options"
-            value={grnFilter}
-            onChange={(event) => {
-              setGrnFilter(event.target.value)
-              setCurrentTakeKoliItems([])
-              setCurrentReturnKoliItems([])
-              setQtyInputs({})
-              setError('')
-              setSuccess('')
-            }}
-            style={styles.input}
-            placeholder="Type or choose GRN Number"
-          />
-          <datalist id="qc-confirmation-rejection-grn-options">
-            {grnOptions.map((item) => (
-              <option key={item} value={item} />
-            ))}
-          </datalist>
+        <div style={styles.topBar}>
+          <div>
+            <p style={styles.eyebrow}>Grading Verification</p>
+            <h1 style={styles.title}>Rejection Grade</h1>
+            <p style={styles.subtitle}>Grade B and Grade C items are verified into next-process or return koli.</p>
+          </div>
+          <Link href="/dashboard/qc/confirmation" style={styles.backButton}>
+            X
+          </Link>
         </div>
 
         {error ? <p style={styles.errorText}>{error}</p> : null}
         {success ? <p style={styles.successText}>{success}</p> : null}
         <p style={styles.note}>Grade B/C yang diambil akan ikut ke next process dengan grade aslinya. Yang tidak diambil masuk retur dan bisa nanti diprint per koli.</p>
 
-        {grnFilter ? (
-          <div style={styles.summaryGrid}>
-            <div style={styles.summaryCard}>
-              <span style={styles.summaryLabel}>Source B/C</span>
-              <strong style={styles.summaryValue}>{totals.source}</strong>
-            </div>
-            <div style={styles.summaryCard}>
-              <span style={styles.summaryLabel}>Taken Qty</span>
-              <strong style={styles.summaryValue}>{totals.taken}</strong>
-            </div>
-            <div style={styles.summaryCard}>
-              <span style={styles.summaryLabel}>Returned Qty</span>
-              <strong style={styles.summaryValue}>{totals.returned}</strong>
-            </div>
-            <div style={styles.summaryCard}>
-              <span style={styles.summaryLabel}>Take Draft</span>
-              <strong style={styles.summaryValue}>{currentTakeKoliItems.reduce((sum, item) => sum + Number(item.qty || 0), 0)}</strong>
-            </div>
-            <div style={styles.summaryCard}>
-              <span style={styles.summaryLabel}>Return Draft</span>
-              <strong style={styles.summaryValue}>{currentReturnKoliItems.reduce((sum, item) => sum + Number(item.qty || 0), 0)}</strong>
+        <div style={styles.contentGrid}>
+          <div style={styles.grnCard}>
+            <span style={styles.grnLabel}>GRN Number</span>
+            <input
+              list="qc-confirmation-rejection-grn-options"
+              value={grnFilter}
+              onChange={(event) => {
+                setGrnFilter(event.target.value)
+                setCurrentTakeKoliItems([])
+                setCurrentReturnKoliItems([])
+                setQtyInputs({})
+                setError('')
+                setSuccess('')
+              }}
+              style={styles.input}
+              placeholder="Type or choose GRN Number"
+            />
+            <datalist id="qc-confirmation-rejection-grn-options">
+              {grnOptions.map((item) => (
+                <option key={item} value={item} />
+              ))}
+            </datalist>
+            <div style={styles.field}>
+              <span style={styles.grnLabel}>Item Name</span>
+              <strong style={styles.infoValue}>{selectedInbound?.item_name || '-'}</strong>
             </div>
           </div>
-        ) : null}
+
+          <div style={styles.headerInfoColumn}>
+            <div style={styles.infoGrid}>
+              <div style={styles.infoBox}>
+                <span style={styles.grnLabel}>Inbound Date</span>
+                <strong style={styles.infoValue}>{formatDateDisplay(selectedInbound?.inbound_date)}</strong>
+              </div>
+              <div style={styles.infoBox}>
+                <span style={styles.grnLabel}>Supplier</span>
+                <strong style={styles.infoValue}>{selectedInbound?.suppliers?.supplier_name || '-'}</strong>
+              </div>
+            </div>
+
+            <div style={styles.metricGrid}>
+              <div style={styles.metricBox}>
+                <span style={styles.grnLabel}>Reject Source</span>
+                <strong style={styles.metricValue}>{totals.source}</strong>
+              </div>
+              <div style={styles.metricBox}>
+                <span style={styles.grnLabel}>Passing Posted</span>
+                <strong style={styles.metricValue}>{totals.taken}</strong>
+              </div>
+              <div style={styles.metricBox}>
+                <span style={styles.grnLabel}>Return Posted</span>
+                <strong style={styles.metricValue}>{totals.returned}</strong>
+              </div>
+              <div style={styles.metricBox}>
+                <span style={styles.grnLabel}>Total Reject Koli</span>
+                <strong style={styles.metricValue}>{totalRejectKoli}</strong>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
 
       <div style={styles.card}>

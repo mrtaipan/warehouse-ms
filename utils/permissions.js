@@ -78,7 +78,7 @@ const BASE_PERMISSION_GROUPS = [
       { key: 'summary', label: 'QC Summary', description: 'Halaman ringkasan performa dan hasil QC.', actions: ['view'] },
       { key: 'receiving', label: 'QC Receiving', description: 'Buat dan kelola rencana alokasi QC receiving.', actions: ['view', 'add', 'edit', 'delete'] },
       { key: 'grading_task', label: 'Grading Task', description: 'Halaman kerja inspector untuk menjalankan tugas grading QC.', actions: ['view', 'add', 'edit'] },
-      { key: 'confirmation', label: 'QC Confirmation', description: 'Kelola hasil final dan konfirmasi QC.', actions: ['view', 'add', 'edit'] },
+      { key: 'confirmation', label: 'Grading Verification', description: 'Kelola verifikasi hasil grading QC.', actions: ['view', 'add', 'edit'] },
       { key: 'retur_report', label: 'Return Report', description: 'Kelola return reguler serta siklus return dan Re-QC Arkline.', actions: ['view', 'add', 'edit'] },
     ],
   },

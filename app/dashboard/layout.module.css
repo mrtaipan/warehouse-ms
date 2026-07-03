@@ -29,6 +29,14 @@
   overflow: hidden;
 }
 
+.sidebarHidden {
+  width: 0;
+  min-width: 0;
+  height: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
 .sidebarInner {
   min-height: 0;
   display: flex;
@@ -334,6 +342,10 @@
     height: auto;
     border-radius: 24px;
     padding: 14px 16px;
+  }
+
+  .sidebarHidden {
+    display: none;
   }
 
   .sidebar:hover {

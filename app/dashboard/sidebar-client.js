@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import { usePathname, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import Image from 'next/image'
 
@@ -110,9 +111,18 @@ function GearIcon() {
 
 export default function SidebarClient({ navItems, settingHref }) {
   const [isMobileExpanded, setIsMobileExpanded] = useState(false)
+  const pathname = usePathname()
+  const searchParams = useSearchParams()
+  const shouldHideSidebar =
+    pathname === '/dashboard/qc/confirmation/next-process' &&
+    searchParams.get('form') === '1'
 
   function collapseMobileSidebarOnNavigate() {
     setIsMobileExpanded(false)
+  }
+
+  if (shouldHideSidebar) {
+    return <aside className={styles.sidebarHidden} aria-hidden="true" />
   }
 
   return (
