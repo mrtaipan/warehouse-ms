@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { createClient } from '@/utils/supabase/browser'
 import { getProfileByAuthenticatedUser } from '@/utils/user-profiles'
@@ -8,6 +8,10 @@ import { getProfileByAuthenticatedUser } from '@/utils/user-profiles'
 const supabase = createClient()
 const RACK_LOCATION_BATCH_SIZE = 1000
 const TAKE_REQUESTS_TABLE = 'restock_request'
+const SOURCE_OPTIONS = [
+  { value: 'MOB', label: 'MOB' },
+  { value: 'ARKLINE', label: 'ARKLINE' },
+]
 
 async function fetchAllRackLocations() {
   const allRows = []
@@ -65,6 +69,51 @@ function normalizeText(value) {
 
 function normalizeSearchTermInput(value) {
   return String(value || '').toUpperCase()
+}
+
+function normalizeArklineProduct(row) {
+  return {
+    sku: normalizeText(row?.sku_induk),
+    name: normalizeText(row?.nama_produk),
+    category: normalizeText(row?.kategori_produk),
+    isActive: row?.is_active !== false,
+  }
+}
+
+function getArklineProductLabel(product) {
+  if (!product) {
+    return ''
+  }
+
+  return [product.sku, product.name].filter(Boolean).join(' ')
+}
+
+function findArklineProductByInput(products, value) {
+  const normalizedValue = normalizeText(value)
+
+  if (!normalizedValue) {
+    return null
+  }
+
+  return (
+    products.find((item) => item.sku === normalizedValue) ||
+    products.find((item) => item.name === normalizedValue) ||
+    products.find((item) => getArklineProductLabel(item) === normalizedValue) ||
+    null
+  )
+}
+
+async function fetchArklineProducts() {
+  const { data, error } = await supabase
+    .from('arkline_dir_products')
+    .select('sku_induk, nama_produk, kategori_produk, is_active')
+    .order('nama_produk', { ascending: true })
+
+  if (error) {
+    throw error
+  }
+
+  return (data || []).map(normalizeArklineProduct).filter((item) => item.isActive && (item.sku || item.name))
 }
 
 function getStorageSearchCandidates(value) {
@@ -246,6 +295,26 @@ function buildRequestRows(matches, rackLocations, form, requesterName) {
   ]
 }
 
+function buildArklineRequestRows(product, form, requesterName) {
+  const requestedQty = Number(form.qty || 0)
+  const submittedNote = String(form.note || '').trim()
+  const itemLabel = getArklineProductLabel(product) || form.searchTerm.trim()
+
+  return [
+    {
+      requester_name: requesterName.trim(),
+      item_name: itemLabel,
+      size: normalizeSizeValue(form.size) || '-',
+      qty: requestedQty,
+      take_from: 'Lokasi belum terdata',
+      storage_id: null,
+      search_term: product?.sku || itemLabel,
+      note: submittedNote || null,
+      request_status: 'open',
+    },
+  ]
+}
+
 async function fetchOpenRequests() {
   const { data, error } = await supabase
     .from(TAKE_REQUESTS_TABLE)
@@ -271,17 +340,25 @@ export default function RestockRequestSubmit({
   const [rackLocations, setRackLocations] = useState([])
   const [requests, setRequests] = useState([])
   const [requesterName, setRequesterName] = useState('')
+  const [arklineProducts, setArklineProducts] = useState([])
+  const [arklineProductError, setArklineProductError] = useState('')
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
   const [form, setForm] = useState({
+    sourceType: '',
     size: '',
     qty: '1',
     searchTerm: '',
     note: '',
   })
+
+  const arklineProductOptions = useMemo(
+    () => arklineProducts.map((item) => getArklineProductLabel(item)).filter(Boolean),
+    [arklineProducts]
+  )
 
   async function fetchRequesterName() {
     const {
@@ -324,10 +401,14 @@ export default function RestockRequestSubmit({
       setError('')
 
       try {
-        const [rackData, requestRows, currentRequesterName] = await Promise.all([
+        const [rackData, requestRows, currentRequesterName, productRows] = await Promise.all([
           fetchAllRackLocations(),
           fetchOpenRequests(),
           fetchRequesterName(),
+          fetchArklineProducts().catch((productError) => {
+            setArklineProductError(productError.message || 'Failed to load Arkline products.')
+            return []
+          }),
         ])
 
         const normalizedRackLocations = (rackData || []).map((item) => ({
@@ -345,6 +426,7 @@ export default function RestockRequestSubmit({
         setRackLocations(normalizedRackLocations)
         setRequests(requestRows)
         setRequesterName(currentRequesterName)
+        setArklineProducts(productRows)
         setLoading(false)
       } catch (loadError) {
         setError(
@@ -389,6 +471,19 @@ export default function RestockRequestSubmit({
     }))
   }
 
+  function handleSourceTypeChange(nextSourceType) {
+    setForm((prev) => ({
+      ...prev,
+      sourceType: nextSourceType,
+      searchTerm: '',
+      size: '',
+      qty: prev.qty || '1',
+      note: '',
+    }))
+    setError('')
+    setSuccess('')
+  }
+
   async function handleSubmit(event) {
     event.preventDefault()
     setSubmitting(true)
@@ -397,6 +492,12 @@ export default function RestockRequestSubmit({
 
     if (!requesterName.trim()) {
       setError('Display name user belum tersedia. Isi dulu di User Access.')
+      setSubmitting(false)
+      return
+    }
+
+    if (!form.sourceType) {
+      setError('Pilih sumber request dulu: MOB atau ARKLINE.')
       setSubmitting(false)
       return
     }
@@ -421,18 +522,33 @@ export default function RestockRequestSubmit({
       return
     }
 
-    let data = []
+    let payload = []
 
-    try {
-      data = await fetchStorageMatches(form.searchTerm.trim(), form.size.trim())
-    } catch (searchError) {
-      setError(searchError.message)
-      setSubmitting(false)
-      return
+    if (form.sourceType === 'ARKLINE') {
+      const selectedProduct = findArklineProductByInput(arklineProducts, form.searchTerm)
+
+      if (!selectedProduct) {
+        setError('Pilih produk Arkline dari dropdown yang tersedia.')
+        setSubmitting(false)
+        return
+      }
+
+      payload = buildArklineRequestRows(selectedProduct, form, requesterName)
+    } else {
+      let data = []
+
+      try {
+        data = await fetchStorageMatches(form.searchTerm.trim(), form.size.trim())
+      } catch (searchError) {
+        setError(searchError.message)
+        setSubmitting(false)
+        return
+      }
+
+      const matchedRows = selectRowsForRequestedSize(data || [], form.size.trim())
+      payload = buildRequestRows(matchedRows, rackLocations, form, requesterName)
     }
 
-    const matchedRows = selectRowsForRequestedSize(data || [], form.size.trim())
-    const payload = buildRequestRows(matchedRows, rackLocations, form, requesterName)
     const { error: insertError } = await supabase.from(TAKE_REQUESTS_TABLE).insert(payload)
 
     if (insertError) {
@@ -489,55 +605,102 @@ export default function RestockRequestSubmit({
           </div>
 
           <div style={styles.field}>
-            <label style={styles.label}>Nama Barang / SKU</label>
-            <input
-              name="searchTerm"
-              value={form.searchTerm}
-              onChange={handleInputChange}
-              style={styles.input}
-              placeholder="CARI ITEM YANG MAU DIAMBIL"
-              required
-            />
-          </div>
+            <label style={styles.label}>Request Untuk</label>
+            <div style={styles.sourceSelector}>
+              {SOURCE_OPTIONS.map((option) => {
+                const isActive = form.sourceType === option.value
 
-          <div style={styles.row}>
-            <div style={styles.field}>
-              <label style={styles.label}>Size</label>
-              <input
-                name="size"
-                value={form.size}
-                onChange={handleInputChange}
-                style={styles.input}
-                placeholder="CONTOH: M"
-                required
-              />
-            </div>
-
-            <div style={styles.field}>
-              <label style={styles.label}>Qty</label>
-              <input
-                name="qty"
-                value={form.qty}
-                onChange={handleInputChange}
-                style={styles.input}
-                inputMode="numeric"
-                placeholder="1"
-                required
-              />
+                return (
+                  <button
+                    key={option.value}
+                    type="button"
+                    onClick={() => handleSourceTypeChange(option.value)}
+                    style={{
+                      ...styles.sourceButton,
+                      ...(isActive ? styles.sourceButtonActive : {}),
+                    }}
+                  >
+                    {option.label}
+                  </button>
+                )
+              })}
             </div>
           </div>
 
-          <div style={styles.field}>
-            <label style={styles.label}>Notes</label>
-            <textarea
-              name="note"
-              value={form.note}
-              onChange={handleInputChange}
-              style={styles.textarea}
-              placeholder="Catatan untuk picker, kalau ada instruksi tambahan"
-              rows={3}
-            />
-          </div>
+          {form.sourceType ? (
+            <>
+              <div style={styles.field}>
+                <label style={styles.label}>Nama Barang / SKU</label>
+                <input
+                  name="searchTerm"
+                  value={form.searchTerm}
+                  onChange={handleInputChange}
+                  style={styles.input}
+                  placeholder={
+                    form.sourceType === 'ARKLINE'
+                      ? 'KETIK ATAU PILIH PRODUK ARKLINE'
+                      : 'CARI ITEM YANG MAU DIAMBIL'
+                  }
+                  list={form.sourceType === 'ARKLINE' ? 'arkline-product-options' : undefined}
+                  required
+                />
+                {form.sourceType === 'ARKLINE' ? (
+                  <>
+                    <datalist id="arkline-product-options">
+                      {arklineProductOptions.map((label) => (
+                        <option key={label} value={label} />
+                      ))}
+                    </datalist>
+                    {arklineProductError ? <span style={styles.helperError}>{arklineProductError}</span> : null}
+                    {!arklineProductError && !arklineProductOptions.length ? (
+                      <span style={styles.helperText}>Belum ada produk Arkline aktif yang bisa dipilih.</span>
+                    ) : null}
+                  </>
+                ) : null}
+              </div>
+
+              <div style={styles.row}>
+                <div style={styles.field}>
+                  <label style={styles.label}>Size</label>
+                  <input
+                    name="size"
+                    value={form.size}
+                    onChange={handleInputChange}
+                    style={styles.input}
+                    placeholder="CONTOH: M"
+                    required
+                  />
+                </div>
+
+                <div style={styles.field}>
+                  <label style={styles.label}>Qty</label>
+                  <input
+                    name="qty"
+                    value={form.qty}
+                    onChange={handleInputChange}
+                    style={styles.input}
+                    inputMode="numeric"
+                    placeholder="1"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div style={styles.field}>
+                <label style={styles.label}>Notes</label>
+                <textarea
+                  name="note"
+                  value={form.note}
+                  onChange={handleInputChange}
+                  style={styles.textarea}
+                  placeholder="Catatan untuk picker, kalau ada instruksi tambahan"
+                  rows={3}
+                />
+              </div>
+            </>
+          ) : (
+            <div style={styles.emptyState}>Pilih MOB atau ARKLINE terlebih dahulu untuk membuka field request.</div>
+          )}
 
           {error ? <p style={styles.error}>{error}</p> : null}
           {success ? <p style={styles.success}>{success}</p> : null}
@@ -722,6 +885,28 @@ const styles = {
     color: '#7c2d12',
     fontSize: '15px',
   },
+  sourceSelector: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+    gap: '8px',
+  },
+  sourceButton: {
+    height: '44px',
+    borderRadius: '12px',
+    borderWidth: '1px',
+    borderStyle: 'solid',
+    borderColor: '#fdba74',
+    background: '#fff',
+    color: '#7c2d12',
+    fontSize: '13px',
+    fontWeight: '800',
+    cursor: 'pointer',
+  },
+  sourceButtonActive: {
+    background: '#111827',
+    borderColor: '#111827',
+    color: '#fff',
+  },
   field: {
     display: 'flex',
     flexDirection: 'column',
@@ -746,6 +931,16 @@ const styles = {
     fontSize: '13px',
     color: '#111827',
     outline: 'none',
+  },
+  helperText: {
+    color: '#6b7280',
+    fontSize: '12px',
+    lineHeight: 1.4,
+  },
+  helperError: {
+    color: '#dc2626',
+    fontSize: '12px',
+    lineHeight: 1.4,
   },
   textarea: {
     minHeight: '88px',
