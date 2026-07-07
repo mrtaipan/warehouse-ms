@@ -10,20 +10,23 @@ const styles = {
   wrapper: {
     display: 'flex',
     flexDirection: 'column',
-    gap: '20px',
+    gap: '14px',
+    width: '100%',
+    maxWidth: '560px',
+    margin: '0 auto',
   },
   card: {
     background: '#fff',
     border: '1px solid #e5e7eb',
-    borderRadius: '14px',
-    padding: '24px',
+    borderRadius: '12px',
+    padding: '16px',
     display: 'flex',
     flexDirection: 'column',
-    gap: '18px',
+    gap: '14px',
   },
   title: {
     margin: 0,
-    fontSize: '28px',
+    fontSize: '24px',
   },
   subtitle: {
     margin: '6px 0 0',
@@ -40,19 +43,19 @@ const styles = {
   },
   grid: {
     display: 'grid',
-    gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
-    gap: '16px',
+    gridTemplateColumns: '1fr',
+    gap: '12px',
   },
   summaryGrid: {
     display: 'grid',
     gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
-    gap: '16px',
+    gap: '8px',
   },
   summaryCard: {
     background: '#f9fafb',
     border: '1px solid #e5e7eb',
-    borderRadius: '12px',
-    padding: '16px',
+    borderRadius: '10px',
+    padding: '12px',
     display: 'flex',
     flexDirection: 'column',
     gap: '6px',
@@ -64,7 +67,7 @@ const styles = {
     color: '#6b7280',
   },
   summaryValue: {
-    fontSize: '24px',
+    fontSize: '20px',
     fontWeight: '800',
     color: '#111827',
   },
@@ -79,7 +82,7 @@ const styles = {
     color: '#111827',
   },
   input: {
-    height: '42px',
+    minHeight: '44px',
     padding: '0 12px',
     border: '1px solid #d1d5db',
     borderRadius: '8px',
@@ -88,7 +91,7 @@ const styles = {
     background: '#fff',
   },
   select: {
-    height: '42px',
+    minHeight: '44px',
     padding: '0 12px',
     border: '1px solid #d1d5db',
     borderRadius: '8px',
@@ -100,7 +103,7 @@ const styles = {
     position: 'relative',
   },
   dropdownButton: {
-    minHeight: '42px',
+    minHeight: '44px',
     width: '100%',
     padding: '10px 12px',
     border: '1px solid #d1d5db',
@@ -166,7 +169,7 @@ const styles = {
     justifyContent: 'center',
   },
   readonlyBox: {
-    minHeight: '42px',
+    minHeight: '44px',
     padding: '10px 12px',
     border: '1px solid #e5e7eb',
     borderRadius: '8px',
@@ -180,7 +183,7 @@ const styles = {
     borderRadius: '12px',
     padding: '14px',
     display: 'grid',
-    gridTemplateColumns: 'auto 1.6fr 1fr auto',
+    gridTemplateColumns: '1fr',
     gap: '12px',
     alignItems: 'end',
   },
@@ -190,13 +193,13 @@ const styles = {
   },
   buttonRow: {
     display: 'flex',
-    justifyContent: 'flex-end',
+    justifyContent: 'flex-start',
     gap: '12px',
     flexWrap: 'wrap',
     alignItems: 'center',
   },
   primaryButton: {
-    height: '42px',
+    minHeight: '44px',
     padding: '0 16px',
     border: 'none',
     borderRadius: '8px',
@@ -207,7 +210,7 @@ const styles = {
     cursor: 'pointer',
   },
   secondaryButton: {
-    height: '42px',
+    minHeight: '44px',
     padding: '0 16px',
     border: '1px solid #d1d5db',
     borderRadius: '8px',
@@ -354,8 +357,8 @@ export default function PackingListReceivingPage() {
           .select('id, inbound_id, source_koli_sequence, validated_at')
           .order('validated_at', { ascending: false }),
         supabase
-        .from('dir_product_models')
-          .select('id, model_name')
+          .from('dir_product_models')
+          .select('id, model_name, model_color, photo_url')
           .eq('is_active', true)
           .order('model_name', { ascending: true }),
       ])
@@ -457,6 +460,13 @@ export default function PackingListReceivingPage() {
       })),
     [productModels]
   )
+  const productModelMap = useMemo(() => {
+    const mapped = new Map()
+    productModels.forEach((item) => {
+      mapped.set(getModelKey(item.model_name, item.model_color), item)
+    })
+    return mapped
+  }, [productModels])
 
   useEffect(() => {
     async function loadValidationRows() {
@@ -503,13 +513,14 @@ export default function PackingListReceivingPage() {
         nextRows.map((row, index) => {
           const sourceKey = getModelKey(row.model_name, row.model_color)
           const matchedSource = sourceRowMap.get(sourceKey)
+          const matchedModel = productModelMap.get(sourceKey)
 
           return {
             id: `saved-${row.id || index}`,
             source_key: matchedSource?.source_key || '',
             model_name: row.model_name || '',
             model_color: row.model_color || '',
-            photo_url: matchedSource?.photo_url || '',
+            photo_url: matchedSource?.photo_url || matchedModel?.photo_url || '',
             qty: String(row.received_qty || 0),
           }
         })
@@ -517,7 +528,7 @@ export default function PackingListReceivingPage() {
     }
 
     loadValidationRows()
-  }, [selectedInbound?.id, selectedSource?.koli_sequence, sourceRowMap, sourceRows])
+  }, [productModelMap, selectedInbound?.id, selectedSource?.koli_sequence, sourceRowMap, sourceRows])
 
   function handleGrnChange(value) {
     setGrnFilter(value)
@@ -637,13 +648,15 @@ export default function PackingListReceivingPage() {
     } = await supabase.auth.getUser()
 
     const validationBatch = `${selectedInbound.id}-${selectedSource.koli_sequence}-${Date.now()}`
-      const payload = comparisonRows
-      .filter((row) => row.receivedQty > 0)
+    const payload = comparisonRows
+      .filter((row) => row.sourceQty > 0 || row.receivedQty > 0)
       .map((row) => {
       let mismatchType = 'MATCH'
 
       if (row.sourceQty === 0 && row.receivedQty > 0) {
         mismatchType = 'NEW_MODEL'
+      } else if (row.sourceQty > 0 && row.receivedQty === 0) {
+        mismatchType = 'MISSING_FROM_RECEIVING'
       } else if (row.qtyDiff !== 0) {
         mismatchType = 'QTY_DIFF'
       }

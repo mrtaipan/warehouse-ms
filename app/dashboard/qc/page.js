@@ -1557,6 +1557,17 @@ export default function QcDashboardPage() {
     [qcItems]
   )
   const hasInvalidDateRange = Boolean(dateFrom && dateTo && dateFrom > dateTo)
+  const hasSpecificSingleDate = Boolean(dateFrom && dateTo && dateFrom === dateTo)
+  const canEditArklineRejectDetail = !allTime && hasSpecificSingleDate && !hasInvalidDateRange
+  const rejectDetailReadOnlyReason = allTime
+    ? 'Reject Detail and Adjustment are read-only when All Time is active. Choose a specific Date From and Date To before editing.'
+    : !dateFrom || !dateTo
+      ? 'Reject Detail and Adjustment are read-only when only one date is selected. Choose both Date From and Date To before editing.'
+      : hasInvalidDateRange
+        ? 'Reject Detail and Adjustment are read-only until the date range is valid.'
+        : dateFrom !== dateTo
+          ? 'Reject Detail and Adjustment are read-only when the date range spans more than one day. Date From and Date To must be the same date before editing.'
+          : ''
 
   const filteredItems = useMemo(
     () =>
@@ -2217,6 +2228,12 @@ export default function QcDashboardPage() {
 
     setRejectDetailError('')
     setSuccess('')
+
+    if (!canEditArklineRejectDetail) {
+      setRejectDetailError(rejectDetailReadOnlyReason || 'Choose a specific Date From and Date To before editing Reject Detail.')
+      return
+    }
+
     setSavingRejectDetail(true)
 
     try {
@@ -2826,7 +2843,13 @@ export default function QcDashboardPage() {
                           type="button"
                           style={styles.detailButton}
                           onClick={() => openRejectDetailModal(item)}
-                          title={rejectTargetQty ? 'Open Arkline reject detail' : 'Open detail for adjustment'}
+                          title={
+                            canEditArklineRejectDetail
+                              ? rejectTargetQty
+                                ? 'Open Arkline reject detail'
+                                : 'Open detail for adjustment'
+                              : rejectDetailReadOnlyReason
+                          }
                         >
                           Detail
                         </button>
@@ -2996,12 +3019,22 @@ export default function QcDashboardPage() {
                 <button type="button" onClick={() => setRejectDetailSummary(null)} style={styles.secondaryButton}>
                   Close
                 </button>
-                <button type="button" onClick={handleSaveRejectDetail} disabled={savingRejectDetail} style={styles.primaryButton}>
+                <button
+                  type="button"
+                  onClick={handleSaveRejectDetail}
+                  disabled={savingRejectDetail || !canEditArklineRejectDetail}
+                  style={{
+                    ...styles.primaryButton,
+                    ...(!canEditArklineRejectDetail || savingRejectDetail ? { opacity: 0.55, cursor: 'not-allowed' } : {}),
+                  }}
+                  title={!canEditArklineRejectDetail ? rejectDetailReadOnlyReason : 'Save detail'}
+                >
                   {savingRejectDetail ? 'Saving...' : 'Save Detail'}
                 </button>
               </div>
             </div>
 
+            {!canEditArklineRejectDetail ? <div style={styles.warningBox}>{rejectDetailReadOnlyReason}</div> : null}
             {rejectDetailError ? <p style={{ color: '#dc2626', margin: 0 }}>{rejectDetailError}</p> : null}
             {success ? <p style={{ color: '#16a34a', margin: 0 }}>{success}</p> : null}
 
@@ -3096,13 +3129,23 @@ export default function QcDashboardPage() {
               {rejectDraftRows.map((row, index) => (
                 <div key={row.id} style={styles.rejectRowGrid}>
                   <div style={styles.field}>
-                    <select value={row.grade} onChange={(event) => updateRejectDraftRow(row.id, 'grade', event.target.value)} style={styles.select}>
+                    <select
+                      value={row.grade}
+                      onChange={(event) => updateRejectDraftRow(row.id, 'grade', event.target.value)}
+                      style={{ ...styles.select, ...(!canEditArklineRejectDetail ? styles.disabledInput : {}) }}
+                      disabled={!canEditArklineRejectDetail}
+                    >
                       <option value="B">B</option>
                       <option value="C">C</option>
                     </select>
                   </div>
                   <div style={styles.field}>
-                    <select value={row.rejectReasonId} onChange={(event) => updateRejectDraftRow(row.id, 'rejectReasonId', event.target.value)} style={styles.select}>
+                    <select
+                      value={row.rejectReasonId}
+                      onChange={(event) => updateRejectDraftRow(row.id, 'rejectReasonId', event.target.value)}
+                      style={{ ...styles.select, ...(!canEditArklineRejectDetail ? styles.disabledInput : {}) }}
+                      disabled={!canEditArklineRejectDetail}
+                    >
                       <option value="">Choose reason</option>
                       {selectedRejectReasonOptions.map((reason) => (
                         <option key={reason.id} value={reason.id}>
@@ -3115,7 +3158,8 @@ export default function QcDashboardPage() {
                       <input
                         value={row.newReasonName}
                         onChange={(event) => updateRejectDraftRow(row.id, 'newReasonName', event.target.value)}
-                        style={styles.input}
+                        style={{ ...styles.input, ...(!canEditArklineRejectDetail ? styles.disabledInput : {}) }}
+                        disabled={!canEditArklineRejectDetail}
                         placeholder="New reject reason"
                       />
                     ) : null}
@@ -3126,14 +3170,16 @@ export default function QcDashboardPage() {
                       min="0"
                       value={row.qty}
                       onChange={(event) => updateRejectDraftRow(row.id, 'qty', event.target.value)}
-                      style={styles.input}
+                      style={{ ...styles.input, ...(!canEditArklineRejectDetail ? styles.disabledInput : {}) }}
+                      disabled={!canEditArklineRejectDetail}
                     />
                   </div>
                   <div style={styles.field}>
                     <input
                       value={row.size}
                       onChange={(event) => updateRejectDraftRow(row.id, 'size', event.target.value)}
-                      style={styles.input}
+                      style={{ ...styles.input, ...(!canEditArklineRejectDetail ? styles.disabledInput : {}) }}
+                      disabled={!canEditArklineRejectDetail}
                       list="arkline-reject-size-options"
                       placeholder={selectedRejectSizeOptions.length ? 'Choose size' : 'Size'}
                     />
@@ -3141,15 +3187,29 @@ export default function QcDashboardPage() {
                   <div style={styles.iconButtonRow}>
                     <button
                       type="button"
-                      style={styles.iconSmallButton}
+                      style={{
+                        ...styles.iconSmallButton,
+                        ...(!canEditArklineRejectDetail ? { opacity: 0.55, cursor: 'not-allowed' } : {}),
+                      }}
                       onClick={() => setRejectDraftRows((rows) => [...rows, createRejectDraftRow()])}
+                      disabled={!canEditArklineRejectDetail}
                       title="Add row"
                       aria-label="Add row"
                     >
                       +
                     </button>
                     {index > 0 ? (
-                      <button type="button" style={styles.iconSmallButton} onClick={() => removeRejectDraftRow(row.id)} title="Remove row" aria-label="Remove row">
+                      <button
+                        type="button"
+                        style={{
+                          ...styles.iconSmallButton,
+                          ...(!canEditArklineRejectDetail ? { opacity: 0.55, cursor: 'not-allowed' } : {}),
+                        }}
+                        onClick={() => removeRejectDraftRow(row.id)}
+                        disabled={!canEditArklineRejectDetail}
+                        title="Remove row"
+                        aria-label="Remove row"
+                      >
                         X
                       </button>
                     ) : null}
@@ -3190,13 +3250,15 @@ export default function QcDashboardPage() {
                     type="number"
                     value={rejectAdjustmentDraft.bcToAQty}
                     onChange={(event) => setRejectAdjustmentDraft((draft) => ({ ...draft, bcToAQty: event.target.value }))}
-                    style={styles.input}
+                    style={{ ...styles.input, ...(!canEditArklineRejectDetail ? styles.disabledInput : {}) }}
+                    disabled={!canEditArklineRejectDetail}
                     placeholder="Qty"
                   />
                   <input
                     value={rejectAdjustmentDraft.bcToANotes}
                     onChange={(event) => setRejectAdjustmentDraft((draft) => ({ ...draft, bcToANotes: event.target.value }))}
-                    style={styles.input}
+                    style={{ ...styles.input, ...(!canEditArklineRejectDetail ? styles.disabledInput : {}) }}
+                    disabled={!canEditArklineRejectDetail}
                     placeholder="Notes"
                   />
                 </div>
@@ -3206,13 +3268,15 @@ export default function QcDashboardPage() {
                     type="number"
                     value={rejectAdjustmentDraft.inspectorErrorQty}
                     onChange={(event) => setRejectAdjustmentDraft((draft) => ({ ...draft, inspectorErrorQty: event.target.value }))}
-                    style={styles.input}
+                    style={{ ...styles.input, ...(!canEditArklineRejectDetail ? styles.disabledInput : {}) }}
+                    disabled={!canEditArklineRejectDetail}
                     placeholder="Qty"
                   />
                   <input
                     value={rejectAdjustmentDraft.inspectorErrorNotes}
                     onChange={(event) => setRejectAdjustmentDraft((draft) => ({ ...draft, inspectorErrorNotes: event.target.value }))}
-                    style={styles.input}
+                    style={{ ...styles.input, ...(!canEditArklineRejectDetail ? styles.disabledInput : {}) }}
+                    disabled={!canEditArklineRejectDetail}
                     placeholder="Notes"
                   />
                 </div>

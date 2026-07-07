@@ -1,6 +1,7 @@
 'use client'
 
 import Link from 'next/link'
+import { useSearchParams } from 'next/navigation'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createClient } from '@/utils/supabase/browser'
 
@@ -16,25 +17,53 @@ function formatDateDisplay(value) {
   }).format(new Date(value))
 }
 
+function formatNumber(value) {
+  return new Intl.NumberFormat('en-US').format(Number(value || 0))
+}
+
+function XIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M18 6 6 18" />
+      <path d="m6 6 12 12" />
+    </svg>
+  )
+}
+
+function TakeIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M7 17 17 7" />
+      <path d="M9 7h8v8" />
+    </svg>
+  )
+}
+
+function ReturnIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M9 14 4 9l5-5" />
+      <path d="M4 9h10a6 6 0 0 1 0 12h-2" />
+    </svg>
+  )
+}
+
 const styles = {
   wrapper: {
     display: 'flex',
     flexDirection: 'column',
-    gap: '18px',
-    padding: '18px',
+    gap: '20px',
+    padding: '20px',
     border: '1px solid #dbe4f0',
-    borderRadius: '22px',
-    background: 'linear-gradient(180deg, rgba(255, 255, 255, 0.99) 0%, rgba(245, 248, 252, 0.97) 100%)',
-    boxShadow: '0 24px 54px rgba(15, 23, 42, 0.08)',
+    borderRadius: '12px',
+    background: '#ffffff',
+    boxShadow: '0 16px 36px rgba(15, 23, 42, 0.06)',
   },
   card: {
-    background: '#fff',
-    border: '1px solid #e2e8f0',
-    borderRadius: '16px',
-    padding: '24px',
     display: 'flex',
     flexDirection: 'column',
-    gap: '18px',
+    gap: '16px',
+    paddingBottom: '6px',
   },
   topBar: {
     display: 'flex',
@@ -43,86 +72,113 @@ const styles = {
     gap: '14px',
     flexWrap: 'wrap',
   },
-  backButton: {
+  closeIconButton: {
     display: 'inline-flex',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: '8px',
-    minHeight: '38px',
-    padding: '0 12px',
-    border: '1px solid #cbd5e1',
-    borderRadius: '9px',
+    width: '38px',
+    minWidth: '38px',
+    height: '38px',
+    padding: 0,
+    border: '1px solid #fecaca',
+    borderRadius: '10px',
     background: '#fff',
-    color: '#0f172a',
+    color: '#dc2626',
     textDecoration: 'none',
-    fontSize: '13px',
-    fontWeight: '800',
+  },
+  closeIconGlyph: {
+    color: '#dc2626',
+    fontWeight: '950',
+    lineHeight: 1,
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   contentGrid: {
     display: 'grid',
-    gridTemplateColumns: 'minmax(220px, 0.8fr) minmax(360px, 1.2fr)',
-    gap: '16px',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 320px), 1fr))',
+    gap: '12px',
     alignItems: 'stretch',
   },
   grnCard: {
-    background: '#fff',
-    border: '1px solid #e2e8f0',
-    borderRadius: '16px',
-    padding: '18px',
+    background: '#f8fafc',
+    border: '1px solid #cbd5e1',
+    borderRadius: '14px',
+    padding: '14px 16px',
     display: 'flex',
     flexDirection: 'column',
-    gap: '12px',
+    justifyContent: 'center',
+  },
+  grnItemBlock: {
+    marginTop: '12px',
+    paddingTop: '12px',
+    borderTop: '1px solid #e2e8f0',
   },
   grnLabel: {
+    display: 'block',
     color: '#64748b',
-    fontSize: '11px',
+    fontSize: '10px',
     fontWeight: '800',
     textTransform: 'uppercase',
+    marginBottom: '6px',
+  },
+  grnValue: {
+    display: 'block',
+    color: '#0f172a',
+    fontSize: '28px',
+    fontWeight: '900',
+    lineHeight: 1.05,
+    fontVariantNumeric: 'tabular-nums',
+    wordBreak: 'break-word',
   },
   infoValue: {
+    display: 'block',
+    marginTop: '4px',
     color: '#0f172a',
     fontSize: '14px',
     fontWeight: '800',
-    lineHeight: 1.35,
+    lineHeight: 1.25,
+    wordBreak: 'break-word',
   },
   headerInfoColumn: {
     display: 'flex',
     flexDirection: 'column',
-    gap: '12px',
+    gap: '10px',
   },
   infoGrid: {
     display: 'grid',
-    gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
-    gap: '12px',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 180px), 1fr))',
+    gap: '10px',
   },
   infoBox: {
-    background: '#fff',
+    minHeight: '52px',
+    background: '#f8fafc',
     border: '1px solid #e2e8f0',
-    borderRadius: '14px',
-    padding: '14px',
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '6px',
+    borderRadius: '10px',
+    padding: '10px 12px',
   },
   metricGrid: {
     display: 'grid',
     gridTemplateColumns: 'repeat(4, minmax(0, 1fr))',
-    gap: '12px',
+    gap: '10px',
   },
   metricBox: {
-    background: '#f8fafc',
-    border: '1px solid #e2e8f0',
-    borderRadius: '14px',
-    padding: '14px',
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '6px',
+    minWidth: 0,
+    minHeight: '52px',
+    background: '#eef6ff',
+    border: '1px solid #dbeafe',
+    borderRadius: '10px',
+    padding: '10px 12px',
   },
   metricValue: {
+    display: 'block',
+    marginTop: '4px',
     color: '#111827',
-    fontSize: '22px',
+    fontSize: '16px',
     fontWeight: '900',
+    lineHeight: 1.15,
     fontVariantNumeric: 'tabular-nums',
+    wordBreak: 'break-word',
   },
   eyebrow: {
     margin: 0,
@@ -217,7 +273,7 @@ const styles = {
     lineHeight: 1.5,
   },
   sourceCard: {
-    border: '1px solid #e2e8f0',
+    border: '1px solid #dbe4f0',
     borderRadius: '12px',
     padding: '14px',
     display: 'grid',
@@ -257,6 +313,141 @@ const styles = {
     fontWeight: '800',
     color: '#111827',
     fontVariantNumeric: 'tabular-nums',
+  },
+  tableModelCell: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '3px',
+  },
+  tableModelName: {
+    color: '#0f172a',
+    fontSize: '13px',
+    fontWeight: '700',
+    lineHeight: 1.3,
+  },
+  tableMutedText: {
+    color: '#64748b',
+    fontSize: '12px',
+    fontWeight: '650',
+    lineHeight: 1.3,
+  },
+  photoButton: {
+    width: '44px',
+    height: '44px',
+    padding: 0,
+    border: 'none',
+    borderRadius: '8px',
+    background: 'transparent',
+    cursor: 'pointer',
+    overflow: 'hidden',
+  },
+  photoThumb: {
+    width: '44px',
+    height: '44px',
+    borderRadius: '8px',
+    objectFit: 'cover',
+    display: 'block',
+  },
+  photoEmpty: {
+    width: '44px',
+    height: '44px',
+    border: '1px solid #e2e8f0',
+    borderRadius: '8px',
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    color: '#94a3b8',
+    fontSize: '10px',
+    fontWeight: '800',
+    background: '#f8fafc',
+  },
+  photoPreviewOverlay: {
+    position: 'fixed',
+    inset: 0,
+    zIndex: 60,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: '24px',
+    background: 'rgba(15, 23, 42, 0.72)',
+  },
+  photoPreviewWrap: {
+    position: 'relative',
+    maxWidth: 'min(92vw, 920px)',
+    maxHeight: '88vh',
+  },
+  photoPreviewImage: {
+    maxWidth: '100%',
+    maxHeight: '88vh',
+    borderRadius: '10px',
+    objectFit: 'contain',
+    display: 'block',
+  },
+  photoPreviewClose: {
+    position: 'absolute',
+    top: '10px',
+    right: '10px',
+    width: '34px',
+    height: '34px',
+    border: '1px solid rgba(255, 255, 255, 0.72)',
+    borderRadius: '999px',
+    background: 'rgba(15, 23, 42, 0.72)',
+    color: '#fff',
+    fontSize: '14px',
+    fontWeight: '900',
+    cursor: 'pointer',
+  },
+  centerCell: {
+    textAlign: 'center',
+    verticalAlign: 'middle',
+  },
+  actionCell: {
+    minWidth: '170px',
+  },
+  sourceActionGroup: {
+    display: 'grid',
+    gridTemplateColumns: '1fr 1fr',
+    gap: '8px',
+  },
+  compactInput: {
+    height: '36px',
+    padding: '0 10px',
+    border: '1px solid #cbd5e1',
+    borderRadius: '9px',
+    fontSize: '13px',
+    width: '86px',
+    background: '#fff',
+    color: '#111827',
+    textAlign: 'center',
+  },
+  compactButton: {
+    height: '34px',
+    padding: '0 10px',
+    borderRadius: '8px',
+    fontSize: '12px',
+    fontWeight: '750',
+    cursor: 'pointer',
+  },
+  iconActionButton: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '34px',
+    minWidth: '34px',
+    height: '34px',
+    padding: 0,
+    borderRadius: '8px',
+    cursor: 'pointer',
+  },
+  takeIconButton: {
+    border: '1px solid #cbd5e1',
+    background: '#fff',
+    color: '#334155',
+  },
+  returnIconButton: {
+    border: '1px solid #fecaca',
+    background: '#fef2f2',
+    color: '#b91c1c',
   },
   buttonRow: {
     display: 'flex',
@@ -365,7 +556,7 @@ function getSourceKey(item) {
 
 function getModelLabel(item) {
   const variantName = item.variant_name || item.model_color || ''
-  return variantName ? `${item.model_name} / ${variantName}` : item.model_name
+  return variantName ? `${item.model_name} - ${variantName}` : item.model_name
 }
 
 function normalizeReturnRow(item) {
@@ -383,15 +574,14 @@ function normalizeQcItemRow(item) {
 }
 
 export default function QcConfirmationRejectionPage() {
+  const searchParams = useSearchParams()
   const draftIdRef = useRef(1)
   const [loading, setLoading] = useState(true)
   const [savingTake, setSavingTake] = useState(false)
   const [savingReturn, setSavingReturn] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
-  const [grnFilter, setGrnFilter] = useState(() =>
-    typeof window === 'undefined' ? '' : new URLSearchParams(window.location.search).get('grn') || ''
-  )
+  const grnFilter = searchParams.get('grn') || ''
   const [qcItems, setQcItems] = useState([])
   const [confirmRows, setConfirmRows] = useState([])
   const [returnRows, setReturnRows] = useState([])
@@ -402,6 +592,7 @@ export default function QcConfirmationRejectionPage() {
   const [adjustmentModelLabel, setAdjustmentModelLabel] = useState('')
   const [adjustmentGrade, setAdjustmentGrade] = useState('B')
   const [adjustmentQty, setAdjustmentQty] = useState('')
+  const [previewPhotoUrl, setPreviewPhotoUrl] = useState('')
 
   useEffect(() => {
     async function loadData() {
@@ -477,11 +668,6 @@ export default function QcConfirmationRejectionPage() {
     loadData()
   }, [])
 
-  const grnOptions = useMemo(
-    () => Array.from(new Set(qcItems.map((item) => item.inbound?.grn_number).filter(Boolean))),
-    [qcItems]
-  )
-
   const selectedInbound = useMemo(
     () => qcItems.find((item) => item.inbound?.grn_number === grnFilter)?.inbound || null,
     [grnFilter, qcItems]
@@ -519,12 +705,16 @@ export default function QcConfirmationRejectionPage() {
                 'UNCATEGORIZED',
               model_name: item.model_name || 'UNKNOWN MODEL',
               model_color: item.model_color || '',
+              photo_url: item.photo_url || '',
               grade: gradeRow.grade,
               source_qty: 0,
               taken_qty: 0,
               returned_qty: 0,
             }
 
+            if (!current.photo_url && item.photo_url) {
+              current.photo_url = item.photo_url
+            }
             current.source_qty += gradeRow.qty
             grouped.set(key, current)
           })
@@ -802,40 +992,22 @@ export default function QcConfirmationRejectionPage() {
           <div>
             <p style={styles.eyebrow}>Grading Verification</p>
             <h1 style={styles.title}>Rejection Grade</h1>
-            <p style={styles.subtitle}>Grade B and Grade C items are verified into next-process or return koli.</p>
           </div>
-          <Link href="/dashboard/qc/confirmation" style={styles.backButton}>
-            X
+          <Link href="/dashboard/qc/confirmation" style={styles.closeIconButton} aria-label="Back to Grading Verification" title="Back to Grading Verification">
+            <span style={styles.closeIconGlyph}>
+              <XIcon />
+            </span>
           </Link>
         </div>
 
         {error ? <p style={styles.errorText}>{error}</p> : null}
         {success ? <p style={styles.successText}>{success}</p> : null}
-        <p style={styles.note}>Grade B/C yang diambil akan ikut ke next process dengan grade aslinya. Yang tidak diambil masuk retur dan bisa nanti diprint per koli.</p>
 
         <div style={styles.contentGrid}>
           <div style={styles.grnCard}>
             <span style={styles.grnLabel}>GRN Number</span>
-            <input
-              list="qc-confirmation-rejection-grn-options"
-              value={grnFilter}
-              onChange={(event) => {
-                setGrnFilter(event.target.value)
-                setCurrentTakeKoliItems([])
-                setCurrentReturnKoliItems([])
-                setQtyInputs({})
-                setError('')
-                setSuccess('')
-              }}
-              style={styles.input}
-              placeholder="Type or choose GRN Number"
-            />
-            <datalist id="qc-confirmation-rejection-grn-options">
-              {grnOptions.map((item) => (
-                <option key={item} value={item} />
-              ))}
-            </datalist>
-            <div style={styles.field}>
+            <strong style={styles.grnValue}>{selectedInbound?.grn_number || grnFilter || '-'}</strong>
+            <div style={styles.grnItemBlock}>
               <span style={styles.grnLabel}>Item Name</span>
               <strong style={styles.infoValue}>{selectedInbound?.item_name || '-'}</strong>
             </div>
@@ -855,20 +1027,20 @@ export default function QcConfirmationRejectionPage() {
 
             <div style={styles.metricGrid}>
               <div style={styles.metricBox}>
-                <span style={styles.grnLabel}>Reject Source</span>
-                <strong style={styles.metricValue}>{totals.source}</strong>
+                <span style={styles.grnLabel}>Initial</span>
+                <strong style={styles.metricValue}>{formatNumber(totals.source)}</strong>
               </div>
               <div style={styles.metricBox}>
-                <span style={styles.grnLabel}>Passing Posted</span>
-                <strong style={styles.metricValue}>{totals.taken}</strong>
+                <span style={styles.grnLabel}>Taken</span>
+                <strong style={styles.metricValue}>{formatNumber(totals.taken)}</strong>
               </div>
               <div style={styles.metricBox}>
-                <span style={styles.grnLabel}>Return Posted</span>
-                <strong style={styles.metricValue}>{totals.returned}</strong>
+                <span style={styles.grnLabel}>Returned</span>
+                <strong style={styles.metricValue}>{formatNumber(totals.returned)}</strong>
               </div>
               <div style={styles.metricBox}>
-                <span style={styles.grnLabel}>Total Reject Koli</span>
-                <strong style={styles.metricValue}>{totalRejectKoli}</strong>
+                <span style={styles.grnLabel}>Total Koli</span>
+                <strong style={styles.metricValue}>{formatNumber(totalRejectKoli)}</strong>
               </div>
             </div>
           </div>
@@ -876,92 +1048,127 @@ export default function QcConfirmationRejectionPage() {
       </div>
 
       <div style={styles.card}>
-        <div>
-          <h2 style={styles.sectionTitle}>Grade B / C Source</h2>
-          <p style={styles.sectionSubtitle}>Decide each source qty into `Take` or `Return`.</p>
-        </div>
-
-        {!grnFilter ? <p style={styles.emptyText}>Choose a GRN Number first.</p> : null}
+        {!grnFilter ? <p style={styles.emptyText}>Open this page from Grading Verification first.</p> : null}
         {grnFilter && !sourceRows.length ? <p style={styles.emptyText}>No Grade B / C source found for this GRN.</p> : null}
 
-        {grnFilter && sourceRows.length
-          ? sourceRows.map((row) => {
-              const remainingQty =
-                Math.max(
-                  0,
-                  Number(row.source_qty || 0) -
-                    Number(row.taken_qty || 0) -
-                    Number(row.returned_qty || 0) -
-                    getDraftQty(row.key, 'take') -
-                    getDraftQty(row.key, 'return')
-                )
+        {grnFilter && sourceRows.length ? (
+          <div style={styles.tableWrap}>
+            <table style={{ ...styles.table, minWidth: '1120px' }}>
+              <thead>
+                <tr>
+                  <th style={styles.th}>Brand</th>
+                  <th style={styles.th}>Picture</th>
+                  <th style={styles.th}>Category</th>
+                  <th style={styles.th}>Model-Variant</th>
+                  <th style={{ ...styles.th, ...styles.centerCell }}>Grade</th>
+                  <th style={{ ...styles.th, ...styles.centerCell }}>Initial</th>
+                  <th style={{ ...styles.th, ...styles.centerCell }}>Taken</th>
+                  <th style={{ ...styles.th, ...styles.centerCell }}>Returned</th>
+                  <th style={{ ...styles.th, ...styles.centerCell }}>Remaining</th>
+                  <th style={{ ...styles.th, ...styles.centerCell }}>Qty</th>
+                  <th style={{ ...styles.th, ...styles.centerCell }}>Take</th>
+                  <th style={{ ...styles.th, ...styles.centerCell }}>Return</th>
+                </tr>
+              </thead>
+              <tbody>
+                {sourceRows.map((row) => {
+                  const remainingQty = Math.max(
+                    0,
+                    Number(row.source_qty || 0) -
+                      Number(row.taken_qty || 0) -
+                      Number(row.returned_qty || 0) -
+                      getDraftQty(row.key, 'take') -
+                      getDraftQty(row.key, 'return')
+                  )
+                  const isActionDisabled = remainingQty <= 0
 
-              return (
-                <div key={row.key} style={styles.sourceCard}>
-                  <div style={styles.modelMeta}>
-                    <div style={styles.modelName}>{getModelLabel(row)}</div>
-                    <p style={styles.modelInfo}>{row.brand_name}</p>
-                    <p style={styles.modelInfo}>{row.category_name}</p>
-                  </div>
-
-                  <div style={styles.qtyBox}>
-                    <span style={styles.qtyLabel}>Grade</span>
-                    <strong style={styles.qtyValue}>{row.grade}</strong>
-                  </div>
-
-                  <div style={styles.qtyBox}>
-                    <span style={styles.qtyLabel}>Source</span>
-                    <strong style={styles.qtyValue}>{row.source_qty}</strong>
-                  </div>
-
-                  <div style={styles.qtyBox}>
-                    <span style={styles.qtyLabel}>Taken</span>
-                    <strong style={styles.qtyValue}>{row.taken_qty}</strong>
-                  </div>
-
-                  <div style={styles.qtyBox}>
-                    <span style={styles.qtyLabel}>Returned</span>
-                    <strong style={styles.qtyValue}>{row.returned_qty}</strong>
-                  </div>
-
-                  <div style={styles.qtyBox}>
-                    <span style={styles.qtyLabel}>Remaining</span>
-                    <strong style={styles.qtyValue}>{remainingQty}</strong>
-                  </div>
-
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                    <input
-                      type="number"
-                      min="0"
-                      value={qtyInputs[row.key] || ''}
-                      onChange={(event) =>
-                        setQtyInputs((prev) => ({
-                          ...prev,
-                          [row.key]: event.target.value,
-                        }))
-                      }
-                      style={styles.input}
-                      placeholder="Qty"
-                    />
-                    <div style={{ display: 'flex', gap: '8px' }}>
-                      <button type="button" onClick={() => handleAddDecision(row, 'take')} style={styles.secondaryButton} disabled={remainingQty <= 0}>
-                        Take
-                      </button>
-                      <button type="button" onClick={() => handleAddDecision(row, 'return')} style={styles.redButton} disabled={remainingQty <= 0}>
-                        Return
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              )
-            })
-          : null}
+                  return (
+                    <tr key={row.key}>
+                      <td style={styles.td}>{row.brand_name}</td>
+                      <td style={styles.td}>
+                        {row.photo_url ? (
+                          <button
+                            type="button"
+                            onClick={() => setPreviewPhotoUrl(row.photo_url)}
+                            style={styles.photoButton}
+                            aria-label={`Preview ${getModelLabel(row)} photo`}
+                            title="Preview photo"
+                          >
+                            <img src={row.photo_url} alt={getModelLabel(row)} style={styles.photoThumb} />
+                          </button>
+                        ) : (
+                          <span style={styles.photoEmpty}>NO</span>
+                        )}
+                      </td>
+                      <td style={styles.td}>{row.category_name}</td>
+                      <td style={styles.td}>
+                        <span style={styles.tableModelName}>{getModelLabel(row)}</span>
+                      </td>
+                      <td style={{ ...styles.td, ...styles.centerCell }}>{row.grade}</td>
+                      <td style={{ ...styles.td, ...styles.centerCell }}>{formatNumber(row.source_qty)}</td>
+                      <td style={{ ...styles.td, ...styles.centerCell }}>{formatNumber(row.taken_qty)}</td>
+                      <td style={{ ...styles.td, ...styles.centerCell }}>{formatNumber(row.returned_qty)}</td>
+                      <td style={{ ...styles.td, ...styles.centerCell }}>{formatNumber(remainingQty)}</td>
+                      <td style={{ ...styles.td, ...styles.centerCell }}>
+                        <input
+                          type="number"
+                          min="0"
+                          value={qtyInputs[row.key] || ''}
+                          onChange={(event) =>
+                            setQtyInputs((prev) => ({
+                              ...prev,
+                              [row.key]: event.target.value,
+                            }))
+                          }
+                          style={styles.compactInput}
+                          placeholder="Qty"
+                          disabled={isActionDisabled}
+                        />
+                      </td>
+                      <td style={{ ...styles.td, ...styles.centerCell }}>
+                        <button
+                          type="button"
+                          onClick={() => handleAddDecision(row, 'take')}
+                          style={{
+                            ...styles.iconActionButton,
+                            ...styles.takeIconButton,
+                            ...(isActionDisabled ? { opacity: 0.55, cursor: 'not-allowed' } : {}),
+                          }}
+                          disabled={isActionDisabled}
+                          aria-label={`Take ${getModelLabel(row)} grade ${row.grade}`}
+                          title="Take"
+                        >
+                          <TakeIcon />
+                        </button>
+                      </td>
+                      <td style={{ ...styles.td, ...styles.centerCell }}>
+                        <button
+                          type="button"
+                          onClick={() => handleAddDecision(row, 'return')}
+                          style={{
+                            ...styles.iconActionButton,
+                            ...styles.returnIconButton,
+                            ...(isActionDisabled ? { opacity: 0.55, cursor: 'not-allowed' } : {}),
+                          }}
+                          disabled={isActionDisabled}
+                          aria-label={`Return ${getModelLabel(row)} grade ${row.grade}`}
+                          title="Return"
+                        >
+                          <ReturnIcon />
+                        </button>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        ) : null}
       </div>
 
       <div style={styles.card}>
         <div>
           <h2 style={styles.sectionTitle}>Adjustment</h2>
-          <p style={styles.sectionSubtitle}>Add adjustment item for Grade B/C, then send it directly to `Take` or `Return`.</p>
         </div>
 
         {!grnFilter ? <p style={styles.emptyText}>Choose a GRN Number first.</p> : null}
@@ -1018,8 +1225,7 @@ export default function QcConfirmationRejectionPage() {
 
       <div style={styles.card}>
         <div>
-          <h2 style={styles.sectionTitle}>Current Take Koli</h2>
-          <p style={styles.sectionSubtitle}>Ini yang akan ikut next process, tetap dengan grade B/C aslinya.</p>
+          <h2 style={styles.sectionTitle}>Take Koli</h2>
         </div>
 
         {!currentTakeKoliItems.length ? <p style={styles.emptyText}>Take koli is still empty.</p> : null}
@@ -1043,7 +1249,7 @@ export default function QcConfirmationRejectionPage() {
                       {item.grade}
                       {item.is_adjustment ? ' - Adjustment' : ''}
                     </td>
-                    <td style={styles.td}>{item.qty}</td>
+                    <td style={styles.td}>{formatNumber(item.qty)}</td>
                     <td style={styles.td}>
                       <button type="button" onClick={() => removeDraftItem('take', item.id)} style={styles.secondaryButton}>
                         Remove
@@ -1073,8 +1279,7 @@ export default function QcConfirmationRejectionPage() {
 
       <div style={styles.card}>
         <div>
-          <h2 style={styles.sectionTitle}>Current Return Koli</h2>
-          <p style={styles.sectionSubtitle}>Ini yang akan masuk ke returns dari phase QC.</p>
+          <h2 style={styles.sectionTitle}>Return Koli</h2>
         </div>
 
         {!currentReturnKoliItems.length ? <p style={styles.emptyText}>Return koli is still empty.</p> : null}
@@ -1098,7 +1303,7 @@ export default function QcConfirmationRejectionPage() {
                       {item.grade}
                       {item.is_adjustment ? ' - Adjustment' : ''}
                     </td>
-                    <td style={styles.td}>{item.qty}</td>
+                    <td style={styles.td}>{formatNumber(item.qty)}</td>
                     <td style={styles.td}>
                       <button type="button" onClick={() => removeDraftItem('return', item.id)} style={styles.secondaryButton}>
                         Remove
@@ -1125,6 +1330,16 @@ export default function QcConfirmationRejectionPage() {
           </button>
         </div>
       </div>
+      {previewPhotoUrl ? (
+        <div style={styles.photoPreviewOverlay} role="dialog" aria-modal="true" onClick={() => setPreviewPhotoUrl('')}>
+          <div style={styles.photoPreviewWrap} onClick={(event) => event.stopPropagation()}>
+            <img src={previewPhotoUrl} alt="Product preview" style={styles.photoPreviewImage} />
+            <button type="button" onClick={() => setPreviewPhotoUrl('')} style={styles.photoPreviewClose} aria-label="Close preview">
+              X
+            </button>
+          </div>
+        </div>
+      ) : null}
     </div>
   )
 }

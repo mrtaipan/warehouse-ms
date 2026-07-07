@@ -737,6 +737,25 @@ function buildReturnReQcSummary(batch = {}) {
   )
 }
 
+function buildReturnSizeSummary(rows = [], qtyKeys = ['qty']) {
+  const totals = (rows || []).reduce((summary, row) => {
+    const size = String(row?.size || '').trim().toUpperCase()
+    if (!size) return summary
+    const qty = qtyKeys.reduce((value, key) => {
+      if (value) return value
+      return Number(row?.[key] || 0)
+    }, 0)
+    if (!qty) return summary
+    summary[size] = (summary[size] || 0) + qty
+    return summary
+  }, {})
+
+  return [
+    ...RECEIPT_SIZE_ORDER.filter((size) => Object.prototype.hasOwnProperty.call(totals, size)),
+    ...Object.keys(totals).filter((size) => !RECEIPT_SIZE_ORDER.includes(size)).sort(),
+  ].map((size) => ({ size, qty: totals[size] }))
+}
+
 function formatReturnReQcResult(batch = {}) {
   const summary = buildReturnReQcSummary(batch)
   const total = summary.a + summary.b + summary.c
@@ -2022,6 +2041,31 @@ export default function ArklineProgressOverviewPage() {
         return lines.length
       }
 
+      const drawSizeSummary = (title, rows = []) => {
+        ensureSpace(12)
+        doc.setFont('helvetica', 'bold')
+        doc.setFontSize(9)
+        doc.setTextColor(15, 23, 42)
+        doc.text(title, margin, cursorY)
+        cursorY += 5
+
+        if (!rows.length) {
+          doc.setFont('helvetica', 'normal')
+          doc.setFontSize(8.5)
+          doc.setTextColor(100, 116, 139)
+          doc.text('No size qty recorded.', margin, cursorY)
+          cursorY += 6
+          return
+        }
+
+        const summaryText = rows.map((row) => `${row.size}: ${formatNumber(row.qty)}`).join('  |  ')
+        doc.setFont('helvetica', 'normal')
+        doc.setFontSize(8.5)
+        doc.setTextColor(51, 65, 85)
+        const lineCount = drawText(summaryText, margin + 3, cursorY, { maxWidth: pageWidth - margin * 2 - 6 })
+        cursorY += Math.max(6, lineCount * 4.5)
+      }
+
       doc.setFont('helvetica', 'bold')
       doc.setFontSize(16)
       doc.setTextColor(15, 23, 42)
@@ -2043,6 +2087,8 @@ export default function ArklineProgressOverviewPage() {
         const reQcResult = formatReturnReQcResult(batch)
         const originalReasons = buildReturnReasonSummary(batch.lines || [])
         const latestReasons = buildReturnReasonSummary(batch.latestRejectRows || [])
+        const sentSizeSummary = buildReturnSizeSummary(batch.lines || [], ['qty', 'sent_qty'])
+        const returnedSizeSummary = buildReturnSizeSummary(batch.receipts || [], ['received_qty', 'qty'])
         const returnedDates = Array.from(new Set((batch.receipts || []).map((receipt) => formatDateLabel(receipt.receive_date)).filter((date) => date !== '-'))).join(', ')
 
         doc.setDrawColor(226, 232, 240)
@@ -2059,6 +2105,10 @@ export default function ArklineProgressOverviewPage() {
         doc.text(`Return: ${formatDateLabel(batch.return_date)} | Returned: ${returnedDates || '-'}`, margin + 4, cursorY + 14)
         doc.text(`Sent ${formatNumber(batch.sent_qty)} | Received ${formatNumber(batch.returned_qty)} | Short ${formatNumber(batch.short_qty)} | Re-QC ${reQcResult}`, margin + 4, cursorY + 21)
         cursorY += 34
+
+        drawSizeSummary('Sent Size Summary', sentSizeSummary)
+        drawSizeSummary('Returned Size Summary', returnedSizeSummary)
+        cursorY += 2
 
         doc.setFont('helvetica', 'bold')
         doc.setFontSize(9)

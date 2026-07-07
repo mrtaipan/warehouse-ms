@@ -423,6 +423,11 @@ const styles = {
     background: '#111827',
     color: '#fff',
   },
+  adjustmentCardDisabled: {
+    opacity: 0.45,
+    cursor: 'not-allowed',
+    background: '#f8fafc',
+  },
   adjustmentCardTitle: {
     fontSize: '12px',
     fontWeight: '850',
@@ -1034,7 +1039,7 @@ function getAdjustmentLabel(value) {
   return ''
 }
 
-function isShortageAdjustment(item) {
+function isShortageType(item) {
   return String(item?.adjustment_type || '').toUpperCase() === 'SHORTAGE'
 }
 
@@ -1273,8 +1278,11 @@ export default function QcConfirmationNextProcessPage() {
           return
         }
 
-        if (isShortageAdjustment(item)) {
-          current.shortage_qty += Number(item.qty || 0)
+        if (isShortageType(item)) {
+          const verifiedQty = Number(item.qty || 0)
+          const shortageQty = Math.max(0, Number(current.source_qty || 0) - Number(current.confirmed_qty || 0) - Number(current.shortage_qty || 0) - verifiedQty)
+          current.confirmed_qty += verifiedQty
+          current.shortage_qty += shortageQty
         } else {
           current.confirmed_qty += Number(item.qty || 0)
         }
@@ -1323,14 +1331,12 @@ export default function QcConfirmationNextProcessPage() {
     [sourceRows]
   )
 
-  const currentKoliQty = currentKoliItems
-    .filter((item) => !isShortageAdjustment(item))
-    .reduce((sum, item) => sum + Number(item.qty || 0), 0)
+  const currentKoliQty = currentKoliItems.reduce((sum, item) => sum + Number(item.qty || 0), 0)
   const postedKoliRows = useMemo(() => {
     const grouped = new Map()
 
     confirmRows
-      .filter((item) => Number(item.inbound_id) === Number(selectedInbound?.id) && !isShortageAdjustment(item))
+      .filter((item) => Number(item.inbound_id) === Number(selectedInbound?.id))
       .forEach((item) => {
         const key = Number(item.koli_sequence || 0)
         const current = grouped.get(key) || {
@@ -1447,12 +1453,15 @@ export default function QcConfirmationNextProcessPage() {
   )
 
   function getDraftQtyForSource(sourceKey) {
-    return currentKoliItems
-      .filter((item) => item.source_key === sourceKey && !isSurplusAdjustment(item))
-      .reduce((sum, item) => sum + Number(item.qty || 0), 0)
+    const draftItems = currentKoliItems.filter((item) => item.source_key === sourceKey)
+
+    if (draftItems.some((item) => item.closes_remaining)) {
+      return Number.MAX_SAFE_INTEGER
+    }
+
+    return draftItems.reduce((sum, item) => sum + Number(item.qty || 0), 0)
   }
 
-  const isAdjustmentMode = Boolean(adjustmentType)
   const selectedSourceRemainingQty = selectedSourceRow
     ? Math.max(0, getSourcePendingQty(selectedSourceRow) - getDraftQtyForSource(selectedSourceRow.key))
     : 0
@@ -1462,6 +1471,9 @@ export default function QcConfirmationNextProcessPage() {
       remainingQty: Math.max(0, getSourcePendingQty(row) - getDraftQtyForSource(row.key)),
     }))
     .filter((item) => item.remainingQty > 0)
+  const onlySurplusAvailable = sourceRows.length > 0 && remainingSourceOptions.length === 0
+  const effectiveAdjustmentType = onlySurplusAvailable ? 'SURPLUS' : adjustmentType
+  const isAdjustmentMode = Boolean(effectiveAdjustmentType)
   const modelDropdownOptions = isAdjustmentMode
     ? sourceRows.map((row) => ({
       row,
@@ -1469,7 +1481,7 @@ export default function QcConfirmationNextProcessPage() {
     }))
     : remainingSourceOptions
   const canAddSelectedSourceItem = Boolean(selectedSourceRow) && (
-    adjustmentType === 'SURPLUS' || selectedSourceRemainingQty > 0
+    effectiveAdjustmentType === 'SURPLUS' || selectedSourceRemainingQty > 0
   )
 
   function handleAddSelectedSourceItem() {
@@ -1483,7 +1495,12 @@ export default function QcConfirmationNextProcessPage() {
 
     const nextQty = Number(verificationQty || 0)
 
-    if (nextQty <= 0) {
+    if (effectiveAdjustmentType === 'SHORTAGE' && verificationQty === '') {
+      setError('Input the physical Grade A qty first.')
+      return
+    }
+
+    if (effectiveAdjustmentType !== 'SHORTAGE' && nextQty <= 0) {
       setError('Qty must be greater than 0.')
       return
     }
@@ -1493,32 +1510,49 @@ export default function QcConfirmationNextProcessPage() {
       return
     }
 
-    if (adjustmentType === 'SHORTAGE' && nextQty > selectedSourceRemainingQty) {
-      setError(`Shortage qty for ${selectedSourceRow.model_name} cannot be greater than the remaining source qty (${selectedSourceRemainingQty}).`)
+    if (effectiveAdjustmentType === 'SHORTAGE' && nextQty > selectedSourceRemainingQty) {
+      setError(`Grade A qty for ${selectedSourceRow.model_name} cannot be greater than the remaining source qty (${selectedSourceRemainingQty}).`)
       return
     }
 
-    setCurrentKoliItems((prev) => [
-      ...prev,
-      {
-        id: `draft-${draftIdRef.current++}`,
-        source_key: selectedSourceRow.key,
-        inbound_id: selectedSourceRow.inbound_id,
-        brand_id: selectedSourceRow.brand_id,
-        brand_name: selectedSourceRow.brand_name,
-        category_id: selectedSourceRow.category_id,
-        category_name: selectedSourceRow.category_name,
-        model_name: selectedSourceRow.model_name,
-        model_color: selectedSourceRow.model_color,
-        photo_url: selectedSourceRow.photo_url,
-        qty: nextQty,
-        grade: 'A',
-        is_adjustment: isAdjustmentMode,
-        adjustment_type: adjustmentType || null,
-      },
-    ])
+    if (effectiveAdjustmentType === 'SHORTAGE' && selectedSourceRemainingQty - nextQty <= 0) {
+      setError('Shortage needs the physical Grade A qty to be less than the remaining qty.')
+      return
+    }
+
+    const createDraftItem = ({ qty, isAdjustment = false, type = null, closesRemaining = false }) => ({
+      id: `draft-${draftIdRef.current++}`,
+      source_key: selectedSourceRow.key,
+      inbound_id: selectedSourceRow.inbound_id,
+      brand_id: selectedSourceRow.brand_id,
+      brand_name: selectedSourceRow.brand_name,
+      category_id: selectedSourceRow.category_id,
+      category_name: selectedSourceRow.category_name,
+      model_name: selectedSourceRow.model_name,
+      model_color: selectedSourceRow.model_color,
+      photo_url: selectedSourceRow.photo_url,
+      qty,
+      grade: 'A',
+      is_adjustment: isAdjustment,
+      adjustment_type: type,
+      closes_remaining: closesRemaining,
+    })
+
+    const nextItems = effectiveAdjustmentType === 'SHORTAGE'
+      ? [
+        createDraftItem({ qty: nextQty, isAdjustment: true, type: 'SHORTAGE', closesRemaining: true }),
+      ]
+      : [
+        createDraftItem({
+          qty: nextQty,
+          isAdjustment: isAdjustmentMode,
+          type: effectiveAdjustmentType || null,
+        }),
+      ]
+
+    setCurrentKoliItems((prev) => [...prev, ...nextItems])
     setVerificationQty('')
-    if (!isSurplusAdjustment({ adjustment_type: adjustmentType }) && nextQty >= selectedSourceRemainingQty) {
+    if (effectiveAdjustmentType === 'SHORTAGE' || (!isSurplusAdjustment({ adjustment_type: effectiveAdjustmentType }) && nextQty >= selectedSourceRemainingQty)) {
       setSelectedSourceKey('')
     }
   }
@@ -1553,7 +1587,7 @@ export default function QcConfirmationNextProcessPage() {
           <tr>
             <td><strong>${item.brand_name || '-'}</strong><br />${item.category_name || '-'}</td>
             <td>${getModelDashLabel(item)}</td>
-            <td>${item.is_adjustment ? `${getAdjustmentLabel(item.adjustment_type) || 'Adjustment'} Adjustment` : `Grade ${item.grade || 'A'}`}</td>
+            <td>${isShortageType(item) ? `Grade ${item.grade || 'A'} - Shortage` : item.is_adjustment ? `${getAdjustmentLabel(item.adjustment_type) || 'Adjustment'} Adjustment` : `Grade ${item.grade || 'A'}`}</td>
             <td class="qty">${Number(item.qty || 0)}</td>
           </tr>
         `
@@ -1713,13 +1747,15 @@ export default function QcConfirmationNextProcessPage() {
                 { value: 'SURPLUS', title: 'Surplus', hint: 'Physically Extra Qty' },
                 { value: 'SHORTAGE', title: 'Shortage', hint: 'Physically Less Qty' },
               ].map((option) => {
-                const isActive = adjustmentType === option.value
+                const isActive = effectiveAdjustmentType === option.value
+                const isDisabled = onlySurplusAvailable && option.value !== 'SURPLUS'
 
                 return (
                   <button
                     key={option.title}
                     type="button"
                     onClick={() => {
+                      if (isDisabled) return
                       setAdjustmentType(option.value)
                       setSelectedSourceKey('')
                       setVerificationQty('')
@@ -1730,7 +1766,9 @@ export default function QcConfirmationNextProcessPage() {
                     style={{
                       ...styles.adjustmentCard,
                       ...(isActive ? styles.adjustmentCardActive : {}),
+                      ...(isDisabled ? styles.adjustmentCardDisabled : {}),
                     }}
+                    disabled={isDisabled}
                   >
                     <span style={styles.adjustmentCardTitle}>{option.title}</span>
                     <span style={styles.adjustmentCardHint}>{option.hint}</span>
@@ -1816,7 +1854,7 @@ export default function QcConfirmationNextProcessPage() {
                 <strong style={styles.modelName}>{getModelDashLabel(selectedSourceRow)}</strong>
                 <p style={styles.modelInfo}>{selectedSourceRow.brand_name}</p>
                 <p style={styles.modelInfo}>{selectedSourceRow.category_name}</p>
-                {isAdjustmentMode ? <span style={styles.adjustmentBadge}>{getAdjustmentLabel(adjustmentType)}</span> : null}
+                {isAdjustmentMode ? <span style={styles.adjustmentBadge}>{getAdjustmentLabel(effectiveAdjustmentType)}</span> : null}
               </div>
               <div>
                 <span style={styles.qtyLabel}>Remaining</span>
@@ -1830,10 +1868,26 @@ export default function QcConfirmationNextProcessPage() {
             <input
               type="number"
               min="0"
+              max={effectiveAdjustmentType === 'SURPLUS' ? undefined : selectedSourceRemainingQty}
               value={verificationQty}
-              onChange={(event) => setVerificationQty(event.target.value)}
+              onChange={(event) => {
+                const nextValue = event.target.value
+
+                if (effectiveAdjustmentType === 'SURPLUS') {
+                  setVerificationQty(nextValue)
+                  return
+                }
+
+                if (nextValue === '') {
+                  setVerificationQty('')
+                  return
+                }
+
+                const cappedValue = Math.min(Number(nextValue || 0), selectedSourceRemainingQty)
+                setVerificationQty(String(Math.max(0, cappedValue)))
+              }}
               style={styles.input}
-              placeholder="Input qty"
+              placeholder={effectiveAdjustmentType === 'SHORTAGE' ? 'Input physical Grade A qty' : 'Input qty'}
             />
           </div>
 
