@@ -1471,9 +1471,11 @@
 }
 
 .receivingHistoryTable td:nth-child(1),
-.receivingHistoryTable td:nth-child(3),
+.receivingHistoryTable td:nth-child(2),
+.receivingHistoryTable td:nth-child(4),
 .receivingHistoryTable th:nth-child(1),
-.receivingHistoryTable th:nth-child(3) {
+.receivingHistoryTable th:nth-child(2),
+.receivingHistoryTable th:nth-child(4) {
   white-space: nowrap;
 }
 

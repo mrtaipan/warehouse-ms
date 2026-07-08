@@ -1,12 +1,185 @@
 'use client'
 
 import Image from 'next/image'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { useEffect, useMemo, useState } from 'react'
 import { createClient } from '@/utils/supabase/browser'
 
 const supabase = createClient()
 
 const styles = {
+  overviewPanel: {
+    background: '#fff',
+    border: '1px solid #e2e8f0',
+    borderRadius: '22px',
+    padding: '18px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '16px',
+  },
+  overviewHeader: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    gap: '16px',
+    flexWrap: 'wrap',
+  },
+  eyebrow: {
+    margin: 0,
+    fontSize: '11px',
+    fontWeight: 800,
+    letterSpacing: '0.08em',
+    textTransform: 'uppercase',
+    color: '#64748b',
+  },
+  overviewTitle: {
+    margin: '4px 0 0',
+    fontSize: '28px',
+    lineHeight: 1.05,
+    fontWeight: 900,
+    color: '#0f172a',
+  },
+  overviewSubtitle: {
+    margin: '6px 0 0',
+    color: '#475569',
+    fontSize: '13px',
+    lineHeight: 1.45,
+    maxWidth: '640px',
+  },
+  overviewPrimaryButton: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: '40px',
+    padding: '0 16px',
+    border: 'none',
+    background: '#111827',
+    color: '#fff',
+    borderRadius: '999px',
+    fontSize: '13px',
+    fontWeight: '800',
+    whiteSpace: 'nowrap',
+    cursor: 'pointer',
+  },
+  topIconGroup: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '12px',
+  },
+  topIconButton: {
+    width: '58px',
+    height: '58px',
+    borderRadius: '16px',
+    borderWidth: '1px',
+    borderStyle: 'solid',
+    borderColor: 'transparent',
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    cursor: 'pointer',
+    fontSize: '20px',
+    fontWeight: 900,
+  },
+  inputIconButton: {
+    background: '#0f766e',
+    color: '#fff',
+    boxShadow: '0 16px 32px rgba(15, 118, 110, 0.16)',
+  },
+  closeIconButton: {
+    background: '#fff',
+    color: '#dc2626',
+    borderColor: '#fecaca',
+  },
+  overviewTableWrap: {
+    background: '#fff',
+    border: '1px solid #e2e8f0',
+    borderRadius: '18px',
+    overflowX: 'auto',
+  },
+  overviewTable: {
+    width: '100%',
+    borderCollapse: 'collapse',
+  },
+  overviewHeadRow: {
+    background: '#f8fafc',
+  },
+  overviewBodyRow: {
+    borderTop: '1px solid #f1f5f9',
+  },
+  overviewTh: {
+    padding: '12px 14px',
+    textAlign: 'left',
+    fontSize: '12px',
+    fontWeight: 800,
+    color: '#475569',
+    whiteSpace: 'nowrap',
+  },
+  overviewTd: {
+    padding: '12px 14px',
+    fontSize: '13px',
+    color: '#0f172a',
+    whiteSpace: 'nowrap',
+  },
+  detailInfoRow: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+    gap: '14px',
+    alignItems: 'stretch',
+  },
+  grnHeroCard: {
+    background: '#f8fafc',
+    border: '1px solid #cbd5e1',
+    borderRadius: '18px',
+    padding: '22px',
+  },
+  grnHeroLabel: {
+    margin: 0,
+    color: '#64748b',
+    fontSize: '13px',
+    fontWeight: 800,
+    textTransform: 'uppercase',
+  },
+  grnHeroValue: {
+    margin: '10px 0 0',
+    color: '#020617',
+    fontSize: '36px',
+    lineHeight: 1,
+    fontWeight: 900,
+  },
+  detailInfoBox: {
+    background: '#fff',
+    border: '1px solid #e2e8f0',
+    borderRadius: '14px',
+    padding: '14px',
+    display: 'flex',
+    flexDirection: 'column',
+    justifyContent: 'center',
+  },
+  detailInfoLabel: {
+    display: 'block',
+    color: '#64748b',
+    fontSize: '12px',
+    fontWeight: 800,
+    textTransform: 'uppercase',
+  },
+  detailInfoValue: {
+    display: 'block',
+    marginTop: '8px',
+    color: '#0f172a',
+    fontSize: '18px',
+    fontWeight: 800,
+  },
+  variancePill: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    minWidth: '72px',
+    minHeight: '32px',
+    padding: '0 12px',
+    borderRadius: '999px',
+    fontSize: '13px',
+    fontWeight: 900,
+  },
   wrapper: {
     display: 'flex',
     flexDirection: 'column',
@@ -48,7 +221,7 @@ const styles = {
   },
   summaryGrid: {
     display: 'grid',
-    gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
     gap: '8px',
   },
   summaryCard: {
@@ -268,6 +441,25 @@ const styles = {
     border: '1px solid #e5e7eb',
     background: '#fff',
   },
+  overviewList: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '10px',
+  },
+  overviewRow: {
+    border: '1px solid #e5e7eb',
+    borderRadius: '12px',
+    padding: '14px',
+    display: 'grid',
+    gridTemplateColumns: '1fr auto',
+    gap: '12px',
+    alignItems: 'center',
+  },
+  overviewMeta: {
+    margin: '6px 0 0',
+    color: '#6b7280',
+    fontSize: '13px',
+  },
 }
 
 function getModelKey(modelName, modelColor) {
@@ -312,6 +504,9 @@ function createDraftRows(sourceRows) {
 }
 
 export default function PackingListReceivingPage() {
+  const router = useRouter()
+  const searchParams = useSearchParams()
+  const initialGrn = searchParams.get('grn') || ''
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [koliMenuOpen, setKoliMenuOpen] = useState(false)
@@ -325,6 +520,14 @@ export default function PackingListReceivingPage() {
   const [draftRows, setDraftRows] = useState([])
   const [validationRows, setValidationRows] = useState([])
   const [previewPhoto, setPreviewPhoto] = useState(null)
+  const [showInputForm, setShowInputForm] = useState(false)
+  const [detailGrn, setDetailGrn] = useState(initialGrn)
+
+  useEffect(() => {
+    if (!initialGrn) {
+      router.replace('/dashboard/packing-list')
+    }
+  }, [initialGrn, router])
 
   useEffect(() => {
     async function loadData() {
@@ -342,23 +545,27 @@ export default function PackingListReceivingPage() {
             id,
             inbound_id,
             model_name,
-            model_color,
+            model_color:variant_name,
             photo_url,
             qty,
             koli_sequence,
             inbound:inbound_id (
               id,
-              grn_number
+              grn_number,
+              inbound_date,
+              suppliers:dir_suppliers!supplier_id (
+                supplier_name
+              )
             )
           `)
           .order('created_at', { ascending: false }),
         supabase
           .from('pl_receiving')
-          .select('id, inbound_id, source_koli_sequence, validated_at')
+          .select('id, inbound_id, source_koli_sequence, source_qty, received_qty, qty_diff, validated_at')
           .order('validated_at', { ascending: false }),
         supabase
           .from('dir_product_models')
-          .select('id, model_name, model_color, photo_url')
+          .select('id, model_name')
           .eq('is_active', true)
           .order('model_name', { ascending: true }),
       ])
@@ -382,6 +589,118 @@ export default function PackingListReceivingPage() {
     () => Array.from(new Set(confirmRows.map((item) => item.inbound?.grn_number).filter(Boolean))),
     [confirmRows]
   )
+
+  const overviewRows = useMemo(() => {
+    const validatedMap = new Map()
+
+    validationSummaryRows.forEach((row) => {
+      validatedMap.set(`${row.inbound_id}::${Number(row.source_koli_sequence || 0)}`, true)
+    })
+
+    const grouped = new Map()
+
+    confirmRows.forEach((item) => {
+      const inboundId = item.inbound?.id || item.inbound_id || 0
+      const current = grouped.get(inboundId) || {
+        inbound_id: inboundId,
+        grn_number: item.inbound?.grn_number || '-',
+        inbound_date: item.inbound?.inbound_date || null,
+        supplier_name: item.inbound?.suppliers?.supplier_name || '-',
+        total_qty: 0,
+        koliSet: new Set(),
+        validatedSet: new Set(),
+      }
+      const koliSequence = Number(item.koli_sequence || 0)
+
+      current.total_qty += Number(item.qty || 0)
+      current.koliSet.add(koliSequence)
+      if (validatedMap.has(`${inboundId}::${koliSequence}`)) {
+        current.validatedSet.add(koliSequence)
+      }
+      grouped.set(inboundId, current)
+    })
+
+    return Array.from(grouped.values())
+      .map((row) => ({
+        inbound_id: row.inbound_id,
+        grn_number: row.grn_number,
+        inbound_date: row.inbound_date,
+        supplier_name: row.supplier_name,
+        total_qty: row.total_qty,
+        total_koli: row.koliSet.size,
+        validated_koli: row.validatedSet.size,
+        pending_koli: Math.max(0, row.koliSet.size - row.validatedSet.size),
+      }))
+      .sort((a, b) => new Date(b.inbound_date || 0).getTime() - new Date(a.inbound_date || 0).getTime())
+  }, [confirmRows, validationSummaryRows])
+
+  const selectedDetail = overviewRows.find((row) => row.grn_number === detailGrn) || null
+  const detailKoliRows = useMemo(() => {
+    if (!detailGrn) return []
+
+    const validationMap = new Map()
+    validationSummaryRows.forEach((row) => {
+      const key = `${row.inbound_id}::${Number(row.source_koli_sequence || 0)}`
+      const current = validationMap.get(key) || {
+        source_qty: 0,
+        received_qty: 0,
+        qty_diff: 0,
+        validated_at: row.validated_at || null,
+      }
+
+      current.source_qty += Number(row.source_qty || 0)
+      current.received_qty += Number(row.received_qty || 0)
+      current.qty_diff += Number(row.qty_diff || 0)
+      current.validated_at =
+        !current.validated_at || new Date(row.validated_at || 0) > new Date(current.validated_at || 0)
+          ? row.validated_at
+          : current.validated_at
+      validationMap.set(key, current)
+    })
+
+    const grouped = new Map()
+    confirmRows
+      .filter((item) => item.inbound?.grn_number === detailGrn)
+      .forEach((item) => {
+        const inboundId = item.inbound?.id || item.inbound_id || 0
+        const koliSequence = Number(item.koli_sequence || 0)
+        const key = `${inboundId}::${koliSequence}`
+        const validationInfo = validationMap.get(key) || null
+        const current = grouped.get(key) || {
+          key,
+          inbound_id: inboundId,
+          koli_sequence: koliSequence,
+          qc_confirm_qty: 0,
+          received_qty: 0,
+          qty_diff: 0,
+          validated_at: null,
+          is_validated: false,
+        }
+
+        current.qc_confirm_qty += Number(item.qty || 0)
+        current.received_qty = validationInfo ? Number(validationInfo.received_qty || 0) : current.received_qty
+        current.qty_diff = validationInfo ? Number(validationInfo.qty_diff || 0) : current.qty_diff
+        current.validated_at = validationInfo?.validated_at || null
+        current.is_validated = Boolean(validationInfo)
+        grouped.set(key, current)
+      })
+
+    return Array.from(grouped.values()).sort((a, b) => a.koli_sequence - b.koli_sequence)
+  }, [confirmRows, detailGrn, validationSummaryRows])
+  const detailTotals = useMemo(
+    () =>
+      detailKoliRows.reduce(
+        (summary, row) => ({
+          qcConfirmQty: summary.qcConfirmQty + Number(row.qc_confirm_qty || 0),
+          receivedQty: summary.receivedQty + Number(row.received_qty || 0),
+          validatedKoli: summary.validatedKoli + (row.is_validated ? 1 : 0),
+          pendingKoli: summary.pendingKoli + (row.is_validated ? 0 : 1),
+        }),
+        { qcConfirmQty: 0, receivedQty: 0, validatedKoli: 0, pendingKoli: 0 }
+      ),
+    [detailKoliRows]
+  )
+  const detailVariance = detailTotals.receivedQty - detailTotals.qcConfirmQty
 
   const selectedInbound = useMemo(
     () => confirmRows.find((item) => item.inbound?.grn_number === grnFilter)?.inbound || null,
@@ -535,6 +854,33 @@ export default function PackingListReceivingPage() {
     setSelectedSourceKey('')
     setKoliMenuOpen(false)
     setDraftRows([])
+    setError('')
+    setSuccess('')
+  }
+
+  function openInputForm(nextGrn = detailGrn) {
+    setGrnFilter(nextGrn)
+    setDetailGrn(nextGrn || detailGrn)
+    setSelectedSourceKey('')
+    setKoliMenuOpen(false)
+    setDraftRows([])
+    setValidationRows([])
+    setError('')
+    setSuccess('')
+    setShowInputForm(true)
+  }
+
+  function backToOverview() {
+    router.push('/dashboard/packing-list')
+  }
+
+  function backToDetail() {
+    setShowInputForm(false)
+    setGrnFilter('')
+    setSelectedSourceKey('')
+    setKoliMenuOpen(false)
+    setDraftRows([])
+    setValidationRows([])
     setError('')
     setSuccess('')
   }
@@ -699,6 +1045,8 @@ export default function PackingListReceivingPage() {
       .insert(payload)
       .select(`
         id,
+        inbound_id,
+        source_koli_sequence,
         source_qc_confirm_id,
         model_name,
         model_color,
@@ -726,37 +1074,163 @@ export default function PackingListReceivingPage() {
       )
 
       return [
-        {
-          id: insertedRows?.[0]?.id || `${nextKey}-${Date.now()}`,
-          inbound_id: selectedInbound.id,
-          source_koli_sequence: selectedSource.koli_sequence,
-          validated_at: insertedRows?.[0]?.validated_at || new Date().toISOString(),
-        },
+        ...((insertedRows || []).map((row) => ({
+          id: row.id,
+          inbound_id: row.inbound_id,
+          source_koli_sequence: row.source_koli_sequence,
+          source_qty: row.source_qty,
+          received_qty: row.received_qty,
+          qty_diff: row.qty_diff,
+          validated_at: row.validated_at,
+        }))),
         ...remaining,
       ]
     })
 
     const mismatchCount = payload.filter((row) => !row.is_match).length
     if (!mismatchCount) {
-      setSuccess(`Packing List Receiving validated for ${selectedInbound.grn_number} ${selectedSource.label}.`)
+      setSuccess(`Receiving validated for ${selectedInbound.grn_number} ${selectedSource.label}.`)
       return
     }
 
-    setSuccess(`Packing List Receiving validated. ${mismatchCount} row still differs from QC Confirm.`)
+    setSuccess(`Receiving validated. ${mismatchCount} row still differs from QC Confirm.`)
   }
 
   if (loading) {
     return <p style={styles.emptyText}>Loading packing list receiving...</p>
   }
 
+  if (!initialGrn) {
+    return <p style={styles.emptyText}>Redirecting to Packing List overview...</p>
+  }
+
+  if (!showInputForm && selectedDetail) {
+    return (
+      <section style={styles.overviewPanel}>
+        <div style={styles.overviewHeader}>
+          <div>
+            <p style={styles.eyebrow}>Packing List</p>
+            <h1 style={styles.overviewTitle}>Receiving</h1>
+            <p style={styles.overviewSubtitle}>Validate QC Confirm data for this GRN before size breakdown.</p>
+          </div>
+
+          <div style={styles.topIconGroup}>
+            <button
+              type="button"
+              onClick={() => openInputForm(selectedDetail.grn_number)}
+              style={{ ...styles.topIconButton, ...styles.inputIconButton }}
+              title="Open receiving input"
+              aria-label="Open receiving input"
+            >
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M9 5H7.6C6.16 5 5 6.16 5 7.6V18.4C5 19.84 6.16 21 7.6 21H16.4C17.84 21 19 19.84 19 18.4V7.6C19 6.16 17.84 5 16.4 5H15" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                <path d="M9 5C9 3.9 9.9 3 11 3H13C14.1 3 15 3.9 15 5V6.5H9V5Z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
+                <path d="M9 12H15" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                <path d="M9 16H14" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+              </svg>
+            </button>
+            <button
+              type="button"
+              onClick={backToOverview}
+              style={{ ...styles.topIconButton, ...styles.closeIconButton }}
+              title="Back to Packing List overview"
+              aria-label="Back to Packing List overview"
+            >
+              X
+            </button>
+          </div>
+        </div>
+
+        <div style={styles.summaryGrid}>
+          <div style={styles.summaryCard}>
+            <span style={styles.summaryLabel}>QC Confirm Qty</span>
+            <strong style={styles.summaryValue}>{detailTotals.qcConfirmQty}</strong>
+          </div>
+          <div style={styles.summaryCard}>
+            <span style={styles.summaryLabel}>Received Qty</span>
+            <strong style={styles.summaryValue}>{detailTotals.receivedQty}</strong>
+          </div>
+          <div style={styles.summaryCard}>
+            <span style={styles.summaryLabel}>Variance</span>
+            <strong style={{ ...styles.summaryValue, color: detailVariance === 0 ? '#111827' : detailVariance > 0 ? '#15803d' : '#dc2626' }}>
+              {detailVariance > 0 ? '+' : ''}
+              {detailVariance}
+            </strong>
+          </div>
+        </div>
+
+        <div style={styles.detailInfoRow}>
+          <div style={styles.grnHeroCard}>
+            <p style={styles.grnHeroLabel}>GRN Number</p>
+            <h2 style={styles.grnHeroValue}>{selectedDetail.grn_number}</h2>
+          </div>
+
+          <div style={styles.detailInfoBox}>
+            <span style={styles.detailInfoLabel}>Supplier</span>
+            <span style={styles.detailInfoValue}>{selectedDetail.supplier_name || '-'}</span>
+          </div>
+        </div>
+
+        <div style={styles.overviewTableWrap}>
+          <table style={styles.overviewTable}>
+            <thead>
+              <tr style={styles.overviewHeadRow}>
+                <th style={styles.overviewTh}>No</th>
+                <th style={styles.overviewTh}>Koli</th>
+                <th style={styles.overviewTh}>QC Confirm Qty</th>
+                <th style={styles.overviewTh}>Received Qty</th>
+                <th style={styles.overviewTh}>Variance</th>
+                <th style={styles.overviewTh}>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {detailKoliRows.map((row, index) => {
+                const variance = Number(row.received_qty || 0) - Number(row.qc_confirm_qty || 0)
+                const varianceStyle =
+                  variance === 0
+                    ? { background: '#ecfdf5', color: '#047857', border: '1px solid #bbf7d0' }
+                    : variance > 0
+                      ? { background: '#fff7ed', color: '#c2410c', border: '1px solid #fed7aa' }
+                      : { background: '#fef2f2', color: '#b91c1c', border: '1px solid #fecaca' }
+
+                return (
+                  <tr key={row.key} style={styles.overviewBodyRow}>
+                    <td style={styles.overviewTd}>{index + 1}</td>
+                    <td style={styles.overviewTd}>Koli {row.koli_sequence || '-'}</td>
+                    <td style={styles.overviewTd}>{row.qc_confirm_qty}</td>
+                    <td style={styles.overviewTd}>{row.is_validated ? row.received_qty : '-'}</td>
+                    <td style={styles.overviewTd}>
+                      <span style={{ ...styles.variancePill, ...varianceStyle }}>
+                        {variance > 0 ? '+' : ''}
+                        {variance}
+                      </span>
+                    </td>
+                    <td style={{ ...styles.overviewTd, color: row.is_validated ? '#15803d' : '#dc2626', fontWeight: 800 }}>
+                      {row.is_validated ? 'Validated' : 'Pending'}
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    )
+  }
+
   return (
     <div style={styles.wrapper}>
       <div style={styles.card}>
-        <div>
-          <h1 style={styles.title}>Packing List Receiving</h1>
-          <p style={styles.subtitle}>
-            Validate the received packing list against QC Confirm by GRN and Koli. No allocation is needed here, only model and qty confirmation.
-          </p>
+        <div style={styles.buttonRow}>
+          <div style={{ flex: 1 }}>
+            <h1 style={styles.title}>Receiving Input</h1>
+            <p style={styles.subtitle}>
+              Validate the received packing list against QC Confirm by GRN and Koli.
+            </p>
+          </div>
+          <button type="button" onClick={backToDetail} style={styles.secondaryButton}>
+            Back
+          </button>
         </div>
 
         <div style={styles.grid}>
@@ -850,7 +1324,7 @@ export default function PackingListReceivingPage() {
           </p>
         </div>
 
-        {isValidated ? <p style={styles.successText}>Koli ini sudah validated di Packing List Receiving.</p> : null}
+        {isValidated ? <p style={styles.successText}>Koli ini sudah validated di Receiving.</p> : null}
 
         {!selectedSource ? <p style={styles.emptyText}>Choose GRN and Koli first to validate packing list receiving.</p> : null}
 
@@ -947,7 +1421,7 @@ export default function PackingListReceivingPage() {
                 style={isValidated || saving ? { ...styles.primaryButton, ...styles.disabledButton } : styles.primaryButton}
                 disabled={isValidated || saving}
               >
-                {saving ? 'Saving...' : 'Validate Packing List Receiving'}
+                {saving ? 'Saving...' : 'Validate Receiving'}
               </button>
             </div>
           </>

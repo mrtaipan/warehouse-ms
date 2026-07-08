@@ -45,11 +45,7 @@ function getMonthBounds(value) {
   return { start, next }
 }
 
-function formatNumber(value) {
-  return new Intl.NumberFormat('en-US').format(Number(value || 0))
-}
-
-function buildVerificationRows(inboundRows = [], qcRows = [], confirmRows = [], returnRows = []) {
+function buildVerificationRows(inboundRows = [], qcRows = []) {
   const rowsByInbound = new Map()
 
   inboundRows.forEach((inbound) => {
@@ -60,8 +56,6 @@ function buildVerificationRows(inboundRows = [], qcRows = [], confirmRows = [], 
       itemName: inbound.item_name || '-',
       passingSourceQty: 0,
       rejectionSourceQty: 0,
-      passingPostedQty: 0,
-      rejectionProcessedQty: 0,
     })
   })
 
@@ -71,25 +65,6 @@ function buildVerificationRows(inboundRows = [], qcRows = [], confirmRows = [], 
 
     row.passingSourceQty += Number(item.qty_a || 0)
     row.rejectionSourceQty += Number(item.qty_b || 0) + Number(item.qty_c || 0)
-  })
-
-  confirmRows.forEach((item) => {
-    const row = rowsByInbound.get(String(item.inbound_id || ''))
-    if (!row) return
-
-    const grade = String(item.grade || 'A').toUpperCase()
-    if (grade === 'A') {
-      row.passingPostedQty += Number(item.qty || 0)
-    } else if (grade === 'B' || grade === 'C') {
-      row.rejectionProcessedQty += Number(item.qty || 0)
-    }
-  })
-
-  returnRows.forEach((item) => {
-    const row = rowsByInbound.get(String(item.inbound_id || ''))
-    if (!row) return
-
-    row.rejectionProcessedQty += Number(item.qty || 0)
   })
 
   return Array.from(rowsByInbound.values()).filter((row) => row.passingSourceQty > 0 || row.rejectionSourceQty > 0)
@@ -138,40 +113,21 @@ export default async function QcConfirmationPage({ searchParams }) {
 
   const inboundIds = (inboundRows || []).map((row) => row.id).filter(Boolean)
   let qcRows = []
-  let confirmRows = []
-  let returnRows = []
   let qcError = null
-  let confirmError = null
-  let returnError = null
 
   if (inboundIds.length) {
-    const [qcResult, confirmResult, returnResult] = await Promise.all([
-      supabase
-        .from('qc_items')
-        .select('inbound_id, qty_a, qty_b, qty_c')
-        .eq('status', 'done')
-        .in('inbound_id', inboundIds),
-      supabase
-        .from('qc_confirm')
-        .select('inbound_id, qty, grade')
-        .in('inbound_id', inboundIds),
-      supabase
-        .from('warehouse_returns')
-        .select('inbound_id, qty, source_phase')
-        .eq('source_phase', 'qc')
-        .in('inbound_id', inboundIds),
-    ])
+    const qcResult = await supabase
+      .from('qc_items')
+      .select('inbound_id, qty_a, qty_b, qty_c')
+      .eq('status', 'done')
+      .in('inbound_id', inboundIds)
 
     qcRows = qcResult.data || []
-    confirmRows = confirmResult.data || []
-    returnRows = returnResult.data || []
     qcError = qcResult.error
-    confirmError = confirmResult.error
-    returnError = returnResult.error
   }
 
-  const error = supplierError?.message || inboundError?.message || qcError?.message || confirmError?.message || returnError?.message || ''
-  const rows = error ? [] : buildVerificationRows(inboundRows || [], qcRows, confirmRows, returnRows)
+  const error = supplierError?.message || inboundError?.message || qcError?.message || ''
+  const rows = error ? [] : buildVerificationRows(inboundRows || [], qcRows)
 
   return (
     <section style={styles.wrapper}>
@@ -200,8 +156,6 @@ export default async function QcConfirmationPage({ searchParams }) {
                 <th style={th}>GRN Number</th>
                 <th style={th}>Supplier</th>
                 <th style={th}>Item Name</th>
-                <th style={{ ...th, textAlign: 'center' }}>Grade A Posted</th>
-                <th style={{ ...th, textAlign: 'center' }}>Reject Processed</th>
                 <th style={{ ...th, textAlign: 'center' }}>Action</th>
               </tr>
             </thead>
@@ -215,13 +169,11 @@ export default async function QcConfirmationPage({ searchParams }) {
                     </td>
                     <td style={td}>{row.supplierName}</td>
                     <td style={td}>{row.itemName}</td>
-                    <td style={{ ...td, textAlign: 'center' }}>{formatNumber(row.passingPostedQty)}</td>
-                    <td style={{ ...td, textAlign: 'center' }}>{formatNumber(row.rejectionProcessedQty)}</td>
                     <td style={{ ...td, whiteSpace: 'nowrap' }}>
                       <div style={styles.actionGroup}>
                         <Link
                           href={`/dashboard/qc/confirmation/next-process?grn=${grnParam}`}
-                          style={styles.actionButton}
+                          style={{ ...styles.actionButton, ...styles.passingButton }}
                           aria-label={`Passing Grade ${row.grnNumber}`}
                           title="Passing Grade"
                         >
@@ -229,7 +181,7 @@ export default async function QcConfirmationPage({ searchParams }) {
                         </Link>
                         <Link
                           href={`/dashboard/qc/confirmation/rejection?grn=${grnParam}`}
-                          style={styles.actionButton}
+                          style={{ ...styles.actionButton, ...styles.rejectionButton }}
                           aria-label={`Rejection Grade ${row.grnNumber}`}
                           title="Rejection Grade"
                         >
@@ -318,7 +270,7 @@ const styles = {
   },
   table: {
     width: '100%',
-    minWidth: '760px',
+    minWidth: '680px',
     borderCollapse: 'collapse',
   },
   headRow: {
@@ -330,7 +282,8 @@ const styles = {
   actionGroup: {
     display: 'flex',
     alignItems: 'center',
-    gap: '8px',
+    justifyContent: 'center',
+    gap: '10px',
     flexWrap: 'nowrap',
   },
   actionButton: {
@@ -342,13 +295,21 @@ const styles = {
     padding: '0 12px',
     height: '34px',
     borderRadius: '8px',
-    border: '1px solid #cbd5e1',
-    background: '#fff',
-    color: '#0f172a',
     textDecoration: 'none',
     fontSize: '12px',
     fontWeight: '800',
     whiteSpace: 'nowrap',
+    boxShadow: '0 8px 18px rgba(15, 23, 42, 0.08)',
+  },
+  passingButton: {
+    border: '1px solid #065f46',
+    background: '#064e3b',
+    color: '#ecfdf5',
+  },
+  rejectionButton: {
+    border: '1px solid #991b1b',
+    background: '#7f1d1d',
+    color: '#fef2f2',
   },
   emptyBox: {
     background: '#fff',

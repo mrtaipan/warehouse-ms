@@ -109,14 +109,6 @@ export default async function PackingListOverviewPage() {
           <p style={styles.subtitle}>Monitor QC Confirm data before Packing List size breakdown and storage handoff.</p>
         </div>
 
-        <div style={styles.actions}>
-          <Link href="/dashboard/packing-list/receiving" style={styles.primaryButton}>
-            + PL Receiving
-          </Link>
-          <Link href="/dashboard/packing-list/size-breakdown" style={styles.secondaryButton}>
-            Size Breakdown
-          </Link>
-        </div>
       </div>
 
       {confirmError || validationError ? (
@@ -171,7 +163,7 @@ export default async function PackingListOverviewPage() {
                       </td>
                       <td style={styles.td}>
                         <div style={styles.rowActions}>
-                          <Link href="/dashboard/packing-list/receiving" style={styles.iconButton} title="PL Receiving">
+                          <Link href={`/dashboard/packing-list/receiving?grn=${encodeURIComponent(row.grn_number)}`} style={styles.iconButton} title="PL Receiving">
                             PL
                           </Link>
                           <Link href="/dashboard/packing-list/size-breakdown" style={styles.iconButton} title="Size Breakdown">

@@ -32,6 +32,9 @@ alter table if exists public.arkline_po_item_receipts
 alter table if exists public.arkline_po_item_receipts
   add column if not exists created_by text null;
 
+alter table if exists public.arkline_po_item_receipts
+  add column if not exists supplier_sj text null;
+
 create index if not exists arkline_po_item_receipts_po_item_id_idx
   on public.arkline_po_item_receipts (arkline_po_item_id);
 

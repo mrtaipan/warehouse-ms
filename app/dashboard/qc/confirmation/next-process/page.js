@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createClient } from '@/utils/supabase/browser'
+import { getProfileByAuthenticatedUser } from '@/utils/user-profiles'
 
 const supabase = createClient()
 
@@ -19,6 +20,17 @@ function formatDateDisplay(value) {
 
 function formatNumber(value) {
   return new Intl.NumberFormat('en-US').format(Number(value || 0))
+}
+
+function getDisplayName(user, profile) {
+  return (
+    String(profile?.display_name || '').trim() ||
+    String(user?.user_metadata?.display_name || '').trim() ||
+    String(user?.user_metadata?.full_name || '').trim() ||
+    String(user?.user_metadata?.name || '').trim() ||
+    String(user?.email || '').split('@')[0] ||
+    'QC Staff'
+  )
 }
 
 function BuilderIcon() {
@@ -396,6 +408,30 @@ const styles = {
     gap: '14px',
     background: '#fff',
     margin: '0 16px',
+  },
+  koliTypeToggle: {
+    display: 'grid',
+    gridTemplateColumns: '1fr 1fr',
+    gap: '6px',
+    padding: '4px',
+    border: '1px solid #dbe4f0',
+    borderRadius: '12px',
+    background: '#f8fafc',
+  },
+  koliTypeButton: {
+    minHeight: '38px',
+    border: 'none',
+    borderRadius: '9px',
+    background: 'transparent',
+    color: '#64748b',
+    fontSize: '13px',
+    fontWeight: '850',
+    cursor: 'pointer',
+  },
+  koliTypeButtonActive: {
+    background: '#111827',
+    color: '#fff',
+    boxShadow: '0 8px 18px rgba(15, 23, 42, 0.12)',
   },
   adjustmentCardGrid: {
     display: 'grid',
@@ -907,6 +943,28 @@ const styles = {
     fontWeight: '600',
     textTransform: 'uppercase',
   },
+  transferAdjustmentPill: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: 'fit-content',
+    minHeight: '18px',
+    padding: '2px 7px',
+    border: '1px solid #bfdbfe',
+    borderRadius: '999px',
+    background: '#eff6ff',
+    color: '#1d4ed8',
+    fontSize: '9px',
+    fontWeight: '900',
+    letterSpacing: 0,
+    textTransform: 'uppercase',
+  },
+  koliCellStack: {
+    display: 'inline-flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    gap: '6px',
+  },
   koliQtyStack: {
     display: 'flex',
     flexDirection: 'column',
@@ -977,6 +1035,14 @@ function normalizeQcItemRow(item) {
   }
 }
 
+function normalizeConfirmRow(item) {
+  return {
+    ...item,
+    is_sample: Boolean(item.is_sample),
+    model_color: item.variant_name || item.model_color || '',
+  }
+}
+
 function getQcItemBrandId(item) {
   return item.product_model?.brand_id || item.inbound_unload?.brand_id || null
 }
@@ -1034,9 +1100,23 @@ function getBrandItemLabel(item) {
 
 function getAdjustmentLabel(value) {
   const normalized = String(value || '').toUpperCase()
+  if (normalized === 'NORMAL') return 'Normal'
   if (normalized === 'SURPLUS') return 'Surplus'
   if (normalized === 'SHORTAGE') return 'Shortage'
+  if (normalized === 'REJECTION_MANUAL') return 'Manual Adjustment'
+  if (normalized === 'TRANSFER') return 'Transfer'
   return ''
+}
+
+function getGradeTypeLabel(item) {
+  const gradeLabel = `Grade ${item?.grade || 'A'}`
+  const adjustmentLabel = getAdjustmentLabel(item?.adjustment_type)
+
+  return adjustmentLabel ? `${gradeLabel} - ${adjustmentLabel}` : gradeLabel
+}
+
+function isTransferAdjustment(item) {
+  return Boolean(item?.is_adjustment) && String(item?.adjustment_type || '').toUpperCase() === 'TRANSFER'
 }
 
 function isShortageType(item) {
@@ -1098,6 +1178,13 @@ function getFirstName(value) {
   return String(value || '').trim().split(/\s+/)[0] || ''
 }
 
+function getKoliDisplayLabel(koli) {
+  if (!koli) return 'Koli -'
+  if (koli.display_label) return koli.display_label
+  if (koli.is_sample) return `Sample ${koli.sample_display_sequence || koli.koli_sequence || '-'}`
+  return `Koli ${koli.koli_sequence || '-'}`
+}
+
 export default function QcConfirmationNextProcessPage() {
   const router = useRouter()
   const searchParams = useSearchParams()
@@ -1106,10 +1193,12 @@ export default function QcConfirmationNextProcessPage() {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
+  const [picName, setPicName] = useState('')
   const [qcItems, setQcItems] = useState([])
   const [confirmRows, setConfirmRows] = useState([])
   const [displayNameByEmail, setDisplayNameByEmail] = useState({})
   const [currentKoliItems, setCurrentKoliItems] = useState([])
+  const [isSampleKoli, setIsSampleKoli] = useState(false)
   const [resultTab, setResultTab] = useState('koli')
   const [previewPhotoUrl, setPreviewPhotoUrl] = useState('')
   const [selectedSourceKey, setSelectedSourceKey] = useState('')
@@ -1126,19 +1215,22 @@ export default function QcConfirmationNextProcessPage() {
   const grnFilter = searchParams.get('grn') || ''
   const isFormMode = searchParams.get('form') === '1'
 
-  useEffect(() => {
-    async function loadData() {
+  const loadData = useCallback(async (silent = false) => {
+    if (!silent) {
       setLoading(true)
       setError('')
+    }
 
-      const [
-        { data: qcData, error: qcError },
-        { data: confirmData, error: confirmError },
-        { data: profileData, error: profileError },
-      ] = await Promise.all([
-        supabase
-          .from('qc_items')
-          .select(`
+    const [
+      { data: authData, error: authError },
+      { data: qcData, error: qcError },
+      { data: confirmData, error: confirmError },
+      { data: profileData, error: profileError },
+    ] = await Promise.all([
+      supabase.auth.getUser(),
+      supabase
+        .from('qc_items')
+        .select(`
             *,
             inbound:inbound_id (
               id,
@@ -1178,39 +1270,67 @@ export default function QcConfirmationNextProcessPage() {
               )
             )
           `)
-          .eq('status', 'done')
-          .order('created_at', { ascending: false }),
-        supabase
-          .from('qc_confirm')
-          .select('id, inbound_id, brand_id, category_id, model_name, model_color, photo_url, qty, koli_sequence, grade, is_adjustment, adjustment_type')
-          .order('koli_sequence', { ascending: true }),
-        supabase
-          .from('dir_user_profiles')
-          .select('email, display_name'),
-      ])
+        .eq('status', 'done')
+        .order('created_at', { ascending: false }),
+      supabase
+        .from('qc_confirm')
+        .select('id, inbound_id, brand_id, category_id, model_name, variant_name, photo_url, qty, koli_sequence, is_sample, grade, is_adjustment, adjustment_type, pic_name')
+        .order('koli_sequence', { ascending: true }),
+      supabase
+        .from('dir_user_profiles')
+        .select('email, display_name'),
+    ])
 
-      if (qcError || confirmError || profileError) {
-        setError(qcError?.message || confirmError?.message || profileError?.message || 'Failed to load confirmation next process.')
+    if (authError || qcError || confirmError || profileError) {
+      if (!silent) {
+        setError(authError?.message || qcError?.message || confirmError?.message || profileError?.message || 'Failed to load confirmation next process.')
         setLoading(false)
+      }
+      return
+    }
+
+    let nextPicName = ''
+    if (authData?.user) {
+      const { data: profileRow } = await getProfileByAuthenticatedUser(supabase, authData.user, 'display_name')
+      nextPicName = getDisplayName(authData.user, profileRow)
+    }
+
+    const profileMap = {}
+    ;(profileData || []).forEach((item) => {
+      const email = normalizeEmail(item.email)
+      if (email) {
+        profileMap[email] = item.display_name || item.email || ''
+      }
+    })
+
+    setQcItems((qcData || []).map(normalizeQcItemRow))
+    setConfirmRows((confirmData || []).map(normalizeConfirmRow))
+    setDisplayNameByEmail(profileMap)
+    setPicName(nextPicName)
+    if (!silent) {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => {
+      loadData()
+    }, 0)
+
+    return () => window.clearTimeout(timeoutId)
+  }, [loadData])
+
+  useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      if (saving || modelDropdownOpen || previewPhotoUrl || currentKoliItems.length || selectedSourceKey || verificationQty) {
         return
       }
 
-      const profileMap = {}
-      ;(profileData || []).forEach((item) => {
-        const email = normalizeEmail(item.email)
-        if (email) {
-          profileMap[email] = item.display_name || item.email || ''
-        }
-      })
+      loadData(true)
+    }, 15000)
 
-      setQcItems((qcData || []).map(normalizeQcItemRow))
-      setConfirmRows(confirmData || [])
-      setDisplayNameByEmail(profileMap)
-      setLoading(false)
-    }
-
-    loadData()
-  }, [])
+    return () => window.clearInterval(intervalId)
+  }, [currentKoliItems.length, loadData, modelDropdownOpen, previewPhotoUrl, saving, selectedSourceKey, verificationQty])
 
   const selectedInbound = useMemo(
     () => qcItems.find((item) => item.inbound?.grn_number === grnFilter)?.inbound || null,
@@ -1338,14 +1458,20 @@ export default function QcConfirmationNextProcessPage() {
     confirmRows
       .filter((item) => Number(item.inbound_id) === Number(selectedInbound?.id))
       .forEach((item) => {
-        const key = Number(item.koli_sequence || 0)
+        const isSample = Boolean(item.is_sample)
+        const sequence = Number(item.koli_sequence || 0)
+        const key = `${isSample ? 'sample' : 'regular'}::${sequence}`
         const current = grouped.get(key) || {
-          koli_sequence: key,
+          key,
+          koli_sequence: sequence,
+          is_sample: isSample,
           total_qty: 0,
+          has_transfer_adjustment: false,
           items: [],
         }
 
         current.total_qty += Number(item.qty || 0)
+        current.has_transfer_adjustment = current.has_transfer_adjustment || isTransferAdjustment(item)
         const sourceRow = sourceRowByKey.get(getSourceKey(item)) || sourceRowByModelOnlyKey.get(getModelOnlyKey(item))
         current.items.push({
           ...item,
@@ -1355,13 +1481,30 @@ export default function QcConfirmationNextProcessPage() {
           category_name: sourceRow?.category_name || 'UNCATEGORIZED',
           model_name: sourceRow?.model_name || item.model_name,
           model_color: sourceRow?.model_color || item.model_color,
-          pic_names: sourceRow?.pic_names || [],
+          pic_names: item.pic_name ? [getFirstName(item.pic_name)] : sourceRow?.pic_names || [],
           photo_url: item.photo_url || sourceRow?.photo_url || '',
         })
         grouped.set(key, current)
       })
 
-    return Array.from(grouped.values()).sort((a, b) => a.koli_sequence - b.koli_sequence)
+    let sampleDisplaySequence = 0
+    return Array.from(grouped.values())
+      .sort((a, b) => a.koli_sequence - b.koli_sequence)
+      .map((row) => {
+        if (!row.is_sample) {
+          return {
+            ...row,
+            display_label: `Koli ${row.koli_sequence}`,
+          }
+        }
+
+        sampleDisplaySequence += 1
+        return {
+          ...row,
+          sample_display_sequence: sampleDisplaySequence,
+          display_label: `Sample ${sampleDisplaySequence}`,
+        }
+      })
   }, [confirmRows, selectedInbound?.id, sourceRowByKey, sourceRowByModelOnlyKey])
 
   const brandFilterOptions = useMemo(() => {
@@ -1587,7 +1730,7 @@ export default function QcConfirmationNextProcessPage() {
           <tr>
             <td><strong>${item.brand_name || '-'}</strong><br />${item.category_name || '-'}</td>
             <td>${getModelDashLabel(item)}</td>
-            <td>${isShortageType(item) ? `Grade ${item.grade || 'A'} - Shortage` : item.is_adjustment ? `${getAdjustmentLabel(item.adjustment_type) || 'Adjustment'} Adjustment` : `Grade ${item.grade || 'A'}`}</td>
+            <td>${getGradeTypeLabel(item)}</td>
             <td class="qty">${Number(item.qty || 0)}</td>
           </tr>
         `
@@ -1628,7 +1771,7 @@ export default function QcConfirmationNextProcessPage() {
     <div class="card">
       <h1>QC Verified: Grade A</h1>
       <div class="row"><div class="label">No GRN</div><div class="value">${selectedInbound.grn_number || '-'}</div></div>
-      <div class="row"><div class="label">No Koli</div><div class="value">Koli ${koli.koli_sequence || '-'}</div></div>
+      <div class="row"><div class="label">No Koli</div><div class="value">${getKoliDisplayLabel(koli)}</div></div>
       <table>
         <thead>
           <tr>
@@ -1671,21 +1814,35 @@ export default function QcConfirmationNextProcessPage() {
     }
 
     setSaving(true)
+    const { data: latestConfirmRows, error: sequenceError } = await supabase
+      .from('qc_confirm')
+      .select('koli_sequence, is_sample')
+      .eq('inbound_id', selectedInbound.id)
+
+    if (sequenceError) {
+      setError(sequenceError.message)
+      setSaving(false)
+      return
+    }
+
     const nextKoliSequence =
-      confirmRows
-        .filter((item) => Number(item.inbound_id) === Number(selectedInbound.id))
-        .reduce((maxValue, item) => Math.max(maxValue, Number(item.koli_sequence || 0)), 0) + 1
+      (latestConfirmRows || []).reduce((maxValue, item) => Math.max(maxValue, Number(item.koli_sequence || 0)), 0) + 1
+    const nextSampleDisplaySequence =
+      Array.from(new Set((latestConfirmRows || []).filter((item) => item.is_sample).map((item) => Number(item.koli_sequence || 0)).filter(Boolean))).length + 1
+    const nextDisplayLabel = isSampleKoli ? `Sample ${nextSampleDisplaySequence}` : `Koli ${nextKoliSequence}`
 
     const payload = currentKoliItems.map((item) => ({
       inbound_id: item.inbound_id,
       brand_id: item.brand_id,
       category_id: item.category_id,
       model_name: item.model_name,
-      model_color: item.model_color || null,
+      variant_name: item.model_color || null,
       photo_url: item.photo_url || null,
       qty: Number(item.qty || 0),
       koli_sequence: nextKoliSequence,
+      is_sample: isSampleKoli,
       grade: 'A',
+      pic_name: picName || 'QC Staff',
       is_adjustment: Boolean(item.is_adjustment),
       adjustment_type: item.adjustment_type || null,
     }))
@@ -1693,7 +1850,7 @@ export default function QcConfirmationNextProcessPage() {
     const { data, error: insertError } = await supabase
       .from('qc_confirm')
       .insert(payload)
-      .select('id, inbound_id, brand_id, category_id, model_name, model_color, photo_url, qty, koli_sequence, grade, is_adjustment, adjustment_type')
+      .select('id, inbound_id, brand_id, category_id, model_name, variant_name, photo_url, qty, koli_sequence, is_sample, grade, is_adjustment, adjustment_type, pic_name')
 
     if (insertError) {
       setError(insertError.message)
@@ -1701,12 +1858,12 @@ export default function QcConfirmationNextProcessPage() {
       return
     }
 
-    setConfirmRows((prev) => [...prev, ...(data || [])])
+    setConfirmRows((prev) => [...prev, ...(data || []).map(normalizeConfirmRow)])
     setCurrentKoliItems([])
     setSelectedSourceKey('')
     setVerificationQty('')
     setAdjustmentType('')
-    setSuccess(`Koli ${nextKoliSequence} posted to next process.`)
+    setSuccess(`${nextDisplayLabel} posted to next process.`)
     setSaving(false)
   }
 
@@ -1739,6 +1896,32 @@ export default function QcConfirmationNextProcessPage() {
         {!grnFilter ? <p style={{ ...styles.emptyText, ...styles.mobileInlineContent }}>Open this page from Grading Verification first.</p> : null}
 
         <section style={styles.mobileFormCard}>
+          <div style={styles.field}>
+            <label style={styles.label}>Koli Type</label>
+            <div style={styles.koliTypeToggle}>
+              {[
+                { value: false, label: 'Reguler' },
+                { value: true, label: 'Sample' },
+              ].map((option) => {
+                const isActive = isSampleKoli === option.value
+
+                return (
+                  <button
+                    key={option.label}
+                    type="button"
+                    onClick={() => setIsSampleKoli(option.value)}
+                    style={{
+                      ...styles.koliTypeButton,
+                      ...(isActive ? styles.koliTypeButtonActive : {}),
+                    }}
+                  >
+                    {option.label}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+
           <div style={styles.field}>
             <label style={styles.label}>Adjustment</label>
             <div style={styles.adjustmentCardGrid}>
@@ -2170,8 +2353,13 @@ export default function QcConfirmationNextProcessPage() {
                       const picNames = Array.from(new Set(koli.items.flatMap((item) => item.pic_names || []).filter(Boolean)))
 
                       return (
-                        <tr key={koli.koli_sequence}>
-                          <td style={{ ...styles.koliTd, ...styles.koliCenterCell }}>{`Koli ${koli.koli_sequence}`}</td>
+                        <tr key={koli.key || koli.koli_sequence}>
+                          <td style={{ ...styles.koliTd, ...styles.koliCenterCell }}>
+                            <span style={styles.koliCellStack}>
+                              <span>{getKoliDisplayLabel(koli)}</span>
+                              {koli.has_transfer_adjustment ? <span style={styles.transferAdjustmentPill}>ADJ</span> : null}
+                            </span>
+                          </td>
                           <td style={styles.koliTd}>
                             <div style={styles.koliPictureStack}>
                               {koli.items.map((item, index) => (

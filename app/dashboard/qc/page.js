@@ -1171,6 +1171,10 @@ function getAggregatedRejectAdjustment(rows = [], adjustmentType) {
   return { qty, notes }
 }
 
+function isVerificationAdjustment(item) {
+  return ['SURPLUS', 'SHORTAGE', 'REJECTION_MANUAL', 'TRANSFER'].includes(String(item?.adjustment_type || '').trim().toUpperCase())
+}
+
 function InfoHint({ text }) {
   const [open, setOpen] = useState(false)
 
@@ -1312,11 +1316,12 @@ export default function QcDashboardPage() {
           id,
           inbound_id,
           model_name,
-          model_color,
+          variant_name,
           photo_url,
           qty,
           grade,
           is_adjustment,
+          adjustment_type,
           created_at,
           inbound:inbound_id (
             id,
@@ -1343,6 +1348,7 @@ export default function QcDashboardPage() {
           qty,
           grade,
           is_adjustment,
+          adjustment_type,
           created_at,
           source_phase,
           inbound:inbound_id (
@@ -1488,7 +1494,7 @@ export default function QcDashboardPage() {
 
     setQcItems((qcRows || []).map(normalizeQcItemRow))
     setArklineQcItems(arklineRows || [])
-    setQcConfirmRows(confirmRows || [])
+    setQcConfirmRows((confirmRows || []).map((row) => ({ ...row, model_color: row.variant_name || '' })))
     setReturnRows((returnData || []).map((row) => ({ ...row, model_color: row.variant_name || '' })))
     setQcMembers(eligibleMembers)
     setQcProfiles(allProfiles)
@@ -1779,6 +1785,8 @@ export default function QcDashboardPage() {
     }
 
     if (qcMode === 'regular') filteredAdjustmentRows.forEach((item) => {
+      if (isVerificationAdjustment(item)) return
+
       const brand = getConfirmBrandLabel(item)
       const category = getConfirmCategoryLabel(item)
       const model = item.model_name || 'UNKNOWN MODEL'
@@ -1797,6 +1805,8 @@ export default function QcDashboardPage() {
     })
 
     if (qcMode === 'regular') filteredReturnAdjustmentRows.forEach((item) => {
+      if (isVerificationAdjustment(item)) return
+
       const brand = getReturnBrandLabel(item)
       const category = getReturnCategoryLabel(item)
       const model = item.model_name || 'UNKNOWN MODEL'

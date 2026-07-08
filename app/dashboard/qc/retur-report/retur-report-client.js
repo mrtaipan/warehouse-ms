@@ -29,6 +29,14 @@ function getModelLabel(item) {
   return variantLabel ? `${item.model_name} - ${variantLabel}` : item.model_name
 }
 
+function getBrandLabel(item) {
+  return item.brands?.brand_name || '-'
+}
+
+function getCategoryLabel(item) {
+  return item.categories?.full_name || item.categories?.category_name || '-'
+}
+
 function getStatusLabel(value) {
   return String(value || 'waiting').replaceAll('_', ' ').toUpperCase()
 }
@@ -47,6 +55,11 @@ export default function ReturReportClient({ rows, canAdd = false }) {
   const [grnFilter, setGrnFilter] = useState('')
   const [supplierFilter, setSupplierFilter] = useState('')
   const [statusFilter, setStatusFilter] = useState('waiting')
+  const [phaseFilter, setPhaseFilter] = useState('')
+  const [brandFilter, setBrandFilter] = useState('')
+  const [categoryFilter, setCategoryFilter] = useState('')
+  const [modelFilter, setModelFilter] = useState('')
+  const [gradeFilter, setGradeFilter] = useState('')
 
   const grnOptions = useMemo(
     () => Array.from(new Set(rows.map((row) => row.inbound?.grn_number).filter(Boolean))).sort((a, b) => a.localeCompare(b)),
@@ -60,15 +73,60 @@ export default function ReturReportClient({ rows, canAdd = false }) {
     () => Array.from(new Set(['waiting', ...rows.map((row) => row.status || 'waiting').filter(Boolean)])).sort((a, b) => a.localeCompare(b)),
     [rows]
   )
+  const phaseOptions = useMemo(
+    () => Array.from(new Set(rows.map((row) => row.source_phase).filter(Boolean))).sort((a, b) => a.localeCompare(b)),
+    [rows]
+  )
+  const brandOptions = useMemo(
+    () =>
+      Array.from(
+        rows.reduce((options, row) => {
+          if (row.brand_id && getBrandLabel(row) !== '-') {
+            options.set(String(row.brand_id), getBrandLabel(row))
+          }
+          return options
+        }, new Map())
+      )
+        .map(([id, name]) => ({ id, name }))
+        .sort((a, b) => a.name.localeCompare(b.name)),
+    [rows]
+  )
+  const categoryOptions = useMemo(
+    () =>
+      Array.from(
+        rows.reduce((options, row) => {
+          if (row.category_id && getCategoryLabel(row) !== '-') {
+            options.set(String(row.category_id), getCategoryLabel(row))
+          }
+          return options
+        }, new Map())
+      )
+        .map(([id, name]) => ({ id, name }))
+        .sort((a, b) => a.name.localeCompare(b.name)),
+    [rows]
+  )
+  const modelOptions = useMemo(
+    () => Array.from(new Set(rows.map((row) => getModelLabel(row)).filter(Boolean))).sort((a, b) => a.localeCompare(b)),
+    [rows]
+  )
+  const gradeOptions = useMemo(
+    () => Array.from(new Set(rows.map((row) => row.grade).filter(Boolean))).sort((a, b) => String(a).localeCompare(String(b))),
+    [rows]
+  )
   const filteredRows = useMemo(
     () =>
       rows.filter((row) => {
         const matchesGrn = !grnFilter || row.inbound?.grn_number === grnFilter
         const matchesSupplier = !supplierFilter || row.inbound?.suppliers?.supplier_name === supplierFilter
         const matchesStatus = !statusFilter || String(row.status || 'waiting') === statusFilter
-        return matchesGrn && matchesSupplier && matchesStatus
+        const matchesPhase = !phaseFilter || String(row.source_phase || '') === phaseFilter
+        const matchesBrand = !brandFilter || String(row.brand_id || '') === brandFilter
+        const matchesCategory = !categoryFilter || String(row.category_id || '') === categoryFilter
+        const matchesModel = !modelFilter || getModelLabel(row) === modelFilter
+        const matchesGrade = !gradeFilter || String(row.grade || '') === gradeFilter
+        return matchesGrn && matchesSupplier && matchesStatus && matchesPhase && matchesBrand && matchesCategory && matchesModel && matchesGrade
       }),
-    [grnFilter, rows, statusFilter, supplierFilter]
+    [brandFilter, categoryFilter, gradeFilter, grnFilter, modelFilter, phaseFilter, rows, statusFilter, supplierFilter]
   )
   const selectableRows = useMemo(
     () => filteredRows.filter((row) => String(row.status || 'waiting').toLowerCase() !== 'completed'),
@@ -88,6 +146,40 @@ export default function ReturReportClient({ rows, canAdd = false }) {
   )
   const selectedInbound = selectedRows[0]?.inbound || null
   const paymentLabel = selectedInbound?.payment_on_site ? 'Paid by Receiver' : 'Paid by Us'
+
+  const selectedReturnCardGroups = useMemo(() => {
+    const grouped = new Map()
+
+    selectedRows.forEach((row) => {
+      const hasKoli = row.koli_sequence !== null && row.koli_sequence !== undefined && row.koli_sequence !== ''
+      const key = hasKoli
+        ? `${row.inbound_id || 'no-inbound'}::${row.source_phase || 'no-phase'}::${row.koli_sequence}`
+        : `row::${row.id}`
+      const current = grouped.get(key) || {
+        key,
+        inbound: row.inbound,
+        inbound_id: row.inbound_id,
+        source_phase: row.source_phase,
+        koli_sequence: hasKoli ? row.koli_sequence : null,
+        created_at: row.created_at,
+        items: [],
+        total_qty: 0,
+      }
+
+      current.items.push(row)
+      current.total_qty += Number(row.qty || 0)
+      if (!current.created_at || (row.created_at && new Date(row.created_at) < new Date(current.created_at))) {
+        current.created_at = row.created_at
+      }
+      grouped.set(key, current)
+    })
+
+    return Array.from(grouped.values()).sort((a, b) => {
+      const grnSort = String(a.inbound?.grn_number || '').localeCompare(String(b.inbound?.grn_number || ''))
+      if (grnSort) return grnSort
+      return Number(a.koli_sequence || 0) - Number(b.koli_sequence || 0)
+    })
+  }, [selectedRows])
 
   function updateFilter(setFilter, value) {
     setFilter(value)
@@ -146,14 +238,28 @@ export default function ReturReportClient({ rows, canAdd = false }) {
     setIsModalOpen(true)
   }
 
-  function buildReturnCardHtml(row) {
-    const grnNumber = row.inbound?.grn_number || '-'
-    const supplierName = row.inbound?.suppliers?.supplier_name || '-'
-    const brandName = row.brands?.brand_name || '-'
-    const categoryName = row.categories?.full_name || row.categories?.category_name || '-'
-    const modelLabel = getModelLabel(row) || '-'
-    const rowLabel = row.koli_sequence ? `Koli ${row.koli_sequence}` : `Row ${row.id || '-'}`
-    const returnDate = formatDateDisplay(row.created_at || row.inbound?.inbound_date)
+  function buildReturnCardHtml(group) {
+    const grnNumber = group.inbound?.grn_number || '-'
+    const supplierName = group.inbound?.suppliers?.supplier_name || '-'
+    const rowLabel = group.koli_sequence ? `Koli ${group.koli_sequence}` : `Row ${group.items[0]?.id || '-'}`
+    const returnDate = formatDateDisplay(group.created_at || group.inbound?.inbound_date)
+    const phaseLabel = String(group.source_phase || group.items[0]?.source_phase || '-').toUpperCase()
+    const rowsHtml = group.items
+      .map((item) => {
+        const brandName = item.brands?.brand_name || '-'
+        const categoryName = item.categories?.full_name || item.categories?.category_name || '-'
+        const modelLabel = getModelLabel(item) || '-'
+
+        return `
+          <tr>
+            <td>${escapeHtml(brandName)}</td>
+            <td>${escapeHtml(categoryName)}</td>
+            <td>${escapeHtml(modelLabel)}</td>
+            <td class="center">${escapeHtml(item.grade || '-')}</td>
+            <td class="qty">${escapeHtml(item.qty || 0)}</td>
+          </tr>`
+      })
+      .join('')
 
     return `
     <div class="card">
@@ -166,24 +272,21 @@ export default function ReturReportClient({ rows, canAdd = false }) {
         <thead>
           <tr>
             <th>Brand</th>
+            <th>Category</th>
             <th>Model - Variant</th>
             <th>Grade</th>
+            <th>Qty</th>
           </tr>
         </thead>
         <tbody>
-          <tr>
-            <td>${escapeHtml(brandName)}</td>
-            <td>${escapeHtml(modelLabel)}</td>
-            <td class="qty">${escapeHtml(row.grade || '-')}</td>
-          </tr>
+          ${rowsHtml}
         </tbody>
       </table>
-      <div class="row"><div class="label">Category</div><div class="value">${escapeHtml(categoryName)}</div></div>
       <div class="qtyBox">
         <div class="qtyLabel">Return Qty</div>
-        <div class="qtyValue">${escapeHtml(row.qty || 0)}</div>
+        <div class="qtyValue">${escapeHtml(group.total_qty || 0)}</div>
       </div>
-      <div class="row footerRow"><div class="label">Phase</div><div class="value">${escapeHtml(String(row.source_phase || '-').toUpperCase())}</div></div>
+      <div class="row footerRow"><div class="label">Phase</div><div class="value">${escapeHtml(phaseLabel)}</div></div>
     </div>`
   }
 
@@ -218,8 +321,9 @@ export default function ReturReportClient({ rows, canAdd = false }) {
       .label { font-weight: 700; font-size: 12px; }
       .value { font-weight: 500; font-size: 13px; }
       table { width: 100%; border-collapse: collapse; margin: 18px 0; }
-      th, td { border: 1px solid #d1d5db; padding: 8px; font-size: 12px; vertical-align: middle; }
+      th, td { border: 1px solid #d1d5db; padding: 7px; font-size: 10px; vertical-align: middle; }
       th { background: #f9fafb; text-align: left; }
+      .center { text-align: center; }
       .qty { text-align: center; font-weight: 800; }
       .qtyBox { margin: 18px 0; padding: 16px; border-radius: 16px; border: 2px solid #111827; text-align: center; }
       .qtyLabel { font-size: 13px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }
@@ -228,7 +332,7 @@ export default function ReturReportClient({ rows, canAdd = false }) {
     </style>
   </head>
   <body>
-    ${selectedRows.map((row) => buildReturnCardHtml(row)).join('')}
+    ${selectedReturnCardGroups.map((group) => buildReturnCardHtml(group)).join('')}
     <script>window.onload = function () { window.print(); };</script>
   </body>
 </html>`
@@ -391,6 +495,10 @@ export default function ReturReportClient({ rows, canAdd = false }) {
             <span>Selected Total Qty</span>
             <strong>{totalSelectedQty}</strong>
           </div>
+          <div className={reportStyles.regularSelectedTotal}>
+            <span>Selected Koli</span>
+            <strong>{selectedReturnCardGroups.length}</strong>
+          </div>
           <button type="button" className={reportStyles.secondaryButton} onClick={handlePrintReturnCards} disabled={!selectedRows.length}>
             Print Return Card
           </button>
@@ -445,6 +553,81 @@ export default function ReturReportClient({ rows, canAdd = false }) {
             ))}
           </select>
         </div>
+
+        <div className={reportStyles.field}>
+          <label htmlFor="qc-retur-report-phase-filter">Phase</label>
+          <select
+            id="qc-retur-report-phase-filter"
+            className={reportStyles.input}
+            value={phaseFilter}
+            onChange={(event) => updateFilter(setPhaseFilter, event.target.value)}
+          >
+            <option value="">All Phase</option>
+            {phaseOptions.map((item) => (
+              <option key={item} value={item}>{String(item).toUpperCase()}</option>
+            ))}
+          </select>
+        </div>
+
+        <div className={reportStyles.field}>
+          <label htmlFor="qc-retur-report-brand-filter">Brand</label>
+          <select
+            id="qc-retur-report-brand-filter"
+            className={reportStyles.input}
+            value={brandFilter}
+            onChange={(event) => updateFilter(setBrandFilter, event.target.value)}
+          >
+            <option value="">All Brand</option>
+            {brandOptions.map((item) => (
+              <option key={item.id} value={item.id}>{item.name}</option>
+            ))}
+          </select>
+        </div>
+
+        <div className={reportStyles.field}>
+          <label htmlFor="qc-retur-report-category-filter">Category</label>
+          <select
+            id="qc-retur-report-category-filter"
+            className={reportStyles.input}
+            value={categoryFilter}
+            onChange={(event) => updateFilter(setCategoryFilter, event.target.value)}
+          >
+            <option value="">All Category</option>
+            {categoryOptions.map((item) => (
+              <option key={item.id} value={item.id}>{item.name}</option>
+            ))}
+          </select>
+        </div>
+
+        <div className={reportStyles.field}>
+          <label htmlFor="qc-retur-report-model-filter">Model-Variant</label>
+          <select
+            id="qc-retur-report-model-filter"
+            className={reportStyles.input}
+            value={modelFilter}
+            onChange={(event) => updateFilter(setModelFilter, event.target.value)}
+          >
+            <option value="">All Model-Variant</option>
+            {modelOptions.map((item) => (
+              <option key={item} value={item}>{item}</option>
+            ))}
+          </select>
+        </div>
+
+        <div className={reportStyles.field}>
+          <label htmlFor="qc-retur-report-grade-filter">Grade</label>
+          <select
+            id="qc-retur-report-grade-filter"
+            className={reportStyles.input}
+            value={gradeFilter}
+            onChange={(event) => updateFilter(setGradeFilter, event.target.value)}
+          >
+            <option value="">All Grade</option>
+            {gradeOptions.map((item) => (
+              <option key={item} value={item}>Grade {item}</option>
+            ))}
+          </select>
+        </div>
       </div>
 
       {printError ? <p className={reportStyles.error}>{printError}</p> : null}
@@ -495,8 +678,8 @@ export default function ReturReportClient({ rows, canAdd = false }) {
                   <td>{row.inbound?.grn_number || '-'}</td>
                   <td>{String(row.source_phase || '-').toUpperCase()}</td>
                   <td>{row.inbound?.suppliers?.supplier_name || '-'}</td>
-                  <td>{row.brands?.brand_name || '-'}</td>
-                  <td>{row.categories?.full_name || row.categories?.category_name || '-'}</td>
+                  <td>{getBrandLabel(row)}</td>
+                  <td>{getCategoryLabel(row)}</td>
                   <td>{getModelLabel(row)}</td>
                   <td>{row.grade || '-'}</td>
                   <td>

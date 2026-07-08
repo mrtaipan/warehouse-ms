@@ -370,7 +370,7 @@ export default function PackingListSizeBreakdownPage() {
         supabase.from('pl_size_breakdown').select('*').order('created_at', { ascending: false }),
         supabase
           .from('qc_confirm')
-          .select('inbound_id, model_name, model_color, photo_url')
+          .select('inbound_id, model_name, model_color:variant_name, photo_url')
           .order('created_at', { ascending: false }),
         supabase.from('dir_product_models').select('*').order('created_at', { ascending: false }),
         supabase.from('dir_product_model_variants').select('*').order('created_at', { ascending: false }),

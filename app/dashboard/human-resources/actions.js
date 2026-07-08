@@ -69,6 +69,79 @@ function formatDateOnly(value) {
   return `${year}-${month}-${day}`
 }
 
+function toDateOnlyValue(value) {
+  if (!value) return null
+  const [year, month, day] = String(value).split('-').map(Number)
+  if (!year || !month || !day) return null
+  return new Date(year, month - 1, day)
+}
+
+async function calculateLeaveWorkingDays(supabase, startDateValue, endDateValue) {
+  const startDate = toDateOnlyValue(startDateValue)
+  const endDate = toDateOnlyValue(endDateValue)
+
+  if (!startDate || !endDate || endDate < startDate) {
+    return null
+  }
+
+  const { data: publicHolidayRows, error: publicHolidayError } = await supabase.from('hrga_public_holidays').select('holiday_date')
+
+  if (publicHolidayError && publicHolidayError.code !== '42P01') {
+    throw new Error(publicHolidayError.message)
+  }
+
+  const holidaySet = new Set((publicHolidayRows || []).map((item) => String(item?.holiday_date || '').trim()).filter(Boolean))
+
+  let totalDays = 0
+  const cursor = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate())
+  const last = new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate())
+
+  while (cursor <= last) {
+    const dayOfWeek = cursor.getDay()
+    const iso = `${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, '0')}-${String(cursor.getDate()).padStart(2, '0')}`
+    const isWeekend = dayOfWeek === 0 || dayOfWeek === 6
+    const isPublicHoliday = holidaySet.has(iso)
+
+    if (!isWeekend && !isPublicHoliday) {
+      totalDays += 1
+    }
+
+    cursor.setDate(cursor.getDate() + 1)
+  }
+
+  return totalDays
+}
+
+function isAdminProfile(profile = {}) {
+  return String(profile?.role || '').trim().toLowerCase() === 'admin'
+}
+
+async function getLeaveProfileByRequest(supabase, requestRow = {}) {
+  const authenticatedId = String(requestRow?.employee_authenticated_id || '').trim()
+  const email = String(requestRow?.employee_email_snapshot || '').trim().toLowerCase()
+
+  let query = supabase
+    .from('dir_user_profiles')
+    .select('id, authenticated_id, email, role, leave_allocation, leave_used')
+    .limit(1)
+
+  if (authenticatedId) {
+    query = query.eq('authenticated_id', authenticatedId)
+  } else if (email) {
+    query = query.ilike('email', email)
+  } else {
+    return null
+  }
+
+  const { data, error } = await query.maybeSingle()
+
+  if (error) {
+    throw new Error(error.message)
+  }
+
+  return data || null
+}
+
 function refreshHrgaPages() {
   revalidatePath('/dashboard/human-resources')
   revalidatePath('/dashboard/myarklife')
@@ -428,7 +501,7 @@ export async function deleteAnnouncementBroadcast(formData) {
 }
 
 export async function submitLeaveRequest(formData) {
-  const { supabase, user, profile } = await getActorContext()
+  const { supabase, user, profile, isAdmin } = await getActorContext()
 
   const requestType = 'LEAVE'
   const startDate = String(formData.get('start_date') || '').trim()
@@ -446,6 +519,20 @@ export async function submitLeaveRequest(formData) {
 
   if (endDate < startDate) {
     throw new Error('End date cannot be earlier than start date.')
+  }
+
+  const workingDays = await calculateLeaveWorkingDays(supabase, startDate, endDate)
+
+  if (workingDays == null) {
+    throw new Error('Unable to calculate leave days.')
+  }
+
+  if (!isAdmin && !isAdminProfile(profile)) {
+    const leaveBalance = Math.max(0, Number(profile?.leave_allocation || 0) - Number(profile?.leave_used || 0))
+
+    if (workingDays > leaveBalance) {
+      throw new Error(`Leave request exceeds Leave Balance. Requested ${workingDays} day${workingDays === 1 ? '' : 's'}, available ${leaveBalance}.`)
+    }
   }
 
   const { error } = await supabase.from('hrga_leave_requests').insert({
@@ -533,6 +620,39 @@ export async function approveLeaveRequest(formData) {
 
   if (!requestId || !['APPROVED', 'REJECTED'].includes(nextStatus)) {
     throw new Error('Valid request id and status are required.')
+  }
+
+  const { data: requestRow, error: requestError } = await supabase
+    .from('hrga_leave_requests')
+    .select('id, employee_authenticated_id, employee_email_snapshot, start_date, end_date, status')
+    .eq('id', requestId)
+    .maybeSingle()
+
+  if (requestError) {
+    throw new Error(requestError.message)
+  }
+
+  if (!requestRow) {
+    throw new Error('Leave request not found.')
+  }
+
+  if (nextStatus === 'APPROVED' && String(requestRow.status || '').toUpperCase() !== 'APPROVED') {
+    const targetProfile = await getLeaveProfileByRequest(supabase, requestRow)
+
+    if (targetProfile && !isAdminProfile(targetProfile)) {
+      const workingDays = await calculateLeaveWorkingDays(supabase, requestRow.start_date, requestRow.end_date)
+
+      if (workingDays == null) {
+        throw new Error('Unable to calculate leave days for approval.')
+      }
+
+      const nextLeaveUsed = Number(targetProfile.leave_used || 0) + workingDays
+      const { error: leaveUsedError } = await supabase.from('dir_user_profiles').update({ leave_used: nextLeaveUsed }).eq('id', targetProfile.id)
+
+      if (leaveUsedError) {
+        throw new Error(leaveUsedError.message)
+      }
+    }
   }
 
   const { error } = await supabase

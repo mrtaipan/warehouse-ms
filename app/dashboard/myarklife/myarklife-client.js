@@ -281,6 +281,8 @@ export default function MyArklifeClient({ profile, leaveRows, giftRows, publicHo
     () => calculateLeaveWorkingDays(leaveStartDate, leaveEndDate, publicHolidayRows),
     [leaveEndDate, leaveStartDate, publicHolidayRows],
   )
+  const leaveBalanceLabel = Number.isFinite(leaveBalance) ? `Leave Balance: ${formatNumber(leaveBalance)} day${leaveBalance === 1 ? '' : 's'}` : 'Leave Balance: -'
+  const leaveBalanceExceeded = String(profile?.role || '').trim().toLowerCase() !== 'admin' && leaveWorkingDays != null && leaveWorkingDays > leaveBalance
 
   async function handleServerAction(action, formData, { onSuccess, setModalError, clearOthers = [] } = {}) {
     setModalError?.('')
@@ -456,11 +458,14 @@ export default function MyArklifeClient({ profile, leaveRows, giftRows, publicHo
         <ModalFrame
           title="Request Leave"
           headerAddon={
-            leaveStartDate && leaveEndDate && leaveWorkingDays != null ? (
-              <span className={styles.leaveDaysBadge}>
-                {leaveWorkingDays} day{leaveWorkingDays === 1 ? '' : 's'}
-              </span>
-            ) : null
+            <div className={styles.leaveHeaderBadges}>
+              <span className={`${styles.leaveDaysBadge} ${styles.leaveBalanceBadge}`.trim()}>{leaveBalanceLabel}</span>
+              {leaveStartDate && leaveEndDate && leaveWorkingDays != null ? (
+                <span className={styles.leaveDaysBadge}>
+                  {leaveWorkingDays} day{leaveWorkingDays === 1 ? '' : 's'}
+                </span>
+              ) : null}
+            </div>
           }
           onClose={() => setOpenLeaveModal(false)}
         >
@@ -514,12 +519,13 @@ export default function MyArklifeClient({ profile, leaveRows, giftRows, publicHo
                 dianggap hangus dan terhitung unpaid leave (memotong gaji).
               </p>
             </div>
+            {leaveBalanceExceeded ? <p className={styles.errorText}>Requested leave exceeds Leave Balance.</p> : null}
             {leaveError ? <p className={styles.errorText}>{leaveError}</p> : null}
             <div className={styles.modalActions}>
               <button type="button" className={styles.cancelDangerButton} onClick={() => setOpenLeaveModal(false)}>
                 Cancel
               </button>
-              <button type="submit" className={styles.primaryButton} disabled={pending}>
+              <button type="submit" className={styles.primaryButton} disabled={pending || leaveBalanceExceeded}>
                 {pending ? 'Submitting...' : 'Submit Request'}
               </button>
             </div>

@@ -822,6 +822,7 @@ function buildIncomingGoodsGroups(receipts) {
         notes: row?.notes || '',
         createdBy: row?.created_by || '',
         createdAt: row?.created_at || '',
+        supplierSj: row?.supplier_sj || '',
         isFinal: Boolean(row?.is_final),
         totalQty: 0,
         rows: [],
@@ -831,6 +832,9 @@ function buildIncomingGoodsGroups(receipts) {
     const target = grouped.get(groupKey)
     target.totalQty += Number(row?.received_qty || 0)
     target.isFinal = target.isFinal || Boolean(row?.is_final)
+    if (!target.supplierSj && row?.supplier_sj) {
+      target.supplierSj = row.supplier_sj
+    }
     target.rows.push({
       id: row?.id,
       size: row?.size || '-',
@@ -879,6 +883,78 @@ function buildIncomingGoodsSizeSummary(receipts) {
     size,
     qty: totals[size] || 0,
   }))
+}
+
+function addDaysIso(value, days) {
+  const parsed = parseIso(value)
+  if (!parsed) return ''
+  parsed.setDate(parsed.getDate() + days)
+  return parsed.toISOString().slice(0, 10)
+}
+
+function buildQcReceiptPeriodOptions(receipts = []) {
+  const dates = Array.from(
+    new Set(
+      (receipts || [])
+        .map((row) => String(row?.receive_date || '').slice(0, 10))
+        .filter(Boolean)
+    )
+  ).sort()
+
+  return [
+    { value: 'all', label: 'All Incoming Goods', startDate: '', nextDate: '' },
+    ...dates.map((date, index) => {
+      const nextDate = dates[index + 1] || ''
+      const endDate = nextDate ? addDaysIso(nextDate, -1) : ''
+      return {
+        value: date,
+        startDate: date,
+        nextDate,
+        label: endDate ? `${formatDateLabel(date)} - ${formatDateLabel(endDate)}` : `${formatDateLabel(date)} onwards`,
+      }
+    }),
+  ]
+}
+
+function isDateWithinReceiptPeriod(value, startDate, nextDate = '') {
+  const normalized = String(value || '').slice(0, 10)
+  if (!normalized || !startDate) return false
+  return normalized >= startDate && (!nextDate || normalized < nextDate)
+}
+
+function getQcRowActivityDate(row = {}) {
+  return row.finished_at || row.updated_at || row.started_at || row.created_at || ''
+}
+
+function getQcSampleReportData(productDetail, receiptDateFilter = 'all') {
+  const options = buildQcReceiptPeriodOptions(productDetail?.receipts || [])
+  const selectedOption = options.find((option) => option.value === receiptDateFilter) || options[0]
+
+  if (!selectedOption || selectedOption.value === 'all') {
+    return {
+      options,
+      selectedOption: options[0],
+      qcRows: productDetail?.qcRows || [],
+      rejectRows: productDetail?.qcRejectRows || [],
+      adjustmentRows: productDetail?.qcRejectAdjustments || [],
+      receipts: productDetail?.receipts || [],
+    }
+  }
+
+  const { startDate, nextDate } = selectedOption
+  const qcRows = (productDetail?.qcRows || []).filter((row) => isDateWithinReceiptPeriod(getQcRowActivityDate(row), startDate, nextDate))
+  const qcIds = new Set(qcRows.map((row) => String(row.id || '')).filter(Boolean))
+  const rejectRows = (productDetail?.qcRejectRows || []).filter(
+    (row) =>
+      (row.arkline_qc_id && qcIds.has(String(row.arkline_qc_id))) ||
+      isDateWithinReceiptPeriod(row.created_at, startDate, nextDate)
+  )
+  const adjustmentRows = (productDetail?.qcRejectAdjustments || []).filter((row) =>
+    isDateWithinReceiptPeriod(row.created_at, startDate, nextDate)
+  )
+  const receipts = (productDetail?.receipts || []).filter((row) => isDateWithinReceiptPeriod(row.receive_date, startDate, nextDate))
+
+  return { options, selectedOption, qcRows, rejectRows, adjustmentRows, receipts }
 }
 
 function getUpdateImpactDays(requestDeliveryDate, updatedDeliveryDate) {
@@ -994,12 +1070,13 @@ export default function ArklineProgressOverviewPage() {
   const [productActionError, setProductActionError] = useState('')
   const [printingQcReport, setPrintingQcReport] = useState(false)
   const [printingReturnHistory, setPrintingReturnHistory] = useState(false)
+  const [qcReceiptDateFilter, setQcReceiptDateFilter] = useState('all')
   const [expandedReturnBatchId, setExpandedReturnBatchId] = useState('')
   const [savingStatusChange, setSavingStatusChange] = useState(false)
   const [shortageBatch, setShortageBatch] = useState(null)
   const [shortageNotes, setShortageNotes] = useState('')
   const [savingShortage, setSavingShortage] = useState(false)
-  const [receiptDraft, setReceiptDraft] = useState({ receiveDate: '', notes: '', sizeQty: {}, isFinal: false, hpp: '' })
+  const [receiptDraft, setReceiptDraft] = useState({ receiveDate: '', supplierSj: '', notes: '', sizeQty: {}, isFinal: false, hpp: '' })
   const [statusDraft, setStatusDraft] = useState({
     editingUpdateId: '',
     updatedDeliveryDate: '',
@@ -1279,6 +1356,7 @@ export default function ArklineProgressOverviewPage() {
     setProductActionMessage('')
     setProductActionError('')
     setExpandedReturnBatchId('')
+    setQcReceiptDateFilter('all')
   }
 
   function toggleProductDetailSection(sectionKey) {
@@ -1333,6 +1411,7 @@ export default function ArklineProgressOverviewPage() {
     setProductActionMessage('')
     setProductActionError('')
     setExpandedReturnBatchId('')
+    setQcReceiptDateFilter('all')
     setProductDetailSections({
       receivingHistory: false,
       updateStatus: false,
@@ -1357,7 +1436,7 @@ export default function ArklineProgressOverviewPage() {
       financeSummary: null,
       sizeBreakdown: [],
     })
-    setReceiptDraft({ receiveDate: '', notes: '', sizeQty: {}, isFinal: false, hpp: '' })
+    setReceiptDraft({ receiveDate: '', supplierSj: '', notes: '', sizeQty: {}, isFinal: false, hpp: '' })
     setStatusDraft({
       updatedDeliveryDate: entry.updatedDeliveryDate || '',
       reason: DEFAULT_UPDATE_REASON,
@@ -1382,7 +1461,7 @@ export default function ArklineProgressOverviewPage() {
         loadOptionalRows(() =>
           supabase
             .from('arkline_po_item_receipts')
-            .select('id, receipt_group_id, size, received_qty, receive_date, is_final, notes, created_by, created_at')
+            .select('id, receipt_group_id, size, received_qty, receive_date, supplier_sj, is_final, notes, created_by, created_at')
             .eq('arkline_po_item_id', entry.id)
             .eq('receipt_type', 'INITIAL')
             .order('receive_date', { ascending: false })
@@ -1408,7 +1487,7 @@ export default function ArklineProgressOverviewPage() {
         loadOptionalRows(() =>
           supabase
             .from('arkline_qc')
-            .select('id, qc_cycle_id, qc_round_number, qc_type, source_return_batch_id, arkline_po_item_id, po_id, sku_induk, assigned_to, allocated_qty, qty_a, qty_b, qty_c, model_name, status, started_at, finished_at, updated_at')
+            .select('id, qc_cycle_id, qc_round_number, qc_type, source_return_batch_id, arkline_po_item_id, po_id, sku_induk, assigned_to, allocated_qty, qty_a, qty_b, qty_c, model_name, status, started_at, finished_at, created_at, updated_at')
             .eq('po_id', selectedPoDetail.poId)
             .order('updated_at', { ascending: false })
         ),
@@ -1442,6 +1521,7 @@ export default function ArklineProgressOverviewPage() {
               grade,
               size,
               qty,
+              created_at,
               reason:reject_reason_id (
                 id,
                 reason_name,
@@ -1611,6 +1691,7 @@ export default function ArklineProgressOverviewPage() {
           return accumulator
         }, {}),
         isFinal: false,
+        supplierSj: '',
         hpp: String(hpp || 0),
       })
     } finally {
@@ -1646,6 +1727,7 @@ export default function ArklineProgressOverviewPage() {
       size: row.size,
       received_qty: row.qty,
       receive_date: receiptDraft.receiveDate,
+      supplier_sj: receiptDraft.supplierSj.trim().toUpperCase() || null,
       is_final: receiptDraft.isFinal,
       notes: receiptDraft.notes.trim() || null,
       created_by: createdBy,
@@ -1689,6 +1771,7 @@ export default function ArklineProgressOverviewPage() {
     setProductActionMessage('Receipt berhasil disimpan.')
     setReceiptDraft((prev) => ({
       receiveDate: '',
+      supplierSj: '',
       notes: '',
       sizeQty: Object.keys(prev.sizeQty || {}).reduce((accumulator, size) => {
         accumulator[size] = ''
@@ -1871,13 +1954,21 @@ export default function ArklineProgressOverviewPage() {
     setPrintingQcReport(true)
     try {
       const { jsPDF } = await import('jspdf')
+      const qcReportData = getQcSampleReportData(selectedProductDetail, qcReceiptDateFilter)
+      if (!qcReportData.qcRows.length) {
+        setProductActionError('No QC sample rows for the selected incoming goods date.')
+        return
+      }
       const qcSummary = buildQcGradeSummary(
-        selectedProductDetail.qcRows || [],
-        selectedProductDetail.qcRejectAdjustments || []
+        qcReportData.qcRows || [],
+        qcReportData.adjustmentRows || []
       )
-      const rejectSummary = buildRejectDetailSummary(selectedProductDetail.qcRejectRows || [], qcSummary)
-      const repairabilitySummary = buildRepairabilitySummary(selectedProductDetail.qcRejectRows || [])
-      const receivingQty = getReceivingQtyBase(selectedProductDetail.receipts || [], selectedProductDetail.financeSummary?.actualQty || 0)
+      const rejectSummary = buildRejectDetailSummary(qcReportData.rejectRows || [], qcSummary)
+      const repairabilitySummary = buildRepairabilitySummary(qcReportData.rejectRows || [])
+      const receivingQty =
+        qcReportData.selectedOption?.value === 'all'
+          ? getReceivingQtyBase(selectedProductDetail.receipts || [], selectedProductDetail.financeSummary?.actualQty || 0)
+          : (qcReportData.receipts || []).reduce((sum, row) => sum + Number(row?.received_qty || 0), 0)
       const totalRejectQty = Number(qcSummary.qtyB || 0) + Number(qcSummary.qtyC || 0)
       const doc = new jsPDF({ unit: 'mm', format: 'a4' })
       const pageWidth = doc.internal.pageSize.getWidth()
@@ -1904,6 +1995,9 @@ export default function ArklineProgressOverviewPage() {
       cursorY += 5
       doc.text(`SKU: ${selectedProductDetail.sku || '-'}`, margin, cursorY)
       cursorY += 8
+      doc.setTextColor(71, 85, 105)
+      doc.text(`Incoming Filter: ${qcReportData.selectedOption?.label || 'All Incoming Goods'}`, margin, cursorY)
+      cursorY += 7
 
       const metricWidth = (pageWidth - margin * 2 - 15) / 6
       const metricHeight = 24
@@ -2890,6 +2984,7 @@ export default function ArklineProgressOverviewPage() {
                             <thead>
                               <tr>
                                 <th>Receiving Date</th>
+                                <th>Supplier SJ</th>
                                 <th>Size</th>
                                 <th>Total</th>
                               </tr>
@@ -2898,6 +2993,7 @@ export default function ArklineProgressOverviewPage() {
                               {incomingGoodsGroups.map((group) => (
                                 <tr key={group.id}>
                                   <td>{formatDateLabel(group.receiveDate)}</td>
+                                  <td>{group.supplierSj || '-'}</td>
                                   <td>{formatIncomingGoodsGroupSizes(group.rows)}</td>
                                   <td>{formatNumber(group.totalQty)}</td>
                                 </tr>
@@ -2938,16 +3034,17 @@ export default function ArklineProgressOverviewPage() {
                   {(selectedProductDetail.qcRows || []).length ? (
                     <>
                       {(() => {
+                        const qcReportData = getQcSampleReportData(selectedProductDetail, qcReceiptDateFilter)
                         const qcSummary = buildQcGradeSummary(
-                          selectedProductDetail.qcRows || [],
-                          selectedProductDetail.qcRejectAdjustments || []
+                          qcReportData.qcRows || [],
+                          qcReportData.adjustmentRows || []
                         )
-                        const rejectSummary = buildRejectDetailSummary(selectedProductDetail.qcRejectRows || [], qcSummary)
-                        const repairabilitySummary = buildRepairabilitySummary(selectedProductDetail.qcRejectRows || [])
-                        const receivingQty = getReceivingQtyBase(
-                          selectedProductDetail.receipts || [],
-                          selectedProductDetail.financeSummary?.actualQty || 0
-                        )
+                        const rejectSummary = buildRejectDetailSummary(qcReportData.rejectRows || [], qcSummary)
+                        const repairabilitySummary = buildRepairabilitySummary(qcReportData.rejectRows || [])
+                        const receivingQty =
+                          qcReportData.selectedOption?.value === 'all'
+                            ? getReceivingQtyBase(selectedProductDetail.receipts || [], selectedProductDetail.financeSummary?.actualQty || 0)
+                            : (qcReportData.receipts || []).reduce((sum, row) => sum + Number(row?.received_qty || 0), 0)
                         const totalRejectQty = Number(qcSummary.qtyB || 0) + Number(qcSummary.qtyC || 0)
                         const repairableWidth = totalRejectQty > 0 ? Math.max(Math.min((repairabilitySummary.repairableQty / totalRejectQty) * 100, 100), 0) : 0
                         const nonRepairableWidth =
@@ -2955,6 +3052,23 @@ export default function ArklineProgressOverviewPage() {
 
                         return (
                           <>
+                            <label className={styles.filterField}>
+                              <span>Incoming Goods Filter</span>
+                              <select
+                                className={styles.select}
+                                value={qcReceiptDateFilter}
+                                onChange={(event) => setQcReceiptDateFilter(event.target.value)}
+                              >
+                                {qcReportData.options.map((option) => (
+                                  <option key={option.value} value={option.value}>
+                                    {option.label}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                            {!qcReportData.qcRows.length ? (
+                              <div className={styles.emptyMini}>No QC sample rows for this incoming goods date.</div>
+                            ) : null}
                             <div className={`${styles.modalGrid} ${styles.compactModalGrid}`.trim()} style={{ gridTemplateColumns: 'repeat(4, minmax(0, 1fr))' }}>
                               <div className={`${styles.modalMetric} ${styles.qcGradeAMetric}`.trim()}>
                                 <span>Grade A</span>
@@ -3270,6 +3384,15 @@ export default function ArklineProgressOverviewPage() {
                   type="date"
                   value={receiptDraft.receiveDate}
                   onChange={(event) => setReceiptDraft((prev) => ({ ...prev, receiveDate: event.target.value }))}
+                />
+              </div>
+              <div className={styles.filterField}>
+                <span>Supplier SJ</span>
+                <input
+                  className={styles.input}
+                  value={receiptDraft.supplierSj}
+                  onChange={(event) => setReceiptDraft((prev) => ({ ...prev, supplierSj: event.target.value.toUpperCase() }))}
+                  placeholder="Input supplier SJ"
                 />
               </div>
               <div className={styles.filterField}>
