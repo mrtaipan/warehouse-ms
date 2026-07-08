@@ -3303,8 +3303,9 @@ export default function UnloadPage() {
     <title>Inbound Card</title>
     <style>
       @page { size: A6 portrait; margin: 8mm; }
-      body { font-family: Arial, sans-serif; color: #111827; margin: 0; }
-      .card { border: 2px solid #111827; border-radius: 16px; padding: 18px; width: 100%; box-sizing: border-box; }
+      :root { --inbound-navy: #0b1f3a; }
+      body { font-family: Arial, sans-serif; color: var(--inbound-navy); margin: 0; }
+      .card { border: 2px solid var(--inbound-navy); border-radius: 16px; padding: 18px; width: 100%; box-sizing: border-box; }
       h1 { margin: 0 0 16px; font-size: 26px; text-align: center; }
       .row { display: grid; grid-template-columns: 88px 1fr; gap: 10px; padding: 8px 0; border-bottom: 1px solid #e5e7eb; align-items: start; }
       .row:last-child { border-bottom: none; }
@@ -3318,7 +3319,7 @@ export default function UnloadPage() {
         margin: 18px 0;
         padding: 16px;
         border-radius: 16px;
-        border: 2px solid #111827;
+        border: 2px solid var(--inbound-navy);
         text-align: center;
       }
       .qtyLabel {
