@@ -959,6 +959,22 @@ const styles = {
     letterSpacing: 0,
     textTransform: 'uppercase',
   },
+  samplePill: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: 'fit-content',
+    minHeight: '18px',
+    padding: '2px 7px',
+    border: '1px solid #fed7aa',
+    borderRadius: '999px',
+    background: '#fff7ed',
+    color: '#c2410c',
+    fontSize: '9px',
+    fontWeight: '900',
+    letterSpacing: 0,
+    textTransform: 'uppercase',
+  },
   koliCellStack: {
     display: 'inline-flex',
     flexDirection: 'column',
@@ -1181,7 +1197,6 @@ function getFirstName(value) {
 function getKoliDisplayLabel(koli) {
   if (!koli) return 'Koli -'
   if (koli.display_label) return koli.display_label
-  if (koli.is_sample) return `Sample ${koli.sample_display_sequence || koli.koli_sequence || '-'}`
   return `Koli ${koli.koli_sequence || '-'}`
 }
 
@@ -1487,22 +1502,12 @@ export default function QcConfirmationNextProcessPage() {
         grouped.set(key, current)
       })
 
-    let sampleDisplaySequence = 0
     return Array.from(grouped.values())
       .sort((a, b) => a.koli_sequence - b.koli_sequence)
       .map((row) => {
-        if (!row.is_sample) {
-          return {
-            ...row,
-            display_label: `Koli ${row.koli_sequence}`,
-          }
-        }
-
-        sampleDisplaySequence += 1
         return {
           ...row,
-          sample_display_sequence: sampleDisplaySequence,
-          display_label: `Sample ${sampleDisplaySequence}`,
+          display_label: `Koli ${row.koli_sequence}`,
         }
       })
   }, [confirmRows, selectedInbound?.id, sourceRowByKey, sourceRowByModelOnlyKey])
@@ -1827,9 +1832,7 @@ export default function QcConfirmationNextProcessPage() {
 
     const nextKoliSequence =
       (latestConfirmRows || []).reduce((maxValue, item) => Math.max(maxValue, Number(item.koli_sequence || 0)), 0) + 1
-    const nextSampleDisplaySequence =
-      Array.from(new Set((latestConfirmRows || []).filter((item) => item.is_sample).map((item) => Number(item.koli_sequence || 0)).filter(Boolean))).length + 1
-    const nextDisplayLabel = isSampleKoli ? `Sample ${nextSampleDisplaySequence}` : `Koli ${nextKoliSequence}`
+    const nextDisplayLabel = `Koli ${nextKoliSequence}`
 
     const payload = currentKoliItems.map((item) => ({
       inbound_id: item.inbound_id,
@@ -2358,6 +2361,7 @@ export default function QcConfirmationNextProcessPage() {
                             <span style={styles.koliCellStack}>
                               <span>{getKoliDisplayLabel(koli)}</span>
                               {koli.has_transfer_adjustment ? <span style={styles.transferAdjustmentPill}>ADJ</span> : null}
+                              {koli.is_sample ? <span style={styles.samplePill}>Sample</span> : null}
                             </span>
                           </td>
                           <td style={styles.koliTd}>

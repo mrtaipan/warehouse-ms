@@ -8,6 +8,7 @@ import { getProfileByAuthenticatedUser } from '@/utils/user-profiles'
 import { ADMIN_EMAIL, resolveRole } from '@/utils/permissions'
 
 const supabase = createClient()
+const PRODUCT_PHOTOS_BUCKET = 'product-photos'
 
 function formatDateDisplay(value) {
   if (!value) return '-'
@@ -74,15 +75,19 @@ function getRowVariantIdentifier(row) {
 }
 
 function getNextVariantCode(model, variants) {
-  const prefix = `${model?.model_code || `MODEL-${model?.id || ''}`}-VAR`
+  const prefix = `${model?.model_code || `MODEL${model?.id || ''}`}`
   const nextNumber =
     variants.reduce((max, variant) => {
       const code = String(variant.variant_code || variant.variant_label || '')
-      const match = code.match(new RegExp(`^${prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(\\d+)$`, 'i'))
+      const match = code.match(new RegExp(`^${prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}-(\\d+)$`, 'i'))
       return match ? Math.max(max, Number(match[1] || 0)) : max
     }, 0) + 1
 
-  return `${prefix}${nextNumber}`
+  if (nextNumber > 999) {
+    throw new Error(`Variant code sequence for ${prefix} already reached 999. Please review the variant registry before adding more variants.`)
+  }
+
+  return `${prefix}-${String(nextNumber).padStart(3, '0')}`
 }
 
 function getBrandDisplayLabel(brand) {
@@ -92,6 +97,16 @@ function getBrandDisplayLabel(brand) {
 
 function getCategoryDisplayLabel(category) {
   return category?.full_name || category?.category_name || '-'
+}
+
+function getSafeStorageSegment(value, fallback = 'item') {
+  return (
+    String(value || fallback)
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9-_]+/g, '-')
+      .replace(/^-+|-+$/g, '') || fallback
+  )
 }
 
 function readFileAsDataUrl(file) {
@@ -3650,15 +3665,37 @@ export default function UnloadPage() {
         setProductModels((prev) => [...prev, insertedModel])
       }
 
+      const siblingVariants = productModelVariants.filter(
+        (variant) => Number(variant.product_model_id || 0) === Number(savedModel.id || 0)
+      )
+      let resolvedVariantStorageCode = ''
+
+      try {
+        resolvedVariantStorageCode = isEditingVariant
+          ? getVariantProductId(editingVariantContext?.variant) || normalizedVariantName
+          : getNextVariantCode(savedModel, siblingVariants)
+      } catch (variantCodeError) {
+        setModelModalError(variantCodeError.message || 'Failed to generate variant code.')
+        setSaving(false)
+        return
+      }
+
       let variantPhotoUrl = ''
 
       if (variantPhotoFile) {
         const fileExt = variantPhotoFile.name.split('.').pop()?.toLowerCase() || 'jpg'
         const fileName = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}.${fileExt}`
-        const filePath = `${selectedBrandId}/${selectedCategory.id}/variants/${fileName}`
+        const filePath = [
+          getSafeStorageSegment(selectedBrand?.brand_code || selectedBrand?.brand_name || selectedBrandId, 'brand'),
+          getSafeStorageSegment(selectedCategory.full_code || selectedCategory.category_code || selectedCategory.category_name || selectedCategory.id, 'category'),
+          getSafeStorageSegment(savedModel.model_code || savedModel.id || normalizedModelName, 'model'),
+          'variants',
+          getSafeStorageSegment(resolvedVariantStorageCode || normalizedVariantName, 'variant'),
+          fileName,
+        ].join('/')
 
         const { error: uploadError } = await supabase.storage
-          .from('product-photos')
+          .from(PRODUCT_PHOTOS_BUCKET)
           .upload(filePath, variantPhotoFile, { upsert: false })
 
         if (uploadError) {
@@ -3668,7 +3705,7 @@ export default function UnloadPage() {
         }
 
         const { data: publicUrlData } = supabase.storage
-          .from('product-photos')
+          .from(PRODUCT_PHOTOS_BUCKET)
           .getPublicUrl(filePath)
 
         variantPhotoUrl = publicUrlData.publicUrl || ''
@@ -3720,10 +3757,7 @@ export default function UnloadPage() {
         return
       }
 
-      const siblingVariants = productModelVariants.filter(
-        (variant) => Number(variant.product_model_id || 0) === Number(savedModel.id || 0)
-      )
-      const automaticVariantCode = getNextVariantCode(savedModel, siblingVariants)
+      const automaticVariantCode = resolvedVariantStorageCode
       const nextVariant = {
         product_model_id: savedModel.id,
         variant_code: automaticVariantCode,

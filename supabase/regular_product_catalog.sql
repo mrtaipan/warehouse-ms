@@ -4,10 +4,10 @@
 -- 2. dir_product_model_variants
 -- 3. dir_product_skus
 --
--- Model code is an internal family code generated per brand:
---   ADS-1, ADS-2, ...
+-- Model code is an internal family code generated per brand + category full code:
+--   CHM01SST001, CHM01SST002, ...
 -- Variant code is an internal variant code generated per model:
---   ADS-1-VAR1, ADS-1-VAR2, ...
+--   CHM01SST001-001, CHM01SST001-002, ...
 -- SKU code is the warehouse/business SKU in dir_product_skus. Multiple variants can point
 -- to one SKU when the business decides the physical differences should be counted
 -- as the same stock item.
@@ -77,16 +77,24 @@ create index if not exists dir_product_model_variants_sku_idx
 create index if not exists dir_product_skus_parent_sku_idx
   on public.dir_product_skus (parent_sku_id);
 
-create or replace function public.generate_regular_model_code(p_brand_id bigint)
+drop function if exists public.generate_regular_model_code(bigint);
+
+create or replace function public.generate_regular_model_code(p_brand_id bigint, p_category_id bigint)
 returns text
 language plpgsql
 as $$
 declare
   v_brand_code text;
+  v_category_code text;
+  v_prefix text;
   v_next_number integer;
 begin
   if p_brand_id is null then
     raise exception 'brand_id is required to generate regular model_code.';
+  end if;
+
+  if p_category_id is null then
+    raise exception 'category_id is required to generate regular model_code.';
   end if;
 
   select upper(nullif(trim(brand_code), ''))
@@ -98,18 +106,35 @@ begin
     v_brand_code := 'BRD' || p_brand_id::text;
   end if;
 
-  perform pg_advisory_xact_lock(hashtext('regular-model-code:' || v_brand_code));
+  select upper(nullif(regexp_replace(trim(coalesce(full_code, category_code, '')), '[^A-Za-z0-9]', '', 'g'), ''))
+    into v_category_code
+  from public.dir_categories
+  where id = p_category_id;
+
+  if v_category_code is null then
+    v_category_code := 'CAT' || p_category_id::text;
+  end if;
+
+  v_prefix := v_brand_code || v_category_code;
+
+  perform pg_advisory_xact_lock(hashtext('regular-model-code:' || v_prefix));
 
   select coalesce(max(suffix::integer), 0) + 1
     into v_next_number
   from (
-    select substring(upper(model_code) from length(v_brand_code) + 2) as suffix
+    select substring(upper(model_code) from length(v_prefix) + 1) as suffix
     from public.dir_product_models
-    where left(upper(model_code), length(v_brand_code) + 1) = v_brand_code || '-'
+    where brand_id = p_brand_id
+      and category_id = p_category_id
+      and left(upper(model_code), length(v_prefix)) = v_prefix
   ) model_codes
   where suffix ~ '^[0-9]+$';
 
-  return v_brand_code || '-' || v_next_number::text;
+  if v_next_number > 999 then
+    raise exception 'Model code sequence for % already reached 999. Please review the model registry before adding more models.', v_prefix;
+  end if;
+
+  return v_prefix || lpad(v_next_number::text, 3, '0');
 end;
 $$;
 
@@ -119,7 +144,7 @@ language plpgsql
 as $$
 begin
   if new.model_code is null or trim(new.model_code) = '' then
-    new.model_code := public.generate_regular_model_code(new.brand_id);
+    new.model_code := public.generate_regular_model_code(new.brand_id, new.category_id);
   end if;
 
   new.model_code := upper(trim(new.model_code));
@@ -159,13 +184,18 @@ begin
   select coalesce(max(suffix::integer), 0) + 1
     into v_next_number
   from (
-    select substring(upper(variant_code) from length(v_model_code) + 5) as suffix
+    select substring(upper(variant_code) from length(v_model_code) + 2) as suffix
     from public.dir_product_model_variants
-    where left(upper(variant_code), length(v_model_code) + 4) = v_model_code || '-VAR'
+    where product_model_id = p_product_model_id
+      and left(upper(variant_code), length(v_model_code) + 1) = v_model_code || '-'
   ) variant_codes
   where suffix ~ '^[0-9]+$';
 
-  return v_model_code || '-VAR' || v_next_number::text;
+  if v_next_number > 999 then
+    raise exception 'Variant code sequence for % already reached 999. Please review the variant registry before adding more variants.', v_model_code;
+  end if;
+
+  return v_model_code || '-' || lpad(v_next_number::text, 3, '0');
 end;
 $$;
 
@@ -190,10 +220,10 @@ for each row
 execute function public.set_regular_variant_code();
 
 comment on column public.dir_product_models.model_code is
-  'Regular internal model family code, generated per brand, e.g. ADS-1.';
+  'Regular internal model family code, generated per brand and category full code, e.g. CHM01SST001.';
 
 comment on column public.dir_product_model_variants.variant_code is
-  'Regular internal variant code generated from model_code, e.g. ADS-1-VAR1.';
+  'Regular internal variant code generated from model_code, e.g. CHM01SST001-001.';
 
 comment on column public.dir_product_model_variants.sku_id is
   'Final business/warehouse SKU. Multiple variants may point to the same SKU if they are merged operationally.';

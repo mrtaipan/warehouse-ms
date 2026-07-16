@@ -1,5 +1,5 @@
 'use client'
-import { Fragment, useEffect, useMemo, useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 
 import { createClient } from '@/utils/supabase/browser'
 import useArklineAccess from '../use-arkline-access'
@@ -14,6 +14,8 @@ const MATERIAL_BOARD_STATUSES = ['Ordered', 'Received', 'Sent']
 const RECEIPT_SIZE_ORDER = ['XS', 'S', 'M', 'L', 'XL', 'XXL']
 const DEFAULT_UPDATE_REASON = 'FABRIC ISSUE'
 const OTHERS_UPDATE_REASON = 'OTHERS'
+const ARKLINE_POWERBI_EMBED_URL =
+  'https://app.powerbi.com/reportEmbed?reportId=ec1df29a-b8da-4011-a674-82c461184f76&autoAuth=true&embeddedDemo=true'
 
 function CalendarIcon() {
   return (
@@ -1080,6 +1082,8 @@ async function loadOptionalRows(queryFactory) {
 export default function ArklineProgressOverviewPage() {
   const { access, loading: accessLoading, role } = useArklineAccess()
   const canOpenKanbanDetail = role === 'admin' || access.progressKanbanAdd || access.progressKanbanEdit
+  const powerBiFrameRef = useRef(null)
+  const powerBiDragRef = useRef({ active: false, startX: 0, startY: 0, scrollLeft: 0, scrollTop: 0 })
   const [view, setView] = useState('')
   const [monthDate, setMonthDate] = useState(() => new Date())
   const [lastRefresh, setLastRefresh] = useState(() => new Date())
@@ -1117,6 +1121,10 @@ export default function ArklineProgressOverviewPage() {
   const [shortageBatch, setShortageBatch] = useState(null)
   const [shortageNotes, setShortageNotes] = useState('')
   const [savingShortage, setSavingShortage] = useState(false)
+  const [powerBiModalOpen, setPowerBiModalOpen] = useState(false)
+  const [powerBiZoom, setPowerBiZoom] = useState(1)
+  const [powerBiPanMode, setPowerBiPanMode] = useState(false)
+  const [powerBiDragging, setPowerBiDragging] = useState(false)
   const [receiptDraft, setReceiptDraft] = useState({ receiveDate: '', supplierSj: '', notes: '', sizeQty: {}, isFinal: false, hpp: '' })
   const [statusDraft, setStatusDraft] = useState({
     editingUpdateId: '',
@@ -1169,6 +1177,39 @@ export default function ArklineProgressOverviewPage() {
     } finally {
       setLoading(false)
     }
+  }
+
+  function handlePowerBiPanStart(event) {
+    if (!powerBiPanMode || !powerBiFrameRef.current) return
+
+    event.preventDefault()
+    powerBiDragRef.current = {
+      active: true,
+      startX: event.clientX,
+      startY: event.clientY,
+      scrollLeft: powerBiFrameRef.current.scrollLeft,
+      scrollTop: powerBiFrameRef.current.scrollTop,
+    }
+    setPowerBiDragging(true)
+    event.currentTarget.setPointerCapture?.(event.pointerId)
+  }
+
+  function handlePowerBiPanMove(event) {
+    if (!powerBiDragRef.current.active || !powerBiFrameRef.current) return
+
+    event.preventDefault()
+    const deltaX = event.clientX - powerBiDragRef.current.startX
+    const deltaY = event.clientY - powerBiDragRef.current.startY
+    powerBiFrameRef.current.scrollLeft = powerBiDragRef.current.scrollLeft - deltaX
+    powerBiFrameRef.current.scrollTop = powerBiDragRef.current.scrollTop - deltaY
+  }
+
+  function handlePowerBiPanEnd(event) {
+    if (!powerBiDragRef.current.active) return
+
+    powerBiDragRef.current.active = false
+    setPowerBiDragging(false)
+    event.currentTarget.releasePointerCapture?.(event.pointerId)
   }
 
   const monthDays = useMemo(() => buildMonthDays(monthDate), [monthDate])
@@ -2500,6 +2541,11 @@ export default function ArklineProgressOverviewPage() {
                 <button type="button" className={styles.secondaryButton} onClick={() => void handleRefresh()} disabled={loading}>
                   {loading ? 'Refreshing...' : 'Refresh'}
                 </button>
+                {role === 'admin' ? (
+                  <button type="button" className={styles.powerBiButton} onClick={() => setPowerBiModalOpen(true)}>
+                    BI Report
+                  </button>
+                ) : null}
               </div>
               <div className={styles.messageText}>
                 {loadError || message || `Refreshed at ${lastRefresh.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}`}
@@ -2744,6 +2790,74 @@ export default function ArklineProgressOverviewPage() {
           </div>
         ) : null}
       </section>
+
+      {powerBiModalOpen && role === 'admin' ? (
+        <div className={styles.modalOverlay} onClick={() => setPowerBiModalOpen(false)}>
+          <div className={`${styles.modalCard} ${styles.powerBiModalCard}`.trim()} onClick={(event) => event.stopPropagation()}>
+            <div className={styles.modalHeader}>
+              <div>
+                <p className={styles.eyebrow}>Admin Report</p>
+                <h3 className={styles.modalTitle}>Power BI Embedded Report</h3>
+              </div>
+              <div className={styles.powerBiHeaderActions}>
+                <div className={styles.powerBiZoomControls} aria-label="Power BI zoom controls">
+                  <button type="button" onClick={() => setPowerBiZoom((value) => Math.max(0.75, Number((value - 0.1).toFixed(2))))}>
+                    -
+                  </button>
+                  <span>{Math.round(powerBiZoom * 100)}%</span>
+                  <button type="button" onClick={() => setPowerBiZoom((value) => Math.min(1.8, Number((value + 0.1).toFixed(2))))}>
+                    +
+                  </button>
+                  <button type="button" onClick={() => setPowerBiZoom(1)}>
+                    Reset
+                  </button>
+                  <button
+                    type="button"
+                    className={powerBiPanMode ? styles.powerBiPanToggleActive : ''}
+                    aria-pressed={powerBiPanMode}
+                    onClick={() => setPowerBiPanMode((value) => !value)}
+                  >
+                    Pan {powerBiPanMode ? 'On' : 'Off'}
+                  </button>
+                </div>
+                <button type="button" className={styles.iconButton} onClick={() => setPowerBiModalOpen(false)} aria-label="Close Power BI report">
+                  <CloseIcon />
+                </button>
+              </div>
+            </div>
+            <div ref={powerBiFrameRef} className={`${styles.powerBiFrameShell} ${powerBiDragging ? styles.powerBiFrameShellDragging : ''}`.trim()}>
+              <div
+                className={styles.powerBiPanCanvas}
+                style={{
+                  width: `${100 * powerBiZoom}%`,
+                  height: `${100 * powerBiZoom}%`,
+                  minWidth: `${1140 * powerBiZoom}px`,
+                  minHeight: `${642 * powerBiZoom}px`,
+                }}
+              >
+                <iframe
+                  title="Arkline Report Reborn"
+                  className={styles.powerBiEmbedContainer}
+                  src={ARKLINE_POWERBI_EMBED_URL}
+                  frameBorder="0"
+                  allowFullScreen
+                />
+              </div>
+              {powerBiPanMode ? (
+                <div
+                  className={`${styles.powerBiDragLayer} ${powerBiDragging ? styles.powerBiDragLayerDragging : ''}`.trim()}
+                  role="presentation"
+                  onPointerDown={handlePowerBiPanStart}
+                  onPointerMove={handlePowerBiPanMove}
+                  onPointerUp={handlePowerBiPanEnd}
+                  onPointerCancel={handlePowerBiPanEnd}
+                  onPointerLeave={handlePowerBiPanEnd}
+                />
+              ) : null}
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {selectedPoDetail ? (
         <div className={styles.modalOverlay} onClick={closePoDetail}>

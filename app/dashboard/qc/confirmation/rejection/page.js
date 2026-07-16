@@ -1527,6 +1527,7 @@ export default function QcConfirmationRejectionPage() {
       category_id: item.category_id,
       model_name: item.model_name,
       variant_name: item.model_color || null,
+      photo_url: item.photo_url || null,
       qty: Number(item.qty || 0),
       koli_sequence: nextKoliSequence,
       grade: item.grade,

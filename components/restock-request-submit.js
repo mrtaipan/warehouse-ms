@@ -50,7 +50,7 @@ async function fetchAllRackLocations() {
 
 function getLocationLabel(location) {
   if (!location) {
-    return 'Location not found'
+    return 'Location is not found'
   }
 
   return [
@@ -275,11 +275,10 @@ function buildRequestRows(matches, rackLocations, form, requesterName) {
   const locationCount = uniqueLocations.length
   const takeFromSummary =
     locationCount > 0
-      ? `${locationCount} lokasi tercatat${uniqueLocations.length > 0 ? ` • ${uniqueLocations.slice(0, 2).join(', ')}` : ''}${
-          uniqueLocations.length > 2 ? ' ...' : ''
-        }`
-      : 'Lokasi belum terdata'
-
+      ? `${locationCount} Registered Location${locationCount === 1 ? '' : 's'}${
+          uniqueLocations.length > 0 ? ` - ${uniqueLocations.slice(0, 2).join(', ')}` : ''
+        }${uniqueLocations.length > 2 ? ' ...' : ''}`
+      : 'Location is not found'
   return [
     {
       requester_name: requesterName.trim(),
@@ -306,13 +305,36 @@ function buildArklineRequestRows(product, form, requesterName) {
       item_name: itemLabel,
       size: normalizeSizeValue(form.size) || '-',
       qty: requestedQty,
-      take_from: 'Lokasi belum terdata',
+      take_from: 'Location is not found',
       storage_id: null,
       search_term: product?.sku || itemLabel,
       note: submittedNote || null,
       request_status: 'open',
     },
   ]
+}
+
+function formatTakeFromLabel(value) {
+  const label = String(value || '').trim()
+
+  if (!label) {
+    return 'Location is not found'
+  }
+
+  const registeredLocationMatch = label.match(/^(\d+)\s+lokasi\s+(tercatat|terdata)(.*)$/i)
+
+  if (registeredLocationMatch) {
+    const count = Number(registeredLocationMatch[1] || 0)
+    const suffix = registeredLocationMatch[3] || ''
+
+    return `${count} Registered Location${count === 1 ? '' : 's'}${suffix}`
+  }
+
+  if (/^lokasi belum terdata$/i.test(label) || /^location (not recorded|not found)$/i.test(label)) {
+    return 'Location is not found'
+  }
+
+  return label
 }
 
 async function fetchOpenRequests() {
@@ -491,25 +513,25 @@ export default function RestockRequestSubmit({
     setSuccess('')
 
     if (!requesterName.trim()) {
-      setError('Display name user belum tersedia. Isi dulu di User Access.')
+      setError('User display name is not available yet. Please complete it in User Access first.')
       setSubmitting(false)
       return
     }
 
     if (!form.sourceType) {
-      setError('Pilih sumber request dulu: MOB atau ARKLINE.')
+      setError('Choose a request source first: MOB or ARKLINE.')
       setSubmitting(false)
       return
     }
 
     if (!form.searchTerm.trim()) {
-      setError('SKU wajib diisi.')
+      setError('SKU is required.')
       setSubmitting(false)
       return
     }
 
     if (!form.size.trim()) {
-      setError('Size wajib diisi.')
+      setError('Size is required.')
       setSubmitting(false)
       return
     }
@@ -517,7 +539,7 @@ export default function RestockRequestSubmit({
     const requestedQty = Number(form.qty || 0)
 
     if (requestedQty <= 0) {
-      setError('Qty harus lebih dari 0.')
+      setError('Qty must be greater than 0.')
       setSubmitting(false)
       return
     }
@@ -528,7 +550,7 @@ export default function RestockRequestSubmit({
       const selectedProduct = findArklineProductByInput(arklineProducts, form.searchTerm)
 
       if (!selectedProduct) {
-        setError('Pilih produk Arkline dari dropdown yang tersedia.')
+        setError('Choose an Arkline product from the available dropdown.')
         setSubmitting(false)
         return
       }
@@ -553,7 +575,7 @@ export default function RestockRequestSubmit({
 
     if (insertError) {
       setError(
-        `${insertError.message} Pastikan tabel ${TAKE_REQUESTS_TABLE} dan policy insert/select-nya sudah ada.`
+        `${insertError.message} Make sure the ${TAKE_REQUESTS_TABLE} table and insert/select policies are available.`
       )
       setSubmitting(false)
       return
@@ -567,7 +589,7 @@ export default function RestockRequestSubmit({
       searchTerm: '',
       note: '',
     }))
-    setSuccess('Submit berhasil')
+    setSuccess('Request submitted successfully.')
     setSubmitting(false)
   }
 
@@ -588,7 +610,7 @@ export default function RestockRequestSubmit({
 
         <div style={styles.hero}>
           <div>
-            <p style={styles.eyebrow}>Barang Kosong</p>
+            <p style={styles.eyebrow}>Out of Stock</p>
             <h1 style={styles.title}>{title}</h1>
             {subtitle ? <p style={styles.subtitle}>{subtitle}</p> : null}
           </div>
@@ -596,7 +618,7 @@ export default function RestockRequestSubmit({
 
         <form onSubmit={handleSubmit} style={styles.card}>
           <div style={styles.cardHeader}>
-            <h2 style={styles.cardTitle}>Buat Request</h2>
+            <h2 style={styles.cardTitle}>Create Request</h2>
           </div>
 
           <div style={styles.requesterBox}>
@@ -605,7 +627,7 @@ export default function RestockRequestSubmit({
           </div>
 
           <div style={styles.field}>
-            <label style={styles.label}>Request Untuk</label>
+            <label style={styles.label}>Request Source</label>
             <div style={styles.sourceSelector}>
               {SOURCE_OPTIONS.map((option) => {
                 const isActive = form.sourceType === option.value
@@ -630,7 +652,7 @@ export default function RestockRequestSubmit({
           {form.sourceType ? (
             <>
               <div style={styles.field}>
-                <label style={styles.label}>Nama Barang / SKU</label>
+                <label style={styles.label}>Item Name / SKU</label>
                 <input
                   name="searchTerm"
                   value={form.searchTerm}
@@ -638,8 +660,8 @@ export default function RestockRequestSubmit({
                   style={styles.input}
                   placeholder={
                     form.sourceType === 'ARKLINE'
-                      ? 'KETIK ATAU PILIH PRODUK ARKLINE'
-                      : 'CARI ITEM YANG MAU DIAMBIL'
+                      ? 'TYPE OR CHOOSE AN ARKLINE PRODUCT'
+                      : 'SEARCH THE ITEM TO PICK'
                   }
                   list={form.sourceType === 'ARKLINE' ? 'arkline-product-options' : undefined}
                   required
@@ -653,7 +675,7 @@ export default function RestockRequestSubmit({
                     </datalist>
                     {arklineProductError ? <span style={styles.helperError}>{arklineProductError}</span> : null}
                     {!arklineProductError && !arklineProductOptions.length ? (
-                      <span style={styles.helperText}>Belum ada produk Arkline aktif yang bisa dipilih.</span>
+                      <span style={styles.helperText}>No active Arkline products are available yet.</span>
                     ) : null}
                   </>
                 ) : null}
@@ -667,7 +689,7 @@ export default function RestockRequestSubmit({
                     value={form.size}
                     onChange={handleInputChange}
                     style={styles.input}
-                    placeholder="CONTOH: M"
+                    placeholder="EXAMPLE: M"
                     required
                   />
                 </div>
@@ -693,13 +715,13 @@ export default function RestockRequestSubmit({
                   value={form.note}
                   onChange={handleInputChange}
                   style={styles.textarea}
-                  placeholder="Catatan untuk picker, kalau ada instruksi tambahan"
+                  placeholder="Notes for the picker, if there are extra instructions"
                   rows={3}
                 />
               </div>
             </>
           ) : (
-            <div style={styles.emptyState}>Pilih MOB atau ARKLINE terlebih dahulu untuk membuka field request.</div>
+            <div style={styles.emptyState}>Choose MOB or ARKLINE first to open the request fields.</div>
           )}
 
           {error ? <p style={styles.error}>{error}</p> : null}
@@ -713,7 +735,7 @@ export default function RestockRequestSubmit({
         <div style={styles.card}>
           <div style={styles.listHeader}>
             <div>
-              <h2 style={styles.cardTitle}>Daftar Pengambilan</h2>
+              <h2 style={styles.cardTitle}>Pick List</h2>
             </div>
 
             <div style={styles.listHeaderActions}>
@@ -731,20 +753,20 @@ export default function RestockRequestSubmit({
 
           {requests.length === 0 ? (
             <div style={styles.emptyState}>
-              Belum ada request. Submit barang di form atas untuk mulai daftar pengambilan.
+              No requests yet. Submit an item from the form above to start the pick list.
             </div>
           ) : (
             <div style={styles.requestList}>
               {requests.map((row) => (
                 <div key={row.id} style={styles.requestCard}>
                   <div style={styles.requestOwner}>
-                    <span style={styles.requestOwnerLabel}>Untuk</span>
+                    <span style={styles.requestOwnerLabel}>For</span>
                     <strong style={styles.requestOwnerValue}>{row.requester_name}</strong>
                   </div>
 
                   <div style={styles.requestGrid}>
                     <div style={styles.requestCell}>
-                      <span style={styles.requestLabel}>Nama Barang</span>
+                      <span style={styles.requestLabel}>Item Name</span>
                       <strong style={styles.requestValue}>{row.item_name}</strong>
                     </div>
 
@@ -760,7 +782,7 @@ export default function RestockRequestSubmit({
 
                     <div style={styles.requestCell}>
                       <span style={styles.requestLabel}>Take from</span>
-                      <strong style={styles.requestValue}>{row.take_from}</strong>
+                      <strong style={styles.requestValue}>{formatTakeFromLabel(row.take_from)}</strong>
                     </div>
                   </div>
 
