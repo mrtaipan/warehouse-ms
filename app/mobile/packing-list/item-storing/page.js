@@ -1,7 +1,7 @@
 'use client'
 
 import Image from 'next/image'
-import { useEffect, useMemo, useState } from 'react'
+import { Suspense, useEffect, useMemo, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { createClient } from '@/utils/supabase/browser'
 import { getProfileByAuthenticatedUser } from '@/utils/user-profiles'
@@ -93,7 +93,7 @@ function preventNumberWheel(event) {
   event.currentTarget.blur()
 }
 
-export default function ItemStoringPage() {
+function ItemStoringContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const grnNumber = searchParams.get('grn') || ''
@@ -748,6 +748,14 @@ export default function ItemStoringPage() {
         </div>
       ) : null}
     </div>
+  )
+}
+
+export default function ItemStoringPage() {
+  return (
+    <Suspense fallback={<div style={styles.loading}>Loading item storing...</div>}>
+      <ItemStoringContent />
+    </Suspense>
   )
 }
 
