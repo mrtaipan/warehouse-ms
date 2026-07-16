@@ -388,15 +388,25 @@ const styles = {
     fontSize: '13px',
   },
   previewButton: {
-    width: '36px',
-    height: '36px',
+    width: '46px',
+    height: '46px',
+    padding: 0,
     border: '1px solid #d1d5db',
-    borderRadius: '999px',
-    background: '#fff',
+    borderRadius: '8px',
+    background: '#f8fafc',
     color: '#111827',
-    fontSize: '14px',
-    fontWeight: '700',
+    overflow: 'hidden',
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    fontSize: 0,
     cursor: 'pointer',
+  },
+  previewThumb: {
+    width: '100%',
+    height: '100%',
+    objectFit: 'cover',
+    display: 'block',
   },
   detailButton: {
     height: '34px',
@@ -889,6 +899,10 @@ function isWithinDateRange(dateString, dateFrom, dateTo) {
   return true
 }
 
+function getQcWorkDateValue(item) {
+  return item?.finished_at || item?.updated_at || item?.created_at || ''
+}
+
 function getTodayLocalDate() {
   const now = new Date()
   const year = now.getFullYear()
@@ -1160,15 +1174,11 @@ function getRejectDetailSummaryKey(item) {
   return `${po}|||${sku}|||${model}`
 }
 
-function getAggregatedRejectAdjustment(rows = [], adjustmentType) {
-  const matchedRows = rows.filter((item) => item.adjustment_type === adjustmentType)
-  const qty = matchedRows.reduce((sum, item) => sum + Number(item.qty || 0), 0)
-  const notes = matchedRows
-    .map((item) => String(item.notes || '').trim())
-    .filter(Boolean)
-    .join('\n')
-
-  return { qty, notes }
+function getArklineAdjustmentLabel(value) {
+  const normalized = String(value || '').trim().toLowerCase()
+  if (normalized === 'bc_to_a') return 'Transfer to A'
+  if (normalized === 'inspector_data_error') return 'QC Inspector Error'
+  return value || '-'
 }
 
 function isVerificationAdjustment(item) {
@@ -1242,10 +1252,9 @@ export default function QcDashboardPage() {
   const [rejectDetailSummary, setRejectDetailSummary] = useState(null)
   const [rejectDraftRows, setRejectDraftRows] = useState([])
   const [rejectAdjustmentDraft, setRejectAdjustmentDraft] = useState({
-    bcToAQty: '',
-    bcToANotes: '',
-    inspectorErrorQty: '',
-    inspectorErrorNotes: '',
+    adjustmentType: 'bc_to_a',
+    qty: '',
+    notes: '',
   })
   const [savingRejectDetail, setSavingRejectDetail] = useState(false)
 
@@ -1578,7 +1587,7 @@ export default function QcDashboardPage() {
   const filteredItems = useMemo(
     () =>
       qcItems.filter((item) => {
-        const matchesDate = hasInvalidDateRange ? true : isWithinDateRange(item.finished_at || item.created_at, dateFrom, dateTo)
+        const matchesDate = hasInvalidDateRange ? true : isWithinDateRange(getQcWorkDateValue(item), dateFrom, dateTo)
         const matchesGrn = !grnFilter || item.inbound?.grn_number === grnFilter
         const matchesBrand = !brandFilter || getBrandLabel(item) === brandFilter
         const matchesCategory = !categoryFilter || getCategoryLabel(item) === categoryFilter
@@ -1590,7 +1599,7 @@ export default function QcDashboardPage() {
   const filteredArklineItems = useMemo(
     () =>
       arklineModeItems.filter((item) => {
-        const matchesDate = hasInvalidDateRange ? true : isWithinDateRange(item.finished_at || item.created_at, dateFrom, dateTo)
+        const matchesDate = hasInvalidDateRange ? true : isWithinDateRange(getQcWorkDateValue(item), dateFrom, dateTo)
         const matchesPo = !poFilter || getArklinePoLabel(item) === poFilter
         const matchesProduct = !arklineProductFilter || getArklineProductLabel(item) === arklineProductFilter
         return matchesDate && matchesPo && matchesProduct
@@ -1690,8 +1699,7 @@ export default function QcDashboardPage() {
       arklineRejectDetails
         .filter(
           (detail) =>
-            activeArklineTaskIds.has(String(detail.arkline_qc_id)) &&
-            (hasInvalidDateRange || isWithinDateRange(detail.created_at || detail.updated_at, dateFrom, dateTo))
+            activeArklineTaskIds.has(String(detail.arkline_qc_id))
         )
         .forEach((detail) => {
           const baseKey = getRejectDetailSummaryKey(detail)
@@ -1706,11 +1714,16 @@ export default function QcDashboardPage() {
 
       arklineRejectAdjustments
         .filter(
-          (adjustment) =>
-            (adjustment.qc_cycle_id
-              ? activeArklineCycleIds.has(String(adjustment.qc_cycle_id))
-              : qcMode === 'arkline') &&
-            (hasInvalidDateRange || isWithinDateRange(adjustment.created_at || adjustment.updated_at, dateFrom, dateTo))
+          (adjustment) => {
+            const adjustmentCycleId = String(adjustment.qc_cycle_id || '')
+            const matchesCycle = adjustmentCycleId
+              ? activeArklineCycleIds.has(adjustmentCycleId)
+              : qcMode === 'arkline'
+            const matchesDate = adjustmentCycleId
+              ? true
+              : hasInvalidDateRange || isWithinDateRange(adjustment.created_at || adjustment.updated_at, dateFrom, dateTo)
+            return matchesCycle && matchesDate
+          }
         )
         .forEach((adjustment) => {
           const baseKey = getAdjustmentSummaryKey(adjustment)
@@ -1868,11 +1881,30 @@ export default function QcDashboardPage() {
         const matchesSummary = selectedRejectTaskIds.size
           ? selectedRejectTaskIds.has(String(item.arkline_qc_id))
           : getRejectDetailSummaryKey(item) === selectedRejectSummaryKey
-        const matchesDate = hasInvalidDateRange || isWithinDateRange(item.created_at || item.updated_at, dateFrom, dateTo)
+        const matchesDate = selectedRejectTaskIds.size
+          ? true
+          : hasInvalidDateRange || isWithinDateRange(item.created_at || item.updated_at, dateFrom, dateTo)
         return matchesSummary && matchesDate
       }),
     [arklineRejectDetails, dateFrom, dateTo, hasInvalidDateRange, selectedRejectSummaryKey, selectedRejectTaskIds]
   )
+  const selectedRejectExistingAdjustments = useMemo(() => {
+    if (!rejectDetailSummary) return []
+
+    const summaryParts = getSummaryTaskKeyParts(rejectDetailSummary)
+    const selectedCycleIds = new Set(selectedRejectTaskRows.map((item) => String(item.qc_cycle_id || '')).filter(Boolean))
+
+    return arklineRejectAdjustments
+      .filter((item) => {
+        const samePo = String(item.po_id || 'NO PO').trim().toUpperCase() === summaryParts.brand
+        const sameSku = String(item.sku_induk || 'NO SKU').trim().toUpperCase() === summaryParts.category
+        const sameModel = String(item.model_name || '').trim().toUpperCase() === summaryParts.model
+        const adjustmentCycleId = String(item.qc_cycle_id || '')
+        const sameCycle = !selectedCycleIds.size || !adjustmentCycleId || selectedCycleIds.has(adjustmentCycleId)
+        return samePo && sameSku && sameModel && sameCycle
+      })
+      .sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime())
+  }, [arklineRejectAdjustments, rejectDetailSummary, selectedRejectTaskRows])
   const selectedRejectReasonOptions = useMemo(() => {
     const grouped = new Map()
 
@@ -1894,15 +1926,18 @@ export default function QcDashboardPage() {
   }, [arklineRejectReasons, selectedRejectExistingDetails])
   const selectedRejectTargetQty = Number(rejectDetailSummary?.rejectTargetQty ?? getRejectQty(rejectDetailSummary || {}))
   const selectedRejectDetailQty = rejectDraftRows.reduce((sum, item) => sum + Number(item.qty || 0), 0)
-  const selectedRejectAdjustmentQty =
-    Number(rejectAdjustmentDraft.bcToAQty || 0) + Number(rejectAdjustmentDraft.inspectorErrorQty || 0)
+  const selectedRejectAdjustmentQty = selectedRejectExistingAdjustments.reduce((sum, item) => sum + Number(item.qty || 0), 0)
   const selectedRejectGap = selectedRejectTargetQty - selectedRejectDetailQty - selectedRejectAdjustmentQty
   const selectedRejectPreviewSummary = useMemo(() => {
     const baseQtyA = selectedRejectTaskRows.reduce((sum, item) => sum + Number(item.qty_a || 0), 0)
     const baseQtyB = selectedRejectTaskRows.reduce((sum, item) => sum + Number(item.qty_b || 0), 0)
     const baseQtyC = selectedRejectTaskRows.reduce((sum, item) => sum + Number(item.qty_c || 0), 0)
-    const bcToAQty = Number(rejectAdjustmentDraft.bcToAQty || 0)
-    const inspectorErrorQty = Number(rejectAdjustmentDraft.inspectorErrorQty || 0)
+    const bcToAQty = selectedRejectExistingAdjustments
+      .filter((item) => item.adjustment_type === 'bc_to_a')
+      .reduce((sum, item) => sum + Number(item.qty || 0), 0)
+    const inspectorErrorQty = selectedRejectExistingAdjustments
+      .filter((item) => item.adjustment_type === 'inspector_data_error')
+      .reduce((sum, item) => sum + Number(item.qty || 0), 0)
     const adjustedRejectTotals = applyInspectorErrorToRejectTotals(baseQtyB, baseQtyC, bcToAQty + inspectorErrorQty)
 
     return {
@@ -1910,7 +1945,7 @@ export default function QcDashboardPage() {
       qtyB: adjustedRejectTotals.qtyB,
       qtyC: adjustedRejectTotals.qtyC,
     }
-  }, [rejectAdjustmentDraft.bcToAQty, rejectAdjustmentDraft.inspectorErrorQty, selectedRejectTaskRows])
+  }, [selectedRejectExistingAdjustments, selectedRejectTaskRows])
   const selectedRejectPreviewChecked =
     selectedRejectPreviewSummary.qtyA + selectedRejectPreviewSummary.qtyB + selectedRejectPreviewSummary.qtyC
   const selectedRejectSizeOptions = useMemo(() => {
@@ -2133,19 +2168,11 @@ export default function QcDashboardPage() {
       const matchesSummary = taskIds.size
         ? taskIds.has(String(item.arkline_qc_id))
         : getRejectDetailSummaryKey(item) === summaryKey
-      const matchesDate = hasInvalidDateRange || isWithinDateRange(item.created_at || item.updated_at, dateFrom, dateTo)
+      const matchesDate = taskIds.size
+        ? true
+        : hasInvalidDateRange || isWithinDateRange(item.created_at || item.updated_at, dateFrom, dateTo)
       return matchesSummary && matchesDate
     })
-    const existingAdjustments = arklineRejectAdjustments.filter((item) => {
-      const samePo = String(item.po_id || 'NO PO').trim().toUpperCase() === summaryParts.brand
-      const sameSku = String(item.sku_induk || 'NO SKU').trim().toUpperCase() === summaryParts.category
-      const sameModel = String(item.model_name || '').trim().toUpperCase() === summaryParts.model
-      const adjustmentCycleId = String(item.qc_cycle_id || '')
-      const sameCycle = !cycleIds.size || !adjustmentCycleId || cycleIds.has(adjustmentCycleId)
-      const matchesDate = hasInvalidDateRange || isWithinDateRange(item.created_at || item.updated_at, dateFrom, dateTo)
-      return samePo && sameSku && sameModel && sameCycle && matchesDate
-    })
-
     const summaryRejectTargetQty = Number(summary.rejectTargetQty ?? getRejectQty(summary))
     const initialRows = existingDetails.length
       ? buildGroupedRejectDraftRows(existingDetails)
@@ -2155,17 +2182,13 @@ export default function QcDashboardPage() {
           ...(!summaryRejectTargetQty ? [createRejectDraftRow()] : []),
         ]
 
-    const bcToAAdjustment = getAggregatedRejectAdjustment(existingAdjustments, 'bc_to_a')
-    const inspectorErrorAdjustment = getAggregatedRejectAdjustment(existingAdjustments, 'inspector_data_error')
-
     setRejectDetailSummary(summary)
     setRejectDetailError('')
     setRejectDraftRows(initialRows.length ? initialRows : [createRejectDraftRow()])
     setRejectAdjustmentDraft({
-      bcToAQty: bcToAAdjustment.qty ? String(bcToAAdjustment.qty) : '',
-      bcToANotes: bcToAAdjustment.notes,
-      inspectorErrorQty: inspectorErrorAdjustment.qty ? String(inspectorErrorAdjustment.qty) : '',
-      inspectorErrorNotes: inspectorErrorAdjustment.notes,
+      adjustmentType: 'bc_to_a',
+      qty: '',
+      notes: '',
     })
   }
 
@@ -2231,6 +2254,70 @@ export default function QcDashboardPage() {
 
     setArklineRejectReasons((items) => [...items, data].sort((a, b) => a.reason_name.localeCompare(b.reason_name)))
     return data.id
+  }
+
+  async function handleSubmitRejectAdjustment() {
+    if (!rejectDetailSummary) return
+
+    setRejectDetailError('')
+    setSuccess('')
+
+    if (!canEditArklineRejectDetail) {
+      setRejectDetailError(rejectDetailReadOnlyReason || 'Choose a specific Date From and Date To before submitting Adjustment.')
+      return
+    }
+
+    const qty = Number(rejectAdjustmentDraft.qty || 0)
+    if (!qty) {
+      setRejectDetailError('Masukkan qty adjustment terlebih dahulu.')
+      return
+    }
+
+    const adjustmentType = String(rejectAdjustmentDraft.adjustmentType || '').trim()
+    if (!['bc_to_a', 'inspector_data_error'].includes(adjustmentType)) {
+      setRejectDetailError('Pilih tipe adjustment terlebih dahulu.')
+      return
+    }
+
+    setSavingRejectDetail(true)
+
+    try {
+      const poId = rejectDetailSummary.brand === 'NO PO' ? null : rejectDetailSummary.brand
+      const skuInduk = rejectDetailSummary.category === 'NO SKU' ? null : rejectDetailSummary.category
+      const targetCycleId = selectedRejectTaskRows[0]?.qc_cycle_id || null
+      const payload = {
+        adjustment_type: adjustmentType,
+        qty,
+        notes: rejectAdjustmentDraft.notes.trim() || null,
+        po_id: poId,
+        arkline_po_item_id: selectedRejectTaskRows[0]?.arkline_po_item_id || null,
+        sku_induk: skuInduk,
+        model_name: rejectDetailSummary.model,
+        qc_cycle_id: targetCycleId,
+      }
+
+      const { error: insertAdjustmentError } = await supabase.from('arkline_qc_reject_adjustments').insert(payload)
+      if (insertAdjustmentError) throw new Error(insertAdjustmentError.message)
+
+      const { data: nextAdjustmentRows, error: nextAdjustmentError } = await supabase
+        .from('arkline_qc_reject_adjustments')
+        .select('*')
+        .order('created_at', { ascending: false })
+
+      if (nextAdjustmentError) throw new Error(nextAdjustmentError.message)
+
+      setArklineRejectAdjustments(nextAdjustmentRows || [])
+      setRejectAdjustmentDraft({
+        adjustmentType: 'bc_to_a',
+        qty: '',
+        notes: '',
+      })
+      setSuccess('Arkline adjustment submitted.')
+    } catch (submitError) {
+      setRejectDetailError(submitError.message || 'Failed to submit Arkline adjustment.')
+    } finally {
+      setSavingRejectDetail(false)
+    }
   }
 
   async function handleSaveRejectDetail() {
@@ -2337,60 +2424,6 @@ export default function QcDashboardPage() {
       if (detailPayload.length) {
         const { error: insertDetailError } = await supabase.from('arkline_qc_reject_details').insert(detailPayload)
         if (insertDetailError) throw new Error(insertDetailError.message)
-      }
-
-      const poId = rejectDetailSummary.brand === 'NO PO' ? null : rejectDetailSummary.brand
-      const skuInduk = rejectDetailSummary.category === 'NO SKU' ? null : rejectDetailSummary.category
-      const rejectSummaryParts = getSummaryTaskKeyParts(rejectDetailSummary)
-      const targetCycleId = selectedRejectTaskRows[0]?.qc_cycle_id || null
-      const selectedRejectCycleIds = new Set(selectedRejectTaskRows.map((item) => String(item.qc_cycle_id || '')).filter(Boolean))
-      const existingAdjustmentIds = arklineRejectAdjustments
-        .filter((item) => {
-          const samePo = String(item.po_id || 'NO PO').trim().toUpperCase() === rejectSummaryParts.brand
-          const sameSku = String(item.sku_induk || 'NO SKU').trim().toUpperCase() === rejectSummaryParts.category
-          const sameModel = String(item.model_name || '').trim().toUpperCase() === rejectSummaryParts.model
-          const adjustmentCycleId = String(item.qc_cycle_id || '')
-          const sameCycle = !selectedRejectCycleIds.size || !adjustmentCycleId || selectedRejectCycleIds.has(adjustmentCycleId)
-          const matchesDate = hasInvalidDateRange || isWithinDateRange(item.created_at || item.updated_at, dateFrom, dateTo)
-          return samePo && sameSku && sameModel && sameCycle && matchesDate
-        })
-        .map((item) => item.id)
-        .filter(Boolean)
-
-      if (existingAdjustmentIds.length) {
-        const { error: deleteAdjustmentError } = await supabase
-          .from('arkline_qc_reject_adjustments')
-          .delete()
-          .in('id', existingAdjustmentIds)
-
-        if (deleteAdjustmentError) throw new Error(deleteAdjustmentError.message)
-      }
-
-      const adjustmentPayload = [
-        {
-          adjustment_type: 'bc_to_a',
-          qty: Number(rejectAdjustmentDraft.bcToAQty || 0),
-          notes: rejectAdjustmentDraft.bcToANotes.trim() || null,
-        },
-        {
-          adjustment_type: 'inspector_data_error',
-          qty: Number(rejectAdjustmentDraft.inspectorErrorQty || 0),
-          notes: rejectAdjustmentDraft.inspectorErrorNotes.trim() || null,
-        },
-      ]
-        .filter((item) => item.qty !== 0)
-        .map((item) => ({
-          ...item,
-          po_id: poId,
-          arkline_po_item_id: selectedRejectTaskRows[0]?.arkline_po_item_id || null,
-          sku_induk: skuInduk,
-          model_name: rejectDetailSummary.model,
-          qc_cycle_id: targetCycleId,
-        }))
-
-      if (adjustmentPayload.length) {
-        const { error: insertAdjustmentError } = await supabase.from('arkline_qc_reject_adjustments').insert(adjustmentPayload)
-        if (insertAdjustmentError) throw new Error(insertAdjustmentError.message)
       }
 
       const [
@@ -2832,6 +2865,7 @@ export default function QcDashboardPage() {
                     {qcMode !== 'regular' ? null : <td style={styles.td}>
                       {item.photoUrl ? (
                         <button type="button" style={styles.previewButton} onClick={() => setPreviewPhoto({ url: item.photoUrl, label: item.model })} title="Preview photo">
+                          <img src={item.photoUrl} alt={item.model || 'Product photo'} style={styles.previewThumb} />
                           👁
                         </button>
                       ) : (
@@ -3231,65 +3265,102 @@ export default function QcDashboardPage() {
             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
               <div>
                 <h3 style={{ ...styles.sectionTitle, fontSize: '16px' }}>Adjustment</h3>
-                <div style={styles.noteGrid}>
-                  <div style={styles.noteCard}>
-                    <p style={styles.smallNote}>
-                      <strong>Jika data &gt; aktual,</strong>
-                    </p>
-                    <p style={styles.smallNote}>Isi kolom &apos;Pindah ke Grade A&apos; , jika produk yang awalnya reject dianggap masih ok.</p>
-                    <p style={styles.smallNote}>Isi kolom &apos;Salah data QC Inspector&apos; , jika terdapat kesalahan input oleh Inspector pada data awal.</p>
-                  </div>
-                  <div style={styles.noteCard}>
-                    <p style={styles.smallNote}>
-                      <strong>Jika data &lt; aktual,</strong>
-                    </p>
-                    <p style={styles.smallNote}>Isi kolom &apos;Pindah ke Grade A&apos; dengan minus (-), jika ada salah input Grade A.</p>
-                    <p style={styles.smallNote}>Isi kolom &apos;Salah data QC Inspector&apos; dengan minus (-), jika ada kekurangan input oleh Inspector pada data awal.</p>
-                  </div>
-                </div>
+                <p style={styles.smallNote}>
+                  Submit adjustment satu per satu agar riwayatnya jelas. Gunakan qty minus (-) jika adjustment perlu menambah kembali Grade B/C.
+                </p>
               </div>
               {selectedRejectGap !== 0 ? (
                 <div style={styles.warningBox}>
                   Gap masih {selectedRejectGap}. Reject detail adalah hasil akhir Grade B/C aktual. Adjustment dipakai untuk rekonsiliasi angka QC awal sampai gap menjadi 0.
                 </div>
               ) : null}
-              <div style={styles.adjustmentGrid}>
-                <div style={styles.summaryCard}>
-                  <label style={styles.label}>Pindah ke Grade A</label>
-                  <input
-                    type="number"
-                    value={rejectAdjustmentDraft.bcToAQty}
-                    onChange={(event) => setRejectAdjustmentDraft((draft) => ({ ...draft, bcToAQty: event.target.value }))}
-                    style={{ ...styles.input, ...(!canEditArklineRejectDetail ? styles.disabledInput : {}) }}
-                    disabled={!canEditArklineRejectDetail}
-                    placeholder="Qty"
-                  />
-                  <input
-                    value={rejectAdjustmentDraft.bcToANotes}
-                    onChange={(event) => setRejectAdjustmentDraft((draft) => ({ ...draft, bcToANotes: event.target.value }))}
-                    style={{ ...styles.input, ...(!canEditArklineRejectDetail ? styles.disabledInput : {}) }}
-                    disabled={!canEditArklineRejectDetail}
-                    placeholder="Notes"
-                  />
+              <div style={{ ...styles.summaryCard, gap: '10px' }}>
+                <div
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'minmax(160px, 0.9fr) 110px minmax(260px, 1.8fr) auto',
+                    gap: '10px',
+                    alignItems: 'end',
+                  }}
+                >
+                  <div style={styles.field}>
+                    <label style={styles.label}>Adjustment Type</label>
+                    <select
+                      value={rejectAdjustmentDraft.adjustmentType}
+                      onChange={(event) => setRejectAdjustmentDraft((draft) => ({ ...draft, adjustmentType: event.target.value }))}
+                      style={{ ...styles.select, ...(!canEditArklineRejectDetail ? styles.disabledInput : {}) }}
+                      disabled={!canEditArklineRejectDetail}
+                    >
+                      <option value="bc_to_a">Transfer to A</option>
+                      <option value="inspector_data_error">QC Inspector Error</option>
+                    </select>
+                  </div>
+                  <div style={styles.field}>
+                    <label style={styles.label}>Qty</label>
+                    <input
+                      type="number"
+                      value={rejectAdjustmentDraft.qty}
+                      onChange={(event) => setRejectAdjustmentDraft((draft) => ({ ...draft, qty: event.target.value }))}
+                      style={{ ...styles.input, ...(!canEditArklineRejectDetail ? styles.disabledInput : {}) }}
+                      disabled={!canEditArklineRejectDetail}
+                      placeholder="Qty"
+                    />
+                  </div>
+                  <div style={styles.field}>
+                    <label style={styles.label}>Notes</label>
+                    <input
+                      value={rejectAdjustmentDraft.notes}
+                      onChange={(event) => setRejectAdjustmentDraft((draft) => ({ ...draft, notes: event.target.value }))}
+                      style={{ ...styles.input, ...(!canEditArklineRejectDetail ? styles.disabledInput : {}) }}
+                      disabled={!canEditArklineRejectDetail}
+                      placeholder="Notes"
+                    />
+                  </div>
+                  <div style={{ ...styles.iconButtonRow, justifyContent: 'flex-start' }}>
+                    <button
+                      type="button"
+                      onClick={handleSubmitRejectAdjustment}
+                      disabled={savingRejectDetail || !canEditArklineRejectDetail}
+                      style={{
+                        ...styles.primaryButton,
+                        ...(!canEditArklineRejectDetail || savingRejectDetail ? { opacity: 0.55, cursor: 'not-allowed' } : {}),
+                      }}
+                    >
+                      Submit Adjustment
+                    </button>
+                  </div>
                 </div>
-                <div style={styles.summaryCard}>
-                  <label style={styles.label}>Salah data QC inspector</label>
-                  <input
-                    type="number"
-                    value={rejectAdjustmentDraft.inspectorErrorQty}
-                    onChange={(event) => setRejectAdjustmentDraft((draft) => ({ ...draft, inspectorErrorQty: event.target.value }))}
-                    style={{ ...styles.input, ...(!canEditArklineRejectDetail ? styles.disabledInput : {}) }}
-                    disabled={!canEditArklineRejectDetail}
-                    placeholder="Qty"
-                  />
-                  <input
-                    value={rejectAdjustmentDraft.inspectorErrorNotes}
-                    onChange={(event) => setRejectAdjustmentDraft((draft) => ({ ...draft, inspectorErrorNotes: event.target.value }))}
-                    style={{ ...styles.input, ...(!canEditArklineRejectDetail ? styles.disabledInput : {}) }}
-                    disabled={!canEditArklineRejectDetail}
-                    placeholder="Notes"
-                  />
-                </div>
+              </div>
+
+              <div style={styles.modalTableWrap}>
+                <table style={styles.table}>
+                  <thead>
+                    <tr>
+                      <th style={styles.th}>Adjustment Type</th>
+                      <th style={styles.th}>Qty</th>
+                      <th style={styles.th}>Notes</th>
+                      <th style={styles.th}>Date</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {selectedRejectExistingAdjustments.length ? (
+                      selectedRejectExistingAdjustments.map((item) => (
+                        <tr key={item.id}>
+                          <td style={styles.td}>{getArklineAdjustmentLabel(item.adjustment_type)}</td>
+                          <td style={styles.td}>{item.qty}</td>
+                          <td style={styles.td}>{item.notes || '-'}</td>
+                          <td style={styles.td}>{String(item.created_at || '-').slice(0, 10)}</td>
+                        </tr>
+                      ))
+                    ) : (
+                      <tr>
+                        <td style={styles.td} colSpan={4}>
+                          No saved adjustment yet.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
               </div>
             </div>
 

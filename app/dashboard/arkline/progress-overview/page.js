@@ -351,9 +351,15 @@ async function loadSnapshotRows() {
     const updatedDeliveryDate = String(row?.updated_delivery_date || '').slice(0, 10)
     const price = Number(row?.price || 0)
     const hpp = Number(row?.hpp || 0)
-    const itemStatus = normalizeBoardStatus(row?.status)
     const itemNotes = String(row?.notes || '').trim()
     const itemId = String(row?.id || '').trim()
+    const savedItemStatus = normalizeBoardStatus(row?.status)
+    const itemStatus =
+      savedItemStatus === 'Completed' || (totalQty > 0 && actualQty >= totalQty)
+        ? 'Completed'
+        : actualQty > 0
+          ? 'On Progress'
+          : savedItemStatus
 
     const sizeBreakdown = ((sizeRowsByItemId[itemId] || []).length ? sizeRowsByItemId[itemId] : [])
       .map((row) => {
@@ -580,7 +586,7 @@ async function syncPoBoardStatus(poId) {
 
   const { data: itemRows, error: itemError } = await supabase
     .from('arkline_po_items')
-    .select('status, actual_qty')
+    .select('id, status, total_qty, actual_qty')
     .eq('po_id', normalizedPoId)
 
   if (itemError) {
@@ -588,10 +594,43 @@ async function syncPoBoardStatus(poId) {
   }
 
   const items = itemRows || []
+  const itemIds = items.map((row) => row.id).filter(Boolean)
+  const { data: receiptRows, error: receiptError } = itemIds.length
+    ? await supabase
+        .from('arkline_po_item_receipts')
+        .select('arkline_po_item_id, received_qty')
+        .in('arkline_po_item_id', itemIds)
+    : { data: [], error: null }
+
+  if (receiptError) {
+    throw new Error(receiptError.message)
+  }
+
+  const receiptQtyByItemId = (receiptRows || []).reduce((accumulator, row) => {
+    const itemId = String(row?.arkline_po_item_id || '').trim()
+    if (!itemId) return accumulator
+    accumulator[itemId] = (accumulator[itemId] || 0) + Number(row?.received_qty || 0)
+    return accumulator
+  }, {})
+
+  const normalizedItems = items.map((row) => {
+    const actualQty = Number(receiptQtyByItemId[String(row?.id || '').trim()] ?? row?.actual_qty ?? 0)
+    const totalQty = Number(row?.total_qty || 0)
+    const savedStatus = normalizeBoardStatus(row?.status)
+    const status =
+      savedStatus === 'Completed' || (totalQty > 0 && actualQty >= totalQty)
+        ? 'Completed'
+        : actualQty > 0
+          ? 'On Progress'
+          : savedStatus
+
+    return { ...row, actualQty, totalQty, status }
+  })
+
   const nextStatus =
-    items.length && items.every((row) => normalizeBoardStatus(row?.status) === 'Completed')
+    normalizedItems.length && normalizedItems.every((row) => row.status === 'Completed')
       ? 'Completed'
-      : items.some((row) => Number(row?.actual_qty || 0) > 0 || normalizeBoardStatus(row?.status) === 'Completed')
+      : normalizedItems.some((row) => row.actualQty > 0 || row.status === 'Completed')
         ? 'On Progress'
         : 'Initiated'
 
@@ -683,9 +722,10 @@ function buildRejectDetailSummary(rows, qcSummary = {}) {
   ;(rows || []).forEach((row) => {
     const reason = String(row?.reason?.reason_name || row?.reason_name || '').trim() || 'Belum dikategorikan'
     const grade = String(row?.grade || '').trim().toUpperCase() || '-'
-    const key = `${reason}::${grade}`
+    const isRepairable = Boolean(row?.reason?.is_repairable)
+    const key = `${isRepairable ? 'repairable' : 'non-repairable'}::${reason}::${grade}`
     const qty = Number(row?.qty || 0)
-    const current = grouped.get(key) || { key, reason, grade, qty: 0 }
+    const current = grouped.get(key) || { key, reason, grade, isRepairable, qty: 0 }
     current.qty += qty
     identifiedQty += qty
     grouped.set(key, current)
@@ -702,6 +742,7 @@ function buildRejectDetailSummary(rows, qcSummary = {}) {
       key: 'unidentified',
       reason: 'Belum dikategorikan',
       grade: 'B/C',
+      isRepairable: false,
       qty: unidentifiedQty,
     })
   }
@@ -1740,19 +1781,24 @@ export default function ArklineProgressOverviewPage() {
       return
     }
 
+    const totalReceivedAfterSave =
+      (selectedProductDetail.receipts || []).reduce((sum, row) => sum + Number(row?.received_qty || 0), 0) +
+      sizeEntries.reduce((sum, row) => sum + row.qty, 0)
+    const plannedQty = Number(selectedProductDetail.financeSummary?.plannedQty || selectedProductDetail.qty || 0)
+    const nextStatus =
+      receiptDraft.isFinal || (plannedQty > 0 && totalReceivedAfterSave >= plannedQty)
+        ? 'Completed'
+        : totalReceivedAfterSave > 0
+          ? 'On Progress'
+          : 'Initiated'
     const itemUpdatePayload = {
       hpp: nextHpp,
+      actual_qty: totalReceivedAfterSave,
+      status: nextStatus,
     }
 
-    if (receiptDraft.isFinal) {
-      const totalReceivedAfterSave =
-        (selectedProductDetail.receipts || []).reduce((sum, row) => sum + Number(row?.received_qty || 0), 0) +
-        sizeEntries.reduce((sum, row) => sum + row.qty, 0)
-      Object.assign(itemUpdatePayload, {
-        status: 'Completed',
-        completion_date: receiptDraft.receiveDate,
-        actual_qty: totalReceivedAfterSave,
-      })
+    if (nextStatus === 'Completed') {
+      itemUpdatePayload.completion_date = receiptDraft.receiveDate
     }
 
     const { error: itemUpdateError } = await supabase.from('arkline_po_items').update(itemUpdatePayload).eq('id', selectedProductDetail.id)
@@ -1964,12 +2010,15 @@ export default function ArklineProgressOverviewPage() {
         qcReportData.adjustmentRows || []
       )
       const rejectSummary = buildRejectDetailSummary(qcReportData.rejectRows || [], qcSummary)
-      const repairabilitySummary = buildRepairabilitySummary(qcReportData.rejectRows || [])
       const receivingQty =
         qcReportData.selectedOption?.value === 'all'
           ? getReceivingQtyBase(selectedProductDetail.receipts || [], selectedProductDetail.financeSummary?.actualQty || 0)
           : (qcReportData.receipts || []).reduce((sum, row) => sum + Number(row?.received_qty || 0), 0)
       const totalRejectQty = Number(qcSummary.qtyB || 0) + Number(qcSummary.qtyC || 0)
+      const repairableRejectRows = rejectSummary.filter((row) => row.isRepairable)
+      const nonRepairableRejectRows = rejectSummary.filter((row) => !row.isRepairable)
+      const repairableRejectQty = repairableRejectRows.reduce((sum, row) => sum + Number(row.qty || 0), 0)
+      const nonRepairableRejectQty = nonRepairableRejectRows.reduce((sum, row) => sum + Number(row.qty || 0), 0)
       const doc = new jsPDF({ unit: 'mm', format: 'a4' })
       const pageWidth = doc.internal.pageSize.getWidth()
       const pageHeight = doc.internal.pageSize.getHeight()
@@ -1999,7 +2048,7 @@ export default function ArklineProgressOverviewPage() {
       doc.text(`Incoming Filter: ${qcReportData.selectedOption?.label || 'All Incoming Goods'}`, margin, cursorY)
       cursorY += 7
 
-      const metricWidth = (pageWidth - margin * 2 - 15) / 6
+      const metricWidth = (pageWidth - margin * 2 - 9) / 4
       const metricHeight = 24
       const metrics = [
         {
@@ -2025,18 +2074,6 @@ export default function ArklineProgressOverviewPage() {
           value: formatNumber(qcSummary.totalQc),
           note: `${formatPercent(qcSummary.totalQc, receivingQty)} of receiving qty`,
           dark: true,
-        },
-        {
-          label: 'Repairable',
-          value: formatNumber(repairabilitySummary.repairableQty),
-          note: formatRepairabilityNote(repairabilitySummary.repairableQty, totalRejectQty, receivingQty),
-          dark: false,
-        },
-        {
-          label: 'Non-Repairable',
-          value: formatNumber(repairabilitySummary.nonRepairableQty),
-          note: formatRepairabilityNote(repairabilitySummary.nonRepairableQty, totalRejectQty, receivingQty),
-          dark: false,
         },
       ]
 
@@ -2071,15 +2108,40 @@ export default function ArklineProgressOverviewPage() {
       doc.text('Reject Details', margin, cursorY)
       cursorY += 6
 
-      if (!rejectSummary.length) {
+      const drawRejectSection = ({ title, qty, rows, tone }) => {
+        const isRepairableTone = tone === 'repairable'
+        ensureSpace(28)
+
+        const cardWidth = Math.min(72, pageWidth - margin * 2)
+        const cardHeight = 18
+        doc.setDrawColor(isRepairableTone ? 187 : 254, isRepairableTone ? 247 : 202, isRepairableTone ? 208 : 202)
+        doc.setFillColor(isRepairableTone ? 240 : 254, isRepairableTone ? 253 : 242, isRepairableTone ? 244 : 242)
+        doc.roundedRect(margin, cursorY, cardWidth, cardHeight, 3, 3, 'FD')
+        doc.setFont('helvetica', 'bold')
+        doc.setFontSize(8)
+        doc.setTextColor(isRepairableTone ? 22 : 153, isRepairableTone ? 101 : 27, isRepairableTone ? 52 : 27)
+        doc.text(title.toUpperCase(), margin + 4, cursorY + 6)
+        doc.setFontSize(13)
+        doc.setTextColor(15, 23, 42)
+        doc.text(formatNumber(qty), margin + 4, cursorY + 14)
         doc.setFont('helvetica', 'normal')
-        doc.setFontSize(10)
+        doc.setFontSize(6.4)
         doc.setTextColor(100, 116, 139)
-        doc.text('No reject detail rows.', margin, cursorY)
-      } else {
-        rejectSummary.forEach((row) => {
+        doc.text(formatRepairabilityNote(qty, totalRejectQty, receivingQty), margin + 22, cursorY + 14)
+        cursorY += cardHeight + 4
+
+        if (!rows.length) {
+          doc.setFont('helvetica', 'normal')
+          doc.setFontSize(9)
+          doc.setTextColor(100, 116, 139)
+          doc.text(`No ${title.toLowerCase()} reject detail rows.`, margin + 2, cursorY)
+          cursorY += 8
+          return
+        }
+
+        rows.forEach((row) => {
           ensureSpace(14)
-          const label = `${row.grade === 'B/C' ? row.grade : `Grade ${row.grade}`} • ${row.reason}`
+          const label = `${row.grade === 'B/C' ? row.grade : `Grade ${row.grade}`} - ${row.reason}`
           doc.setDrawColor(226, 232, 240)
           doc.setFillColor(248, 250, 252)
           doc.roundedRect(margin, cursorY, pageWidth - margin * 2, 12, 3, 3, 'FD')
@@ -2089,6 +2151,28 @@ export default function ArklineProgressOverviewPage() {
           doc.text(label, margin + 4, cursorY + 7)
           doc.text(formatNumber(row.qty), pageWidth - margin - 4, cursorY + 7, { align: 'right' })
           cursorY += 15
+        })
+
+        cursorY += 2
+      }
+
+      if (!rejectSummary.length) {
+        doc.setFont('helvetica', 'normal')
+        doc.setFontSize(10)
+        doc.setTextColor(100, 116, 139)
+        doc.text('No reject detail rows.', margin, cursorY)
+      } else {
+        drawRejectSection({
+          title: 'Repairable',
+          qty: repairableRejectQty,
+          rows: repairableRejectRows,
+          tone: 'repairable',
+        })
+        drawRejectSection({
+          title: 'Non-Repairable',
+          qty: nonRepairableRejectQty,
+          rows: nonRepairableRejectRows,
+          tone: 'non-repairable',
         })
       }
 
