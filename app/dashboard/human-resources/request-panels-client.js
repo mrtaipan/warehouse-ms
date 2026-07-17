@@ -105,9 +105,32 @@ function calculateLeaveWorkingDays(startDateValue, endDateValue, publicHolidayRo
   return totalDays
 }
 
-function buildLeaveItem(row, publicHolidayRows) {
+function resolveLeaveProfile(row, peopleRows = []) {
+  const requestAuthenticatedId = String(row?.employee_authenticated_id || '').trim().toLowerCase()
+  const requestEmail = String(row?.employee_email_snapshot || '').trim().toLowerCase()
+
+  return (peopleRows || []).find((person) => {
+    const profileAuthenticatedId = String(person?.authenticated_id || '').trim().toLowerCase()
+    const profileEmail = String(person?.email || '').trim().toLowerCase()
+
+    if (requestAuthenticatedId && profileAuthenticatedId) {
+      return profileAuthenticatedId === requestAuthenticatedId
+    }
+
+    if (requestEmail && profileEmail) {
+      return profileEmail === requestEmail
+    }
+
+    return false
+  })
+}
+
+function buildLeaveItem(row, publicHolidayRows, peopleRows) {
   const workingDays = calculateLeaveWorkingDays(row?.start_date, row?.end_date || row?.start_date, publicHolidayRows)
   const dayLabel = workingDays == null ? '' : ` • ${workingDays} day${workingDays === 1 ? '' : 's'}`
+  const profile = resolveLeaveProfile(row, peopleRows)
+  const leaveBalance = profile ? Math.max(0, Number(profile?.leave_allocation || 0) - Number(profile?.leave_used || 0)) : null
+  const balanceLabel = leaveBalance == null ? '' : ` • ${leaveBalance} day${leaveBalance === 1 ? '' : 's'} balance left`
 
   return {
     id: `leave-${row.id}`,
@@ -116,7 +139,7 @@ function buildLeaveItem(row, publicHolidayRows) {
     name: row.employee_name_snapshot || row.employee_email_snapshot || '-',
     primaryDate: formatDateValue(row.start_date),
     secondaryDate: formatDateValue(row.end_date),
-    dateLabel: `${formatDateValue(row.start_date)} - ${formatDateValue(row.end_date)}${dayLabel}`,
+    dateLabel: `${formatDateValue(row.start_date)} - ${formatDateValue(row.end_date)}${dayLabel}${balanceLabel}`,
     note: row.reason || '-',
     status: row.status || 'SUBMITTED',
     submittedAt: row.submitted_at || row.created_at || '',
@@ -543,21 +566,21 @@ export default function RequestPanelsClient({
   const [openCalendar, setOpenCalendar] = useState(false)
 
   const visibleRows = useMemo(() => {
-    return [...(leaveRows || []).map((row) => buildLeaveItem(row, publicHolidayRows)), ...(giftRows || []).map(buildBirthdayItem)]
+    return [...(leaveRows || []).map((row) => buildLeaveItem(row, publicHolidayRows, peopleRows)), ...(giftRows || []).map(buildBirthdayItem)]
       .sort((a, b) => {
         const aValue = new Date(a.row?.submitted_at || a.row?.created_at || 0).getTime()
         const bValue = new Date(b.row?.submitted_at || b.row?.created_at || 0).getTime()
         return bValue - aValue
       })
-  }, [giftRows, leaveRows, publicHolidayRows])
+  }, [giftRows, leaveRows, peopleRows, publicHolidayRows])
 
   const allRows = useMemo(() => {
-    return [...(leaveRowsAll || []).map((row) => buildLeaveItem(row, publicHolidayRows)), ...(giftRowsAll || []).map(buildBirthdayItem)].sort((a, b) => {
+    return [...(leaveRowsAll || []).map((row) => buildLeaveItem(row, publicHolidayRows, peopleRows)), ...(giftRowsAll || []).map(buildBirthdayItem)].sort((a, b) => {
       const aValue = new Date(a.row?.submitted_at || a.row?.created_at || 0).getTime()
       const bValue = new Date(b.row?.submitted_at || b.row?.created_at || 0).getTime()
       return bValue - aValue
     })
-  }, [giftRowsAll, leaveRowsAll, publicHolidayRows])
+  }, [giftRowsAll, leaveRowsAll, peopleRows, publicHolidayRows])
 
   const submittedCount = visibleRows.filter((item) => item.status === 'SUBMITTED').length
   const hasMissing = leaveMissing || giftMissing
