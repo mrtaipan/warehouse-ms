@@ -6,6 +6,7 @@ import { createClient } from '@/utils/supabase/browser'
 import { ADMIN_EMAIL } from '@/utils/permissions'
 
 const supabase = createClient()
+const QC_GRADE_OPTIONS = ['A', 'B', 'C']
 
 function normalizeQcItemRow(item) {
   return {
@@ -1094,27 +1095,83 @@ function compareApparelSize(a, b) {
   return normalizedA.localeCompare(normalizedB, undefined, { numeric: true })
 }
 
-function applyInspectorErrorToRejectTotals(qtyB, qtyC, inspectorErrorQty) {
-  let nextQtyB = Number(qtyB || 0)
-  let nextQtyC = Number(qtyC || 0)
-  const signedQty = Number(inspectorErrorQty || 0)
+function normalizeQcGrade(value, fallback = '') {
+  const grade = String(value || '').trim().toUpperCase()
+  return QC_GRADE_OPTIONS.includes(grade) ? grade : fallback
+}
 
-  if (!signedQty) {
-    return { qtyB: nextQtyB, qtyC: nextQtyC }
+function applyArklineAdjustmentsToGradeTotals(qtyA, qtyB, qtyC, adjustmentRows = []) {
+  const totals = {
+    A: Number(qtyA || 0),
+    B: Number(qtyB || 0),
+    C: Number(qtyC || 0),
   }
 
-  if (signedQty > 0) {
-    let remaining = signedQty
-    const qtyCAdjustment = Math.min(nextQtyC, remaining)
-    nextQtyC -= qtyCAdjustment
-    remaining -= qtyCAdjustment
-    const qtyBAdjustment = Math.min(nextQtyB, remaining)
-    nextQtyB -= qtyBAdjustment
-    return { qtyB: nextQtyB, qtyC: nextQtyC }
+  function moveQty(fromGrade, toGrade, rawQty) {
+    const sourceGrade = normalizeQcGrade(fromGrade)
+    const targetGrade = normalizeQcGrade(toGrade)
+    const qty = Math.max(0, Number(rawQty || 0))
+    if (!sourceGrade || !targetGrade || sourceGrade === targetGrade || !qty) return 0
+
+    const appliedQty = Math.min(totals[sourceGrade], qty)
+    totals[sourceGrade] -= appliedQty
+    totals[targetGrade] += appliedQty
+    return appliedQty
   }
 
-  nextQtyC += Math.abs(signedQty)
-  return { qtyB: nextQtyB, qtyC: nextQtyC }
+  function reduceGrade(grade, rawQty) {
+    const targetGrade = normalizeQcGrade(grade)
+    const qty = Math.max(0, Number(rawQty || 0))
+    if (!targetGrade || !qty) return 0
+
+    const appliedQty = Math.min(totals[targetGrade], qty)
+    totals[targetGrade] -= appliedQty
+    return appliedQty
+  }
+
+  adjustmentRows.forEach((item) => {
+    const type = String(item?.adjustment_type || '').trim().toLowerCase()
+    const qty = Number(item?.qty || 0)
+    if (!qty) return
+
+    if (type === 'transfer') {
+      if (qty > 0) moveQty(item.from_grade, item.to_grade, qty)
+      if (qty < 0) moveQty(item.to_grade, item.from_grade, Math.abs(qty))
+      return
+    }
+
+    if (type === 'bc_to_a') {
+      if (qty > 0) {
+        const movedFromC = moveQty('C', 'A', qty)
+        moveQty('B', 'A', Math.max(0, qty - movedFromC))
+      } else {
+        moveQty('A', 'C', Math.abs(qty))
+      }
+      return
+    }
+
+    if (type === 'inspector_data_error') {
+      const affectedGrade = normalizeQcGrade(item.affected_grade)
+      if (affectedGrade) {
+        if (qty > 0) reduceGrade(affectedGrade, qty)
+        if (qty < 0) totals[affectedGrade] += Math.abs(qty)
+        return
+      }
+
+      if (qty > 0) {
+        const reducedFromC = reduceGrade('C', qty)
+        reduceGrade('B', Math.max(0, qty - reducedFromC))
+      } else {
+        totals.C += Math.abs(qty)
+      }
+    }
+  })
+
+  return {
+    qtyA: totals.A,
+    qtyB: totals.B,
+    qtyC: totals.C,
+  }
 }
 
 function createRejectDraftRow(overrides = {}) {
@@ -1176,9 +1233,20 @@ function getRejectDetailSummaryKey(item) {
 
 function getArklineAdjustmentLabel(value) {
   const normalized = String(value || '').trim().toLowerCase()
+  if (normalized === 'transfer') return 'Transfer'
   if (normalized === 'bc_to_a') return 'Transfer to A'
   if (normalized === 'inspector_data_error') return 'QC Inspector Error'
   return value || '-'
+}
+
+function getArklineAdjustmentGradeLabel(item) {
+  const type = String(item?.adjustment_type || '').trim().toLowerCase()
+  if (type === 'transfer') {
+    return `${normalizeQcGrade(item?.from_grade, '-')} -> ${normalizeQcGrade(item?.to_grade, '-')}`
+  }
+  if (type === 'bc_to_a') return 'B/C -> A'
+  if (type === 'inspector_data_error') return normalizeQcGrade(item?.affected_grade, 'B/C')
+  return '-'
 }
 
 function isVerificationAdjustment(item) {
@@ -1252,7 +1320,10 @@ export default function QcDashboardPage() {
   const [rejectDetailSummary, setRejectDetailSummary] = useState(null)
   const [rejectDraftRows, setRejectDraftRows] = useState([])
   const [rejectAdjustmentDraft, setRejectAdjustmentDraft] = useState({
-    adjustmentType: 'bc_to_a',
+    adjustmentType: 'transfer',
+    fromGrade: '',
+    toGrade: '',
+    affectedGrade: '',
     qty: '',
     notes: '',
   })
@@ -1716,12 +1787,10 @@ export default function QcDashboardPage() {
         .filter(
           (adjustment) => {
             const adjustmentCycleId = String(adjustment.qc_cycle_id || '')
-            const matchesCycle = adjustmentCycleId
-              ? activeArklineCycleIds.has(adjustmentCycleId)
+            const matchesCycle = activeArklineCycleIds.size
+              ? !adjustmentCycleId || activeArklineCycleIds.has(adjustmentCycleId)
               : qcMode === 'arkline'
-            const matchesDate = adjustmentCycleId
-              ? true
-              : hasInvalidDateRange || isWithinDateRange(adjustment.created_at || adjustment.updated_at, dateFrom, dateTo)
+            const matchesDate = hasInvalidDateRange || isWithinDateRange(adjustment.created_at || adjustment.updated_at, dateFrom, dateTo)
             return matchesCycle && matchesDate
           }
         )
@@ -1731,9 +1800,8 @@ export default function QcDashboardPage() {
             qcMode === 're_qc'
               ? `${baseKey}|||ROUND:${activeArklineRoundByCycle.get(String(adjustment.qc_cycle_id || '')) || 2}`
               : baseKey
-          const current = arklineAdjustmentBySummaryKey.get(key) || { bcToAQty: 0, inspectorErrorQty: 0 }
-          if (adjustment.adjustment_type === 'bc_to_a') current.bcToAQty += Number(adjustment.qty || 0)
-          if (adjustment.adjustment_type === 'inspector_data_error') current.inspectorErrorQty += Number(adjustment.qty || 0)
+          const current = arklineAdjustmentBySummaryKey.get(key) || { rows: [] }
+          current.rows.push(adjustment)
           arklineAdjustmentBySummaryKey.set(key, current)
         })
     }
@@ -1784,13 +1852,11 @@ export default function QcDashboardPage() {
         }
 
         if (adjustment) {
-          const bcToAQty = Number(adjustment.bcToAQty || 0)
-          const inspectorErrorQty = Number(adjustment.inspectorErrorQty || 0)
-          const adjustedRejectTotals = applyInspectorErrorToRejectTotals(current.qtyB, current.qtyC, bcToAQty + inspectorErrorQty)
+          const adjustedTotals = applyArklineAdjustmentsToGradeTotals(current.qtyA, current.qtyB, current.qtyC, adjustment.rows)
 
-          current.qtyA += bcToAQty
-          current.qtyB = adjustedRejectTotals.qtyB
-          current.qtyC = adjustedRejectTotals.qtyC
+          current.qtyA = adjustedTotals.qtyA
+          current.qtyB = adjustedTotals.qtyB
+          current.qtyC = adjustedTotals.qtyC
         }
 
         current.checked = current.qtyA + current.qtyB + current.qtyC
@@ -1900,11 +1966,20 @@ export default function QcDashboardPage() {
         const sameSku = String(item.sku_induk || 'NO SKU').trim().toUpperCase() === summaryParts.category
         const sameModel = String(item.model_name || '').trim().toUpperCase() === summaryParts.model
         const adjustmentCycleId = String(item.qc_cycle_id || '')
-        const sameCycle = !selectedCycleIds.size || !adjustmentCycleId || selectedCycleIds.has(adjustmentCycleId)
+        const sameCycle = selectedCycleIds.size
+          ? !adjustmentCycleId || selectedCycleIds.has(adjustmentCycleId)
+          : !adjustmentCycleId
         return samePo && sameSku && sameModel && sameCycle
       })
       .sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime())
   }, [arklineRejectAdjustments, rejectDetailSummary, selectedRejectTaskRows])
+  const selectedRejectApplicableAdjustments = useMemo(
+    () =>
+      selectedRejectExistingAdjustments.filter(
+        (item) => allTime || hasInvalidDateRange || isWithinDateRange(item.created_at || item.updated_at, dateFrom, dateTo)
+      ),
+    [allTime, dateFrom, dateTo, hasInvalidDateRange, selectedRejectExistingAdjustments]
+  )
   const selectedRejectReasonOptions = useMemo(() => {
     const grouped = new Map()
 
@@ -1926,26 +2001,32 @@ export default function QcDashboardPage() {
   }, [arklineRejectReasons, selectedRejectExistingDetails])
   const selectedRejectTargetQty = Number(rejectDetailSummary?.rejectTargetQty ?? getRejectQty(rejectDetailSummary || {}))
   const selectedRejectDetailQty = rejectDraftRows.reduce((sum, item) => sum + Number(item.qty || 0), 0)
-  const selectedRejectAdjustmentQty = selectedRejectExistingAdjustments.reduce((sum, item) => sum + Number(item.qty || 0), 0)
-  const selectedRejectGap = selectedRejectTargetQty - selectedRejectDetailQty - selectedRejectAdjustmentQty
-  const selectedRejectPreviewSummary = useMemo(() => {
+  const selectedRejectAdjustedBaseSummary = useMemo(() => {
     const baseQtyA = selectedRejectTaskRows.reduce((sum, item) => sum + Number(item.qty_a || 0), 0)
     const baseQtyB = selectedRejectTaskRows.reduce((sum, item) => sum + Number(item.qty_b || 0), 0)
     const baseQtyC = selectedRejectTaskRows.reduce((sum, item) => sum + Number(item.qty_c || 0), 0)
-    const bcToAQty = selectedRejectExistingAdjustments
-      .filter((item) => item.adjustment_type === 'bc_to_a')
+
+    return applyArklineAdjustmentsToGradeTotals(baseQtyA, baseQtyB, baseQtyC, selectedRejectApplicableAdjustments)
+  }, [selectedRejectApplicableAdjustments, selectedRejectTaskRows])
+  const selectedRejectExpectedRejectQty = selectedRejectAdjustedBaseSummary.qtyB + selectedRejectAdjustedBaseSummary.qtyC
+  const selectedRejectGap = selectedRejectExpectedRejectQty - selectedRejectDetailQty
+  const selectedRejectPreviewSummary = useMemo(() => {
+    const draftQtyB = rejectDraftRows
+      .filter((item) => String(item.grade || '').toUpperCase() === 'B')
       .reduce((sum, item) => sum + Number(item.qty || 0), 0)
-    const inspectorErrorQty = selectedRejectExistingAdjustments
-      .filter((item) => item.adjustment_type === 'inspector_data_error')
+    const draftQtyC = rejectDraftRows
+      .filter((item) => String(item.grade || '').toUpperCase() === 'C')
       .reduce((sum, item) => sum + Number(item.qty || 0), 0)
-    const adjustedRejectTotals = applyInspectorErrorToRejectTotals(baseQtyB, baseQtyC, bcToAQty + inspectorErrorQty)
+    const hasDraftRejectRows = rejectDraftRows.some((item) => Number(item.qty || 0) > 0)
+    const adjustedPreviewTotal =
+      selectedRejectAdjustedBaseSummary.qtyA + selectedRejectAdjustedBaseSummary.qtyB + selectedRejectAdjustedBaseSummary.qtyC
 
     return {
-      qtyA: baseQtyA + bcToAQty,
-      qtyB: adjustedRejectTotals.qtyB,
-      qtyC: adjustedRejectTotals.qtyC,
+      qtyA: hasDraftRejectRows ? Math.max(0, adjustedPreviewTotal - draftQtyB - draftQtyC) : selectedRejectAdjustedBaseSummary.qtyA,
+      qtyB: hasDraftRejectRows ? draftQtyB : selectedRejectAdjustedBaseSummary.qtyB,
+      qtyC: hasDraftRejectRows ? draftQtyC : selectedRejectAdjustedBaseSummary.qtyC,
     }
-  }, [selectedRejectExistingAdjustments, selectedRejectTaskRows])
+  }, [rejectDraftRows, selectedRejectAdjustedBaseSummary])
   const selectedRejectPreviewChecked =
     selectedRejectPreviewSummary.qtyA + selectedRejectPreviewSummary.qtyB + selectedRejectPreviewSummary.qtyC
   const selectedRejectSizeOptions = useMemo(() => {
@@ -2186,7 +2267,10 @@ export default function QcDashboardPage() {
     setRejectDetailError('')
     setRejectDraftRows(initialRows.length ? initialRows : [createRejectDraftRow()])
     setRejectAdjustmentDraft({
-      adjustmentType: 'bc_to_a',
+      adjustmentType: 'transfer',
+      fromGrade: '',
+      toGrade: '',
+      affectedGrade: '',
       qty: '',
       notes: '',
     })
@@ -2268,14 +2352,27 @@ export default function QcDashboardPage() {
     }
 
     const qty = Number(rejectAdjustmentDraft.qty || 0)
-    if (!qty) {
+    if (qty <= 0) {
       setRejectDetailError('Masukkan qty adjustment terlebih dahulu.')
       return
     }
 
     const adjustmentType = String(rejectAdjustmentDraft.adjustmentType || '').trim()
-    if (!['bc_to_a', 'inspector_data_error'].includes(adjustmentType)) {
+    if (!['transfer', 'inspector_data_error'].includes(adjustmentType)) {
       setRejectDetailError('Pilih tipe adjustment terlebih dahulu.')
+      return
+    }
+    const fromGrade = normalizeQcGrade(rejectAdjustmentDraft.fromGrade)
+    const toGrade = normalizeQcGrade(rejectAdjustmentDraft.toGrade)
+    const affectedGrade = normalizeQcGrade(rejectAdjustmentDraft.affectedGrade)
+
+    if (adjustmentType === 'transfer' && (!fromGrade || !toGrade || fromGrade === toGrade)) {
+      setRejectDetailError('Transfer harus memilih grade asal dan tujuan yang berbeda.')
+      return
+    }
+
+    if (adjustmentType === 'inspector_data_error' && !affectedGrade) {
+      setRejectDetailError('Pilih grade yang dikurangi untuk QC Inspector Error.')
       return
     }
 
@@ -2289,6 +2386,9 @@ export default function QcDashboardPage() {
         adjustment_type: adjustmentType,
         qty,
         notes: rejectAdjustmentDraft.notes.trim() || null,
+        from_grade: adjustmentType === 'transfer' ? fromGrade : null,
+        to_grade: adjustmentType === 'transfer' ? toGrade : null,
+        affected_grade: adjustmentType === 'inspector_data_error' ? affectedGrade : null,
         po_id: poId,
         arkline_po_item_id: selectedRejectTaskRows[0]?.arkline_po_item_id || null,
         sku_induk: skuInduk,
@@ -2308,7 +2408,10 @@ export default function QcDashboardPage() {
 
       setArklineRejectAdjustments(nextAdjustmentRows || [])
       setRejectAdjustmentDraft({
-        adjustmentType: 'bc_to_a',
+        adjustmentType: 'transfer',
+        fromGrade: '',
+        toGrade: '',
+        affectedGrade: '',
         qty: '',
         notes: '',
       })
@@ -3266,19 +3369,19 @@ export default function QcDashboardPage() {
               <div>
                 <h3 style={{ ...styles.sectionTitle, fontSize: '16px' }}>Adjustment</h3>
                 <p style={styles.smallNote}>
-                  Submit adjustment satu per satu agar riwayatnya jelas. Gunakan qty minus (-) jika adjustment perlu menambah kembali Grade B/C.
+                  Submit adjustments one by one so the history stays clear. Transfer moves qty between grades; QC Inspector Error reduces the selected grade.
                 </p>
               </div>
               {selectedRejectGap !== 0 ? (
                 <div style={styles.warningBox}>
-                  Gap masih {selectedRejectGap}. Reject detail adalah hasil akhir Grade B/C aktual. Adjustment dipakai untuk rekonsiliasi angka QC awal sampai gap menjadi 0.
+                  Gap is still {selectedRejectGap}. Only adjustments within the active date filter affect this gap.
                 </div>
               ) : null}
               <div style={{ ...styles.summaryCard, gap: '10px' }}>
                 <div
                   style={{
                     display: 'grid',
-                    gridTemplateColumns: 'minmax(160px, 0.9fr) 110px minmax(260px, 1.8fr) auto',
+                    gridTemplateColumns: 'minmax(150px, 0.9fr) 88px 88px 100px minmax(240px, 1.5fr) auto',
                     gap: '10px',
                     alignItems: 'end',
                   }}
@@ -3287,18 +3390,72 @@ export default function QcDashboardPage() {
                     <label style={styles.label}>Adjustment Type</label>
                     <select
                       value={rejectAdjustmentDraft.adjustmentType}
-                      onChange={(event) => setRejectAdjustmentDraft((draft) => ({ ...draft, adjustmentType: event.target.value }))}
+                      onChange={(event) =>
+                        setRejectAdjustmentDraft((draft) => ({
+                          ...draft,
+                          adjustmentType: event.target.value,
+                          fromGrade: '',
+                          toGrade: '',
+                          affectedGrade: '',
+                        }))
+                      }
                       style={{ ...styles.select, ...(!canEditArklineRejectDetail ? styles.disabledInput : {}) }}
                       disabled={!canEditArklineRejectDetail}
                     >
-                      <option value="bc_to_a">Transfer to A</option>
+                      <option value="transfer">Transfer</option>
                       <option value="inspector_data_error">QC Inspector Error</option>
+                    </select>
+                  </div>
+                  <div style={styles.field}>
+                    <label style={styles.label}>{rejectAdjustmentDraft.adjustmentType === 'transfer' ? 'From' : 'Grade'}</label>
+                    <select
+                      value={rejectAdjustmentDraft.adjustmentType === 'transfer' ? rejectAdjustmentDraft.fromGrade : rejectAdjustmentDraft.affectedGrade}
+                      onChange={(event) =>
+                        setRejectAdjustmentDraft((draft) =>
+                          draft.adjustmentType === 'transfer'
+                            ? { ...draft, fromGrade: event.target.value, toGrade: draft.toGrade === event.target.value ? '' : draft.toGrade }
+                            : { ...draft, affectedGrade: event.target.value }
+                        )
+                      }
+                      style={{ ...styles.select, ...(!canEditArklineRejectDetail ? styles.disabledInput : {}) }}
+                      disabled={!canEditArklineRejectDetail}
+                    >
+                      <option value="">Choose</option>
+                      {QC_GRADE_OPTIONS.map((grade) => (
+                        <option key={grade} value={grade}>
+                          {grade}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div style={styles.field}>
+                    <label style={styles.label}>To</label>
+                    <select
+                      value={rejectAdjustmentDraft.toGrade}
+                      onChange={(event) => setRejectAdjustmentDraft((draft) => ({ ...draft, toGrade: event.target.value }))}
+                      style={{
+                        ...styles.select,
+                        ...(!canEditArklineRejectDetail ||
+                        rejectAdjustmentDraft.adjustmentType !== 'transfer' ||
+                        !rejectAdjustmentDraft.fromGrade
+                          ? styles.disabledInput
+                          : {}),
+                      }}
+                      disabled={!canEditArklineRejectDetail || rejectAdjustmentDraft.adjustmentType !== 'transfer' || !rejectAdjustmentDraft.fromGrade}
+                    >
+                      <option value="">{rejectAdjustmentDraft.fromGrade ? 'Choose' : 'Choose From first'}</option>
+                      {QC_GRADE_OPTIONS.filter((grade) => grade !== rejectAdjustmentDraft.fromGrade).map((grade) => (
+                        <option key={grade} value={grade}>
+                          {grade}
+                        </option>
+                      ))}
                     </select>
                   </div>
                   <div style={styles.field}>
                     <label style={styles.label}>Qty</label>
                     <input
                       type="number"
+                      min="1"
                       value={rejectAdjustmentDraft.qty}
                       onChange={(event) => setRejectAdjustmentDraft((draft) => ({ ...draft, qty: event.target.value }))}
                       style={{ ...styles.input, ...(!canEditArklineRejectDetail ? styles.disabledInput : {}) }}
@@ -3337,6 +3494,7 @@ export default function QcDashboardPage() {
                   <thead>
                     <tr>
                       <th style={styles.th}>Adjustment Type</th>
+                      <th style={styles.th}>Grade</th>
                       <th style={styles.th}>Qty</th>
                       <th style={styles.th}>Notes</th>
                       <th style={styles.th}>Date</th>
@@ -3347,6 +3505,7 @@ export default function QcDashboardPage() {
                       selectedRejectExistingAdjustments.map((item) => (
                         <tr key={item.id}>
                           <td style={styles.td}>{getArklineAdjustmentLabel(item.adjustment_type)}</td>
+                          <td style={styles.td}>{getArklineAdjustmentGradeLabel(item)}</td>
                           <td style={styles.td}>{item.qty}</td>
                           <td style={styles.td}>{item.notes || '-'}</td>
                           <td style={styles.td}>{String(item.created_at || '-').slice(0, 10)}</td>
@@ -3354,7 +3513,7 @@ export default function QcDashboardPage() {
                       ))
                     ) : (
                       <tr>
-                        <td style={styles.td} colSpan={4}>
+                        <td style={styles.td} colSpan={5}>
                           No saved adjustment yet.
                         </td>
                       </tr>

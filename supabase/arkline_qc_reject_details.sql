@@ -32,16 +32,46 @@ create table if not exists public.arkline_qc_reject_adjustments (
   sku_induk text null,
   model_name text not null,
   adjustment_type text not null,
+  from_grade text null,
+  to_grade text null,
+  affected_grade text null,
   qty integer not null default 0,
   notes text null,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   constraint arkline_qc_reject_adjustments_type_check
-    check (adjustment_type in ('bc_to_a', 'inspector_data_error'))
+    check (adjustment_type in ('bc_to_a', 'transfer', 'inspector_data_error')),
+  constraint arkline_qc_reject_adjustments_from_grade_check
+    check (from_grade is null or from_grade in ('A', 'B', 'C')),
+  constraint arkline_qc_reject_adjustments_to_grade_check
+    check (to_grade is null or to_grade in ('A', 'B', 'C')),
+  constraint arkline_qc_reject_adjustments_affected_grade_check
+    check (affected_grade is null or affected_grade in ('A', 'B', 'C'))
 );
 
 alter table if exists public.arkline_qc_reject_adjustments
   drop constraint if exists arkline_qc_reject_adjustments_qty_check;
+
+alter table if exists public.arkline_qc_reject_adjustments
+  add column if not exists from_grade text null,
+  add column if not exists to_grade text null,
+  add column if not exists affected_grade text null;
+
+alter table if exists public.arkline_qc_reject_adjustments
+  drop constraint if exists arkline_qc_reject_adjustments_type_check,
+  drop constraint if exists arkline_qc_reject_adjustments_from_grade_check,
+  drop constraint if exists arkline_qc_reject_adjustments_to_grade_check,
+  drop constraint if exists arkline_qc_reject_adjustments_affected_grade_check;
+
+alter table if exists public.arkline_qc_reject_adjustments
+  add constraint arkline_qc_reject_adjustments_type_check
+    check (adjustment_type in ('bc_to_a', 'transfer', 'inspector_data_error')),
+  add constraint arkline_qc_reject_adjustments_from_grade_check
+    check (from_grade is null or from_grade in ('A', 'B', 'C')),
+  add constraint arkline_qc_reject_adjustments_to_grade_check
+    check (to_grade is null or to_grade in ('A', 'B', 'C')),
+  add constraint arkline_qc_reject_adjustments_affected_grade_check
+    check (affected_grade is null or affected_grade in ('A', 'B', 'C'));
 
 create index if not exists arkline_qc_reject_details_qc_idx
   on public.arkline_qc_reject_details (arkline_qc_id);
