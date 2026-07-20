@@ -35,6 +35,7 @@ create table if not exists public.arkline_qc_reject_adjustments (
   from_grade text null,
   to_grade text null,
   affected_grade text null,
+  effective_date date null,
   qty integer not null default 0,
   notes text null,
   created_at timestamptz not null default now(),
@@ -55,7 +56,19 @@ alter table if exists public.arkline_qc_reject_adjustments
 alter table if exists public.arkline_qc_reject_adjustments
   add column if not exists from_grade text null,
   add column if not exists to_grade text null,
-  add column if not exists affected_grade text null;
+  add column if not exists affected_grade text null,
+  add column if not exists effective_date date null;
+
+update public.arkline_qc_reject_adjustments
+set effective_date = coalesce(
+  (
+    select min(coalesce(task.finished_at, task.updated_at, task.created_at))::date
+    from public.arkline_qc task
+    where task.qc_cycle_id = public.arkline_qc_reject_adjustments.qc_cycle_id
+  ),
+  created_at::date
+)
+where effective_date is null;
 
 alter table if exists public.arkline_qc_reject_adjustments
   drop constraint if exists arkline_qc_reject_adjustments_type_check,

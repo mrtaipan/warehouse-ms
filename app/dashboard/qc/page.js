@@ -904,6 +904,10 @@ function getQcWorkDateValue(item) {
   return item?.finished_at || item?.updated_at || item?.created_at || ''
 }
 
+function getArklineAdjustmentDateValue(item) {
+  return item?.effective_date || item?.created_at || item?.updated_at || ''
+}
+
 function getTodayLocalDate() {
   const now = new Date()
   const year = now.getFullYear()
@@ -1790,7 +1794,7 @@ export default function QcDashboardPage() {
             const matchesCycle = activeArklineCycleIds.size
               ? !adjustmentCycleId || activeArklineCycleIds.has(adjustmentCycleId)
               : qcMode === 'arkline'
-            const matchesDate = hasInvalidDateRange || isWithinDateRange(adjustment.created_at || adjustment.updated_at, dateFrom, dateTo)
+            const matchesDate = hasInvalidDateRange || isWithinDateRange(getArklineAdjustmentDateValue(adjustment), dateFrom, dateTo)
             return matchesCycle && matchesDate
           }
         )
@@ -1976,7 +1980,7 @@ export default function QcDashboardPage() {
   const selectedRejectApplicableAdjustments = useMemo(
     () =>
       selectedRejectExistingAdjustments.filter(
-        (item) => allTime || hasInvalidDateRange || isWithinDateRange(item.created_at || item.updated_at, dateFrom, dateTo)
+        (item) => allTime || hasInvalidDateRange || isWithinDateRange(getArklineAdjustmentDateValue(item), dateFrom, dateTo)
       ),
     [allTime, dateFrom, dateTo, hasInvalidDateRange, selectedRejectExistingAdjustments]
   )
@@ -2389,6 +2393,7 @@ export default function QcDashboardPage() {
         from_grade: adjustmentType === 'transfer' ? fromGrade : null,
         to_grade: adjustmentType === 'transfer' ? toGrade : null,
         affected_grade: adjustmentType === 'inspector_data_error' ? affectedGrade : null,
+        effective_date: dateFrom || null,
         po_id: poId,
         arkline_po_item_id: selectedRejectTaskRows[0]?.arkline_po_item_id || null,
         sku_induk: skuInduk,
@@ -3508,7 +3513,7 @@ export default function QcDashboardPage() {
                           <td style={styles.td}>{getArklineAdjustmentGradeLabel(item)}</td>
                           <td style={styles.td}>{item.qty}</td>
                           <td style={styles.td}>{item.notes || '-'}</td>
-                          <td style={styles.td}>{String(item.created_at || '-').slice(0, 10)}</td>
+                          <td style={styles.td}>{String(getArklineAdjustmentDateValue(item) || '-').slice(0, 10)}</td>
                         </tr>
                       ))
                     ) : (
