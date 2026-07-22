@@ -113,7 +113,6 @@ function ItemStoringContent() {
   const [productPickerOpen, setProductPickerOpen] = useState(false)
   const [qty, setQty] = useState('')
   const [draftItems, setDraftItems] = useState([])
-  const [postedCard, setPostedCard] = useState(null)
   const [previewPhoto, setPreviewPhoto] = useState(null)
   const [loading, setLoading] = useState(true)
   const [posting, setPosting] = useState(false)
@@ -181,6 +180,7 @@ function ItemStoringContent() {
           item_name: getItemName(row),
           size_label: normalizeSizeLabel(row.size_label),
           brand_id: brandId,
+          brand_code: String(brand?.brand_code || '').trim().toUpperCase(),
           brand_name: brand?.brand_name || brand?.name || 'UNBRANDED',
           photo_url:
             row.pl_photo_url ||
@@ -203,7 +203,7 @@ function ItemStoringContent() {
       const current = grouped.get(row.product_key) || {
         key: row.product_key,
         item_name: row.item_name,
-        brand_id: row.brand_id,
+        brand_code: row.brand_code,
         brand_name: row.brand_name,
         photo_url: row.photo_url,
         total_qty: 0,
@@ -379,7 +379,7 @@ function ItemStoringContent() {
       return
     }
 
-    if (draftItems.length && Number(draftItems[0].brand_id || 0) !== Number(selectedProduct.brand_id || 0)) {
+    if (draftItems.length && normalize(draftItems[0].brand_code) !== normalize(selectedProduct.brand_code)) {
       setError('One regular card can only contain one brand. Post or clear this koli first.')
       return
     }
@@ -398,7 +398,7 @@ function ItemStoringContent() {
           breakdown_id: selectedSize.id,
           product_key: selectedProduct.key,
           item_name: selectedProduct.item_name,
-          brand_id: selectedProduct.brand_id,
+          brand_code: selectedProduct.brand_code,
           brand_name: selectedProduct.brand_name,
           photo_url: selectedProduct.photo_url,
           size_label: selectedSize.size_label,
@@ -452,7 +452,7 @@ function ItemStoringContent() {
         }
       }
 
-      const brandId = Number(draftItems[0]?.brand_id || 0) || null
+      const brandCode = normalize(draftItems[0]?.brand_code) || null
       const isPhoto = packageType === 'PHOTO'
       const maxSequence = isPhoto
         ? 0
@@ -461,13 +461,12 @@ function ItemStoringContent() {
               Number(row.inbound_id || 0) === Number(inbound.id || 0) &&
               row.storing_type === storingType &&
               row.package_type === 'REGULAR' &&
-              Number(row.brand_id || 0) === Number(brandId || 0)
+              normalize(row.brand_code) === normalize(brandCode)
             )
             .reduce((max, row) => Math.max(max, Number(row.koli_sequence || 0)), 0)
       const nextSequence = isPhoto ? null : maxSequence + 1
-      const koliLabel = isPhoto ? '-' : String(nextSequence)
       const now = new Date().toISOString()
-      const groupKey = `${inbound.id}-${storingType}-${packageType}-${brandId || 'none'}-${Date.now()}`
+      const groupKey = `${inbound.id}-${storingType}-${packageType}-${brandCode || 'none'}-${Date.now()}`
       const payload = draftItems.map((draft) => {
         const sourceBreakdown = breakdownRows.find((row) => Number(row.id || 0) === Number(draft.breakdown_id || 0)) || {}
         return {
@@ -476,7 +475,7 @@ function ItemStoringContent() {
           packing_group_key: groupKey,
           storing_type: storingType,
           package_type: packageType,
-          brand_id: brandId,
+          brand_code: brandCode,
           product_model_id: sourceBreakdown.product_model_id || null,
           product_model_variant_id: sourceBreakdown.product_model_variant_id || null,
           source_variant_code: sourceBreakdown.source_variant_code || null,
@@ -487,10 +486,8 @@ function ItemStoringContent() {
           variant_name: sourceBreakdown.variant_name || null,
           size_label: draft.size_label,
           koli_sequence: nextSequence,
-          koli_label: koliLabel,
           qty: draft.qty,
           packed_by: displayName,
-          posted_at: now,
           updated_at: now,
         }
       })
@@ -499,16 +496,10 @@ function ItemStoringContent() {
       if (insertError) throw insertError
 
       await reloadPackingRows(inbound.id)
-      setPostedCard({
-        storing_type: storingType,
-        package_type: packageType,
-        brand_name: draftItems[0]?.brand_name || '-',
-        koli_label: koliLabel,
-        qty: draftItems.reduce((sum, row) => sum + Number(row.qty || 0), 0),
-        rows: draftItems,
-      })
       setDraftItems([])
-      setSuccess(`${packageType === 'PHOTO' ? 'Photo item' : `Koli ${koliLabel}`} posted.`)
+      setSelectedBreakdownId('')
+      setQty('')
+      setSuccess(`${packageType === 'PHOTO' ? 'Photo item' : `Koli ${nextSequence}`} posted.`)
     } catch (postError) {
       setError(postError.message || 'Failed to post Item Storing.')
     } finally {
@@ -714,25 +705,6 @@ function ItemStoringContent() {
                 <p style={styles.emptyText}>Choose product, size, and qty, then add to koli.</p>
               )}
             </section>
-
-            {postedCard ? (
-              <section style={styles.printPreview}>
-                <div style={styles.sectionHeader}>
-                  <h2 style={styles.sectionTitle}>Print Preview</h2>
-                  <button type="button" onClick={() => window.print()} style={styles.printButton}>Print</button>
-                </div>
-                <div style={styles.printCard}>
-                  <p style={styles.printEyebrow}>Packing List Card</p>
-                  <h3 style={styles.printTitle}>{postedCard.storing_type} / {postedCard.package_type === 'PHOTO' ? 'FOTO' : `KOLI ${postedCard.koli_label}`}</h3>
-                  <p style={styles.printMeta}>{grnNumber} / {postedCard.brand_name} / {formatNumber(postedCard.qty)} pcs</p>
-                  {postedCard.rows.map((row) => (
-                    <span key={`${row.breakdown_id}-${row.size_label}`} style={styles.koliRow}>
-                      {row.item_name} / {row.size_label}: {formatNumber(row.qty)}
-                    </span>
-                  ))}
-                </div>
-              </section>
-            ) : null}
 
           </>
         )}
@@ -1067,8 +1039,10 @@ const styles = {
   selectedProductImage: {
     width: '100%',
     height: '220px',
-    objectFit: 'cover',
-    background: '#f1f5f9',
+    objectFit: 'contain',
+    objectPosition: 'center',
+    display: 'block',
+    background: '#fff',
   },
   selectedProductNoPhoto: {
     width: '100%',
@@ -1325,35 +1299,6 @@ const styles = {
     textAlign: 'right',
     fontVariantNumeric: 'tabular-nums',
   },
-  koliCard: {
-    border: '1px solid #e2e8f0',
-    borderRadius: '16px',
-    background: '#f8fafc',
-    padding: '12px',
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '8px',
-  },
-  koliHeader: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    gap: '10px',
-    color: '#0f172a',
-    fontSize: '14px',
-    fontWeight: 950,
-  },
-  koliRows: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '4px',
-  },
-  koliRow: {
-    color: '#475569',
-    fontSize: '12px',
-    lineHeight: 1.35,
-    fontWeight: 750,
-  },
   removeButton: {
     width: '30px',
     height: '30px',
@@ -1364,55 +1309,6 @@ const styles = {
     fontSize: '12px',
     fontWeight: 950,
     cursor: 'pointer',
-  },
-  printPreview: {
-    margin: '0 16px',
-    border: '1px solid #cbd5e1',
-    borderRadius: '20px',
-    background: '#f8fafc',
-    padding: '16px',
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '12px',
-  },
-  printButton: {
-    minHeight: '30px',
-    border: '1px solid #cbd5e1',
-    borderRadius: '999px',
-    background: '#fff',
-    color: '#0f172a',
-    padding: '0 10px',
-    fontSize: '12px',
-    fontWeight: 900,
-    cursor: 'pointer',
-  },
-  printCard: {
-    border: '1px dashed #94a3b8',
-    borderRadius: '16px',
-    background: '#fff',
-    padding: '14px',
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '6px',
-  },
-  printEyebrow: {
-    margin: 0,
-    color: '#64748b',
-    fontSize: '10px',
-    fontWeight: 900,
-    textTransform: 'uppercase',
-  },
-  printTitle: {
-    margin: 0,
-    color: '#0f172a',
-    fontSize: '22px',
-    fontWeight: 950,
-  },
-  printMeta: {
-    margin: 0,
-    color: '#334155',
-    fontSize: '13px',
-    fontWeight: 850,
   },
   emptyText: {
     margin: 0,

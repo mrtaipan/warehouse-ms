@@ -4,6 +4,7 @@ import Image from 'next/image'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useEffect, useMemo, useState } from 'react'
 import { createClient } from '@/utils/supabase/browser'
+import { getProfileByAuthenticatedUser } from '@/utils/user-profiles'
 
 const supabase = createClient()
 const PRODUCT_PHOTOS_BUCKET = 'product-photos'
@@ -880,6 +881,88 @@ const styles = {
     gap: '5px',
     flexWrap: 'wrap',
   },
+  koliTitleCell: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: '7px',
+    flexWrap: 'wrap',
+  },
+  koliName: {
+    fontSize: '13px',
+    fontWeight: 900,
+    color: '#0f172a',
+  },
+  koliSelectCell: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: '8px',
+  },
+  koliCheckbox: {
+    width: '18px',
+    height: '18px',
+    accentColor: '#0f766e',
+    cursor: 'pointer',
+  },
+  koliModePill: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    minHeight: '20px',
+    padding: '0 8px',
+    borderRadius: '999px',
+    background: '#ecfeff',
+    color: '#0e7490',
+    fontSize: '10px',
+    fontWeight: 900,
+  },
+  koliCellStack: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '5px',
+    alignItems: 'center',
+  },
+  koliItemText: {
+    color: '#0f172a',
+    fontSize: '12px',
+    fontWeight: 700,
+    lineHeight: 1.25,
+    textAlign: 'left',
+    width: '100%',
+  },
+  koliFlatValue: {
+    color: '#0f172a',
+    fontSize: '12px',
+    fontWeight: 700,
+    lineHeight: 1.25,
+    fontVariantNumeric: 'tabular-nums',
+  },
+  koliDividerCell: {
+    borderTop: '2px solid #94a3b8',
+  },
+  itemDividerCell: {
+    borderTop: '1px dashed #cbd5e1',
+  },
+  koliQtyPill: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: '22px',
+    minWidth: '42px',
+    padding: '2px 8px',
+    borderRadius: '999px',
+    background: '#f0fdf4',
+    color: '#047857',
+    fontSize: '11px',
+    fontWeight: 900,
+    fontVariantNumeric: 'tabular-nums',
+  },
+  tableActionCell: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: '6px',
+  },
   previewOverlay: {
     position: 'fixed',
     inset: 0,
@@ -946,6 +1029,12 @@ const styles = {
     fontSize: '13px',
     fontWeight: 900,
     cursor: 'pointer',
+  },
+  compactActionButton: {
+    minHeight: '34px',
+    padding: '0 12px',
+    fontSize: '12px',
+    whiteSpace: 'nowrap',
   },
   compactResetButton: {
     width: '38px',
@@ -1123,10 +1212,233 @@ const styles = {
   hiddenFileInput: {
     display: 'none',
   },
+  allocationModal: {
+    position: 'relative',
+    width: 'min(920px, 94vw)',
+    maxHeight: '86vh',
+    overflow: 'hidden',
+    borderWidth: '1px',
+    borderStyle: 'solid',
+    borderColor: '#e2e8f0',
+    borderRadius: '18px',
+    background: '#fff',
+    boxShadow: '0 24px 64px rgba(15, 23, 42, 0.28)',
+    display: 'flex',
+    flexDirection: 'column',
+  },
+  modalHeader: {
+    position: 'sticky',
+    top: 0,
+    zIndex: 5,
+    display: 'flex',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: '16px',
+    padding: '18px',
+    borderBottomWidth: '1px',
+    borderBottomStyle: 'solid',
+    borderBottomColor: '#e2e8f0',
+    background: '#fff',
+  },
+  modalTitleGroup: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '12px',
+    flexWrap: 'wrap',
+  },
+  modalTitle: {
+    margin: '4px 0 0',
+    color: '#0f172a',
+    fontSize: '24px',
+    lineHeight: 1.1,
+    fontWeight: 950,
+  },
+  allocationPresetRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '6px',
+    flexWrap: 'wrap',
+  },
+  allocationPresetButton: {
+    minHeight: '28px',
+    padding: '0 10px',
+    borderWidth: '1px',
+    borderStyle: 'solid',
+    borderColor: '#94a3b8',
+    borderRadius: '999px',
+    background: '#fff',
+    color: '#334155',
+    fontSize: '9px',
+    fontWeight: 900,
+    cursor: 'pointer',
+    letterSpacing: '0.03em',
+    boxShadow: '0 4px 10px rgba(15, 23, 42, 0.06)',
+    whiteSpace: 'nowrap',
+  },
+  allocationPresetButtonHover: {
+    borderColor: '#0f766e',
+    color: '#0f766e',
+    background: '#f0fdfa',
+  },
+  allocationPresetButtonActive: {
+    borderColor: '#0f766e',
+    color: '#fff',
+    background: '#0f766e',
+    boxShadow: '0 8px 16px rgba(15, 118, 110, 0.18)',
+  },
+  allocationModalBody: {
+    overflow: 'auto',
+    padding: '14px 18px 18px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '14px',
+  },
+  allocationTableWrap: {
+    borderWidth: '1px',
+    borderStyle: 'solid',
+    borderColor: '#e2e8f0',
+    borderRadius: '14px',
+    maxHeight: '46vh',
+    overflow: 'auto',
+    background: '#fff',
+  },
+  allocationTable: {
+    width: '100%',
+    minWidth: '860px',
+    borderCollapse: 'collapse',
+  },
+  allocationStickyTh: {
+    position: 'sticky',
+    top: 0,
+    zIndex: 3,
+  },
+  allocationTd: {
+    padding: '10px',
+    borderTop: '1px solid #f1f5f9',
+    color: '#0f172a',
+    fontSize: '13px',
+    fontWeight: 500,
+    textAlign: 'center',
+    verticalAlign: 'middle',
+  },
+  allocationPhotoButton: {
+    width: '44px',
+    height: '44px',
+    border: 'none',
+    borderRadius: '10px',
+    padding: 0,
+    background: 'transparent',
+    overflow: 'hidden',
+    cursor: 'pointer',
+  },
+  allocationPhoto: {
+    width: '44px',
+    height: '44px',
+    objectFit: 'cover',
+    display: 'block',
+  },
+  allocationNoPhoto: {
+    width: '44px',
+    height: '44px',
+    borderRadius: '10px',
+    background: '#f1f5f9',
+    color: '#94a3b8',
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    fontSize: '8px',
+    fontWeight: 900,
+  },
+  allocationInput: {
+    width: '84px',
+    height: '36px',
+    boxSizing: 'border-box',
+    borderWidth: '1px',
+    borderStyle: 'solid',
+    borderColor: '#cbd5e1',
+    borderRadius: '10px',
+    background: '#fff',
+    color: '#0f172a',
+    padding: '0 8px',
+    fontSize: '13px',
+    fontWeight: 500,
+    textAlign: 'center',
+    fontVariantNumeric: 'tabular-nums',
+  },
+  allocationFooter: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: '12px',
+    flexWrap: 'wrap',
+  },
+  modalFeedback: {
+    minHeight: '22px',
+    display: 'flex',
+    alignItems: 'center',
+  },
+  modalActionGroup: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    flexShrink: 0,
+  },
+  printModal: {
+    position: 'relative',
+    width: 'min(520px, 94vw)',
+    maxHeight: '84vh',
+    overflow: 'hidden',
+    borderWidth: '1px',
+    borderStyle: 'solid',
+    borderColor: '#e2e8f0',
+    borderRadius: '18px',
+    background: '#fff',
+    boxShadow: '0 24px 64px rgba(15, 23, 42, 0.28)',
+    display: 'flex',
+    flexDirection: 'column',
+  },
+  printModalBody: {
+    padding: '16px 18px 18px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '14px',
+  },
+  printChoiceGrid: {
+    display: 'grid',
+    gridTemplateColumns: '1fr 1fr',
+    gap: '8px',
+  },
+  printChoiceButton: {
+    minHeight: '48px',
+    padding: '10px 12px',
+    borderWidth: '1px',
+    borderStyle: 'solid',
+    borderColor: '#cbd5e1',
+    borderRadius: '12px',
+    background: '#fff',
+    color: '#0f172a',
+    fontSize: '13px',
+    fontWeight: 900,
+    cursor: 'pointer',
+  },
+  printChoiceButtonActive: {
+    borderColor: '#0f766e',
+    background: '#f0fdfa',
+    color: '#0f766e',
+  },
 }
 
 function normalize(value) {
   return String(value || '').trim().toUpperCase()
+}
+
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;')
 }
 
 function getModelKey(modelName, catalogName) {
@@ -1287,6 +1599,10 @@ function createEmptySizeRow(index = 0) {
     breakdown_row_id: null,
     size_label: '',
     qty: '',
+    mob_target_qty: null,
+    oi_target_qty: null,
+    allocation_source: 'DEFAULT_RULE',
+    allocation_reason: '',
     checker_names: [],
     weight_value: '',
     length_value: '',
@@ -1352,7 +1668,12 @@ function getPlModelIdentity(card = {}) {
 function assignPlIdentities(cards = []) {
   const sequenceCards = cards
     .slice()
-    .sort((a, b) => a.firstSort - b.firstSort || getModelLabel(a).localeCompare(getModelLabel(b)))
+    .sort(
+      (a, b) =>
+        Number(b.receiving_qty || 0) - Number(a.receiving_qty || 0) ||
+        a.firstSort - b.firstSort ||
+        getModelLabel(a).localeCompare(getModelLabel(b))
+    )
   const modelSequenceMap = new Map()
   const itemSequenceByModel = new Map()
   const plIdentityMap = new Map()
@@ -1387,16 +1708,16 @@ function assignPlIdentities(cards = []) {
   }))
 }
 
-function getShortGrnLabel(grnNumber) {
-  const value = String(grnNumber || '').trim()
-  return value.split('-')[0] || value || 'GRN'
-}
-
 function getMultipageGroupKey(card = {}) {
   return [
     card.brand_id || normalize(card.brand_name) || 'UNBRANDED',
     card.category_id || normalize(getCategoryPathLabel(card)) || 'UNCATEGORIZED',
   ].join('::')
+}
+
+function getShortGrnLabel(grnNumber) {
+  const value = String(grnNumber || '').trim()
+  return value.split('-')[0] || value || 'GRN'
 }
 
 function getBreakdownIdentity(row = {}) {
@@ -1444,6 +1765,586 @@ function getDefaultAllocationTargets(rowQty = 0, modelTotalQty = 0) {
     mobTargetQty: Math.max(0, normalizedQty - oiTargetQty),
     oiTargetQty,
   }
+}
+
+function getSizeRowAllocationTargets(sizeRow = {}, modelTotalQty = 0) {
+  const rowQty = Math.max(0, Number(sizeRow.qty || 0))
+  const defaultTargets = getDefaultAllocationTargets(rowQty, modelTotalQty)
+  const mobTargetQty = Number(sizeRow.mob_target_qty)
+  const oiTargetQty = Number(sizeRow.oi_target_qty)
+
+  if (
+    Number.isFinite(mobTargetQty) &&
+    Number.isFinite(oiTargetQty) &&
+    mobTargetQty >= 0 &&
+    oiTargetQty >= 0 &&
+    mobTargetQty + oiTargetQty === rowQty
+  ) {
+    return { mobTargetQty, oiTargetQty }
+  }
+
+  return defaultTargets
+}
+
+function getTargetKey(breakdownId, storingType) {
+  return `${Number(breakdownId || 0)}::${normalize(storingType)}`
+}
+
+function getAllocationDraftSignature(rows = [], reason = '') {
+  return JSON.stringify({
+    reason: String(reason || '').trim().toUpperCase(),
+    rows: rows.map((row) => ({
+      key: row.key,
+      mob_qty: Number(row.mob_qty || 0),
+      oi_qty: Number(row.oi_qty || 0),
+    })),
+  })
+}
+
+function formatPdfValue(value) {
+  const text = String(value ?? '').trim()
+  return text || '-'
+}
+
+function formatPdfQty(value) {
+  return new Intl.NumberFormat('en-US').format(Number(value || 0))
+}
+
+function getPdfGroupLabel(qtyMode = 'all') {
+  if (qtyMode === 'mob') return 'MOB'
+  if (qtyMode === 'oi') return 'OI'
+  return 'ALL'
+}
+
+const PDF_FONT_FAMILY = 'OpenSans'
+const PDF_SIZE_CHART_COLUMNS = [
+  { key: 'weight_value', label: 'Weight', width: 22 },
+  { key: 'length_value', label: 'Length', width: 22 },
+  { key: 'width_value', label: 'Width', width: 22 },
+  { key: 'width_afterpull', label: 'Width After Pull', width: 32 },
+  { key: 'sleeve_length', label: 'Sleeve Length', width: 30 },
+  { key: 'thigh_width', label: 'Thigh Width', width: 28 },
+]
+
+async function getFileBase64(url) {
+  const response = await fetch(url)
+  if (!response.ok) throw new Error(`Failed to load PDF font: ${url}`)
+  const blob = await response.blob()
+  return await new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onloadend = () => resolve(String(reader.result || '').split(',')[1] || '')
+    reader.onerror = () => reject(new Error(`Failed to read PDF font: ${url}`))
+    reader.readAsDataURL(blob)
+  })
+}
+
+async function registerPdfFonts(doc) {
+  const [regularFont, semiboldFont] = await Promise.all([
+    getFileBase64('/fonts/open-sans/OpenSans-Regular.ttf'),
+    getFileBase64('/fonts/open-sans/OpenSans-SemiBold.ttf'),
+  ])
+  doc.addFileToVFS('OpenSans-Regular.ttf', regularFont)
+  doc.addFileToVFS('OpenSans-SemiBold.ttf', semiboldFont)
+  doc.addFont('OpenSans-Regular.ttf', PDF_FONT_FAMILY, 'normal')
+  doc.addFont('OpenSans-SemiBold.ttf', PDF_FONT_FAMILY, 'bold')
+  doc.setFont(PDF_FONT_FAMILY, 'normal')
+}
+
+function hasPdfMeasurementValue(value) {
+  const text = String(value ?? '').trim()
+  return Boolean(text && text !== '-')
+}
+
+function buildPdfSizeChartGroups(rows = []) {
+  const rowsByPlId = new Map()
+  rows.forEach((row) => {
+    const plId = formatPdfValue(row.pl_id)
+    const current = rowsByPlId.get(plId) || []
+    current.push(row)
+    rowsByPlId.set(plId, current)
+  })
+
+  const groupsBySignature = new Map()
+  rowsByPlId.forEach((plRows, plId) => {
+    const canonicalRows = plRows
+      .map((row) => ({
+        size_label: formatPdfValue(row.size_label),
+        ...Object.fromEntries(
+          PDF_SIZE_CHART_COLUMNS.map((column) => [column.key, formatPdfValue(row[column.key])])
+        ),
+      }))
+      .sort((a, b) => a.size_label.localeCompare(b.size_label, undefined, { numeric: true }))
+    const signature = JSON.stringify(canonicalRows)
+    const current = groupsBySignature.get(signature) || {
+      plIds: [],
+      rows: plRows,
+    }
+    current.plIds.push(plId)
+    groupsBySignature.set(signature, current)
+  })
+
+  return Array.from(groupsBySignature.values()).map((group) => {
+    const visibleMeasurementColumns = PDF_SIZE_CHART_COLUMNS.filter((column) =>
+      group.rows.some((row) => hasPdfMeasurementValue(row[column.key]))
+    )
+    return {
+      ...group,
+      headers: [
+        { key: 'size_label', label: 'Size', width: 22 },
+        ...visibleMeasurementColumns,
+      ],
+    }
+  })
+}
+
+function toPdfTitleCase(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/(^|[\s/-])([a-z])/g, (match, prefix, letter) => `${prefix}${letter.toUpperCase()}`)
+}
+
+function formatPdfPrintDate(value = new Date()) {
+  return new Intl.DateTimeFormat('en-GB', {
+    day: '2-digit',
+    month: 'long',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(value)
+}
+
+async function getImageDataUrl(url) {
+  if (!url) return ''
+  try {
+    const response = await fetch(url)
+    if (!response.ok) return ''
+    const blob = await response.blob()
+    const originalDataUrl = await new Promise((resolve) => {
+      const reader = new FileReader()
+      reader.onloadend = () => resolve(String(reader.result || ''))
+      reader.onerror = () => resolve('')
+      reader.readAsDataURL(blob)
+    })
+
+    try {
+      const bitmap = await createImageBitmap(blob)
+      const maxSide = 1200
+      const scale = Math.min(1, maxSide / Math.max(bitmap.width, bitmap.height))
+      const canvas = document.createElement('canvas')
+      canvas.width = Math.max(1, Math.round(bitmap.width * scale))
+      canvas.height = Math.max(1, Math.round(bitmap.height * scale))
+      const context = canvas.getContext('2d')
+      context.fillStyle = '#ffffff'
+      context.fillRect(0, 0, canvas.width, canvas.height)
+      context.drawImage(bitmap, 0, 0, canvas.width, canvas.height)
+      bitmap.close()
+      return canvas.toDataURL('image/jpeg', 0.88)
+    } catch {
+      return originalDataUrl
+    }
+  } catch {
+    return ''
+  }
+}
+
+function paintPdfPageBackground(doc) {
+  doc.setFillColor(255, 255, 255)
+  doc.rect(0, 0, doc.internal.pageSize.getWidth(), doc.internal.pageSize.getHeight(), 'F')
+}
+
+function getPdfImageFormat(imageData) {
+  if (imageData?.startsWith('data:image/png')) return 'PNG'
+  if (imageData?.startsWith('data:image/webp')) return 'WEBP'
+  return 'JPEG'
+}
+
+function drawPdfImageContain(doc, imageData, x, y, width, height) {
+  if (!imageData) return false
+
+  try {
+    const properties = doc.getImageProperties(imageData)
+    const sourceWidth = Number(properties?.width || width)
+    const sourceHeight = Number(properties?.height || height)
+    const ratio = Math.min(width / sourceWidth, height / sourceHeight)
+    const renderedWidth = Math.max(1, sourceWidth * ratio)
+    const renderedHeight = Math.max(1, sourceHeight * ratio)
+    doc.addImage(
+      imageData,
+      getPdfImageFormat(imageData),
+      x + (width - renderedWidth) / 2,
+      y + (height - renderedHeight) / 2,
+      renderedWidth,
+      renderedHeight
+    )
+    return true
+  } catch {
+    return false
+  }
+}
+
+function getPdfCellLines(doc, value, width, height, fontSize = 7) {
+  const lineHeight = fontSize * 0.43
+  const maxLines = Math.max(1, Math.floor((height - 4) / lineHeight))
+  const lines = doc.splitTextToSize(formatPdfValue(value), Math.max(width - 4, 6))
+  if (lines.length <= maxLines) return { lines, lineHeight }
+
+  const visibleLines = lines.slice(0, maxLines)
+  const lastIndex = visibleLines.length - 1
+  const lastLine = String(visibleLines[lastIndex] || '')
+  visibleLines[lastIndex] = `${lastLine.slice(0, Math.max(1, lastLine.length - 3))}...`
+  return { lines: visibleLines, lineHeight }
+}
+
+function drawPdfCellText(doc, value, x, y, width, height, options = {}) {
+  const {
+    align = 'left',
+    bold = false,
+    fontSize = 7,
+    color = [15, 23, 42],
+  } = options
+  doc.setFont(PDF_FONT_FAMILY, bold ? 'bold' : 'normal')
+  doc.setFontSize(fontSize)
+  doc.setTextColor(...color)
+  const { lines, lineHeight } = getPdfCellLines(doc, value, width, height, fontSize)
+  const textHeight = lines.length * lineHeight
+  const textY = y + Math.max(3.3, (height - textHeight) / 2 + lineHeight * 0.78)
+  const textX = align === 'center' ? x + width / 2 : align === 'right' ? x + width - 2 : x + 2
+  doc.text(lines, textX, textY, { align })
+}
+
+function groupPdfProductRows(rows = []) {
+  const groups = new Map()
+
+  rows.forEach((row, rowIndex) => {
+    const key = row.product_key || [row.pl_id, row.item_name, row.photo_url, row.brand_name].join('::')
+    const current = groups.get(key) || {
+      key,
+      firstIndex: rowIndex,
+      identity: row,
+      rows: [],
+    }
+    current.rows.push(row)
+    groups.set(key, current)
+  })
+
+  return Array.from(groups.values()).sort((a, b) => a.firstIndex - b.firstIndex)
+}
+
+function drawPdfProductTable(doc, config) {
+  const {
+    title,
+    rows,
+    startY,
+    margin = 10,
+    imageCache = new Map(),
+    emptyText = 'No data.',
+    onPageBreak,
+    picKey = 'data_pic',
+    picLabel = 'PIC Data',
+  } = config
+  const pageHeight = doc.internal.pageSize.getHeight()
+  const pageBottom = pageHeight - margin - 7
+  const columns = [
+    { key: 'pl_id', label: 'PL ID', width: 14, merged: true, align: 'center' },
+    { key: 'item_name', label: 'Brand / Model / Variant / Detail', width: 66, merged: true },
+    { key: 'size_label', label: 'Size', width: 16, align: 'center' },
+    { key: 'qty', label: 'Qty', width: 13, align: 'center' },
+    { key: 'total_qty', label: 'Total', width: 15, merged: true, align: 'center', accent: true },
+    { key: picKey, label: picLabel, width: 30, align: 'center' },
+    { key: 'photo_url', label: 'Photo', width: 36, merged: true, image: true },
+  ]
+  const tableWidth = columns.reduce((sum, column) => sum + column.width, 0)
+  const headerHeight = 9
+  let y = startY
+
+  if (y + 18 > pageBottom) {
+    doc.addPage()
+    y = typeof onPageBreak === 'function' ? onPageBreak() : margin
+  }
+
+  const drawSectionHeading = (continued = false) => {
+    doc.setFont(PDF_FONT_FAMILY, 'bold')
+    doc.setFontSize(10)
+    doc.setTextColor(15, 23, 42)
+    doc.text(`${title}${continued ? ' (continued)' : ''}`, margin, y)
+    y += 5
+  }
+
+  const drawHeader = () => {
+    let x = margin
+    doc.setLineWidth(0.2)
+    columns.forEach((column) => {
+      doc.setFillColor(15, 23, 42)
+      doc.setDrawColor(15, 23, 42)
+      doc.rect(x, y, column.width, headerHeight, 'FD')
+      drawPdfCellText(doc, column.label, x, y, column.width, headerHeight, {
+        align: 'center',
+        bold: true,
+        fontSize: 6.7,
+        color: [255, 255, 255],
+      })
+      x += column.width
+    })
+    y += headerHeight
+  }
+
+  const startContinuationPage = () => {
+    doc.addPage()
+    y = typeof onPageBreak === 'function' ? onPageBreak() : margin
+    drawSectionHeading(true)
+    drawHeader()
+  }
+
+  drawSectionHeading(false)
+  if (!rows.length) {
+    doc.setFillColor(248, 250, 252)
+    doc.setDrawColor(226, 232, 240)
+    doc.roundedRect(margin, y, tableWidth, 15, 2, 2, 'FD')
+    drawPdfCellText(doc, emptyText, margin, y, tableWidth, 15, {
+      align: 'center',
+      color: [100, 116, 139],
+    })
+    return y + 23
+  }
+
+  drawHeader()
+  const groupedRows = groupPdfProductRows(rows)
+  const drawableGroups = groupedRows.flatMap((group) => {
+    const chunks = []
+    for (let index = 0; index < group.rows.length; index += 14) {
+      chunks.push({
+        ...group,
+        rows: group.rows.slice(index, index + 14),
+        continued: index > 0,
+      })
+    }
+    return chunks
+  })
+
+  drawableGroups.forEach((group, groupIndex) => {
+    const minimumHeight = group.rows.length > 1 ? 41 : 25
+    const groupHeight = Math.max(minimumHeight, group.rows.length * 8.5)
+    const detailRowHeight = groupHeight / group.rows.length
+
+    if (y + groupHeight > pageBottom) startContinuationPage()
+
+    const groupFill = groupIndex % 2 === 0 ? [255, 255, 255] : [248, 250, 252]
+    let x = margin
+    columns.forEach((column) => {
+      const cellHeight = column.merged ? groupHeight : detailRowHeight
+      if (column.merged) {
+        doc.setFillColor(...(column.accent ? [240, 253, 244] : groupFill))
+        doc.setDrawColor(203, 213, 225)
+        doc.rect(x, y, column.width, groupHeight, 'FD')
+
+        if (column.image) {
+          const imageData = imageCache.get(group.identity[column.key])
+          const inset = groupHeight > 32 ? 3 : 2
+          const imageWidth = column.width - inset * 2
+          const imageDrawn = drawPdfImageContain(
+            doc,
+            imageData,
+            x + inset,
+            y + inset,
+            imageWidth,
+            groupHeight - inset * 2
+          )
+          if (!imageDrawn) {
+            drawPdfCellText(doc, 'No photo', x + inset, y, imageWidth, groupHeight, {
+              align: 'center',
+              fontSize: 6.5,
+              color: [148, 163, 184],
+            })
+          }
+        } else if (column.key === 'item_name') {
+          const inset = 3
+          const itemWidth = column.width - inset * 2
+          const itemTitle = [
+            toPdfTitleCase(group.identity.brand_name),
+            toPdfTitleCase(group.identity.item_name),
+          ].filter(Boolean).join(' ')
+          doc.setFont(PDF_FONT_FAMILY, 'bold')
+          doc.setFontSize(7.8)
+          doc.setTextColor(15, 23, 42)
+          const titleLines = doc.splitTextToSize(itemTitle || '-', itemWidth).slice(0, 3)
+          const titleLineHeight = 3.5
+          const notes = String(group.identity.pl_notes || '').trim()
+          let noteLines = []
+          let noteLineHeight = 0
+          if (notes) {
+            doc.setFont(PDF_FONT_FAMILY, 'normal')
+            doc.setFontSize(5.8)
+            const notesHeight = Math.max(4, groupHeight - inset * 2 - titleLines.length * titleLineHeight - 1)
+            const noteText = getPdfCellLines(doc, notes, itemWidth, notesHeight, 5.8)
+            noteLines = noteText.lines
+            noteLineHeight = noteText.lineHeight
+          }
+
+          const titleBlockHeight = titleLines.length * titleLineHeight
+          const notesBlockHeight = noteLines.length ? 1 + noteLines.length * noteLineHeight : 0
+          const blockHeight = titleBlockHeight + notesBlockHeight
+          const blockTop = y + Math.max(inset, (groupHeight - blockHeight) / 2)
+
+          doc.setFont(PDF_FONT_FAMILY, 'bold')
+          doc.setFontSize(7.8)
+          doc.setTextColor(15, 23, 42)
+          doc.text(titleLines, x + inset, blockTop + titleLineHeight * 0.78)
+
+          if (noteLines.length) {
+            const notesY = blockTop + titleBlockHeight + 1
+            doc.setFont(PDF_FONT_FAMILY, 'normal')
+            doc.setFontSize(5.8)
+            doc.setTextColor(100, 116, 139)
+            doc.text(noteLines, x + inset, notesY + noteLineHeight * 0.72)
+          }
+        } else {
+          const displayValue = column.key === 'pl_id' && group.continued
+            ? `${group.identity[column.key]} (cont.)`
+            : group.identity[column.key]
+          drawPdfCellText(doc, displayValue, x, y, column.width, groupHeight, {
+            align: column.align || 'left',
+            bold: Boolean(column.accent || column.key === 'pl_id'),
+            fontSize: 7,
+          })
+        }
+      } else {
+        group.rows.forEach((row, rowIndex) => {
+          const rowY = y + rowIndex * detailRowHeight
+          doc.setFillColor(...groupFill)
+          doc.setDrawColor(203, 213, 225)
+          doc.rect(x, rowY, column.width, detailRowHeight, 'FD')
+          drawPdfCellText(doc, row[column.key], x, rowY, column.width, detailRowHeight, {
+            align: column.align || 'left',
+            fontSize: 6.8,
+          })
+        })
+      }
+      x += column.width
+    })
+    y += groupHeight
+  })
+
+  return y + 9
+}
+
+function getPdfTableRowHeight(doc, headers, row) {
+  const cellLines = headers.map((header) => {
+    if (header.type === 'image') return ['']
+    return doc.splitTextToSize(formatPdfValue(row[header.key]), Math.max(header.width - 4, 8))
+  })
+  const textHeight = Math.max(...cellLines.map((line) => line.length)) * 3.1 + 2.5
+  return Math.max(8, textHeight, headers.some((header) => header.type === 'image') ? 16 : 0)
+}
+
+function getPdfTableHeight(doc, headers, rows) {
+  const rowHeight = rows.reduce((total, row) => total + getPdfTableRowHeight(doc, headers, row), 0)
+  return 6 + 10 + rowHeight + 8
+}
+
+function drawPdfTable(doc, config) {
+  const {
+    title,
+    headers,
+    rows,
+    startY,
+    margin = 10,
+    startX = margin,
+    imageCache = new Map(),
+    emptyText = 'No data.',
+    onPageBreak,
+  } = config
+  const pageHeight = doc.internal.pageSize.getHeight()
+  let y = startY
+  if (y + 18 > pageHeight - margin - 7) {
+    doc.addPage()
+    y = typeof onPageBreak === 'function' ? onPageBreak() : margin
+  }
+
+  doc.setFont(PDF_FONT_FAMILY, 'bold')
+  doc.setFontSize(10)
+  doc.setTextColor(15, 23, 42)
+  doc.text(title, startX, y)
+  y += 6
+
+  if (!rows.length) {
+    doc.setFont(PDF_FONT_FAMILY, 'normal')
+    doc.setFontSize(8)
+    doc.setTextColor(100, 116, 139)
+    doc.text(emptyText, startX, y)
+    return y + 8
+  }
+
+  const drawHeader = () => {
+    let x = startX
+    headers.forEach((header) => {
+      doc.setFillColor(71, 85, 105)
+      doc.setDrawColor(71, 85, 105)
+      doc.rect(x, y, header.width, 10, 'FD')
+      drawPdfCellText(doc, String(header.label || ''), x, y, header.width, 10, {
+        align: 'center',
+        bold: true,
+        fontSize: 6.2,
+        color: [255, 255, 255],
+      })
+      x += header.width
+    })
+    y += 10
+  }
+
+  drawHeader()
+
+  rows.forEach((row) => {
+    const cellLines = headers.map((header) => {
+      if (header.type === 'image') return ['']
+      return doc.splitTextToSize(formatPdfValue(row[header.key]), Math.max(header.width - 4, 8))
+    })
+    const rowHeight = getPdfTableRowHeight(doc, headers, row)
+
+    if (y + rowHeight > pageHeight - margin) {
+      doc.addPage()
+      y = typeof onPageBreak === 'function' ? onPageBreak() : margin
+      doc.setFont(PDF_FONT_FAMILY, 'bold')
+      doc.setFontSize(10)
+      doc.setTextColor(15, 23, 42)
+      doc.text(`${title} (continued)`, startX, y)
+      y += 6
+      drawHeader()
+    }
+
+    let x = startX
+    headers.forEach((header, index) => {
+      doc.setDrawColor(226, 232, 240)
+      doc.rect(x, y, header.width, rowHeight)
+
+      if (header.type === 'image') {
+        const imageData = imageCache.get(row[header.key])
+        if (imageData) {
+          const imageDrawn = drawPdfImageContain(doc, imageData, x + 2, y + 2, 12, 12)
+          if (!imageDrawn) {
+            doc.setFont(PDF_FONT_FAMILY, 'normal')
+            doc.setFontSize(6)
+            doc.text('-', x + 6, y + 7, { align: 'center' })
+          }
+        } else {
+          doc.setFont(PDF_FONT_FAMILY, 'normal')
+          doc.setFontSize(6)
+          doc.setTextColor(100, 116, 139)
+          doc.text('-', x + 6, y + 7, { align: 'center' })
+        }
+      } else {
+        doc.setFont(PDF_FONT_FAMILY, 'normal')
+        doc.setFontSize(7)
+        doc.setTextColor(15, 23, 42)
+        doc.text(cellLines[index], x + 2, y + 5)
+      }
+      x += header.width
+    })
+
+    y += rowHeight
+  })
+
+  return y + 8
 }
 
 function getAllocatedPlRowSizeSummary(plRow = {}, modelTotalQty = 0, qtyMode = 'all') {
@@ -1576,6 +2477,33 @@ function normalizeCheckerNames(value, fallback = '') {
   }, [])
 }
 
+function getPdfCheckerFirstNames(value) {
+  return normalizeCheckerNames(value).reduce((result, name) => {
+    const firstName = String(name || '').trim().split(/\s+/)[0] || ''
+    if (firstName && !result.includes(firstName)) result.push(firstName)
+    return result
+  }, [])
+}
+
+function getFirstName(value) {
+  return String(value || '').trim().split(/\s+/)[0]?.toUpperCase() || '-'
+}
+
+function getBottomCategoryLabel(value) {
+  const parts = String(value || '')
+    .split('>')
+    .map((part) => part.trim())
+    .filter(Boolean)
+  if (parts.length >= 2) {
+    return [parts[parts.length - 1], parts[parts.length - 2]].join(' ')
+  }
+  return parts[0] || ''
+}
+
+function getPackingKoliTitle(row = {}) {
+  return row.package_type === 'PHOTO' ? 'Foto' : `Koli ${row.koli_sequence || '-'}`
+}
+
 function getCheckerSummary(checkerNames = []) {
   const names = normalizeCheckerNames(checkerNames)
   if (!names.length) return 'Choose checker'
@@ -1617,6 +2545,10 @@ function serializePlRows(rows = []) {
       sizeRows: (row.sizeRows || []).map((sizeRow) => ({
         size_label: normalizeSizeLabel(sizeRow.size_label),
         qty: String(sizeRow.qty ?? '').trim(),
+        mob_target_qty: sizeRow.mob_target_qty ?? null,
+        oi_target_qty: sizeRow.oi_target_qty ?? null,
+        allocation_source: sizeRow.allocation_source || 'DEFAULT_RULE',
+        allocation_reason: String(sizeRow.allocation_reason || '').trim(),
         checker_names: normalizeCheckerNames(sizeRow.checker_names),
         weight_value: String(sizeRow.weight_value || '').trim(),
         length_value: String(sizeRow.length_value || '').trim(),
@@ -1632,6 +2564,7 @@ export default function PackingListSizeBreakdownPage() {
   const initialGrn = searchParams.get('grn') || ''
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [printingPdf, setPrintingPdf] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
   const [plReceivingRows, setPlReceivingRows] = useState([])
@@ -1656,11 +2589,40 @@ export default function PackingListSizeBreakdownPage() {
   const [baselineSignature, setBaselineSignature] = useState('')
   const [plRows, setPlRows] = useState([])
   const [openCheckerPickerKey, setOpenCheckerPickerKey] = useState('')
+  const [allocationModalOpen, setAllocationModalOpen] = useState(false)
+  const [allocationDraftRows, setAllocationDraftRows] = useState([])
+  const [allocationBaselineSignature, setAllocationBaselineSignature] = useState('')
+  const [allocationReason, setAllocationReason] = useState('')
+  const [allocationError, setAllocationError] = useState('')
+  const [allocationActivePreset, setAllocationActivePreset] = useState('default')
+  const [allocationHoveredPreset, setAllocationHoveredPreset] = useState('')
+  const [printModalOpen, setPrintModalOpen] = useState(false)
+  const [printType, setPrintType] = useState('packing_list')
+  const [printRange, setPrintRange] = useState('all')
+  const [printSectionKey, setPrintSectionKey] = useState('')
+  const [selectedKoliPrintKeys, setSelectedKoliPrintKeys] = useState([])
   const [modelFilters, setModelFilters] = useState({
     brand: '',
     categoryPath: '',
     model: '',
   })
+
+  useEffect(() => {
+    async function enforceStaffRoute() {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser()
+
+      if (!user) return
+
+      const { data: profile } = await getProfileByAuthenticatedUser(supabase, user, 'role')
+      if (String(profile?.role || '').trim() === 'packing_staff' && initialGrn) {
+        router.replace(`/mobile/packing-list/item-storing?grn=${encodeURIComponent(initialGrn)}`)
+      }
+    }
+
+    enforceStaffRoute()
+  }, [initialGrn, router])
 
   useEffect(() => {
     async function loadData() {
@@ -1874,45 +2836,11 @@ export default function PackingListSizeBreakdownPage() {
     const sortedCards = Array.from(grouped.values()).sort(
       (a, b) => b.receiving_qty - a.receiving_qty || a.firstSort - b.firstSort || getModelLabel(a).localeCompare(getModelLabel(b))
     )
-    const sequenceCards = sortedCards
-      .slice()
-      .sort((a, b) => a.firstSort - b.firstSort || getModelLabel(a).localeCompare(getModelLabel(b)))
-    const modelSequenceMap = new Map()
-    const itemSequenceByModel = new Map()
-    const plIdentityMap = new Map()
 
-    sequenceCards.forEach((card) => {
-      const modelIdentity = card.product_model_id ? `model:${card.product_model_id}` : `legacy:${normalize(card.model_name)}`
-      if (!modelSequenceMap.has(modelIdentity)) {
-        modelSequenceMap.set(modelIdentity, modelSequenceMap.size + 1)
-      }
-
-      const nextItemSequence = (itemSequenceByModel.get(modelIdentity) || 0) + 1
-      itemSequenceByModel.set(modelIdentity, nextItemSequence)
-      plIdentityMap.set(card.key, {
-        model_seq: modelSequenceMap.get(modelIdentity),
-        pl_letter: getLetterFromIndex(nextItemSequence),
-        model_item_count: 0,
-      })
-    })
-
-    sequenceCards.forEach((card) => {
-      const modelIdentity = card.product_model_id ? `model:${card.product_model_id}` : `legacy:${normalize(card.model_name)}`
-      const current = itemSequenceByModel.get(modelIdentity) || 1
-      const plIdentity = plIdentityMap.get(card.key)
-      if (plIdentity) {
-        plIdentity.model_item_count = current
-      }
-    })
-
-    return sortedCards.map((card) => {
-      const plIdentity = plIdentityMap.get(card.key) || { model_seq: 1, pl_letter: 'A', model_item_count: 1 }
-      return {
-        ...card,
-        ...plIdentity,
-        breakdown_qty: breakdownByIdentity.get(card.product_model_variant_id ? `variant:${card.product_model_variant_id}` : `model:${card.product_model_id}`) || 0,
-      }
-    })
+    return assignPlIdentities(sortedCards).map((card) => ({
+      ...card,
+      breakdown_qty: breakdownByIdentity.get(card.product_model_variant_id ? `variant:${card.product_model_variant_id}` : `model:${card.product_model_id}`) || 0,
+    }))
   }, [breakdownRows, catalogContext, initialGrn, photoMap, plReceivingRows])
 
   const selectedCard = cards.find((card) => card.key === selectedCardKey) || null
@@ -1949,6 +2877,7 @@ export default function PackingListSizeBreakdownPage() {
       grouped.set(key, current)
     })
 
+    const fullGrnLabel = String(initialGrn || '-').trim()
     const shortGrnLabel = getShortGrnLabel(initialGrn)
     return Array.from(grouped.values())
       .sort(
@@ -1959,20 +2888,66 @@ export default function PackingListSizeBreakdownPage() {
       .map((group, index) => ({
         ...group,
         page_label: `${shortGrnLabel}.${getLetterFromIndex(index + 1)}`,
+        print_label: `${fullGrnLabel}.${getLetterFromIndex(index + 1)}`,
         cards: assignPlIdentities(group.cards),
       }))
   }, [cards, initialGrn])
 
+  const effectiveModelFilters = useMemo(
+    () => (pageMode === 'multipage' ? { ...modelFilters, brand: '', categoryPath: '' } : modelFilters),
+    [modelFilters, pageMode]
+  )
+  function cardHasVisibleModelQty(card) {
+    const rows = buildRowsForCard(card)
+    const modelTotalQty = getPlRowsBreakdownQty(rows)
+
+    return rows.some((plRow) => {
+      const sizes = [
+        ...getAllocatedPlRowSizeSummary(plRow, modelTotalQty, qtyMode),
+        ...(qtyMode === 'all' ? getReturnSummary(plRow.returnRows) : []),
+      ]
+      const totalQty = sizes.reduce((sum, size) => sum + Number(size.qty || 0), 0)
+      return qtyMode === 'all' ? sizes.length > 0 : totalQty > 0
+    })
+  }
+
+  function cardHasVisibleKoliQty(card) {
+    const breakdownIds = buildRowsForCard(card)
+      .flatMap((plRow) => plRow.sizeRows || [])
+      .map((sizeRow) => Number(sizeRow.breakdown_row_id || 0))
+      .filter(Boolean)
+
+    if (!breakdownIds.length) return false
+    const breakdownIdSet = new Set(breakdownIds)
+    return packingRows.some((row) => {
+      if (!breakdownIdSet.has(Number(row.pl_size_breakdown_id || 0))) return false
+      if (qtyMode !== 'all' && normalize(row.storing_type) !== normalize(qtyMode)) return false
+      return Number(row.qty || 0) > 0
+    })
+  }
+
+  const visibleMultipageGroups = multipageGroups.filter((group) =>
+    group.cards.some((card) => {
+      if (!matchesModelFilter(card, effectiveModelFilters)) return false
+      return overviewMode === 'koli' ? cardHasVisibleKoliQty(card) : cardHasVisibleModelQty(card)
+    })
+  )
+  useEffect(() => {
+    if (pageMode !== 'multipage') return
+    if (!visibleMultipageGroups.length) {
+      if (selectedMultipageKey) setSelectedMultipageKey('')
+      return
+    }
+    if (!visibleMultipageGroups.some((group) => group.key === selectedMultipageKey)) {
+      setSelectedMultipageKey(visibleMultipageGroups[0].key)
+    }
+  }, [pageMode, selectedMultipageKey, visibleMultipageGroups])
   const activeMultipageGroup = pageMode === 'multipage'
-    ? multipageGroups.find((group) => group.key === selectedMultipageKey) || multipageGroups[0] || null
+    ? visibleMultipageGroups.find((group) => group.key === selectedMultipageKey) || visibleMultipageGroups[0] || null
     : null
   const filterBaseCards = useMemo(
     () => (pageMode === 'multipage' ? activeMultipageGroup?.cards || [] : cards),
     [activeMultipageGroup, cards, pageMode]
-  )
-  const effectiveModelFilters = useMemo(
-    () => (pageMode === 'multipage' ? { ...modelFilters, brand: '', categoryPath: '' } : modelFilters),
-    [modelFilters, pageMode]
   )
 
   const modelFilterOptions = useMemo(() => {
@@ -1987,6 +2962,14 @@ export default function PackingListSizeBreakdownPage() {
     () => filterBaseCards.filter((card) => matchesModelFilter(card, effectiveModelFilters)),
     [effectiveModelFilters, filterBaseCards]
   )
+
+  const packedQtyByTargetKey = useMemo(() => {
+    return packingRows.reduce((result, row) => {
+      const key = getTargetKey(row.pl_size_breakdown_id, row.storing_type)
+      result.set(key, (result.get(key) || 0) + Number(row.qty || 0))
+      return result
+    }, new Map())
+  }, [packingRows])
 
   function updateModelFilter(key, value) {
     setModelFilters((prev) => {
@@ -2042,6 +3025,7 @@ export default function PackingListSizeBreakdownPage() {
         oi_target_qty: row.oi_target_qty ?? null,
         allocation_source: row.allocation_source || 'DEFAULT_RULE',
         allocation_reason: row.allocation_reason || '',
+        created_by: row.created_by || '',
         checker_names: normalizeCheckerNames(row.checker_names),
         weight_value: String(row.weight_value || ''),
         length_value: String(row.length_value || ''),
@@ -2139,6 +3123,7 @@ export default function PackingListSizeBreakdownPage() {
       setSelectedCardKey(cardKey)
       setPlRows(savedRows)
       setBaselineSignature(serializePlRows(savedRows))
+      closeAllocationModal(true)
       setError('')
       setSuccess('')
       return
@@ -2148,6 +3133,7 @@ export default function PackingListSizeBreakdownPage() {
     setSelectedCardKey(cardKey)
     setPlRows(nextRows)
     setBaselineSignature(serializePlRows(nextRows))
+    closeAllocationModal(true)
     setError('')
     setSuccess('')
   }
@@ -2160,6 +3146,7 @@ export default function PackingListSizeBreakdownPage() {
         const savedRows = buildRowsForCard(selectedCard)
         setPlRows(savedRows)
         setBaselineSignature(serializePlRows(savedRows))
+        closeAllocationModal(true)
       }
     }
     setViewMode('table')
@@ -2202,6 +3189,188 @@ export default function PackingListSizeBreakdownPage() {
     setEditSection(nextSection)
     setError('')
     setSuccess('')
+  }
+
+  function hasAllocationDraftChanges() {
+    if (!allocationModalOpen) return false
+    return getAllocationDraftSignature(allocationDraftRows, allocationReason) !== allocationBaselineSignature
+  }
+
+  function closeAllocationModal(force = false) {
+    if (!force && hasAllocationDraftChanges()) {
+      const shouldClose = window.confirm('You have unsaved manual allocation changes. Close and discard them?')
+      if (!shouldClose) return
+    }
+    setAllocationModalOpen(false)
+    setAllocationDraftRows([])
+    setAllocationBaselineSignature('')
+    setAllocationReason('')
+    setAllocationError('')
+    setAllocationActivePreset('default')
+    setAllocationHoveredPreset('')
+  }
+
+  function openAllocationModal() {
+    if (!selectedCard) {
+      setError('Choose a model card first.')
+      setSuccess('')
+      return
+    }
+
+    const modelVariantQty = getPlRowsBreakdownQty(plRows)
+    const draftRows = plRows.flatMap((plRow, plRowIndex) =>
+      plRow.sizeRows.map((sizeRow, sizeRowIndex) => {
+        const rowQty = Math.max(0, Number(sizeRow.qty || 0))
+        const defaultTargets = getDefaultAllocationTargets(rowQty, modelVariantQty)
+        const currentTargets = getSizeRowAllocationTargets(sizeRow, modelVariantQty)
+        const breakdownId = Number(sizeRow.breakdown_row_id || 0)
+        return {
+          key: `${plRow.id || 'pl-row'}:${sizeRow.id || 'size-row'}:${plRowIndex}:${sizeRowIndex}`,
+          plRowId: plRow.id,
+          sizeRowId: sizeRow.id,
+          pl_id: computePlLabel(selectedCard, plRow, plRows.length),
+          pl_name: String(plRow.pl_name || selectedCard.catalogName || selectedCard.model_name || '').trim().toUpperCase(),
+          photo_url: plRow.pl_photo_url || selectedCard.photo_url || '',
+          size_label: normalizeSizeLabel(sizeRow.size_label) || 'SIZE',
+          qty: rowQty,
+          mob_qty: currentTargets.mobTargetQty,
+          oi_qty: currentTargets.oiTargetQty,
+          default_mob_qty: defaultTargets.mobTargetQty,
+          default_oi_qty: defaultTargets.oiTargetQty,
+          posted_mob_qty: packedQtyByTargetKey.get(getTargetKey(breakdownId, 'MOB')) || 0,
+          posted_oi_qty: packedQtyByTargetKey.get(getTargetKey(breakdownId, 'OI')) || 0,
+        }
+      })
+    )
+    const existingReason =
+      plRows
+        .flatMap((plRow) => plRow.sizeRows)
+        .find((sizeRow) => sizeRow.allocation_source === 'MANUAL_OVERRIDE' && String(sizeRow.allocation_reason || '').trim())
+        ?.allocation_reason || ''
+
+    setAllocationDraftRows(draftRows)
+    setAllocationReason(String(existingReason || '').toUpperCase())
+    setAllocationBaselineSignature(getAllocationDraftSignature(draftRows, existingReason))
+    setAllocationError('')
+    setAllocationActivePreset(existingReason ? '' : 'default')
+    setAllocationHoveredPreset('')
+    setAllocationModalOpen(true)
+  }
+
+  function updateAllocationDraftQty(rowKey, field, value) {
+    setAllocationDraftRows((prev) =>
+      prev.map((row) => {
+        if (row.key !== rowKey) return row
+        const nextValue = Math.max(0, Math.floor(Number(value || 0)))
+        const nextQty = Math.min(Number(row.qty || 0), nextValue)
+
+        if (field === 'mob_qty') {
+          return {
+            ...row,
+            mob_qty: nextQty,
+            oi_qty: Math.max(0, Number(row.qty || 0) - nextQty),
+          }
+        }
+
+        return {
+          ...row,
+          oi_qty: nextQty,
+          mob_qty: Math.max(0, Number(row.qty || 0) - nextQty),
+        }
+      })
+    )
+    setAllocationError('')
+    setAllocationActivePreset('')
+  }
+
+  function applyAllocationPreset(preset) {
+    const modelVariantQty = getPlRowsBreakdownQty(plRows)
+    setAllocationDraftRows((prev) =>
+      prev.map((row) => {
+        if (preset === 'mob') {
+          return { ...row, mob_qty: Number(row.qty || 0), oi_qty: 0 }
+        }
+        if (preset === 'oi') {
+          return { ...row, mob_qty: 0, oi_qty: Number(row.qty || 0) }
+        }
+
+        const sourceSizeRow = plRows
+          .find((plRow) => plRow.id === row.plRowId)
+          ?.sizeRows.find((sizeRow) => sizeRow.id === row.sizeRowId)
+        const defaultTargets = getDefaultAllocationTargets(Number(sourceSizeRow?.qty || row.qty || 0), modelVariantQty)
+        return {
+          ...row,
+          mob_qty: defaultTargets.mobTargetQty,
+          oi_qty: defaultTargets.oiTargetQty,
+          default_mob_qty: defaultTargets.mobTargetQty,
+          default_oi_qty: defaultTargets.oiTargetQty,
+        }
+      })
+    )
+    if (preset === 'default') {
+      setAllocationReason('')
+    }
+    setAllocationActivePreset(preset)
+    setAllocationError('')
+  }
+
+  function applyAllocationOverride() {
+    const reason = String(allocationReason || '').trim().toUpperCase()
+    const hasManualOverride = allocationDraftRows.some(
+      (row) => Number(row.mob_qty || 0) !== Number(row.default_mob_qty || 0) || Number(row.oi_qty || 0) !== Number(row.default_oi_qty || 0)
+    )
+
+    if (hasManualOverride && !reason) {
+      setAllocationError('Reason is required for manual override.')
+      return
+    }
+
+    const invalidRow = allocationDraftRows.find((row) => {
+      const mobQty = Number(row.mob_qty || 0)
+      const oiQty = Number(row.oi_qty || 0)
+      return mobQty < 0 || oiQty < 0 || mobQty + oiQty !== Number(row.qty || 0)
+    })
+
+    if (invalidRow) {
+      setAllocationError(`${invalidRow.pl_id} ${invalidRow.size_label} must keep MOB + OI equal to total qty.`)
+      return
+    }
+
+    const blockedRow = allocationDraftRows.find(
+      (row) =>
+        Number(row.mob_qty || 0) < Number(row.posted_mob_qty || 0) ||
+        Number(row.oi_qty || 0) < Number(row.posted_oi_qty || 0)
+    )
+
+    if (blockedRow) {
+      setAllocationError(`${blockedRow.pl_id} ${blockedRow.size_label} cannot be lower than posted Item Storing qty.`)
+      return
+    }
+
+    const draftMap = new Map(allocationDraftRows.map((row) => [row.key, row]))
+    setPlRows((prev) =>
+      prev.map((plRow, plRowIndex) => ({
+        ...plRow,
+        sizeRows: plRow.sizeRows.map((sizeRow, sizeRowIndex) => {
+          const draft = draftMap.get(`${plRow.id || 'pl-row'}:${sizeRow.id || 'size-row'}:${plRowIndex}:${sizeRowIndex}`)
+          if (!draft) return sizeRow
+
+          const isManual =
+            Number(draft.mob_qty || 0) !== Number(draft.default_mob_qty || 0) ||
+            Number(draft.oi_qty || 0) !== Number(draft.default_oi_qty || 0)
+          return {
+            ...sizeRow,
+            mob_target_qty: Number(draft.mob_qty || 0),
+            oi_target_qty: Number(draft.oi_qty || 0),
+            allocation_source: isManual ? 'MANUAL_OVERRIDE' : 'DEFAULT_RULE',
+            allocation_reason: isManual ? reason : '',
+          }
+        }),
+      }))
+    )
+    setSuccess(hasManualOverride ? 'MOB/OI allocation override applied. Save to persist it.' : 'MOB/OI allocation reset to default rule. Save to persist it.')
+    setError('')
+    closeAllocationModal(true)
   }
 
   function updatePlRow(plRowId, updates) {
@@ -2253,6 +3422,7 @@ export default function PackingListSizeBreakdownPage() {
     setPlRows(savedRows)
     setBaselineSignature(serializePlRows(savedRows))
     setOpenCheckerPickerKey('')
+    closeAllocationModal(true)
     setError('')
     setSuccess('')
   }
@@ -2510,6 +3680,485 @@ export default function PackingListSizeBreakdownPage() {
     }
   }
 
+  function buildPrintSections() {
+    if (pageMode === 'multipage') {
+      return visibleMultipageGroups
+        .map((group) => {
+          const sectionCards = group.cards.filter((card) => matchesModelFilter(card, effectiveModelFilters))
+          return {
+            key: group.key,
+            title: group.print_label,
+            grn_number: group.print_label,
+            brand_name: group.brand_name || 'UNBRANDED',
+            category_path_label: group.category_path_label || '-',
+            cards: sectionCards,
+          }
+        })
+        .filter((section) => section.cards.length)
+    }
+
+    return [
+      {
+        key: 'all',
+        title: initialGrn || 'Packing List',
+        grn_number: initialGrn || '-',
+        brand_name: modelFilters.brand || (displayCards.length === 1 ? displayCards[0]?.brand_name : 'ALL'),
+        category_path_label: modelFilters.categoryPath || (displayCards.length === 1 ? getCategoryPathLabel(displayCards[0]) : 'ALL'),
+        cards: displayCards,
+      },
+    ]
+  }
+
+  function buildPrintRowsForCards(sectionCards = []) {
+    const modelRows = []
+    const sizeChartRows = []
+    const breakdownInfoById = new Map()
+
+    sectionCards.forEach((card) => {
+      const rows = buildRowsForCard(card)
+      const modelTotalQty = getPlRowsBreakdownQty(rows)
+
+      rows.forEach((plRow) => {
+        const plId = computePlLabel(card, plRow, rows.length)
+        const modelVariantLabel = getOverviewModelVariantLabel(card)
+        const savedPlName = String(plRow.pl_name || '').trim()
+        const isDefaultVariantOnlyName = normalize(savedPlName) === normalize(card.catalogName)
+        const itemName = savedPlName && !isDefaultVariantOnlyName ? savedPlName : modelVariantLabel
+        const photoUrl = plRow.pl_photo_url || card.photo_url || ''
+        const printableSizeRows = (plRow.sizeRows || [])
+          .map((sizeRow) => {
+            const totalQty = Number(sizeRow.qty || 0)
+            const targets = getSizeRowAllocationTargets(sizeRow, modelTotalQty)
+            const qty = qtyMode === 'mob' ? targets.mobTargetQty : qtyMode === 'oi' ? targets.oiTargetQty : totalQty
+            return { sizeRow, qty }
+          })
+          .filter((row) => Number(row.qty || 0) > 0 || qtyMode === 'all')
+        const plRowTotalQty = printableSizeRows.reduce((sum, row) => sum + Number(row.qty || 0), 0)
+        const commonRow = {
+          product_key: `${card.key}::${plRow.id}`,
+          photo_url: photoUrl,
+          pl_notes: String(plRow.pl_notes || '').trim(),
+          pl_id: plId,
+          brand_name: card.brand_name || 'UNBRANDED',
+          category_path: getCategoryPathLabel(card) || '-',
+          item_name: itemName || '-',
+          total_qty: formatPdfQty(plRowTotalQty),
+        }
+        const summaryRows = new Map()
+
+        printableSizeRows.forEach(({ sizeRow, qty }) => {
+          const breakdownId = Number(sizeRow.breakdown_row_id || 0)
+          const sizeLabel = normalizeSizeLabel(sizeRow.size_label)
+          const summarySizeLabel = getSummarySizeLabel(sizeLabel) || '-'
+          const checkerNames = getPdfCheckerFirstNames(sizeRow.checker_names)
+          const packingPicNames = packingRows
+            .filter((packingRow) => {
+              if (Number(packingRow.pl_size_breakdown_id || 0) !== breakdownId) return false
+              if (qtyMode !== 'all' && normalize(packingRow.storing_type) !== normalize(qtyMode)) return false
+              return true
+            })
+            .map((packingRow) => String(packingRow.packed_by || '').trim().toUpperCase())
+            .filter(Boolean)
+          const packingPic = [...new Set(packingPicNames)].join(', ') || '-'
+          const dataPic = checkerNames.join(', ') || '-'
+          const baseRow = {
+            ...commonRow,
+            size_label: sizeLabel || '-',
+            qty: formatPdfQty(qty),
+            data_pic: dataPic,
+            packing_pic: packingPic,
+          }
+
+          const currentSummary = summaryRows.get(summarySizeLabel) || {
+            qty: 0,
+            checkerNames: [],
+          }
+          currentSummary.qty += Number(qty || 0)
+          checkerNames.forEach((name) => {
+            if (!currentSummary.checkerNames.includes(name)) currentSummary.checkerNames.push(name)
+          })
+          summaryRows.set(summarySizeLabel, currentSummary)
+
+          sizeChartRows.push({
+            pl_id: plId,
+            item_name: itemName || '-',
+            size_label: sizeLabel || '-',
+            weight_value: formatPdfValue(sizeRow.weight_value),
+            length_value: formatPdfValue(sizeRow.length_value),
+            width_value: formatPdfValue(sizeRow.width_value),
+            width_afterpull: formatPdfValue(sizeRow.width_afterpull),
+            sleeve_length: formatPdfValue(sizeRow.sleeve_length),
+            thigh_width: formatPdfValue(sizeRow.thigh_width),
+          })
+
+          if (breakdownId) {
+            breakdownInfoById.set(breakdownId, {
+              ...baseRow,
+              raw_item_name: itemName || '-',
+              raw_size_label: sizeLabel || '-',
+              raw_data_pic: dataPic,
+            })
+          }
+        })
+
+        summaryRows.forEach((summary, sizeLabel) => {
+          modelRows.push({
+            ...commonRow,
+            size_label: sizeLabel,
+            qty: formatPdfQty(summary.qty),
+            data_pic: summary.checkerNames.join(', ') || '-',
+            packing_pic: '-',
+          })
+        })
+      })
+    })
+
+    return { modelRows, sizeChartRows, breakdownInfoById }
+  }
+
+  function buildPrintKoliGroups(sectionCards = []) {
+    const { breakdownInfoById, sizeChartRows } = buildPrintRowsForCards(sectionCards)
+    const groups = new Map()
+
+    packingRows
+      .filter((row) => {
+        const breakdownId = Number(row.pl_size_breakdown_id || 0)
+        if (!breakdownInfoById.has(breakdownId)) return false
+        if (qtyMode !== 'all' && normalize(row.storing_type) !== normalize(qtyMode)) return false
+        return true
+      })
+      .forEach((row) => {
+        const breakdownInfo = breakdownInfoById.get(Number(row.pl_size_breakdown_id || 0)) || {}
+        const groupKey = row.packing_group_key || `${row.storing_type || 'MOB'}-${row.package_type || 'REGULAR'}-${row.brand_code || 'none'}-${row.koli_sequence || '-'}`
+        const current = groups.get(groupKey) || {
+          key: groupKey,
+          title: `${row.storing_type || 'MOB'} / ${row.package_type === 'PHOTO' ? 'FOTO' : `KOLI ${row.koli_sequence || '-'}`}`,
+          total_qty: 0,
+          rows: [],
+        }
+        current.total_qty += Number(row.qty || 0)
+        current.rows.push({
+          product_key: breakdownInfo.product_key || `${breakdownInfo.pl_id || '-'}::${breakdownInfo.raw_item_name || '-'}`,
+          photo_url: breakdownInfo.photo_url || '',
+          pl_notes: breakdownInfo.pl_notes || '',
+          pl_id: breakdownInfo.pl_id || '-',
+          brand_name: breakdownInfo.brand_name || 'UNBRANDED',
+          category_path: breakdownInfo.category_path || '-',
+          item_name: row.pl_name || breakdownInfo.raw_item_name || '-',
+          size_label: normalizeSizeLabel(row.size_label || breakdownInfo.raw_size_label) || '-',
+          qty: formatPdfQty(row.qty),
+          total_qty: formatPdfQty(row.qty),
+          data_pic: breakdownInfo.raw_data_pic || '-',
+          packing_pic: String(row.packed_by || '').trim().toUpperCase() || '-',
+        })
+        groups.set(groupKey, current)
+      })
+
+    const koliGroups = Array.from(groups.values()).map((group) => {
+      const totalsByProduct = group.rows.reduce((result, row) => {
+        const key = row.product_key || row.pl_id
+        result.set(key, (result.get(key) || 0) + Number(String(row.qty || 0).replace(/,/g, '')))
+        return result
+      }, new Map())
+      return {
+        ...group,
+        rows: group.rows.map((row) => ({
+          ...row,
+          total_qty: formatPdfQty(totalsByProduct.get(row.product_key || row.pl_id) || 0),
+        })),
+      }
+    })
+
+    return {
+      koliGroups: koliGroups.sort((a, b) => a.title.localeCompare(b.title, undefined, { numeric: true })),
+      sizeChartRows,
+    }
+  }
+
+  async function handlePrintPdf(options = {}) {
+    if (printingPdf) return
+
+    const sections = buildPrintSections().filter((section) => !options.sectionKey || section.key === options.sectionKey)
+    if (!sections.length || !sections.some((section) => section.cards.length)) {
+      setError('No Packing List data to print.')
+      setSuccess('')
+      return
+    }
+
+    setPrintingPdf(true)
+    setError('')
+    setSuccess('')
+
+    try {
+      const { jsPDF } = await import('jspdf')
+      const documentSectionGroups = pageMode === 'multipage'
+        ? sections.map((section) => [section])
+        : [sections]
+      const printedAt = new Date()
+
+      for (const documentSections of documentSectionGroups) {
+      const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
+      await registerPdfFonts(doc)
+      paintPdfPageBackground(doc)
+      const margin = 10
+      const pageWidth = doc.internal.pageSize.getWidth()
+      const imageUrls = new Set()
+      const printData = documentSections.map((section) => {
+        const payload = overviewMode === 'koli' ? buildPrintKoliGroups(section.cards) : buildPrintRowsForCards(section.cards)
+        const rowsForImages = overviewMode === 'koli'
+          ? payload.koliGroups.flatMap((group) => group.rows)
+          : payload.modelRows
+        rowsForImages.forEach((row) => {
+          if (row.photo_url) imageUrls.add(row.photo_url)
+        })
+        return { section, payload }
+      })
+      const imageEntries = await Promise.all(
+        Array.from(imageUrls).map(async (url) => [url, await getImageDataUrl(url)])
+      )
+      const imageCache = new Map(imageEntries.filter(([, dataUrl]) => dataUrl))
+
+      const getPayloadRows = (payload) => overviewMode === 'koli'
+        ? (payload.koliGroups || []).flatMap((group) => group.rows)
+        : payload.modelRows || []
+
+      const getBrandCategorySummary = (section) => {
+        const labels = section.cards.map((card) => {
+          const brand = toPdfTitleCase(card.brand_name || 'UNBRANDED')
+          const pathParts = String(getCategoryPathLabel(card) || '')
+            .split('>')
+            .map((part) => part.trim())
+            .filter(Boolean)
+          const categoryParts = pathParts.length > 1
+            ? [pathParts[pathParts.length - 1], pathParts[pathParts.length - 2]]
+            : pathParts
+          const category = toPdfTitleCase(categoryParts.join(' '))
+          return [brand, category].filter(Boolean).join(' ')
+        })
+        return [...new Set(labels)]
+          .map((label, index) => `(${index + 1}) ${label}`)
+          .join('; ') || '-'
+      }
+
+      const drawInlineField = (label, value, x, y, fontSize = 8) => {
+        doc.setFont(PDF_FONT_FAMILY, 'bold')
+        doc.setFontSize(fontSize)
+        doc.setTextColor(71, 85, 105)
+        const labelText = `${label}:`
+        doc.text(labelText, x, y)
+        const valueX = x + doc.getTextWidth(labelText) + 2
+        doc.setFont(PDF_FONT_FAMILY, 'normal')
+        doc.setTextColor(15, 23, 42)
+        doc.text(formatPdfValue(value), valueX, y)
+      }
+
+      const drawDocumentHeader = (section, payload, startY) => {
+        let y = startY
+        const contentWidth = pageWidth - margin * 2
+        const payloadRows = getPayloadRows(payload)
+        const totalQty = payloadRows.reduce(
+          (sum, row) => sum + Number(String(row.qty || 0).replace(/,/g, '')),
+          0
+        )
+
+        doc.setFont(PDF_FONT_FAMILY, 'bold')
+        doc.setFontSize(7)
+        doc.setTextColor(13, 148, 136)
+        doc.text('PACKING LIST', margin, y)
+        y += 6
+        doc.setFont(PDF_FONT_FAMILY, 'bold')
+        doc.setFontSize(19)
+        doc.setTextColor(15, 23, 42)
+        doc.setDrawColor(15, 23, 42)
+        doc.setLineWidth(0.16)
+        doc.text('SIZE BREAKDOWN REPORT', margin, y, { renderingMode: 'fillThenStroke' })
+        doc.setLineWidth(0.2)
+
+        y += 3
+        const metricCardWidth = 126
+        const metricWidth = metricCardWidth / 2
+        const metricHeight = 18
+        doc.setFillColor(248, 250, 252)
+        doc.setDrawColor(203, 213, 225)
+        doc.roundedRect(margin, y, metricCardWidth, metricHeight, 2.5, 2.5, 'FD')
+        doc.line(margin + metricWidth, y + 4, margin + metricWidth, y + metricHeight - 4)
+
+        const drawMetricValue = (label, value, x, valueColor = [15, 23, 42]) => {
+          doc.setFont(PDF_FONT_FAMILY, 'bold')
+          doc.setFontSize(6.5)
+          doc.setTextColor(100, 116, 139)
+          doc.text(label, x + 5, y + 6)
+          doc.setFontSize(12)
+          doc.setTextColor(...valueColor)
+          doc.text(formatPdfValue(value), x + 5, y + 14.5)
+        }
+        drawMetricValue('GRN NUMBER', section.grn_number, margin)
+        drawMetricValue('TOTAL QTY', `${formatPdfQty(totalQty)} PCS`, margin + metricWidth)
+
+        y += metricHeight + 5
+        doc.setFont(PDF_FONT_FAMILY, 'bold')
+        doc.setFontSize(8)
+        doc.setTextColor(71, 85, 105)
+        const brandLabel = 'Brand:'
+        doc.text(brandLabel, margin, y)
+        const brandValueX = margin + doc.getTextWidth(brandLabel) + 2
+        doc.setFont(PDF_FONT_FAMILY, 'normal')
+        doc.setTextColor(15, 23, 42)
+        const brandLines = doc.splitTextToSize(
+          getBrandCategorySummary(section),
+          contentWidth - (brandValueX - margin)
+        )
+        doc.text(brandLines, brandValueX, y)
+        y += Math.max(1, brandLines.length) * 4.2 + 3
+
+        drawInlineField('Group', getPdfGroupLabel(qtyMode), margin, y)
+        y += 6
+        drawInlineField('Print Date', formatPdfPrintDate(printedAt), margin, y)
+
+        y += 5
+        doc.setDrawColor(203, 213, 225)
+        doc.line(margin, y, pageWidth - margin, y)
+        y += 5
+        return y
+      }
+
+      printData.forEach(({ section, payload }, sectionIndex) => {
+        if (sectionIndex > 0) {
+          doc.addPage()
+          paintPdfPageBackground(doc)
+        }
+        const drawContinuationHeader = () => {
+          paintPdfPageBackground(doc)
+          return margin + 4
+        }
+        let cursorY = drawDocumentHeader(section, payload, margin + 4)
+
+        const drawSizeCharts = () => {
+          const chartGroups = buildPdfSizeChartGroups(payload.sizeChartRows || [])
+          if (!chartGroups.length) {
+            cursorY = drawPdfTable(doc, {
+              title: 'Size Chart',
+              headers: [{ key: 'size_label', label: 'Size', width: 22 }],
+              rows: [],
+              startY: cursorY,
+              emptyText: '-',
+              onPageBreak: drawContinuationHeader,
+            })
+            return
+          }
+
+          const chartGap = 8
+          const pageBottom = doc.internal.pageSize.getHeight() - margin - 7
+          let chartX = margin
+          let chartRowY = cursorY
+          let chartRowHeight = 0
+
+          chartGroups.forEach((chartGroup) => {
+            const chartTitle = `Size Chart for PL ID: ${chartGroup.plIds.join(', ')}`
+            const chartWidth = chartGroup.headers.reduce((total, header) => total + header.width, 0)
+            const chartHeight = getPdfTableHeight(doc, chartGroup.headers, chartGroup.rows)
+            doc.setFont(PDF_FONT_FAMILY, 'bold')
+            doc.setFontSize(10)
+            const chartBlockWidth = Math.max(chartWidth, doc.getTextWidth(chartTitle))
+
+            if (chartX > margin && chartX + chartBlockWidth > pageWidth - margin) {
+              chartRowY += chartRowHeight + chartGap
+              chartX = margin
+              chartRowHeight = 0
+            }
+
+            if (chartRowY + chartHeight > pageBottom) {
+              doc.addPage()
+              chartRowY = drawContinuationHeader()
+              chartX = margin
+              chartRowHeight = 0
+            }
+
+            const chartEndY = drawPdfTable(doc, {
+              title: chartTitle,
+              headers: chartGroup.headers,
+              rows: chartGroup.rows,
+              startY: chartRowY,
+              startX: chartX,
+              emptyText: '-',
+              onPageBreak: drawContinuationHeader,
+            })
+            chartRowHeight = Math.max(chartRowHeight, chartEndY - chartRowY)
+            chartX += chartBlockWidth + chartGap
+            cursorY = chartRowY + chartRowHeight
+          })
+        }
+
+        if (overviewMode === 'koli') {
+          const groups = payload.koliGroups || []
+          if (!groups.length) {
+            cursorY = drawPdfProductTable(doc, {
+              title: 'Koli',
+              rows: [],
+              startY: cursorY,
+              imageCache,
+              emptyText: 'No posted Koli data.',
+              onPageBreak: drawContinuationHeader,
+              picKey: 'packing_pic',
+              picLabel: 'PIC Koli',
+            })
+          }
+          groups.forEach((group) => {
+            cursorY = drawPdfProductTable(doc, {
+              title: `${group.title} - ${formatPdfQty(group.total_qty)} pcs`,
+              rows: group.rows,
+              startY: cursorY,
+              imageCache,
+              onPageBreak: drawContinuationHeader,
+              picKey: 'packing_pic',
+              picLabel: 'PIC Koli',
+            })
+          })
+          drawSizeCharts()
+        } else {
+          cursorY = drawPdfProductTable(doc, {
+            title: 'Model Breakdown',
+            rows: payload.modelRows || [],
+            startY: cursorY,
+            imageCache,
+            onPageBreak: drawContinuationHeader,
+            picKey: 'data_pic',
+            picLabel: 'PIC Data',
+          })
+          drawSizeCharts()
+        }
+      })
+
+      const totalPages = doc.getNumberOfPages()
+      const documentGrn = documentSections[0]?.grn_number || initialGrn || '-'
+      for (let pageNumber = 1; pageNumber <= totalPages; pageNumber += 1) {
+        doc.setPage(pageNumber)
+        const footerY = doc.internal.pageSize.getHeight() - 6
+        doc.setDrawColor(226, 232, 240)
+        doc.line(margin, footerY - 4, pageWidth - margin, footerY - 4)
+        doc.setFont(PDF_FONT_FAMILY, 'normal')
+        doc.setFontSize(6.5)
+        doc.setTextColor(100, 116, 139)
+        doc.text(`Packing List / ${formatPdfValue(documentGrn)} / ${getPdfGroupLabel(qtyMode)}`, margin, footerY)
+        doc.text(`Page ${pageNumber} of ${totalPages}`, pageWidth - margin, footerY, { align: 'right' })
+      }
+
+      const safeDocumentGrn = String(documentGrn).replace(/[<>:"/\\|?*\u0000-\u001F]/g, '-')
+      doc.save(`PL${safeDocumentGrn}.pdf`)
+      }
+
+      setSuccess(
+        documentSectionGroups.length > 1
+          ? `${documentSectionGroups.length} Packing List PDFs generated.`
+          : 'Packing List PDF generated.'
+      )
+    } catch (printError) {
+      setError(printError.message || 'Failed to generate Packing List PDF.')
+    } finally {
+      setPrintingPdf(false)
+    }
+  }
+
   async function saveBreakdown() {
     if (!selectedCard) {
       setError('Choose a model card first.')
@@ -2558,6 +4207,35 @@ export default function PackingListSizeBreakdownPage() {
 
     if (invalidReturnRow) {
       setError('Complete every PL Return qty and return reason before saving.')
+      setSuccess('')
+      return
+    }
+
+    const invalidManualAllocation = plRows
+      .flatMap((row) => row.sizeRows)
+      .find((sizeRow) => {
+        if (sizeRow.allocation_source !== 'MANUAL_OVERRIDE') return false
+        const rowQty = Number(sizeRow.qty || 0)
+        const mobTarget = Number(sizeRow.mob_target_qty)
+        const oiTarget = Number(sizeRow.oi_target_qty)
+        const reason = String(sizeRow.allocation_reason || '').trim()
+        const postedMobQty = packedQtyByTargetKey.get(getTargetKey(sizeRow.breakdown_row_id, 'MOB')) || 0
+        const postedOiQty = packedQtyByTargetKey.get(getTargetKey(sizeRow.breakdown_row_id, 'OI')) || 0
+
+        return (
+          !reason ||
+          !Number.isFinite(mobTarget) ||
+          !Number.isFinite(oiTarget) ||
+          mobTarget < 0 ||
+          oiTarget < 0 ||
+          mobTarget + oiTarget !== rowQty ||
+          mobTarget < postedMobQty ||
+          oiTarget < postedOiQty
+        )
+      })
+
+    if (invalidManualAllocation) {
+      setError('Review Manual Allocation before saving. Manual override needs valid targets, reason, and cannot be lower than posted Item Storing qty.')
       setSuccess('')
       return
     }
@@ -2714,32 +4392,11 @@ export default function PackingListSizeBreakdownPage() {
       }
     }
 
-    let nextReturnKoliSequence = 1
-    if (returnPayload.some((row) => !row.koli_sequence)) {
-      const { data: latestReturnRows, error: sequenceError } = await supabase
-        .from('warehouse_returns')
-        .select('koli_sequence')
-        .eq('inbound_id', selectedCard.inbound_id)
-
-      if (sequenceError) {
-        setSaving(false)
-        setError(sequenceError.message || 'Failed to assign PL return Koli number.')
-        return
-      }
-
-      nextReturnKoliSequence =
-        (latestReturnRows || []).reduce(
-          (max, row) => Math.max(max, Number(row.koli_sequence || 0)),
-          0
-        ) + 1
-    }
-
     for (const row of returnPayload) {
-      const assignedKoliSequence = row.koli_sequence || nextReturnKoliSequence++
       const warehouseReturnPayload = {
         inbound_id: row.inbound_id,
         source_phase: PL_RETURN_SOURCE_PHASE,
-        koli_sequence: assignedKoliSequence,
+        koli_sequence: row.koli_sequence || null,
         brand_id: row.brand_id,
         category_id: row.category_id,
         model_name: row.model_name,
@@ -2807,6 +4464,7 @@ export default function PackingListSizeBreakdownPage() {
     const savedRows = buildRowsForCard(selectedCard, nextBreakdownRows, nextReturnRows)
     setPlRows(savedRows)
     setBaselineSignature(serializePlRows(savedRows))
+    closeAllocationModal(true)
     setSuccess('PL size breakdown saved.')
   }
 
@@ -2823,7 +4481,7 @@ export default function PackingListSizeBreakdownPage() {
     }))
 
     return rowsWithAllPlIds
-      .map(({ plRow, allPlId }) => {
+      .map(({ plRow, allPlId }, plRowIndex) => {
         const hasSavedBreakdown = plRow.sizeRows.some((sizeRow) => sizeRow.breakdown_row_id)
         const savedPlName = String(plRow.pl_name || '').trim()
         const isDefaultVariantOnlyName = normalize(savedPlName) === normalize(card.catalogName)
@@ -2836,7 +4494,7 @@ export default function PackingListSizeBreakdownPage() {
         const totalQty = sizes.reduce((sum, size) => sum + Number(size.qty || 0), 0)
 
         return {
-          key: `${card.key}-${plRow.id}`,
+          key: `${card.key}-${plRow.id || 'pl-row'}-${plRowIndex}`,
           cardKey: card.key,
           pl_id: allPlId,
           photo_url: plRow.pl_photo_url || card.photo_url,
@@ -2863,6 +4521,29 @@ export default function PackingListSizeBreakdownPage() {
       .map((sizeRow) => Number(sizeRow.breakdown_row_id || 0))
       .filter(Boolean)
   )
+  const breakdownDisplayById = new Map()
+  displayCards.forEach((card) => {
+    const cardRows = buildRowsForCard(card)
+    cardRows.forEach((plRow) => {
+      const plId = computePlLabel(card, plRow, cardRows.length)
+      const modelVariantLabel = getOverviewModelVariantLabel(card)
+      const savedPlName = String(plRow.pl_name || '').trim()
+      const isDefaultVariantOnlyName = normalize(savedPlName) === normalize(card.catalogName)
+      const itemName = savedPlName && !isDefaultVariantOnlyName ? savedPlName : modelVariantLabel
+
+      ;(plRow.sizeRows || []).forEach((sizeRow) => {
+        const breakdownId = Number(sizeRow.breakdown_row_id || 0)
+        if (!breakdownId) return
+        breakdownDisplayById.set(breakdownId, {
+          pl_id: plId,
+          brand_name: card.brand_name || 'UNBRANDED',
+          category_path: getCategoryPathLabel(card) || '-',
+          item_name: itemName || '-',
+          photo_url: plRow.pl_photo_url || card.photo_url || '',
+        })
+      })
+    })
+  })
   const packingKoliRows = Array.from(
     packingRows
       .filter((row) => {
@@ -2874,19 +4555,24 @@ export default function PackingListSizeBreakdownPage() {
       })
       .reduce((result, row) => {
         const sourceBreakdown = breakdownById.get(Number(row.pl_size_breakdown_id || 0)) || {}
-        const groupKey = row.packing_group_key || `${row.storing_type || 'MOB'}-${row.package_type || 'REGULAR'}-${row.brand_id || 'none'}-${row.koli_label || row.koli_sequence || '-'}`
+        const displayInfo = breakdownDisplayById.get(Number(row.pl_size_breakdown_id || 0)) || {}
+        const groupKey = row.packing_group_key || `${row.storing_type || 'MOB'}-${row.package_type || 'REGULAR'}-${row.brand_code || 'none'}-${row.koli_sequence || '-'}`
         const current = result.get(groupKey) || {
           key: groupKey,
           storing_type: row.storing_type || 'MOB',
           package_type: row.package_type || 'REGULAR',
-          koli_label: row.koli_label || (row.koli_sequence ? String(row.koli_sequence) : '-'),
+          koli_sequence: row.koli_sequence || null,
           total_qty: 0,
           items: [],
         }
         current.total_qty += Number(row.qty || 0)
         current.items.push({
           id: row.id,
-          item_name: row.pl_name || sourceBreakdown.pl_name || sourceBreakdown.variant_name || sourceBreakdown.model_name || 'PL Item',
+          pl_id: displayInfo.pl_id || '-',
+          brand_name: displayInfo.brand_name || 'UNBRANDED',
+          category_path: displayInfo.category_path || '-',
+          source_variant_code: row.source_variant_code || sourceBreakdown.source_variant_code || '',
+          item_name: row.pl_name || displayInfo.item_name || sourceBreakdown.pl_name || sourceBreakdown.variant_name || sourceBreakdown.model_name || 'PL Item',
           size_label: normalizeSizeLabel(row.size_label || sourceBreakdown.size_label),
           qty: Number(row.qty || 0),
           packed_by: row.packed_by || '-',
@@ -2895,10 +4581,220 @@ export default function PackingListSizeBreakdownPage() {
         return result
       }, new Map())
       .values()
-  ).sort((a, b) => `${a.storing_type}-${a.package_type}-${a.koli_label}`.localeCompare(`${b.storing_type}-${b.package_type}-${b.koli_label}`, undefined, { numeric: true }))
+  ).sort((a, b) => `${a.storing_type}-${a.package_type}-${a.koli_sequence || '-'}`.localeCompare(`${b.storing_type}-${b.package_type}-${b.koli_sequence || '-'}`, undefined, { numeric: true }))
+  const packingKoliTableRows = packingKoliRows.flatMap((koliRow) =>
+    koliRow.items.map((item, itemIndex) => {
+      const previousItem = koliRow.items[itemIndex - 1] || null
+      const itemKey = `${normalize(item.brand_name)}::${normalize(item.item_name)}`
+      const previousItemKey = previousItem ? `${normalize(previousItem.brand_name)}::${normalize(previousItem.item_name)}` : ''
+      const isFirstKoliRow = itemIndex === 0
+      const isFirstItemRow = isFirstKoliRow || itemKey !== previousItemKey
+      return {
+        ...item,
+        key: `${koliRow.key}-${item.id || 'item'}-${itemIndex}`,
+        koliKey: koliRow.key,
+        storing_type: koliRow.storing_type,
+        package_type: koliRow.package_type,
+        koli_sequence: koliRow.koli_sequence,
+        koli_total_qty: koliRow.total_qty,
+        isFirstKoliRow,
+        isFirstItemRow,
+      }
+    })
+  )
+  const printSections = buildPrintSections()
+  const printableSectionOptions = printSections.map((section) => ({
+    key: section.key,
+    label: section.grn_number || section.title || '-',
+  }))
+  const hasFilteredPrintData = printSections.some((section) => {
+    const payload = overviewMode === 'koli' ? buildPrintKoliGroups(section.cards) : buildPrintRowsForCards(section.cards)
+    return overviewMode === 'koli'
+      ? Boolean(payload.koliGroups?.length)
+      : Boolean(payload.modelRows?.length)
+  })
+  const selectedKoliPrintRows = packingKoliRows.filter((row) => selectedKoliPrintKeys.includes(row.key))
+  const activePrintGrnNumber = pageMode === 'multipage'
+    ? activeMultipageGroup?.print_label || initialGrn || '-'
+    : initialGrn || '-'
+  const canOpenPrintModal = viewMode === 'table' && !saving && !printingPdf && (hasFilteredPrintData || packingKoliRows.length)
+  const canPrintPackingListFromView = overviewMode === 'model'
+  const canPrintPlCardFromView = overviewMode === 'koli'
+
+  function toggleKoliPrintSelection(koliKey) {
+    setSelectedKoliPrintKeys((prev) =>
+      prev.includes(koliKey)
+        ? prev.filter((key) => key !== koliKey)
+        : [...prev, koliKey]
+    )
+  }
+
+  function openPrintModal() {
+    if (!canOpenPrintModal) return
+    setPrintType(overviewMode === 'koli' ? 'pl_card' : 'packing_list')
+    setPrintRange(pageMode === 'multipage' ? 'all' : 'all')
+    setPrintSectionKey((current) => current || printableSectionOptions[0]?.key || '')
+    setPrintModalOpen(true)
+  }
+
+  function closePrintModal() {
+    if (printingPdf) return
+    setPrintModalOpen(false)
+  }
+
+  function getKoliPrintReference(item) {
+    const categoryLabel = getBottomCategoryLabel(item.category_path) || item.item_name || ''
+    return [item.brand_name, categoryLabel]
+      .filter(Boolean)
+      .map((part) => toPdfTitleCase(part))
+      .join(' ')
+  }
+
+  function getPrintGrnNumberForKoli(koliRow = {}) {
+    const firstItem = koliRow.items?.[0] || {}
+    const matchedGroup = multipageGroups.find((group) =>
+      normalize(group.brand_name) === normalize(firstItem.brand_name) &&
+      normalize(group.category_path_label) === normalize(firstItem.category_path)
+    )
+    return matchedGroup?.print_label || activePrintGrnNumber
+  }
+
+  function handlePrintPackingKoliCards(koliRows = selectedKoliPrintRows) {
+    if (!koliRows.length) return
+
+    const printWindow = window.open('', '_blank', 'width=720,height=820')
+    if (!printWindow) {
+      setError('Print window was blocked by the browser.')
+      setSuccess('')
+      return
+    }
+
+    const cardsHtml = koliRows.map((koliRow) => {
+      const koliTitle = getPackingKoliTitle(koliRow)
+      const groupLabel = normalize(koliRow.storing_type || 'MOB') || 'MOB'
+      const cardGrnNumber = getPrintGrnNumberForKoli(koliRow)
+      const totalQty = koliRow.items.reduce((sum, item) => sum + Number(item.qty || 0), 0)
+      const picList = Array.from(new Set(koliRow.items.map((item) => getFirstName(item.packed_by)).filter((name) => name && name !== '-')))
+      const highlightsHtml = Array.from(new Set(koliRow.items.map((item) => getKoliPrintReference(item))))
+        .map((reference) => `<div>${escapeHtml(reference)}</div>`)
+        .join('')
+      const rowsHtml = koliRow.items
+        .map((item) => `
+        <tr>
+          <td>${escapeHtml(item.brand_name || '-')}</td>
+          <td>${escapeHtml(item.source_variant_code || '-')}</td>
+          <td>${escapeHtml(item.item_name || '-')}</td>
+          <td class="center">${escapeHtml(item.size_label || '-')}</td>
+          <td class="qty">${escapeHtml(formatPdfQty(item.qty || 0))}</td>
+        </tr>
+      `)
+        .join('')
+
+      return `
+    <section class="card">
+      <div class="titleRow">
+        <h1>Packing List Card</h1>
+        <span class="group">${escapeHtml(groupLabel)}</span>
+      </div>
+      <div class="meta">
+        <div class="box"><span class="label">GRN Number</span><span class="value">${escapeHtml(cardGrnNumber)}</span></div>
+        <div class="box"><span class="label">Koli</span><span class="value">${escapeHtml(koliTitle)}</span></div>
+      </div>
+      <div class="highlight">${highlightsHtml || '-'}</div>
+      <table>
+        <thead>
+          <tr>
+            <th>Brand</th>
+            <th>Variant Code</th>
+            <th>Item</th>
+            <th>Size</th>
+            <th>Qty</th>
+          </tr>
+        </thead>
+        <tbody>${rowsHtml}</tbody>
+      </table>
+      <div class="total">
+        <span class="totalLabel">Total Qty</span>
+        <span class="totalValue">${escapeHtml(formatPdfQty(totalQty))}</span>
+      </div>
+      <div class="footer">
+        <span class="footerLabel">PIC Koli</span>
+        <span class="footerValue">${escapeHtml(picList.join(', ') || '-')}</span>
+      </div>
+    </section>`
+    }).join('')
+    const fontBaseUrl = `${window.location.origin}/fonts/open-sans`
+
+    const printHtml = `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Packing List Card</title>
+    <style>
+      @page { size: A6 portrait; margin: 8mm; }
+      @font-face { font-family: 'Open Sans'; src: url('${fontBaseUrl}/OpenSans-Regular.ttf') format('truetype'); font-weight: 400; }
+      @font-face { font-family: 'Open Sans'; src: url('${fontBaseUrl}/OpenSans-SemiBold.ttf') format('truetype'); font-weight: 700; }
+      :root { --ink: #0f172a; --muted: #64748b; --line: #cbd5e1; --soft: #f8fafc; --accent: #0f766e; }
+      * { box-sizing: border-box; }
+      body { margin: 0; color: var(--ink); font-family: 'Open Sans', Arial, sans-serif; }
+      .card { width: 100%; border: 2px solid var(--ink); border-radius: 14px; padding: 14px; page-break-after: always; }
+      .card:last-child { page-break-after: auto; }
+      .titleRow { display: flex; align-items: center; justify-content: center; gap: 8px; margin-bottom: 12px; }
+      h1 { margin: 0; font-size: 33px; line-height: 1.02; font-weight: 1000; text-align: center; letter-spacing: 0.01em; -webkit-text-stroke: 0.62px var(--ink); }
+      .meta { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px; }
+      .box { border: 1px solid var(--line); border-radius: 10px; padding: 8px; background: var(--soft); min-height: 48px; }
+      .label { display: block; color: var(--muted); font-size: 9px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }
+      .value { display: block; margin-top: 3px; font-size: 16px; font-weight: 800; }
+      .highlight { margin: 0 0 10px; color: var(--ink); font-size: 22px; font-weight: 950; line-height: 1.12; text-align: left; -webkit-text-stroke: 0.18px var(--ink); }
+      .group { display: inline-flex; align-items: center; min-height: 24px; padding: 0 10px; border-radius: 999px; background: #ecfeff; color: #0e7490; font-size: 11px; font-weight: 900; white-space: nowrap; }
+      table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+      th, td { border: 1px solid var(--line); padding: 7px; font-size: 11px; vertical-align: middle; }
+      th { background: var(--ink); color: #fff; font-weight: 800; text-align: center; }
+      td:first-child { font-weight: 700; }
+      .center { text-align: center; }
+      .qty { text-align: center; font-weight: 800; font-variant-numeric: tabular-nums; }
+      .total { margin-top: 10px; border: 2px solid var(--ink); border-radius: 12px; padding: 8px; text-align: center; }
+      .totalLabel { display: block; color: var(--muted); font-size: 10px; font-weight: 800; letter-spacing: 0.05em; text-transform: uppercase; }
+      .totalValue { display: block; margin-top: 4px; font-size: 42px; line-height: 1; font-weight: 800; font-variant-numeric: tabular-nums; }
+      .footer { margin-top: 6px; display: grid; grid-template-columns: 72px 1fr; gap: 8px; font-size: 10px; }
+      .footerLabel { color: var(--muted); font-weight: 800; text-transform: uppercase; }
+      .footerValue { font-weight: 700; }
+    </style>
+  </head>
+  <body>
+    ${cardsHtml}
+    <script>window.onload = function () { window.print(); };</script>
+  </body>
+</html>`
+
+    printWindow.document.open()
+    printWindow.document.write(printHtml)
+    printWindow.document.close()
+  }
+
+  async function handlePrintSubmit() {
+    if (printType === 'pl_card') {
+      if (!canPrintPlCardFromView) return
+      if (!selectedKoliPrintRows.length) return
+      handlePrintPackingKoliCards(selectedKoliPrintRows)
+      setPrintModalOpen(false)
+      return
+    }
+
+    if (!canPrintPackingListFromView) return
+    await handlePrintPdf({
+      sectionKey: pageMode === 'multipage' && printRange === 'certain' ? printSectionKey : '',
+    })
+    setPrintModalOpen(false)
+  }
+
   const editorReceivingQty = Number(selectedCard?.receiving_qty || 0)
   const editorBreakdownQty = getPlRowsBreakdownQty(plRows)
   const editorRemainingQty = editorReceivingQty - editorBreakdownQty
+  const allocationOverrideCount = plRows.reduce(
+    (sum, row) => sum + row.sizeRows.filter((sizeRow) => sizeRow.allocation_source === 'MANUAL_OVERRIDE').length,
+    0
+  )
   const saveFeedbackMessage = saving ? 'Saving PL size breakdown...' : error || success
   const saveFeedbackColor = saving ? '#475569' : error ? '#dc2626' : '#047857'
   const hasEditorUnsavedChanges = hasUnsavedChanges()
@@ -2940,23 +4836,6 @@ export default function PackingListSizeBreakdownPage() {
           </div>
 
           <div style={styles.headerActions}>
-            <button
-              type="button"
-              onClick={openEditForm}
-              disabled={saving}
-              style={{
-                ...styles.secondaryButton,
-                ...(viewMode !== 'table' ? styles.modeButtonActive : {}),
-                ...(viewMode !== 'table' ? { background: '#fff', color: '#dc2626', borderColor: '#fecaca' } : {}),
-                ...(saving ? styles.disabledButton : {}),
-                fontSize: 0,
-              }}
-              title={viewMode === 'table' ? 'Edit Form' : 'Back to Overview'}
-              aria-label={viewMode === 'table' ? 'Edit Form' : 'Back to Overview'}
-            >
-              <span style={{ fontSize: '13px' }}>{viewMode === 'table' ? 'Edit' : 'Cancel Edit'}</span>
-              ✎
-            </button>
             {viewMode === 'table' ? (
               <button
                 type="button"
@@ -2975,6 +4854,72 @@ export default function PackingListSizeBreakdownPage() {
                   <path d="M9 5C9 3.9 9.9 3 11 3H13C14.1 3 15 3.9 15 5V6.5H9V5Z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
                   <path d="M9 12H15" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
                   <path d="M9 16H14" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                </svg>
+              </button>
+            ) : null}
+            <button
+              type="button"
+              onClick={openEditForm}
+              disabled={saving}
+              style={
+                viewMode !== 'table'
+                  ? { ...styles.toolIconButton, display: 'none' }
+                  : saving
+                    ? { ...styles.toolIconButton, ...styles.disabledButton }
+                    : styles.toolIconButton
+              }
+              title={viewMode === 'table' ? 'Edit Form' : 'Back to Overview'}
+              aria-label={viewMode === 'table' ? 'Edit Form' : 'Back to Overview'}
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M4 20H8L19 9C20.1 7.9 20.1 6.1 19 5C17.9 3.9 16.1 3.9 15 5L4 16V20Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                <path d="M13.5 6.5L17.5 10.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+              </svg>
+            </button>
+            {viewMode !== 'table' ? (
+              <>
+              <button
+                type="button"
+                onClick={openAllocationModal}
+                disabled={saving || !selectedCard}
+                style={
+                  saving || !selectedCard
+                    ? { ...styles.secondaryButton, ...styles.compactActionButton, ...styles.disabledButton }
+                    : { ...styles.secondaryButton, ...styles.compactActionButton }
+                }
+              >
+                Manual Allocation{allocationOverrideCount ? ` (${allocationOverrideCount})` : ''}
+              </button>
+              <button
+                type="button"
+                onClick={openEditForm}
+                disabled={saving}
+                style={saving ? { ...styles.iconButton, ...styles.disabledButton } : styles.iconButton}
+                title="Cancel Edit"
+                aria-label="Cancel Edit"
+              >
+                X
+              </button>
+              </>
+            ) : null}
+            {viewMode === 'table' ? (
+              <button
+                type="button"
+                onClick={openPrintModal}
+                disabled={!canOpenPrintModal}
+                style={
+                  !canOpenPrintModal
+                    ? { ...styles.toolIconButton, ...styles.disabledButton }
+                    : styles.toolIconButton
+                }
+                title={printingPdf ? 'Preparing PDF' : 'Print'}
+                aria-label={printingPdf ? 'Preparing PDF' : 'Print'}
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path d="M7 8V4H17V8" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                  <path d="M7 17H5C3.9 17 3 16.1 3 15V11C3 9.9 3.9 9 5 9H19C20.1 9 21 9.9 21 11V15C21 16.1 20.1 17 19 17H17" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                  <path d="M7 14H17V20H7V14Z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
+                  <path d="M18 12H18.01" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
                 </svg>
               </button>
             ) : null}
@@ -3047,7 +4992,7 @@ export default function PackingListSizeBreakdownPage() {
                   type="button"
                   onClick={() => {
                     setPageMode('multipage')
-                    setSelectedMultipageKey((current) => current || multipageGroups[0]?.key || '')
+                    setSelectedMultipageKey((current) => current || visibleMultipageGroups[0]?.key || '')
                     setModelFilters((prev) => ({ ...prev, brand: '', categoryPath: '' }))
                   }}
                   style={{
@@ -3116,9 +5061,9 @@ export default function PackingListSizeBreakdownPage() {
               </button>
             </div>
             <div style={pageMode === 'multipage' ? styles.multipageTableShell : undefined}>
-              {pageMode === 'multipage' && multipageGroups.length ? (
+              {pageMode === 'multipage' && visibleMultipageGroups.length ? (
                 <div style={styles.multipageTabs} role="tablist" aria-label="Packing List pages">
-                  {multipageGroups.map((group) => {
+                  {visibleMultipageGroups.map((group) => {
                     const isActive = (activeMultipageGroup?.key || '') === group.key
                     const pageTitle = [group.brand_name, group.category_path_label].filter(Boolean).join(' / ')
                     return (
@@ -3213,29 +5158,65 @@ export default function PackingListSizeBreakdownPage() {
                     <table style={styles.table}>
                       <thead>
                         <tr>
+                          <th style={styles.th}>Select</th>
                           <th style={styles.th}>Koli</th>
+                          <th style={styles.th}>Brand Name</th>
                           <th style={styles.th}>Items</th>
+                          <th style={styles.th}>Size</th>
+                          <th style={styles.th}>Qty / Size</th>
                           <th style={styles.th}>Total Qty</th>
                           <th style={styles.th}>PIC</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {packingKoliRows.map((row) => (
-                          <tr key={row.key}>
-                            <td style={styles.td}>{row.storing_type} / {row.package_type === 'PHOTO' ? 'Foto' : `Koli ${row.koli_label}`}</td>
-                            <td style={{ ...styles.td, textAlign: 'left' }}>
-                              <span style={styles.sizeSummary}>
-                                {row.items.map((item) => (
-                                  <span key={`${row.key}-${item.id}`} style={styles.sizeChip}>
-                                    {item.item_name} / {item.size_label}: {item.qty}
+                        {packingKoliTableRows.map((row) => {
+                          const dividerStyle = row.isFirstKoliRow
+                            ? styles.koliDividerCell
+                            : row.isFirstItemRow
+                              ? styles.itemDividerCell
+                              : {}
+                          return (
+                            <tr key={row.key}>
+                              <td style={{ ...styles.td, ...dividerStyle }}>
+                                {row.isFirstKoliRow ? (
+                                  <span style={styles.koliSelectCell}>
+                                    <input
+                                      type="checkbox"
+                                      checked={selectedKoliPrintKeys.includes(row.koliKey)}
+                                      onChange={() => toggleKoliPrintSelection(row.koliKey)}
+                                      style={styles.koliCheckbox}
+                                      aria-label={`Select ${getPackingKoliTitle(row)} for PL Card print`}
+                                    />
                                   </span>
-                                ))}
-                              </span>
-                            </td>
-                            <td style={styles.td}>{row.total_qty}</td>
-                            <td style={styles.td}>{row.items[0]?.packed_by || '-'}</td>
-                          </tr>
-                        ))}
+                                ) : null}
+                              </td>
+                              <td style={{ ...styles.td, ...dividerStyle }}>
+                                {row.isFirstKoliRow ? (
+                                  <span style={styles.koliTitleCell}>
+                                    <span style={styles.koliName}>{getPackingKoliTitle(row)}</span>
+                                    <span style={styles.koliModePill}>{row.storing_type}</span>
+                                  </span>
+                                ) : null}
+                              </td>
+                              <td style={{ ...styles.td, ...dividerStyle }}>
+                                {row.isFirstItemRow ? row.brand_name : null}
+                              </td>
+                              <td style={{ ...styles.td, ...dividerStyle, textAlign: 'left' }}>
+                                {row.isFirstItemRow ? (
+                                  <span style={styles.koliItemText}>{row.item_name}</span>
+                                ) : null}
+                              </td>
+                              <td style={{ ...styles.td, ...dividerStyle }}>
+                                <span style={styles.koliFlatValue}>{row.size_label || '-'}</span>
+                              </td>
+                              <td style={{ ...styles.td, ...dividerStyle }}>
+                                <span style={styles.koliFlatValue}>{row.qty}</span>
+                              </td>
+                              <td style={{ ...styles.td, ...dividerStyle }}>{row.isFirstKoliRow ? row.koli_total_qty : null}</td>
+                              <td style={{ ...styles.td, ...dividerStyle }}>{row.isFirstKoliRow ? getFirstName(row.packed_by) : null}</td>
+                            </tr>
+                          )
+                        })}
                       </tbody>
                     </table>
                   </div>
@@ -3624,6 +5605,282 @@ export default function PackingListSizeBreakdownPage() {
           </div>
         ) : null}
       </section>
+      {printModalOpen ? (
+        <div style={styles.previewOverlay} onClick={closePrintModal}>
+          <div style={styles.printModal} onClick={(event) => event.stopPropagation()}>
+            <div style={styles.modalHeader}>
+              <div>
+                <p style={styles.eyebrow}>Print</p>
+                <h2 style={styles.modalTitle}>What do you want to print?</h2>
+              </div>
+              <div style={styles.modalActionGroup}>
+                <button type="button" onClick={closePrintModal} style={styles.secondaryButton} disabled={printingPdf}>
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handlePrintSubmit}
+                  disabled={
+                    printingPdf ||
+                    (printType === 'packing_list' && (!canPrintPackingListFromView || !hasFilteredPrintData)) ||
+                    (printType === 'pl_card' && (!canPrintPlCardFromView || !selectedKoliPrintRows.length))
+                  }
+                  style={
+                    printingPdf ||
+                    (printType === 'packing_list' && (!canPrintPackingListFromView || !hasFilteredPrintData)) ||
+                    (printType === 'pl_card' && (!canPrintPlCardFromView || !selectedKoliPrintRows.length))
+                      ? { ...styles.primaryButton, ...styles.disabledButton }
+                      : styles.primaryButton
+                  }
+                >
+                  {printingPdf ? 'Preparing...' : 'Print'}
+                </button>
+              </div>
+            </div>
+
+            <div style={styles.printModalBody}>
+              <div style={styles.printChoiceGrid}>
+                <button
+                  type="button"
+                  onClick={() => canPrintPackingListFromView ? setPrintType('packing_list') : null}
+                  disabled={!canPrintPackingListFromView}
+                  style={{
+                    ...styles.printChoiceButton,
+                    ...(printType === 'packing_list' ? styles.printChoiceButtonActive : {}),
+                    ...(!canPrintPackingListFromView ? styles.disabledButton : {}),
+                  }}
+                >
+                  Packing List
+                </button>
+                <button
+                  type="button"
+                  onClick={() => canPrintPlCardFromView ? setPrintType('pl_card') : null}
+                  disabled={!canPrintPlCardFromView}
+                  style={{
+                    ...styles.printChoiceButton,
+                    ...(printType === 'pl_card' ? styles.printChoiceButtonActive : {}),
+                    ...(!canPrintPlCardFromView ? styles.disabledButton : {}),
+                  }}
+                >
+                  PL Card
+                </button>
+              </div>
+
+              {printType === 'packing_list' ? (
+                <>
+                  {pageMode === 'multipage' ? (
+                    <div style={styles.segmentedToggle} role="tablist" aria-label="Packing List print range">
+                      <button
+                        type="button"
+                        onClick={() => setPrintRange('all')}
+                        style={{
+                          ...styles.segmentedButton,
+                          ...(printRange === 'all' ? styles.segmentedButtonActive : {}),
+                        }}
+                      >
+                        Print All
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPrintRange('certain')
+                          setPrintSectionKey((current) => current || printableSectionOptions[0]?.key || '')
+                        }}
+                        style={{
+                          ...styles.segmentedButton,
+                          ...(printRange === 'certain' ? styles.segmentedButtonActive : {}),
+                        }}
+                      >
+                        Print Certain Packing List
+                      </button>
+                    </div>
+                  ) : null}
+                  {pageMode === 'multipage' && printRange === 'certain' ? (
+                    <label style={styles.field}>
+                      <span style={styles.label}>Packing List Page</span>
+                      <select
+                        value={printSectionKey || printableSectionOptions[0]?.key || ''}
+                        onChange={(event) => setPrintSectionKey(event.target.value)}
+                        style={styles.input}
+                        disabled={!printableSectionOptions.length}
+                      >
+                        {printableSectionOptions.map((section) => (
+                          <option key={section.key} value={section.key}>
+                            {section.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  ) : null}
+                  {!hasFilteredPrintData ? <p style={styles.errorText}>No Packing List data matches the current filters.</p> : null}
+                </>
+              ) : (
+                <>
+                  <p style={styles.emptyText}>
+                    {selectedKoliPrintRows.length
+                      ? `${selectedKoliPrintRows.length} koli selected for PL Card.`
+                      : 'Select at least one koli from the Koli table first.'}
+                  </p>
+                  {!packingKoliRows.length ? <p style={styles.errorText}>No Koli data matches the current filters.</p> : null}
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      ) : null}
+      {allocationModalOpen ? (
+        <div style={styles.previewOverlay} onClick={() => closeAllocationModal()}>
+          <div style={styles.allocationModal} onClick={(event) => event.stopPropagation()}>
+            <div style={styles.modalHeader}>
+              <div>
+                <p style={styles.eyebrow}>Manual</p>
+                <div style={styles.modalTitleGroup}>
+                  <h2 style={styles.modalTitle}>Allocation</h2>
+                  <div style={styles.allocationPresetRow}>
+                    <button
+                      type="button"
+                      onClick={() => applyAllocationPreset('default')}
+                      onMouseEnter={() => setAllocationHoveredPreset('default')}
+                      onMouseLeave={() => setAllocationHoveredPreset('')}
+                      onFocus={() => setAllocationHoveredPreset('default')}
+                      onBlur={() => setAllocationHoveredPreset('')}
+                      style={{
+                        ...styles.allocationPresetButton,
+                        ...(allocationHoveredPreset === 'default' ? styles.allocationPresetButtonHover : {}),
+                        ...(allocationActivePreset === 'default' ? styles.allocationPresetButtonActive : {}),
+                      }}
+                    >
+                      DEFAULT
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => applyAllocationPreset('mob')}
+                      onMouseEnter={() => setAllocationHoveredPreset('mob')}
+                      onMouseLeave={() => setAllocationHoveredPreset('')}
+                      onFocus={() => setAllocationHoveredPreset('mob')}
+                      onBlur={() => setAllocationHoveredPreset('')}
+                      style={{
+                        ...styles.allocationPresetButton,
+                        ...(allocationHoveredPreset === 'mob' ? styles.allocationPresetButtonHover : {}),
+                        ...(allocationActivePreset === 'mob' ? styles.allocationPresetButtonActive : {}),
+                      }}
+                    >
+                      ALL MOB
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => applyAllocationPreset('oi')}
+                      onMouseEnter={() => setAllocationHoveredPreset('oi')}
+                      onMouseLeave={() => setAllocationHoveredPreset('')}
+                      onFocus={() => setAllocationHoveredPreset('oi')}
+                      onBlur={() => setAllocationHoveredPreset('')}
+                      style={{
+                        ...styles.allocationPresetButton,
+                        ...(allocationHoveredPreset === 'oi' ? styles.allocationPresetButtonHover : {}),
+                        ...(allocationActivePreset === 'oi' ? styles.allocationPresetButtonActive : {}),
+                      }}
+                    >
+                      ALL OI
+                    </button>
+                  </div>
+                </div>
+              </div>
+              <div style={styles.modalActionGroup}>
+                <button type="button" onClick={() => closeAllocationModal()} style={styles.secondaryButton}>
+                  Cancel
+                </button>
+                <button type="button" onClick={applyAllocationOverride} style={styles.primaryButton}>
+                  Apply
+                </button>
+              </div>
+            </div>
+
+            <div style={styles.allocationModalBody}>
+            <div style={styles.allocationTableWrap}>
+              <table style={styles.allocationTable}>
+                <thead>
+                  <tr>
+                    <th style={{ ...styles.th, ...styles.allocationStickyTh }}>Photo</th>
+                    <th style={{ ...styles.th, ...styles.allocationStickyTh }}>PL ID</th>
+                    <th style={{ ...styles.th, ...styles.allocationStickyTh, textAlign: 'left' }}>Item</th>
+                    <th style={{ ...styles.th, ...styles.allocationStickyTh }}>Size</th>
+                    <th style={{ ...styles.th, ...styles.allocationStickyTh }}>Total</th>
+                    <th style={{ ...styles.th, ...styles.allocationStickyTh }}>MOB</th>
+                    <th style={{ ...styles.th, ...styles.allocationStickyTh }}>OI</th>
+                    <th style={{ ...styles.th, ...styles.allocationStickyTh }}>Posted</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {allocationDraftRows.map((row) => (
+                    <tr key={row.key}>
+                      <td style={styles.allocationTd}>
+                        {row.photo_url ? (
+                          <button
+                            type="button"
+                            onClick={() => setPreviewPhoto({ src: row.photo_url, alt: row.pl_name || 'Manual adjustment photo' })}
+                            style={styles.allocationPhotoButton}
+                            aria-label="Preview photo"
+                          >
+                            <Image src={row.photo_url} alt={row.pl_name || 'Manual adjustment photo'} width={44} height={44} unoptimized style={styles.allocationPhoto} />
+                          </button>
+                        ) : (
+                          <span style={styles.allocationNoPhoto}>NO</span>
+                        )}
+                      </td>
+                      <td style={styles.allocationTd}>{row.pl_id}</td>
+                      <td style={{ ...styles.allocationTd, textAlign: 'left' }}>{row.pl_name || '-'}</td>
+                      <td style={styles.allocationTd}>{row.size_label}</td>
+                      <td style={styles.allocationTd}>{row.qty}</td>
+                      <td style={styles.allocationTd}>
+                        <input
+                          type="number"
+                          min="0"
+                          max={row.qty}
+                          value={row.mob_qty}
+                          onChange={(event) => updateAllocationDraftQty(row.key, 'mob_qty', event.target.value)}
+                          style={styles.allocationInput}
+                        />
+                      </td>
+                      <td style={styles.allocationTd}>
+                        <input
+                          type="number"
+                          min="0"
+                          max={row.qty}
+                          value={row.oi_qty}
+                          onChange={(event) => updateAllocationDraftQty(row.key, 'oi_qty', event.target.value)}
+                          style={styles.allocationInput}
+                        />
+                      </td>
+                      <td style={styles.allocationTd}>
+                        MOB {row.posted_mob_qty} / OI {row.posted_oi_qty}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <label style={styles.field}>
+              <span style={styles.label}>Reason</span>
+              <textarea
+                value={allocationReason}
+                onChange={(event) => {
+                  setAllocationReason(event.target.value.toUpperCase())
+                  setAllocationError('')
+                  setAllocationActivePreset('')
+                }}
+                style={styles.textarea}
+                placeholder="REQUIRED FOR MANUAL OVERRIDE"
+              />
+            </label>
+
+              <div style={styles.modalFeedback}>
+                {allocationError ? <p style={styles.errorText}>{allocationError}</p> : null}
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
       {previewPhoto ? (
         <div style={styles.previewOverlay} onClick={() => setPreviewPhoto(null)}>
           <div style={styles.previewFrame} onClick={(event) => event.stopPropagation()}>

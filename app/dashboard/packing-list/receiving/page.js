@@ -4,6 +4,7 @@ import Image from 'next/image'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import { useEffect, useMemo, useState } from 'react'
 import { createClient } from '@/utils/supabase/browser'
+import { getProfileByAuthenticatedUser } from '@/utils/user-profiles'
 
 const supabase = createClient()
 
@@ -1179,6 +1180,25 @@ export default function PackingListReceivingPage() {
       router.replace('/dashboard/packing-list')
     }
   }, [initialGrn, router])
+
+  useEffect(() => {
+    async function enforceStaffRoute() {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser()
+
+      if (!user) return
+
+      const { data: profile } = await getProfileByAuthenticatedUser(supabase, user, 'role')
+      const isStaff = String(profile?.role || '').trim() === 'packing_staff'
+
+      if (isStaff && !isInputRoute && initialGrn) {
+        router.replace(`/dashboard/packing-list/receiving/input?grn=${encodeURIComponent(initialGrn)}`)
+      }
+    }
+
+    enforceStaffRoute()
+  }, [initialGrn, isInputRoute, router])
 
   useEffect(() => {
     setGrnFilter(initialGrn)

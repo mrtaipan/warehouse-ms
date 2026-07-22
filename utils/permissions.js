@@ -253,6 +253,9 @@ const DEFAULT_ROLE_BUNDLES = {
     'packing.receiving.edit',
     'packing.size_breakdown.view',
     'packing.size_breakdown.edit',
+    'storage.restock_submit.view',
+    'storage.restock_submit.add',
+    'storage.restock_submit.edit',
   ],
   packing_staff: [
     'dashboard.home.view',
@@ -263,6 +266,9 @@ const DEFAULT_ROLE_BUNDLES = {
     'packing.receiving.edit',
     'packing.size_breakdown.view',
     'packing.size_breakdown.edit',
+    'storage.restock_submit.view',
+    'storage.restock_submit.add',
+    'storage.restock_submit.edit',
   ],
   qc_coordinator: [
     'dashboard.home.view',
@@ -673,7 +679,7 @@ export function getStorageFeatureAccess(role, permissions = [], isAdmin = false)
   if (isAdmin || role === 'admin') {
     return {
       menu: true,
-      menuHref: '/dashboard/storage',
+      menuHref: '/dashboard/storage/overview',
       overview: true,
       location: true,
       registry: true,
@@ -689,15 +695,14 @@ export function getStorageFeatureAccess(role, permissions = [], isAdmin = false)
   const location = hasPermission(permissions, 'storage.location.view', isAdmin)
   const restockInstruction = hasPermission(permissions, 'storage.restock_instruction.view', isAdmin)
   const restockSubmit = hasPermission(permissions, 'storage.restock_submit.view', isAdmin)
-  const restockPicker = hasPermission(permissions, 'storage.restock_picker.view', isAdmin)
-  const menu = overview || registry || search || location || restockInstruction || restockSubmit || restockPicker
+  let restockPicker = hasPermission(permissions, 'storage.restock_picker.view', isAdmin)
+  if (role === 'packing_staff' || role === 'packing_coordinator') {
+    restockPicker = false
+  }
+  const menu = overview || registry || search || location
 
   let menuHref = '/dashboard'
-  if (overview) menuHref = '/dashboard/storage'
-  else if (search) menuHref = '/dashboard/storage/search'
-  else if (registry) menuHref = '/dashboard/storage/registry'
-  else if (location) menuHref = '/dashboard/storage/overview'
-  else if (restockInstruction || restockSubmit || restockPicker) menuHref = '/dashboard/storage/restock-instruction'
+  if (location || search || registry || overview) menuHref = '/dashboard/storage/overview'
 
   return {
     menu,
@@ -748,7 +753,7 @@ export function getAllowedMenus(role, permissions = [], isAdmin = false) {
       qcInspectorOnly: false,
       packing: true,
       storage: true,
-      storageHref: '/dashboard/storage',
+      storageHref: '/dashboard/storage/overview',
       masterData: true,
       userAccess: true,
     }
@@ -785,10 +790,11 @@ const ROUTE_PERMISSION_MAP = [
   { matcher: (pathname) => pathname.startsWith('/dashboard/profile'), codes: ['myarklife.view'] },
   { matcher: (pathname) => pathname === '/dashboard/myarklife' || pathname.startsWith('/dashboard/myarklife/'), codes: ['myarklife.view'] },
   { matcher: (pathname) => pathname === '/dashboard/human-resources' || pathname.startsWith('/dashboard/human-resources/'), codes: ['hrga.home.view'] },
-  { matcher: (pathname) => pathname === '/dashboard/storage' || pathname.startsWith('/dashboard/storage?'), codes: ['storage.overview.view'] },
+  { matcher: (pathname) => pathname === '/dashboard/storage' || pathname.startsWith('/dashboard/storage?'), codes: ['storage.overview.view', 'storage.location.view', 'storage.search.view', 'storage.registry.view'] },
   { matcher: (pathname) => pathname.startsWith('/dashboard/storage/search'), codes: ['storage.search.view'] },
   { matcher: (pathname) => pathname.startsWith('/dashboard/storage/registry'), codes: ['storage.registry.view'] },
-  { matcher: (pathname) => pathname.startsWith('/dashboard/storage/overview'), codes: ['storage.location.view'] },
+  { matcher: (pathname) => pathname.startsWith('/dashboard/storage/overview'), codes: ['storage.location.view', 'storage.search.view', 'storage.registry.view'] },
+  { matcher: (pathname) => pathname.startsWith('/dashboard/storage/daftar-barang'), codes: ['storage.location.view', 'storage.search.view'] },
   { matcher: (pathname) => pathname.startsWith('/dashboard/storage/warehouse-map'), codes: ['storage.location.view'] },
   { matcher: (pathname) => pathname.startsWith('/dashboard/storage/restock-instruction'), codes: ['storage.restock_instruction.view', 'storage.restock_submit.view', 'storage.restock_picker.view'] },
   { matcher: (pathname) => pathname.startsWith('/dashboard/storage/restock-request') || pathname === '/restock-request' || pathname.startsWith('/restock-request?'), codes: ['storage.restock_submit.view'] },
@@ -809,6 +815,7 @@ const ROUTE_PERMISSION_MAP = [
   { matcher: (pathname) => pathname === '/dashboard/packing-list' || pathname.startsWith('/dashboard/packing-list?'), codes: ['packing.overview.view'] },
   { matcher: (pathname) => pathname.startsWith('/dashboard/packing-list/receiving'), codes: ['packing.receiving.view'] },
   { matcher: (pathname) => pathname.startsWith('/dashboard/packing-list/size-breakdown'), codes: ['packing.size_breakdown.view'] },
+  { matcher: (pathname) => pathname.startsWith('/mobile/packing-list/item-storing'), codes: ['packing.size_breakdown.view'] },
   { matcher: (pathname) => pathname === '/dashboard/arkline' || pathname.startsWith('/dashboard/arkline?'), codes: ['arkline.overview.view'] },
   { matcher: (pathname) => pathname === '/dashboard/arkline/directory' || pathname.startsWith('/dashboard/arkline/directory?'), codes: ['arkline.directory.view', 'arkline.directory.products.view', 'arkline.directory.bom.view', 'arkline.directory.materials.view'] },
   { matcher: (pathname) => pathname.startsWith('/dashboard/arkline/directory/bom'), codes: ['arkline.directory.bom.view'] },
@@ -860,6 +867,10 @@ export function canAccessPath(pathname, role, permissions = [], isAdmin = false)
     if (/^\/dashboard\/inbound\/[^/]+\/input/.test(pathname)) return true
     if (pathname.startsWith('/mobile/inbound/receiving')) return true
     if (pathname.startsWith('/mobile/inbound/unload')) return true
+  }
+
+  if ((resolvedRole === 'packing_staff' || resolvedRole === 'packing_coordinator') && (pathname === '/take-requests' || pathname.startsWith('/take-requests?'))) {
+    return false
   }
 
   const matched = ROUTE_PERMISSION_MAP.find((item) => item.matcher(pathname))

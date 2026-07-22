@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { createClient } from '@/utils/supabase/server'
+import { loadAccessContext } from '@/utils/access-control'
 
 function formatDateDisplay(value) {
   if (!value) return '-'
@@ -102,6 +103,9 @@ export default async function PackingListOverviewPage() {
     redirect('/login')
   }
 
+  const { role, isAdmin } = await loadAccessContext(supabase, user, 'role')
+  const isPackingStaff = !isAdmin && role === 'packing_staff'
+
   const [
     { data: confirmRows, error: confirmError },
     { data: validationRows, error: validationError },
@@ -197,7 +201,11 @@ export default async function PackingListOverviewPage() {
                       <td style={styles.actionTd}>
                         <div style={styles.rowActions}>
                           <Link
-                            href={`/dashboard/packing-list/receiving?grn=${encodeURIComponent(row.grn_number)}`}
+                            href={
+                              isPackingStaff
+                                ? `/dashboard/packing-list/receiving/input?grn=${encodeURIComponent(row.grn_number)}`
+                                : `/dashboard/packing-list/receiving?grn=${encodeURIComponent(row.grn_number)}`
+                            }
                             style={styles.iconButton}
                             title="PL Receiving"
                             aria-label={`PL Receiving ${row.grn_number}`}
@@ -205,7 +213,11 @@ export default async function PackingListOverviewPage() {
                             <ReceivingIcon />
                           </Link>
                           <Link
-                            href={`/dashboard/packing-list/size-breakdown?grn=${encodeURIComponent(row.grn_number)}`}
+                            href={
+                              isPackingStaff
+                                ? `/mobile/packing-list/item-storing?grn=${encodeURIComponent(row.grn_number)}`
+                                : `/dashboard/packing-list/size-breakdown?grn=${encodeURIComponent(row.grn_number)}`
+                            }
                             style={styles.iconButton}
                             title="PL Breakdown"
                             aria-label={`PL Breakdown ${row.grn_number}`}

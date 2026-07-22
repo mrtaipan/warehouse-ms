@@ -50,6 +50,12 @@
   margin-bottom: -2px;
 }
 
+.heroQuickActions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .heroKicker,
 .sectionKicker {
   margin: 0;
@@ -107,6 +113,7 @@
 .heroProfileLink {
   width: 42px;
   height: 42px;
+  padding: 0;
   border-radius: 999px;
   border: 1px solid #dbe4ef;
   background: #f8fafc;
@@ -115,6 +122,7 @@
   align-items: center;
   justify-content: center;
   text-decoration: none;
+  cursor: pointer;
   transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease, background 160ms ease;
 }
 
@@ -318,6 +326,266 @@
   color: #6b7280;
   font-size: 13px;
   line-height: 1.6;
+}
+
+.restockActionGroup {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.restockButton {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-height: 78px;
+  justify-content: center;
+  padding: 14px;
+  border-radius: 16px;
+  text-decoration: none;
+  border: 1px solid #dbe4ef;
+  transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease;
+}
+
+.restockButton:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 12px 24px rgba(15, 23, 42, 0.08);
+}
+
+.restockButton strong {
+  font-size: 14px;
+}
+
+.restockButton span {
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.restockButtonPrimary {
+  background: #111827;
+  border-color: #111827;
+  color: #ffffff;
+}
+
+.restockButtonPrimary span {
+  color: #dbe4ef;
+}
+
+.restockButtonSecondary {
+  background: #f8fafc;
+  color: #111827;
+}
+
+.restockModalOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(15, 23, 42, 0.32);
+}
+
+.restockModalCard {
+  width: min(100%, 460px);
+  border: 1px solid #e2e8f0;
+  border-radius: 22px;
+  background: #ffffff;
+  box-shadow: 0 24px 70px rgba(15, 23, 42, 0.2);
+  padding: 20px;
+}
+
+.restockModalHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 16px;
+}
+
+.restockModalHeader h2 {
+  margin: 2px 0 0;
+  color: #111827;
+  font-size: 22px;
+  line-height: 1.2;
+}
+
+.restockModalEyebrow {
+  margin: 0;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.restockModalClose {
+  min-height: 34px;
+  border: 1px solid #fecaca;
+  border-radius: 999px;
+  background: #fef2f2;
+  color: #b91c1c;
+  font-size: 12px;
+  font-weight: 800;
+  padding: 0 12px;
+  cursor: pointer;
+}
+
+.restockChoiceGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.restockChoiceCard {
+  min-height: 104px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 8px;
+  padding: 16px;
+  border: 1px solid #dbe4ef;
+  border-radius: 18px;
+  background: #f8fafc;
+  color: #111827;
+  text-decoration: none;
+  transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease, background 160ms ease;
+}
+
+.restockChoiceCard:hover {
+  transform: translateY(-1px);
+  border-color: #cbd5e1;
+  background: #ffffff;
+  box-shadow: 0 14px 28px rgba(15, 23, 42, 0.08);
+}
+
+.restockChoiceCard strong {
+  font-size: 15px;
+}
+
+.restockChoiceCard span {
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.itemSearchModalCard {
+  width: min(100%, 620px);
+  max-height: min(86vh, 760px);
+  overflow: auto;
+  border: 1px solid #e2e8f0;
+  border-radius: 22px;
+  background: #ffffff;
+  box-shadow: 0 24px 70px rgba(15, 23, 42, 0.2);
+  padding: 20px;
+}
+
+.itemSearchModalForm {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+}
+
+.itemSearchInput {
+  min-width: 0;
+  height: 42px;
+  padding: 0 13px;
+  border: 1px solid #cbd5e1;
+  border-radius: 13px;
+  background: #f8fafc;
+  color: #0f172a;
+  font: inherit;
+  font-size: 14px;
+}
+
+.itemSearchInput:focus {
+  border-color: #0f766e;
+  background: #ffffff;
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.1);
+}
+
+.itemSearchButton {
+  min-height: 42px;
+  padding: 0 18px;
+  border: 1px solid #0f172a;
+  border-radius: 13px;
+  background: #0f172a;
+  color: #ffffff;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.itemSearchButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.itemSearchError,
+.itemSearchEmpty {
+  margin: 14px 0 0;
+  padding: 12px 14px;
+  border-radius: 13px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.itemSearchError {
+  background: #fef2f2;
+  color: #b91c1c;
+}
+
+.itemSearchEmpty {
+  background: #f8fafc;
+  color: #64748b;
+}
+
+.itemSearchResultList {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.itemSearchResultCard {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(180px, 0.65fr);
+  gap: 12px;
+  align-items: center;
+  padding: 13px;
+  border: 1px solid #e2e8f0;
+  border-radius: 15px;
+  background: #f8fafc;
+}
+
+.itemSearchResultCard strong,
+.itemSearchResultCard span {
+  display: block;
+}
+
+.itemSearchResultCard strong {
+  color: #0f172a;
+  font-size: 14px;
+  line-height: 1.3;
+}
+
+.itemSearchResultCard span {
+  margin-top: 4px;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.itemSearchResultCard p {
+  margin: 0;
+  color: #0f766e;
+  font-size: 13px;
+  font-weight: 850;
+  text-align: right;
 }
 
 .accentCard {
@@ -593,10 +861,18 @@
   }
 
   .grnSummaryForm,
-  .grnMetricGrid {
+  .grnMetricGrid,
+  .itemSearchModalForm,
+  .itemSearchResultCard,
+  .restockChoiceGrid {
     grid-template-columns: 1fr;
   }
 
+  .itemSearchResultCard p {
+    text-align: left;
+  }
+
+  .itemSearchButton,
   .grnSummaryButton {
     width: 100%;
   }

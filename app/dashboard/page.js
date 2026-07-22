@@ -1,8 +1,10 @@
 import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { createClient } from '@/utils/supabase/server'
-import { getAllowedMenus } from '@/utils/permissions'
+import { getAllowedMenus, getStorageFeatureAccess } from '@/utils/permissions'
 import { loadAccessContext } from '@/utils/access-control'
+import RestockShortcutButton from './restock-shortcut-client'
+import ItemSearchShortcutButton from './item-search-shortcut-client'
 import styles from './dashboard.module.css'
 
 const DAILY_QUOTES = [
@@ -16,6 +18,24 @@ const DAILY_QUOTES = [
   'Progress is built on the days you feel like doing nothing.',
   'A calm mind makes better decisions.',
   "You don't have to rush what's meant to last.",
+  'Small progress is still progress.',
+  "You don't have to be great to start, but you have to start to be great.",
+  'Done is better than perfect. - Selesaikan dulu, sempurnakan belakangan.',
+  'Every expert was once a beginner. - Semua orang hebat dulunya berawal dari pemula.',
+  'Kalau capek, istirahat. Bukan berhenti.',
+  'Jatuh tujuh kali, bangkit delapan kali!',
+  'Your mindset determines your outcome.',
+  'Bukan seberapa cepat, tapi seberapa konsisten kamu jalan.',
+  "Comparison is the thief of joy. - Jangan bandingin progress kamu sama orang lain.",
+  "Setiap 'belum bisa' itu artinya 'masih belajar', bukan 'nggak bisa'.",
+  'Life is 10% what happens to you and 90% how you react to it.',
+  'The best time to plant a tree was 20 years ago. The second best time is now.',
+  'You are not behind. You are exactly where you need to be.',
+  "Believe you can and you're halfway there.",
+  'Takut itu manusiawi. Tapi maju meski takut, itu keberanian.',
+  'Yang penting bukan seberapa besar langkahnya, tapi seberapa sering kamu melangkah.',
+  'Doubt kills more dreams than failure ever will.',
+  'Kamu udah sejauh ini bukan karena kebetulan - kamu emang layak sampai di sini.',
 ]
 
 function formatToday() {
@@ -38,6 +58,30 @@ function getDailyQuote(email = '') {
     .reduce((total, char) => total + char.charCodeAt(0), 0)
 
   return DAILY_QUOTES[(dateSeed + emailSeed) % DAILY_QUOTES.length]
+}
+
+function getRestockActions(storageAccess) {
+  const actions = []
+
+  if (storageAccess.restockSubmit) {
+    actions.push({
+      href: '/restock-request',
+      label: 'Submit Request',
+      text: 'Create a new request for restock.',
+      tone: 'primary',
+    })
+  }
+
+  if (storageAccess.restockPicker) {
+    actions.push({
+      href: '/take-requests',
+      label: 'Stock Replenishment',
+      text: 'Pick and complete restock requests.',
+      tone: 'secondary',
+    })
+  }
+
+  return actions
 }
 
 function toProperCase(value = '') {
@@ -503,6 +547,8 @@ export default async function DashboardPage({ searchParams }) {
 
   const { profile, role, permissions, isAdmin } = await loadAccessContext(supabase, user, 'role, display_name')
   const menus = getAllowedMenus(role, permissions, isAdmin)
+  const storageAccess = getStorageFeatureAccess(role, permissions, isAdmin)
+  const restockActions = getRestockActions(storageAccess)
 
   const rawUserLabel =
     profile?.display_name || user.user_metadata?.full_name || user.user_metadata?.name || user.email?.split('@')[0] || 'Team'
@@ -556,23 +602,26 @@ export default async function DashboardPage({ searchParams }) {
       <div className={styles.dashboardShell}>
         <section className={styles.heroCard}>
           <div className={styles.heroCopy}>
-          <div className={styles.heroTopBar}>
-            <span className={styles.heroKicker}>{formatToday()}</span>
-            {showMyArklifeButton ? (
-              <Link href={menus.myArklifeHref} className={styles.heroProfileLink} aria-label="Open MyARKLIFE">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                  <path d="M20 21a8 8 0 0 0-16 0" />
-                  <circle cx="12" cy="8" r="4" />
-                </svg>
-              </Link>
-            ) : null}
-          </div>
-          <h1 className={styles.heroTitle}>Hello {userLabel}!</h1>
+            <div className={styles.heroTopBar}>
+              <span className={styles.heroKicker}>{formatToday()}</span>
+              <div className={styles.heroQuickActions}>
+                <ItemSearchShortcutButton />
+                <RestockShortcutButton actions={restockActions} />
+                {showMyArklifeButton ? (
+                  <Link href={menus.myArklifeHref} className={styles.heroProfileLink} aria-label="Open MyARKLIFE">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <path d="M20 21a8 8 0 0 0-16 0" />
+                      <circle cx="12" cy="8" r="4" />
+                    </svg>
+                  </Link>
+                ) : null}
+              </div>
+            </div>
+            <h1 className={styles.heroTitle}>Hello {userLabel}!</h1>
             <p className={styles.heroSupport}>Glad to have you back.</p>
             <p className={styles.heroQuote}>&ldquo;{quoteOfTheDay}&rdquo;</p>
           </div>
         </section>
-
         <section className={`${styles.sectionCard} ${styles.compactCard}`}>
           <p className={styles.sectionKicker}>News &amp; Updates</p>
 
@@ -628,14 +677,18 @@ export default async function DashboardPage({ searchParams }) {
         <div className={styles.heroCopy}>
           <div className={styles.heroTopBar}>
             <span className={styles.heroKicker}>{formatToday()}</span>
-            {showMyArklifeButton ? (
-              <Link href={menus.myArklifeHref} className={styles.heroProfileLink} aria-label="Open MyARKLIFE">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                  <path d="M20 21a8 8 0 0 0-16 0" />
-                  <circle cx="12" cy="8" r="4" />
-                </svg>
-              </Link>
-            ) : null}
+            <div className={styles.heroQuickActions}>
+              <ItemSearchShortcutButton />
+              <RestockShortcutButton actions={restockActions} />
+              {showMyArklifeButton ? (
+                <Link href={menus.myArklifeHref} className={styles.heroProfileLink} aria-label="Open MyARKLIFE">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="M20 21a8 8 0 0 0-16 0" />
+                    <circle cx="12" cy="8" r="4" />
+                  </svg>
+                </Link>
+              ) : null}
+            </div>
           </div>
           <h1 className={styles.heroTitle}>Hello {userLabel}!</h1>
           <p className={styles.heroSupport}>Glad to have you back.</p>
@@ -654,11 +707,11 @@ export default async function DashboardPage({ searchParams }) {
           />
         </div>
         <div className={styles.rightColumn}>
-        <section className={`${styles.sectionCard} ${styles.compactCard}`}>
-          <p className={styles.sectionKicker}>News &amp; Updates</p>
+          <section className={`${styles.sectionCard} ${styles.compactCard}`}>
+            <p className={styles.sectionKicker}>News &amp; Updates</p>
 
-          <div className={styles.insightStack}>
-            {activeBroadcasts.length ? (
+            <div className={styles.insightStack}>
+              {activeBroadcasts.length ? (
                 activeBroadcasts.map((item) => (
                   <div key={item.id} className={styles.insightCard}>
                     <span className={styles.insightLabel}>{item.dateLabel}</span>
