@@ -1,0 +1,91 @@
+.page {
+  width: 100vw;
+  height: 100vh;
+  min-height: 100dvh;
+  margin: 0;
+  padding: 0;
+  background: #020617;
+  overflow: hidden;
+}
+
+.reportFrame {
+  width: 100vw;
+  height: 100vh;
+  min-height: 100dvh;
+  display: block;
+  border: 0;
+  background: #ffffff;
+}
+
+.floatingBackButton {
+  position: fixed;
+  top: 14px;
+  left: 14px;
+  z-index: 10;
+  min-height: 36px;
+  padding: 0 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(15, 23, 42, 0.16);
+  background: rgba(255, 255, 255, 0.94);
+  color: #0f172a;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+  font-size: 12px;
+  font-weight: 850;
+  box-shadow: 0 16px 34px rgba(15, 23, 42, 0.18);
+}
+
+.stateCard {
+  position: fixed;
+  inset: 50% auto auto 50%;
+  width: min(440px, calc(100vw - 32px));
+  transform: translate(-50%, -50%);
+  padding: 24px;
+  border: 1px solid #dbe4f0;
+  border-radius: 20px;
+  background: #ffffff;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.eyebrow {
+  margin: 0;
+  color: #64748b;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.stateCard h1 {
+  margin: 0;
+  color: #0f172a;
+  font-size: 1.6rem;
+  line-height: 1.1;
+  font-weight: 900;
+}
+
+.stateCard p {
+  margin: 0;
+  color: #64748b;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.backButton {
+  min-height: 38px;
+  padding: 0 14px;
+  border-radius: 12px;
+  border: 1px solid #0f172a;
+  background: #0f172a;
+  color: #ffffff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+  font-size: 13px;
+  font-weight: 850;
+}

@@ -41,6 +41,36 @@ function getStatusLabel(value) {
   return String(value || 'waiting').replaceAll('_', ' ').toUpperCase()
 }
 
+function hasKoliSequence(row) {
+  return row.koli_sequence !== null && row.koli_sequence !== undefined && row.koli_sequence !== ''
+}
+
+function isPreparationSource(row) {
+  return ['inbound', 'Packing List', 'packing_list'].includes(String(row.source_phase || ''))
+}
+
+function cloneReturnPayload(row, qty, koliSequence = null) {
+  return {
+    inbound_id: row.inbound_id,
+    source_phase: row.source_phase,
+    koli_sequence: koliSequence,
+    brand_id: row.brand_id || null,
+    category_id: row.category_id || null,
+    model_name: row.model_name || null,
+    variant_name: row.variant_name || row.model_color || null,
+    ...(Object.prototype.hasOwnProperty.call(row, 'variant_label') ? { variant_label: row.variant_label || null } : {}),
+    ...(Object.prototype.hasOwnProperty.call(row, 'variant_code') ? { variant_code: row.variant_code || null } : {}),
+    qty,
+    grade: row.grade || null,
+    pic_name: row.pic_name || null,
+    return_reason: row.return_reason || null,
+    status: row.status || 'waiting',
+    is_adjustment: Boolean(row.is_adjustment),
+    adjustment_type: row.adjustment_type || null,
+    updated_at: new Date().toISOString(),
+  }
+}
+
 export default function ReturReportClient({ rows, canAdd = false }) {
   const router = useRouter()
   const supabase = createClient()
@@ -52,35 +82,58 @@ export default function ReturReportClient({ rows, canAdd = false }) {
   const [isPrinting, setIsPrinting] = useState(false)
   const [paymentInfoOpen, setPaymentInfoOpen] = useState(false)
   const [printError, setPrintError] = useState('')
+  const [activeReturnTab, setActiveReturnTab] = useState('preparation')
   const [grnFilter, setGrnFilter] = useState('')
   const [supplierFilter, setSupplierFilter] = useState('')
-  const [statusFilter, setStatusFilter] = useState('waiting')
+  const [statusFilter, setStatusFilter] = useState('')
   const [phaseFilter, setPhaseFilter] = useState('')
   const [brandFilter, setBrandFilter] = useState('')
   const [categoryFilter, setCategoryFilter] = useState('')
   const [modelFilter, setModelFilter] = useState('')
   const [gradeFilter, setGradeFilter] = useState('')
+  const [prepQtyById, setPrepQtyById] = useState({})
+  const [currentReturnKoliItems, setCurrentReturnKoliItems] = useState([])
+  const [preparationError, setPreparationError] = useState('')
+  const [preparationSuccess, setPreparationSuccess] = useState('')
+  const [isPostingPreparation, setIsPostingPreparation] = useState(false)
+
+  const arrangementRows = useMemo(
+    () => rows.filter((row) => hasKoliSequence(row)),
+    [rows]
+  )
+  const preparationRows = useMemo(
+    () =>
+      rows.filter(
+        (row) =>
+          isPreparationSource(row) &&
+          !hasKoliSequence(row) &&
+          String(row.status || 'waiting').toLowerCase() !== 'completed' &&
+          Number(row.qty || 0) > 0
+      ),
+    [rows]
+  )
+  const filterSourceRows = activeReturnTab === 'preparation' ? preparationRows : arrangementRows
 
   const grnOptions = useMemo(
-    () => Array.from(new Set(rows.map((row) => row.inbound?.grn_number).filter(Boolean))).sort((a, b) => a.localeCompare(b)),
-    [rows]
+    () => Array.from(new Set(filterSourceRows.map((row) => row.inbound?.grn_number).filter(Boolean))).sort((a, b) => a.localeCompare(b)),
+    [filterSourceRows]
   )
   const supplierOptions = useMemo(
-    () => Array.from(new Set(rows.map((row) => row.inbound?.suppliers?.supplier_name).filter(Boolean))).sort((a, b) => a.localeCompare(b)),
-    [rows]
+    () => Array.from(new Set(filterSourceRows.map((row) => row.inbound?.suppliers?.supplier_name).filter(Boolean))).sort((a, b) => a.localeCompare(b)),
+    [filterSourceRows]
   )
   const statusOptions = useMemo(
-    () => Array.from(new Set(['waiting', ...rows.map((row) => row.status || 'waiting').filter(Boolean)])).sort((a, b) => a.localeCompare(b)),
-    [rows]
+    () => Array.from(new Set(filterSourceRows.map((row) => row.status || 'waiting').filter(Boolean))).sort((a, b) => a.localeCompare(b)),
+    [filterSourceRows]
   )
   const phaseOptions = useMemo(
-    () => Array.from(new Set(rows.map((row) => row.source_phase).filter(Boolean))).sort((a, b) => a.localeCompare(b)),
-    [rows]
+    () => Array.from(new Set(filterSourceRows.map((row) => row.source_phase).filter(Boolean))).sort((a, b) => a.localeCompare(b)),
+    [filterSourceRows]
   )
   const brandOptions = useMemo(
     () =>
       Array.from(
-        rows.reduce((options, row) => {
+        filterSourceRows.reduce((options, row) => {
           if (row.brand_id && getBrandLabel(row) !== '-') {
             options.set(String(row.brand_id), getBrandLabel(row))
           }
@@ -89,12 +142,12 @@ export default function ReturReportClient({ rows, canAdd = false }) {
       )
         .map(([id, name]) => ({ id, name }))
         .sort((a, b) => a.name.localeCompare(b.name)),
-    [rows]
+    [filterSourceRows]
   )
   const categoryOptions = useMemo(
     () =>
       Array.from(
-        rows.reduce((options, row) => {
+        filterSourceRows.reduce((options, row) => {
           if (row.category_id && getCategoryLabel(row) !== '-') {
             options.set(String(row.category_id), getCategoryLabel(row))
           }
@@ -103,19 +156,19 @@ export default function ReturReportClient({ rows, canAdd = false }) {
       )
         .map(([id, name]) => ({ id, name }))
         .sort((a, b) => a.name.localeCompare(b.name)),
-    [rows]
+    [filterSourceRows]
   )
   const modelOptions = useMemo(
-    () => Array.from(new Set(rows.map((row) => getModelLabel(row)).filter(Boolean))).sort((a, b) => a.localeCompare(b)),
-    [rows]
+    () => Array.from(new Set(filterSourceRows.map((row) => getModelLabel(row)).filter(Boolean))).sort((a, b) => a.localeCompare(b)),
+    [filterSourceRows]
   )
   const gradeOptions = useMemo(
-    () => Array.from(new Set(rows.map((row) => row.grade).filter(Boolean))).sort((a, b) => String(a).localeCompare(String(b))),
-    [rows]
+    () => Array.from(new Set(filterSourceRows.map((row) => row.grade).filter(Boolean))).sort((a, b) => String(a).localeCompare(String(b))),
+    [filterSourceRows]
   )
   const filteredRows = useMemo(
     () =>
-      rows.filter((row) => {
+      arrangementRows.filter((row) => {
         const matchesGrn = !grnFilter || row.inbound?.grn_number === grnFilter
         const matchesSupplier = !supplierFilter || row.inbound?.suppliers?.supplier_name === supplierFilter
         const matchesStatus = !statusFilter || String(row.status || 'waiting') === statusFilter
@@ -126,7 +179,22 @@ export default function ReturReportClient({ rows, canAdd = false }) {
         const matchesGrade = !gradeFilter || String(row.grade || '') === gradeFilter
         return matchesGrn && matchesSupplier && matchesStatus && matchesPhase && matchesBrand && matchesCategory && matchesModel && matchesGrade
       }),
-    [brandFilter, categoryFilter, gradeFilter, grnFilter, modelFilter, phaseFilter, rows, statusFilter, supplierFilter]
+    [arrangementRows, brandFilter, categoryFilter, gradeFilter, grnFilter, modelFilter, phaseFilter, statusFilter, supplierFilter]
+  )
+  const filteredPreparationRows = useMemo(
+    () =>
+      preparationRows.filter((row) => {
+        const matchesGrn = !grnFilter || row.inbound?.grn_number === grnFilter
+        const matchesSupplier = !supplierFilter || row.inbound?.suppliers?.supplier_name === supplierFilter
+        const matchesStatus = !statusFilter || String(row.status || 'waiting') === statusFilter
+        const matchesPhase = !phaseFilter || String(row.source_phase || '') === phaseFilter
+        const matchesBrand = !brandFilter || String(row.brand_id || '') === brandFilter
+        const matchesCategory = !categoryFilter || String(row.category_id || '') === categoryFilter
+        const matchesModel = !modelFilter || getModelLabel(row) === modelFilter
+        const matchesGrade = !gradeFilter || String(row.grade || '') === gradeFilter
+        return matchesGrn && matchesSupplier && matchesStatus && matchesPhase && matchesBrand && matchesCategory && matchesModel && matchesGrade
+      }),
+    [brandFilter, categoryFilter, gradeFilter, grnFilter, modelFilter, phaseFilter, preparationRows, statusFilter, supplierFilter]
   )
   const selectableRows = useMemo(
     () => filteredRows.filter((row) => String(row.status || 'waiting').toLowerCase() !== 'completed'),
@@ -186,6 +254,18 @@ export default function ReturReportClient({ rows, canAdd = false }) {
     setSelectedIds([])
   }
 
+  function resetFilters() {
+    setGrnFilter('')
+    setSupplierFilter('')
+    setStatusFilter('')
+    setPhaseFilter('')
+    setBrandFilter('')
+    setCategoryFilter('')
+    setModelFilter('')
+    setGradeFilter('')
+    setSelectedIds([])
+  }
+
   function toggleRow(id) {
     setSelectedIds((current) => (current.includes(id) ? current.filter((item) => item !== id) : [...current, id]))
   }
@@ -197,6 +277,155 @@ export default function ReturReportClient({ rows, canAdd = false }) {
     }
 
     setSelectedIds(selectableRows.map((row) => row.id))
+  }
+
+  function getCurrentAddedQty(rowId) {
+    return currentReturnKoliItems
+      .filter((item) => Number(item.sourceRow.id) === Number(rowId))
+      .reduce((sum, item) => sum + Number(item.qty || 0), 0)
+  }
+
+  function addPreparationRowToKoli(row) {
+    setPreparationError('')
+    setPreparationSuccess('')
+
+    const qty = Number(prepQtyById[row.id] || 0)
+    const availableQty = Number(row.qty || 0)
+    const alreadyAddedQty = getCurrentAddedQty(row.id)
+
+    if (!qty || qty <= 0) {
+      setPreparationError('Return qty must be filled before adding to Koli.')
+      return
+    }
+
+    if (qty + alreadyAddedQty > availableQty) {
+      setPreparationError('Return qty cannot exceed the available return qty.')
+      return
+    }
+
+    if (
+      currentReturnKoliItems.length &&
+      currentReturnKoliItems.some((item) => Number(item.sourceRow.inbound_id || 0) !== Number(row.inbound_id || 0))
+    ) {
+      setPreparationError('One return Koli can only contain rows from the same GRN.')
+      return
+    }
+
+    setCurrentReturnKoliItems((current) => {
+      const existing = current.find((item) => Number(item.sourceRow.id) === Number(row.id))
+      if (existing) {
+        return current.map((item) =>
+          Number(item.sourceRow.id) === Number(row.id)
+            ? { ...item, qty: Number(item.qty || 0) + qty }
+            : item
+        )
+      }
+
+      return [
+        ...current,
+        {
+          tempId: `${row.id}-${Date.now()}`,
+          sourceRow: row,
+          qty,
+        },
+      ]
+    })
+    setPrepQtyById((current) => ({ ...current, [row.id]: '' }))
+    setPreparationSuccess('Return row added to current Koli.')
+  }
+
+  function removePreparationItem(tempId) {
+    setCurrentReturnKoliItems((current) => current.filter((item) => item.tempId !== tempId))
+  }
+
+  function clearPreparationKoli() {
+    if (!currentReturnKoliItems.length) return
+    const shouldClear = window.confirm('Clear all rows from the current return Koli?')
+    if (!shouldClear) return
+    setCurrentReturnKoliItems([])
+    setPreparationError('')
+    setPreparationSuccess('')
+  }
+
+  async function postPreparationKoli() {
+    if (!currentReturnKoliItems.length) {
+      setPreparationError('Add at least one return row to Koli first.')
+      return
+    }
+
+    const inboundId = currentReturnKoliItems[0]?.sourceRow?.inbound_id
+    if (!inboundId) {
+      setPreparationError('Return Koli must have a valid GRN before posting.')
+      return
+    }
+
+    const invalidItem = currentReturnKoliItems.find((item) => {
+      const sourceQty = Number(item.sourceRow.qty || 0)
+      const postQty = Number(item.qty || 0)
+      return !postQty || postQty <= 0 || postQty > sourceQty
+    })
+    if (invalidItem) {
+      setPreparationError('Every return qty must be greater than zero and cannot exceed available qty.')
+      return
+    }
+
+    const shouldPost = window.confirm(
+      `Post this return Koli with ${currentReturnKoliItems.length} row${currentReturnKoliItems.length > 1 ? 's' : ''}?`
+    )
+    if (!shouldPost) return
+
+    setIsPostingPreparation(true)
+    setPreparationError('')
+    setPreparationSuccess('')
+
+    const { data: latestRows, error: sequenceError } = await supabase
+      .from('warehouse_returns')
+      .select('koli_sequence')
+      .eq('inbound_id', inboundId)
+
+    if (sequenceError) {
+      setPreparationError(sequenceError.message)
+      setIsPostingPreparation(false)
+      return
+    }
+
+    const assignedKoliSequence =
+      (latestRows || []).reduce((max, row) => Math.max(max, Number(row.koli_sequence || 0)), 0) + 1
+
+    for (const item of currentReturnKoliItems) {
+      const sourceRow = item.sourceRow
+      const sourceQty = Number(sourceRow.qty || 0)
+      const postQty = Number(item.qty || 0)
+      const remainingQty = sourceQty - postQty
+      const postedPayload = cloneReturnPayload(sourceRow, postQty, assignedKoliSequence)
+
+      const { error: updateError } = await supabase
+        .from('warehouse_returns')
+        .update(postedPayload)
+        .eq('id', sourceRow.id)
+
+      if (updateError) {
+        setPreparationError(updateError.message)
+        setIsPostingPreparation(false)
+        return
+      }
+
+      if (remainingQty > 0) {
+        const remainingPayload = cloneReturnPayload(sourceRow, remainingQty, null)
+        const { error: insertError } = await supabase.from('warehouse_returns').insert([remainingPayload])
+        if (insertError) {
+          setPreparationError(insertError.message)
+          setIsPostingPreparation(false)
+          return
+        }
+      }
+    }
+
+    setCurrentReturnKoliItems([])
+    setPreparationSuccess(`Return Koli ${assignedKoliSequence} posted to Return Arrangement.`)
+    setIsPostingPreparation(false)
+    setActiveReturnTab('arrangement')
+    router.refresh()
   }
 
   function openReturModal() {
@@ -482,7 +711,215 @@ export default function ReturReportClient({ rows, canAdd = false }) {
     printWindow.print()
   }
 
+  const currentPreparationQty = currentReturnKoliItems.reduce((sum, item) => sum + Number(item.qty || 0), 0)
+  const currentPreparationGrn = currentReturnKoliItems[0]?.sourceRow?.inbound?.grn_number || '-'
+
   return (
+    <>
+      <div className={reportStyles.subPageTabsPage}>
+        <div className={reportStyles.subPageTabsShell}>
+          <div className={reportStyles.subPageTabsBar} role="tablist" aria-label="Regular return workflow">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeReturnTab === 'preparation'}
+              className={`${reportStyles.subPageTabLink} ${activeReturnTab === 'preparation' ? reportStyles.subPageTabLinkActive : ''}`.trim()}
+              onClick={() => {
+                setActiveReturnTab('preparation')
+                resetFilters()
+              }}
+            >
+              <span className={reportStyles.subPageTabLabel}>Return Preparation</span>
+              <span className={reportStyles.subPageTabUnderline} />
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeReturnTab === 'arrangement'}
+              className={`${reportStyles.subPageTabLink} ${activeReturnTab === 'arrangement' ? reportStyles.subPageTabLinkActive : ''}`.trim()}
+              onClick={() => {
+                setActiveReturnTab('arrangement')
+                resetFilters()
+              }}
+            >
+              <span className={reportStyles.subPageTabLabel}>Return Arrangement</span>
+              <span className={reportStyles.subPageTabUnderline} />
+            </button>
+          </div>
+        </div>
+
+        <div className={reportStyles.subPageTabsPanel}>
+          {activeReturnTab === 'preparation' ? (
+            <section className={`${reportStyles.card} ${reportStyles.subPageCard}`.trim()}>
+              <div className={reportStyles.sectionHeader}>
+                <div>
+                  <p className={reportStyles.eyebrow}>Reguler</p>
+                  <h2 className={reportStyles.sectionTitle}>Return Preparation</h2>
+                  <p>Prepare Inbound and Packing List returns into QC return Koli before arrangement.</p>
+                </div>
+
+                <div className={reportStyles.regularHeaderActions}>
+                  <div className={reportStyles.regularSelectedTotal}>
+                    <span>Current Koli</span>
+                    <strong>{currentPreparationQty}</strong>
+                  </div>
+                  <button type="button" className={reportStyles.secondaryButton} onClick={clearPreparationKoli} disabled={!currentReturnKoliItems.length || isPostingPreparation}>
+                    Clear
+                  </button>
+                  <button type="button" className={reportStyles.primaryButton} onClick={postPreparationKoli} disabled={!canAdd || !currentReturnKoliItems.length || isPostingPreparation}>
+                    {isPostingPreparation ? 'Posting...' : 'Post'}
+                  </button>
+                </div>
+              </div>
+
+              {grnOptions.length || phaseOptions.length || brandOptions.length || modelOptions.length ? (
+                <div className={reportStyles.filterGrid}>
+                  {grnOptions.length ? (
+                    <div className={reportStyles.field}>
+                      <label htmlFor="qc-retur-prep-grn-filter">GRN Number</label>
+                      <select id="qc-retur-prep-grn-filter" className={reportStyles.input} value={grnFilter} onChange={(event) => updateFilter(setGrnFilter, event.target.value)}>
+                        <option value="">All GRN</option>
+                        {grnOptions.map((item) => <option key={item} value={item}>{item}</option>)}
+                      </select>
+                    </div>
+                  ) : null}
+                  {phaseOptions.length ? (
+                    <div className={reportStyles.field}>
+                      <label htmlFor="qc-retur-prep-phase-filter">Phase</label>
+                      <select id="qc-retur-prep-phase-filter" className={reportStyles.input} value={phaseFilter} onChange={(event) => updateFilter(setPhaseFilter, event.target.value)}>
+                        <option value="">All Phase</option>
+                        {phaseOptions.map((item) => <option key={item} value={item}>{String(item).toUpperCase()}</option>)}
+                      </select>
+                    </div>
+                  ) : null}
+                  {brandOptions.length ? (
+                    <div className={reportStyles.field}>
+                      <label htmlFor="qc-retur-prep-brand-filter">Brand</label>
+                      <select id="qc-retur-prep-brand-filter" className={reportStyles.input} value={brandFilter} onChange={(event) => updateFilter(setBrandFilter, event.target.value)}>
+                        <option value="">All Brand</option>
+                        {brandOptions.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+                      </select>
+                    </div>
+                  ) : null}
+                  {modelOptions.length ? (
+                    <div className={reportStyles.field}>
+                      <label htmlFor="qc-retur-prep-model-filter">Model-Variant</label>
+                      <select id="qc-retur-prep-model-filter" className={reportStyles.input} value={modelFilter} onChange={(event) => updateFilter(setModelFilter, event.target.value)}>
+                        <option value="">All Model-Variant</option>
+                        {modelOptions.map((item) => <option key={item} value={item}>{item}</option>)}
+                      </select>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+
+              {preparationError ? <p className={reportStyles.error}>{preparationError}</p> : null}
+              {preparationSuccess ? <p className={reportStyles.notice}>{preparationSuccess}</p> : null}
+
+              {currentReturnKoliItems.length ? (
+                <div className={reportStyles.preparationBasket}>
+                  <div className={reportStyles.batchHeader}>
+                    <div>
+                      <strong>Current Return Koli</strong>
+                      <p>GRN {currentPreparationGrn} / Total Qty {currentPreparationQty}</p>
+                    </div>
+                  </div>
+                  <div className={reportStyles.tableWrap}>
+                    <table className={reportStyles.table}>
+                      <thead>
+                        <tr>
+                          <th>Phase</th>
+                          <th>Brand</th>
+                          <th>Model-Variant</th>
+                          <th>Grade</th>
+                          <th className={reportStyles.centerNumberCell}>Qty</th>
+                          <th>Action</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {currentReturnKoliItems.map((item) => (
+                          <tr key={item.tempId}>
+                            <td>{String(item.sourceRow.source_phase || '-').toUpperCase()}</td>
+                            <td>{getBrandLabel(item.sourceRow)}</td>
+                            <td>{getModelLabel(item.sourceRow)}</td>
+                            <td>{item.sourceRow.grade || '-'}</td>
+                            <td className={reportStyles.centerNumberCell}>{item.qty}</td>
+                            <td>
+                              <button type="button" className={reportStyles.secondaryButton} onClick={() => removePreparationItem(item.tempId)} disabled={isPostingPreparation}>
+                                Remove
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ) : null}
+
+              {!filteredPreparationRows.length ? (
+                <p className={reportStyles.empty}>
+                  {preparationRows.length ? 'No preparation rows found for this filter.' : 'No inbound or Packing List returns are waiting for preparation.'}
+                </p>
+              ) : (
+                <div className={reportStyles.tableWrap}>
+                  <table className={reportStyles.table}>
+                    <thead>
+                      <tr>
+                        <th>Date</th>
+                        <th>GRN</th>
+                        <th>Phase</th>
+                        <th>Brand</th>
+                        <th>Category</th>
+                        <th>Model-Variant</th>
+                        <th>Grade</th>
+                        <th className={reportStyles.centerNumberCell}>Available Qty</th>
+                        <th className={reportStyles.centerNumberCell}>Return Qty</th>
+                        <th>Action</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filteredPreparationRows.map((row) => {
+                        const alreadyAddedQty = getCurrentAddedQty(row.id)
+                        const remainingQty = Math.max(0, Number(row.qty || 0) - alreadyAddedQty)
+                        return (
+                          <tr key={row.id}>
+                            <td>{formatDateDisplay(row.created_at || row.inbound?.inbound_date)}</td>
+                            <td>{row.inbound?.grn_number || '-'}</td>
+                            <td>{String(row.source_phase || '-').toUpperCase()}</td>
+                            <td>{getBrandLabel(row)}</td>
+                            <td>{getCategoryLabel(row)}</td>
+                            <td>{getModelLabel(row)}</td>
+                            <td>{row.grade || '-'}</td>
+                            <td className={reportStyles.centerNumberCell}>{remainingQty}</td>
+                            <td className={reportStyles.centerNumberCell}>
+                              <input
+                                className={reportStyles.qtyInput}
+                                type="number"
+                                min="1"
+                                max={remainingQty}
+                                value={prepQtyById[row.id] || ''}
+                                onChange={(event) => setPrepQtyById((current) => ({ ...current, [row.id]: event.target.value }))}
+                                disabled={remainingQty <= 0 || isPostingPreparation}
+                                aria-label={`Return qty for ${getModelLabel(row)}`}
+                              />
+                            </td>
+                            <td>
+                              <button type="button" className={reportStyles.secondaryButton} onClick={() => addPreparationRowToKoli(row)} disabled={remainingQty <= 0 || isPostingPreparation}>
+                                Add to Koli
+                              </button>
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </section>
+          ) : null}
+
+          {activeReturnTab === 'arrangement' ? (
     <section className={reportStyles.regularArrangementPanel}>
       <div className={reportStyles.sectionHeader}>
         <div>
@@ -508,6 +945,7 @@ export default function ReturReportClient({ rows, canAdd = false }) {
         </div>
       </div>
 
+      {grnOptions.length || supplierOptions.length || statusOptions.length || phaseOptions.length || brandOptions.length || categoryOptions.length || modelOptions.length || gradeOptions.length ? (
       <div className={reportStyles.filterGrid}>
         <div className={reportStyles.field}>
           <label htmlFor="qc-retur-report-grn-filter">GRN Number</label>
@@ -629,12 +1067,13 @@ export default function ReturReportClient({ rows, canAdd = false }) {
           </select>
         </div>
       </div>
+      ) : null}
 
       {printError ? <p className={reportStyles.error}>{printError}</p> : null}
 
       {!filteredRows.length ? (
         <p className={reportStyles.empty}>
-          {rows.length ? 'No return rows found for this filter.' : 'No return rows yet.'}
+          {arrangementRows.length ? 'No return rows found for this filter.' : 'No arranged return Koli yet.'}
         </p>
       ) : (
       <div className={reportStyles.tableWrap}>
@@ -833,6 +1272,10 @@ export default function ReturReportClient({ rows, canAdd = false }) {
         </div>
       ) : null}
     </section>
+          ) : null}
+        </div>
+      </div>
+    </>
   )
 }
 

@@ -19,10 +19,12 @@ create table public.pl_packing_items (
   size_label text not null,
   koli_sequence integer null,
   qty integer not null default 0,
+  storage_status text not null default 'queued',
   packed_by text null,
   created_at timestamp with time zone not null default now(),
   updated_at timestamp with time zone not null default now(),
   constraint pl_packing_items_qty_check check (qty >= 0),
+  constraint pl_packing_items_storage_status_check check (storage_status in ('queued', 'stored')),
   constraint pl_packing_items_koli_sequence_check check (koli_sequence is null or koli_sequence >= 1),
   constraint pl_packing_items_storing_type_check check (storing_type in ('MOB', 'OI')),
   constraint pl_packing_items_package_type_check check (package_type in ('REGULAR', 'PHOTO')),
@@ -44,6 +46,9 @@ create index pl_packing_items_breakdown_idx
 
 create index pl_packing_items_model_idx
   on public.pl_packing_items (product_model_id, product_model_variant_id);
+
+create index pl_packing_items_storage_status_idx
+  on public.pl_packing_items (storage_status, inbound_id, koli_sequence);
 
 alter table public.pl_packing_items enable row level security;
 

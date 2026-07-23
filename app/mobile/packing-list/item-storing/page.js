@@ -487,6 +487,7 @@ function ItemStoringContent() {
           size_label: draft.size_label,
           koli_sequence: nextSequence,
           qty: draft.qty,
+          storage_status: 'queued',
           packed_by: displayName,
           updated_at: now,
         }
@@ -508,6 +509,11 @@ function ItemStoringContent() {
   }
 
   function handleBack() {
+    if (String(profile?.role || '').trim() === 'packing_staff') {
+      router.push('/dashboard/packing-list')
+      return
+    }
+
     router.push(`/dashboard/packing-list/size-breakdown?grn=${encodeURIComponent(grnNumber)}`)
   }
 

@@ -1174,6 +1174,7 @@ export default function PackingListReceivingPage() {
   const [detailTableMode, setDetailTableMode] = useState('koli')
   const [showInputForm, setShowInputForm] = useState(isInputRoute || searchParams.get('form') === '1')
   const [detailGrn, setDetailGrn] = useState(initialGrn)
+  const [isPackingStaff, setIsPackingStaff] = useState(false)
 
   useEffect(() => {
     if (!initialGrn) {
@@ -1191,6 +1192,7 @@ export default function PackingListReceivingPage() {
 
       const { data: profile } = await getProfileByAuthenticatedUser(supabase, user, 'role')
       const isStaff = String(profile?.role || '').trim() === 'packing_staff'
+      setIsPackingStaff(isStaff)
 
       if (isStaff && !isInputRoute && initialGrn) {
         router.replace(`/dashboard/packing-list/receiving/input?grn=${encodeURIComponent(initialGrn)}`)
@@ -1683,6 +1685,11 @@ export default function PackingListReceivingPage() {
   }
 
   function backToDetail() {
+    if (isPackingStaff) {
+      backToOverview()
+      return
+    }
+
     setShowInputForm(false)
     setGrnFilter('')
     setSelectedSourceKey('')

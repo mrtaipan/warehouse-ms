@@ -25,6 +25,29 @@ function normalizeText(value) {
   return String(value || '').trim().toUpperCase()
 }
 
+function formatTakeFromLabel(value) {
+  const label = String(value || '').trim()
+
+  if (!label) {
+    return 'Location is not found'
+  }
+
+  const registeredLocationMatch = label.match(/^(\d+)\s+lokasi\s+(tercatat|terdata)(.*)$/i)
+
+  if (registeredLocationMatch) {
+    const count = Number(registeredLocationMatch[1] || 0)
+    const suffix = registeredLocationMatch[3] || ''
+
+    return `${count} Registered Location${count === 1 ? '' : 's'}${suffix}`
+  }
+
+  if (/^lokasi\s+(belum|tidak)\s+terdata$/i.test(label) || /^location\s+(is\s+)?(not\s+recorded|not\s+found)$/i.test(label)) {
+    return 'Location is not found'
+  }
+
+  return label
+}
+
 function getStorageSearchCandidates(value) {
   const rawValue = String(value || '').trim()
   const normalizedValue = normalizeText(rawValue)
@@ -157,7 +180,7 @@ async function fetchSourceOptions(row) {
     .filter((entry) => Number(entry.qty || 0) > 0)
     .map((entry) => ({
       storageId: entry.id,
-      label: locationMap.get(entry.rack_location_id) || 'Location not found',
+      label: locationMap.get(entry.rack_location_id) || 'Location is not found',
       qty: Number(entry.qty || 0),
     }))
 
@@ -295,7 +318,7 @@ export default function TakeRequestsMobile() {
       }
 
       if (!currentEntry) {
-        setError('Storage item sudah tidak ditemukan. Cek request ini sebelum complete.')
+        setError('Storage item is no longer available. Please review this request before completing it.')
         setCompletingId('')
         return
       }
@@ -303,7 +326,7 @@ export default function TakeRequestsMobile() {
       const currentQty = Number(currentEntry.qty || 0)
 
       if (currentQty < fulfilledQty) {
-        setError('Qty di storage sudah berubah dan tidak cukup untuk jumlah ambil ini.')
+        setError('The storage qty has changed and is no longer enough for this request.')
         setCompletingId('')
         return
       }
@@ -341,7 +364,7 @@ export default function TakeRequestsMobile() {
     const pickerEmail = await getCurrentUserEmail()
     const selectedSourceLabel =
       selectedSourceValue === 'unrecorded'
-        ? 'Lokasi belum terdata'
+        ? 'Location is not found'
         : sourceOptions.find((item) => String(item.storageId) === selectedSourceValue)?.label || selectedRequest.take_from
     const { error: requestUpdateError } = await supabase
       .from(TAKE_REQUESTS_TABLE)
@@ -362,7 +385,7 @@ export default function TakeRequestsMobile() {
     }
 
     await refreshRequests(false)
-    setSuccess(`Request untuk ${selectedRequest.requester_name} sudah selesai.`)
+    setSuccess(`Request for ${selectedRequest.requester_name} has been completed.`)
     setCompletingId('')
     closeCompleteModal()
   }
@@ -375,14 +398,14 @@ export default function TakeRequestsMobile() {
     <div style={styles.page}>
       <div style={styles.shell}>
         <div style={styles.topBar}>
-          <Link href="/dashboard/storage" style={styles.backIconLink} aria-label="Back to Storage">
+          <Link href="/dashboard" style={styles.backIconLink} aria-label="Back to Dashboard" title="Back to Dashboard">
             ←
           </Link>
         </div>
 
         <div style={styles.hero}>
           <div>
-            <p style={styles.eyebrow}>Barang Kosong</p>
+            <p style={styles.eyebrow}>Out of Stock</p>
             <h1 style={styles.title}>Stock Replenishment</h1>
           </div>
         </div>
@@ -410,20 +433,20 @@ export default function TakeRequestsMobile() {
 
         {requests.length === 0 ? (
           <div style={styles.emptyState}>
-            Belum ada request aktif. Halaman ini akan update otomatis setiap beberapa detik.
+            No active requests yet. This page updates automatically every few seconds.
           </div>
         ) : (
           <div style={styles.requestList}>
             {requests.map((row) => (
               <div key={row.id} style={styles.requestCard}>
                 <div style={styles.ownerCard}>
-                  <span style={styles.ownerLabel}>Untuk</span>
+                  <span style={styles.ownerLabel}>For</span>
                   <strong style={styles.ownerValue}>{row.requester_name}</strong>
                   <span style={styles.timeText}>{new Date(row.created_at).toLocaleString('id-ID')}</span>
                 </div>
 
                 <div style={styles.requestCell}>
-                  <span style={styles.requestLabel}>Nama Barang</span>
+                  <span style={styles.requestLabel}>Item Name</span>
                   <strong style={styles.requestValue}>{row.item_name}</strong>
                 </div>
 
@@ -441,7 +464,7 @@ export default function TakeRequestsMobile() {
 
                 <div style={styles.requestCell}>
                   <span style={styles.requestLabel}>Take from</span>
-                  <strong style={styles.requestValue}>{row.take_from}</strong>
+                  <strong style={styles.requestValue}>{formatTakeFromLabel(row.take_from)}</strong>
                 </div>
 
                 {row.note ? (
@@ -475,10 +498,10 @@ export default function TakeRequestsMobile() {
               </div>
 
               <p style={styles.modalText}>
-                <strong>Untuk:</strong> {selectedRequest.requester_name}
+                <strong>For:</strong> {selectedRequest.requester_name}
               </p>
               <p style={styles.modalText}>
-                <strong>Barang:</strong> {selectedRequest.item_name}
+                <strong>Item:</strong> {selectedRequest.item_name}
               </p>
               <p style={styles.modalText}>
                 <strong>Size:</strong> {selectedRequest.size || '-'}
@@ -487,7 +510,7 @@ export default function TakeRequestsMobile() {
                 <strong>Request Qty:</strong> {selectedRequest.qty}
               </p>
               <p style={styles.modalText}>
-                <strong>Lokasi tercatat:</strong> {selectedRequest.take_from}
+                <strong>Registered Location:</strong> {formatTakeFromLabel(selectedRequest.take_from)}
               </p>
               {selectedRequest.note ? (
                 <div style={styles.modalNoteBox}>
@@ -498,7 +521,7 @@ export default function TakeRequestsMobile() {
 
               <form onSubmit={handleComplete} style={styles.modalForm}>
                 <div style={styles.requestCell}>
-                  <label style={styles.requestLabel}>Ambil dari mana</label>
+                  <label style={styles.requestLabel}>Take Source</label>
                   <div style={styles.sourceOptionList}>
                     {loadingSourceOptions ? (
                       <div style={styles.sourceLoadingBox}>Loading source options...</div>
@@ -527,7 +550,7 @@ export default function TakeRequestsMobile() {
                             checked={selectedSourceValue === 'unrecorded'}
                             onChange={(event) => setSelectedSourceValue(event.target.value)}
                           />
-                          <span style={styles.sourceOptionText}>Lokasi belum terdata</span>
+                          <span style={styles.sourceOptionText}>Location is not found</span>
                         </label>
                       </>
                     )}

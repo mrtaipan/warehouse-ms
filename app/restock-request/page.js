@@ -20,6 +20,8 @@ export default async function RestockRequestPage() {
       title="Restock Request"
       subtitle=""
       showBackToStorage={true}
+      backHref="/dashboard"
+      backLabel="Back to Dashboard"
     />
   )
 }

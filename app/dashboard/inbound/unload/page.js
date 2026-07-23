@@ -3024,6 +3024,11 @@ export default function UnloadPage() {
       return
     }
 
+    if (userRole === 'inbound_staff') {
+      router.push('/dashboard/inbound/receiving')
+      return
+    }
+
     const query = selectedInbound?.grn_number || grnParam
     router.push(query ? `/dashboard/inbound/unload?grn=${encodeURIComponent(query)}` : '/dashboard/inbound/unload')
   }
@@ -3889,24 +3894,6 @@ export default function UnloadPage() {
     let insertResult = null
 
     if (isReturn) {
-      const { data: latestReturnRows, error: sequenceError } = await supabase
-        .from('warehouse_returns')
-        .select('koli_sequence')
-        .eq('inbound_id', selectedInbound.id)
-        .eq('source_phase', 'inbound')
-
-      if (sequenceError) {
-        setError(sequenceError.message)
-        setSaving(false)
-        return
-      }
-
-      const assignedReturnSequence =
-        (latestReturnRows || []).reduce(
-          (max, row) => Math.max(max, Number(row.koli_sequence || 0)),
-          0
-        ) + 1
-
       insertResult = await supabase.from('warehouse_returns').insert([
         {
           inbound_id: payload.inbound_id,
@@ -3919,7 +3906,7 @@ export default function UnloadPage() {
           qty: payload.qty,
           pic_name: payload.pic_name,
           source_phase: 'inbound',
-          koli_sequence: assignedReturnSequence,
+          koli_sequence: null,
         },
       ])
     } else {

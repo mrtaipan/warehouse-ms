@@ -358,6 +358,8 @@ export default function RestockRequestSubmit({
   subtitle = '',
   showPickerLink = false,
   showBackToStorage = false,
+  backHref = '/dashboard/storage',
+  backLabel = 'Back to Storage',
 }) {
   const [rackLocations, setRackLocations] = useState([])
   const [requests, setRequests] = useState([])
@@ -602,7 +604,7 @@ export default function RestockRequestSubmit({
       <div style={styles.shell}>
         {showBackToStorage ? (
           <div style={styles.topBar}>
-            <Link href="/dashboard/storage" style={styles.backIconLink} aria-label="Back to Storage">
+            <Link href={backHref} style={styles.backIconLink} aria-label={backLabel} title={backLabel}>
               ←
             </Link>
           </div>

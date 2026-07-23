@@ -178,26 +178,17 @@ export default async function PackingListOverviewPage() {
               <table style={styles.table}>
                 <thead>
                   <tr style={styles.headRow}>
+                    <th style={styles.actionTh}>Action</th>
                     <th style={styles.th}>GRN Number</th>
                     <th style={styles.th}>Inbound Date</th>
                     <th style={styles.numberTh}>QC Confirm Qty</th>
                     <th style={styles.numberTh}>Pending Koli</th>
                     <th style={styles.th}>Item Name</th>
-                    <th style={styles.actionTh}>Action</th>
                   </tr>
                 </thead>
                 <tbody>
                   {rows.map((row) => (
                     <tr key={row.inbound_id} style={styles.bodyRow}>
-                      <td style={styles.td}>
-                        <strong>{row.grn_number}</strong>
-                      </td>
-                      <td style={styles.td}>{formatDateDisplay(row.inbound_date)}</td>
-                      <td style={styles.numberTd}>{row.qc_confirm_qty}</td>
-                      <td style={{ ...styles.numberTd, color: row.pending_koli ? '#dc2626' : '#15803d', fontWeight: 800 }}>
-                        {row.pending_koli}
-                      </td>
-                      <td style={styles.itemTd}>{row.item_name}</td>
                       <td style={styles.actionTd}>
                         <div style={styles.rowActions}>
                           <Link
@@ -226,6 +217,15 @@ export default async function PackingListOverviewPage() {
                           </Link>
                         </div>
                       </td>
+                      <td style={styles.td}>
+                        <strong>{row.grn_number}</strong>
+                      </td>
+                      <td style={styles.td}>{formatDateDisplay(row.inbound_date)}</td>
+                      <td style={styles.numberTd}>{row.qc_confirm_qty}</td>
+                      <td style={{ ...styles.numberTd, color: row.pending_koli ? '#dc2626' : '#15803d', fontWeight: 800 }}>
+                        {row.pending_koli}
+                      </td>
+                      <td style={styles.itemTd}>{row.item_name}</td>
                     </tr>
                   ))}
                 </tbody>

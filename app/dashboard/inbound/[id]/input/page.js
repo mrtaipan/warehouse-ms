@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { createClient } from '@/utils/supabase/browser'
 import { getProfileByAuthenticatedUser } from '@/utils/user-profiles'
+import { ADMIN_EMAIL, resolveRole } from '@/utils/permissions'
 
 const supabase = createClient()
 
@@ -105,6 +106,7 @@ export default function ReceivingInputPage() {
 
   const displayName = getDisplayName(user, profile)
   const displayFirstName = getFirstName(displayName)
+  const userRole = resolveRole(profile?.role, user?.email?.toLowerCase() === ADMIN_EMAIL)
   const submittedCount = rows.filter((row) => String(row.unload_pic || '').trim()).length
   const totalKoli = Math.max(Number(inbound?.total_koli || 0), 1)
   const isCompleted = submittedCount >= totalKoli
@@ -352,6 +354,11 @@ export default function ReceivingInputPage() {
 
   function handleBackToReceiving() {
     if (hasUnsavedDraft && !window.confirm('Are you sure you want to discard this receiving input?')) {
+      return
+    }
+
+    if (userRole === 'inbound_staff') {
+      router.push('/dashboard/inbound/receiving')
       return
     }
 

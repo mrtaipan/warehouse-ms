@@ -288,12 +288,12 @@ export default function ReceivingFiltersClient({
             <table style={styles.table}>
               <thead>
                 <tr style={styles.headRow}>
+                  <th style={th}>Actions</th>
                   <th style={th}>GRN Number</th>
                   <th style={th}>Inbound Date</th>
                   <th style={th}>Supplier</th>
                   <th style={th}>Item Name</th>
                   <th style={th}>SJ Qty</th>
-                  <th style={th}>Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -310,13 +310,6 @@ export default function ReceivingFiltersClient({
 
                     return (
                     <tr key={order.id} style={styles.bodyRow}>
-                      <td style={td}>
-                        <strong>{order.grn_number}</strong>
-                      </td>
-                      <td style={td}>{formatDateDisplay(order.inbound_date)}</td>
-                      <td style={td}>{order.suppliers?.supplier_name || '-'}</td>
-                      <td style={td}>{order.item_name || '-'}</td>
-                      <td style={{ ...td, textAlign: 'right' }}>{order.total_claimed_qty ?? 'No data'}</td>
                       <td style={{ ...td, whiteSpace: 'nowrap' }}>
                         <div style={styles.actionGroup}>
                           <Link
@@ -335,8 +328,15 @@ export default function ReceivingFiltersClient({
                           >
                             <ActionIcon kind="unload" />
                           </Link>
-                      </div>
-                    </td>
+                        </div>
+                      </td>
+                      <td style={td}>
+                        <strong>{order.grn_number}</strong>
+                      </td>
+                      <td style={td}>{formatDateDisplay(order.inbound_date)}</td>
+                      <td style={td}>{order.suppliers?.supplier_name || '-'}</td>
+                      <td style={td}>{order.item_name || '-'}</td>
+                      <td style={{ ...td, textAlign: 'right' }}>{order.total_claimed_qty ?? 'No data'}</td>
                   </tr>
                     )
                   })()

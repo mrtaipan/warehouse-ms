@@ -1,5 +1,6 @@
 'use client'
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
+import Link from 'next/link'
+import { Fragment, useEffect, useMemo, useState } from 'react'
 
 import { createClient } from '@/utils/supabase/browser'
 import useArklineAccess from '../use-arkline-access'
@@ -14,8 +15,6 @@ const MATERIAL_BOARD_STATUSES = ['Ordered', 'Received', 'Sent']
 const RECEIPT_SIZE_ORDER = ['XS', 'S', 'M', 'L', 'XL', 'XXL']
 const DEFAULT_UPDATE_REASON = 'FABRIC ISSUE'
 const OTHERS_UPDATE_REASON = 'OTHERS'
-const ARKLINE_POWERBI_EMBED_URL =
-  'https://app.powerbi.com/reportEmbed?reportId=ec1df29a-b8da-4011-a674-82c461184f76&autoAuth=true&embeddedDemo=true'
 
 function CalendarIcon() {
   return (
@@ -653,27 +652,85 @@ function normalizeFinancePaymentRow(row) {
   }
 }
 
-function applySignedAdjustmentToRejectTotals(qtyB, qtyC, adjustmentQty) {
-  let nextQtyB = Number(qtyB || 0)
-  let nextQtyC = Number(qtyC || 0)
-  const signedQty = Number(adjustmentQty || 0)
+const QC_GRADE_OPTIONS = ['A', 'B', 'C']
 
-  if (!signedQty) {
-    return { qtyB: nextQtyB, qtyC: nextQtyC }
+function normalizeQcGrade(value, fallback = '') {
+  const grade = String(value || '').trim().toUpperCase()
+  return QC_GRADE_OPTIONS.includes(grade) ? grade : fallback
+}
+
+function applyArklineAdjustmentsToGradeTotals(qtyA, qtyB, qtyC, adjustmentRows = []) {
+  const totals = {
+    A: Number(qtyA || 0),
+    B: Number(qtyB || 0),
+    C: Number(qtyC || 0),
   }
 
-  if (signedQty > 0) {
-    let remaining = signedQty
-    const qtyCAdjustment = Math.min(nextQtyC, remaining)
-    nextQtyC -= qtyCAdjustment
-    remaining -= qtyCAdjustment
-    const qtyBAdjustment = Math.min(nextQtyB, remaining)
-    nextQtyB -= qtyBAdjustment
-    return { qtyB: nextQtyB, qtyC: nextQtyC }
+  function moveQty(fromGrade, toGrade, rawQty) {
+    const sourceGrade = normalizeQcGrade(fromGrade)
+    const targetGrade = normalizeQcGrade(toGrade)
+    const qty = Math.max(0, Number(rawQty || 0))
+    if (!sourceGrade || !targetGrade || sourceGrade === targetGrade || !qty) return 0
+
+    const appliedQty = Math.min(totals[sourceGrade], qty)
+    totals[sourceGrade] -= appliedQty
+    totals[targetGrade] += appliedQty
+    return appliedQty
   }
 
-  nextQtyC += Math.abs(signedQty)
-  return { qtyB: nextQtyB, qtyC: nextQtyC }
+  function reduceGrade(grade, rawQty) {
+    const targetGrade = normalizeQcGrade(grade)
+    const qty = Math.max(0, Number(rawQty || 0))
+    if (!targetGrade || !qty) return 0
+
+    const appliedQty = Math.min(totals[targetGrade], qty)
+    totals[targetGrade] -= appliedQty
+    return appliedQty
+  }
+
+  adjustmentRows.forEach((row) => {
+    const type = String(row?.adjustment_type || '').trim().toLowerCase()
+    const qty = Number(row?.qty || 0)
+    if (!qty) return
+
+    if (type === 'transfer') {
+      if (qty > 0) moveQty(row.from_grade, row.to_grade, qty)
+      if (qty < 0) moveQty(row.to_grade, row.from_grade, Math.abs(qty))
+      return
+    }
+
+    if (type === 'bc_to_a') {
+      if (qty > 0) {
+        const movedFromC = moveQty('C', 'A', qty)
+        moveQty('B', 'A', Math.max(0, qty - movedFromC))
+      } else {
+        moveQty('A', 'C', Math.abs(qty))
+      }
+      return
+    }
+
+    if (type === 'inspector_data_error') {
+      const affectedGrade = normalizeQcGrade(row.affected_grade)
+      if (affectedGrade) {
+        if (qty > 0) reduceGrade(affectedGrade, qty)
+        if (qty < 0) totals[affectedGrade] += Math.abs(qty)
+        return
+      }
+
+      if (qty > 0) {
+        const reducedFromC = reduceGrade('C', qty)
+        reduceGrade('B', Math.max(0, qty - reducedFromC))
+      } else {
+        totals.C += Math.abs(qty)
+      }
+    }
+  })
+
+  return {
+    qtyA: totals.A,
+    qtyB: totals.B,
+    qtyC: totals.C,
+  }
 }
 
 function buildQcGradeSummary(rows, adjustmentRows = []) {
@@ -687,29 +744,10 @@ function buildQcGradeSummary(rows, adjustmentRows = []) {
     { qtyA: 0, qtyB: 0, qtyC: 0 }
   )
 
-  const adjustmentSummary = (adjustmentRows || []).reduce(
-    (accumulator, row) => {
-      const type = String(row?.adjustment_type || '').trim().toLowerCase()
-      if (type === 'bc_to_a') accumulator.bcToAQty += Number(row?.qty || 0)
-      if (type === 'inspector_data_error') accumulator.inspectorErrorQty += Number(row?.qty || 0)
-      return accumulator
-    },
-    { bcToAQty: 0, inspectorErrorQty: 0 }
-  )
-
-  summary.qtyA += adjustmentSummary.bcToAQty
-  const rejectTotalsAfterGradeAAdjustment = applySignedAdjustmentToRejectTotals(
-    summary.qtyB,
-    summary.qtyC,
-    adjustmentSummary.bcToAQty
-  )
-  const adjustedRejectTotals = applySignedAdjustmentToRejectTotals(
-    rejectTotalsAfterGradeAAdjustment.qtyB,
-    rejectTotalsAfterGradeAAdjustment.qtyC,
-    adjustmentSummary.inspectorErrorQty
-  )
-  summary.qtyB = adjustedRejectTotals.qtyB
-  summary.qtyC = adjustedRejectTotals.qtyC
+  const adjustedTotals = applyArklineAdjustmentsToGradeTotals(summary.qtyA, summary.qtyB, summary.qtyC, adjustmentRows)
+  summary.qtyA = adjustedTotals.qtyA
+  summary.qtyB = adjustedTotals.qtyB
+  summary.qtyC = adjustedTotals.qtyC
 
   return {
     ...summary,
@@ -969,6 +1007,14 @@ function getQcRowActivityDate(row = {}) {
   return row.finished_at || row.updated_at || row.started_at || row.created_at || ''
 }
 
+function getArklineAdjustmentDateValue(row = {}) {
+  return row.effective_date || row.created_at || row.updated_at || ''
+}
+
+function isInitialArklineQcRow(row = {}) {
+  return String(row?.qc_type || 'INITIAL').trim().toUpperCase() !== 'RE_QC'
+}
+
 function getQcSampleReportData(productDetail, receiptDateFilter = 'all') {
   const options = buildQcReceiptPeriodOptions(productDetail?.receipts || [])
   const selectedOption = options.find((option) => option.value === receiptDateFilter) || options[0]
@@ -993,7 +1039,7 @@ function getQcSampleReportData(productDetail, receiptDateFilter = 'all') {
       isDateWithinReceiptPeriod(row.created_at, startDate, nextDate)
   )
   const adjustmentRows = (productDetail?.qcRejectAdjustments || []).filter((row) =>
-    isDateWithinReceiptPeriod(row.created_at, startDate, nextDate)
+    isDateWithinReceiptPeriod(getArklineAdjustmentDateValue(row), startDate, nextDate)
   )
   const receipts = (productDetail?.receipts || []).filter((row) => isDateWithinReceiptPeriod(row.receive_date, startDate, nextDate))
 
@@ -1082,8 +1128,6 @@ async function loadOptionalRows(queryFactory) {
 export default function ArklineProgressOverviewPage() {
   const { access, loading: accessLoading, role } = useArklineAccess()
   const canOpenKanbanDetail = role === 'admin' || access.progressKanbanAdd || access.progressKanbanEdit
-  const powerBiFrameRef = useRef(null)
-  const powerBiDragRef = useRef({ active: false, startX: 0, startY: 0, scrollLeft: 0, scrollTop: 0 })
   const [view, setView] = useState('')
   const [monthDate, setMonthDate] = useState(() => new Date())
   const [lastRefresh, setLastRefresh] = useState(() => new Date())
@@ -1121,10 +1165,6 @@ export default function ArklineProgressOverviewPage() {
   const [shortageBatch, setShortageBatch] = useState(null)
   const [shortageNotes, setShortageNotes] = useState('')
   const [savingShortage, setSavingShortage] = useState(false)
-  const [powerBiModalOpen, setPowerBiModalOpen] = useState(false)
-  const [powerBiZoom, setPowerBiZoom] = useState(1)
-  const [powerBiPanMode, setPowerBiPanMode] = useState(false)
-  const [powerBiDragging, setPowerBiDragging] = useState(false)
   const [receiptDraft, setReceiptDraft] = useState({ receiveDate: '', supplierSj: '', notes: '', sizeQty: {}, isFinal: false, hpp: '' })
   const [statusDraft, setStatusDraft] = useState({
     editingUpdateId: '',
@@ -1177,39 +1217,6 @@ export default function ArklineProgressOverviewPage() {
     } finally {
       setLoading(false)
     }
-  }
-
-  function handlePowerBiPanStart(event) {
-    if (!powerBiPanMode || !powerBiFrameRef.current) return
-
-    event.preventDefault()
-    powerBiDragRef.current = {
-      active: true,
-      startX: event.clientX,
-      startY: event.clientY,
-      scrollLeft: powerBiFrameRef.current.scrollLeft,
-      scrollTop: powerBiFrameRef.current.scrollTop,
-    }
-    setPowerBiDragging(true)
-    event.currentTarget.setPointerCapture?.(event.pointerId)
-  }
-
-  function handlePowerBiPanMove(event) {
-    if (!powerBiDragRef.current.active || !powerBiFrameRef.current) return
-
-    event.preventDefault()
-    const deltaX = event.clientX - powerBiDragRef.current.startX
-    const deltaY = event.clientY - powerBiDragRef.current.startY
-    powerBiFrameRef.current.scrollLeft = powerBiDragRef.current.scrollLeft - deltaX
-    powerBiFrameRef.current.scrollTop = powerBiDragRef.current.scrollTop - deltaY
-  }
-
-  function handlePowerBiPanEnd(event) {
-    if (!powerBiDragRef.current.active) return
-
-    powerBiDragRef.current.active = false
-    setPowerBiDragging(false)
-    event.currentTarget.releasePointerCapture?.(event.pointerId)
   }
 
   const monthDays = useMemo(() => buildMonthDays(monthDate), [monthDate])
@@ -1589,8 +1596,10 @@ export default function ArklineProgressOverviewPage() {
         const rowSku = String(row?.sku_induk || '').trim().toUpperCase()
         return (normalizedItemId && rowItemId === normalizedItemId) || (normalizedSku && rowSku === normalizedSku)
       })
-      const qcRows = qcRowsByItem.length ? qcRowsByItem : (qcRowsRaw || []).filter((row) => String(row?.sku_induk || '').trim().toUpperCase() === normalizedSku)
+      const qcCandidateRows = qcRowsByItem.length ? qcRowsByItem : (qcRowsRaw || []).filter((row) => String(row?.sku_induk || '').trim().toUpperCase() === normalizedSku)
+      const qcRows = qcCandidateRows.filter(isInitialArklineQcRow)
       const qcTaskIds = qcRows.map((row) => row.id).filter(Boolean)
+      const qcCycleIds = new Set(qcRows.map((row) => String(row.qc_cycle_id || '')).filter(Boolean))
       const rejectDetailRows = await loadOptionalRows(() => {
         let query = supabase
           .from('arkline_qc_reject_details')
@@ -1613,22 +1622,19 @@ export default function ArklineProgressOverviewPage() {
           )
           .order('created_at', { ascending: false })
 
-        if (normalizedItemId) {
-          query = query.eq('arkline_po_item_id', normalizedItemId)
-        } else if (selectedPoDetail.poId && normalizedSku) {
-          query = query.eq('po_id', selectedPoDetail.poId).eq('sku_induk', normalizedSku)
-        } else if (qcTaskIds.length) {
-          query = query.in('arkline_qc_id', qcTaskIds)
-        } else {
-          query = query.limit(0)
-        }
+        if (!qcTaskIds.length) return query.limit(0)
+
+        query = query.in('arkline_qc_id', qcTaskIds)
+
+        if (normalizedItemId) query = query.eq('arkline_po_item_id', normalizedItemId)
+        else if (selectedPoDetail.poId && normalizedSku) query = query.eq('po_id', selectedPoDetail.poId).eq('sku_induk', normalizedSku)
 
         return query
       })
-      const rejectAdjustmentRows = await loadOptionalRows(() => {
+      const rejectAdjustmentRowsRaw = await loadOptionalRows(() => {
         let query = supabase
           .from('arkline_qc_reject_adjustments')
-          .select('id, po_id, arkline_po_item_id, sku_induk, model_name, adjustment_type, qty, notes, created_at')
+          .select('*')
           .order('created_at', { ascending: false })
 
         if (normalizedItemId) {
@@ -1640,6 +1646,10 @@ export default function ArklineProgressOverviewPage() {
         }
 
         return query
+      })
+      const rejectAdjustmentRows = (rejectAdjustmentRowsRaw || []).filter((row) => {
+        const cycleId = String(row?.qc_cycle_id || '')
+        return !cycleId || qcCycleIds.has(cycleId)
       })
 
       const returnBatchIds = (returnBatchRows || []).map((row) => row.id).filter(Boolean)
@@ -2542,9 +2552,9 @@ export default function ArklineProgressOverviewPage() {
                   {loading ? 'Refreshing...' : 'Refresh'}
                 </button>
                 {role === 'admin' ? (
-                  <button type="button" className={styles.powerBiButton} onClick={() => setPowerBiModalOpen(true)}>
+                  <Link className={styles.powerBiButton} href="/arkline-power-bi">
                     BI Report
-                  </button>
+                  </Link>
                 ) : null}
               </div>
               <div className={styles.messageText}>
@@ -2790,74 +2800,6 @@ export default function ArklineProgressOverviewPage() {
           </div>
         ) : null}
       </section>
-
-      {powerBiModalOpen && role === 'admin' ? (
-        <div className={styles.modalOverlay} onClick={() => setPowerBiModalOpen(false)}>
-          <div className={`${styles.modalCard} ${styles.powerBiModalCard}`.trim()} onClick={(event) => event.stopPropagation()}>
-            <div className={styles.modalHeader}>
-              <div>
-                <p className={styles.eyebrow}>Admin Report</p>
-                <h3 className={styles.modalTitle}>Power BI Embedded Report</h3>
-              </div>
-              <div className={styles.powerBiHeaderActions}>
-                <div className={styles.powerBiZoomControls} aria-label="Power BI zoom controls">
-                  <button type="button" onClick={() => setPowerBiZoom((value) => Math.max(0.75, Number((value - 0.1).toFixed(2))))}>
-                    -
-                  </button>
-                  <span>{Math.round(powerBiZoom * 100)}%</span>
-                  <button type="button" onClick={() => setPowerBiZoom((value) => Math.min(1.8, Number((value + 0.1).toFixed(2))))}>
-                    +
-                  </button>
-                  <button type="button" onClick={() => setPowerBiZoom(1)}>
-                    Reset
-                  </button>
-                  <button
-                    type="button"
-                    className={powerBiPanMode ? styles.powerBiPanToggleActive : ''}
-                    aria-pressed={powerBiPanMode}
-                    onClick={() => setPowerBiPanMode((value) => !value)}
-                  >
-                    Pan {powerBiPanMode ? 'On' : 'Off'}
-                  </button>
-                </div>
-                <button type="button" className={styles.iconButton} onClick={() => setPowerBiModalOpen(false)} aria-label="Close Power BI report">
-                  <CloseIcon />
-                </button>
-              </div>
-            </div>
-            <div ref={powerBiFrameRef} className={`${styles.powerBiFrameShell} ${powerBiDragging ? styles.powerBiFrameShellDragging : ''}`.trim()}>
-              <div
-                className={styles.powerBiPanCanvas}
-                style={{
-                  width: `${100 * powerBiZoom}%`,
-                  height: `${100 * powerBiZoom}%`,
-                  minWidth: `${1140 * powerBiZoom}px`,
-                  minHeight: `${642 * powerBiZoom}px`,
-                }}
-              >
-                <iframe
-                  title="Arkline Report Reborn"
-                  className={styles.powerBiEmbedContainer}
-                  src={ARKLINE_POWERBI_EMBED_URL}
-                  frameBorder="0"
-                  allowFullScreen
-                />
-              </div>
-              {powerBiPanMode ? (
-                <div
-                  className={`${styles.powerBiDragLayer} ${powerBiDragging ? styles.powerBiDragLayerDragging : ''}`.trim()}
-                  role="presentation"
-                  onPointerDown={handlePowerBiPanStart}
-                  onPointerMove={handlePowerBiPanMove}
-                  onPointerUp={handlePowerBiPanEnd}
-                  onPointerCancel={handlePowerBiPanEnd}
-                  onPointerLeave={handlePowerBiPanEnd}
-                />
-              ) : null}
-            </div>
-          </div>
-        </div>
-      ) : null}
 
       {selectedPoDetail ? (
         <div className={styles.modalOverlay} onClick={closePoDetail}>
