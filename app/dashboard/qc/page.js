@@ -1214,6 +1214,13 @@ function buildGroupedRejectDraftRows(rows = []) {
   return Array.from(grouped.values())
 }
 
+function getRejectDraftKey(row) {
+  const grade = String(row?.grade || 'B').trim().toUpperCase()
+  const reasonId = String(row?.rejectReasonId || row?.reject_reason_id || '').trim()
+  const size = String(row?.size || '').trim().toUpperCase()
+  return `${grade}|||${reasonId}|||${size}`
+}
+
 function getSummaryRejectKey(item) {
   const po = String(item?.brand || 'NO PO').trim().toUpperCase() || 'NO PO'
   const sku = String(item?.category || 'NO SKU').trim().toUpperCase() || 'NO SKU'
@@ -2003,7 +2010,6 @@ export default function QcDashboardPage() {
 
     return Array.from(grouped.values()).sort((a, b) => a.reason_name.localeCompare(b.reason_name))
   }, [arklineRejectReasons, selectedRejectExistingDetails])
-  const selectedRejectTargetQty = Number(rejectDetailSummary?.rejectTargetQty ?? getRejectQty(rejectDetailSummary || {}))
   const selectedRejectDetailQty = rejectDraftRows.reduce((sum, item) => sum + Number(item.qty || 0), 0)
   const selectedRejectAdjustedBaseSummary = useMemo(() => {
     const baseQtyA = selectedRejectTaskRows.reduce((sum, item) => sum + Number(item.qty_a || 0), 0)
@@ -2448,11 +2454,11 @@ export default function QcDashboardPage() {
 
       const validRows = rejectDraftRows.filter((row) => Number(row.qty || 0) > 0)
 
-      if (!validRows.length && selectedRejectTargetQty > 0) {
+      if (!validRows.length && selectedRejectExpectedRejectQty > 0) {
         throw new Error('Tambahkan minimal satu baris reject detail.')
       }
 
-      if (selectedRejectTargetQty > 0 && selectedRejectGap !== 0) {
+      if (selectedRejectExpectedRejectQty > 0 && selectedRejectGap !== 0) {
         throw new Error('Total detail + adjustment harus sama dengan total Grade B/C awal.')
       }
 
@@ -2473,16 +2479,68 @@ export default function QcDashboardPage() {
         rowsWithReasons.push({ ...row, rejectReasonId: await resolveRejectReasonId(row) })
       }
 
+      const existingDetailIds = selectedRejectExistingDetails.map((item) => item.id).filter(Boolean)
+      const { data: returnLineRows, error: returnLineError } = existingDetailIds.length
+        ? await supabase
+            .from('arkline_qc_return_batch_lines')
+            .select('reject_detail_id, qty')
+            .in('reject_detail_id', existingDetailIds)
+        : { data: [], error: null }
+
+      if (returnLineError) throw new Error(returnLineError.message)
+
+      const lockedDetailIds = new Set((returnLineRows || []).map((item) => String(item.reject_detail_id)).filter(Boolean))
+      const lockedDetails = selectedRejectExistingDetails.filter((item) => lockedDetailIds.has(String(item.id)))
+      const unlockedDetailIds = selectedRejectExistingDetails
+        .filter((item) => !lockedDetailIds.has(String(item.id)))
+        .map((item) => item.id)
+        .filter(Boolean)
+      const lockedQtyByKey = new Map()
+      const lockedQtyByTaskGrade = new Map()
+
+      lockedDetails.forEach((item) => {
+        const key = getRejectDraftKey(item)
+        lockedQtyByKey.set(key, Number(lockedQtyByKey.get(key) || 0) + Number(item.qty || 0))
+
+        const taskGradeKey = `${item.arkline_qc_id || ''}|||${String(item.grade || '').trim().toUpperCase()}`
+        lockedQtyByTaskGrade.set(taskGradeKey, Number(lockedQtyByTaskGrade.get(taskGradeKey) || 0) + Number(item.qty || 0))
+      })
+
+      const desiredQtyByKey = new Map()
+      rowsWithReasons.forEach((row) => {
+        const key = getRejectDraftKey(row)
+        desiredQtyByKey.set(key, Number(desiredQtyByKey.get(key) || 0) + Number(row.qty || 0))
+      })
+
+      for (const [key, lockedQty] of lockedQtyByKey.entries()) {
+        const desiredQty = Number(desiredQtyByKey.get(key) || 0)
+        if (desiredQty < Number(lockedQty || 0)) {
+          throw new Error('Reject detail yang sudah dipakai return tidak bisa dikurangi atau dihapus.')
+        }
+      }
+
       const taskRowsByGrade = {
-        B: selectedRejectTaskRows.map((item) => ({ ...item, remainingRejectQty: Number(item.qty_b || 0) })),
-        C: selectedRejectTaskRows.map((item) => ({ ...item, remainingRejectQty: Number(item.qty_c || 0) })),
+        B: selectedRejectTaskRows.map((item) => {
+          const lockedQty = Number(lockedQtyByTaskGrade.get(`${item.id || ''}|||B`) || 0)
+          return { ...item, remainingRejectQty: Math.max(0, Number(item.qty_b || 0) - lockedQty) }
+        }),
+        C: selectedRejectTaskRows.map((item) => {
+          const lockedQty = Number(lockedQtyByTaskGrade.get(`${item.id || ''}|||C`) || 0)
+          return { ...item, remainingRejectQty: Math.max(0, Number(item.qty_c || 0) - lockedQty) }
+        }),
       }
       const detailPayload = []
 
       rowsWithReasons.forEach((row) => {
-        let remaining = Number(row.qty || 0)
+        const key = getRejectDraftKey(row)
+        const lockedQty = Number(lockedQtyByKey.get(key) || 0)
+        let remaining = Number(row.qty || 0) - lockedQty
         const grade = String(row.grade || 'B').toUpperCase()
         const queue = taskRowsByGrade[grade] || []
+
+        if (remaining < 0) {
+          throw new Error('Reject detail yang sudah dipakai return tidak bisa dikurangi atau dihapus.')
+        }
 
         queue.forEach((task) => {
           if (remaining <= 0 || Number(task.remainingRejectQty || 0) <= 0) return
@@ -2523,9 +2581,8 @@ export default function QcDashboardPage() {
         }
       })
 
-      const existingDetailIds = selectedRejectExistingDetails.map((item) => item.id).filter(Boolean)
-      if (existingDetailIds.length) {
-        const { error: deleteDetailError } = await supabase.from('arkline_qc_reject_details').delete().in('id', existingDetailIds)
+      if (unlockedDetailIds.length) {
+        const { error: deleteDetailError } = await supabase.from('arkline_qc_reject_details').delete().in('id', unlockedDetailIds)
         if (deleteDetailError) throw new Error(deleteDetailError.message)
       }
 
