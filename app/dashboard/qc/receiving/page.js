@@ -8,6 +8,7 @@ import { ADMIN_EMAIL } from '@/utils/permissions'
 import { readFileAsDataUrl } from '../shared'
 
 const supabase = createClient()
+const PRODUCT_PHOTOS_BUCKET = 'product-photos'
 const ARKLINE_PO_TABLE_CANDIDATES = ['arkline_pos', 'dir_arkline_purchase_orders', 'dir_arkline_po', 'dir_arkline_pos']
 const ARKLINE_PO_ITEM_TABLE_CANDIDATES = ['arkline_po_items', 'dir_arkline_purchase_order_items', 'dir_arkline_po_items', 'dir_arkline_pos_items']
 
@@ -124,6 +125,38 @@ function getCategoryPath(categoryId, categoryMap) {
   }
 
   return path
+}
+
+function getSafeStorageSegment(value, fallback = 'item') {
+  return (
+    String(value || fallback)
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9-_]+/g, '-')
+      .replace(/^-+|-+$/g, '') || fallback
+  )
+}
+
+function getProductPhotoBasePathFromRow(row = {}, categoryMap = new Map()) {
+  const categoryPath = row.category_id
+    ? getCategoryPath(row.category_id, categoryMap)
+    : String(row.category_name || '')
+        .split('>')
+        .map((item) => ({ category_name: item.trim() }))
+        .filter((item) => item.category_name)
+  const [category = null, ...subCategories] = categoryPath
+  const subcategory = subCategories.map((item) => item.category_name).filter(Boolean).join('-') || row.category_name
+
+  return [
+    getSafeStorageSegment(row.brand_name || row.brands?.brand_name, 'brand'),
+    getSafeStorageSegment(category?.category_name || row.category_name, 'category'),
+    getSafeStorageSegment(subcategory, 'subcategory'),
+    getSafeStorageSegment(row.model_name, 'model'),
+  ].join('/')
+}
+
+function getStablePhotoFileName(name, extension = 'jpg') {
+  return `${getSafeStorageSegment(name, 'model')}.${extension}`
 }
 
 function getItemTypeSubcategoryLabel(categoryId, categoryMap, fallback = '') {
@@ -2384,12 +2417,17 @@ export default function QcReceivingPage() {
 
     if (modelPhotoFile) {
       const fileExt = modelPhotoFile.name.split('.').pop()?.toLowerCase() || 'jpg'
-      const fileName = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}.${fileExt}`
-      const filePath = `qc-models/${fileName}`
+      const activeRow = modelRows.find((row) => row.id === activeModelRowId) || {}
+      const storageRow = {
+        ...activeRow,
+        model_name: modelDraft.model_name.trim().toUpperCase(),
+      }
+      const fileName = getStablePhotoFileName(modelDraft.model_color || modelDraft.model_name, fileExt)
+      const filePath = [getProductPhotoBasePathFromRow(storageRow, catalogCategoryById), fileName].join('/')
 
       const { error: uploadError } = await supabase.storage
-        .from('product-photos')
-        .upload(filePath, modelPhotoFile, { upsert: false })
+        .from(PRODUCT_PHOTOS_BUCKET)
+        .upload(filePath, modelPhotoFile, { upsert: true })
 
       if (uploadError) {
         setModelModalError(uploadError.message)
@@ -2397,7 +2435,7 @@ export default function QcReceivingPage() {
       }
 
       const { data: publicUrlData } = supabase.storage
-        .from('product-photos')
+        .from(PRODUCT_PHOTOS_BUCKET)
         .getPublicUrl(filePath)
 
       photoUrl = publicUrlData.publicUrl || ''

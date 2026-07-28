@@ -1598,6 +1598,24 @@ function getCategoryPath(category = {}, categoryById = new Map()) {
   return cleanPath.length ? cleanPath : fullName ? [fullName] : []
 }
 
+function getProductPhotoBasePathFromCard(card = {}) {
+  const categoryPath = Array.isArray(card.category_path) && card.category_path.length
+    ? card.category_path
+    : String(card.category_name || card.category_code || '')
+        .split('>')
+        .map((item) => item.trim())
+        .filter(Boolean)
+  const [category = card.category_root || card.category_code || card.category_name, ...subCategories] = categoryPath
+  const subcategory = subCategories.join('-') || card.sub_category || card.item_type || card.category_code || card.category_id
+
+  return [
+    getSafeStorageSegment(card.brand_code || card.brand_name, 'brand'),
+    getSafeStorageSegment(category, 'category'),
+    getSafeStorageSegment(subcategory, 'subcategory'),
+    getSafeStorageSegment(card.model_code || card.model_name || card.product_model_id, 'model'),
+  ].join('/')
+}
+
 function getCategoryPathLabel(card = {}) {
   return (card.category_path || []).filter(Boolean).join(' > ')
 }
@@ -3678,10 +3696,7 @@ export default function PackingListSizeBreakdownPage() {
         const fileExt = compressedFile.name.split('.').pop()?.toLowerCase() || 'jpg'
         const fileName = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}.${fileExt}`
         const filePath = [
-          getSafeStorageSegment(selectedCard?.brand_code || selectedCard?.brand_name, 'brand'),
-          getSafeStorageSegment(selectedCard?.category_code || selectedCard?.category_name || selectedCard?.category_id, 'category'),
-          getSafeStorageSegment(selectedCard?.model_code || selectedCard?.model_name || selectedCard?.product_model_id, 'model'),
-          'variants',
+          getProductPhotoBasePathFromCard(selectedCard),
           getSafeStorageSegment(variantSegment, 'variant'),
           'detail',
           getSafeStorageSegment(plDetailSegment, 'pl'),
@@ -3750,7 +3765,7 @@ export default function PackingListSizeBreakdownPage() {
     )
 
     const storagePath = getProductPhotoStoragePath(photoUrl)
-    if (!storagePath || !storagePath.includes('/variants/') || !storagePath.includes('/detail/')) return
+    if (!storagePath || !storagePath.includes('/detail/')) return
 
     const { error: removeError } = await supabase.storage
       .from(PRODUCT_PHOTOS_BUCKET)

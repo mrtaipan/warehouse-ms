@@ -142,6 +142,29 @@ function formatNumber(value) {
   return new Intl.NumberFormat('id-ID', { maximumFractionDigits: 0 }).format(Number(value || 0))
 }
 
+function canAccessOperationsCalendar(role, isAdmin) {
+  if (isAdmin) return true
+  if (role === 'warehouse_leader') return true
+  return String(role || '').endsWith('_coordinator')
+}
+
+function CalendarIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M7 3v3" />
+      <path d="M17 3v3" />
+      <path d="M4 9h16" />
+      <rect x="4" y="5" width="16" height="15" rx="2" />
+      <path d="M8 13h.01" />
+      <path d="M12 13h.01" />
+      <path d="M16 13h.01" />
+      <path d="M8 17h.01" />
+      <path d="M12 17h.01" />
+      <path d="M16 17h.01" />
+    </svg>
+  )
+}
+
 function addGradeTotals(total, row = {}) {
   const grade = String(row.grade || '').toUpperCase()
   const qty = Number(row.qty || 0)
@@ -557,6 +580,7 @@ export default async function DashboardPage({ searchParams }) {
   const todayDate = getTodayDateString()
   const params = await searchParams
   const selectedGrn = String(params?.grn || '').trim()
+  const showOperationsCalendarButton = canAccessOperationsCalendar(role, isAdmin)
 
   const { data: announcementRows } = await supabase.from('dir_user_profiles').select('*')
   const { data: broadcastRows, error: broadcastError } = await supabase
@@ -607,6 +631,13 @@ export default async function DashboardPage({ searchParams }) {
               <div className={styles.heroQuickActions}>
                 <ItemSearchShortcutButton />
                 <RestockShortcutButton actions={restockActions} />
+                {showOperationsCalendarButton ? (
+                  <Link href="/operations-calendar" className={styles.heroProfileLink} aria-label="Open Operations Calendar">
+                    <span className={styles.heroActionIcon}>
+                      <CalendarIcon />
+                    </span>
+                  </Link>
+                ) : null}
                 {showMyArklifeButton ? (
                   <Link href={menus.myArklifeHref} className={styles.heroProfileLink} aria-label="Open MyARKLIFE">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -680,6 +711,13 @@ export default async function DashboardPage({ searchParams }) {
             <div className={styles.heroQuickActions}>
               <ItemSearchShortcutButton />
               <RestockShortcutButton actions={restockActions} />
+              {showOperationsCalendarButton ? (
+                <Link href="/operations-calendar" className={styles.heroProfileLink} aria-label="Open Operations Calendar">
+                  <span className={styles.heroActionIcon}>
+                    <CalendarIcon />
+                  </span>
+                </Link>
+              ) : null}
               {showMyArklifeButton ? (
                 <Link href={menus.myArklifeHref} className={styles.heroProfileLink} aria-label="Open MyARKLIFE">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">

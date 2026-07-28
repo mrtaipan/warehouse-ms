@@ -109,6 +109,52 @@ function getSafeStorageSegment(value, fallback = 'item') {
   )
 }
 
+function getCategoryStorageSegments(category, categoryById = new Map()) {
+  const path = []
+  const visited = new Set()
+  let current = category
+
+  while (current?.id && !visited.has(Number(current.id))) {
+    visited.add(Number(current.id))
+    path.unshift(current)
+    current = current.parent_id ? categoryById.get(Number(current.parent_id)) : null
+  }
+
+  if (!path.length && category?.full_name) {
+    const [categoryName = '', ...subCategoryNames] = String(category.full_name).split('>').map((item) => item.trim()).filter(Boolean)
+    return {
+      category: categoryName,
+      subcategory: subCategoryNames.join('-') || categoryName,
+    }
+  }
+
+  const [rootCategory, ...subCategories] = path
+  return {
+    category: rootCategory?.category_code || rootCategory?.category_name || category?.category_code || category?.category_name,
+    subcategory:
+      subCategories
+        .map((item) => item.category_code || item.category_name)
+        .filter(Boolean)
+        .join('-') ||
+      category?.category_code ||
+      category?.category_name,
+  }
+}
+
+function getProductPhotoBasePath({ brand, brandFallback, category, categoryById, model, modelFallback }) {
+  const categorySegments = getCategoryStorageSegments(category, categoryById)
+  return [
+    getSafeStorageSegment(brand?.brand_code || brand?.brand_name || brandFallback, 'brand'),
+    getSafeStorageSegment(categorySegments.category, 'category'),
+    getSafeStorageSegment(categorySegments.subcategory, 'subcategory'),
+    getSafeStorageSegment(model?.model_code || model?.model_name || model?.id || modelFallback, 'model'),
+  ].join('/')
+}
+
+function getStablePhotoFileName(name, extension = 'jpg') {
+  return `${getSafeStorageSegment(name, 'variant')}.${extension}`
+}
+
 function readFileAsDataUrl(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
@@ -3689,19 +3735,22 @@ export default function UnloadPage() {
 
       if (variantPhotoFile) {
         const fileExt = variantPhotoFile.name.split('.').pop()?.toLowerCase() || 'jpg'
-        const fileName = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}.${fileExt}`
+        const fileName = getStablePhotoFileName(resolvedVariantStorageCode || normalizedVariantName, fileExt)
         const filePath = [
-          getSafeStorageSegment(selectedBrand?.brand_code || selectedBrand?.brand_name || selectedBrandId, 'brand'),
-          getSafeStorageSegment(selectedCategory.full_code || selectedCategory.category_code || selectedCategory.category_name || selectedCategory.id, 'category'),
-          getSafeStorageSegment(savedModel.model_code || savedModel.id || normalizedModelName, 'model'),
-          'variants',
-          getSafeStorageSegment(resolvedVariantStorageCode || normalizedVariantName, 'variant'),
+          getProductPhotoBasePath({
+            brand: selectedBrand,
+            brandFallback: selectedBrandId,
+            category: selectedCategory,
+            categoryById: categoryMaps.byId,
+            model: savedModel,
+            modelFallback: normalizedModelName,
+          }),
           fileName,
         ].join('/')
 
         const { error: uploadError } = await supabase.storage
           .from(PRODUCT_PHOTOS_BUCKET)
-          .upload(filePath, variantPhotoFile, { upsert: false })
+          .upload(filePath, variantPhotoFile, { upsert: true })
 
         if (uploadError) {
           setModelModalError(uploadError.message)
