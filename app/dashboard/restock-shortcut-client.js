@@ -1,7 +1,8 @@
 'use client'
 
 import Link from 'next/link'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import { createPortal } from 'react-dom'
 import styles from './dashboard.module.css'
 
 function RestockIcon() {
@@ -24,8 +25,20 @@ function RestockIcon() {
 }
 
 export default function RestockShortcutButton({ actions = [] }) {
+  const portalRoot = typeof document === 'undefined' ? null : document.body
   const [isOpen, setIsOpen] = useState(false)
   const availableActions = actions.filter((action) => action?.href)
+
+  useEffect(() => {
+    if (!isOpen) return undefined
+
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+
+    return () => {
+      document.body.style.overflow = previousOverflow
+    }
+  }, [isOpen])
 
   if (!availableActions.length) {
     return null
@@ -56,8 +69,8 @@ export default function RestockShortcutButton({ actions = [] }) {
         <RestockIcon />
       </button>
 
-      {isOpen ? (
-        <div className={styles.restockModalOverlay} role="presentation" onClick={() => setIsOpen(false)}>
+      {isOpen && portalRoot ? createPortal(
+        <div className={styles.restockShortcutModalOverlay} role="presentation" onClick={() => setIsOpen(false)}>
           <div
             className={styles.restockModalCard}
             role="dialog"
@@ -84,7 +97,8 @@ export default function RestockShortcutButton({ actions = [] }) {
               ))}
             </div>
           </div>
-        </div>
+        </div>,
+        portalRoot
       ) : null}
     </>
   )

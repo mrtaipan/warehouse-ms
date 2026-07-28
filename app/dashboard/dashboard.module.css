@@ -389,6 +389,19 @@
   background: rgba(15, 23, 42, 0.32);
 }
 
+.restockShortcutModalOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(15, 23, 42, 0.42);
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
 .itemSearchModalOverlay {
   position: fixed;
   inset: 0;
@@ -893,6 +906,19 @@
   .itemSearchModalOverlay {
     align-items: stretch;
     padding: 12px;
+  }
+
+  .restockShortcutModalOverlay {
+    align-items: stretch;
+    padding: 12px;
+  }
+
+  .restockModalCard {
+    width: 100%;
+    max-height: calc(100dvh - 24px);
+    overflow-y: auto;
+    border-radius: 20px;
+    padding: 16px;
   }
 
   .itemSearchModalCard {
