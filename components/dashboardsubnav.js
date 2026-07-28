@@ -79,7 +79,11 @@ export default function DashboardSubnav({ items, children, variant = 'default' }
   const isPageTabsVariant = variant === 'pageTabs'
   const shouldHideNav =
     isMenuVariant &&
-    (pathname.startsWith('/dashboard/qc/confirmation/next-process') || pathname.startsWith('/dashboard/qc/confirmation/rejection'))
+    (
+      pathname.startsWith('/dashboard/qc/confirmation/next-process') ||
+      pathname.startsWith('/dashboard/qc/confirmation/rejection') ||
+      pathname === '/dashboard/storage/warehouse-map'
+    )
 
   return (
     <div

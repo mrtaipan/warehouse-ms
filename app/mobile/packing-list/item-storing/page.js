@@ -73,11 +73,26 @@ function getDefaultTargetQty(rowQty = 0, modelVariantQty = 0, storingType = 'MOB
 }
 
 function getStoredOrDefaultTargetQty(row = {}, modelVariantQty = 0, storingType = 'MOB') {
+  const rowQty = Math.max(0, Number(row.qty || 0))
+  const defaultTargetQty = getDefaultTargetQty(rowQty, modelVariantQty, storingType)
+  const mobTargetQty = Number(row.mob_target_qty)
+  const oiTargetQty = Number(row.oi_target_qty)
+
+  if (
+    Number.isFinite(mobTargetQty) &&
+    Number.isFinite(oiTargetQty) &&
+    mobTargetQty >= 0 &&
+    oiTargetQty >= 0 &&
+    mobTargetQty + oiTargetQty === rowQty
+  ) {
+    return storingType === 'OI' ? oiTargetQty : mobTargetQty
+  }
+
   const field = storingType === 'OI' ? 'oi_target_qty' : 'mob_target_qty'
   if (row[field] !== null && row[field] !== undefined) {
-    return Math.max(0, Number(row[field] || 0))
+    return Math.min(rowQty, Math.max(0, Number(row[field] || 0)))
   }
-  return getDefaultTargetQty(row.qty, modelVariantQty, storingType)
+  return defaultTargetQty
 }
 
 function ArrowLeftIcon() {
@@ -354,10 +369,43 @@ function ItemStoringContent() {
   }
 
   function selectProduct(productKey) {
+    const product = products.find((item) => item.key === productKey) || null
+    if (product && Number(product.remaining_qty || 0) <= 0) {
+      setError('This product has no available qty.')
+      return
+    }
+
     setSelectedProductKey(productKey)
     setSelectedBreakdownId('')
+    setQty('')
     setProductPickerOpen(false)
     setError('')
+  }
+
+  function handleSizeChange(nextBreakdownId) {
+    const nextSize = sizeOptions.find((item) => String(item.id) === String(nextBreakdownId)) || null
+    const nextAvailableQty = Math.max(0, Number(nextSize?.remaining_qty || 0))
+    const currentQty = Number(qty || 0)
+
+    setSelectedBreakdownId(nextBreakdownId)
+    if (!nextBreakdownId) {
+      setQty('')
+    } else if (currentQty > nextAvailableQty) {
+      setQty(String(nextAvailableQty))
+    }
+    setError('')
+  }
+
+  function handleQtyChange(value) {
+    const sanitizedQty = sanitizeQuantityInput(value)
+    if (!sanitizedQty) {
+      setQty('')
+      return
+    }
+
+    const availableQty = Math.max(0, Number(selectedSize?.remaining_qty || 0))
+    const inputQty = Number(sanitizedQty)
+    setQty(String(Math.min(inputQty, availableQty)))
   }
 
   function addToKoli(event) {
@@ -592,19 +640,29 @@ function ItemStoringContent() {
                 </button>
                 {productPickerOpen ? (
                   <div style={styles.productPickerMenu}>
-                    {products.map((product) => (
-                      <button key={product.key} type="button" onClick={() => selectProduct(product.key)} style={styles.productPickerOption}>
-                        {product.photo_url ? (
-                          <Image src={product.photo_url} alt={product.item_name} width={46} height={46} unoptimized style={styles.productPickerThumb} />
-                        ) : (
-                          <span style={styles.productPickerNoPhoto}>NO</span>
-                        )}
-                        <span style={styles.productPickerText}>
-                          <strong style={styles.productPickerName}>{product.item_name}</strong>
-                          <small style={styles.productPickerBrand}>{product.brand_name}</small>
-                        </span>
-                      </button>
-                    ))}
+                    {products.map((product) => {
+                      const isUnavailable = Number(product.remaining_qty || 0) <= 0
+
+                      return (
+                        <button
+                          key={product.key}
+                          type="button"
+                          onClick={() => selectProduct(product.key)}
+                          disabled={isUnavailable}
+                          style={isUnavailable ? { ...styles.productPickerOption, ...styles.productPickerOptionDisabled } : styles.productPickerOption}
+                        >
+                          {product.photo_url ? (
+                            <Image src={product.photo_url} alt={product.item_name} width={46} height={46} unoptimized style={styles.productPickerThumb} />
+                          ) : (
+                            <span style={styles.productPickerNoPhoto}>NO</span>
+                          )}
+                          <span style={styles.productPickerText}>
+                            <strong style={styles.productPickerName}>{product.item_name}</strong>
+                            <small style={styles.productPickerBrand}>{isUnavailable ? 'No available qty' : product.brand_name}</small>
+                          </span>
+                        </button>
+                      )
+                    })}
                   </div>
                 ) : null}
               </div>
@@ -626,7 +684,7 @@ function ItemStoringContent() {
               <form onSubmit={addToKoli} style={styles.inputStack}>
                 <label style={styles.field}>
                   <span style={styles.label}>Size</span>
-                  <select value={selectedBreakdownId} onChange={(event) => setSelectedBreakdownId(event.target.value)} style={styles.input} disabled={!selectedProduct || !sizeOptions.length}>
+                  <select value={selectedBreakdownId} onChange={(event) => handleSizeChange(event.target.value)} style={styles.input} disabled={!selectedProduct || !sizeOptions.length}>
                     {sizeOptions.length ? (
                       <>
                         <option value="">Choose size</option>
@@ -646,7 +704,7 @@ function ItemStoringContent() {
                   <span style={styles.label}>Qty</span>
                   <input
                     value={qty}
-                    onChange={(event) => setQty(sanitizeQuantityInput(event.target.value))}
+                    onChange={(event) => handleQtyChange(event.target.value)}
                     onWheel={preventNumberWheel}
                     inputMode="numeric"
                     pattern="[0-9]*"
@@ -987,6 +1045,11 @@ const styles = {
     alignItems: 'center',
     cursor: 'pointer',
     textAlign: 'left',
+  },
+  productPickerOptionDisabled: {
+    opacity: 0.46,
+    cursor: 'not-allowed',
+    background: '#f8fafc',
   },
   productPickerThumb: {
     width: '44px',

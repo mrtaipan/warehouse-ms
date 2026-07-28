@@ -57,7 +57,7 @@ function getVariantProductId(variant) {
 }
 
 function getVariantDisplayName(variant) {
-  return String(variant?.variant_name || variant?.variant_label || variant?.variant_code || 'Variant').trim()
+  return String(variant?.selling_name || variant?.variant_name || variant?.variant_label || variant?.variant_code || 'Variant').trim()
 }
 
 function normalizeVariantLookupValue(value) {
@@ -65,7 +65,7 @@ function normalizeVariantLookupValue(value) {
 }
 
 function getVariantLookupValues(variant) {
-  return [variant?.variant_code, variant?.variant_label, variant?.variant_name]
+  return [variant?.variant_code, variant?.variant_label, variant?.selling_name, variant?.variant_name]
     .map((value) => normalizeVariantLookupValue(value))
     .filter(Boolean)
 }

@@ -916,6 +916,21 @@ const styles = {
     fontSize: '10px',
     fontWeight: 900,
   },
+  koliStatusPill: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: '22px',
+    padding: '0 9px',
+    borderRadius: '999px',
+    background: '#f8fafc',
+    color: '#475569',
+    borderWidth: '1px',
+    borderStyle: 'solid',
+    borderColor: '#e2e8f0',
+    fontSize: '10px',
+    fontWeight: 850,
+  },
   koliCellStack: {
     display: 'flex',
     flexDirection: 'column',
@@ -1432,6 +1447,11 @@ function normalize(value) {
   return String(value || '').trim().toUpperCase()
 }
 
+function formatStatusLabel(value = '') {
+  const normalized = normalize(value || 'queued')
+  return normalized ? normalized.replaceAll('_', ' ') : 'QUEUED'
+}
+
 function escapeHtml(value) {
   return String(value ?? '')
     .replace(/&/g, '&amp;')
@@ -1446,7 +1466,7 @@ function getModelKey(modelName, catalogName) {
 }
 
 function getCatalogName(row = {}) {
-  return row.catalogName || row.variant_name || row.variant_label || row.variant_code || row.model_color || ''
+  return row.catalogName || row.selling_name || row.variant_name || row.variant_label || row.variant_code || row.model_color || ''
 }
 
 function getVariantCode(row = {}) {
@@ -1666,46 +1686,50 @@ function getPlModelIdentity(card = {}) {
 }
 
 function assignPlIdentities(cards = []) {
-  const sequenceCards = cards
-    .slice()
+  const modelGroups = new Map()
+
+  cards.forEach((card) => {
+    const modelIdentity = getPlModelIdentity(card)
+    const group = modelGroups.get(modelIdentity) || {
+      key: modelIdentity,
+      cards: [],
+      totalReceivingQty: 0,
+      firstSort: Number(card.firstSort || 0),
+      modelLabel: getModelLabel(card),
+    }
+
+    group.cards.push(card)
+    group.totalReceivingQty += Number(card.receiving_qty || 0)
+    group.firstSort = Math.min(group.firstSort || Number.MAX_SAFE_INTEGER, Number(card.firstSort || 0))
+    group.modelLabel = group.modelLabel || getModelLabel(card)
+    modelGroups.set(modelIdentity, group)
+  })
+
+  return Array.from(modelGroups.values())
     .sort(
       (a, b) =>
-        Number(b.receiving_qty || 0) - Number(a.receiving_qty || 0) ||
+        b.totalReceivingQty - a.totalReceivingQty ||
         a.firstSort - b.firstSort ||
-        getModelLabel(a).localeCompare(getModelLabel(b))
+        a.modelLabel.localeCompare(b.modelLabel)
     )
-  const modelSequenceMap = new Map()
-  const itemSequenceByModel = new Map()
-  const plIdentityMap = new Map()
+    .flatMap((group, modelIndex) => {
+      const modelCards = group.cards
+        .slice()
+        .sort(
+          (a, b) =>
+            Number(b.receiving_qty || 0) - Number(a.receiving_qty || 0) ||
+            Number(a.firstSort || 0) - Number(b.firstSort || 0) ||
+            getModelLabel(a).localeCompare(getModelLabel(b))
+        )
+      const modelItemCount = modelCards.length
 
-  sequenceCards.forEach((card) => {
-    const modelIdentity = getPlModelIdentity(card)
-    if (!modelSequenceMap.has(modelIdentity)) {
-      modelSequenceMap.set(modelIdentity, modelSequenceMap.size + 1)
-    }
-
-    const nextItemSequence = (itemSequenceByModel.get(modelIdentity) || 0) + 1
-    itemSequenceByModel.set(modelIdentity, nextItemSequence)
-    plIdentityMap.set(card.key, {
-      model_seq: modelSequenceMap.get(modelIdentity),
-      pl_letter: getLetterFromIndex(nextItemSequence),
-      model_item_count: 0,
+      return modelCards.map((card, itemIndex) => ({
+        ...card,
+        model_seq: modelIndex + 1,
+        pl_letter: getLetterFromIndex(itemIndex + 1),
+        model_item_count: modelItemCount,
+      }))
     })
-  })
-
-  sequenceCards.forEach((card) => {
-    const modelIdentity = getPlModelIdentity(card)
-    const current = itemSequenceByModel.get(modelIdentity) || 1
-    const plIdentity = plIdentityMap.get(card.key)
-    if (plIdentity) {
-      plIdentity.model_item_count = current
-    }
-  })
-
-  return cards.map((card) => ({
-    ...card,
-    ...(plIdentityMap.get(card.key) || { model_seq: 1, pl_letter: 'A', model_item_count: 1 }),
-  }))
 }
 
 function getMultipageGroupKey(card = {}) {
@@ -2351,7 +2375,6 @@ function getAllocatedPlRowSizeSummary(plRow = {}, modelTotalQty = 0, qtyMode = '
   const allSizes = getSizeSummary(plRow.sizeRows || [])
   if (qtyMode === 'all') return allSizes
 
-  const targetField = qtyMode === 'oi' ? 'oi_target_qty' : 'mob_target_qty'
   const hasStoredTargets = (plRow.sizeRows || []).every(
     (row) => row.mob_target_qty !== null && row.mob_target_qty !== undefined && row.oi_target_qty !== null && row.oi_target_qty !== undefined
   )
@@ -2361,7 +2384,9 @@ function getAllocatedPlRowSizeSummary(plRow = {}, modelTotalQty = 0, qtyMode = '
     ;(plRow.sizeRows || []).forEach((row) => {
       const size = getSummarySizeLabel(row.size_label)
       if (!size) return
-      grouped.set(size, (grouped.get(size) || 0) + Number(row[targetField] || 0))
+      const targets = getSizeRowAllocationTargets(row, modelTotalQty)
+      const targetQty = qtyMode === 'oi' ? targets.oiTargetQty : targets.mobTargetQty
+      grouped.set(size, (grouped.get(size) || 0) + Number(targetQty || 0))
     })
     return Array.from(grouped.entries())
       .map(([size, qty]) => ({ size, qty }))
@@ -2737,7 +2762,7 @@ export default function PackingListSizeBreakdownPage() {
     const variantByModelAndName = new Map()
     catalogVariants.forEach((variant) => {
       const modelId = Number(variant.product_model_id || 0)
-      ;[variant.variant_code, variant.variant_label, variant.variant_name].forEach((value) => {
+      ;[variant.variant_code, variant.variant_label, variant.selling_name, variant.variant_name].forEach((value) => {
         const key = `${modelId}::${normalize(value)}`
         if (normalize(value) && !variantByModelAndName.has(key)) {
           variantByModelAndName.set(key, variant)
@@ -2823,6 +2848,62 @@ export default function PackingListSizeBreakdownPage() {
         current.firstSort = Math.min(current.firstSort || Number(row.id || 0), new Date(row.validated_at || 0).getTime() || Number(row.id || 0))
         current.registrationOrder = Math.min(current.registrationOrder || Number(row.id || 0), Number(row.id || 0))
         grouped.set(key, current)
+      })
+
+    const currentInboundIds = new Set(
+      plReceivingRows
+        .filter((row) => row.inbound?.grn_number === initialGrn)
+        .map((row) => Number(row.inbound_id || 0))
+        .filter(Boolean)
+    )
+
+    breakdownRows
+      .filter((row) => currentInboundIds.has(Number(row.inbound_id || 0)))
+      .forEach((row) => {
+        const fallbackModel = catalogContext.modelById.get(Number(row.product_model_id || 0)) || catalogContext.modelByName.get(normalize(row.model_name)) || null
+        const productModelId = Number(row.product_model_id || fallbackModel?.id || 0) || null
+        const catalogVariant =
+          catalogContext.variantById.get(Number(row.product_model_variant_id || 0)) ||
+          catalogContext.variantByModelAndName.get(`${Number(productModelId || 0)}::${normalize(row.variant_name)}`) ||
+          null
+        const productModelVariantId = Number(row.product_model_variant_id || catalogVariant?.id || 0) || null
+        const key = productModelVariantId ? `variant:${productModelVariantId}` : `model:${productModelId || getModelKey(row.model_name, row.variant_name)}`
+
+        if (grouped.has(key)) return
+
+        const brand = catalogContext.brandById.get(Number(fallbackModel?.brand_id || 0)) || null
+        const category = catalogContext.categoryById.get(Number(fallbackModel?.category_id || 0)) || null
+        const categoryPath = getCategoryPath(category, catalogContext.categoryById)
+        const photoKey = `${row.inbound_id}::${getModelKey(row.model_name, row.variant_name)}`
+        const sourceVariantCode = row.source_variant_code || getVariantCode(catalogVariant) || ''
+
+        grouped.set(key, {
+          key,
+          inbound_id: row.inbound_id,
+          grn_number: initialGrn,
+          product_model_id: productModelId,
+          product_model_variant_id: productModelVariantId,
+          source_variant_code: sourceVariantCode,
+          brand_id: fallbackModel?.brand_id || null,
+          category_id: fallbackModel?.category_id || null,
+          brand_code: brand?.brand_code || '',
+          brand_name: brand?.brand_name || brand?.name || 'UNBRANDED',
+          category_code: category?.full_code || category?.category_code || '',
+          category_name: category?.full_name || category?.category_name || '',
+          category_path: categoryPath,
+          category_root: categoryPath[0] || '',
+          sub_category: categoryPath[1] || '',
+          item_type: categoryPath[2] || '',
+          model_code: fallbackModel?.model_code || '',
+          variant_code: sourceVariantCode,
+          model_name: row.model_name || fallbackModel?.model_name || '',
+          catalogName: row.variant_name || getCatalogName(catalogVariant) || '',
+          catalogVariant,
+          photo_url: row.pl_photo_url || row.variant_photo_url || photoMap.get(photoKey) || catalogVariant?.variant_photo_url || '',
+          receiving_qty: 0,
+          firstSort: Number(row.detail_order || row.id || 0),
+          registrationOrder: Number(row.id || 0),
+        })
       })
 
     const breakdownByIdentity = new Map()
@@ -4257,6 +4338,7 @@ export default function PackingListSizeBreakdownPage() {
         const checkerNames = normalizeCheckerNames(sizeRow.checker_names)
         const rowQty = Number(sizeRow.qty || 0)
         const defaultTargets = getDefaultAllocationTargets(rowQty, modelVariantQty)
+        const sourceVariantCode = selectedCard.source_variant_code || selectedCard.variant_code || null
         const manualReason = String(sizeRow.allocation_reason || '').trim()
         const manualMobTarget = Number(sizeRow.mob_target_qty)
         const manualOiTarget = Number(sizeRow.oi_target_qty)
@@ -4273,7 +4355,7 @@ export default function PackingListSizeBreakdownPage() {
           inbound_id: selectedCard.inbound_id,
           product_model_id: selectedCard.product_model_id,
           product_model_variant_id: selectedCard.product_model_variant_id || null,
-          source_variant_code: selectedCard.source_variant_code || null,
+          source_variant_code: sourceVariantCode,
           model_name: selectedCard.model_name || null,
           variant_name: selectedCard.catalogName || null,
           pl_detail_seq: row.pl_detail_seq,
@@ -4562,6 +4644,7 @@ export default function PackingListSizeBreakdownPage() {
           storing_type: row.storing_type || 'MOB',
           package_type: row.package_type || 'REGULAR',
           koli_sequence: row.koli_sequence || null,
+          storage_status: row.storage_status || 'queued',
           total_qty: 0,
           items: [],
         }
@@ -4576,6 +4659,7 @@ export default function PackingListSizeBreakdownPage() {
           size_label: normalizeSizeLabel(row.size_label || sourceBreakdown.size_label),
           qty: Number(row.qty || 0),
           packed_by: row.packed_by || '-',
+          storage_status: row.storage_status || current.storage_status || 'queued',
         })
         result.set(groupKey, current)
         return result
@@ -4596,6 +4680,7 @@ export default function PackingListSizeBreakdownPage() {
         storing_type: koliRow.storing_type,
         package_type: koliRow.package_type,
         koli_sequence: koliRow.koli_sequence,
+        storage_status: koliRow.storage_status || 'queued',
         koli_total_qty: koliRow.total_qty,
         isFirstKoliRow,
         isFirstItemRow,
@@ -5165,6 +5250,7 @@ export default function PackingListSizeBreakdownPage() {
                           <th style={styles.th}>Size</th>
                           <th style={styles.th}>Qty / Size</th>
                           <th style={styles.th}>Total Qty</th>
+                          <th style={styles.th}>Status</th>
                           <th style={styles.th}>PIC</th>
                         </tr>
                       </thead>
@@ -5213,6 +5299,9 @@ export default function PackingListSizeBreakdownPage() {
                                 <span style={styles.koliFlatValue}>{row.qty}</span>
                               </td>
                               <td style={{ ...styles.td, ...dividerStyle }}>{row.isFirstKoliRow ? row.koli_total_qty : null}</td>
+                              <td style={{ ...styles.td, ...dividerStyle }}>
+                                {row.isFirstKoliRow ? <span style={styles.koliStatusPill}>{formatStatusLabel(row.storage_status)}</span> : null}
+                              </td>
                               <td style={{ ...styles.td, ...dividerStyle }}>{row.isFirstKoliRow ? getFirstName(row.packed_by) : null}</td>
                             </tr>
                           )
@@ -5281,6 +5370,7 @@ export default function PackingListSizeBreakdownPage() {
                 {plRows.map((plRow, plRowIndex) => {
                   const isFirstPlRow = plRowIndex === 0
                   const isLastPlRow = plRowIndex === plRows.length - 1
+                  const plRowSourceCode = selectedCard.source_variant_code || selectedCard.variant_code || selectedCard.catalogName || '-'
                   return (
                   <div key={plRow.id} style={styles.plRow}>
                     <fieldset disabled={saving} style={saving ? { ...styles.editorFieldset, ...styles.lockedArea } : styles.editorFieldset}>
@@ -5293,7 +5383,7 @@ export default function PackingListSizeBreakdownPage() {
                         )}
                         <div style={styles.featureMeta}>
                           <div style={styles.modelLine}>
-                            <span style={styles.sourceInline}>{selectedCard.source_variant_code || selectedCard.catalogName || '-'}</span>
+                            <span style={styles.sourceInline}>{plRowSourceCode}</span>
                             <strong style={styles.modelNameStrong}>{getModelLabel(selectedCard)}</strong>
                           </div>
                           <div style={styles.field}>

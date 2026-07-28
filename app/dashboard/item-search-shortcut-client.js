@@ -1,6 +1,7 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { createClient } from '@/utils/supabase/browser'
 import styles from './dashboard.module.css'
 
@@ -28,12 +29,24 @@ function getLocationLabel(location = {}) {
 }
 
 export default function ItemSearchShortcutButton() {
+  const portalRoot = typeof document === 'undefined' ? null : document.body
   const [isOpen, setIsOpen] = useState(false)
   const [searchTerm, setSearchTerm] = useState('')
   const [results, setResults] = useState([])
   const [hasSearched, setHasSearched] = useState(false)
   const [isSearching, setIsSearching] = useState(false)
   const [error, setError] = useState('')
+
+  useEffect(() => {
+    if (!isOpen) return undefined
+
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+
+    return () => {
+      document.body.style.overflow = previousOverflow
+    }
+  }, [isOpen])
 
   function closeModal() {
     if (isSearching) return
@@ -107,8 +120,8 @@ export default function ItemSearchShortcutButton() {
         <SearchIcon />
       </button>
 
-      {isOpen ? (
-        <div className={styles.restockModalOverlay} role="presentation" onClick={closeModal}>
+      {isOpen && portalRoot ? createPortal(
+        <div className={styles.itemSearchModalOverlay} role="presentation" onClick={closeModal}>
           <div
             className={styles.itemSearchModalCard}
             role="dialog"
@@ -159,7 +172,8 @@ export default function ItemSearchShortcutButton() {
               )
             ) : null}
           </div>
-        </div>
+        </div>,
+        portalRoot
       ) : null}
     </>
   )

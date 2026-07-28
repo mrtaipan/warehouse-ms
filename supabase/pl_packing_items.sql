@@ -20,11 +20,25 @@ create table public.pl_packing_items (
   koli_sequence integer null,
   qty integer not null default 0,
   storage_status text not null default 'queued',
+  release_status text not null default 'draft',
+  released_at timestamp with time zone null,
+  released_by text null,
+  photo_queue_status text not null default 'none',
+  photo_queue_submitted_at timestamp with time zone null,
+  photo_queue_submitted_by text null,
+  model_photoshoot_done boolean not null default false,
+  model_photoshoot_done_at timestamp with time zone null,
+  model_photoshoot_done_by text null,
+  teaser_photoshoot_done boolean not null default false,
+  teaser_photoshoot_done_at timestamp with time zone null,
+  teaser_photoshoot_done_by text null,
   packed_by text null,
   created_at timestamp with time zone not null default now(),
   updated_at timestamp with time zone not null default now(),
   constraint pl_packing_items_qty_check check (qty >= 0),
   constraint pl_packing_items_storage_status_check check (storage_status in ('queued', 'stored')),
+  constraint pl_packing_items_release_status_check check (release_status in ('draft', 'released')),
+  constraint pl_packing_items_photo_queue_status_check check (photo_queue_status in ('none', 'draft', 'queued')),
   constraint pl_packing_items_koli_sequence_check check (koli_sequence is null or koli_sequence >= 1),
   constraint pl_packing_items_storing_type_check check (storing_type in ('MOB', 'OI')),
   constraint pl_packing_items_package_type_check check (package_type in ('REGULAR', 'PHOTO')),
@@ -49,6 +63,12 @@ create index pl_packing_items_model_idx
 
 create index pl_packing_items_storage_status_idx
   on public.pl_packing_items (storage_status, inbound_id, koli_sequence);
+
+create index pl_packing_items_release_status_idx
+  on public.pl_packing_items (release_status, inbound_id, product_model_variant_id);
+
+create index pl_packing_items_photo_queue_status_idx
+  on public.pl_packing_items (photo_queue_status, inbound_id, product_model_variant_id);
 
 alter table public.pl_packing_items enable row level security;
 

@@ -1149,6 +1149,13 @@ export default function WarehouseMapClient({ canEditMap = false }) {
   const selectedWarehouseIndex = WAREHOUSE_ORDER.indexOf(selectedWarehouseKey)
   const canGoPreviousWarehouse = selectedWarehouseIndex > 0
   const canGoNextWarehouse = selectedWarehouseIndex < WAREHOUSE_ORDER.length - 1
+  const selectedWarehouseTotalQty = useMemo(
+    () =>
+      storageRows
+        .filter((entry) => matchesWarehouse(entry.location || {}, warehouse.key))
+        .reduce((sum, entry) => sum + Number(entry.qty || 0), 0),
+    [storageRows, warehouse.key]
+  )
 
   const zoneDataByCode = useMemo(() => {
     const dataMap = new Map()
@@ -1908,7 +1915,10 @@ export default function WarehouseMapClient({ canEditMap = false }) {
                 >
                   &lt;
                 </button>
-                <h2 className={styles.sectionTitle}>{warehouse.title}</h2>
+                <div className={styles.warehouseTitleBlock}>
+                  <h2 className={styles.sectionTitle}>{warehouse.title}</h2>
+                  <p className={styles.warehouseTotalQty}>Total Qty: {formatNumber(selectedWarehouseTotalQty)}</p>
+                </div>
                 <button
                   type="button"
                   className={styles.warehouseArrow}

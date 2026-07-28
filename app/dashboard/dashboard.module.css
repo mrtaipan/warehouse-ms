@@ -389,6 +389,19 @@
   background: rgba(15, 23, 42, 0.32);
 }
 
+.itemSearchModalOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(15, 23, 42, 0.42);
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
 .restockModalCard {
   width: min(100%, 460px);
   border: 1px solid #e2e8f0;
@@ -875,5 +888,30 @@
   .itemSearchButton,
   .grnSummaryButton {
     width: 100%;
+  }
+
+  .itemSearchModalOverlay {
+    align-items: stretch;
+    padding: 12px;
+  }
+
+  .itemSearchModalCard {
+    width: 100%;
+    max-height: calc(100dvh - 24px);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    border-radius: 20px;
+    padding: 16px;
+  }
+
+  .itemSearchResultList {
+    min-height: 0;
+    overflow-y: auto;
+    padding-right: 2px;
+  }
+
+  .itemSearchInput {
+    background: #ffffff;
   }
 }

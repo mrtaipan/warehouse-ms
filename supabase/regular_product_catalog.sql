@@ -1,16 +1,12 @@
 -- Regular product catalog structure.
--- This keeps the catalog to 3 business tables:
+-- This keeps the catalog to 2 business tables:
 -- 1. dir_product_models
 -- 2. dir_product_model_variants
--- 3. dir_product_skus
 --
 -- Model code is an internal family code generated per brand + category full code:
 --   CHM01SST001, CHM01SST002, ...
 -- Variant code is an internal variant code generated per model:
 --   CHM01SST001-001, CHM01SST001-002, ...
--- SKU code is the warehouse/business SKU in dir_product_skus. Multiple variants can point
--- to one SKU when the business decides the physical differences should be counted
--- as the same stock item.
 
 begin;
 
@@ -20,41 +16,11 @@ alter table public.dir_product_models
 
 alter table public.dir_product_model_variants
   add column if not exists variant_code text,
-  add column if not exists sku_id bigint references public.dir_product_skus(id),
+  add column if not exists selling_name text,
+  add column if not exists merged_into_variant_id bigint null,
+  add column if not exists merged_at timestamptz null,
+  add column if not exists merged_by text null,
   add column if not exists variant_attributes jsonb not null default '{}'::jsonb;
-
-alter table public.dir_product_skus
-  add column if not exists product_family text,
-  add column if not exists sku_notes text;
-
-do $$
-begin
-  if not exists (
-    select 1
-    from pg_constraint
-    where conname = 'dir_product_skus_parent_sku_id_fkey'
-      and conrelid = 'public.dir_product_skus'::regclass
-  ) then
-    alter table public.dir_product_skus
-      add constraint dir_product_skus_parent_sku_id_fkey
-      foreign key (parent_sku_id)
-      references public.dir_product_skus(id);
-  end if;
-end $$;
-
-do $$
-begin
-  if not exists (
-    select 1
-    from pg_constraint
-    where conname = 'dir_product_skus_parent_not_self'
-      and conrelid = 'public.dir_product_skus'::regclass
-  ) then
-    alter table public.dir_product_skus
-      add constraint dir_product_skus_parent_not_self
-      check (parent_sku_id is null or parent_sku_id <> id);
-  end if;
-end $$;
 
 create unique index if not exists dir_product_models_model_code_uidx
   on public.dir_product_models (upper(model_code))
@@ -64,18 +30,8 @@ create unique index if not exists dir_product_model_variants_variant_code_uidx
   on public.dir_product_model_variants (upper(variant_code))
   where variant_code is not null;
 
-create unique index if not exists dir_product_skus_sku_code_uidx
-  on public.dir_product_skus (upper(sku_code))
-  where sku_code is not null;
-
 create index if not exists dir_product_model_variants_model_idx
   on public.dir_product_model_variants (product_model_id, is_active);
-
-create index if not exists dir_product_model_variants_sku_idx
-  on public.dir_product_model_variants (sku_id);
-
-create index if not exists dir_product_skus_parent_sku_idx
-  on public.dir_product_skus (parent_sku_id);
 
 drop function if exists public.generate_regular_model_code(bigint);
 
@@ -225,11 +181,11 @@ comment on column public.dir_product_models.model_code is
 comment on column public.dir_product_model_variants.variant_code is
   'Regular internal variant code generated from model_code, e.g. CHM01SST001-001.';
 
-comment on column public.dir_product_model_variants.sku_id is
-  'Final business/warehouse SKU. Multiple variants may point to the same SKU if they are merged operationally.';
+comment on column public.dir_product_model_variants.selling_name is
+  'Sales/display name for the variant. When filled, UI displays it before PL or internal variant names.';
 
-comment on column public.dir_product_skus.parent_sku_id is
-  'Canonical SKU pointer for SKU merges. Null means this SKU is canonical.';
+comment on column public.dir_product_model_variants.merged_into_variant_id is
+  'Canonical variant pointer when this variant has been merged into another SKU.';
 
 -- Later cleanup, after UI/code no longer reads old columns:
 -- alter table public.dir_product_models drop column if exists model_color;

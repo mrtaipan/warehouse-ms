@@ -115,6 +115,7 @@ export default function SidebarClient({ navItems, settingHref }) {
   const searchParams = useSearchParams()
   const shouldHideSidebar =
     pathname === '/dashboard/packing-list/receiving/input' ||
+    pathname === '/dashboard/storage/warehouse-map' ||
     (searchParams.get('form') === '1' && pathname === '/dashboard/qc/confirmation/next-process')
 
   function collapseMobileSidebarOnNavigate() {
