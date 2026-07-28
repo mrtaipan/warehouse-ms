@@ -59,8 +59,13 @@ function getLocationLabel(location) {
     location.location_code,
     location.sub_location,
   ]
+    .map((item) => String(item || '').trim())
     .filter(Boolean)
-    .join(' / ')
+    .join(' / ') || 'Location is not found'
+}
+
+function getLocationKey(value) {
+  return String(value || '').trim()
 }
 
 function normalizeText(value) {
@@ -256,17 +261,17 @@ function rankMatches(rows, searchTerm, size) {
 function buildRequestRows(matches, rackLocations, form, requesterName) {
   const requestedQty = Number(form.qty || 0)
   const submittedNote = String(form.note || '').trim()
-  const locationById = new Map(rackLocations.map((item) => [item.id, item]))
+  const locationById = new Map(rackLocations.map((item) => [getLocationKey(item.id), item]))
   const rankedMatches = rankMatches(matches, form.searchTerm, form.size)
   const availableRows = rankedMatches.filter((entry) => Number(entry.qty || 0) > 0)
   const uniqueLocations = []
   const seenLocations = new Set()
 
   availableRows.forEach((entry) => {
-    const location = locationById.get(entry.rack_location_id) || null
+    const location = locationById.get(getLocationKey(entry.rack_location_id)) || null
     const label = getLocationLabel(location)
 
-    if (!seenLocations.has(label)) {
+    if (label !== 'Location is not found' && !seenLocations.has(label)) {
       seenLocations.add(label)
       uniqueLocations.push(label)
     }

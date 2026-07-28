@@ -6,6 +6,7 @@ import { createClient } from '@/utils/supabase/browser'
 
 const supabase = createClient()
 const TAKE_REQUESTS_TABLE = 'restock_request'
+const RACK_LOCATION_BATCH_SIZE = 1000
 
 async function fetchOpenRequests() {
   const { data, error } = await supabase
@@ -23,6 +24,26 @@ async function fetchOpenRequests() {
 
 function normalizeText(value) {
   return String(value || '').trim().toUpperCase()
+}
+
+function getLocationKey(value) {
+  return String(value || '').trim()
+}
+
+function getLocationLabel(location) {
+  if (!location) {
+    return 'Location is not found'
+  }
+
+  return [
+    location.location_type,
+    location.location_id,
+    location.location_code,
+    location.sub_location,
+  ]
+    .map((item) => String(item || '').trim())
+    .filter(Boolean)
+    .join(' / ') || 'Location is not found'
 }
 
 function formatTakeFromLabel(value) {
@@ -151,20 +172,37 @@ function selectRowsForRequestedSize(rows, requestedSize) {
 }
 
 async function fetchRackLocationMap() {
-  const { data, error } = await supabase
-    .from('dir_rack_locations')
-    .select('id, location_type, location_id, location_code, sub_location')
+  const allRows = []
+  let from = 0
 
-  if (error) {
-    throw error
+  while (true) {
+    const to = from + RACK_LOCATION_BATCH_SIZE - 1
+    const { data, error } = await supabase
+      .from('dir_rack_locations')
+      .select('id, location_type, location_id, location_code, sub_location')
+      .range(from, to)
+
+    if (error) {
+      throw error
+    }
+
+    if (!data || data.length === 0) {
+      break
+    }
+
+    allRows.push(...data)
+
+    if (data.length < RACK_LOCATION_BATCH_SIZE) {
+      break
+    }
+
+    from += RACK_LOCATION_BATCH_SIZE
   }
 
   return new Map(
-    (data || []).map((item) => [
-      item.id,
-      [item.location_type, item.location_id, item.location_code, item.sub_location]
-        .filter(Boolean)
-        .join(' / '),
+    allRows.map((item) => [
+      getLocationKey(item.id),
+      getLocationLabel(item),
     ])
   )
 }
@@ -180,7 +218,7 @@ async function fetchSourceOptions(row) {
     .filter((entry) => Number(entry.qty || 0) > 0)
     .map((entry) => ({
       storageId: entry.id,
-      label: locationMap.get(entry.rack_location_id) || 'Location is not found',
+      label: locationMap.get(getLocationKey(entry.rack_location_id)) || 'Location is not found',
       qty: Number(entry.qty || 0),
     }))
 
