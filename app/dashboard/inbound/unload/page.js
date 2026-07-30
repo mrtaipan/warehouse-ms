@@ -2553,6 +2553,9 @@ export default function UnloadPage() {
   const displayFirstName = getFirstName(displayName)
   const currentKoliQty = currentKoliItems.reduce((sum, row) => sum + Number(row.qty || 0), 0)
   const isModeLocked = currentKoliItems.length > 0
+  const currentBasketTitle = isSample ? 'Sample Basket' : 'Koli Basket'
+  const currentBasketPostLabel = isSample ? 'Post Sample' : 'Post'
+  const currentBasketEmptyText = isSample ? 'No item in the Sample basket yet.' : 'No item in the Koli basket yet.'
   const hasUnloadDraft = isBuilderMode && Boolean(
     selectedBrandId ||
     selectedModel ||
@@ -2690,15 +2693,40 @@ export default function UnloadPage() {
   })()
 
   const sampleRows = unloadRows.filter((row) => row.is_sample)
-  const sampleBreakdownGroup = sampleRows.length
-    ? {
-        label: 'Sample',
-        items: sampleRows,
-        total_qty: sampleRows.reduce((sum, row) => sum + Number(row.qty || 0), 0),
-        pic_list: [...new Set(sampleRows.map((row) => row.pic_name).filter(Boolean))],
+  const sampleBreakdownGroups = (() => {
+    const grouped = new Map()
+
+    sampleRows.forEach((row) => {
+      const key = row.koli_sequence != null ? `sample-${Number(row.koli_sequence)}` : `sample-row-${row.id}`
+      const current = grouped.get(key) || {
+        label: row.koli_sequence != null ? `Koli Sample ${Number(row.koli_sequence)}` : 'Sample',
+        sample_sequence: row.koli_sequence != null ? Number(row.koli_sequence) : null,
+        items: [],
+        total_qty: 0,
+        pic_names: new Set(),
         rowType: 'sample',
       }
-    : null
+
+      current.items.push(row)
+      current.total_qty += Number(row.qty || 0)
+      if (row.pic_name) {
+        current.pic_names.add(row.pic_name)
+      }
+      grouped.set(key, current)
+    })
+
+    return Array.from(grouped.values())
+      .sort((a, b) => {
+        if (a.sample_sequence == null && b.sample_sequence == null) return 0
+        if (a.sample_sequence == null) return 1
+        if (b.sample_sequence == null) return -1
+        return a.sample_sequence - b.sample_sequence
+      })
+      .map((group) => ({
+        ...group,
+        pic_list: Array.from(group.pic_names),
+      }))
+  })()
   const returnBreakdownGroup = returnRows.length
     ? {
         label: 'Retur',
@@ -2708,7 +2736,7 @@ export default function UnloadPage() {
         rowType: 'return',
       }
     : null
-  const nonKoliGroups = [sampleBreakdownGroup, returnBreakdownGroup].filter(Boolean)
+  const nonKoliGroups = [...sampleBreakdownGroups, returnBreakdownGroup].filter(Boolean)
   const sortedBrandFilterOptions = [...new Map(
     modelGroups
       .filter((group) => matchesBreakdownFilters(group, group.total_qty, 'brandId'))
@@ -3646,8 +3674,12 @@ export default function UnloadPage() {
       return
     }
 
-    const chosenExistingModel = registryUsesNewModel ? null : registrySelectedModel
-    const normalizedModelName = registryUsesNewModel
+    const chosenExistingModel = isEditingVariant
+      ? editingVariantContext?.model || null
+      : registryUsesNewModel
+        ? null
+        : registrySelectedModel
+    const normalizedModelName = isEditingVariant || registryUsesNewModel
       ? modelDraft.model_name.trim().toUpperCase()
       : String(chosenExistingModel?.model_name || '').trim().toUpperCase()
     const normalizedVariantName = modelDraft.variant_name.trim().toUpperCase()
@@ -3667,7 +3699,7 @@ export default function UnloadPage() {
       return
     }
 
-    if (!isEditingVariant && !normalizedModelName) {
+    if ((isEditingVariant || registryUsesNewModel) && !normalizedModelName) {
       setModelModalError('Model name is required.')
       return
     }
@@ -3714,6 +3746,46 @@ export default function UnloadPage() {
 
         savedModel = insertedModel
         setProductModels((prev) => [...prev, insertedModel])
+      }
+
+      if (isEditingVariant) {
+        const duplicateModel = productModels.find(
+          (model) =>
+            Number(model.id || 0) !== Number(savedModel.id || 0) &&
+            Number(model.brand_id || 0) === Number(selectedBrandId) &&
+            Number(model.category_id || 0) === Number(selectedCategory.id) &&
+            String(model.model_name || '').trim().toUpperCase() === normalizedModelName
+        )
+
+        if (duplicateModel) {
+          setModelModalError('A model with this name already exists for the selected brand and category.')
+          setSaving(false)
+          return
+        }
+
+        const modelPayload = {
+          model_name: normalizedModelName,
+          model_notes: modelDraft.model_notes.trim() || null,
+          updated_at: new Date().toISOString(),
+        }
+
+        const { data: updatedModel, error: updateModelError } = await supabase
+          .from('dir_product_models')
+          .update(modelPayload)
+          .eq('id', savedModel.id)
+          .select('id, brand_id, category_id, model_code, model_name, model_notes')
+          .single()
+
+        if (updateModelError) {
+          setModelModalError(updateModelError.message)
+          setSaving(false)
+          return
+        }
+
+        savedModel = updatedModel
+        setProductModels((prev) =>
+          prev.map((model) => (Number(model.id) === Number(updatedModel.id) ? updatedModel : model))
+        )
       }
 
       const siblingVariants = productModelVariants.filter(
@@ -3768,6 +3840,7 @@ export default function UnloadPage() {
       }
 
       if (isEditingVariant) {
+        const previousVariantCode = getVariantProductId(editingVariantContext.variant)
         const variantPayload = {
           variant_name: normalizedVariantName,
           variant_notes: modelDraft.variant_notes.trim() || null,
@@ -3788,11 +3861,89 @@ export default function UnloadPage() {
           return
         }
 
-        const editedModel = editingVariantContext.model
+        const editedModel = savedModel
         const editedVariantProductId = getVariantProductId(updatedVariant)
+        const snapshotPatch = {
+          model_name: editedModel.model_name,
+          ...(supportsUnloadVariantName ? { variant_name: getVariantDisplayName(updatedVariant) } : {}),
+          photo_url: updatedVariant.variant_photo_url || null,
+        }
+        const returnSnapshotPatch = {
+          model_name: editedModel.model_name,
+          ...(supportsReturnVariantName ? { variant_name: getVariantDisplayName(updatedVariant) } : {}),
+        }
+
+        if (selectedInbound?.id && previousVariantCode) {
+          const snapshotUpdates = []
+
+          if (supportsUnloadVariantCode) {
+            snapshotUpdates.push(
+              supabase
+                .from('inbound_unload')
+                .update(snapshotPatch)
+                .eq('inbound_id', selectedInbound.id)
+                .eq('variant_code', previousVariantCode)
+            )
+          }
+
+          if (supportsUnloadVariant) {
+            snapshotUpdates.push(
+              supabase
+                .from('inbound_unload')
+                .update(snapshotPatch)
+                .eq('inbound_id', selectedInbound.id)
+                .eq('variant_label', previousVariantCode)
+            )
+          }
+
+          if (supportsReturnVariantCode) {
+            snapshotUpdates.push(
+              supabase
+                .from('warehouse_returns')
+                .update(returnSnapshotPatch)
+                .eq('inbound_id', selectedInbound.id)
+                .eq('source_phase', 'inbound')
+                .eq('variant_code', previousVariantCode)
+            )
+          }
+
+          if (supportsReturnVariant) {
+            snapshotUpdates.push(
+              supabase
+                .from('warehouse_returns')
+                .update(returnSnapshotPatch)
+                .eq('inbound_id', selectedInbound.id)
+                .eq('source_phase', 'inbound')
+                .eq('variant_label', previousVariantCode)
+            )
+          }
+
+          const snapshotResults = await Promise.all(snapshotUpdates)
+          const snapshotError = snapshotResults.find((result) => result.error)?.error
+
+          if (snapshotError) {
+            setModelModalError(snapshotError.message)
+            setSaving(false)
+            return
+          }
+
+          await refreshUnloadData(selectedInbound.id)
+        }
 
         setProductModelVariants((prev) =>
           prev.map((variant) => (Number(variant.id) === Number(updatedVariant.id) ? updatedVariant : variant))
+        )
+        setCurrentKoliItems((prev) =>
+          prev.map((item) =>
+            getRowVariantIdentifier(item) === previousVariantCode
+              ? {
+                  ...item,
+                  model_name: editedModel.model_name,
+                  variant_name: getVariantDisplayName(updatedVariant),
+                  photo_url: updatedVariant.variant_photo_url || item.photo_url || null,
+                }
+              : item
+          )
         )
         setSelectedModel({
           ...editedModel,
@@ -3806,7 +3957,7 @@ export default function UnloadPage() {
         setShowChooseModelModal(false)
         setModelModalError('')
         setError('')
-        setSuccess('Variant updated successfully.')
+        setSuccess('Model and variant updated successfully.')
         setSaving(false)
         return
       }
@@ -3900,14 +4051,15 @@ export default function UnloadPage() {
       qty: Number(qty),
       pic_name: displayName,
       photo_url: selectedModelPhoto || selectedModel?.photo_url || null,
+      is_sample: isSample,
     }
 
-    if (!isReturn && !isSample) {
+    if (!isReturn) {
       const payloadProductKey = getProductAggregationKey(payload)
       const existingItem = currentKoliItems.find((item) => getProductAggregationKey(item) === payloadProductKey)
 
       if (existingItem) {
-        const shouldAggregate = window.confirm('Product yang sama sudah ada di Koli ini. Mau digabungkan qty-nya?')
+        const shouldAggregate = window.confirm('Product yang sama sudah ada di basket ini. Mau digabungkan qty-nya?')
 
         if (!shouldAggregate) {
           setSaving(false)
@@ -3935,7 +4087,7 @@ export default function UnloadPage() {
         },
       ])
       resetEntryForm({ keepPath: true })
-      setSuccess('Item added to this Koli.')
+      setSuccess(isSample ? 'Sample added to the basket.' : 'Item added to this Koli.')
       setSaving(false)
       return
     }
@@ -3955,23 +4107,6 @@ export default function UnloadPage() {
           qty: payload.qty,
           pic_name: payload.pic_name,
           source_phase: 'inbound',
-          koli_sequence: null,
-        },
-      ])
-    } else {
-      insertResult = await supabase.from('inbound_unload').insert([
-        {
-          inbound_id: payload.inbound_id,
-          brand_id: payload.brand_id,
-          category_id: payload.category_id,
-          model_name: payload.model_name,
-          ...(supportsUnloadVariant ? { variant_label: payload.variant_label } : {}),
-          ...(supportsUnloadVariantCode ? { variant_code: payload.variant_code } : {}),
-          ...(supportsUnloadVariantName ? { variant_name: payload.variant_name } : {}),
-          qty: payload.qty,
-          pic_name: payload.pic_name,
-          photo_url: payload.photo_url,
-          is_sample: true,
           koli_sequence: null,
         },
       ])
@@ -4008,12 +4143,13 @@ export default function UnloadPage() {
     }
 
     if (!currentKoliItems.length) {
-      setError('Current Koli does not have any item yet.')
+      setError(isSample ? 'Sample basket does not have any item yet.' : 'Current Koli does not have any item yet.')
       return
     }
 
+    const postTypeLabel = isSample ? 'Sample Koli' : 'Koli'
     const shouldPost = window.confirm(
-      `Post this Koli with ${currentKoliItems.length} item${currentKoliItems.length > 1 ? 's' : ''}, total qty ${currentKoliQty}?`
+      `Post this ${postTypeLabel} with ${currentKoliItems.length} item${currentKoliItems.length > 1 ? 's' : ''}, total qty ${currentKoliQty}?`
     )
 
     if (!shouldPost) {
@@ -4026,7 +4162,7 @@ export default function UnloadPage() {
       .from('inbound_unload')
       .select('koli_sequence')
       .eq('inbound_id', selectedInbound.id)
-      .eq('is_sample', false)
+      .eq('is_sample', isSample)
 
     if (sequenceError) {
       setError(sequenceError.message)
@@ -4051,7 +4187,7 @@ export default function UnloadPage() {
       qty: item.qty,
       pic_name: item.pic_name,
       photo_url: item.photo_url,
-      is_sample: false,
+      is_sample: isSample,
       koli_sequence: assignedKoliSequence,
     }))
 
@@ -4073,7 +4209,7 @@ export default function UnloadPage() {
 
     setCurrentKoliItems([])
     resetEntryForm({ keepPath: true })
-    setSuccess('Koli posted successfully.')
+    setSuccess(isSample ? 'Sample Koli posted successfully.' : 'Koli posted successfully.')
     setSaving(false)
   }
 
@@ -4085,7 +4221,7 @@ export default function UnloadPage() {
     selectProductShortcut(row)
     setQty(row.qty ? String(row.qty) : '')
     setIsReturn(false)
-    setIsSample(false)
+    setIsSample(Boolean(row.is_sample))
     setCurrentKoliItems((prev) => prev.filter((item) => item.tempId !== row.tempId))
     setSuccess('Item moved back to input for editing.')
   }
@@ -4421,9 +4557,13 @@ export default function UnloadPage() {
                         </tr>
                       ))}
                       {filteredNonKoliGroups.map((group) => (
-                        <tr key={group.rowType}>
+                        <tr key={`${group.rowType}-${group.sample_sequence ?? group.label}`}>
                           <td style={{ ...styles.td, ...styles.koliGroupTd, ...styles.koliCell }}>
-                            {group.rowType === 'sample' ? <span style={styles.sampleBadge}>Sample</span> : <span style={styles.returnBadge}>Retur</span>}
+                            {group.rowType === 'sample' ? (
+                              <span style={styles.sampleBadge}>{group.label || 'Sample'}</span>
+                            ) : (
+                              <span style={styles.returnBadge}>Retur</span>
+                            )}
                           </td>
                           <td style={{ ...styles.td, ...styles.koliGroupTd }}>
                             <div style={styles.tableLineStack}>
@@ -4842,17 +4982,17 @@ export default function UnloadPage() {
                 ...(saving || loading ? { opacity: 0.6, cursor: 'not-allowed' } : {}),
               }}
             >
-              {saving ? 'Adding...' : isReturn ? 'Add Retur' : isSample ? 'Add Sample' : 'Add Item to Koli'}
+              {saving ? 'Adding...' : isReturn ? 'Add Retur' : isSample ? 'Add Sample to Basket' : 'Add Item to Koli'}
             </button>
           </div>
         </div>
         </div>
 
-        {!isReturn && !isSample ? (
+        {!isReturn ? (
           <div style={styles.currentKoliPanel}>
             <div style={styles.header}>
               <div>
-                <h2 style={styles.sectionTitle}>Koli Basket</h2>
+                <h2 style={styles.sectionTitle}>{currentBasketTitle}</h2>
               </div>
               <button
                 type="button"
@@ -4863,12 +5003,12 @@ export default function UnloadPage() {
                   ...(saving || !currentKoliItems.length ? { opacity: 0.6, cursor: 'not-allowed' } : {}),
                 }}
               >
-                {saving ? 'Posting...' : 'Post'}
+                {saving ? 'Posting...' : currentBasketPostLabel}
               </button>
             </div>
 
             {currentKoliItems.length === 0 ? (
-              <p style={styles.emptyText}>No item in the Koli basket yet.</p>
+              <p style={styles.emptyText}>{currentBasketEmptyText}</p>
             ) : (
               <div style={styles.tableWrap}>
                 <table style={styles.table}>
@@ -4957,7 +5097,7 @@ export default function UnloadPage() {
           <div style={registryModalStyle}>
             <div style={styles.modalTitleRow}>
               <h2 style={{ ...styles.sectionTitle, ...styles.registryModalTitle }}>
-                {isEditingVariant ? 'Edit Variant' : 'Registry New Model-Variant'}
+                {isEditingVariant ? 'Edit Model-Variant' : 'Registry New Model-Variant'}
               </h2>
               <div style={styles.modalTitleActions}>
                 <button
@@ -4980,7 +5120,7 @@ export default function UnloadPage() {
                     ...(saving ? { opacity: 0.6, cursor: 'not-allowed' } : {}),
                   }}
                 >
-                  {saving ? 'Saving...' : 'Save Variant'}
+                  {saving ? 'Saving...' : isEditingVariant ? 'Save Changes' : 'Save Variant'}
                 </button>
               </div>
             </div>
@@ -5067,7 +5207,7 @@ export default function UnloadPage() {
                 <div style={styles.field}>
                   <div style={styles.modelLabelRow}>
                     <label style={styles.label}>
-                      Model Name {!isEditingVariant ? <span style={styles.requiredMark}>*</span> : null}
+                      Model Name <span style={styles.requiredMark}>*</span>
                     </label>
                     {!isEditingVariant && registryUsesNewModel && filteredModelOptions.length ? (
                       <button
@@ -5089,12 +5229,30 @@ export default function UnloadPage() {
                   </div>
 
                   {isEditingVariant ? (
-                    <input
-                      value={modelDraft.model_name}
-                      readOnly
-                      style={{ ...styles.input, ...styles.readOnlyInput }}
-                      placeholder="MODEL NAME"
-                    />
+                    <>
+                      <input
+                        value={modelDraft.model_name}
+                        onChange={(event) =>
+                          setModelDraft((prev) => ({
+                            ...prev,
+                            model_name: event.target.value.toUpperCase(),
+                          }))
+                        }
+                        style={styles.input}
+                        placeholder="MODEL NAME"
+                      />
+                      <textarea
+                        value={modelDraft.model_notes}
+                        onChange={(event) =>
+                          setModelDraft((prev) => ({
+                            ...prev,
+                            model_notes: event.target.value,
+                          }))
+                        }
+                        style={{ ...styles.textarea, minHeight: '74px' }}
+                        placeholder="Model notes"
+                      />
+                    </>
                   ) : registryUsesNewModel ? (
                     <>
                       <input
