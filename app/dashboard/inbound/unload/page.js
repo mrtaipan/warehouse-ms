@@ -2699,6 +2699,7 @@ export default function UnloadPage() {
     sampleRows.forEach((row) => {
       const key = row.koli_sequence != null ? `sample-${Number(row.koli_sequence)}` : `sample-row-${row.id}`
       const current = grouped.get(key) || {
+        groupKey: key,
         label: row.koli_sequence != null ? `Koli Sample ${Number(row.koli_sequence)}` : 'Sample',
         sample_sequence: row.koli_sequence != null ? Number(row.koli_sequence) : null,
         items: [],
@@ -4557,7 +4558,7 @@ export default function UnloadPage() {
                         </tr>
                       ))}
                       {filteredNonKoliGroups.map((group) => (
-                        <tr key={`${group.rowType}-${group.sample_sequence ?? group.label}`}>
+                        <tr key={group.groupKey || `${group.rowType}-${group.label}`}>
                           <td style={{ ...styles.td, ...styles.koliGroupTd, ...styles.koliCell }}>
                             {group.rowType === 'sample' ? (
                               <span style={styles.sampleBadge}>{group.label || 'Sample'}</span>
