@@ -630,6 +630,7 @@ const styles = {
     borderRadius: '12px',
     background: '#f1f5f9',
     border: '1px solid #e2e8f0',
+    maxWidth: '100%',
   },
   segmentButton: {
     height: '32px',
@@ -666,18 +667,23 @@ const styles = {
     fontVariantNumeric: 'tabular-nums',
   },
   breakdownToolbar: {
-    display: 'grid',
-    gridTemplateColumns: 'auto minmax(0, 1fr)',
-    alignItems: 'center',
+    display: 'flex',
+    alignItems: 'flex-start',
     justifyContent: 'space-between',
     gap: '8px 12px',
+    flexWrap: 'wrap',
+    minWidth: 0,
+    maxWidth: '100%',
   },
   breakdownFilters: {
     display: 'grid',
-    gridTemplateColumns: 'minmax(150px, 1.2fr) minmax(260px, 1.55fr) minmax(170px, 1.3fr) minmax(190px, 1fr) 34px',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 148px), 1fr))',
     gap: '8px',
     alignItems: 'center',
+    flex: '1 1 560px',
     minWidth: 0,
+    maxWidth: '100%',
+    width: '100%',
   },
   filterSelect: {
     width: '100%',
@@ -694,9 +700,11 @@ const styles = {
   },
   qtyFilterGroup: {
     display: 'grid',
-    gridTemplateColumns: 'minmax(126px, 1fr) 56px',
+    gridTemplateColumns: 'minmax(0, 1fr) 56px',
     gap: '6px',
     minWidth: 0,
+    maxWidth: '100%',
+    width: '100%',
   },
   filterNumberInput: {
     width: '100%',
@@ -714,8 +722,10 @@ const styles = {
   },
   filterSearchInput: {
     gridColumn: '1 / -1',
+    flex: '1 0 100%',
     width: '100%',
     minWidth: 0,
+    maxWidth: '100%',
     height: '38px',
     padding: '0 12px',
     border: '1px solid #cbd5e1',
@@ -2243,6 +2253,7 @@ export default function UnloadPage() {
   const [supportsUnloadVariant, setSupportsUnloadVariant] = useState(false)
   const [supportsUnloadVariantCode, setSupportsUnloadVariantCode] = useState(false)
   const [supportsUnloadVariantName, setSupportsUnloadVariantName] = useState(false)
+  const [supportsUnloadTemporarySample, setSupportsUnloadTemporarySample] = useState(false)
   const [supportsReturnVariant, setSupportsReturnVariant] = useState(false)
   const [supportsReturnVariantCode, setSupportsReturnVariantCode] = useState(false)
   const [supportsReturnVariantName, setSupportsReturnVariantName] = useState(false)
@@ -2377,6 +2388,7 @@ export default function UnloadPage() {
         { error: unloadVariantError },
         { error: unloadVariantCodeError },
         { error: unloadVariantNameError },
+        { error: unloadTemporarySampleError },
         { error: returnVariantError },
         { error: returnVariantCodeError },
         { error: returnVariantNameError },
@@ -2386,6 +2398,7 @@ export default function UnloadPage() {
         supabase.from('inbound_unload').select('variant_label').limit(1),
         supabase.from('inbound_unload').select('variant_code').limit(1),
         supabase.from('inbound_unload').select('variant_name').limit(1),
+        supabase.from('inbound_unload').select('is_product_temporary').limit(1),
         supabase.from('warehouse_returns').select('variant_label').limit(1),
         supabase.from('warehouse_returns').select('variant_code').limit(1),
         supabase.from('warehouse_returns').select('variant_name').limit(1),
@@ -2396,6 +2409,7 @@ export default function UnloadPage() {
       setSupportsUnloadVariant(!unloadVariantError)
       setSupportsUnloadVariantCode(!unloadVariantCodeError)
       setSupportsUnloadVariantName(!unloadVariantNameError)
+      setSupportsUnloadTemporarySample(!unloadTemporarySampleError)
       setSupportsReturnVariant(!returnVariantError)
       setSupportsReturnVariantCode(!returnVariantCodeError)
       setSupportsReturnVariantName(!returnVariantNameError)
@@ -2437,6 +2451,7 @@ export default function UnloadPage() {
             supportsUnloadVariant ? 'variant_label' : null,
             supportsUnloadVariantCode ? 'variant_code' : null,
             supportsUnloadVariantName ? 'variant_name' : null,
+            supportsUnloadTemporarySample ? 'is_product_temporary' : null,
           ].filter(Boolean).join(', '))
           .eq('inbound_id', selectedInboundId)
           .order('is_sample', { ascending: true })
@@ -2493,6 +2508,7 @@ export default function UnloadPage() {
     supportsUnloadVariant,
     supportsUnloadVariantCode,
     supportsUnloadVariantName,
+    supportsUnloadTemporarySample,
     supportsUnloadProductModel,
     supportsUnloadProductModelVariant,
   ])
@@ -3169,6 +3185,14 @@ export default function UnloadPage() {
   }
 
   function getProductAggregationKey(row) {
+    if (row?.is_product_temporary || row?.is_sample) {
+      return [
+        'sample',
+        row.brand_id || '',
+        row.category_id || '',
+      ].join('|')
+    }
+
     const matchingVariant = getVariantForRow(row)
 
     if (matchingVariant?.id) {
@@ -3375,6 +3399,9 @@ export default function UnloadPage() {
     setIsSample(mode === 'sample')
     setSelectedModel(null)
     setSelectedVariantLabel('')
+    setShowChooseModelModal(false)
+    setShowModelModal(false)
+    setShowMoveModelModal(false)
     setQty('')
 
     if (mode === 'return') {
@@ -3557,6 +3584,7 @@ export default function UnloadPage() {
           supportsUnloadVariant ? 'variant_label' : null,
           supportsUnloadVariantCode ? 'variant_code' : null,
           supportsUnloadVariantName ? 'variant_name' : null,
+          supportsUnloadTemporarySample ? 'is_product_temporary' : null,
         ].filter(Boolean).join(', '))
         .eq('inbound_id', inboundId)
         .order('is_sample', { ascending: true })
@@ -3602,6 +3630,7 @@ export default function UnloadPage() {
     supportsUnloadVariant,
     supportsUnloadVariantCode,
     supportsUnloadVariantName,
+    supportsUnloadTemporarySample,
     supportsUnloadProductModel,
     supportsUnloadProductModelVariant,
   ])
@@ -4646,7 +4675,7 @@ export default function UnloadPage() {
       return
     }
 
-    if (!isReturn && !selectedModel?.model_name) {
+    if (!isReturn && !isSample && !selectedModel?.model_name) {
       setError('Please choose or add a model first.')
       return
     }
@@ -4658,20 +4687,34 @@ export default function UnloadPage() {
 
     setSaving(true)
 
+    const isTemporarySample = isSample && !isReturn
     const payload = {
       inbound_id: selectedInbound.id,
       brand_id: selectedBrandId ? Number(selectedBrandId) : null,
       category_id: selectedCategory?.id || null,
-      product_model_id: selectedModel?.id ? Number(selectedModel.id) : null,
-      product_model_variant_id: selectedVariant?.id ? Number(selectedVariant.id) : null,
-      model_name: selectedModel?.model_name || null,
-      variant_code: selectedVariant ? getVariantProductId(selectedVariant) || selectedVariantLabel || null : selectedVariantLabel || null,
-      variant_label: selectedVariant ? getVariantProductId(selectedVariant) || selectedVariantLabel || null : selectedVariantLabel || null,
-      variant_name: selectedVariant ? getVariantDisplayName(selectedVariant) : selectedVariantDisplayName || null,
+      product_model_id: isTemporarySample ? null : selectedModel?.id ? Number(selectedModel.id) : null,
+      product_model_variant_id: isTemporarySample ? null : selectedVariant?.id ? Number(selectedVariant.id) : null,
+      model_name: isTemporarySample ? 'TEMPORARY SAMPLE' : selectedModel?.model_name || null,
+      variant_code: isTemporarySample
+        ? null
+        : selectedVariant
+          ? getVariantProductId(selectedVariant) || selectedVariantLabel || null
+          : selectedVariantLabel || null,
+      variant_label: isTemporarySample
+        ? null
+        : selectedVariant
+          ? getVariantProductId(selectedVariant) || selectedVariantLabel || null
+          : selectedVariantLabel || null,
+      variant_name: isTemporarySample
+        ? 'TEMPORARY'
+        : selectedVariant
+          ? getVariantDisplayName(selectedVariant)
+          : selectedVariantDisplayName || null,
       qty: Number(qty),
       pic_name: displayName,
-      photo_url: selectedModelPhoto || selectedModel?.photo_url || null,
+      photo_url: isTemporarySample ? null : selectedModelPhoto || selectedModel?.photo_url || null,
       is_sample: isSample,
+      is_product_temporary: isTemporarySample,
     }
 
     if (!isReturn) {
@@ -4812,6 +4855,7 @@ export default function UnloadPage() {
       pic_name: item.pic_name,
       photo_url: item.photo_url,
       is_sample: isSample,
+      ...(supportsUnloadTemporarySample ? { is_product_temporary: Boolean(item.is_product_temporary) } : {}),
       koli_sequence: assignedKoliSequence,
     }))
 
@@ -4842,7 +4886,21 @@ export default function UnloadPage() {
   }
 
   function handleEditCurrentKoliItem(row) {
-    selectProductShortcut(row)
+    if (row.is_sample || row.is_product_temporary) {
+      const categoryPathIds = getCategoryPathIds(row.category_id)
+      const brand = brands.find((item) => Number(item.id) === Number(row.brand_id)) || null
+
+      setSelectedBrandId(row.brand_id ? String(row.brand_id) : '')
+      setBrandSearch(brand ? getBrandDisplayLabel(brand) : '')
+      setLevel0Id(categoryPathIds[0] || '')
+      setLevel1Id(categoryPathIds[1] || '')
+      setLevel2Id(categoryPathIds[2] || '')
+      setSelectedModel(null)
+      setSelectedVariantLabel('')
+    } else {
+      selectProductShortcut(row)
+    }
+
     setQty(row.qty ? String(row.qty) : '')
     setIsReturn(false)
     setIsSample(Boolean(row.is_sample))
@@ -5356,7 +5414,7 @@ export default function UnloadPage() {
           </div>
         </div>
 
-        {!isReturn && recentProductOptions.length ? (
+        {!isReturn && !isSample && recentProductOptions.length ? (
           <div style={styles.shortcutBlock}>
             <div style={styles.shortcutHeader}>
               <span style={styles.shortcutTitle}>Recent Chosen Product</span>
@@ -5528,7 +5586,7 @@ export default function UnloadPage() {
             </div>
           ) : null}
 
-          {!isReturn && selectedCategory ? (
+          {!isReturn && !isSample && selectedCategory ? (
           <div style={styles.field}>
             <div style={styles.modelLabelRow}>
               <label style={styles.label}>Model</label>
@@ -5623,7 +5681,7 @@ export default function UnloadPage() {
                 ...(saving || loading ? { opacity: 0.6, cursor: 'not-allowed' } : {}),
               }}
             >
-              {saving ? 'Adding...' : isReturn ? 'Add Retur' : isSample ? 'Add Sample to Basket' : 'Add Item to Koli'}
+              {saving ? 'Adding...' : isReturn ? 'Add Retur' : isSample ? 'Add Sample' : 'Add Item to Koli'}
             </button>
           </div>
         </div>
@@ -5656,7 +5714,7 @@ export default function UnloadPage() {
                   <thead>
                     <tr>
                       <th style={styles.th}>Photo</th>
-                      <th style={styles.th}>Model Name</th>
+                      <th style={styles.th}>Inside</th>
                       <th style={styles.th}>Qty</th>
                       <th style={styles.th}>Action</th>
                     </tr>
@@ -5693,8 +5751,12 @@ export default function UnloadPage() {
                           </td>
                           <td style={styles.td}>
                             <span style={styles.koliModelStack}>
-                              <strong>{row.model_name || '-'}</strong>
-                              {variantName ? <span style={styles.koliVariantText}>{variantName}</span> : null}
+                              <strong>{row.is_sample || row.is_product_temporary ? 'TEMPORARY SAMPLE' : row.model_name || '-'}</strong>
+                              {row.is_sample || row.is_product_temporary ? (
+                                <span style={styles.koliVariantText}>{getItemTypeSubcategoryLabel(row.category_id)}</span>
+                              ) : variantName ? (
+                                <span style={styles.koliVariantText}>{variantName}</span>
+                              ) : null}
                             </span>
                           </td>
                           <td style={styles.td}>{row.qty || 0}</td>
