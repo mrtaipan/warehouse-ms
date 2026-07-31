@@ -641,25 +641,42 @@ const styles = {
     fontSize: '12px',
     fontWeight: '850',
     cursor: 'pointer',
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '6px',
   },
   segmentButtonActive: {
     background: '#fff',
     color: '#0f172a',
     boxShadow: '0 1px 3px rgba(15, 23, 42, 0.08)',
   },
+  segmentBadge: {
+    minWidth: '18px',
+    height: '18px',
+    padding: '0 6px',
+    borderRadius: '999px',
+    background: '#0f172a',
+    color: '#fff',
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    fontSize: '10px',
+    fontWeight: '900',
+    lineHeight: 1,
+    fontVariantNumeric: 'tabular-nums',
+  },
   breakdownToolbar: {
-    display: 'flex',
+    display: 'grid',
+    gridTemplateColumns: 'auto minmax(0, 1fr)',
     alignItems: 'center',
     justifyContent: 'space-between',
-    gap: '12px',
-    flexWrap: 'wrap',
+    gap: '8px 12px',
   },
   breakdownFilters: {
     display: 'grid',
     gridTemplateColumns: 'minmax(150px, 1.2fr) minmax(260px, 1.55fr) minmax(170px, 1.3fr) minmax(190px, 1fr) 34px',
     gap: '8px',
     alignItems: 'center',
-    flex: '1 1 720px',
     minWidth: 0,
   },
   filterSelect: {
@@ -693,6 +710,22 @@ const styles = {
     fontSize: '12px',
     fontWeight: '800',
     fontVariantNumeric: 'tabular-nums',
+    outline: 'none',
+  },
+  filterSearchInput: {
+    gridColumn: '1 / -1',
+    width: '100%',
+    minWidth: 0,
+    height: '38px',
+    padding: '0 12px',
+    border: '1px solid #cbd5e1',
+    borderRadius: '9px',
+    background: '#fff',
+    color: '#0f172a',
+    WebkitTextFillColor: '#0f172a',
+    caretColor: '#0f172a',
+    fontSize: '13px',
+    fontWeight: '750',
     outline: 'none',
   },
   filterNumberInputDisabled: {
@@ -2220,6 +2253,7 @@ export default function UnloadPage() {
     modelName: '',
     qtyMode: '',
     qtyValue: '',
+    search: '',
   })
   const displayName = user ? getDisplayName(user, profile) : 'Loading...'
   const userRole = resolveRole(profile?.role, user?.email?.toLowerCase() === ADMIN_EMAIL)
@@ -2853,7 +2887,6 @@ export default function UnloadPage() {
         pic_list: Array.from(group.pic_names),
       }))
   })()
-
   const sampleRows = unloadRows.filter((row) => row.is_sample)
   const sampleBreakdownGroups = (() => {
     const grouped = new Map()
@@ -2900,15 +2933,22 @@ export default function UnloadPage() {
       }
     : null
   const nonKoliGroups = [...sampleBreakdownGroups, returnBreakdownGroup].filter(Boolean)
+  const breakdownFilterOptionRows = [
+    ...modelGroups,
+    ...returnRows.map((row) => ({
+      ...row,
+      total_qty: Number(row.qty || 0),
+    })),
+  ]
   const sortedBrandFilterOptions = [...new Map(
-    modelGroups
+    breakdownFilterOptionRows
       .filter((group) => matchesBreakdownFilters(group, group.total_qty, 'brandId'))
       .map((group) => [String(group.brand_id || ''), brands.find((item) => Number(item.id) === Number(group.brand_id))])
       .filter(([id, brand]) => id && brand)
   ).values()]
     .sort((a, b) => String(a.brand_name || '').localeCompare(String(b.brand_name || '')))
   const sortedCategoryFilterOptions = [...new Map(
-    modelGroups
+    breakdownFilterOptionRows
       .filter((group) => matchesBreakdownFilters(group, group.total_qty, 'categoryId'))
       .map((group) => {
         const category = categoryMaps.byId.get(Number(group.category_id))
@@ -2920,13 +2960,18 @@ export default function UnloadPage() {
       String(a.full_name || a.category_name || '').localeCompare(String(b.full_name || b.category_name || ''))
     )
   const sortedModelFilterOptions = [...new Set(
-    modelGroups
+    breakdownFilterOptionRows
       .filter((group) => matchesBreakdownFilters(group, group.total_qty, 'modelName'))
       .map((group) => String(group.model_name || '').trim())
       .filter(Boolean)
   )]
     .sort((a, b) => a.localeCompare(b))
   const filteredModelGroups = modelGroups.filter((group) => matchesBreakdownFilters(group, group.total_qty))
+  const displayedModelCount = new Set(
+    filteredModelGroups
+      .map((group) => [group.brand_id || '', group.category_id || '', normalizeVariantLookupValue(group.model_name)].join('|'))
+      .filter((key) => key.replaceAll('|', '').trim())
+  ).size
   const filteredKoliGroups = koliGroups
     .map((group) => {
       const items = group.items.filter((row) => matchesBreakdownFilters(row, Number(row.qty || 0)))
@@ -2966,13 +3011,26 @@ export default function UnloadPage() {
     }
   })
   const filteredPrintTotalQty = filteredSummaryRows.reduce((sum, row) => sum + Number(row.modelQty || 0), 0)
+  const filteredIntakeQty =
+    breakdownMode === 'model'
+      ? filteredModelGroups.reduce((sum, group) => sum + Number(group.total_qty || 0), 0)
+      : [
+          ...filteredKoliGroups,
+          ...filteredNonKoliGroups.filter((group) => group.rowType === 'sample'),
+        ].reduce((sum, group) => sum + Number(group.total_qty || 0), 0)
+  const filteredReturnQty = filteredNonKoliGroups
+    .filter((group) => group.rowType === 'return')
+    .reduce((sum, group) => sum + Number(group.total_qty || 0), 0)
   const hasBreakdownFilters = Boolean(
     breakdownFilters.brandId ||
     breakdownFilters.categoryId ||
     breakdownFilters.modelName ||
     breakdownFilters.qtyMode ||
-    breakdownFilters.qtyValue
+    breakdownFilters.qtyValue ||
+    breakdownFilters.search
   )
+  const displayedIntakeQty = hasBreakdownFilters ? filteredIntakeQty : totalInboundQty
+  const displayedReturnQty = hasBreakdownFilters ? filteredReturnQty : totalReturnQty
 
   function updateBreakdownFilter(name, value) {
     setBreakdownFilters((current) => ({
@@ -2980,6 +3038,7 @@ export default function UnloadPage() {
       [name]: value,
       ...(name === 'brandId' ? { categoryId: '', modelName: '' } : {}),
       ...(name === 'categoryId' ? { modelName: '' } : {}),
+      ...(name === 'qtyMode' && !value ? { qtyValue: '' } : {}),
     }))
   }
 
@@ -2990,6 +3049,7 @@ export default function UnloadPage() {
       modelName: '',
       qtyMode: '',
       qtyValue: '',
+      search: '',
     })
   }
 
@@ -3024,6 +3084,25 @@ export default function UnloadPage() {
       normalizeVariantLookupValue(row.model_name) !== normalizeVariantLookupValue(breakdownFilters.modelName)
     ) {
       return false
+    }
+
+    if (ignoredFilter !== 'search' && breakdownFilters.search.trim()) {
+      const searchTerm = normalizeVariantLookupValue(breakdownFilters.search)
+      const searchableText = [
+        row.model_name,
+        row.variant_name,
+        row.variant_label,
+        row.variant_code,
+        getRowVariantIdentifier(row),
+        getModelVariantLabelForRow(row),
+      ]
+        .map((value) => normalizeVariantLookupValue(value))
+        .filter(Boolean)
+        .join(' ')
+
+      if (!searchableText.includes(searchTerm)) {
+        return false
+      }
     }
 
     if (ignoredFilter === 'qty') {
@@ -4912,11 +4991,11 @@ export default function UnloadPage() {
                 </div>
                 <div style={styles.metricBox}>
                   <span style={styles.infoLabel}>Intake Qty</span>
-                  <strong style={styles.metricValue}>{totalInboundQty}</strong>
+                  <strong style={styles.metricValue}>{displayedIntakeQty}</strong>
                 </div>
                 <div style={styles.metricBox}>
                   <span style={styles.infoLabel}>Retur Qty</span>
-                  <strong style={styles.metricValue}>{totalReturnQty}</strong>
+                  <strong style={styles.metricValue}>{displayedReturnQty}</strong>
                 </div>
               </div>
             </div>
@@ -4943,7 +5022,8 @@ export default function UnloadPage() {
                     ...(breakdownMode === 'model' ? styles.segmentButtonActive : {}),
                   }}
                 >
-                  Model
+                  <span>Model</span>
+                  <span style={styles.segmentBadge}>{displayedModelCount}</span>
                 </button>
               </div>
 
@@ -4990,12 +5070,7 @@ export default function UnloadPage() {
                 <div style={styles.qtyFilterGroup}>
                   <select
                     value={breakdownFilters.qtyMode}
-                    onChange={(event) => {
-                      updateBreakdownFilter('qtyMode', event.target.value)
-                      if (!event.target.value) {
-                        updateBreakdownFilter('qtyValue', '')
-                      }
-                    }}
+                    onChange={(event) => updateBreakdownFilter('qtyMode', event.target.value)}
                     style={styles.filterSelect}
                     aria-label="Filter quantity comparison"
                   >
@@ -5031,6 +5106,13 @@ export default function UnloadPage() {
                   <ResetIcon />
                 </button>
               </div>
+              <input
+                value={breakdownFilters.search}
+                onChange={(event) => updateBreakdownFilter('search', event.target.value)}
+                style={styles.filterSearchInput}
+                placeholder="Search model name or variant"
+                aria-label="Search model name or variant"
+              />
             </div>
 
             {!selectedInbound ? (
