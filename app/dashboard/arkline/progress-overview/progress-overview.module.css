@@ -1499,9 +1499,76 @@
   white-space: nowrap;
 }
 
+.returnHistoryTable {
+  min-width: 0;
+  width: 100%;
+}
+
+.returnHistoryTable th,
+.returnHistoryTable td {
+  padding: 10px 8px;
+}
+
+.returnHistoryDateCol {
+  width: 12%;
+}
+
+.returnHistoryBatchCol {
+  width: 18%;
+}
+
+.returnHistoryQtyCol {
+  width: 10%;
+}
+
+.returnHistoryReturnedDateCol {
+  width: 15%;
+}
+
+.returnHistoryStatusCol {
+  width: 11%;
+}
+
+.returnHistoryActionCol {
+  width: 14%;
+}
+
+.returnHistoryTable th:nth-child(2),
+.returnHistoryTable td:nth-child(2) {
+  white-space: normal;
+}
+
+.returnHistoryTable th:nth-child(5),
+.returnHistoryTable td:nth-child(5),
+.returnHistoryTable th:nth-child(6),
+.returnHistoryTable td:nth-child(6) {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.returnHistoryTable th:nth-child(3),
+.returnHistoryTable td:nth-child(3) {
+  text-align: left;
+  white-space: nowrap;
+}
+
+.returnHistoryTable th:nth-child(8),
+.returnHistoryTable td:nth-child(8) {
+  text-align: left;
+}
+
+.returnHistoryBatchCell {
+  color: #0f172a;
+  font-weight: 800;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
 .returnHistoryActions {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
 }
 

@@ -949,6 +949,11 @@ function getTaskModelInfo(item) {
   }
 }
 
+function getRegularModelVariantLabel(item) {
+  const taskModel = getTaskModelInfo(item)
+  return [taskModel.model, taskModel.variant].map((value) => String(value || '').trim()).filter(Boolean).join(' - ')
+}
+
 function getArklinePoLabel(item) {
   return String(item.po_id || 'NO PO').trim().toUpperCase() || 'NO PO'
 }
@@ -1052,6 +1057,10 @@ function formatDisplayDate(value) {
   }).format(new Date(value))
 }
 
+function formatNumber(value) {
+  return new Intl.NumberFormat('en-US').format(Number(value || 0))
+}
+
 function getCheckedQty(item) {
   return Number(item?.qty_a || 0) + Number(item?.qty_b || 0) + Number(item?.qty_c || 0)
 }
@@ -1066,6 +1075,28 @@ function hasQcResult(item) {
 
 function isRegularSampleTask(item) {
   return Boolean(item?.inbound_unload?.is_sample)
+}
+
+function hasProductIdentityForSampleTask(item) {
+  const modelName = String(item?.model_name || item?.inbound_unload?.model_name || '').trim().toUpperCase()
+  const variantName = String(item?.variant_name || item?.model_color || item?.inbound_unload?.variant_name || '').trim().toUpperCase()
+  const temporaryModelNames = new Set(['', 'SAMPLE', 'TEMPORARY', 'TEMPORARY SAMPLE'])
+  const temporaryVariantNames = new Set(['', 'SAMPLE', 'TEMPORARY'])
+
+  return !temporaryModelNames.has(modelName) && !temporaryVariantNames.has(variantName)
+}
+
+function isTemporarySampleTask(item) {
+  if (!isRegularSampleTask(item)) return false
+  if (item?.inbound_unload?.is_product_temporary) return true
+
+  return !hasProductIdentityForSampleTask(item)
+}
+
+function getSampleBreakdownLabel(row) {
+  const model = String(row?.model_name || 'UNKNOWN MODEL').trim()
+  const variant = String(row?.variant_name || '').trim()
+  return variant ? `${model} - ${variant}` : model
 }
 
 function shouldTrackQcTiming(item, qcMode) {
@@ -1322,11 +1353,19 @@ export default function QcDashboardPage() {
   const [arklineRejectDetails, setArklineRejectDetails] = useState([])
   const [arklineRejectAdjustments, setArklineRejectAdjustments] = useState([])
   const [arklinePoItemSizes, setArklinePoItemSizes] = useState([])
+  const [sampleBreakdownRows, setSampleBreakdownRows] = useState([])
+  const [qcSampleBreakdownRows, setQcSampleBreakdownRows] = useState([])
+  const [supportsSampleSplit, setSupportsSampleSplit] = useState(false)
+  const [sampleSplitSummary, setSampleSplitSummary] = useState(null)
+  const [sampleSplitDraftRows, setSampleSplitDraftRows] = useState([])
+  const [sampleSplitError, setSampleSplitError] = useState('')
+  const [savingSampleSplit, setSavingSampleSplit] = useState(false)
   const [grnFilter, setGrnFilter] = useState('')
   const [poFilter, setPoFilter] = useState('')
   const [arklineProductFilter, setArklineProductFilter] = useState('')
   const [brandFilter, setBrandFilter] = useState('')
   const [categoryFilter, setCategoryFilter] = useState('')
+  const [regularModelVariantFilter, setRegularModelVariantFilter] = useState('')
   const [sampleFilter, setSampleFilter] = useState('')
   const [allTime, setAllTime] = useState(true)
   const [dateFrom, setDateFrom] = useState('')
@@ -1367,6 +1406,8 @@ export default function QcDashboardPage() {
       { data: rejectDetailRows, error: rejectDetailError },
       { data: rejectAdjustmentRows, error: rejectAdjustmentError },
       { data: poItemSizeRows, error: poItemSizeError },
+      { data: sampleBreakdownData, error: sampleBreakdownError },
+      { data: qcSampleBreakdownData, error: qcSampleBreakdownError },
     ] = await Promise.all([
       supabase
         .from('qc_items')
@@ -1381,6 +1422,8 @@ export default function QcDashboardPage() {
             brand_id,
             category_id,
             is_sample,
+            model_name,
+            variant_name,
             brands:dir_brands!brand_id (
               id,
               brand_name
@@ -1497,6 +1540,8 @@ export default function QcDashboardPage() {
               brand_id,
               category_id,
               is_sample,
+              model_name,
+              variant_name,
               brands:dir_brands!brand_id (
                 id,
                 brand_name
@@ -1552,6 +1597,46 @@ export default function QcDashboardPage() {
         .from('arkline_po_item_sizes')
         .select('arkline_po_item_id, size, qty')
         .order('size', { ascending: true }),
+      supabase
+        .from('inbound_sample_model_breakdowns')
+        .select(`
+          id,
+          inbound_unload_id,
+          inbound_id,
+          brand_id,
+          category_id,
+          product_model_id,
+          product_model_variant_id,
+          model_name,
+          variant_name,
+          photo_url,
+          qty
+        `)
+        .order('created_at', { ascending: true }),
+      supabase
+        .from('qc_sample_breakdowns')
+        .select(`
+          id,
+          qc_item_id,
+          sample_breakdown_id,
+          qty_a,
+          qty_b,
+          qty_c,
+          sample_breakdown:sample_breakdown_id (
+            id,
+            inbound_unload_id,
+            inbound_id,
+            brand_id,
+            category_id,
+            product_model_id,
+            product_model_variant_id,
+            model_name,
+            variant_name,
+            photo_url,
+            qty
+          )
+        `)
+        .order('created_at', { ascending: true }),
     ])
 
     if (
@@ -1605,6 +1690,9 @@ export default function QcDashboardPage() {
     setArklineRejectDetails(rejectDetailRows || [])
     setArklineRejectAdjustments(rejectAdjustmentRows || [])
     setArklinePoItemSizes(poItemSizeRows || [])
+    setSupportsSampleSplit(!sampleBreakdownError && !qcSampleBreakdownError)
+    setSampleBreakdownRows(sampleBreakdownError ? [] : sampleBreakdownData || [])
+    setQcSampleBreakdownRows(qcSampleBreakdownError ? [] : qcSampleBreakdownData || [])
     if (!silent) setLoading(false)
   }, [today])
 
@@ -1629,9 +1717,38 @@ export default function QcDashboardPage() {
     return () => window.clearInterval(intervalId)
   }, [loadDashboard, pauseDetailInspector, previewPhoto, rejectDetailSummary, savingRejectDetail, showPauseConfirm])
 
+  const hasInvalidDateRange = Boolean(dateFrom && dateTo && dateFrom > dateTo)
+  const matchesRegularFilterValues = useCallback((item, ignoredFilter = '') => {
+    const matchesDate = hasInvalidDateRange ? true : isWithinDateRange(getQcWorkDateValue(item), dateFrom, dateTo)
+    const matchesGrn = ignoredFilter === 'grn' || !grnFilter || item.inbound?.grn_number === grnFilter
+    const matchesBrand = ignoredFilter === 'brand' || !brandFilter || getBrandLabel(item) === brandFilter
+    const matchesCategory = ignoredFilter === 'category' || !categoryFilter || getCategoryLabel(item) === categoryFilter
+    const matchesModelVariant =
+      ignoredFilter === 'modelVariant' ||
+      !regularModelVariantFilter ||
+      getRegularModelVariantLabel(item).toUpperCase().includes(String(regularModelVariantFilter || '').trim().toUpperCase())
+    const matchesSample =
+      ignoredFilter === 'sample' ||
+      !sampleFilter ||
+      (sampleFilter === 'yes' ? isRegularSampleTask(item) : !isRegularSampleTask(item))
+
+    return matchesDate && matchesGrn && matchesBrand && matchesCategory && matchesModelVariant && matchesSample
+  }, [brandFilter, categoryFilter, dateFrom, dateTo, grnFilter, hasInvalidDateRange, regularModelVariantFilter, sampleFilter])
+
+  const matchesArklineFilterValues = useCallback((item, ignoredFilter = '') => {
+    const matchesDate = hasInvalidDateRange ? true : isWithinDateRange(getQcWorkDateValue(item), dateFrom, dateTo)
+    const matchesPo = ignoredFilter === 'po' || !poFilter || getArklinePoLabel(item) === poFilter
+    const matchesProduct = ignoredFilter === 'product' || !arklineProductFilter || getArklineProductLabel(item) === arklineProductFilter
+
+    return matchesDate && matchesPo && matchesProduct
+  }, [arklineProductFilter, dateFrom, dateTo, hasInvalidDateRange, poFilter])
+
   const grnOptions = useMemo(
-    () => Array.from(new Set(qcItems.map((item) => item.inbound?.grn_number).filter(Boolean))),
-    [qcItems]
+    () =>
+      Array.from(new Set(qcItems.filter((item) => matchesRegularFilterValues(item, 'grn')).map((item) => item.inbound?.grn_number).filter(Boolean))).sort(
+        (a, b) => a.localeCompare(b, undefined, { numeric: true })
+      ),
+    [matchesRegularFilterValues, qcItems]
   )
   const arklineModeItems = useMemo(
     () =>
@@ -1643,28 +1760,33 @@ export default function QcDashboardPage() {
     [arklineQcItems, qcMode]
   )
   const poOptions = useMemo(
-    () => Array.from(new Set(arklineModeItems.map((item) => getArklinePoLabel(item)).filter(Boolean))).sort((a, b) => a.localeCompare(b, undefined, { numeric: true })),
-    [arklineModeItems]
+    () =>
+      Array.from(new Set(arklineModeItems.filter((item) => matchesArklineFilterValues(item, 'po')).map((item) => getArklinePoLabel(item)).filter(Boolean))).sort(
+        (a, b) => a.localeCompare(b, undefined, { numeric: true })
+      ),
+    [arklineModeItems, matchesArklineFilterValues]
   )
-  const arklineProductOptions = useMemo(() => {
-    const sourceItems =
-      poFilter && poFilter !== 'NO PO'
-        ? arklineModeItems.filter((item) => getArklinePoLabel(item) === poFilter)
-        : arklineModeItems
-
-    return Array.from(new Set(sourceItems.map((item) => getArklineProductLabel(item)).filter(Boolean))).sort((a, b) =>
-      a.localeCompare(b, undefined, { numeric: true })
-    )
-  }, [arklineModeItems, poFilter])
+  const arklineProductOptions = useMemo(
+    () =>
+      Array.from(
+        new Set(arklineModeItems.filter((item) => matchesArklineFilterValues(item, 'product')).map((item) => getArklineProductLabel(item)).filter(Boolean))
+      ).sort((a, b) => a.localeCompare(b, undefined, { numeric: true })),
+    [arklineModeItems, matchesArklineFilterValues]
+  )
   const brandOptions = useMemo(
-    () => Array.from(new Set(qcItems.map((item) => getBrandLabel(item)).filter(Boolean))).sort((a, b) => a.localeCompare(b)),
-    [qcItems]
+    () =>
+      Array.from(new Set(qcItems.filter((item) => matchesRegularFilterValues(item, 'brand')).map((item) => getBrandLabel(item)).filter(Boolean))).sort((a, b) =>
+        a.localeCompare(b)
+      ),
+    [matchesRegularFilterValues, qcItems]
   )
   const categoryOptions = useMemo(
-    () => Array.from(new Set(qcItems.map((item) => getCategoryLabel(item)).filter(Boolean))).sort((a, b) => a.localeCompare(b)),
-    [qcItems]
+    () =>
+      Array.from(new Set(qcItems.filter((item) => matchesRegularFilterValues(item, 'category')).map((item) => getCategoryLabel(item)).filter(Boolean))).sort((a, b) =>
+        a.localeCompare(b)
+      ),
+    [matchesRegularFilterValues, qcItems]
   )
-  const hasInvalidDateRange = Boolean(dateFrom && dateTo && dateFrom > dateTo)
   const hasSpecificSingleDate = Boolean(dateFrom && dateTo && dateFrom === dateTo)
   const canEditArklineRejectDetail = !allTime && hasSpecificSingleDate && !hasInvalidDateRange
   const rejectDetailReadOnlyReason = allTime
@@ -1678,29 +1800,13 @@ export default function QcDashboardPage() {
           : ''
 
   const filteredItems = useMemo(
-    () =>
-      qcItems.filter((item) => {
-        const matchesDate = hasInvalidDateRange ? true : isWithinDateRange(getQcWorkDateValue(item), dateFrom, dateTo)
-        const matchesGrn = !grnFilter || item.inbound?.grn_number === grnFilter
-        const matchesBrand = !brandFilter || getBrandLabel(item) === brandFilter
-        const matchesCategory = !categoryFilter || getCategoryLabel(item) === categoryFilter
-        const matchesSample =
-          !sampleFilter ||
-          (sampleFilter === 'yes' ? isRegularSampleTask(item) : !isRegularSampleTask(item))
-        return matchesDate && matchesGrn && matchesBrand && matchesCategory && matchesSample
-      }),
-    [brandFilter, categoryFilter, dateFrom, dateTo, grnFilter, hasInvalidDateRange, qcItems, sampleFilter]
+    () => qcItems.filter((item) => matchesRegularFilterValues(item)),
+    [matchesRegularFilterValues, qcItems]
   )
 
   const filteredArklineItems = useMemo(
-    () =>
-      arklineModeItems.filter((item) => {
-        const matchesDate = hasInvalidDateRange ? true : isWithinDateRange(getQcWorkDateValue(item), dateFrom, dateTo)
-        const matchesPo = !poFilter || getArklinePoLabel(item) === poFilter
-        const matchesProduct = !arklineProductFilter || getArklineProductLabel(item) === arklineProductFilter
-        return matchesDate && matchesPo && matchesProduct
-      }),
-    [arklineModeItems, arklineProductFilter, dateFrom, dateTo, hasInvalidDateRange, poFilter]
+    () => arklineModeItems.filter((item) => matchesArklineFilterValues(item)),
+    [arklineModeItems, matchesArklineFilterValues]
   )
 
   const filteredAdjustmentRows = useMemo(
@@ -1714,12 +1820,15 @@ export default function QcDashboardPage() {
         const matchesGrn = !grnFilter || item.inbound?.grn_number === grnFilter
         const matchesBrand = !brandFilter || getConfirmBrandLabel(item) === brandFilter
         const matchesCategory = !categoryFilter || getConfirmCategoryLabel(item) === categoryFilter
+        const matchesModelVariant =
+          !regularModelVariantFilter ||
+          getRegularModelVariantLabel(item).toUpperCase().includes(String(regularModelVariantFilter || '').trim().toUpperCase())
         const matchesSample =
           !sampleFilter ||
           (sampleFilter === 'yes' ? Boolean(item.is_sample) : !Boolean(item.is_sample))
-        return matchesDate && matchesGrn && matchesBrand && matchesCategory && matchesSample
+        return matchesDate && matchesGrn && matchesBrand && matchesCategory && matchesModelVariant && matchesSample
       }),
-    [brandFilter, categoryFilter, dateFrom, dateTo, grnFilter, hasInvalidDateRange, qcConfirmRows, sampleFilter]
+    [brandFilter, categoryFilter, dateFrom, dateTo, grnFilter, hasInvalidDateRange, qcConfirmRows, regularModelVariantFilter, sampleFilter]
   )
 
   const filteredReturnAdjustmentRows = useMemo(
@@ -1733,12 +1842,15 @@ export default function QcDashboardPage() {
         const matchesGrn = !grnFilter || item.inbound?.grn_number === grnFilter
         const matchesBrand = !brandFilter || getReturnBrandLabel(item) === brandFilter
         const matchesCategory = !categoryFilter || getReturnCategoryLabel(item) === categoryFilter
+        const matchesModelVariant =
+          !regularModelVariantFilter ||
+          getRegularModelVariantLabel(item).toUpperCase().includes(String(regularModelVariantFilter || '').trim().toUpperCase())
         const matchesSample =
           !sampleFilter ||
           (sampleFilter === 'yes' ? Boolean(item.is_sample) : !Boolean(item.is_sample))
-        return matchesDate && matchesGrn && matchesBrand && matchesCategory && matchesSample
+        return matchesDate && matchesGrn && matchesBrand && matchesCategory && matchesModelVariant && matchesSample
       }),
-    [brandFilter, categoryFilter, dateFrom, dateTo, grnFilter, hasInvalidDateRange, returnRows, sampleFilter]
+    [brandFilter, categoryFilter, dateFrom, dateTo, grnFilter, hasInvalidDateRange, regularModelVariantFilter, returnRows, sampleFilter]
   )
 
   const filteredRegularPauseLogs = useMemo(
@@ -1748,12 +1860,15 @@ export default function QcDashboardPage() {
         const matchesGrn = !grnFilter || item.qc_item?.inbound?.grn_number === grnFilter
         const matchesBrand = !brandFilter || getBrandLabel(item.qc_item || {}) === brandFilter
         const matchesCategory = !categoryFilter || getCategoryLabel(item.qc_item || {}) === categoryFilter
+        const matchesModelVariant =
+          !regularModelVariantFilter ||
+          getRegularModelVariantLabel(item.qc_item || {}).toUpperCase().includes(String(regularModelVariantFilter || '').trim().toUpperCase())
         const matchesSample =
           !sampleFilter ||
           (sampleFilter === 'yes' ? isRegularSampleTask(item.qc_item || {}) : !isRegularSampleTask(item.qc_item || {}))
-        return Boolean(item.qc_item_id) && matchesDate && matchesGrn && matchesBrand && matchesCategory && matchesSample
+        return Boolean(item.qc_item_id) && matchesDate && matchesGrn && matchesBrand && matchesCategory && matchesModelVariant && matchesSample
       }),
-    [brandFilter, categoryFilter, dateFrom, dateTo, grnFilter, hasInvalidDateRange, pauseLogs, sampleFilter]
+    [brandFilter, categoryFilter, dateFrom, dateTo, grnFilter, hasInvalidDateRange, pauseLogs, regularModelVariantFilter, sampleFilter]
   )
 
   const filteredArklinePauseLogs = useMemo(
@@ -1788,6 +1903,34 @@ export default function QcDashboardPage() {
       }, {}),
     [qcProfiles]
   )
+  const sampleBreakdownsByUnloadId = useMemo(() => {
+    const grouped = new Map()
+
+    sampleBreakdownRows.forEach((row) => {
+      const unloadId = Number(row.inbound_unload_id || 0)
+      if (!unloadId) return
+
+      const current = grouped.get(unloadId) || []
+      current.push(row)
+      grouped.set(unloadId, current)
+    })
+
+    return grouped
+  }, [sampleBreakdownRows])
+  const qcSampleSplitsByQcItemId = useMemo(() => {
+    const grouped = new Map()
+
+    qcSampleBreakdownRows.forEach((row) => {
+      const qcItemId = Number(row.qc_item_id || 0)
+      if (!qcItemId) return
+
+      const current = grouped.get(qcItemId) || []
+      current.push(row)
+      grouped.set(qcItemId, current)
+    })
+
+    return grouped
+  }, [qcSampleBreakdownRows])
 
   const qcResultSummary = useMemo(() => {
     const grouped = new Map()
@@ -1847,7 +1990,97 @@ export default function QcDashboardPage() {
       const model = taskModel.model
       const variant = qcMode === 'regular' ? taskModel.variant : ''
       const roundNumber = qcMode === 're_qc' ? Number(item.qc_round_number || 2) : null
-      const baseKey = qcMode === 'regular' ? `${brand}|||${category}|||${model}|||${variant}` : getSummaryRejectKey({ brand, category, model })
+      const sampleSourceId = Number(item.inbound_unload_id || item.inbound_unload?.id || 0)
+      const isSampleTask = qcMode === 'regular' && isRegularSampleTask(item)
+      const isTemporarySample = qcMode === 'regular' && isTemporarySampleTask(item)
+      const sampleSplitRows = isTemporarySample ? qcSampleSplitsByQcItemId.get(Number(item.id || 0)) || [] : []
+
+      if (isTemporarySample && sampleSplitRows.length) {
+        let splitQtyA = 0
+        let splitQtyB = 0
+        let splitQtyC = 0
+
+        sampleSplitRows.forEach((split) => {
+          const breakdown = split.sample_breakdown || {}
+          const splitModel = breakdown.model_name || 'UNKNOWN MODEL'
+          const splitVariant = breakdown.variant_name || ''
+          const splitKey = `${brand}|||${category}|||${sampleSourceId}|||${splitModel}|||${splitVariant}|||split:${breakdown.id || split.sample_breakdown_id}`
+          const current =
+            grouped.get(splitKey) || {
+              brand,
+              category,
+              model: splitModel,
+              variant: splitVariant,
+              roundNumber,
+              photoUrl: breakdown.photo_url || '',
+              qtyA: 0,
+              qtyB: 0,
+              qtyC: 0,
+              rejectTargetQty: 0,
+              checked: 0,
+              taskRows: [],
+              hasRejectDetails: false,
+              isSampleSummary: true,
+              isTemporarySampleSummary: true,
+              sampleSourceId,
+            }
+
+          current.qtyA += Number(split.qty_a || 0)
+          current.qtyB += Number(split.qty_b || 0)
+          current.qtyC += Number(split.qty_c || 0)
+          current.checked += Number(split.qty_a || 0) + Number(split.qty_b || 0) + Number(split.qty_c || 0)
+          current.photoUrl = current.photoUrl || breakdown.photo_url || ''
+          current.taskRows.push(item)
+          grouped.set(splitKey, current)
+
+          splitQtyA += Number(split.qty_a || 0)
+          splitQtyB += Number(split.qty_b || 0)
+          splitQtyC += Number(split.qty_c || 0)
+        })
+
+        const residualQtyA = Math.max(0, Number(item.qty_a || 0) - splitQtyA)
+        const residualQtyB = Math.max(0, Number(item.qty_b || 0) - splitQtyB)
+        const residualQtyC = Math.max(0, Number(item.qty_c || 0) - splitQtyC)
+
+        if (residualQtyA || residualQtyB || residualQtyC) {
+          const residualKey = `${brand}|||${category}|||${sampleSourceId}|||TEMPORARY SAMPLE|||TEMPORARY`
+          const current =
+            grouped.get(residualKey) || {
+              brand,
+              category,
+              model: 'TEMPORARY SAMPLE',
+              variant: 'TEMPORARY',
+              roundNumber,
+              photoUrl: taskModel.photoUrl,
+              qtyA: 0,
+              qtyB: 0,
+              qtyC: 0,
+              rejectTargetQty: 0,
+              checked: 0,
+              taskRows: [],
+              hasRejectDetails: false,
+              isSampleSummary: true,
+              isTemporarySampleSummary: true,
+              sampleSourceId,
+            }
+
+          current.qtyA += residualQtyA
+          current.qtyB += residualQtyB
+          current.qtyC += residualQtyC
+          current.rejectTargetQty += residualQtyB + residualQtyC
+          current.checked += residualQtyA + residualQtyB + residualQtyC
+          current.taskRows.push(item)
+          grouped.set(residualKey, current)
+        }
+
+        return
+      }
+
+      const baseKey = qcMode === 'regular'
+        ? isSampleTask
+          ? `${brand}|||${category}|||${sampleSourceId}|||${model}|||${variant}`
+          : `${brand}|||${category}|||${model}|||${variant}`
+        : getSummaryRejectKey({ brand, category, model })
       const key = qcMode === 're_qc' ? `${baseKey}|||ROUND:${roundNumber}` : baseKey
       const current =
         grouped.get(key) || {
@@ -1864,6 +2097,9 @@ export default function QcDashboardPage() {
           checked: 0,
           taskRows: [],
           hasRejectDetails: false,
+          isSampleSummary: isSampleTask,
+          isTemporarySampleSummary: isTemporarySample,
+          sampleSourceId: isSampleTask ? sampleSourceId : null,
         }
 
       current.qtyA += Number(item.qty_a || 0)
@@ -1872,7 +2108,7 @@ export default function QcDashboardPage() {
       current.rejectTargetQty += getRejectQty(item)
       current.checked += getCheckedQty(item)
       current.photoUrl = current.photoUrl || taskModel.photoUrl
-      if (qcMode !== 'regular') current.taskRows.push(item)
+      if (qcMode !== 'regular' || isSampleTask) current.taskRows.push(item)
       grouped.set(key, current)
     })
 
@@ -1958,6 +2194,7 @@ export default function QcDashboardPage() {
     filteredReturnAdjustmentRows,
     hasInvalidDateRange,
     qcMode,
+    qcSampleSplitsByQcItemId,
   ])
 
   const selectedRejectTaskRows = useMemo(
@@ -2279,6 +2516,169 @@ export default function QcDashboardPage() {
     (sum, item) => sum + (Number(item.locked_qty || 0) - Number(item.allocated_qty || 0)),
     0
   )
+  const selectedSampleSplitTasks = useMemo(() => {
+    if (!sampleSplitSummary) return []
+
+    const sourceId = Number(sampleSplitSummary.sampleSourceId || 0)
+    const sourceTaskRows = activeItems.filter((item) => isTemporarySampleTask(item) && Number(item.inbound_unload_id || item.inbound_unload?.id || 0) === sourceId)
+    const taskRows = sourceTaskRows.length ? sourceTaskRows : sampleSplitSummary.taskRows || []
+
+    return [...new Map(taskRows.map((item) => [String(item.id), item])).values()]
+      .sort((a, b) => String(a.assigned_to || '').localeCompare(String(b.assigned_to || '')))
+  }, [activeItems, sampleSplitSummary])
+  const selectedSampleSplitBreakdowns = useMemo(() => {
+    if (!sampleSplitSummary) return []
+
+    return sampleBreakdownsByUnloadId.get(Number(sampleSplitSummary.sampleSourceId || 0)) || []
+  }, [sampleBreakdownsByUnloadId, sampleSplitSummary])
+  const sampleSplitDraftTotals = useMemo(
+    () =>
+      sampleSplitDraftRows.reduce(
+        (total, row) => ({
+          qtyA: total.qtyA + Number(row.qtyA || 0),
+          qtyB: total.qtyB + Number(row.qtyB || 0),
+          qtyC: total.qtyC + Number(row.qtyC || 0),
+          checked: total.checked + Number(row.qtyA || 0) + Number(row.qtyB || 0) + Number(row.qtyC || 0),
+        }),
+        { qtyA: 0, qtyB: 0, qtyC: 0, checked: 0 }
+      ),
+    [sampleSplitDraftRows]
+  )
+
+  function openSampleSplitModal(summary) {
+    setSampleSplitError('')
+
+    if (!supportsSampleSplit) {
+      setError('Run `supabase/inbound_sample_breakdowns.sql` first before splitting sample QC.')
+      return
+    }
+
+    const sourceId = Number(summary.sampleSourceId || 0)
+    const breakdowns = sampleBreakdownsByUnloadId.get(sourceId) || []
+
+    if (!breakdowns.length) {
+      setError('Resolve Sample in Inbound first before splitting QC result.')
+      return
+    }
+
+    const sourceTaskRows = activeItems.filter((item) => isTemporarySampleTask(item) && Number(item.inbound_unload_id || item.inbound_unload?.id || 0) === sourceId)
+    const taskRows = sourceTaskRows.length ? sourceTaskRows : summary.taskRows || []
+
+    const uniqueTasks = [...new Map(taskRows.map((item) => [String(item.id), item])).values()]
+    const rows = uniqueTasks.flatMap((task) => {
+      const existingRows = qcSampleSplitsByQcItemId.get(Number(task.id || 0)) || []
+
+      return breakdowns.map((breakdown) => {
+        const existing = existingRows.find((item) => Number(item.sample_breakdown_id || 0) === Number(breakdown.id || 0))
+
+        return {
+          id: `${task.id}-${breakdown.id}`,
+          existingId: existing?.id || null,
+          qcItemId: task.id,
+          sampleBreakdownId: breakdown.id,
+          inspector: memberNameMap[String(task.assigned_to || '').trim().toLowerCase()] || task.assigned_to || '-',
+          modelVariant: getSampleBreakdownLabel(breakdown),
+          photoUrl: breakdown.photo_url || '',
+          taskCheckedQty: getCheckedQty(task),
+          breakdownQty: Number(breakdown.qty || 0),
+          qtyA: existing?.qty_a ? String(existing.qty_a) : '',
+          qtyB: existing?.qty_b ? String(existing.qty_b) : '',
+          qtyC: existing?.qty_c ? String(existing.qty_c) : '',
+        }
+      })
+    })
+
+    setSampleSplitSummary(summary)
+    setSampleSplitDraftRows(rows)
+    setSampleSplitError('')
+    setError('')
+    setSuccess('')
+  }
+
+  function closeSampleSplitModal() {
+    setSampleSplitSummary(null)
+    setSampleSplitDraftRows([])
+    setSampleSplitError('')
+  }
+
+  function updateSampleSplitDraft(rowId, field, value) {
+    const normalizedValue = Math.max(0, Number(value || 0))
+
+    setSampleSplitDraftRows((rows) =>
+      rows.map((row) => (row.id === rowId ? { ...row, [field]: value === '' ? '' : String(normalizedValue) } : row))
+    )
+  }
+
+  async function saveSampleSplitRows() {
+    if (!sampleSplitSummary) return
+
+    setSampleSplitError('')
+    setSuccess('')
+
+    if (!supportsSampleSplit) {
+      setSampleSplitError('Run `supabase/inbound_sample_breakdowns.sql` first before splitting sample QC.')
+      return
+    }
+
+    const totalByTask = new Map()
+    sampleSplitDraftRows.forEach((row) => {
+      const current = totalByTask.get(row.qcItemId) || { total: 0, checked: row.taskCheckedQty, inspector: row.inspector }
+      current.total += Number(row.qtyA || 0) + Number(row.qtyB || 0) + Number(row.qtyC || 0)
+      totalByTask.set(row.qcItemId, current)
+    })
+
+    for (const row of totalByTask.values()) {
+      if (row.total > row.checked) {
+        setSampleSplitError(`Split qty for ${row.inspector} cannot exceed checked qty ${formatNumber(row.checked)}.`)
+        return
+      }
+    }
+
+    const deleteIds = sampleSplitDraftRows
+      .filter((row) => row.existingId && Number(row.qtyA || 0) + Number(row.qtyB || 0) + Number(row.qtyC || 0) <= 0)
+      .map((row) => row.existingId)
+    const upsertRows = sampleSplitDraftRows
+      .filter((row) => Number(row.qtyA || 0) + Number(row.qtyB || 0) + Number(row.qtyC || 0) > 0)
+      .map((row) => ({
+        qc_item_id: row.qcItemId,
+        sample_breakdown_id: row.sampleBreakdownId,
+        qty_a: Number(row.qtyA || 0),
+        qty_b: Number(row.qtyB || 0),
+        qty_c: Number(row.qtyC || 0),
+      }))
+
+    setSavingSampleSplit(true)
+
+    if (deleteIds.length) {
+      const { error: deleteError } = await supabase
+        .from('qc_sample_breakdowns')
+        .delete()
+        .in('id', deleteIds)
+
+      if (deleteError) {
+        setSampleSplitError(deleteError.message)
+        setSavingSampleSplit(false)
+        return
+      }
+    }
+
+    if (upsertRows.length) {
+      const { error: upsertError } = await supabase
+        .from('qc_sample_breakdowns')
+        .upsert(upsertRows, { onConflict: 'qc_item_id,sample_breakdown_id' })
+
+      if (upsertError) {
+        setSampleSplitError(upsertError.message)
+        setSavingSampleSplit(false)
+        return
+      }
+    }
+
+    await loadDashboard(true)
+    setSavingSampleSplit(false)
+    closeSampleSplitModal()
+    setSuccess('Sample QC split saved.')
+  }
 
   function openRejectDetailModal(summary) {
     const summaryTaskRows = summary.taskRows?.length ? summary.taskRows : activeItems.filter((item) => isTaskInSummary(item, summary))
@@ -2781,6 +3181,7 @@ export default function QcDashboardPage() {
                 onClick={() => {
                   setQcMode('regular')
                   setPauseDetailInspector('')
+                  setPoFilter('')
                   setArklineProductFilter('')
                 }}
               >
@@ -2792,6 +3193,11 @@ export default function QcDashboardPage() {
                 onClick={() => {
                   setQcMode('arkline')
                   setPauseDetailInspector('')
+                  setGrnFilter('')
+                  setBrandFilter('')
+                  setCategoryFilter('')
+                  setRegularModelVariantFilter('')
+                  setSampleFilter('')
                 }}
               >
                 Arkline
@@ -2802,8 +3208,13 @@ export default function QcDashboardPage() {
                 onClick={() => {
                   setQcMode('re_qc')
                   setPauseDetailInspector('')
+                  setGrnFilter('')
                   setPoFilter('')
                   setArklineProductFilter('')
+                  setBrandFilter('')
+                  setCategoryFilter('')
+                  setRegularModelVariantFilter('')
+                  setSampleFilter('')
                 }}
               >
                 Re-QC
@@ -2889,16 +3300,11 @@ export default function QcDashboardPage() {
                 <input
                   list="qc-dashboard-po-options"
                   value={poFilter}
-                  onClick={() => {
-                    if (poFilter) {
-                      setPoFilter('')
-                      setArklineProductFilter('')
-                    }
+                  autoComplete="off"
+                  onMouseDown={() => {
+                    if (poFilter) setPoFilter('')
                   }}
-                  onChange={(event) => {
-                    setPoFilter(event.target.value)
-                    setArklineProductFilter('')
-                  }}
+                  onChange={(event) => setPoFilter(event.target.value)}
                   style={styles.input}
                   placeholder="All PO"
                 />
@@ -2914,7 +3320,8 @@ export default function QcDashboardPage() {
                 <input
                   list="qc-dashboard-arkline-product-options"
                   value={arklineProductFilter}
-                  onClick={() => {
+                  autoComplete="off"
+                  onMouseDown={() => {
                     if (arklineProductFilter) setArklineProductFilter('')
                   }}
                   onChange={(event) => setArklineProductFilter(event.target.value)}
@@ -2935,7 +3342,8 @@ export default function QcDashboardPage() {
                 <input
                   list="qc-dashboard-grn-options"
                   value={grnFilter}
-                  onClick={() => {
+                  autoComplete="off"
+                  onMouseDown={() => {
                     if (grnFilter) setGrnFilter('')
                   }}
                   onChange={(event) => setGrnFilter(event.target.value)}
@@ -2954,7 +3362,8 @@ export default function QcDashboardPage() {
                 <input
                   list="qc-dashboard-brand-options"
                   value={brandFilter}
-                  onClick={() => {
+                  autoComplete="off"
+                  onMouseDown={() => {
                     if (brandFilter) setBrandFilter('')
                   }}
                   onChange={(event) => setBrandFilter(event.target.value)}
@@ -2973,7 +3382,8 @@ export default function QcDashboardPage() {
                 <input
                   list="qc-dashboard-category-options"
                   value={categoryFilter}
-                  onClick={() => {
+                  autoComplete="off"
+                  onMouseDown={() => {
                     if (categoryFilter) setCategoryFilter('')
                   }}
                   onChange={(event) => setCategoryFilter(event.target.value)}
@@ -2985,6 +3395,21 @@ export default function QcDashboardPage() {
                     <option key={item} value={item} />
                   ))}
                 </datalist>
+              </div>
+
+              <div style={{ ...styles.field, gridColumn: 'span 2' }}>
+                <label style={styles.label}>Model Variant</label>
+                <input
+                  type="search"
+                  value={regularModelVariantFilter}
+                  autoComplete="off"
+                  onMouseDown={() => {
+                    if (regularModelVariantFilter) setRegularModelVariantFilter('')
+                  }}
+                  onChange={(event) => setRegularModelVariantFilter(event.target.value)}
+                  style={styles.input}
+                  placeholder="Search model or variant"
+                />
               </div>
 
               <div style={styles.field}>
@@ -3073,6 +3498,7 @@ export default function QcDashboardPage() {
                 <th style={{ ...styles.th, ...styles.thCenter }}>Qty B</th>
                 <th style={{ ...styles.th, ...styles.thCenter }}>Qty C</th>
                 <th style={{ ...styles.th, ...styles.thCenter }}>Total Inspected</th>
+                {qcMode === 'regular' ? <th style={{ ...styles.th, ...styles.thCenter }}>Split</th> : null}
                 {qcMode !== 'regular' ? <th style={{ ...styles.th, ...styles.thCenter }}>Detail</th> : null}
               </tr>
             </thead>
@@ -3081,7 +3507,7 @@ export default function QcDashboardPage() {
                 qcResultSummary.map((item) => {
                   const rejectTargetQty = Number(item.rejectTargetQty ?? getRejectQty(item))
                   return (
-                  <tr key={`${item.brand}-${item.category}-${item.model}-${item.variant || ''}-${item.roundNumber || 'initial'}`}>
+                  <tr key={`${item.brand}-${item.category}-${item.sampleSourceId || 'regular'}-${item.model}-${item.variant || ''}-${item.roundNumber || 'initial'}`}>
                     {qcMode !== 'regular' ? null : <td style={styles.td}>
                       {item.photoUrl ? (
                         <button type="button" style={styles.previewButton} onClick={() => setPreviewPhoto({ url: item.photoUrl, label: item.model })} title="Preview photo">
@@ -3101,6 +3527,22 @@ export default function QcDashboardPage() {
                     <td style={{ ...styles.td, ...styles.tdCenter }}>{item.qtyB}</td>
                     <td style={{ ...styles.td, ...styles.tdCenter }}>{item.qtyC}</td>
                     <td style={{ ...styles.td, ...styles.tdCenter }}>{item.checked}</td>
+                    {qcMode === 'regular' ? (
+                      <td style={{ ...styles.td, ...styles.tdCenter }}>
+                        {item.isTemporarySampleSummary ? (
+                          <button
+                            type="button"
+                            style={styles.detailButton}
+                            onClick={() => openSampleSplitModal(item)}
+                            title="Split sample QC result"
+                          >
+                            Split
+                          </button>
+                        ) : (
+                          '-'
+                        )}
+                      </td>
+                    ) : null}
                     {qcMode !== 'regular' ? (
                       <td style={{ ...styles.td, ...styles.tdCenter }}>
                         <button
@@ -3265,6 +3707,140 @@ export default function QcDashboardPage() {
             >
               x
             </button>
+          </div>
+        </div>
+      ) : null}
+
+      {sampleSplitSummary ? (
+        <div style={styles.overlay}>
+          <div style={{ ...styles.modal, ...styles.wideModal }}>
+            <div style={styles.headerRow}>
+              <div>
+                <h2 style={styles.sectionTitle}>Split Sample</h2>
+                <p style={styles.subtitle}>
+                  {sampleSplitSummary.brand} / {sampleSplitSummary.category}
+                </p>
+              </div>
+              <div style={styles.buttonRow}>
+                <button type="button" onClick={closeSampleSplitModal} style={styles.secondaryButton}>
+                  Close
+                </button>
+                <button
+                  type="button"
+                  onClick={saveSampleSplitRows}
+                  disabled={savingSampleSplit || !supportsSampleSplit}
+                  style={{
+                    ...styles.primaryButton,
+                    ...(savingSampleSplit || !supportsSampleSplit ? { opacity: 0.55, cursor: 'not-allowed' } : {}),
+                  }}
+                >
+                  {savingSampleSplit ? 'Saving...' : 'Save Split'}
+                </button>
+              </div>
+            </div>
+
+            {!supportsSampleSplit ? (
+              <div style={styles.warningBox}>Run `supabase/inbound_sample_breakdowns.sql` first before splitting sample QC.</div>
+            ) : null}
+            {!selectedSampleSplitBreakdowns.length ? (
+              <div style={styles.warningBox}>Resolve Sample in Inbound first before splitting QC result.</div>
+            ) : null}
+            {sampleSplitError ? <p style={styles.errorText}>{sampleSplitError}</p> : null}
+
+            <div style={styles.rejectDetailGrid}>
+              <div style={{ ...styles.summaryCard, ...styles.compactSummaryCard }}>
+                <span style={styles.summaryLabel}>Resolved Models</span>
+                <strong style={{ ...styles.summaryValue, ...styles.compactSummaryValue }}>{selectedSampleSplitBreakdowns.length}</strong>
+              </div>
+              <div style={{ ...styles.summaryCard, ...styles.compactSummaryCard }}>
+                <span style={styles.summaryLabel}>QC Tasks</span>
+                <strong style={{ ...styles.summaryValue, ...styles.compactSummaryValue }}>{selectedSampleSplitTasks.length}</strong>
+              </div>
+              <div style={{ ...styles.summaryCard, ...styles.compactSummaryCard }}>
+                <span style={styles.summaryLabel}>Draft A</span>
+                <strong style={{ ...styles.summaryValue, ...styles.compactSummaryValue }}>{formatNumber(sampleSplitDraftTotals.qtyA)}</strong>
+              </div>
+              <div style={{ ...styles.summaryCard, ...styles.compactSummaryCard }}>
+                <span style={styles.summaryLabel}>Draft B</span>
+                <strong style={{ ...styles.summaryValue, ...styles.compactSummaryValue }}>{formatNumber(sampleSplitDraftTotals.qtyB)}</strong>
+              </div>
+              <div style={{ ...styles.summaryCard, ...styles.compactSummaryCard }}>
+                <span style={styles.summaryLabel}>Draft C</span>
+                <strong style={{ ...styles.summaryValue, ...styles.compactSummaryValue }}>{formatNumber(sampleSplitDraftTotals.qtyC)}</strong>
+              </div>
+            </div>
+
+            <div style={styles.tableWrap}>
+              <table style={styles.table}>
+                <thead>
+                  <tr>
+                    <th style={styles.th}>Photo</th>
+                    <th style={styles.th}>Inspector</th>
+                    <th style={styles.th}>Model - Variant</th>
+                    <th style={{ ...styles.th, ...styles.thCenter }}>QC Checked</th>
+                    <th style={{ ...styles.th, ...styles.thCenter }}>Sample Qty</th>
+                    <th style={{ ...styles.th, ...styles.thCenter }}>A</th>
+                    <th style={{ ...styles.th, ...styles.thCenter }}>B</th>
+                    <th style={{ ...styles.th, ...styles.thCenter }}>C</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {sampleSplitDraftRows.length ? (
+                    sampleSplitDraftRows.map((row) => (
+                      <tr key={row.id}>
+                        <td style={styles.td}>
+                          {row.photoUrl ? (
+                            <button
+                              type="button"
+                              style={styles.previewButton}
+                              onClick={() => setPreviewPhoto({ url: row.photoUrl, label: row.modelVariant })}
+                              title="Preview photo"
+                            >
+                              <Image
+                                src={row.photoUrl}
+                                alt={row.modelVariant}
+                                width={46}
+                                height={46}
+                                unoptimized
+                                style={styles.previewThumb}
+                              />
+                            </button>
+                          ) : (
+                            '-'
+                          )}
+                        </td>
+                        <td style={styles.td}>{row.inspector}</td>
+                        <td style={styles.td}>{row.modelVariant}</td>
+                        <td style={{ ...styles.td, ...styles.tdCenter }}>{formatNumber(row.taskCheckedQty)}</td>
+                        <td style={{ ...styles.td, ...styles.tdCenter }}>{formatNumber(row.breakdownQty)}</td>
+                        {['qtyA', 'qtyB', 'qtyC'].map((field) => (
+                          <td key={field} style={{ ...styles.td, ...styles.tdCenter }}>
+                            <input
+                              type="number"
+                              min="0"
+                              value={row[field]}
+                              onChange={(event) => updateSampleSplitDraft(row.id, field, event.target.value)}
+                              onWheel={(event) => event.currentTarget.blur()}
+                              onKeyDown={(event) => {
+                                if (['-', '+', 'e', 'E'].includes(event.key)) event.preventDefault()
+                              }}
+                              style={{ ...styles.input, width: '74px', textAlign: 'center', fontVariantNumeric: 'tabular-nums' }}
+                              disabled={savingSampleSplit || !supportsSampleSplit}
+                            />
+                          </td>
+                        ))}
+                      </tr>
+                    ))
+                  ) : (
+                    <tr>
+                      <td style={styles.td} colSpan={8}>
+                        No sample split row available.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       ) : null}

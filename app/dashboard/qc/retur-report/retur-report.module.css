@@ -290,6 +290,7 @@
   margin: 0;
   color: #111827;
   font-size: 19px;
+  font-weight: 900;
 }
 
 .eyebrow {
@@ -333,7 +334,7 @@
 
 .filteredSummary {
   display: grid;
-  grid-template-columns: minmax(136px, 0.18fr) minmax(0, 1fr);
+  grid-template-columns: minmax(136px, 0.18fr) repeat(2, minmax(0, 1fr));
   gap: 12px;
   margin-top: 14px;
   padding: 12px;
@@ -361,6 +362,7 @@
 .summaryMetric strong {
   color: #111827;
   font-size: 20px;
+  font-weight: 900;
   line-height: 1;
   font-variant-numeric: tabular-nums;
 }
@@ -627,6 +629,39 @@
   display: grid;
   gap: 8px;
   margin-top: 18px;
+}
+
+.modalSummaryBox {
+  display: grid;
+  gap: 10px;
+  margin-top: 16px;
+  padding: 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  background: #f8fafc;
+}
+
+.modalSummaryTotal {
+  color: #334155;
+  font-size: 13px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+.modalSummaryTotal strong {
+  color: #111827;
+  font-size: 18px;
+  font-weight: 900;
+}
+
+.modalSummaryGroup > span {
+  display: block;
+  margin-bottom: 6px;
+  color: #64748b;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
 }
 
 .lineRow {

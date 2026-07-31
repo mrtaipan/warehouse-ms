@@ -342,6 +342,15 @@ function PerformanceIcon() {
   )
 }
 
+function ResolveIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M9 11 12 14 22 4" />
+      <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
+    </svg>
+  )
+}
+
 const styles = {
   wrapper: {
     display: 'flex',
@@ -1888,6 +1897,51 @@ const styles = {
     fontSize: '12px',
     fontWeight: '700',
   },
+  resolveActionStack: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: '8px',
+    flexWrap: 'wrap',
+  },
+  resolveButton: {
+    width: '34px',
+    height: '34px',
+    padding: 0,
+    border: '1px solid #99f6e4',
+    borderRadius: '9px',
+    background: '#ecfdf5',
+    color: '#0f766e',
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    cursor: 'pointer',
+  },
+  resolveStatusBadge: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    minWidth: '54px',
+    height: '24px',
+    padding: '0 8px',
+    borderRadius: '999px',
+    background: '#f8fafc',
+    color: '#64748b',
+    border: '1px solid #e2e8f0',
+    fontSize: '11px',
+    fontWeight: '850',
+    fontVariantNumeric: 'tabular-nums',
+  },
+  resolveStatusDone: {
+    background: '#ecfdf5',
+    color: '#047857',
+    border: '1px solid #a7f3d0',
+  },
+  resolveStatusWarning: {
+    background: '#fff7ed',
+    color: '#c2410c',
+    border: '1px solid #fed7aa',
+  },
   returnBadge: {
     display: 'inline-flex',
     alignItems: 'center',
@@ -1977,6 +2031,73 @@ const styles = {
   performanceMetricWarning: {
     background: '#fff7ed',
     border: '1px solid #fed7aa',
+  },
+  resolveModal: {
+    maxWidth: '980px',
+    gap: '14px',
+  },
+  resolveHeaderGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 160px), 1fr))',
+    gap: '10px',
+  },
+  resolveVariantGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 132px), 1fr))',
+    gap: '10px',
+  },
+  resolveVariantCard: {
+    minWidth: 0,
+    padding: '8px',
+    border: '1px solid #e2e8f0',
+    borderRadius: '12px',
+    background: '#fff',
+    color: '#0f172a',
+    cursor: 'pointer',
+    textAlign: 'left',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '7px',
+  },
+  resolveVariantCardActive: {
+    border: '1px solid #0f766e',
+    boxShadow: '0 0 0 2px rgba(15, 118, 110, 0.12)',
+  },
+  resolveVariantImage: {
+    width: '100%',
+    aspectRatio: '1 / 1',
+    objectFit: 'cover',
+    borderRadius: '9px',
+    border: '1px solid #e5e7eb',
+    background: '#f8fafc',
+  },
+  resolveVariantPlaceholder: {
+    width: '100%',
+    aspectRatio: '1 / 1',
+    borderRadius: '9px',
+    border: '1px solid #e5e7eb',
+    background: '#f8fafc',
+    color: '#94a3b8',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    fontSize: '10px',
+    fontWeight: '850',
+  },
+  resolveModalGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'minmax(0, 1.25fr) minmax(280px, 0.75fr)',
+    gap: '14px',
+    alignItems: 'start',
+  },
+  resolveSidePanel: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '12px',
+    minWidth: 0,
+  },
+  compactTable: {
+    minWidth: '560px',
   },
   performanceMetricSuccess: {
     background: '#f0fdf4',
@@ -2196,7 +2317,9 @@ export default function UnloadPage() {
   const pathname = usePathname()
   const searchParams = useSearchParams()
   const grnParam = searchParams.get('grn') || ''
+  const resolveSampleIdParam = searchParams.get('resolveSample') || ''
   const isBuilderMode = pathname.startsWith('/mobile/inbound/unload')
+  const isSampleResolveBuilder = isBuilderMode && Boolean(resolveSampleIdParam)
   const [user, setUser] = useState(null)
   const [profile, setProfile] = useState(null)
   const [inbounds, setInbounds] = useState([])
@@ -2220,6 +2343,7 @@ export default function UnloadPage() {
   const [isReturn, setIsReturn] = useState(false)
   const [currentKoliItems, setCurrentKoliItems] = useState([])
   const [unloadRows, setUnloadRows] = useState([])
+  const [sampleBreakdownRows, setSampleBreakdownRows] = useState([])
   const [qcItemRows, setQcItemRows] = useState([])
   const [returnRows, setReturnRows] = useState([])
   const [showChooseModelModal, setShowChooseModelModal] = useState(false)
@@ -2248,12 +2372,21 @@ export default function UnloadPage() {
   const [modelEditError, setModelEditError] = useState('')
   const [moveModelError, setMoveModelError] = useState('')
   const [previewImage, setPreviewImage] = useState(null)
+  const [sampleResolveSource, setSampleResolveSource] = useState(null)
+  const [sampleResolveSearch, setSampleResolveSearch] = useState('')
+  const [sampleResolveSelected, setSampleResolveSelected] = useState(null)
+  const [sampleResolveQty, setSampleResolveQty] = useState('')
+  const [sampleResolveItems, setSampleResolveItems] = useState([])
+  const [sampleResolveError, setSampleResolveError] = useState('')
+  const [sampleResolveSaving, setSampleResolveSaving] = useState(false)
+  const [appliedBuilderResolveSampleId, setAppliedBuilderResolveSampleId] = useState('')
   const [supportsUnloadProductModel, setSupportsUnloadProductModel] = useState(false)
   const [supportsUnloadProductModelVariant, setSupportsUnloadProductModelVariant] = useState(false)
   const [supportsUnloadVariant, setSupportsUnloadVariant] = useState(false)
   const [supportsUnloadVariantCode, setSupportsUnloadVariantCode] = useState(false)
   const [supportsUnloadVariantName, setSupportsUnloadVariantName] = useState(false)
   const [supportsUnloadTemporarySample, setSupportsUnloadTemporarySample] = useState(false)
+  const [supportsSampleBreakdowns, setSupportsSampleBreakdowns] = useState(false)
   const [supportsReturnVariant, setSupportsReturnVariant] = useState(false)
   const [supportsReturnVariantCode, setSupportsReturnVariantCode] = useState(false)
   const [supportsReturnVariantName, setSupportsReturnVariantName] = useState(false)
@@ -2269,7 +2402,8 @@ export default function UnloadPage() {
   const displayName = user ? getDisplayName(user, profile) : 'Loading...'
   const userRole = resolveRole(profile?.role, user?.email?.toLowerCase() === ADMIN_EMAIL)
   const canRegistryModelVariant = userRole === 'admin' || userRole === 'inbound_coordinator'
-  const addMode = isReturn ? 'return' : isSample ? 'sample' : 'regular'
+  const isEffectiveSampleMode = isSampleResolveBuilder || isSample
+  const addMode = isReturn ? 'return' : isEffectiveSampleMode ? 'sample' : 'regular'
 
   const loadQcItemsForUnloadRows = useCallback(async (rows) => {
     const unloadIds = (rows || []).map((row) => row.id).filter(Boolean)
@@ -2289,6 +2423,39 @@ export default function UnloadPage() {
 
     return data || []
   }, [])
+
+  const loadSampleBreakdownsForInbound = useCallback(async (inboundId) => {
+    if (!supportsSampleBreakdowns || !inboundId) {
+      return []
+    }
+
+    const { data, error: sampleBreakdownError } = await supabase
+      .from('inbound_sample_model_breakdowns')
+      .select(`
+        id,
+        inbound_unload_id,
+        inbound_id,
+        brand_id,
+        category_id,
+        product_model_id,
+        product_model_variant_id,
+        model_name,
+        variant_name,
+        photo_url,
+        qty,
+        created_at,
+        updated_at
+      `)
+      .eq('inbound_id', inboundId)
+      .order('created_at', { ascending: true })
+      .order('id', { ascending: true })
+
+    if (sampleBreakdownError) {
+      throw new Error(sampleBreakdownError.message || 'Failed to load sample model breakdowns.')
+    }
+
+    return data || []
+  }, [supportsSampleBreakdowns])
 
   useEffect(() => {
     let isMounted = true
@@ -2389,6 +2556,7 @@ export default function UnloadPage() {
         { error: unloadVariantCodeError },
         { error: unloadVariantNameError },
         { error: unloadTemporarySampleError },
+        { error: sampleBreakdownSupportError },
         { error: returnVariantError },
         { error: returnVariantCodeError },
         { error: returnVariantNameError },
@@ -2399,6 +2567,7 @@ export default function UnloadPage() {
         supabase.from('inbound_unload').select('variant_code').limit(1),
         supabase.from('inbound_unload').select('variant_name').limit(1),
         supabase.from('inbound_unload').select('is_product_temporary').limit(1),
+        supabase.from('inbound_sample_model_breakdowns').select('id').limit(1),
         supabase.from('warehouse_returns').select('variant_label').limit(1),
         supabase.from('warehouse_returns').select('variant_code').limit(1),
         supabase.from('warehouse_returns').select('variant_name').limit(1),
@@ -2410,6 +2579,7 @@ export default function UnloadPage() {
       setSupportsUnloadVariantCode(!unloadVariantCodeError)
       setSupportsUnloadVariantName(!unloadVariantNameError)
       setSupportsUnloadTemporarySample(!unloadTemporarySampleError)
+      setSupportsSampleBreakdowns(!sampleBreakdownSupportError)
       setSupportsReturnVariant(!returnVariantError)
       setSupportsReturnVariantCode(!returnVariantCodeError)
       setSupportsReturnVariantName(!returnVariantNameError)
@@ -2423,6 +2593,7 @@ export default function UnloadPage() {
     async function loadUnloadRows() {
       if (!selectedInboundId) {
         setUnloadRows([])
+        setSampleBreakdownRows([])
         setQcItemRows([])
         setReturnRows([])
         setCurrentKoliItems([])
@@ -2486,6 +2657,7 @@ export default function UnloadPage() {
       }
 
       let qcRows = []
+      let sampleBreakdownRows = []
 
       try {
         qcRows = await loadQcItemsForUnloadRows(unloadData || [])
@@ -2493,13 +2665,21 @@ export default function UnloadPage() {
         setError(qcLoadError.message || 'Failed to load QC in rows.')
       }
 
+      try {
+        sampleBreakdownRows = await loadSampleBreakdownsForInbound(selectedInboundId)
+      } catch (sampleLoadError) {
+        setError(sampleLoadError.message || 'Failed to load sample model breakdowns.')
+      }
+
       setUnloadRows(unloadData || [])
+      setSampleBreakdownRows(sampleBreakdownRows)
       setQcItemRows(qcRows)
       setReturnRows(returnsData || [])
     }
 
     loadUnloadRows()
   }, [
+    loadSampleBreakdownsForInbound,
     loadQcItemsForUnloadRows,
     selectedInboundId,
     supportsReturnVariant,
@@ -2513,7 +2693,7 @@ export default function UnloadPage() {
     supportsUnloadProductModelVariant,
   ])
 
-  const categoryMaps = buildCategoryMaps(categories)
+  const categoryMaps = useMemo(() => buildCategoryMaps(categories), [categories])
   const level0Options = categoryMaps.roots
   const level1Options = level0Id ? categoryMaps.getChildren(Number(level0Id)) : []
   const level2Options = level1Id ? categoryMaps.getChildren(Number(level1Id)) : []
@@ -2522,6 +2702,9 @@ export default function UnloadPage() {
 
   const selectedInbound =
     inbounds.find((item) => item.id === Number(selectedInboundId)) || null
+  const builderSampleResolveSource = isSampleResolveBuilder
+    ? unloadRows.find((row) => String(row.id || '') === String(resolveSampleIdParam) && row.is_sample) || null
+    : null
   const builderGridStyle = isBuilderMode ? styles.mobileSingleGrid : styles.compactGrid
   const registryOverlayStyle = isBuilderMode
     ? { ...styles.overlay, ...styles.centeredMobileOverlay }
@@ -2650,6 +2833,75 @@ export default function UnloadPage() {
       .filter((group) => group.variants.length > 0)
   }, [filteredModelOptions, filteredVariantOptions])
 
+  const sampleResolveModelOptions = useMemo(() => {
+    if (!sampleResolveSource) return []
+
+    return productModels
+      .filter((model) =>
+        Number(model.brand_id || 0) === Number(sampleResolveSource.brand_id || 0) &&
+        Number(model.category_id || 0) === Number(sampleResolveSource.category_id || 0)
+      )
+      .sort(compareModelsByCode)
+  }, [productModels, sampleResolveSource])
+  const sampleResolveVariantOptions = useMemo(() => {
+    if (!sampleResolveSource) return []
+
+    const query = sampleResolveSearch.trim().toLowerCase()
+
+    return sampleResolveModelOptions
+      .flatMap((model) =>
+        productModelVariants
+          .filter((variant) => Number(variant.product_model_id || 0) === Number(model.id || 0))
+          .filter((variant) => {
+            if (!query) return true
+
+            return [
+              model.model_code,
+              model.model_name,
+              variant.variant_code,
+              variant.variant_label,
+              variant.variant_name,
+              variant.selling_name,
+            ]
+              .map((value) => String(value || '').toLowerCase())
+              .some((value) => value.includes(query))
+          })
+          .map((variant) => ({
+            model,
+            variant,
+            photoUrl: variant.variant_photo_url || '',
+            label: `${model.model_name || '-'} / ${getVariantDisplayName(variant)}`,
+          }))
+      )
+      .sort((a, b) => {
+        const modelCompare = compareModelsByCode(a.model, b.model)
+        if (modelCompare !== 0) return modelCompare
+
+        return String(getVariantProductId(a.variant) || getVariantDisplayName(a.variant)).localeCompare(
+          String(getVariantProductId(b.variant) || getVariantDisplayName(b.variant)),
+          undefined,
+          { numeric: true }
+        )
+      })
+  }, [productModelVariants, sampleResolveModelOptions, sampleResolveSearch, sampleResolveSource])
+  const sampleResolveVariantGroups = useMemo(() => {
+    const variantsByModelId = new Map()
+
+    sampleResolveVariantOptions.forEach((option) => {
+      const modelId = String(option.model.id)
+      const currentItems = variantsByModelId.get(modelId) || []
+      currentItems.push(option)
+      variantsByModelId.set(modelId, currentItems)
+    })
+
+    return sampleResolveModelOptions
+      .map((model) => ({
+        model,
+        variants: variantsByModelId.get(String(model.id)) || [],
+      }))
+      .filter((group) => group.variants.length > 0)
+  }, [sampleResolveModelOptions, sampleResolveVariantOptions])
+
   const selectedModelVariants = useMemo(
     () =>
       productModelVariants
@@ -2700,6 +2952,45 @@ export default function UnloadPage() {
 
     return qtyMap
   }, [qcItemRows])
+  const sampleBreakdownsByUnloadId = useMemo(() => {
+    const grouped = new Map()
+
+    sampleBreakdownRows.forEach((row) => {
+      const unloadId = Number(row.inbound_unload_id || 0)
+      if (!unloadId) return
+
+      const current = grouped.get(unloadId) || []
+      current.push(row)
+      grouped.set(unloadId, current)
+    })
+
+    return grouped
+  }, [sampleBreakdownRows])
+  const sampleResolvedQtyByUnloadId = useMemo(() => {
+    const qtyMap = new Map()
+
+    sampleBreakdownRows.forEach((row) => {
+      const unloadId = Number(row.inbound_unload_id || 0)
+      if (!unloadId) return
+
+      qtyMap.set(unloadId, Number(qtyMap.get(unloadId) || 0) + Number(row.qty || 0))
+    })
+
+    return qtyMap
+  }, [sampleBreakdownRows])
+  const sampleResolveExistingRows = sampleResolveSource
+    ? sampleBreakdownsByUnloadId.get(Number(sampleResolveSource.id || 0)) || []
+    : []
+  const sampleResolveExistingQty = sampleResolveExistingRows.reduce((sum, row) => sum + Number(row.qty || 0), 0)
+  const sampleResolveDraftQty = sampleResolveItems.reduce((sum, row) => sum + Number(row.qty || 0), 0)
+  const sampleResolveTotalQty = Number(sampleResolveSource?.qty || 0)
+  const sampleResolveRemainingQty = Math.max(0, sampleResolveTotalQty - sampleResolveExistingQty - sampleResolveDraftQty)
+  const sampleResolveBrand = sampleResolveSource
+    ? brands.find((brand) => Number(brand.id) === Number(sampleResolveSource.brand_id)) || null
+    : null
+  const sampleResolveCategory = sampleResolveSource
+    ? categoryMaps.byId.get(Number(sampleResolveSource.category_id)) || null
+    : null
   const modelErrorQtyByUnloadId = useMemo(() => {
     const qtyMap = new Map()
 
@@ -2764,17 +3055,45 @@ export default function UnloadPage() {
   }, [performanceRows])
   const displayFirstName = getFirstName(displayName)
   const currentKoliQty = currentKoliItems.reduce((sum, row) => sum + Number(row.qty || 0), 0)
-  const isModeLocked = currentKoliItems.length > 0
-  const currentBasketTitle = isSample ? 'Sample Basket' : 'Koli Basket'
-  const currentBasketPostLabel = isSample ? 'Post Sample' : 'Post'
-  const currentBasketEmptyText = isSample ? 'No item in the Sample basket yet.' : 'No item in the Koli basket yet.'
+  const builderSampleResolveExistingRows = builderSampleResolveSource
+    ? sampleBreakdownsByUnloadId.get(Number(builderSampleResolveSource.id || 0)) || []
+    : []
+  const builderSampleResolveExistingQty = builderSampleResolveExistingRows.reduce((sum, row) => sum + Number(row.qty || 0), 0)
+  const builderSampleResolveDraftQty = isSampleResolveBuilder ? currentKoliQty : 0
+  const builderSampleResolveTotalQty = Number(builderSampleResolveSource?.qty || 0)
+  const builderSampleResolveRemainingQty = Math.max(
+    0,
+    builderSampleResolveTotalQty - builderSampleResolveExistingQty - builderSampleResolveDraftQty
+  )
+  const isModeLocked = currentKoliItems.length > 0 || isSampleResolveBuilder
+  const currentBasketTitle = isSampleResolveBuilder ? 'Sample Breakdown Basket' : isEffectiveSampleMode ? 'Sample Basket' : 'Koli Basket'
+  const currentBasketPostLabel = isSampleResolveBuilder ? 'Post' : isEffectiveSampleMode ? 'Post Sample' : 'Post'
+  const currentBasketEmptyText = isSampleResolveBuilder
+    ? 'No item in the sample breakdown basket yet.'
+    : isEffectiveSampleMode
+      ? 'No item in the Sample basket yet.'
+      : 'No item in the Koli basket yet.'
+  const mobileIntakeMetricLabel = isSampleResolveBuilder ? 'Resolved Qty' : 'Intake Qty'
+  const mobileIntakeMetricValue = isSampleResolveBuilder
+    ? builderSampleResolveExistingQty + builderSampleResolveDraftQty
+    : totalInboundQty
+  const mobileRemainingMetricValue = isSampleResolveBuilder
+    ? formatNumber(builderSampleResolveRemainingQty)
+    : hasSelectedSjQty
+      ? formatNumber(remainingQty)
+      : 'No data'
+  const mobileRemainingMetricStyle = isSampleResolveBuilder
+    ? builderSampleResolveRemainingQty > 0
+      ? styles.mobileRemainingNegative
+      : styles.mobileRemainingZero
+    : remainingQtyStyle
+  const addActionDisabled = saving || loading || (isSampleResolveBuilder && builderSampleResolveRemainingQty <= 0)
   const hasUnloadDraft = isBuilderMode && Boolean(
-    selectedBrandId ||
     selectedModel ||
     qty ||
     currentKoliItems.length ||
-    isSample ||
-    isReturn
+    isReturn ||
+    (!isSampleResolveBuilder && (selectedBrandId || isSample))
   )
   const recentProductOptions = (() => {
     function getRecentProductKey(row) {
@@ -2800,7 +3119,13 @@ export default function UnloadPage() {
       ...unloadRows.map((row) => ({ ...row, sortKey: Number(row.id || 0) })),
       ...returnRows.map((row) => ({ ...row, sortKey: Number(row.id || 0) })),
     ]
-      .filter((row) => row.brand_id && row.category_id && row.model_name)
+      .filter((row) =>
+        row.brand_id &&
+        row.category_id &&
+        row.model_name &&
+        !isTemporarySampleRow(row) &&
+        getVariantPhotoForRow(row)
+      )
       .sort((a, b) => b.sortKey - a.sortKey)
 
     const seen = new Set()
@@ -2850,13 +3175,23 @@ export default function UnloadPage() {
   }, [unloadRows])
   const modelGroups = (() => {
     const grouped = new Map()
+    const modelSourceRows = [
+      ...unloadRows.filter((row) => !row.is_sample || !isTemporarySampleRow(row)),
+      ...sampleBreakdownRows.map((row) => ({
+        ...row,
+        is_sample: true,
+        is_sample_breakdown: true,
+      })),
+    ]
 
-    unloadRows.forEach((row) => {
+    modelSourceRows.forEach((row) => {
       const matchingVariant = getVariantForRow(row)
       const resolvedVariantName = matchingVariant ? getVariantDisplayName(matchingVariant) : row.variant_name || row.variant_label || row.variant_code || ''
       const resolvedVariantKey = matchingVariant?.id
         ? `variant:${matchingVariant.id}`
-        : `fallback:${getRowVariantIdentifier(row)}|${row.photo_url || ''}`
+        : row.product_model_variant_id
+          ? `variant:${row.product_model_variant_id}`
+          : `fallback:${getRowVariantIdentifier(row)}|${row.photo_url || ''}`
       const key = [
         row.brand_id || '',
         row.category_id || '',
@@ -3185,7 +3520,7 @@ export default function UnloadPage() {
   }
 
   function getProductAggregationKey(row) {
-    if (row?.is_product_temporary || row?.is_sample) {
+    if (row?.is_product_temporary || isTemporarySampleRow(row)) {
       return [
         'sample',
         row.brand_id || '',
@@ -3224,6 +3559,25 @@ export default function UnloadPage() {
   function getModelVariantLabelForRow(row) {
     const variantName = getVariantNameForRow(row)
     return variantName ? `${row.model_name || '-'} - ${variantName}` : row.model_name || '-'
+  }
+
+  function hasProductIdentityForSample(row) {
+    const modelName = normalizeVariantLookupValue(row?.model_name).toUpperCase()
+    const variantName = normalizeVariantLookupValue(getRowVariantIdentifier(row)).toUpperCase()
+    const temporaryModelNames = new Set(['', 'SAMPLE', 'TEMPORARY', 'TEMPORARY SAMPLE'])
+    const temporaryVariantNames = new Set(['', 'SAMPLE', 'TEMPORARY'])
+
+    return Boolean(row?.product_model_variant_id) || (
+      !temporaryModelNames.has(modelName) &&
+      !temporaryVariantNames.has(variantName)
+    )
+  }
+
+  function isTemporarySampleRow(row) {
+    if (!row?.is_sample) return false
+    if (row.is_product_temporary) return true
+
+    return !hasProductIdentityForSample(row)
   }
 
   function formatPicFirstNames(picList) {
@@ -3276,6 +3630,274 @@ export default function UnloadPage() {
     }
 
     return `QC In sesuai stated intake qty (${formatNumber(qcQty)} / ${formatNumber(statedQty)}).`
+  }
+
+  function getSampleResolvedQty(row) {
+    return Number(sampleResolvedQtyByUnloadId.get(Number(row?.id || 0)) || 0)
+  }
+
+  function getSampleResolveStatus(row) {
+    const sampleQty = Number(row?.qty || 0)
+    const resolvedQty = getSampleResolvedQty(row)
+    const remainingQty = Math.max(0, sampleQty - resolvedQty)
+
+    return {
+      sampleQty,
+      resolvedQty,
+      remainingQty,
+      isResolved: sampleQty > 0 && resolvedQty === sampleQty,
+      isOver: resolvedQty > sampleQty,
+    }
+  }
+
+  function getSampleResolveBadgeStyle(row) {
+    const status = getSampleResolveStatus(row)
+
+    if (status.isOver) return { ...styles.resolveStatusBadge, ...styles.resolveStatusWarning }
+    if (status.isResolved) return { ...styles.resolveStatusBadge, ...styles.resolveStatusDone }
+
+    return styles.resolveStatusBadge
+  }
+
+  const setProductPathFromRow = useCallback((row) => {
+    const path = []
+    let current = categoryMaps.byId.get(Number(row.category_id))
+
+    while (current) {
+      path.unshift(String(current.id))
+      current = current.parent_id ? categoryMaps.byId.get(Number(current.parent_id)) : null
+    }
+
+    const [rootId = '', levelOneId = '', levelTwoId = ''] = path
+    const brand = brands.find((item) => Number(item.id) === Number(row.brand_id)) || null
+
+    setSelectedBrandId(row.brand_id ? String(row.brand_id) : '')
+    setBrandSearch(brand ? getBrandDisplayLabel(brand) : '')
+    setLevel0Id(rootId)
+    setLevel1Id(levelOneId)
+    setLevel2Id(levelTwoId)
+    setSelectedModel(null)
+    setSelectedVariantLabel('')
+  }, [brands, categoryMaps])
+
+  function openSampleResolve(row) {
+    if (!row?.is_sample) return
+
+    const params = new URLSearchParams()
+    const query = selectedInbound?.grn_number || grnParam
+
+    if (query) params.set('grn', query)
+    params.set('resolveSample', String(row.id))
+
+    router.push(`/mobile/inbound/unload?${params.toString()}`)
+  }
+
+  function closeSampleResolve() {
+    if (sampleResolveItems.length && !window.confirm('Discard unsaved sample resolve rows?')) {
+      return
+    }
+
+    setSampleResolveSource(null)
+    setSampleResolveSearch('')
+    setSampleResolveSelected(null)
+    setSampleResolveQty('')
+    setSampleResolveItems([])
+    setSampleResolveError('')
+  }
+
+  useEffect(() => {
+    if (!isSampleResolveBuilder) {
+      if (appliedBuilderResolveSampleId) {
+        setAppliedBuilderResolveSampleId('')
+      }
+      return
+    }
+
+    if (!builderSampleResolveSource || !brands.length || !categories.length) {
+      return
+    }
+
+    const sourceId = String(builderSampleResolveSource.id || '')
+    if (!sourceId || appliedBuilderResolveSampleId === sourceId) {
+      return
+    }
+
+    setProductPathFromRow(builderSampleResolveSource)
+    setIsSample(true)
+    setIsReturn(false)
+    setCurrentKoliItems([])
+    setQty('')
+    setError('')
+    setSuccess('')
+    setAppliedBuilderResolveSampleId(sourceId)
+  }, [
+    appliedBuilderResolveSampleId,
+    brands,
+    builderSampleResolveSource,
+    categories,
+    isSampleResolveBuilder,
+    setProductPathFromRow,
+  ])
+
+  function getSampleResolveItemKey(row) {
+    return row.product_model_variant_id
+      ? `variant:${row.product_model_variant_id}`
+      : [
+          row.product_model_id || '',
+          normalizeVariantLookupValue(row.model_name),
+          normalizeVariantLookupValue(row.variant_name),
+        ].join('|')
+  }
+
+  function addSampleResolveItem() {
+    setSampleResolveError('')
+
+    if (!supportsSampleBreakdowns) {
+      setSampleResolveError('Run the sample breakdown SQL first before resolving sample model/variant.')
+      return
+    }
+
+    if (!sampleResolveSource) {
+      setSampleResolveError('Choose a sample row first.')
+      return
+    }
+
+    if (!sampleResolveSelected?.variant?.id || !sampleResolveSelected?.model?.id) {
+      setSampleResolveError('Choose a model variant first.')
+      return
+    }
+
+    const qtyValue = Number(sampleResolveQty || 0)
+
+    if (qtyValue <= 0) {
+      setSampleResolveError('Qty must be greater than 0.')
+      return
+    }
+
+    const existingResolvedQty = getSampleResolvedQty(sampleResolveSource)
+    const draftQty = sampleResolveItems.reduce((sum, item) => sum + Number(item.qty || 0), 0)
+    const sampleQty = Number(sampleResolveSource.qty || 0)
+
+    if (existingResolvedQty + draftQty + qtyValue > sampleQty) {
+      setSampleResolveError(`Resolve qty cannot exceed sample qty ${formatNumber(sampleQty)}.`)
+      return
+    }
+
+    const model = sampleResolveSelected.model
+    const variant = sampleResolveSelected.variant
+    const nextItem = {
+      tempId: `${Date.now()}-${sampleResolveItems.length}`,
+      inbound_unload_id: sampleResolveSource.id,
+      inbound_id: sampleResolveSource.inbound_id,
+      brand_id: sampleResolveSource.brand_id,
+      category_id: sampleResolveSource.category_id,
+      product_model_id: model.id,
+      product_model_variant_id: variant.id,
+      model_name: model.model_name || '',
+      variant_name: getVariantDisplayName(variant),
+      photo_url: variant.variant_photo_url || '',
+      qty: qtyValue,
+    }
+    const nextKey = getSampleResolveItemKey(nextItem)
+
+    setSampleResolveItems((prev) => {
+      const existing = prev.find((item) => getSampleResolveItemKey(item) === nextKey)
+
+      if (existing) {
+        return prev.map((item) =>
+          getSampleResolveItemKey(item) === nextKey
+            ? { ...item, qty: Number(item.qty || 0) + qtyValue }
+            : item
+        )
+      }
+
+      return [...prev, nextItem]
+    })
+    setSampleResolveSelected(null)
+    setSampleResolveQty('')
+  }
+
+  async function postSampleResolveItems() {
+    setSampleResolveError('')
+
+    if (!supportsSampleBreakdowns) {
+      setSampleResolveError('Run the sample breakdown SQL first before resolving sample model/variant.')
+      return
+    }
+
+    if (!sampleResolveSource || !sampleResolveItems.length) {
+      setSampleResolveError('Add at least one model variant row first.')
+      return
+    }
+
+    setSampleResolveSaving(true)
+
+    try {
+      const updatePayloads = []
+      const insertPayloads = []
+
+      sampleResolveItems.forEach((item) => {
+        const existing = sampleResolveExistingRows.find((row) => getSampleResolveItemKey(row) === getSampleResolveItemKey(item))
+
+        if (existing?.id) {
+          updatePayloads.push({
+            id: existing.id,
+            qty: Number(existing.qty || 0) + Number(item.qty || 0),
+          })
+          return
+        }
+
+        insertPayloads.push({
+          inbound_unload_id: item.inbound_unload_id,
+          inbound_id: item.inbound_id,
+          brand_id: item.brand_id,
+          category_id: item.category_id,
+          product_model_id: item.product_model_id,
+          product_model_variant_id: item.product_model_variant_id,
+          model_name: item.model_name,
+          variant_name: item.variant_name,
+          photo_url: item.photo_url,
+          qty: Number(item.qty || 0),
+        })
+      })
+
+      if (updatePayloads.length) {
+        const updateResults = await Promise.all(
+          updatePayloads.map((item) =>
+            supabase
+              .from('inbound_sample_model_breakdowns')
+              .update({ qty: item.qty, updated_at: new Date().toISOString() })
+              .eq('id', item.id)
+          )
+        )
+        const updateError = updateResults.find((result) => result.error)?.error
+
+        if (updateError) {
+          throw new Error(updateError.message)
+        }
+      }
+
+      if (insertPayloads.length) {
+        const { error: insertError } = await supabase
+          .from('inbound_sample_model_breakdowns')
+          .insert(insertPayloads)
+
+        if (insertError) {
+          throw new Error(insertError.message)
+        }
+      }
+
+      await refreshUnloadData(sampleResolveSource.inbound_id)
+      const postedQty = sampleResolveItems.reduce((sum, item) => sum + Number(item.qty || 0), 0)
+      setSampleResolveItems([])
+      setSampleResolveSelected(null)
+      setSampleResolveQty('')
+      setSuccess(`Sample breakdown posted (${formatNumber(postedQty)} qty).`)
+    } catch (samplePostError) {
+      setSampleResolveError(samplePostError.message || 'Failed to post sample breakdown.')
+    } finally {
+      setSampleResolveSaving(false)
+    }
   }
 
   function getVarianceBadgeStyle(value) {
@@ -3618,11 +4240,14 @@ export default function UnloadPage() {
     }
 
     const refreshedQcRows = await loadQcItemsForUnloadRows(refreshedUnloadRows || [])
+    const refreshedSampleBreakdownRows = await loadSampleBreakdownsForInbound(inboundId)
 
     setUnloadRows(refreshedUnloadRows || [])
+    setSampleBreakdownRows(refreshedSampleBreakdownRows)
     setQcItemRows(refreshedQcRows)
     setReturnRows(refreshedReturnRows || [])
   }, [
+    loadSampleBreakdownsForInbound,
     loadQcItemsForUnloadRows,
     supportsReturnVariant,
     supportsReturnVariantCode,
@@ -4675,7 +5300,7 @@ export default function UnloadPage() {
       return
     }
 
-    if (!isReturn && !isSample && !selectedModel?.model_name) {
+    if (!isReturn && (!isEffectiveSampleMode || isSampleResolveBuilder) && !selectedModel?.model_name) {
       setError('Please choose or add a model first.')
       return
     }
@@ -4687,7 +5312,22 @@ export default function UnloadPage() {
 
     setSaving(true)
 
-    const isTemporarySample = isSample && !isReturn
+    if (isSampleResolveBuilder && !builderSampleResolveSource?.id) {
+      setError('Sample source is not available. Please go back and open Resolve Sample again.')
+      return
+    }
+
+    if (isSampleResolveBuilder && !supportsSampleBreakdowns) {
+      setError('Run the sample breakdown SQL first before resolving sample model/variant.')
+      return
+    }
+
+    if (isSampleResolveBuilder && builderSampleResolveExistingQty + currentKoliQty + Number(qty) > builderSampleResolveTotalQty) {
+      setError(`Resolve qty cannot exceed sample qty ${formatNumber(builderSampleResolveTotalQty)}.`)
+      return
+    }
+
+    const isTemporarySample = isEffectiveSampleMode && !isReturn && !isSampleResolveBuilder
     const payload = {
       inbound_id: selectedInbound.id,
       brand_id: selectedBrandId ? Number(selectedBrandId) : null,
@@ -4713,8 +5353,9 @@ export default function UnloadPage() {
       qty: Number(qty),
       pic_name: displayName,
       photo_url: isTemporarySample ? null : selectedModelPhoto || selectedModel?.photo_url || null,
-      is_sample: isSample,
+      is_sample: isEffectiveSampleMode,
       is_product_temporary: isTemporarySample,
+      source_sample_unload_id: isSampleResolveBuilder ? Number(builderSampleResolveSource.id) : null,
     }
 
     if (!isReturn) {
@@ -4750,7 +5391,7 @@ export default function UnloadPage() {
         },
       ])
       resetEntryForm({ keepPath: true })
-      setSuccess(isSample ? 'Sample added to the basket.' : 'Item added to this Koli.')
+      setSuccess(isSampleResolveBuilder ? 'Sample breakdown item added to the basket.' : isEffectiveSampleMode ? 'Sample added to the basket.' : 'Item added to this Koli.')
       setSaving(false)
       return
     }
@@ -4808,11 +5449,11 @@ export default function UnloadPage() {
     }
 
     if (!currentKoliItems.length) {
-      setError(isSample ? 'Sample basket does not have any item yet.' : 'Current Koli does not have any item yet.')
+      setError(isEffectiveSampleMode ? 'Sample basket does not have any item yet.' : 'Current Koli does not have any item yet.')
       return
     }
 
-    const postTypeLabel = isSample ? 'Sample Koli' : 'Koli'
+    const postTypeLabel = isSampleResolveBuilder ? 'Sample Breakdown' : isEffectiveSampleMode ? 'Sample Koli' : 'Koli'
     const shouldPost = window.confirm(
       `Post this ${postTypeLabel} with ${currentKoliItems.length} item${currentKoliItems.length > 1 ? 's' : ''}, total qty ${currentKoliQty}?`
     )
@@ -4823,11 +5464,104 @@ export default function UnloadPage() {
 
     setSaving(true)
 
+    if (isSampleResolveBuilder) {
+      if (!supportsSampleBreakdowns) {
+        setError('Run the sample breakdown SQL first before resolving sample model/variant.')
+        setSaving(false)
+        return
+      }
+
+      if (!builderSampleResolveSource?.id) {
+        setError('Sample source is not available. Please go back and open Resolve Sample again.')
+        setSaving(false)
+        return
+      }
+
+      if (builderSampleResolveExistingQty + currentKoliQty > builderSampleResolveTotalQty) {
+        setError(`Resolve qty cannot exceed sample qty ${formatNumber(builderSampleResolveTotalQty)}.`)
+        setSaving(false)
+        return
+      }
+
+      try {
+        const updatePayloads = []
+        const insertPayloads = []
+
+        currentKoliItems.forEach((item) => {
+          const existing = builderSampleResolveExistingRows.find((row) => getSampleResolveItemKey(row) === getSampleResolveItemKey(item))
+
+          if (existing?.id) {
+            updatePayloads.push({
+              id: existing.id,
+              qty: Number(existing.qty || 0) + Number(item.qty || 0),
+            })
+            return
+          }
+
+          insertPayloads.push({
+            inbound_unload_id: builderSampleResolveSource.id,
+            inbound_id: builderSampleResolveSource.inbound_id || selectedInbound.id,
+            brand_id: item.brand_id,
+            category_id: item.category_id,
+            product_model_id: item.product_model_id,
+            product_model_variant_id: item.product_model_variant_id,
+            model_name: item.model_name,
+            variant_name: item.variant_name,
+            photo_url: item.photo_url,
+            qty: Number(item.qty || 0),
+            created_by: displayName,
+            updated_by: displayName,
+          })
+        })
+
+        if (updatePayloads.length) {
+          const updateResults = await Promise.all(
+            updatePayloads.map((item) =>
+              supabase
+                .from('inbound_sample_model_breakdowns')
+                .update({
+                  qty: item.qty,
+                  updated_by: displayName,
+                  updated_at: new Date().toISOString(),
+                })
+                .eq('id', item.id)
+            )
+          )
+          const updateError = updateResults.find((result) => result.error)?.error
+
+          if (updateError) {
+            throw new Error(updateError.message)
+          }
+        }
+
+        if (insertPayloads.length) {
+          const { error: insertError } = await supabase
+            .from('inbound_sample_model_breakdowns')
+            .insert(insertPayloads)
+
+          if (insertError) {
+            throw new Error(insertError.message)
+          }
+        }
+
+        await refreshUnloadData(selectedInbound.id)
+        setCurrentKoliItems([])
+        resetEntryForm({ keepPath: true })
+        setSuccess(`Sample breakdown posted (${formatNumber(currentKoliQty)} qty).`)
+      } catch (samplePostError) {
+        setError(samplePostError.message || 'Failed to post sample breakdown.')
+      } finally {
+        setSaving(false)
+      }
+
+      return
+    }
+
     const { data: latestKoliRows, error: sequenceError } = await supabase
       .from('inbound_unload')
       .select('koli_sequence')
       .eq('inbound_id', selectedInbound.id)
-      .eq('is_sample', isSample)
+      .eq('is_sample', isEffectiveSampleMode)
 
     if (sequenceError) {
       setError(sequenceError.message)
@@ -4854,7 +5588,7 @@ export default function UnloadPage() {
       qty: item.qty,
       pic_name: item.pic_name,
       photo_url: item.photo_url,
-      is_sample: isSample,
+      is_sample: isEffectiveSampleMode,
       ...(supportsUnloadTemporarySample ? { is_product_temporary: Boolean(item.is_product_temporary) } : {}),
       koli_sequence: assignedKoliSequence,
     }))
@@ -4877,7 +5611,7 @@ export default function UnloadPage() {
 
     setCurrentKoliItems([])
     resetEntryForm({ keepPath: true })
-    setSuccess(isSample ? 'Sample Koli posted successfully.' : 'Koli posted successfully.')
+    setSuccess(isEffectiveSampleMode ? 'Sample Koli posted successfully.' : 'Koli posted successfully.')
     setSaving(false)
   }
 
@@ -4886,7 +5620,7 @@ export default function UnloadPage() {
   }
 
   function handleEditCurrentKoliItem(row) {
-    if (row.is_sample || row.is_product_temporary) {
+    if (isTemporarySampleRow(row)) {
       const categoryPathIds = getCategoryPathIds(row.category_id)
       const brand = brands.find((item) => Number(item.id) === Number(row.brand_id)) || null
 
@@ -4947,13 +5681,13 @@ export default function UnloadPage() {
                 <strong style={{ ...styles.mobileInfoValue, ...styles.mobileInfoValueTight }}>{displayFirstName}</strong>
               </div>
               <div style={styles.mobileInfoMetric}>
-                <span style={{ ...styles.mobileInfoLabel, ...styles.mobileInfoLabelTight }}>Intake Qty</span>
-                <strong style={{ ...styles.mobileInfoValue, ...styles.mobileInfoValueTight }}>{formatNumber(totalInboundQty)}</strong>
+                <span style={{ ...styles.mobileInfoLabel, ...styles.mobileInfoLabelTight }}>{mobileIntakeMetricLabel}</span>
+                <strong style={{ ...styles.mobileInfoValue, ...styles.mobileInfoValueTight }}>{formatNumber(mobileIntakeMetricValue)}</strong>
               </div>
               <div style={styles.mobileInfoMetric}>
                 <span style={{ ...styles.mobileInfoLabel, ...styles.mobileInfoLabelTight }}>Remaining Qty</span>
-                <strong style={{ ...styles.mobileInfoValue, ...styles.mobileInfoValueTight, ...remainingQtyStyle }}>
-                  {hasSelectedSjQty ? formatNumber(remainingQty) : 'No data'}
+                <strong style={{ ...styles.mobileInfoValue, ...styles.mobileInfoValueTight, ...mobileRemainingMetricStyle }}>
+                  {mobileRemainingMetricValue}
                 </strong>
               </div>
             </section>
@@ -5253,6 +5987,7 @@ export default function UnloadPage() {
                           const brand = brands.find((item) => item.id === row.brand_id)
                           const isFirstItem = itemIndex === 0
                           const groupBorderStyle = isFirstItem ? styles.koliGroupTd : {}
+                          const shouldResolveSample = group.rowType === 'sample' && isTemporarySampleRow(row)
 
                           return (
                             <tr key={`${group.groupKey || group.rowType}-${row.id}`}>
@@ -5297,7 +6032,31 @@ export default function UnloadPage() {
                                   {formatPicFirstNames(group.pic_list)}
                                 </td>
                               ) : null}
-                              {isFirstItem ? (
+                              {shouldResolveSample ? (
+                                <td style={{ ...styles.td, ...groupBorderStyle, ...styles.middleCenterCell }}>
+                                  <span style={styles.resolveActionStack}>
+                                    <button
+                                      type="button"
+                                      onClick={() => openSampleResolve(row)}
+                                      style={styles.resolveButton}
+                                      aria-label="Resolve sample"
+                                      title="Resolve Sample"
+                                    >
+                                      <ResolveIcon />
+                                    </button>
+                                    <span
+                                      style={getSampleResolveBadgeStyle(row)}
+                                      title={`Resolved ${formatNumber(getSampleResolveStatus(row).resolvedQty)} of ${formatNumber(getSampleResolveStatus(row).sampleQty)}`}
+                                    >
+                                      {formatNumber(getSampleResolveStatus(row).resolvedQty)}/{formatNumber(getSampleResolveStatus(row).sampleQty)}
+                                    </span>
+                                  </span>
+                                </td>
+                              ) : group.rowType === 'sample' ? (
+                                <td style={{ ...styles.td, ...groupBorderStyle, ...styles.middleCenterCell }}>
+                                  -
+                                </td>
+                              ) : isFirstItem ? (
                                 <td
                                   rowSpan={group.items.length}
                                   style={{ ...styles.td, ...styles.koliGroupTd, ...styles.middleCenterCell }}
@@ -5460,6 +6219,8 @@ export default function UnloadPage() {
               <input
                 value={brandSearch}
                 onChange={(event) => {
+                  if (isSampleResolveBuilder) return
+
                   setBrandSearch(event.target.value)
                   setSelectedBrandId('')
                   setLevel0Id('')
@@ -5470,6 +6231,8 @@ export default function UnloadPage() {
                   setShowBrandResults(true)
                 }}
                 onFocus={() => {
+                  if (isSampleResolveBuilder) return
+
                   setBrandSearch('')
                   setSelectedBrandId('')
                   setLevel0Id('')
@@ -5482,7 +6245,8 @@ export default function UnloadPage() {
                 onBlur={() => {
                   window.setTimeout(() => setShowBrandResults(false), 120)
                 }}
-                style={styles.input}
+                style={{ ...styles.input, ...(isSampleResolveBuilder ? styles.readOnlyInput : {}) }}
+                disabled={isSampleResolveBuilder}
                 placeholder="Search brand"
                 autoComplete="off"
               />
@@ -5527,7 +6291,8 @@ export default function UnloadPage() {
                   setSelectedModel(null)
                   setSelectedVariantLabel('')
                 }}
-                style={styles.select}
+                disabled={isSampleResolveBuilder}
+                style={{ ...styles.select, ...(isSampleResolveBuilder ? styles.readOnlyInput : {}) }}
               >
                 <option value="">Choose category</option>
                 {level0Options.map((item) => (
@@ -5550,7 +6315,8 @@ export default function UnloadPage() {
                   setSelectedModel(null)
                   setSelectedVariantLabel('')
                 }}
-                style={styles.select}
+                disabled={isSampleResolveBuilder}
+                style={{ ...styles.select, ...(isSampleResolveBuilder ? styles.readOnlyInput : {}) }}
               >
                 <option value="">Choose subcategory</option>
                 {level1Options.map((item) => (
@@ -5574,7 +6340,8 @@ export default function UnloadPage() {
                   setSelectedModel(null)
                   setSelectedVariantLabel('')
                 }}
-                style={styles.select}
+                disabled={isSampleResolveBuilder}
+                style={{ ...styles.select, ...(isSampleResolveBuilder ? styles.readOnlyInput : {}) }}
               >
                 <option value="">Choose item type</option>
                 {level2Options.map((item) => (
@@ -5586,7 +6353,7 @@ export default function UnloadPage() {
             </div>
           ) : null}
 
-          {!isReturn && !isSample && selectedCategory ? (
+          {!isReturn && (!isSample || isSampleResolveBuilder) && selectedCategory ? (
           <div style={styles.field}>
             <div style={styles.modelLabelRow}>
               <label style={styles.label}>Model</label>
@@ -5674,14 +6441,14 @@ export default function UnloadPage() {
             <button
               type="button"
               onClick={handleAddToUnload}
-              disabled={saving || loading}
+              disabled={addActionDisabled}
               style={{
                 ...styles.primaryButton,
                 ...styles.addActionButton,
-                ...(saving || loading ? { opacity: 0.6, cursor: 'not-allowed' } : {}),
+                ...(addActionDisabled ? { opacity: 0.6, cursor: 'not-allowed' } : {}),
               }}
             >
-              {saving ? 'Adding...' : isReturn ? 'Add Retur' : isSample ? 'Add Sample' : 'Add Item to Koli'}
+              {saving ? 'Adding...' : isSampleResolveBuilder ? 'Add Item' : isReturn ? 'Add Retur' : isEffectiveSampleMode ? 'Add Sample' : 'Add Item to Koli'}
             </button>
           </div>
         </div>
@@ -5724,6 +6491,7 @@ export default function UnloadPage() {
                       const variantName = getVariantNameForRow(row)
                       const photoUrl = getVariantPhotoForRow(row)
                       const previewTitle = variantName ? `${row.model_name || 'Product'} / ${variantName}` : row.model_name || 'Product photo'
+                      const isTemporaryBasketItem = Boolean(row.is_product_temporary)
 
                       return (
                         <tr key={row.tempId}>
@@ -5751,8 +6519,8 @@ export default function UnloadPage() {
                           </td>
                           <td style={styles.td}>
                             <span style={styles.koliModelStack}>
-                              <strong>{row.is_sample || row.is_product_temporary ? 'TEMPORARY SAMPLE' : row.model_name || '-'}</strong>
-                              {row.is_sample || row.is_product_temporary ? (
+                              <strong>{isTemporaryBasketItem ? 'TEMPORARY SAMPLE' : row.model_name || '-'}</strong>
+                              {isTemporaryBasketItem ? (
                                 <span style={styles.koliVariantText}>{getItemTypeSubcategoryLabel(row.category_id)}</span>
                               ) : variantName ? (
                                 <span style={styles.koliVariantText}>{variantName}</span>
@@ -5792,6 +6560,281 @@ export default function UnloadPage() {
           </div>
         ) : null}
       </div>
+      ) : null}
+
+      {sampleResolveSource ? (
+        <div style={{ ...styles.overlay, ...styles.centeredOverlay }}>
+          <div style={{ ...styles.modal, ...styles.resolveModal }}>
+            <div style={styles.modalTitleRow}>
+              <div>
+                <h2 style={styles.sectionTitle}>Resolve Sample</h2>
+                <p style={styles.sectionSubtitle}>
+                  Assign temporary sample qty into model and variant details.
+                </p>
+              </div>
+              <div style={styles.modalTitleActions}>
+                <button
+                  type="button"
+                  onClick={closeSampleResolve}
+                  style={{ ...styles.closeIconButton, width: '38px', minWidth: '38px', height: '38px' }}
+                  aria-label="Close resolve sample"
+                  title="Close"
+                >
+                  <span style={styles.closeIconGlyph}>X</span>
+                </button>
+              </div>
+            </div>
+
+            <div style={styles.resolveHeaderGrid}>
+              <div style={styles.infoBox}>
+                <span style={styles.infoLabel}>Brand</span>
+                <strong style={styles.infoValue}>{sampleResolveBrand?.brand_name || '-'}</strong>
+              </div>
+              <div style={styles.infoBox}>
+                <span style={styles.infoLabel}>Category</span>
+                <strong style={styles.infoValue}>{sampleResolveCategory?.full_name || sampleResolveCategory?.category_name || '-'}</strong>
+              </div>
+              <div style={styles.infoBox}>
+                <span style={styles.infoLabel}>Sample Qty</span>
+                <strong style={styles.infoValue}>{formatNumber(sampleResolveTotalQty)}</strong>
+              </div>
+              <div style={styles.infoBox}>
+                <span style={styles.infoLabel}>Remaining</span>
+                <strong
+                  style={{
+                    ...styles.infoValue,
+                    color: sampleResolveRemainingQty === 0 ? '#047857' : '#b45309',
+                  }}
+                >
+                  {formatNumber(sampleResolveRemainingQty)}
+                </strong>
+              </div>
+            </div>
+
+            {!supportsSampleBreakdowns ? (
+              <div style={styles.helperBox}>
+                <p style={styles.errorText}>Run `supabase/inbound_sample_breakdowns.sql` first before resolving sample model/variant.</p>
+              </div>
+            ) : null}
+            {sampleResolveError ? <p style={styles.errorText}>{sampleResolveError}</p> : null}
+
+            <div style={styles.resolveModalGrid}>
+              <div style={styles.resolveSidePanel}>
+                <div style={styles.modalTitleRow}>
+                  <input
+                    value={sampleResolveSearch}
+                    onChange={(event) => setSampleResolveSearch(event.target.value)}
+                    style={styles.filterSearchInput}
+                    placeholder="Search model, variant, or Product ID"
+                  />
+                  {canRegistryModelVariant ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setProductPathFromRow(sampleResolveSource)
+                        setShowModelModal(true)
+                        resetRegistryModal({
+                          ...createModelDraft(),
+                          is_new_model: sampleResolveModelOptions.length === 0,
+                        })
+                        setModelModalError('')
+                      }}
+                      style={{ ...styles.secondaryButton, ...styles.modalTitleButton }}
+                    >
+                      Registry New Model
+                    </button>
+                  ) : null}
+                </div>
+
+                <div style={styles.modelPickerCard}>
+                  {sampleResolveVariantOptions.length === 0 ? (
+                    <p style={styles.emptyText}>No variant found for this sample brand/category yet.</p>
+                  ) : (
+                    <div style={styles.modelGroupList}>
+                      {sampleResolveVariantGroups.map((group, groupIndex) => (
+                        <section key={group.model.id} style={styles.modelGroup}>
+                          <div style={styles.modelGroupHeader}>
+                            <button
+                              type="button"
+                              onClick={() => toggleModelCollapse(`resolve-${group.model.id}`)}
+                              style={styles.modelGroupToggle}
+                              aria-expanded={!collapsedModelIds.includes(`resolve-${group.model.id}`)}
+                            >
+                              <span
+                                style={{
+                                  ...styles.modelGroupChevron,
+                                  transform: collapsedModelIds.includes(`resolve-${group.model.id}`) ? 'rotate(-90deg)' : 'rotate(0deg)',
+                                }}
+                              >
+                                <ChevronDownIcon />
+                              </span>
+                              <span style={styles.modelGroupTitle}>M.{groupIndex + 1}</span>
+                              <span style={styles.modelGroupCount}>{group.variants.length} vars</span>
+                            </button>
+                            <span style={styles.modelGroupMeta}>
+                              {group.model.model_code ? `${group.model.model_code} / ` : ''}{group.model.model_name}
+                            </span>
+                          </div>
+
+                          {!collapsedModelIds.includes(`resolve-${group.model.id}`) ? (
+                            <div style={styles.resolveVariantGrid}>
+                              {group.variants.map(({ model, variant, photoUrl, label }) => {
+                                const variantName = getVariantDisplayName(variant)
+                                const variantProductId = getVariantProductId(variant)
+                                const isSelected =
+                                  Number(sampleResolveSelected?.variant?.id || 0) === Number(variant.id || 0)
+
+                                return (
+                                  <button
+                                    key={variant.id || `${model.id}-${variantProductId || variantName}`}
+                                    type="button"
+                                    onClick={() => setSampleResolveSelected({ model, variant, photoUrl, label })}
+                                    style={{
+                                      ...styles.resolveVariantCard,
+                                      ...(isSelected ? styles.resolveVariantCardActive : {}),
+                                    }}
+                                  >
+                                    {photoUrl ? (
+                                      <span
+                                        role="button"
+                                        tabIndex={-1}
+                                        onClick={(event) => {
+                                          event.stopPropagation()
+                                          openImagePreview({ src: photoUrl, title: label })
+                                        }}
+                                        style={{ display: 'block' }}
+                                        title="Preview photo"
+                                      >
+                                        <Image
+                                          src={photoUrl}
+                                          alt={label}
+                                          width={140}
+                                          height={140}
+                                          unoptimized
+                                          style={styles.resolveVariantImage}
+                                        />
+                                      </span>
+                                    ) : (
+                                      <span style={styles.resolveVariantPlaceholder}>NO PHOTO</span>
+                                    )}
+                                    <strong style={styles.shortcutName}>{variantName}</strong>
+                                    <span style={styles.shortcutMeta}>{variantProductId ? `Product ID ${variantProductId}` : 'No Product ID'}</span>
+                                  </button>
+                                )
+                              })}
+                            </div>
+                          ) : null}
+                        </section>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div style={styles.resolveSidePanel}>
+                <div style={styles.field}>
+                  <label style={styles.label}>Selected Variant</label>
+                  <div style={styles.infoBox}>
+                    <strong style={styles.infoValue}>
+                      {sampleResolveSelected
+                        ? `${sampleResolveSelected.model.model_name || '-'} - ${getVariantDisplayName(sampleResolveSelected.variant)}`
+                        : 'No variant selected'}
+                    </strong>
+                  </div>
+                </div>
+                <div style={styles.field}>
+                  <label style={styles.label}>Qty</label>
+                  <input
+                    type="number"
+                    min="1"
+                    value={sampleResolveQty}
+                    onChange={(event) => setSampleResolveQty(event.target.value)}
+                    onWheel={(event) => event.currentTarget.blur()}
+                    onKeyDown={(event) => {
+                      if (['-', '+', 'e', 'E'].includes(event.key)) event.preventDefault()
+                    }}
+                    style={styles.input}
+                    placeholder="0"
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={addSampleResolveItem}
+                  disabled={sampleResolveSaving || !supportsSampleBreakdowns}
+                  style={{
+                    ...styles.primaryButton,
+                    ...(!supportsSampleBreakdowns || sampleResolveSaving ? { opacity: 0.55, cursor: 'not-allowed' } : {}),
+                  }}
+                >
+                  Add Item
+                </button>
+
+                <div style={styles.tableWrap}>
+                  <table style={{ ...styles.table, ...styles.compactTable }}>
+                    <thead>
+                      <tr>
+                        <th style={styles.th}>Type</th>
+                        <th style={styles.th}>Model - Variant</th>
+                        <th style={{ ...styles.th, ...styles.centerHeader }}>Qty</th>
+                        <th style={{ ...styles.th, ...styles.centerHeader }}>Action</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {sampleResolveExistingRows.map((row) => (
+                        <tr key={`existing-${row.id}`}>
+                          <td style={styles.td}>Posted</td>
+                          <td style={styles.td}>{getModelVariantLabelForRow(row)}</td>
+                          <td style={{ ...styles.td, ...styles.middleCenterCell }}>{formatNumber(row.qty)}</td>
+                          <td style={{ ...styles.td, ...styles.middleCenterCell }}>-</td>
+                        </tr>
+                      ))}
+                      {sampleResolveItems.map((row) => (
+                        <tr key={row.tempId}>
+                          <td style={styles.td}>Draft</td>
+                          <td style={styles.td}>{getModelVariantLabelForRow(row)}</td>
+                          <td style={{ ...styles.td, ...styles.middleCenterCell }}>{formatNumber(row.qty)}</td>
+                          <td style={{ ...styles.td, ...styles.middleCenterCell }}>
+                            <button
+                              type="button"
+                              onClick={() => setSampleResolveItems((prev) => prev.filter((item) => item.tempId !== row.tempId))}
+                              style={{ ...styles.koliIconButton, ...styles.koliDeleteButton }}
+                              aria-label="Remove draft"
+                              title="Remove draft"
+                            >
+                              <XIcon />
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                      {!sampleResolveExistingRows.length && !sampleResolveItems.length ? (
+                        <tr>
+                          <td style={styles.td} colSpan={4}>No resolved sample item yet.</td>
+                        </tr>
+                      ) : null}
+                    </tbody>
+                  </table>
+                </div>
+
+                <div style={styles.buttonRow}>
+                  <button type="button" onClick={closeSampleResolve} style={styles.secondaryButton}>
+                    Close
+                  </button>
+                  <button
+                    type="button"
+                    onClick={postSampleResolveItems}
+                    disabled={sampleResolveSaving || !sampleResolveItems.length || !supportsSampleBreakdowns}
+                    style={{
+                      ...styles.primaryButton,
+                      ...(sampleResolveSaving || !sampleResolveItems.length || !supportsSampleBreakdowns ? { opacity: 0.55, cursor: 'not-allowed' } : {}),
+                    }}
+                  >
+                    {sampleResolveSaving ? 'Posting...' : 'Post'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
       ) : null}
 
 

@@ -204,6 +204,13 @@ const styles = {
     fontWeight: '700',
     color: '#111827',
   },
+  variantText: {
+    margin: '4px 0 0',
+    color: '#6b7280',
+    fontSize: '13px',
+    fontWeight: '700',
+    textTransform: 'uppercase',
+  },
   timerBox: {
     borderRadius: '18px',
     background: '#111827',
@@ -219,10 +226,6 @@ const styles = {
     lineHeight: 1,
     fontWeight: '900',
     letterSpacing: '0.04em',
-  },
-  sampleTimerText: {
-    fontSize: '16px',
-    fontWeight: '800',
   },
   fieldGrid: {
     display: 'grid',
@@ -628,6 +631,7 @@ export default function QcInspectionTaskPage() {
               brand_id,
               category_id,
               model_name,
+              variant_name,
               photo_url,
               is_sample,
               koli_sequence,
@@ -788,6 +792,11 @@ export default function QcInspectionTaskPage() {
     [tasks]
   )
   const activeTaskInputs = getTaskGradeInputs(activeTask, gradeInputs)
+  const canSubmitActiveTask = activeTask
+    ? shouldTrackTaskTime(activeTask)
+      ? activeTask.status === 'in_progress'
+      : ['queued', 'in_progress', 'paused'].includes(activeTask.status)
+    : false
   const runningSeconds = useMemo(() => {
     if (!activeTask) {
       return 0
@@ -890,6 +899,7 @@ export default function QcInspectionTaskPage() {
           brand_id,
           category_id,
           model_name,
+          variant_name,
           photo_url,
           is_sample,
           koli_sequence,
@@ -916,6 +926,20 @@ export default function QcInspectionTaskPage() {
         item.id === task.id ? { ...data, source_type: task.source_type } : item
       )
     )
+    setActiveTaskId(task.id)
+  }
+
+  function handleOpenSampleTask(task) {
+    setError('')
+    setSuccess('')
+    setGradeInputs((prev) => ({
+      ...prev,
+      [task.id]: prev[task.id] || { qty_a: '', qty_b: '', qty_c: '' },
+    }))
+    setCompleteChecks((prev) => ({
+      ...prev,
+      [task.id]: Boolean(prev[task.id]),
+    }))
     setActiveTaskId(task.id)
   }
 
@@ -968,6 +992,7 @@ export default function QcInspectionTaskPage() {
           brand_id,
           category_id,
           model_name,
+          variant_name,
           photo_url,
           is_sample,
           koli_sequence,
@@ -1042,6 +1067,7 @@ export default function QcInspectionTaskPage() {
     const isTaskComplete =
       isMarkedComplete || nextLockedQty >= Number(latestTaskRow?.allocated_qty || task.allocated_qty || 0)
     const finishedAt = new Date().toISOString()
+    const nextStatus = isTaskComplete ? 'done' : shouldTrackTime ? 'paused' : 'queued'
 
     if (isTaskComplete && shouldTrackTime) {
       const pauseLogResult = await closeOpenPauseLog({
@@ -1060,7 +1086,7 @@ export default function QcInspectionTaskPage() {
     const { data: updatedTask, error: updateError } = await supabase
       .from(getTaskTableName(task))
       .update({
-        status: isTaskComplete ? 'done' : 'paused',
+        status: nextStatus,
         qty_a: qtyA,
         qty_b: qtyB,
         qty_c: qtyC,
@@ -1084,6 +1110,7 @@ export default function QcInspectionTaskPage() {
           brand_id,
           category_id,
           model_name,
+          variant_name,
           photo_url,
           is_sample,
           koli_sequence,
@@ -1213,8 +1240,8 @@ export default function QcInspectionTaskPage() {
                 <span style={styles.metaValue}>{getTaskModelInfo(activeTask).modelName}</span>
               </div>
               <div style={styles.metaCard}>
-                <span style={styles.metaLabel}>Color</span>
-                <span style={styles.metaValue}>{getTaskModelInfo(activeTask).modelColor || 'NO COLOR'}</span>
+                <span style={styles.metaLabel}>Variant</span>
+                <span style={styles.metaValue}>{getTaskModelInfo(activeTask).modelColor || 'NO VARIANT'}</span>
               </div>
               <div style={styles.metaCard}>
                 <span style={styles.metaLabel}>Allocated</span>
@@ -1230,32 +1257,30 @@ export default function QcInspectionTaskPage() {
             </div>
           </div>
 
-          <div style={styles.timerBox}>
-            <div>
-              <div style={styles.metaLabel}>{shouldTrackTaskTime(activeTask) ? 'Stopwatch' : 'Sample QC'}</div>
-              {shouldTrackTaskTime(activeTask) ? (
+          {shouldTrackTaskTime(activeTask) ? (
+            <div style={styles.timerBox}>
+              <div>
+                <div style={styles.metaLabel}>Stopwatch</div>
                 <div style={styles.timerValue}>{formatSeconds(runningSeconds)}</div>
+              </div>
+
+              {activeTask.status === 'queued' || activeTask.status === 'paused' ? (
+                <button
+                  type="button"
+                  onClick={() => handleStart(activeTask)}
+                  style={{
+                    ...styles.primaryButton,
+                    ...(runningTaskId && runningTaskId !== activeTask.id ? styles.buttonDisabled : {}),
+                  }}
+                  disabled={Boolean(runningTaskId && runningTaskId !== activeTask.id)}
+                >
+                  {activeTask.status === 'paused' ? 'Resume' : 'Start'}
+                </button>
               ) : (
-                <div style={styles.sampleTimerText}>No timing recorded</div>
+                <span style={{ fontWeight: '700' }}>Running</span>
               )}
             </div>
-
-            {activeTask.status === 'queued' || activeTask.status === 'paused' ? (
-              <button
-                type="button"
-                onClick={() => handleStart(activeTask)}
-                style={{
-                  ...styles.primaryButton,
-                  ...(runningTaskId && runningTaskId !== activeTask.id ? styles.buttonDisabled : {}),
-                }}
-                disabled={Boolean(runningTaskId && runningTaskId !== activeTask.id)}
-              >
-                {activeTask.status === 'paused' ? 'Resume' : 'Start'}
-              </button>
-            ) : (
-              <span style={{ fontWeight: '700' }}>Running</span>
-            )}
-          </div>
+          ) : null}
 
           <div style={styles.fieldGrid}>
             <div style={styles.field}>
@@ -1348,9 +1373,9 @@ export default function QcInspectionTaskPage() {
               type="button"
               onClick={() => handleFinish(activeTask)}
               style={styles.primaryButton}
-              disabled={activeTask.status !== 'in_progress'}
+              disabled={!canSubmitActiveTask}
             >
-              Stop & Submit
+              {shouldTrackTaskTime(activeTask) ? 'Stop & Submit' : 'Submit QC'}
             </button>
           </div>
 
@@ -1369,6 +1394,9 @@ export default function QcInspectionTaskPage() {
                   <div style={styles.queueHeader}>
                     <div>
                       <h2 style={styles.queueTitle}>{taskModel.modelName}</h2>
+                      {taskModel.modelColor ? (
+                        <p style={styles.variantText}>{taskModel.modelColor}</p>
+                      ) : null}
                       <p style={styles.subtitle}>
                         {getTaskSourceLabel(task)}
                       </p>
@@ -1403,14 +1431,14 @@ export default function QcInspectionTaskPage() {
                   <div style={styles.buttonRow}>
                     <button
                       type="button"
-                      onClick={() => handleStart(task)}
+                      onClick={() => (shouldTrackTaskTime(task) ? handleStart(task) : handleOpenSampleTask(task))}
                       style={{
                         ...styles.primaryButton,
                         ...(runningTaskId ? styles.buttonDisabled : {}),
                       }}
                       disabled={Boolean(runningTaskId)}
                     >
-                      {task.status === 'paused' ? 'Resume' : 'Mulai'}
+                      {shouldTrackTaskTime(task) ? (task.status === 'paused' ? 'Resume' : 'Mulai') : 'Open'}
                     </button>
                   </div>
                 </div>

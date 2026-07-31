@@ -3304,7 +3304,17 @@ export default function ArklineProgressOverviewPage() {
                   <div className={styles.productDetailRows}>
                     {(selectedProductDetail.returnHistory || []).length ? (
                       <div className={styles.receivingHistoryTableWrap}>
-                        <table className={styles.receivingHistoryTable}>
+                        <table className={`${styles.receivingHistoryTable} ${styles.returnHistoryTable}`.trim()}>
+                          <colgroup>
+                            <col className={styles.returnHistoryDateCol} />
+                            <col className={styles.returnHistoryBatchCol} />
+                            <col className={styles.returnHistoryQtyCol} />
+                            <col className={styles.returnHistoryReturnedDateCol} />
+                            <col className={styles.returnHistoryQtyCol} />
+                            <col className={styles.returnHistoryQtyCol} />
+                            <col className={styles.returnHistoryStatusCol} />
+                            <col className={styles.returnHistoryActionCol} />
+                          </colgroup>
                           <thead>
                             <tr>
                               <th>Return Date</th>
@@ -3334,7 +3344,7 @@ export default function ArklineProgressOverviewPage() {
                                 <Fragment key={batch.id}>
                                   <tr>
                                     <td>{formatDateLabel(batch.return_date)}</td>
-                                    <td>{batch.return_number || '-'}</td>
+                                    <td className={styles.returnHistoryBatchCell}>{batch.return_number || '-'}</td>
                                     <td>{formatNumber(batch.sent_qty)}</td>
                                     <td>{returnedDates || '-'}</td>
                                     <td>{formatNumber(batch.returned_qty)}</td>

@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/utils/supabase/browser'
 import styles from './retur-report.module.css'
@@ -24,6 +24,10 @@ function formatStatus(value) {
   return String(value || 'SENT').replaceAll('_', ' ')
 }
 
+function getReceiptSizeKey(size) {
+  return `size:${String(size || 'No size')}`
+}
+
 export default function ArklineReturReportClient({ eligibleRows, batches, userEmail, canAdd = false, canEdit = false }) {
   const router = useRouter()
   const supabase = createClient()
@@ -31,6 +35,8 @@ export default function ArklineReturReportClient({ eligibleRows, batches, userEm
   const [activeReturnTab, setActiveReturnTab] = useState('arrangement')
   const [repairabilityFilter, setRepairabilityFilter] = useState('all')
   const [rejectReasonFilter, setRejectReasonFilter] = useState('')
+  const [sizeFilter, setSizeFilter] = useState('')
+  const [gradeFilter, setGradeFilter] = useState('')
   const [poFilter, setPoFilter] = useState('')
   const [productFilter, setProductFilter] = useState('')
   const [progressPoFilter, setProgressPoFilter] = useState('')
@@ -52,17 +58,52 @@ export default function ArklineReturReportClient({ eligibleRows, batches, userEm
     () => eligibleRows.filter((row) => selectedIds.includes(row.id)),
     [eligibleRows, selectedIds]
   )
+  const matchesArrangementFilters = useCallback((row, ignoredFilter = '') => {
+    const matchesRepairability =
+      ignoredFilter === 'repairability' ||
+      repairabilityFilter === 'all' ||
+      (repairabilityFilter === 'repairable' ? row.isRepairable : !row.isRepairable)
+    const rowReasonKey = String(row.reasonId || row.reasonName || '').trim()
+    const matchesRejectReason = ignoredFilter === 'rejectReason' || !rejectReasonFilter || rowReasonKey === rejectReasonFilter
+    const matchesSize = ignoredFilter === 'size' || !sizeFilter || String(row.size || '') === sizeFilter
+    const matchesGrade = ignoredFilter === 'grade' || !gradeFilter || String(row.grade || '') === gradeFilter
+    const matchesPo = ignoredFilter === 'po' || !poFilter || row.poId === poFilter
+    const matchesProduct = ignoredFilter === 'product' || !productFilter || row.modelName === productFilter
+
+    return matchesRepairability && matchesRejectReason && matchesSize && matchesGrade && matchesPo && matchesProduct
+  }, [gradeFilter, poFilter, productFilter, rejectReasonFilter, repairabilityFilter, sizeFilter])
+
   const poOptions = useMemo(
-    () => Array.from(new Set(eligibleRows.map((row) => row.poId).filter(Boolean))).sort((a, b) => a.localeCompare(b, undefined, { numeric: true })),
-    [eligibleRows]
+    () =>
+      Array.from(new Set(eligibleRows.filter((row) => matchesArrangementFilters(row, 'po')).map((row) => row.poId).filter(Boolean))).sort((a, b) =>
+        a.localeCompare(b, undefined, { numeric: true })
+      ),
+    [eligibleRows, matchesArrangementFilters]
   )
-  const productOptions = useMemo(() => {
-    const source = poFilter ? eligibleRows.filter((row) => row.poId === poFilter) : eligibleRows
-    return Array.from(new Set(source.map((row) => row.modelName).filter(Boolean))).sort((a, b) => a.localeCompare(b))
-  }, [eligibleRows, poFilter])
+  const productOptions = useMemo(
+    () =>
+      Array.from(new Set(eligibleRows.filter((row) => matchesArrangementFilters(row, 'product')).map((row) => row.modelName).filter(Boolean))).sort((a, b) =>
+        a.localeCompare(b)
+      ),
+    [eligibleRows, matchesArrangementFilters]
+  )
+  const sizeOptions = useMemo(
+    () =>
+      Array.from(new Set(eligibleRows.filter((row) => matchesArrangementFilters(row, 'size')).map((row) => row.size).filter(Boolean))).sort((a, b) =>
+        String(a).localeCompare(String(b), undefined, { numeric: true })
+      ),
+    [eligibleRows, matchesArrangementFilters]
+  )
+  const gradeOptions = useMemo(
+    () =>
+      Array.from(new Set(eligibleRows.filter((row) => matchesArrangementFilters(row, 'grade')).map((row) => row.grade).filter(Boolean))).sort((a, b) =>
+        String(a).localeCompare(String(b))
+      ),
+    [eligibleRows, matchesArrangementFilters]
+  )
   const rejectReasonOptions = useMemo(() => {
     const grouped = new Map()
-    eligibleRows.forEach((row) => {
+    eligibleRows.filter((row) => matchesArrangementFilters(row, 'rejectReason')).forEach((row) => {
       const reasonKey = String(row.reasonId || row.reasonName || '').trim()
       if (!reasonKey) return
       grouped.set(reasonKey, row.reasonName || reasonKey)
@@ -71,7 +112,7 @@ export default function ArklineReturReportClient({ eligibleRows, batches, userEm
     return Array.from(grouped.entries())
       .map(([id, name]) => ({ id, name }))
       .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }))
-  }, [eligibleRows])
+  }, [eligibleRows, matchesArrangementFilters])
   const progressPoOptions = useMemo(
     () => Array.from(new Set(batches.map((batch) => batch.poId).filter(Boolean))).sort((a, b) => a.localeCompare(b, undefined, { numeric: true })),
     [batches]
@@ -103,16 +144,7 @@ export default function ArklineReturReportClient({ eligibleRows, batches, userEm
   const filteredEligibleRows = useMemo(
     () =>
       eligibleRows
-        .filter((row) => {
-          const matchesRepairability =
-            repairabilityFilter === 'all' ||
-            (repairabilityFilter === 'repairable' ? row.isRepairable : !row.isRepairable)
-          const rowReasonKey = String(row.reasonId || row.reasonName || '').trim()
-          const matchesRejectReason = !rejectReasonFilter || rowReasonKey === rejectReasonFilter
-          const matchesPo = !poFilter || row.poId === poFilter
-          const matchesProduct = !productFilter || row.modelName === productFilter
-          return matchesRepairability && matchesRejectReason && matchesPo && matchesProduct
-        })
+        .filter((row) => matchesArrangementFilters(row))
         .sort((a, b) => {
           const reasonCompare = String(a.reasonName || '').localeCompare(String(b.reasonName || ''), undefined, { numeric: true })
           if (reasonCompare) return reasonCompare
@@ -122,7 +154,7 @@ export default function ArklineReturReportClient({ eligibleRows, batches, userEm
           if (productCompare) return productCompare
           return String(a.size || '').localeCompare(String(b.size || ''), undefined, { numeric: true })
         }),
-    [eligibleRows, poFilter, productFilter, rejectReasonFilter, repairabilityFilter]
+    [eligibleRows, matchesArrangementFilters]
   )
   const filteredBatches = useMemo(
     () =>
@@ -138,18 +170,58 @@ export default function ArklineReturReportClient({ eligibleRows, batches, userEm
   )
   const selectedSummary = useMemo(() => {
     const sizeMap = new Map()
+    const gradeMap = new Map()
     const total = selectedRows.reduce((sum, row) => {
       const qty = Number(returnQtyById[row.id] ?? row.availableQty ?? 0)
       const size = row.size || 'No size'
+      const grade = row.grade || 'No grade'
       sizeMap.set(size, Number(sizeMap.get(size) || 0) + qty)
+      gradeMap.set(grade, Number(gradeMap.get(grade) || 0) + qty)
       return sum + qty
     }, 0)
     const sizes = Array.from(sizeMap.entries())
       .map(([size, qty]) => ({ size, qty }))
       .sort((a, b) => String(a.size).localeCompare(String(b.size), undefined, { numeric: true }))
+    const grades = Array.from(gradeMap.entries())
+      .map(([grade, qty]) => ({ grade, qty }))
+      .sort((a, b) => String(a.grade).localeCompare(String(b.grade), undefined, { numeric: true }))
+
+    return { total, sizes, grades }
+  }, [returnQtyById, selectedRows])
+  const receiptSummary = useMemo(() => {
+    if (!receiptBatch) return { total: 0, sizes: [], sizeRows: [] }
+
+    const sizeMap = new Map()
+    receiptBatch.lines.forEach((line) => {
+      const size = line.size || 'No size'
+      const current = sizeMap.get(size) || { size, sentQty: 0, receivedQty: 0, remainingQty: 0, lines: [] }
+      const sentQty = Number(line.qty || 0)
+      const receivedQty = Number(line.receivedQty || 0)
+      const remainingQty = Math.max(0, sentQty - receivedQty)
+      current.sentQty += sentQty
+      current.receivedQty += receivedQty
+      current.remainingQty += remainingQty
+      current.lines.push({ ...line, remainingQty })
+      sizeMap.set(size, current)
+    })
+
+    const sizeRows = Array.from(sizeMap.values()).sort((a, b) => String(a.size).localeCompare(String(b.size), undefined, { numeric: true }))
+    const total = sizeRows.reduce((sum, row) => sum + Number(row.remainingQty || 0), 0)
+    const sizes = sizeRows.map((row) => ({ size: row.size, qty: row.remainingQty }))
+
+    return { total, sizes, sizeRows }
+  }, [receiptBatch])
+  const receiptInputSummary = useMemo(() => {
+    const sizes = receiptSummary.sizeRows
+      .map((row) => ({
+        size: row.size,
+        qty: Number(receiptQtyById[getReceiptSizeKey(row.size)] || 0),
+      }))
+      .filter((row) => row.qty > 0)
+    const total = sizes.reduce((sum, row) => sum + Number(row.qty || 0), 0)
 
     return { total, sizes }
-  }, [returnQtyById, selectedRows])
+  }, [receiptQtyById, receiptSummary.sizeRows])
   const allFilteredSelected =
     filteredEligibleRows.length > 0 && filteredEligibleRows.every((row) => selectedIds.includes(row.id))
   const selectedQty = selectedRows.reduce(
@@ -224,8 +296,12 @@ export default function ArklineReturReportClient({ eligibleRows, batches, userEm
 
   function openReceiptModal(batch) {
     const initialQty = {}
+    const sizes = new Set()
     batch.lines.forEach((line) => {
-      initialQty[line.id] = ''
+      sizes.add(line.size || 'No size')
+    })
+    sizes.forEach((size) => {
+      initialQty[getReceiptSizeKey(size)] = ''
     })
     setReceiptQtyById(initialQty)
     setReceiptDate(todayValue())
@@ -297,19 +373,31 @@ export default function ArklineReturReportClient({ eligibleRows, batches, userEm
   async function saveReworkReceipt() {
     if (!receiptBatch) return
 
-    const receiptLines = receiptBatch.lines
-      .map((line) => ({
-        ...line,
-        inputQty: Number(receiptQtyById[line.id] || 0),
-        remainingQty: Math.max(0, Number(line.qty || 0) - Number(line.receivedQty || 0)),
-      }))
-      .filter((line) => line.inputQty > 0)
-    const invalidLine = receiptLines.find((line) => line.inputQty > line.remainingQty)
+    const receiptLines = []
+    const invalidSize = receiptSummary.sizeRows.find((sizeRow) => Number(receiptQtyById[getReceiptSizeKey(sizeRow.size)] || 0) > Number(sizeRow.remainingQty || 0))
 
-    if (invalidLine) {
-      setError('Received qty cannot exceed the remaining qty for its return line.')
+    if (invalidSize) {
+      setError('Received qty cannot exceed the remaining qty for its size.')
       return
     }
+
+    receiptSummary.sizeRows.forEach((sizeRow) => {
+      let remainingInput = Number(receiptQtyById[getReceiptSizeKey(sizeRow.size)] || 0)
+      if (remainingInput <= 0) return
+
+      sizeRow.lines.forEach((line) => {
+        if (remainingInput <= 0) return
+        const qty = Math.min(remainingInput, Number(line.remainingQty || 0))
+        if (qty > 0) {
+          receiptLines.push({
+            ...line,
+            inputQty: qty,
+          })
+          remainingInput -= qty
+        }
+      })
+    })
+
     if (!receiptLines.length) {
       setError('Enter at least one received qty.')
       return
@@ -413,6 +501,36 @@ export default function ArklineReturReportClient({ eligibleRows, batches, userEm
             </select>
           </div>
           <div className={styles.field}>
+            <label htmlFor="return-size-filter">Size</label>
+            <select
+              id="return-size-filter"
+              className={styles.input}
+              value={sizeFilter}
+              onChange={(event) => {
+                setSizeFilter(event.target.value)
+                setSelectedIds([])
+              }}
+            >
+              <option value="">All sizes</option>
+              {sizeOptions.map((size) => <option key={size} value={size}>{size}</option>)}
+            </select>
+          </div>
+          <div className={styles.field}>
+            <label htmlFor="return-grade-filter">Grade</label>
+            <select
+              id="return-grade-filter"
+              className={styles.input}
+              value={gradeFilter}
+              onChange={(event) => {
+                setGradeFilter(event.target.value)
+                setSelectedIds([])
+              }}
+            >
+              <option value="">All grades</option>
+              {gradeOptions.map((grade) => <option key={grade} value={grade}>Grade {grade}</option>)}
+            </select>
+          </div>
+          <div className={styles.field}>
             <label htmlFor="return-po-filter">PO</label>
             <select
               id="return-po-filter"
@@ -457,6 +575,20 @@ export default function ArklineReturReportClient({ eligibleRows, batches, userEm
                 selectedSummary.sizes.map((item) => (
                   <span key={item.size} className={styles.sizeChip}>
                     {item.size}: <strong>{item.qty}</strong>
+                  </span>
+                ))
+              ) : (
+                <span className={styles.sizeChip}>No selected qty</span>
+              )}
+            </div>
+          </div>
+          <div className={styles.sizeSummary}>
+            <span>Selected Qty per Grade</span>
+            <div className={styles.sizeChipRow}>
+              {selectedSummary.grades.length ? (
+                selectedSummary.grades.map((item) => (
+                  <span key={item.grade} className={styles.sizeChip}>
+                    Grade {item.grade}: <strong>{item.qty}</strong>
                   </span>
                 ))
               ) : (
@@ -672,7 +804,27 @@ export default function ArklineReturReportClient({ eligibleRows, batches, userEm
                 </div>
               ))}
             </div>
-            <p className={styles.notice}>Total qty to return: {selectedQty}</p>
+            <div className={styles.modalSummaryBox}>
+              <div className={styles.modalSummaryTotal}>
+                Total qty to return: <strong>{selectedQty}</strong>
+              </div>
+              <div className={styles.modalSummaryGroup}>
+                <span>Per size</span>
+                <div className={styles.sizeChipRow}>
+                  {selectedSummary.sizes.length ? selectedSummary.sizes.map((item) => (
+                    <span key={item.size} className={styles.sizeChip}>{item.size}: <strong>{item.qty}</strong></span>
+                  )) : <span className={styles.sizeChip}>No selected qty</span>}
+                </div>
+              </div>
+              <div className={styles.modalSummaryGroup}>
+                <span>Per grade</span>
+                <div className={styles.sizeChipRow}>
+                  {selectedSummary.grades.length ? selectedSummary.grades.map((item) => (
+                    <span key={item.grade} className={styles.sizeChip}>Grade {item.grade}: <strong>{item.qty}</strong></span>
+                  )) : <span className={styles.sizeChip}>No selected qty</span>}
+                </div>
+              </div>
+            </div>
             {error ? <p className={styles.error}>{error}</p> : null}
             <div className={styles.modalActions}>
               <button type="button" className={styles.secondaryButton} onClick={closeReturnModal} disabled={saving}>Cancel</button>
@@ -703,28 +855,41 @@ export default function ArklineReturReportClient({ eligibleRows, batches, userEm
               </div>
             </div>
             <div className={styles.lineList}>
-              {receiptBatch.lines.map((line) => {
-                const remaining = Math.max(0, Number(line.qty || 0) - Number(line.receivedQty || 0))
+              {receiptSummary.sizeRows.map((sizeRow) => {
+                const sizeKey = getReceiptSizeKey(sizeRow.size)
                 return (
-                  <div key={line.id} className={styles.lineRow}>
+                  <div key={sizeKey} className={styles.lineRow}>
                     <div className={styles.lineName}>
-                      <strong>{line.reasonName}</strong>
-                      Grade {line.grade} / Size {line.size} / Remaining {remaining}
+                      <strong>Size {sizeRow.size}</strong>
+                      Sent {sizeRow.sentQty} / Returned {sizeRow.receivedQty} / Remaining {sizeRow.remainingQty}
                     </div>
-                    <span className={`${styles.badge} ${styles.lineBadge}`}>Sent {line.qty}</span>
+                    <span className={`${styles.badge} ${styles.lineBadge}`}>Remaining {sizeRow.remainingQty}</span>
                     <input
                       className={styles.input}
                       type="number"
                       min="0"
-                      max={remaining}
-                      value={receiptQtyById[line.id] || ''}
-                      onChange={(event) => setReceiptQtyById((current) => ({ ...current, [line.id]: event.target.value }))}
-                      disabled={remaining === 0}
-                      aria-label={`Received qty for ${line.reasonName}`}
+                      max={sizeRow.remainingQty}
+                      value={receiptQtyById[sizeKey] || ''}
+                      onChange={(event) => setReceiptQtyById((current) => ({ ...current, [sizeKey]: event.target.value }))}
+                      disabled={sizeRow.remainingQty === 0}
+                      aria-label={`Received qty for size ${sizeRow.size}`}
                     />
                   </div>
                 )
               })}
+            </div>
+            <div className={styles.modalSummaryBox}>
+              <div className={styles.modalSummaryTotal}>
+                Total Qty: <strong>{receiptInputSummary.total}</strong>
+              </div>
+              <div className={styles.modalSummaryGroup}>
+                <span>Qty per size</span>
+                <div className={styles.sizeChipRow}>
+                  {receiptInputSummary.sizes.length ? receiptInputSummary.sizes.map((item) => (
+                    <span key={item.size} className={styles.sizeChip}>{item.size}: <strong>{item.qty}</strong></span>
+                  )) : <span className={styles.sizeChip}>No returned qty entered</span>}
+                </div>
+              </div>
             </div>
             {error ? <p className={styles.error}>{error}</p> : null}
             <div className={styles.modalActions}>

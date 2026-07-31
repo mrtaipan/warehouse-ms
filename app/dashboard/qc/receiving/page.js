@@ -193,8 +193,8 @@ function normalizeQcItemRow(row = {}) {
 }
 
 function getExpectedRowKey(row = {}) {
-  const baseKey = getModelKey(row.model_name, row.model_color)
-  return row.model_color ? baseKey : `${baseKey}::SOURCE:${row.id || row.source_id || ''}`
+  const baseKey = getProductIdentityKey(row)
+  return row.is_sample || !row.model_color ? `${baseKey}::SOURCE:${row.id || row.source_id || ''}` : baseKey
 }
 
 async function loadInboundUnloadRows(inboundId) {
@@ -815,6 +815,8 @@ function createDefaultModelRow(expectedRow) {
     model_color: expectedRow.model_color || '',
     original_model_name: expectedRow.model_name || '',
     original_model_color: expectedRow.model_color || '',
+    brand_id: expectedRow.brand_id || null,
+    category_id: expectedRow.category_id || null,
     brand_name: expectedRow.brand_name || '',
     category_name: expectedRow.category_name || '',
     pic_name: expectedRow.pic_name || '',
@@ -991,6 +993,15 @@ async function loadFirstExistingRows(tableNames) {
 
 function getModelKey(modelName, modelColor) {
   return `${String(modelName || '').trim().toUpperCase()}::${String(modelColor || '').trim().toUpperCase()}`
+}
+
+function getProductIdentityKey(row = {}) {
+  return [
+    Number(row.brand_id || 0),
+    Number(row.category_id || 0),
+    String(row.model_name || '').trim().toUpperCase(),
+    String(row.model_color || row.variant_name || '').trim().toUpperCase(),
+  ].join('::')
 }
 
 function getArklineProductLabel(product) {
@@ -1199,6 +1210,8 @@ function buildModelRowsForSource(source, unloadRows, qcItems) {
         model_color: planRow.model_color || '',
         original_model_name: planRow.original_model_name || matchingExpectedRow?.model_name || planRow.model_name || '',
         original_model_color: planRow.original_model_color || matchingExpectedRow?.model_color || planRow.model_color || '',
+        brand_id: matchingExpectedRow?.brand_id || planRow.brand_id || null,
+        category_id: matchingExpectedRow?.category_id || planRow.category_id || null,
         brand_name: matchingExpectedRow?.brand_name || planRow.brand_name || '',
         category_name: matchingExpectedRow?.category_name || planRow.category_name || '',
         pic_name: matchingExpectedRow?.pic_name || planRow.pic_name || '',
@@ -1219,6 +1232,10 @@ function buildModelRowsForSource(source, unloadRows, qcItems) {
       planRow.original_model_name || existingRow.original_model_name || matchingExpectedRow?.model_name || planRow.model_name || ''
     existingRow.original_model_color =
       planRow.original_model_color || existingRow.original_model_color || matchingExpectedRow?.model_color || planRow.model_color || ''
+    existingRow.brand_id = existingRow.brand_id || matchingExpectedRow?.brand_id || planRow.brand_id || null
+    existingRow.category_id = existingRow.category_id || matchingExpectedRow?.category_id || planRow.category_id || null
+    existingRow.brand_name = existingRow.brand_name || matchingExpectedRow?.brand_name || planRow.brand_name || ''
+    existingRow.category_name = existingRow.category_name || matchingExpectedRow?.category_name || planRow.category_name || ''
     existingRow.model_replaced = Boolean(existingRow.model_replaced || planRow.model_replaced)
     existingRow.photo_url = planRow.photo_url || existingRow.photo_url || matchingExpectedRow?.photo_url || ''
     existingRow.qty_qc = existingRow.has_saved_qc_in
