@@ -1084,20 +1084,39 @@ function getSourceTasks(source, qcItems) {
 
 function getSourceAllocationCoverage(source, qcItems) {
   const sourceTasks = getSourceTasks(source, qcItems)
-  const plannedQtyByProduct = new Map()
+  const expectedQtyBySourceId = new Map()
+  const plannedQtyBySourceId = new Map()
+
+  ;(source?.rows || []).forEach((row) => {
+    const sourceId = Number(row.id || 0)
+    if (!sourceId) return
+    expectedQtyBySourceId.set(sourceId, Number(expectedQtyBySourceId.get(sourceId) || 0) + Number(row.qty || 0))
+  })
 
   sourceTasks.forEach((item) => {
-    const identityKey = [
-      Number(item.inbound_unload_id || 0),
-      getModelKey(item.model_name, item.model_color || item.variant_name),
-    ].join('::')
-    plannedQtyByProduct.set(identityKey, Math.max(Number(plannedQtyByProduct.get(identityKey) || 0), Number(item.qty_in || 0)))
+    const sourceId = Number(item.inbound_unload_id || 0)
+    if (!sourceId) return
+
+    const productKey = getModelKey(item.model_name, item.model_color || item.variant_name)
+    const productQtyMap = plannedQtyBySourceId.get(sourceId) || new Map()
+    productQtyMap.set(productKey, Math.max(Number(productQtyMap.get(productKey) || 0), Number(item.qty_in || 0)))
+    plannedQtyBySourceId.set(sourceId, productQtyMap)
   })
+
+  const plannedSourceIds = new Set([...expectedQtyBySourceId.keys(), ...plannedQtyBySourceId.keys()])
+  const plannedQty = Array.from(plannedSourceIds).reduce((sum, sourceId) => {
+    const productQtyMap = plannedQtyBySourceId.get(sourceId)
+    if (productQtyMap) {
+      return sum + Array.from(productQtyMap.values()).reduce((sourceSum, qty) => sourceSum + Number(qty || 0), 0)
+    }
+
+    return sum + Number(expectedQtyBySourceId.get(sourceId) || 0)
+  }, 0)
 
   return {
     sourceTasks,
     allocatedQty: sourceTasks.reduce((sum, item) => sum + Number(item.allocated_qty || 0), 0),
-    plannedQty: Array.from(plannedQtyByProduct.values()).reduce((sum, qty) => sum + Number(qty || 0), 0),
+    plannedQty,
   }
 }
 
@@ -1261,6 +1280,7 @@ export default function QcReceivingPage() {
   const [grnSearch, setGrnSearch] = useState('')
   const [selectedInboundId, setSelectedInboundId] = useState('')
   const [selectedSourceKey, setSelectedSourceKey] = useState('')
+  const [bulkAllocationInspector, setBulkAllocationInspector] = useState('')
   const [selectedArklineProductId, setSelectedArklineProductId] = useState('')
   const [selectedArklineCategory, setSelectedArklineCategory] = useState('')
   const [arklineProductSearch, setArklineProductSearch] = useState('')
@@ -1881,6 +1901,7 @@ export default function QcReceivingPage() {
     setSelectedInboundId(match ? String(match.id) : '')
     setSourceLoading(Boolean(match))
     setSelectedSourceKey('')
+    setBulkAllocationInspector('')
     setModelRows([])
     setError('')
     setSuccess('')
@@ -1893,6 +1914,7 @@ export default function QcReceivingPage() {
     setSuccess('')
     setModelRows([])
     setSelectedSourceKey('')
+    setBulkAllocationInspector('')
     setSelectedArklineProductId('')
     setSelectedArklineCategory('')
     setArklineProductSearch('')
@@ -1904,6 +1926,7 @@ export default function QcReceivingPage() {
 
   function handleSourceChange(nextSourceKey) {
     setSelectedSourceKey(nextSourceKey)
+    setBulkAllocationInspector('')
     setError('')
     setSuccess('')
 
@@ -2333,6 +2356,73 @@ export default function QcReceivingPage() {
     )
   }
 
+  function applyBulkAllocationToSelectedSource() {
+    if (qcMode !== 'regular') {
+      return
+    }
+
+    if (!selectedSource) {
+      setError('Choose GRN and Koli/Sample first.')
+      return
+    }
+
+    if (!canEditSavedPlan) {
+      setError('Shortcut allocation is only available before QC has started for this source.')
+      return
+    }
+
+    if (!canAdjustAllocations) {
+      setError('Allocation is locked because QC for this source has already finished.')
+      return
+    }
+
+    if (!qcMembers.length) {
+      setError('No active QC user found')
+      return
+    }
+
+    const inspectorEmail = String(bulkAllocationInspector || '').trim().toLowerCase()
+    if (!inspectorEmail) {
+      setError('Choose inspector first.')
+      return
+    }
+
+    setError('')
+    setSuccess('')
+    setAllocationOpenRows((prev) => {
+      const next = { ...prev }
+      modelRows.forEach((row) => {
+        next[row.id] = true
+      })
+      return next
+    })
+    setModelRows((prev) =>
+      prev.map((row) => {
+        const inboundQty = Number(row.qty_in || 0)
+        const existingSplit = (row.allocations || []).find((split) => !isDoneAllocation(split)) || null
+
+        return {
+          ...row,
+          qty_qc: String(inboundQty),
+          allocations:
+            inboundQty > 0
+              ? [
+                  {
+                    id: existingSplit?.id || `alloc-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+                    task_id: existingSplit?.task_id || null,
+                    member_email: inspectorEmail,
+                    qty: String(inboundQty),
+                    existing_status: existingSplit?.existing_status || 'queued',
+                    locked_qty: Number(existingSplit?.locked_qty || 0),
+                  },
+                ]
+              : [],
+        }
+      })
+    )
+    setSuccess('Shortcut allocation applied. Review and save QC plan.')
+  }
+
   function removeAllocationSplit(rowId, splitId) {
     setModelRows((prev) =>
       prev.map((row) =>
@@ -2489,6 +2579,7 @@ export default function QcReceivingPage() {
     setGrnSearch('')
     setSelectedInboundId('')
     setSelectedSourceKey('')
+    setBulkAllocationInspector('')
     setUnloadRows([])
     setModelRows([])
   }
@@ -3402,6 +3493,39 @@ export default function QcReceivingPage() {
                 >
                   {sourceDetailsExpanded ? 'Collapse Detail' : 'Expand Detail'}
                 </button>
+              </div>
+            ) : null}
+
+            {!isSelectedSourceCompleted ? (
+              <div style={styles.modelRow}>
+                <div style={{ display: 'flex', alignItems: 'flex-end', gap: '12px', flexWrap: 'wrap' }}>
+                  <div style={{ ...styles.field, flex: '1 1 220px' }}>
+                    <label style={styles.label}>Shortcut Allocation</label>
+                    <select
+                      value={bulkAllocationInspector}
+                      onChange={(event) => setBulkAllocationInspector(event.target.value)}
+                      style={{ ...styles.select, ...(!canEditSavedPlan || !canAdjustAllocations ? styles.selectDisabled : {}) }}
+                      disabled={!canEditSavedPlan || !canAdjustAllocations}
+                    >
+                      <option value="">Choose inspector</option>
+                      {qcMembers.map((member) => (
+                        <option key={member.id} value={member.email}>
+                          {member.display_name || member.email}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={applyBulkAllocationToSelectedSource}
+                    style={{ ...styles.secondaryButton, ...(!canEditSavedPlan || !canAdjustAllocations ? styles.buttonDisabled : {}) }}
+                    disabled={!canEditSavedPlan || !canAdjustAllocations}
+                    title="Set every QC In to Inbound Qty and allocate it to this inspector"
+                  >
+                    Allocate All
+                  </button>
+                </div>
+                <span style={styles.helperText}>Sets QC In equal to Inbound Qty for this Koli/Sample and assigns all rows to one inspector.</span>
               </div>
             ) : null}
 

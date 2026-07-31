@@ -250,6 +250,10 @@ const styles = {
     background: '#f8fafc',
   },
   tabButton: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: '7px',
     minHeight: '32px',
     padding: '0 12px',
     border: 'none',
@@ -264,6 +268,24 @@ const styles = {
     background: '#111827',
     color: '#fff',
   },
+  segmentBadge: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    minWidth: '22px',
+    minHeight: '20px',
+    padding: '0 7px',
+    borderRadius: '999px',
+    background: '#e2e8f0',
+    color: '#334155',
+    fontSize: '11px',
+    fontWeight: '900',
+    fontVariantNumeric: 'tabular-nums',
+  },
+  segmentBadgeActive: {
+    background: 'rgba(255, 255, 255, 0.18)',
+    color: '#fff',
+  },
   flatSection: {
     display: 'flex',
     flexDirection: 'column',
@@ -276,10 +298,16 @@ const styles = {
   },
   resultToolbar: {
     display: 'flex',
+    flexDirection: 'column',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    justifyContent: 'flex-start',
     gap: '12px',
-    flexWrap: 'nowrap',
+  },
+  resultFilterRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '12px',
+    width: '100%',
   },
   breakdownFilters: {
     display: 'grid',
@@ -339,6 +367,17 @@ const styles = {
   resetFilterButtonDisabled: {
     opacity: 0.45,
     cursor: 'not-allowed',
+  },
+  filterSearchInput: {
+    height: '34px',
+    width: '100%',
+    padding: '0 10px',
+    border: '1px solid #cbd5e1',
+    borderRadius: '8px',
+    background: '#fff',
+    color: '#0f172a',
+    fontSize: '12px',
+    fontWeight: '700',
   },
   verificationForm: {
     display: 'grid',
@@ -916,6 +955,19 @@ const styles = {
     borderTop: '3px solid #cbd5e1',
     verticalAlign: 'middle',
   },
+  koliItemTd: {
+    padding: '10px 18px',
+    fontSize: '13px',
+    color: '#020617',
+    borderTop: '1px solid #e2e8f0',
+    verticalAlign: 'middle',
+  },
+  koliPictureCell: {
+    width: '92px',
+  },
+  koliQtyCell: {
+    width: '120px',
+  },
   koliPictureStack: {
     display: 'flex',
     flexDirection: 'column',
@@ -1173,6 +1225,10 @@ function matchesResultFilterValues(row, qty, filters, ignoredFilter = '') {
     return false
   }
 
+  if (ignoredFilter !== 'search' && filters.search && !normalizeFilterValue(getModelDashLabel(row)).includes(normalizeFilterValue(filters.search))) {
+    return false
+  }
+
   if (ignoredFilter === 'qty') {
     return true
   }
@@ -1226,6 +1282,7 @@ export default function QcConfirmationNextProcessPage() {
     modelName: '',
     qtyMode: '',
     qtyValue: '',
+    search: '',
   })
   const grnFilter = searchParams.get('grn') || ''
   const isFormMode = searchParams.get('form') === '1'
@@ -1556,7 +1613,8 @@ export default function QcConfirmationNextProcessPage() {
     resultFilters.categoryId ||
     resultFilters.modelName ||
     resultFilters.qtyMode ||
-    resultFilters.qtyValue
+    resultFilters.qtyValue ||
+    resultFilters.search
   )
 
   function updateResultFilter(name, value) {
@@ -1573,6 +1631,7 @@ export default function QcConfirmationNextProcessPage() {
       modelName: '',
       qtyMode: '',
       qtyValue: '',
+      search: '',
     })
   }
 
@@ -1583,6 +1642,16 @@ export default function QcConfirmationNextProcessPage() {
   const filteredSourceRows = useMemo(
     () => sourceRows.filter((row) => matchesResultFilters(row, Number(row.source_qty || 0))),
     [matchesResultFilters, sourceRows]
+  )
+
+  const displayedModelCount = useMemo(
+    () =>
+      new Set(
+        filteredSourceRows
+          .map((row) => [row.brand_id || '', row.category_id || '', normalizeFilterValue(getModelDashLabel(row))].join('|'))
+          .filter((key) => key.replaceAll('|', '').trim())
+      ).size,
+    [filteredSourceRows]
   )
 
   const filteredPostedKoliRows = useMemo(
@@ -2236,101 +2305,111 @@ export default function QcConfirmationNextProcessPage() {
 
       <section style={{ ...styles.flatSection, ...styles.flatSectionLast }}>
         <div style={styles.resultToolbar}>
-          <div style={styles.tabList}>
-            <button
-              type="button"
-              onClick={() => setResultTab('koli')}
-              style={{ ...styles.tabButton, ...(resultTab === 'koli' ? styles.tabButtonActive : {}) }}
-            >
-              Koli
-            </button>
-            <button
-              type="button"
-              onClick={() => setResultTab('model')}
-              style={{ ...styles.tabButton, ...(resultTab === 'model' ? styles.tabButtonActive : {}) }}
-            >
-              Model
-            </button>
-          </div>
-          <div style={styles.breakdownFilters}>
-            <select
-              value={resultFilters.brandId}
-              onChange={(event) => updateResultFilter('brandId', event.target.value)}
-              style={styles.filterSelect}
-              aria-label="Filter by brand"
-            >
-              <option value="">All brands</option>
-              {brandFilterOptions.map((brand) => (
-                <option key={brand.id} value={brand.id}>{brand.name}</option>
-              ))}
-            </select>
-            <select
-              value={resultFilters.categoryId}
-              onChange={(event) => updateResultFilter('categoryId', event.target.value)}
-              style={styles.filterSelect}
-              aria-label="Filter by category"
-            >
-              <option value="">All categories</option>
-              {categoryFilterOptions.map((category) => (
-                <option key={category.id} value={category.id}>{category.name}</option>
-              ))}
-            </select>
-            <select
-              value={resultFilters.modelName}
-              onChange={(event) => updateResultFilter('modelName', event.target.value)}
-              style={styles.filterSelect}
-              aria-label="Filter by model"
-            >
-              <option value="">All models</option>
-              {modelFilterOptions.map((modelName) => (
-                <option key={modelName} value={modelName}>{modelName}</option>
-              ))}
-            </select>
-            <div style={styles.qtyFilterGroup}>
-              <select
-                value={resultFilters.qtyMode}
-                onChange={(event) => {
-                  updateResultFilter('qtyMode', event.target.value)
-                  if (!event.target.value) {
-                    updateResultFilter('qtyValue', '')
-                  }
-                }}
-                style={styles.filterSelect}
-                aria-label="Filter quantity comparison"
+          <div style={styles.resultFilterRow}>
+            <div style={styles.tabList}>
+              <button
+                type="button"
+                onClick={() => setResultTab('koli')}
+                style={{ ...styles.tabButton, ...(resultTab === 'koli' ? styles.tabButtonActive : {}) }}
               >
-                <option value="">Qty</option>
-                <option value="lt">&lt;</option>
-                <option value="eq">=</option>
-                <option value="gt">&gt;</option>
-              </select>
-              <input
-                type="text"
-                inputMode="numeric"
-                value={resultFilters.qtyValue}
-                onChange={(event) => updateResultFilter('qtyValue', event.target.value.replace(/[^\d]/g, ''))}
-                disabled={!resultFilters.qtyMode}
-                style={{
-                  ...styles.filterNumberInput,
-                  ...(!resultFilters.qtyMode ? styles.filterNumberInputDisabled : {}),
-                }}
-                placeholder="Qty"
-                aria-label="Filter quantity number"
-              />
+                Koli
+              </button>
+              <button
+                type="button"
+                onClick={() => setResultTab('model')}
+                style={{ ...styles.tabButton, ...(resultTab === 'model' ? styles.tabButtonActive : {}) }}
+              >
+                <span>Model</span>
+                <span style={{ ...styles.segmentBadge, ...(resultTab === 'model' ? styles.segmentBadgeActive : {}) }}>{displayedModelCount}</span>
+              </button>
             </div>
-            <button
-              type="button"
-              onClick={resetResultFilters}
-              disabled={!hasResultFilters}
-              style={{
-                ...styles.resetFilterButton,
-                ...(!hasResultFilters ? styles.resetFilterButtonDisabled : {}),
-              }}
-              aria-label="Reset filters"
-              title="Reset filters"
-            >
-              <ResetIcon />
-            </button>
+            <div style={styles.breakdownFilters}>
+              <select
+                value={resultFilters.brandId}
+                onChange={(event) => updateResultFilter('brandId', event.target.value)}
+                style={styles.filterSelect}
+                aria-label="Filter by brand"
+              >
+                <option value="">All brands</option>
+                {brandFilterOptions.map((brand) => (
+                  <option key={brand.id} value={brand.id}>{brand.name}</option>
+                ))}
+              </select>
+              <select
+                value={resultFilters.categoryId}
+                onChange={(event) => updateResultFilter('categoryId', event.target.value)}
+                style={styles.filterSelect}
+                aria-label="Filter by category"
+              >
+                <option value="">All categories</option>
+                {categoryFilterOptions.map((category) => (
+                  <option key={category.id} value={category.id}>{category.name}</option>
+                ))}
+              </select>
+              <select
+                value={resultFilters.modelName}
+                onChange={(event) => updateResultFilter('modelName', event.target.value)}
+                style={styles.filterSelect}
+                aria-label="Filter by model"
+              >
+                <option value="">All models</option>
+                {modelFilterOptions.map((modelName) => (
+                  <option key={modelName} value={modelName}>{modelName}</option>
+                ))}
+              </select>
+              <div style={styles.qtyFilterGroup}>
+                <select
+                  value={resultFilters.qtyMode}
+                  onChange={(event) => {
+                    updateResultFilter('qtyMode', event.target.value)
+                    if (!event.target.value) {
+                      updateResultFilter('qtyValue', '')
+                    }
+                  }}
+                  style={styles.filterSelect}
+                  aria-label="Filter quantity comparison"
+                >
+                  <option value="">Qty</option>
+                  <option value="lt">&lt;</option>
+                  <option value="eq">=</option>
+                  <option value="gt">&gt;</option>
+                </select>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  value={resultFilters.qtyValue}
+                  onChange={(event) => updateResultFilter('qtyValue', event.target.value.replace(/[^\d]/g, ''))}
+                  disabled={!resultFilters.qtyMode}
+                  style={{
+                    ...styles.filterNumberInput,
+                    ...(!resultFilters.qtyMode ? styles.filterNumberInputDisabled : {}),
+                  }}
+                  placeholder="Qty"
+                  aria-label="Filter quantity number"
+                />
+              </div>
+              <button
+                type="button"
+                onClick={resetResultFilters}
+                disabled={!hasResultFilters}
+                style={{
+                  ...styles.resetFilterButton,
+                  ...(!hasResultFilters ? styles.resetFilterButtonDisabled : {}),
+                }}
+                aria-label="Reset filters"
+                title="Reset filters"
+              >
+                <ResetIcon />
+              </button>
+            </div>
           </div>
+          <input
+            value={resultFilters.search}
+            onChange={(event) => updateResultFilter('search', event.target.value)}
+            style={styles.filterSearchInput}
+            placeholder="Search model name or variant"
+            aria-label="Search model name or variant"
+          />
         </div>
 
         {!grnFilter ? <p style={styles.emptyText}>Open this page from Grading Verification first.</p> : null}
@@ -2341,6 +2420,14 @@ export default function QcConfirmationNextProcessPage() {
             {grnFilter && filteredPostedKoliRows.length ? (
               <div style={styles.tableWrap}>
                 <table style={styles.koliTable}>
+                  <colgroup>
+                    <col style={{ width: '110px' }} />
+                    <col style={{ width: '100px' }} />
+                    <col />
+                    <col style={{ width: '120px' }} />
+                    <col style={{ width: '140px' }} />
+                    <col style={{ width: '120px' }} />
+                  </colgroup>
                   <thead>
                     <tr>
                       <th style={{ ...styles.th, ...styles.koliTh, ...styles.koliCenterCell }}>Koli</th>
@@ -2352,69 +2439,65 @@ export default function QcConfirmationNextProcessPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredPostedKoliRows.map((koli) => {
+                    {filteredPostedKoliRows.flatMap((koli) => {
                       const picNames = Array.from(new Set(koli.items.flatMap((item) => item.pic_names || []).filter(Boolean)))
+                      const rowSpan = Math.max(koli.items.length, 1)
 
-                      return (
-                        <tr key={koli.key || koli.koli_sequence}>
-                          <td style={{ ...styles.koliTd, ...styles.koliCenterCell }}>
-                            <span style={styles.koliCellStack}>
-                              <span>{getKoliDisplayLabel(koli)}</span>
-                              {koli.has_transfer_adjustment ? <span style={styles.transferAdjustmentPill}>ADJ</span> : null}
-                              {koli.is_sample ? <span style={styles.samplePill}>Sample</span> : null}
-                            </span>
-                          </td>
-                          <td style={styles.koliTd}>
-                            <div style={styles.koliPictureStack}>
-                              {koli.items.map((item, index) => (
-                                item.photo_url ? (
-                                  <button
-                                    key={`${item.id}-${koli.koli_sequence}-${index}`}
-                                    type="button"
-                                    onClick={() => setPreviewPhotoUrl(item.photo_url)}
-                                    style={{ ...styles.photoButton, width: '44px', height: '44px' }}
-                                    aria-label={`Preview ${getModelLabel(item)} photo`}
-                                    title="Preview photo"
-                                  >
-                                    <img src={item.photo_url} alt={getModelLabel(item)} style={{ ...styles.photoThumb, width: '44px', height: '44px' }} />
-                                  </button>
-                                ) : (
-                                  <span key={`${item.id}-${koli.koli_sequence}-${index}`} style={{ ...styles.photoEmpty, width: '44px', height: '44px' }}>NO</span>
-                                )
-                              ))}
-                            </div>
-                          </td>
-                          <td style={styles.koliTd}>
-                            <div style={styles.koliInsideStack}>
-                              {koli.items.map((item, index) => (
-                                <div key={`${item.id}-${koli.koli_sequence}-inside-${index}`} style={styles.koliInsideItem}>
-                                  <span style={styles.koliBrandText}>{item.brand_name || 'UNBRANDED'}</span>
-                                  <span style={styles.koliMetaText}>{formatItemTypeSubcategoryLabel(item.category_name)}</span>
-                                  <span style={styles.koliMetaText}>{getModelDashLabel(item)}</span>
-                                </div>
-                              ))}
-                            </div>
-                          </td>
-                          <td style={{ ...styles.koliTd, ...styles.koliCenterCell }}>
-                            <div style={styles.koliQtyStack}>
-                              {koli.items.map((item, index) => (
-                                <span
-                                  key={`${item.id}-${koli.koli_sequence}-qty-${index}`}
-                                  style={styles.koliQtyBadge}
-                                >
-                                  {formatNumber(item.qty)}
+                      return koli.items.map((item, index) => {
+                        const isFirstItem = index === 0
+                        const itemCellStyle = isFirstItem ? styles.koliTd : styles.koliItemTd
+
+                        return (
+                          <tr key={`${koli.key || koli.koli_sequence}-${item.id || getModelDashLabel(item)}-${index}`}>
+                            {isFirstItem ? (
+                              <td rowSpan={rowSpan} style={{ ...styles.koliTd, ...styles.koliCenterCell }}>
+                                <span style={styles.koliCellStack}>
+                                  <span>{getKoliDisplayLabel(koli)}</span>
+                                  {koli.has_transfer_adjustment ? <span style={styles.transferAdjustmentPill}>ADJ</span> : null}
+                                  {koli.is_sample ? <span style={styles.samplePill}>Sample</span> : null}
                                 </span>
-                              ))}
-                            </div>
-                          </td>
-                          <td style={{ ...styles.koliTd, ...styles.koliCenterCell }}>{picNames.length ? picNames.join(', ') : '-'}</td>
-                          <td style={{ ...styles.koliTd, ...styles.koliCenterCell }}>
-                            <button type="button" onClick={() => handlePrintPostedKoli(koli)} style={styles.printButton}>
-                              Print
-                            </button>
-                          </td>
-                        </tr>
-                      )
+                              </td>
+                            ) : null}
+                            <td style={{ ...itemCellStyle, ...styles.koliPictureCell }}>
+                              {item.photo_url ? (
+                                <button
+                                  type="button"
+                                  onClick={() => setPreviewPhotoUrl(item.photo_url)}
+                                  style={{ ...styles.photoButton, width: '44px', height: '44px' }}
+                                  aria-label={`Preview ${getModelLabel(item)} photo`}
+                                  title="Preview photo"
+                                >
+                                  <img src={item.photo_url} alt={getModelLabel(item)} style={{ ...styles.photoThumb, width: '44px', height: '44px' }} />
+                                </button>
+                              ) : (
+                                <span style={{ ...styles.photoEmpty, width: '44px', height: '44px' }}>NO</span>
+                              )}
+                            </td>
+                            <td style={itemCellStyle}>
+                              <div style={styles.koliInsideItem}>
+                                <span style={styles.koliBrandText}>{item.brand_name || 'UNBRANDED'}</span>
+                                <span style={styles.koliMetaText}>{formatItemTypeSubcategoryLabel(item.category_name)}</span>
+                                <span style={styles.koliMetaText}>{getModelDashLabel(item)}</span>
+                              </div>
+                            </td>
+                            <td style={{ ...itemCellStyle, ...styles.koliCenterCell, ...styles.koliQtyCell }}>
+                              <span style={styles.koliQtyBadge}>{formatNumber(item.qty)}</span>
+                            </td>
+                            {isFirstItem ? (
+                              <td rowSpan={rowSpan} style={{ ...styles.koliTd, ...styles.koliCenterCell }}>
+                                {picNames.length ? picNames.join(', ') : '-'}
+                              </td>
+                            ) : null}
+                            {isFirstItem ? (
+                              <td rowSpan={rowSpan} style={{ ...styles.koliTd, ...styles.koliCenterCell }}>
+                                <button type="button" onClick={() => handlePrintPostedKoli(koli)} style={styles.printButton}>
+                                  Print
+                                </button>
+                              </td>
+                            ) : null}
+                          </tr>
+                        )
+                      })
                     })}
                   </tbody>
                 </table>

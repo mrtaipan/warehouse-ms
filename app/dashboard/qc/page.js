@@ -1327,6 +1327,7 @@ export default function QcDashboardPage() {
   const [arklineProductFilter, setArklineProductFilter] = useState('')
   const [brandFilter, setBrandFilter] = useState('')
   const [categoryFilter, setCategoryFilter] = useState('')
+  const [sampleFilter, setSampleFilter] = useState('')
   const [allTime, setAllTime] = useState(true)
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
@@ -1683,9 +1684,12 @@ export default function QcDashboardPage() {
         const matchesGrn = !grnFilter || item.inbound?.grn_number === grnFilter
         const matchesBrand = !brandFilter || getBrandLabel(item) === brandFilter
         const matchesCategory = !categoryFilter || getCategoryLabel(item) === categoryFilter
-        return matchesDate && matchesGrn && matchesBrand && matchesCategory
+        const matchesSample =
+          !sampleFilter ||
+          (sampleFilter === 'yes' ? isRegularSampleTask(item) : !isRegularSampleTask(item))
+        return matchesDate && matchesGrn && matchesBrand && matchesCategory && matchesSample
       }),
-    [brandFilter, categoryFilter, dateFrom, dateTo, grnFilter, hasInvalidDateRange, qcItems]
+    [brandFilter, categoryFilter, dateFrom, dateTo, grnFilter, hasInvalidDateRange, qcItems, sampleFilter]
   )
 
   const filteredArklineItems = useMemo(
@@ -1710,9 +1714,12 @@ export default function QcDashboardPage() {
         const matchesGrn = !grnFilter || item.inbound?.grn_number === grnFilter
         const matchesBrand = !brandFilter || getConfirmBrandLabel(item) === brandFilter
         const matchesCategory = !categoryFilter || getConfirmCategoryLabel(item) === categoryFilter
-        return matchesDate && matchesGrn && matchesBrand && matchesCategory
+        const matchesSample =
+          !sampleFilter ||
+          (sampleFilter === 'yes' ? Boolean(item.is_sample) : !Boolean(item.is_sample))
+        return matchesDate && matchesGrn && matchesBrand && matchesCategory && matchesSample
       }),
-    [brandFilter, categoryFilter, dateFrom, dateTo, grnFilter, hasInvalidDateRange, qcConfirmRows]
+    [brandFilter, categoryFilter, dateFrom, dateTo, grnFilter, hasInvalidDateRange, qcConfirmRows, sampleFilter]
   )
 
   const filteredReturnAdjustmentRows = useMemo(
@@ -1726,9 +1733,12 @@ export default function QcDashboardPage() {
         const matchesGrn = !grnFilter || item.inbound?.grn_number === grnFilter
         const matchesBrand = !brandFilter || getReturnBrandLabel(item) === brandFilter
         const matchesCategory = !categoryFilter || getReturnCategoryLabel(item) === categoryFilter
-        return matchesDate && matchesGrn && matchesBrand && matchesCategory
+        const matchesSample =
+          !sampleFilter ||
+          (sampleFilter === 'yes' ? Boolean(item.is_sample) : !Boolean(item.is_sample))
+        return matchesDate && matchesGrn && matchesBrand && matchesCategory && matchesSample
       }),
-    [brandFilter, categoryFilter, dateFrom, dateTo, grnFilter, hasInvalidDateRange, returnRows]
+    [brandFilter, categoryFilter, dateFrom, dateTo, grnFilter, hasInvalidDateRange, returnRows, sampleFilter]
   )
 
   const filteredRegularPauseLogs = useMemo(
@@ -1738,9 +1748,12 @@ export default function QcDashboardPage() {
         const matchesGrn = !grnFilter || item.qc_item?.inbound?.grn_number === grnFilter
         const matchesBrand = !brandFilter || getBrandLabel(item.qc_item || {}) === brandFilter
         const matchesCategory = !categoryFilter || getCategoryLabel(item.qc_item || {}) === categoryFilter
-        return Boolean(item.qc_item_id) && !isRegularSampleTask(item.qc_item || {}) && matchesDate && matchesGrn && matchesBrand && matchesCategory
+        const matchesSample =
+          !sampleFilter ||
+          (sampleFilter === 'yes' ? isRegularSampleTask(item.qc_item || {}) : !isRegularSampleTask(item.qc_item || {}))
+        return Boolean(item.qc_item_id) && matchesDate && matchesGrn && matchesBrand && matchesCategory && matchesSample
       }),
-    [brandFilter, categoryFilter, dateFrom, dateTo, grnFilter, hasInvalidDateRange, pauseLogs]
+    [brandFilter, categoryFilter, dateFrom, dateTo, grnFilter, hasInvalidDateRange, pauseLogs, sampleFilter]
   )
 
   const filteredArklinePauseLogs = useMemo(
@@ -2922,6 +2935,9 @@ export default function QcDashboardPage() {
                 <input
                   list="qc-dashboard-grn-options"
                   value={grnFilter}
+                  onClick={() => {
+                    if (grnFilter) setGrnFilter('')
+                  }}
                   onChange={(event) => setGrnFilter(event.target.value)}
                   style={styles.input}
                   placeholder="All GRN"
@@ -2938,6 +2954,9 @@ export default function QcDashboardPage() {
                 <input
                   list="qc-dashboard-brand-options"
                   value={brandFilter}
+                  onClick={() => {
+                    if (brandFilter) setBrandFilter('')
+                  }}
                   onChange={(event) => setBrandFilter(event.target.value)}
                   style={styles.input}
                   placeholder="All Brand"
@@ -2954,6 +2973,9 @@ export default function QcDashboardPage() {
                 <input
                   list="qc-dashboard-category-options"
                   value={categoryFilter}
+                  onClick={() => {
+                    if (categoryFilter) setCategoryFilter('')
+                  }}
                   onChange={(event) => setCategoryFilter(event.target.value)}
                   style={styles.input}
                   placeholder="All Category"
@@ -2963,6 +2985,19 @@ export default function QcDashboardPage() {
                     <option key={item} value={item} />
                   ))}
                 </datalist>
+              </div>
+
+              <div style={styles.field}>
+                <label style={styles.label}>Sample</label>
+                <select
+                  value={sampleFilter}
+                  onChange={(event) => setSampleFilter(event.target.value)}
+                  style={styles.select}
+                >
+                  <option value="">All</option>
+                  <option value="yes">Yes</option>
+                  <option value="no">No</option>
+                </select>
               </div>
             </>
           )}

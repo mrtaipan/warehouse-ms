@@ -601,6 +601,22 @@ const styles = {
     opacity: 0.45,
     cursor: 'not-allowed',
   },
+  filterStack: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '10px',
+  },
+  filterSearchInput: {
+    height: '34px',
+    width: '100%',
+    padding: '0 10px',
+    border: '1px solid #cbd5e1',
+    borderRadius: '8px',
+    background: '#fff',
+    color: '#0f172a',
+    fontSize: '12px',
+    fontWeight: '700',
+  },
   buttonRow: {
     display: 'flex',
     justifyContent: 'flex-end',
@@ -896,6 +912,10 @@ function matchesResultFilterValues(row, qty, filters, ignoredFilter = '') {
     return false
   }
 
+  if (ignoredFilter !== 'search' && filters.search && !normalizeFilterValue(getModelLabel(row)).includes(normalizeFilterValue(filters.search))) {
+    return false
+  }
+
   if (ignoredFilter !== 'grade' && filters.grade && String(row.grade || '').toUpperCase() !== filters.grade) {
     return false
   }
@@ -973,6 +993,7 @@ export default function QcConfirmationRejectionPage() {
     categoryId: '',
     modelName: '',
     grade: '',
+    search: '',
   })
 
   const loadData = useCallback(async (silent = false) => {
@@ -1290,7 +1311,8 @@ export default function QcConfirmationRejectionPage() {
     resultFilters.brandId ||
     resultFilters.categoryId ||
     resultFilters.modelName ||
-    resultFilters.grade
+    resultFilters.grade ||
+    resultFilters.search
   )
 
   function updateResultFilter(name, value) {
@@ -1306,6 +1328,7 @@ export default function QcConfirmationRejectionPage() {
       categoryId: '',
       modelName: '',
       grade: '',
+      search: '',
     })
   }
 
@@ -1781,64 +1804,73 @@ export default function QcConfirmationRejectionPage() {
         {grnFilter && !sourceRows.length ? <p style={styles.emptyText}>No Grade B / C source found for this GRN.</p> : null}
 
         {grnFilter && sourceRows.length ? (
-          <div style={styles.breakdownFilters}>
-            <select
-              value={resultFilters.brandId}
-              onChange={(event) => updateResultFilter('brandId', event.target.value)}
-              style={styles.filterSelect}
-              aria-label="Filter by brand"
-            >
-              <option value="">All brands</option>
-              {brandFilterOptions.map((brand) => (
-                <option key={brand.id} value={brand.id}>{brand.name}</option>
-              ))}
-            </select>
-            <select
-              value={resultFilters.categoryId}
-              onChange={(event) => updateResultFilter('categoryId', event.target.value)}
-              style={styles.filterSelect}
-              aria-label="Filter by category"
-            >
-              <option value="">All categories</option>
-              {categoryFilterOptions.map((category) => (
-                <option key={category.id} value={category.id}>{category.name}</option>
-              ))}
-            </select>
-            <select
-              value={resultFilters.modelName}
-              onChange={(event) => updateResultFilter('modelName', event.target.value)}
-              style={styles.filterSelect}
-              aria-label="Filter by model"
-            >
-              <option value="">All models</option>
-              {modelFilterOptions.map((modelName) => (
-                <option key={modelName} value={modelName}>{modelName}</option>
-              ))}
-            </select>
-            <select
-              value={resultFilters.grade}
-              onChange={(event) => updateResultFilter('grade', event.target.value)}
-              style={styles.filterSelect}
-              aria-label="Filter by grade"
-            >
-              <option value="">All grades</option>
-              {gradeFilterOptions.map((grade) => (
-                <option key={grade} value={grade}>Grade {grade}</option>
-              ))}
-            </select>
-            <button
-              type="button"
-              onClick={resetResultFilters}
-              disabled={!hasResultFilters}
-              style={{
-                ...styles.resetFilterButton,
-                ...(!hasResultFilters ? styles.resetFilterButtonDisabled : {}),
-              }}
-              aria-label="Reset filters"
-              title="Reset filters"
-            >
-              <ResetIcon />
-            </button>
+          <div style={styles.filterStack}>
+            <div style={styles.breakdownFilters}>
+              <select
+                value={resultFilters.brandId}
+                onChange={(event) => updateResultFilter('brandId', event.target.value)}
+                style={styles.filterSelect}
+                aria-label="Filter by brand"
+              >
+                <option value="">All brands</option>
+                {brandFilterOptions.map((brand) => (
+                  <option key={brand.id} value={brand.id}>{brand.name}</option>
+                ))}
+              </select>
+              <select
+                value={resultFilters.categoryId}
+                onChange={(event) => updateResultFilter('categoryId', event.target.value)}
+                style={styles.filterSelect}
+                aria-label="Filter by category"
+              >
+                <option value="">All categories</option>
+                {categoryFilterOptions.map((category) => (
+                  <option key={category.id} value={category.id}>{category.name}</option>
+                ))}
+              </select>
+              <select
+                value={resultFilters.modelName}
+                onChange={(event) => updateResultFilter('modelName', event.target.value)}
+                style={styles.filterSelect}
+                aria-label="Filter by model"
+              >
+                <option value="">All models</option>
+                {modelFilterOptions.map((modelName) => (
+                  <option key={modelName} value={modelName}>{modelName}</option>
+                ))}
+              </select>
+              <select
+                value={resultFilters.grade}
+                onChange={(event) => updateResultFilter('grade', event.target.value)}
+                style={styles.filterSelect}
+                aria-label="Filter by grade"
+              >
+                <option value="">All grades</option>
+                {gradeFilterOptions.map((grade) => (
+                  <option key={grade} value={grade}>Grade {grade}</option>
+                ))}
+              </select>
+              <button
+                type="button"
+                onClick={resetResultFilters}
+                disabled={!hasResultFilters}
+                style={{
+                  ...styles.resetFilterButton,
+                  ...(!hasResultFilters ? styles.resetFilterButtonDisabled : {}),
+                }}
+                aria-label="Reset filters"
+                title="Reset filters"
+              >
+                <ResetIcon />
+              </button>
+            </div>
+            <input
+              value={resultFilters.search}
+              onChange={(event) => updateResultFilter('search', event.target.value)}
+              style={styles.filterSearchInput}
+              placeholder="Search model name or variant"
+              aria-label="Search model name or variant"
+            />
           </div>
         ) : null}
         {grnFilter && sourceRows.length && !filteredSourceRows.length ? <p style={styles.emptyText}>No Grade B / C source matches this filter.</p> : null}
