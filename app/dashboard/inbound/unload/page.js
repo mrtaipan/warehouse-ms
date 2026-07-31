@@ -60,6 +60,20 @@ function getVariantDisplayName(variant) {
   return String(variant?.selling_name || variant?.variant_name || variant?.variant_label || variant?.variant_code || 'Variant').trim()
 }
 
+function compareModelsByCode(a, b) {
+  const codeCompare = String(a?.model_code || '').localeCompare(String(b?.model_code || ''), undefined, {
+    numeric: true,
+    sensitivity: 'base',
+  })
+
+  if (codeCompare !== 0) return codeCompare
+
+  return String(a?.model_name || '').localeCompare(String(b?.model_name || ''), undefined, {
+    numeric: true,
+    sensitivity: 'base',
+  })
+}
+
 function normalizeVariantLookupValue(value) {
   return String(value ?? '').trim().toLowerCase()
 }
@@ -279,11 +293,30 @@ function PencilIcon() {
   )
 }
 
+function MoveIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M5 7h9" />
+      <path d="m11 4 3 3-3 3" />
+      <path d="M19 17h-9" />
+      <path d="m13 14-3 3 3 3" />
+    </svg>
+  )
+}
+
 function XIcon() {
   return (
     <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <path d="M18 6 6 18" />
       <path d="m6 6 12 12" />
+    </svg>
+  )
+}
+
+function ChevronDownIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="m6 9 6 6 6-6" />
     </svg>
   )
 }
@@ -733,22 +766,23 @@ const styles = {
   tableLineStack: {
     display: 'flex',
     flexDirection: 'column',
-    gap: '8px',
+    gap: '10px',
   },
   tablePhotoLine: {
-    minHeight: '48px',
+    minHeight: '64px',
     display: 'flex',
     alignItems: 'center',
+    justifyContent: 'center',
   },
   tableDetailLine: {
-    minHeight: '48px',
+    minHeight: '64px',
     display: 'flex',
     flexDirection: 'column',
     justifyContent: 'center',
-    gap: '3px',
+    gap: '4px',
   },
   tableQtyLine: {
-    minHeight: '48px',
+    minHeight: '64px',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
@@ -965,8 +999,8 @@ const styles = {
   },
   modelGrid: {
     display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))',
-    gap: '12px',
+    gridTemplateColumns: 'repeat(auto-fill, minmax(136px, 1fr))',
+    gap: '10px',
   },
   modelGroupList: {
     display: 'flex',
@@ -981,9 +1015,45 @@ const styles = {
   modelGroupHeader: {
     display: 'flex',
     justifyContent: 'space-between',
-    alignItems: 'baseline',
+    alignItems: 'center',
     gap: '10px',
     padding: '0 2px',
+  },
+  modelGroupToggle: {
+    minHeight: '32px',
+    border: 'none',
+    background: 'transparent',
+    color: '#0f172a',
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '8px',
+    padding: 0,
+    cursor: 'pointer',
+    textAlign: 'left',
+  },
+  modelGroupChevron: {
+    width: '22px',
+    height: '22px',
+    borderRadius: '999px',
+    background: '#e2e8f0',
+    color: '#334155',
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    transition: 'transform 0.16s ease',
+    flex: '0 0 auto',
+  },
+  modelGroupCount: {
+    color: '#94a3b8',
+    fontSize: '11px',
+    fontWeight: '800',
+  },
+  modelGroupMetaRow: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: '8px',
+    minWidth: 0,
   },
   modelGroupTitle: {
     color: '#0f172a',
@@ -997,12 +1067,44 @@ const styles = {
     textAlign: 'right',
     lineHeight: 1.3,
   },
+  chooseSearchInput: {
+    height: '40px',
+    padding: '0 12px',
+    border: '1px solid #cbd5e1',
+    borderRadius: '10px',
+    background: '#fff',
+    color: '#111827',
+    WebkitTextFillColor: '#111827',
+    caretColor: '#111827',
+    fontSize: '14px',
+    width: '100%',
+  },
+  modelHeaderEditButton: {
+    width: '30px',
+    height: '30px',
+    border: '1px solid #cbd5e1',
+    borderRadius: '8px',
+    background: '#fff',
+    color: '#0f172a',
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    cursor: 'pointer',
+    flex: '0 0 auto',
+  },
+  chooseModalActions: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: '8px',
+    flexWrap: 'wrap',
+  },
   modelOptionCard: {
     display: 'flex',
     flexDirection: 'column',
-    gap: '10px',
-    padding: '12px',
-    borderRadius: '12px',
+    gap: '8px',
+    padding: '10px',
+    borderRadius: '10px',
     border: '1px solid #d1d5db',
     background: '#fff',
     cursor: 'pointer',
@@ -1015,9 +1117,16 @@ const styles = {
     gap: '8px',
     marginTop: '2px',
   },
+  modelOptionButtonGroup: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '6px',
+    flexWrap: 'wrap',
+  },
   variantEditButton: {
     height: '30px',
-    padding: '0 10px',
+    minWidth: '30px',
+    padding: '0 8px',
     border: '1px solid #cbd5e1',
     borderRadius: '8px',
     background: '#fff',
@@ -1038,18 +1147,13 @@ const styles = {
     fontWeight: '900',
     textTransform: 'uppercase',
   },
-  tapHint: {
-    color: '#94a3b8',
-    fontSize: '11px',
-    fontWeight: '750',
-  },
   modelOptionTitle: {
-    fontSize: '14px',
+    fontSize: '13px',
     fontWeight: '700',
     color: '#111827',
   },
   modelOptionMeta: {
-    fontSize: '12px',
+    fontSize: '11px',
     color: '#6b7280',
   },
   label: {
@@ -2006,11 +2110,20 @@ const styles = {
   },
   modelThumb: {
     width: '100%',
-    height: '120px',
-    borderRadius: '10px',
+    height: '88px',
+    borderRadius: '8px',
     objectFit: 'cover',
     border: '1px solid #e5e7eb',
     background: '#fff',
+  },
+  modelThumbButton: {
+    width: '100%',
+    padding: 0,
+    border: 'none',
+    background: 'transparent',
+    cursor: 'zoom-in',
+    display: 'block',
+    textAlign: 'left',
   },
   summaryThumb: {
     width: '72px',
@@ -2052,6 +2165,8 @@ export default function UnloadPage() {
   const [selectedBrandId, setSelectedBrandId] = useState('')
   const [brandSearch, setBrandSearch] = useState('')
   const [showBrandResults, setShowBrandResults] = useState(false)
+  const [variantSearch, setVariantSearch] = useState('')
+  const [collapsedModelIds, setCollapsedModelIds] = useState([])
   const [level0Id, setLevel0Id] = useState('')
   const [level1Id, setLevel1Id] = useState('')
   const [level2Id, setLevel2Id] = useState('')
@@ -2066,9 +2181,20 @@ export default function UnloadPage() {
   const [returnRows, setReturnRows] = useState([])
   const [showChooseModelModal, setShowChooseModelModal] = useState(false)
   const [showModelModal, setShowModelModal] = useState(false)
+  const [showEditModelModal, setShowEditModelModal] = useState(false)
+  const [showMoveModelModal, setShowMoveModelModal] = useState(false)
   const [showPerformanceModal, setShowPerformanceModal] = useState(false)
   const [modelDraft, setModelDraft] = useState(createModelDraft)
   const [editingVariantContext, setEditingVariantContext] = useState(null)
+  const [editingModelContext, setEditingModelContext] = useState(null)
+  const [modelEditDraft, setModelEditDraft] = useState({ model_name: '', model_notes: '' })
+  const [movingVariantContext, setMovingVariantContext] = useState(null)
+  const [moveModelDraft, setMoveModelDraft] = useState({
+    model_id: '',
+    model_name: '',
+    model_notes: '',
+    is_new_model: false,
+  })
   const [variantPhotoFile, setVariantPhotoFile] = useState(null)
   const [showVariantPhotoOptions, setShowVariantPhotoOptions] = useState(false)
   const [loading, setLoading] = useState(true)
@@ -2076,7 +2202,11 @@ export default function UnloadPage() {
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
   const [modelModalError, setModelModalError] = useState('')
+  const [modelEditError, setModelEditError] = useState('')
+  const [moveModelError, setMoveModelError] = useState('')
   const [previewImage, setPreviewImage] = useState(null)
+  const [supportsUnloadProductModel, setSupportsUnloadProductModel] = useState(false)
+  const [supportsUnloadProductModelVariant, setSupportsUnloadProductModelVariant] = useState(false)
   const [supportsUnloadVariant, setSupportsUnloadVariant] = useState(false)
   const [supportsUnloadVariantCode, setSupportsUnloadVariantCode] = useState(false)
   const [supportsUnloadVariantName, setSupportsUnloadVariantName] = useState(false)
@@ -2208,6 +2338,8 @@ export default function UnloadPage() {
       }
 
       const [
+        { error: unloadProductModelError },
+        { error: unloadProductModelVariantError },
         { error: unloadVariantError },
         { error: unloadVariantCodeError },
         { error: unloadVariantNameError },
@@ -2215,6 +2347,8 @@ export default function UnloadPage() {
         { error: returnVariantCodeError },
         { error: returnVariantNameError },
       ] = await Promise.all([
+        supabase.from('inbound_unload').select('product_model_id').limit(1),
+        supabase.from('inbound_unload').select('product_model_variant_id').limit(1),
         supabase.from('inbound_unload').select('variant_label').limit(1),
         supabase.from('inbound_unload').select('variant_code').limit(1),
         supabase.from('inbound_unload').select('variant_name').limit(1),
@@ -2223,6 +2357,8 @@ export default function UnloadPage() {
         supabase.from('warehouse_returns').select('variant_name').limit(1),
       ])
 
+      setSupportsUnloadProductModel(!unloadProductModelError)
+      setSupportsUnloadProductModelVariant(!unloadProductModelVariantError)
       setSupportsUnloadVariant(!unloadVariantError)
       setSupportsUnloadVariantCode(!unloadVariantCodeError)
       setSupportsUnloadVariantName(!unloadVariantNameError)
@@ -2256,6 +2392,8 @@ export default function UnloadPage() {
             'inbound_id',
             'brand_id',
             'category_id',
+            supportsUnloadProductModel ? 'product_model_id' : null,
+            supportsUnloadProductModelVariant ? 'product_model_variant_id' : null,
             'model_name',
             'qty',
             'pic_name',
@@ -2321,6 +2459,8 @@ export default function UnloadPage() {
     supportsUnloadVariant,
     supportsUnloadVariantCode,
     supportsUnloadVariantName,
+    supportsUnloadProductModel,
+    supportsUnloadProductModelVariant,
   ])
 
   const categoryMaps = buildCategoryMaps(categories)
@@ -2386,9 +2526,7 @@ export default function UnloadPage() {
         Number(item.category_id || 0) === Number(selectedCategory.id)
       )
     })
-    .sort((a, b) => {
-      return String(a.model_name || '').localeCompare(String(b.model_name || ''))
-    })
+    .sort(compareModelsByCode)
   const isEditingVariant = Boolean(editingVariantContext?.variant?.id)
   const registryUsesNewModel = !isEditingVariant && (modelDraft.is_new_model || filteredModelOptions.length === 0)
   const registrySelectedModel = modelDraft.model_id
@@ -2396,12 +2534,35 @@ export default function UnloadPage() {
       filteredModelOptions.find((item) => String(item.id) === String(modelDraft.model_id)) ||
       null
     : null
+  const moveTargetModelOptions = movingVariantContext?.model?.id
+    ? filteredModelOptions.filter((model) => Number(model.id || 0) !== Number(movingVariantContext.model.id || 0))
+    : filteredModelOptions
+  const moveUsesNewModel = moveModelDraft.is_new_model || moveTargetModelOptions.length === 0
+  const moveSelectedModel = moveModelDraft.model_id
+    ? moveTargetModelOptions.find((item) => String(item.id) === String(moveModelDraft.model_id)) || null
+    : null
   const filteredVariantOptions = useMemo(
-    () =>
-      filteredModelOptions
+    () => {
+      const query = variantSearch.trim().toLowerCase()
+
+      return filteredModelOptions
         .flatMap((model) =>
           productModelVariants
             .filter((variant) => Number(variant.product_model_id || 0) === Number(model.id || 0))
+            .filter((variant) => {
+              if (!query) return true
+
+              return [
+                model.model_code,
+                model.model_name,
+                variant.variant_code,
+                variant.variant_label,
+                variant.variant_name,
+                variant.selling_name,
+              ]
+                .map((value) => String(value || '').toLowerCase())
+                .some((value) => value.includes(query))
+            })
             .map((variant) => ({
               model,
               variant,
@@ -2410,15 +2571,16 @@ export default function UnloadPage() {
             }))
         )
         .sort((a, b) => {
-          const modelCompare = String(a.model.model_name || '').localeCompare(String(b.model.model_name || ''))
+          const modelCompare = compareModelsByCode(a.model, b.model)
           const variantCompare = String(getVariantProductId(a.variant) || getVariantDisplayName(a.variant)).localeCompare(
             String(getVariantProductId(b.variant) || getVariantDisplayName(b.variant))
           )
 
           if (modelCompare !== 0) return modelCompare
           return variantCompare
-        }),
-    [filteredModelOptions, productModelVariants]
+        })
+    },
+    [filteredModelOptions, productModelVariants, variantSearch]
   )
   const filteredVariantGroups = useMemo(() => {
     const variantsByModelId = new Map()
@@ -2872,6 +3034,11 @@ export default function UnloadPage() {
   }
 
   function getMatchingModelForRow(row) {
+    if (row?.product_model_id) {
+      const matchedById = productModels.find((model) => Number(model.id || 0) === Number(row.product_model_id || 0))
+      if (matchedById) return matchedById
+    }
+
     const rowModelName = normalizeVariantLookupValue(row.model_name)
 
     return productModels.find((model) =>
@@ -2911,6 +3078,13 @@ export default function UnloadPage() {
   }
 
   function getVariantForRow(row) {
+    if (row?.product_model_variant_id) {
+      const matchedById = productModelVariants.find(
+        (variant) => Number(variant.id || 0) === Number(row.product_model_variant_id || 0)
+      )
+      if (matchedById) return matchedById
+    }
+
     const matchingModel = getMatchingModelForRow(row)
     return findVariantForModel(matchingModel, getRowVariantIdentifier(row), row.photo_url)
   }
@@ -3071,7 +3245,7 @@ export default function UnloadPage() {
         model_name: row.model_name,
         photo_url: row.photo_url || '',
       }
-    const matchingVariant = findVariantForModel(matchingModel, getRowVariantIdentifier(row), row.photo_url)
+    const matchingVariant = getVariantForRow(row) || findVariantForModel(matchingModel, getRowVariantIdentifier(row), row.photo_url)
     const variantIdentifier = getVariantProductId(matchingVariant) || getRowVariantIdentifier(row)
 
     setSelectedBrandId(row.brand_id ? String(row.brand_id) : '')
@@ -3236,6 +3410,51 @@ export default function UnloadPage() {
     setShowModelModal(true)
   }
 
+  function openModelEditor(model) {
+    if (!canRegistryModelVariant) {
+      setModelEditError('This role can choose existing variants, but cannot edit models.')
+      return
+    }
+
+    setEditingModelContext(model)
+    setModelEditDraft({
+      model_name: String(model?.model_name || '').toUpperCase(),
+      model_notes: model?.model_notes || '',
+    })
+    setModelEditError('')
+    setShowChooseModelModal(false)
+    setShowEditModelModal(true)
+  }
+
+  function openMoveModelModal(model, variant) {
+    if (!canRegistryModelVariant) {
+      setMoveModelError('This role can choose existing variants, but cannot move variants between models.')
+      return
+    }
+
+    setMovingVariantContext({ model, variant })
+    setMoveModelDraft({
+      model_id: '',
+      model_name: '',
+      model_notes: '',
+      is_new_model: false,
+    })
+    setMoveModelError('')
+    setShowChooseModelModal(false)
+    setShowMoveModelModal(true)
+  }
+
+  function toggleModelCollapse(modelId) {
+    setCollapsedModelIds((current) => {
+      const id = String(modelId || '')
+      if (!id) return current
+
+      return current.includes(id)
+        ? current.filter((item) => item !== id)
+        : [...current, id]
+    })
+  }
+
   const refreshUnloadData = useCallback(async (inboundId) => {
     const [
       { data: refreshedUnloadRows, error: refreshUnloadError },
@@ -3248,6 +3467,8 @@ export default function UnloadPage() {
           'inbound_id',
           'brand_id',
           'category_id',
+          supportsUnloadProductModel ? 'product_model_id' : null,
+          supportsUnloadProductModelVariant ? 'product_model_variant_id' : null,
           'model_name',
           'qty',
           'pic_name',
@@ -3302,6 +3523,8 @@ export default function UnloadPage() {
     supportsUnloadVariant,
     supportsUnloadVariantCode,
     supportsUnloadVariantName,
+    supportsUnloadProductModel,
+    supportsUnloadProductModelVariant,
   ])
 
   useEffect(() => {
@@ -3667,6 +3890,362 @@ export default function UnloadPage() {
     printWindow.document.close()
   }
 
+  function handleSaveModelOnly() {
+    setModelEditError('')
+
+    if (!canRegistryModelVariant) {
+      setModelEditError('This role can choose existing variants, but cannot edit models.')
+      return
+    }
+
+    const targetModel = editingModelContext
+    const normalizedModelName = modelEditDraft.model_name.trim().toUpperCase()
+
+    if (!targetModel?.id) {
+      setModelEditError('Choose a model to edit.')
+      return
+    }
+
+    if (!normalizedModelName) {
+      setModelEditError('Model name is required.')
+      return
+    }
+
+    const duplicateModel = productModels.find(
+      (model) =>
+        Number(model.id || 0) !== Number(targetModel.id || 0) &&
+        Number(model.brand_id || 0) === Number(targetModel.brand_id || 0) &&
+        Number(model.category_id || 0) === Number(targetModel.category_id || 0) &&
+        String(model.model_name || '').trim().toUpperCase() === normalizedModelName
+    )
+
+    if (duplicateModel) {
+      setModelEditError('A model with this name already exists for this brand and category.')
+      return
+    }
+
+    const saveModelOnly = async () => {
+      setSaving(true)
+
+      const previousModelName = String(targetModel.model_name || '').trim()
+      const modelPayload = {
+        model_name: normalizedModelName,
+        model_notes: modelEditDraft.model_notes.trim() || null,
+        updated_at: new Date().toISOString(),
+      }
+
+      const { data: updatedModel, error: updateModelError } = await supabase
+        .from('dir_product_models')
+        .update(modelPayload)
+        .eq('id', targetModel.id)
+        .select('id, brand_id, category_id, model_code, model_name, model_notes')
+        .single()
+
+      if (updateModelError) {
+        setModelEditError(updateModelError.message)
+        setSaving(false)
+        return
+      }
+
+      if (selectedInbound?.id && previousModelName) {
+        const snapshotUpdates = [
+          supabase
+            .from('inbound_unload')
+            .update({ model_name: updatedModel.model_name })
+            .eq('inbound_id', selectedInbound.id)
+            .eq('brand_id', targetModel.brand_id)
+            .eq('category_id', targetModel.category_id)
+            .eq('model_name', previousModelName),
+          supabase
+            .from('warehouse_returns')
+            .update({ model_name: updatedModel.model_name })
+            .eq('inbound_id', selectedInbound.id)
+            .eq('source_phase', 'inbound')
+            .eq('brand_id', targetModel.brand_id)
+            .eq('category_id', targetModel.category_id)
+            .eq('model_name', previousModelName),
+        ]
+
+        const snapshotResults = await Promise.all(snapshotUpdates)
+        const snapshotError = snapshotResults.find((result) => result.error)?.error
+
+        if (snapshotError) {
+          setModelEditError(snapshotError.message)
+          setSaving(false)
+          return
+        }
+
+        await refreshUnloadData(selectedInbound.id)
+      }
+
+      setProductModels((prev) =>
+        prev.map((model) => (Number(model.id) === Number(updatedModel.id) ? updatedModel : model))
+      )
+      setCurrentKoliItems((prev) =>
+        prev.map((item) =>
+          Number(item.brand_id || 0) === Number(targetModel.brand_id || 0) &&
+          Number(item.category_id || 0) === Number(targetModel.category_id || 0) &&
+          String(item.model_name || '').trim() === previousModelName
+            ? { ...item, model_name: updatedModel.model_name }
+            : item
+        )
+      )
+      if (Number(selectedModel?.id || 0) === Number(updatedModel.id || 0)) {
+        setSelectedModel((prev) => (prev ? { ...prev, ...updatedModel } : prev))
+      }
+      setEditingModelContext(null)
+      setModelEditDraft({ model_name: '', model_notes: '' })
+      setShowEditModelModal(false)
+      setModelEditError('')
+      setError('')
+      setSuccess('Model updated successfully.')
+      setSaving(false)
+    }
+
+    saveModelOnly()
+  }
+
+  function handleMoveVariantToModel() {
+    setMoveModelError('')
+
+    if (!canRegistryModelVariant) {
+      setMoveModelError('This role can choose existing variants, but cannot move variants between models.')
+      return
+    }
+
+    const sourceModel = movingVariantContext?.model || null
+    const sourceVariant = movingVariantContext?.variant || null
+    const previousVariantCode = getVariantProductId(sourceVariant)
+    const normalizedModelName = moveModelDraft.model_name.trim().toUpperCase()
+
+    if (!sourceModel?.id || !sourceVariant?.id) {
+      setMoveModelError('Choose a variant to move.')
+      return
+    }
+
+    if (!selectedBrandId || !selectedCategory) {
+      setMoveModelError('Choose brand and category first.')
+      return
+    }
+
+    if (moveUsesNewModel && !normalizedModelName) {
+      setMoveModelError('New model name is required.')
+      return
+    }
+
+    if (!moveUsesNewModel && !moveSelectedModel) {
+      setMoveModelError('Choose target model, or create a new model.')
+      return
+    }
+
+    const moveVariant = async () => {
+      setSaving(true)
+
+      let targetModel = moveUsesNewModel ? null : moveSelectedModel
+
+      if (moveUsesNewModel) {
+        const duplicateModel = productModels.find(
+          (model) =>
+            Number(model.brand_id || 0) === Number(selectedBrandId) &&
+            Number(model.category_id || 0) === Number(selectedCategory.id) &&
+            String(model.model_name || '').trim().toUpperCase() === normalizedModelName
+        )
+
+        if (duplicateModel) {
+          setMoveModelError('A model with this name already exists. Choose it from the existing model list.')
+          setSaving(false)
+          return
+        }
+
+        const { data: insertedModel, error: insertModelError } = await supabase
+          .from('dir_product_models')
+          .insert([
+            {
+              brand_id: Number(selectedBrandId),
+              category_id: selectedCategory.id,
+              model_name: normalizedModelName,
+              model_notes: moveModelDraft.model_notes.trim() || null,
+              is_active: true,
+            },
+          ])
+          .select('id, brand_id, category_id, model_code, model_name, model_notes')
+          .single()
+
+        if (insertModelError) {
+          setMoveModelError(insertModelError.message)
+          setSaving(false)
+          return
+        }
+
+        targetModel = insertedModel
+        setProductModels((prev) => [...prev, insertedModel])
+      }
+
+      if (!targetModel?.id) {
+        setMoveModelError('Target model is not available.')
+        setSaving(false)
+        return
+      }
+
+      let nextVariantCode = ''
+
+      try {
+        nextVariantCode = getNextVariantCode(
+          targetModel,
+          productModelVariants.filter((variant) => Number(variant.id || 0) !== Number(sourceVariant.id || 0))
+        )
+      } catch (variantCodeError) {
+        setMoveModelError(variantCodeError.message || 'Failed to generate new variant code.')
+        setSaving(false)
+        return
+      }
+
+      const { data: updatedVariant, error: updateVariantError } = await supabase
+        .from('dir_product_model_variants')
+        .update({
+          product_model_id: targetModel.id,
+          variant_code: nextVariantCode,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', sourceVariant.id)
+        .select('*')
+        .single()
+
+      if (updateVariantError) {
+        setMoveModelError(updateVariantError.message)
+        setSaving(false)
+        return
+      }
+
+      const movedVariantCode = getVariantProductId(updatedVariant)
+      const movedVariantName = getVariantDisplayName(updatedVariant)
+      const unloadSnapshotPatch = {
+        ...(supportsUnloadProductModel ? { product_model_id: targetModel.id } : {}),
+        ...(supportsUnloadProductModelVariant ? { product_model_variant_id: updatedVariant.id } : {}),
+        model_name: targetModel.model_name,
+        ...(supportsUnloadVariant ? { variant_label: movedVariantCode } : {}),
+        ...(supportsUnloadVariantCode ? { variant_code: movedVariantCode } : {}),
+        ...(supportsUnloadVariantName ? { variant_name: movedVariantName } : {}),
+        photo_url: updatedVariant.variant_photo_url || null,
+      }
+      const returnSnapshotPatch = {
+        model_name: targetModel.model_name,
+        ...(supportsReturnVariant ? { variant_label: movedVariantCode } : {}),
+        ...(supportsReturnVariantCode ? { variant_code: movedVariantCode } : {}),
+        ...(supportsReturnVariantName ? { variant_name: movedVariantName } : {}),
+      }
+
+      if (selectedInbound?.id) {
+        const snapshotUpdates = []
+
+        if (supportsUnloadProductModelVariant) {
+          snapshotUpdates.push(
+            supabase
+              .from('inbound_unload')
+              .update(unloadSnapshotPatch)
+              .eq('inbound_id', selectedInbound.id)
+              .eq('product_model_variant_id', sourceVariant.id)
+          )
+        }
+
+        if (previousVariantCode && supportsUnloadVariantCode) {
+          snapshotUpdates.push(
+            supabase
+              .from('inbound_unload')
+              .update(unloadSnapshotPatch)
+              .eq('inbound_id', selectedInbound.id)
+              .eq('variant_code', previousVariantCode)
+          )
+        }
+
+        if (previousVariantCode && supportsUnloadVariant) {
+          snapshotUpdates.push(
+            supabase
+              .from('inbound_unload')
+              .update(unloadSnapshotPatch)
+              .eq('inbound_id', selectedInbound.id)
+              .eq('variant_label', previousVariantCode)
+          )
+        }
+
+        if (previousVariantCode && supportsReturnVariantCode) {
+          snapshotUpdates.push(
+            supabase
+              .from('warehouse_returns')
+              .update(returnSnapshotPatch)
+              .eq('inbound_id', selectedInbound.id)
+              .eq('source_phase', 'inbound')
+              .eq('variant_code', previousVariantCode)
+          )
+        }
+
+        if (previousVariantCode && supportsReturnVariant) {
+          snapshotUpdates.push(
+            supabase
+              .from('warehouse_returns')
+              .update(returnSnapshotPatch)
+              .eq('inbound_id', selectedInbound.id)
+              .eq('source_phase', 'inbound')
+              .eq('variant_label', previousVariantCode)
+          )
+        }
+
+        const snapshotResults = await Promise.all(snapshotUpdates)
+        const snapshotError = snapshotResults.find((result) => result.error)?.error
+
+        if (snapshotError) {
+          setMoveModelError(snapshotError.message)
+          setSaving(false)
+          return
+        }
+
+        await refreshUnloadData(selectedInbound.id)
+      }
+
+      setProductModelVariants((prev) =>
+        prev.map((variant) => (Number(variant.id) === Number(updatedVariant.id) ? updatedVariant : variant))
+      )
+      setCurrentKoliItems((prev) =>
+        prev.map((item) => {
+          const itemMatchesVariant =
+            Number(item.product_model_variant_id || 0) === Number(sourceVariant.id || 0) ||
+            (previousVariantCode && getRowVariantIdentifier(item) === previousVariantCode)
+
+          return itemMatchesVariant
+            ? {
+                ...item,
+                product_model_id: targetModel.id,
+                product_model_variant_id: updatedVariant.id,
+                model_name: targetModel.model_name,
+                variant_label: movedVariantCode,
+                variant_code: movedVariantCode,
+                variant_name: movedVariantName,
+                photo_url: updatedVariant.variant_photo_url || item.photo_url || null,
+              }
+            : item
+        })
+      )
+
+      if (Number(selectedVariant?.id || 0) === Number(updatedVariant.id || 0)) {
+        setSelectedModel({
+          ...targetModel,
+          photo_url: updatedVariant.variant_photo_url || '',
+        })
+        setSelectedVariantLabel(movedVariantCode)
+      }
+
+      setMovingVariantContext(null)
+      setMoveModelDraft({ model_id: '', model_name: '', model_notes: '', is_new_model: false })
+      setShowMoveModelModal(false)
+      setMoveModelError('')
+      setError('')
+      setSuccess(`Variant moved to ${targetModel.model_name}. New Product ID ${movedVariantCode}.`)
+      setSaving(false)
+    }
+
+    moveVariant()
+  }
+
   function handleSaveModel() {
     setModelModalError('')
 
@@ -3680,7 +4259,7 @@ export default function UnloadPage() {
       : registryUsesNewModel
         ? null
         : registrySelectedModel
-    const normalizedModelName = isEditingVariant || registryUsesNewModel
+    const normalizedModelName = registryUsesNewModel
       ? modelDraft.model_name.trim().toUpperCase()
       : String(chosenExistingModel?.model_name || '').trim().toUpperCase()
     const normalizedVariantName = modelDraft.variant_name.trim().toUpperCase()
@@ -3700,7 +4279,7 @@ export default function UnloadPage() {
       return
     }
 
-    if ((isEditingVariant || registryUsesNewModel) && !normalizedModelName) {
+    if (!isEditingVariant && registryUsesNewModel && !normalizedModelName) {
       setModelModalError('Model name is required.')
       return
     }
@@ -3747,46 +4326,6 @@ export default function UnloadPage() {
 
         savedModel = insertedModel
         setProductModels((prev) => [...prev, insertedModel])
-      }
-
-      if (isEditingVariant) {
-        const duplicateModel = productModels.find(
-          (model) =>
-            Number(model.id || 0) !== Number(savedModel.id || 0) &&
-            Number(model.brand_id || 0) === Number(selectedBrandId) &&
-            Number(model.category_id || 0) === Number(selectedCategory.id) &&
-            String(model.model_name || '').trim().toUpperCase() === normalizedModelName
-        )
-
-        if (duplicateModel) {
-          setModelModalError('A model with this name already exists for the selected brand and category.')
-          setSaving(false)
-          return
-        }
-
-        const modelPayload = {
-          model_name: normalizedModelName,
-          model_notes: modelDraft.model_notes.trim() || null,
-          updated_at: new Date().toISOString(),
-        }
-
-        const { data: updatedModel, error: updateModelError } = await supabase
-          .from('dir_product_models')
-          .update(modelPayload)
-          .eq('id', savedModel.id)
-          .select('id, brand_id, category_id, model_code, model_name, model_notes')
-          .single()
-
-        if (updateModelError) {
-          setModelModalError(updateModelError.message)
-          setSaving(false)
-          return
-        }
-
-        savedModel = updatedModel
-        setProductModels((prev) =>
-          prev.map((model) => (Number(model.id) === Number(updatedModel.id) ? updatedModel : model))
-        )
       }
 
       const siblingVariants = productModelVariants.filter(
@@ -3862,17 +4401,16 @@ export default function UnloadPage() {
           return
         }
 
-        const editedModel = savedModel
+        const editedModel = editingVariantContext.model
         const editedVariantProductId = getVariantProductId(updatedVariant)
         const snapshotPatch = {
-          model_name: editedModel.model_name,
           ...(supportsUnloadVariantName ? { variant_name: getVariantDisplayName(updatedVariant) } : {}),
           photo_url: updatedVariant.variant_photo_url || null,
         }
         const returnSnapshotPatch = {
-          model_name: editedModel.model_name,
           ...(supportsReturnVariantName ? { variant_name: getVariantDisplayName(updatedVariant) } : {}),
         }
+        const hasReturnSnapshotPatch = Object.keys(returnSnapshotPatch).length > 0
 
         if (selectedInbound?.id && previousVariantCode) {
           const snapshotUpdates = []
@@ -3897,7 +4435,7 @@ export default function UnloadPage() {
             )
           }
 
-          if (supportsReturnVariantCode) {
+          if (hasReturnSnapshotPatch && supportsReturnVariantCode) {
             snapshotUpdates.push(
               supabase
                 .from('warehouse_returns')
@@ -3908,7 +4446,7 @@ export default function UnloadPage() {
             )
           }
 
-          if (supportsReturnVariant) {
+          if (hasReturnSnapshotPatch && supportsReturnVariant) {
             snapshotUpdates.push(
               supabase
                 .from('warehouse_returns')
@@ -3958,7 +4496,7 @@ export default function UnloadPage() {
         setShowChooseModelModal(false)
         setModelModalError('')
         setError('')
-        setSuccess('Model and variant updated successfully.')
+        setSuccess('Variant updated successfully.')
         setSaving(false)
         return
       }
@@ -4045,6 +4583,8 @@ export default function UnloadPage() {
       inbound_id: selectedInbound.id,
       brand_id: selectedBrandId ? Number(selectedBrandId) : null,
       category_id: selectedCategory?.id || null,
+      product_model_id: selectedModel?.id ? Number(selectedModel.id) : null,
+      product_model_variant_id: selectedVariant?.id ? Number(selectedVariant.id) : null,
       model_name: selectedModel?.model_name || null,
       variant_code: selectedVariant ? getVariantProductId(selectedVariant) || selectedVariantLabel || null : selectedVariantLabel || null,
       variant_label: selectedVariant ? getVariantProductId(selectedVariant) || selectedVariantLabel || null : selectedVariantLabel || null,
@@ -4101,6 +4641,8 @@ export default function UnloadPage() {
           inbound_id: payload.inbound_id,
           brand_id: payload.brand_id,
           category_id: payload.category_id,
+          ...(supportsUnloadProductModel ? { product_model_id: payload.product_model_id } : {}),
+          ...(supportsUnloadProductModelVariant ? { product_model_variant_id: payload.product_model_variant_id } : {}),
           model_name: payload.model_name,
           ...(supportsReturnVariant ? { variant_label: payload.variant_label } : {}),
           ...(supportsReturnVariantCode ? { variant_code: payload.variant_code } : {}),
@@ -4181,6 +4723,8 @@ export default function UnloadPage() {
       inbound_id: item.inbound_id,
       brand_id: item.brand_id,
       category_id: item.category_id,
+      ...(supportsUnloadProductModel ? { product_model_id: item.product_model_id || null } : {}),
+      ...(supportsUnloadProductModelVariant ? { product_model_variant_id: item.product_model_variant_id || null } : {}),
       model_name: item.model_name,
       ...(supportsUnloadVariant ? { variant_label: item.variant_label || null } : {}),
       ...(supportsUnloadVariantCode ? { variant_code: item.variant_code || item.variant_label || null } : {}),
@@ -4508,109 +5052,123 @@ export default function UnloadPage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {filteredKoliGroups.map((group) => (
-                        <tr key={`koli-${group.koli_sequence}`}>
-                          <td style={{ ...styles.td, ...styles.koliGroupTd, ...styles.koliCell }}>Koli {group.koli_sequence}</td>
-                          <td style={{ ...styles.td, ...styles.koliGroupTd }}>
-                            <div style={styles.tableLineStack}>
-                              {group.items.map((row) => (
-                                <div key={`photo-${row.id}`} style={styles.tablePhotoLine}>
-                                  {renderProductPhotoFrame(row)}
-                                </div>
-                              ))}
-                            </div>
-                          </td>
-                          <td style={{ ...styles.td, ...styles.koliGroupTd }}>
-                            <div style={styles.tableLineStack}>
-                              {group.items.map((row) => {
-                                const brand = brands.find((item) => item.id === row.brand_id)
+                      {filteredKoliGroups.map((group) =>
+                        group.items.map((row, itemIndex) => {
+                          const brand = brands.find((item) => item.id === row.brand_id)
+                          const isFirstItem = itemIndex === 0
+                          const groupBorderStyle = isFirstItem ? styles.koliGroupTd : {}
 
-                                return (
-                                  <div key={row.id} style={styles.tableDetailLine}>
-                                    <strong>{brand?.brand_name || '-'}</strong>
-                                    <span style={styles.itemMeta}>{getItemTypeSubcategoryLabel(row.category_id)}</span>
-                                    <span style={styles.itemMeta}>{getModelVariantLabelForRow(row)}</span>
-                                  </div>
-                                )
-                              })}
-                            </div>
-                          </td>
-                          <td style={{ ...styles.td, ...styles.koliGroupTd, ...styles.middleCenterCell }}>
-                            <div style={styles.tableLineStack}>
-                              {group.items.map((row) => (
-                                <div key={`qty-${row.id}`} style={styles.tableQtyLine}>
-                                  <span
-                                    style={{ ...styles.qtyPill, ...getQtyPillQcStyle(row) }}
-                                    title={getQcVarianceTitle(row)}
-                                  >
-                                    {row.qty || 0}
-                                  </span>
+                          return (
+                            <tr key={`koli-${group.koli_sequence}-${row.id}`}>
+                              {isFirstItem ? (
+                                <td
+                                  rowSpan={group.items.length}
+                                  style={{ ...styles.td, ...styles.koliGroupTd, ...styles.koliCell }}
+                                >
+                                  Koli {group.koli_sequence}
+                                </td>
+                              ) : null}
+                              <td style={{ ...styles.td, ...groupBorderStyle, ...styles.middleCenterCell }}>
+                                {renderProductPhotoFrame(row)}
+                              </td>
+                              <td style={{ ...styles.td, ...groupBorderStyle }}>
+                                <div style={styles.tableDetailLine}>
+                                  <strong>{brand?.brand_name || '-'}</strong>
+                                  <span style={styles.itemMeta}>{getItemTypeSubcategoryLabel(row.category_id)}</span>
+                                  <span style={styles.itemMeta}>{getModelVariantLabelForRow(row)}</span>
                                 </div>
-                              ))}
-                            </div>
-                          </td>
-                          <td style={{ ...styles.td, ...styles.koliGroupTd, ...styles.middleCenterCell }}>{formatPicFirstNames(group.pic_list)}</td>
-                          <td style={{ ...styles.td, ...styles.koliGroupTd, ...styles.middleCenterCell }}>
-                            <button type="button" onClick={() => handlePrintKoli(group)} style={styles.printButton}>
-                              Print
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                      {filteredNonKoliGroups.map((group) => (
-                        <tr key={group.groupKey || `${group.rowType}-${group.label}`}>
-                          <td style={{ ...styles.td, ...styles.koliGroupTd, ...styles.koliCell }}>
-                            {group.rowType === 'sample' ? (
-                              <span style={styles.sampleBadge}>{group.label || 'Sample'}</span>
-                            ) : (
-                              <span style={styles.returnBadge}>Retur</span>
-                            )}
-                          </td>
-                          <td style={{ ...styles.td, ...styles.koliGroupTd }}>
-                            <div style={styles.tableLineStack}>
-                              {group.items.map((row) => (
-                                <div key={`${group.rowType}-photo-${row.id}`} style={styles.tablePhotoLine}>
-                                  {renderProductPhotoFrame(row)}
-                                </div>
-                              ))}
-                            </div>
-                          </td>
-                          <td style={{ ...styles.td, ...styles.koliGroupTd }}>
-                            <div style={styles.tableLineStack}>
-                              {group.items.map((row) => {
-                                const brand = brands.find((item) => item.id === row.brand_id)
+                              </td>
+                              <td style={{ ...styles.td, ...groupBorderStyle, ...styles.middleCenterCell }}>
+                                <span
+                                  style={{ ...styles.qtyPill, ...getQtyPillQcStyle(row) }}
+                                  title={getQcVarianceTitle(row)}
+                                >
+                                  {row.qty || 0}
+                                </span>
+                              </td>
+                              {isFirstItem ? (
+                                <td
+                                  rowSpan={group.items.length}
+                                  style={{ ...styles.td, ...styles.koliGroupTd, ...styles.middleCenterCell }}
+                                >
+                                  {formatPicFirstNames(group.pic_list)}
+                                </td>
+                              ) : null}
+                              {isFirstItem ? (
+                                <td
+                                  rowSpan={group.items.length}
+                                  style={{ ...styles.td, ...styles.koliGroupTd, ...styles.middleCenterCell }}
+                                >
+                                  <button type="button" onClick={() => handlePrintKoli(group)} style={styles.printButton}>
+                                    Print
+                                  </button>
+                                </td>
+                              ) : null}
+                            </tr>
+                          )
+                        })
+                      )}
+                      {filteredNonKoliGroups.map((group) =>
+                        group.items.map((row, itemIndex) => {
+                          const brand = brands.find((item) => item.id === row.brand_id)
+                          const isFirstItem = itemIndex === 0
+                          const groupBorderStyle = isFirstItem ? styles.koliGroupTd : {}
 
-                                return (
-                                  <div key={`${group.rowType}-${row.id}`} style={styles.tableDetailLine}>
-                                    <strong>{brand?.brand_name || '-'}</strong>
-                                    <span style={styles.itemMeta}>{getItemTypeSubcategoryLabel(row.category_id)}</span>
-                                    <span style={styles.itemMeta}>{getModelVariantLabelForRow(row)}</span>
-                                  </div>
-                                )
-                              })}
-                            </div>
-                          </td>
-                          <td style={{ ...styles.td, ...styles.koliGroupTd, ...styles.middleCenterCell }}>
-                            <div style={styles.tableLineStack}>
-                              {group.items.map((row) => (
-                                <div key={`${group.rowType}-qty-${row.id}`} style={styles.tableQtyLine}>
-                                  <span
-                                    style={{
-                                      ...styles.qtyPill,
-                                      ...(group.rowType === 'sample' ? getQtyPillQcStyle(row) : {}),
-                                    }}
-                                    title={group.rowType === 'sample' ? getQcVarianceTitle(row) : undefined}
-                                  >
-                                    {row.qty || 0}
-                                  </span>
+                          return (
+                            <tr key={`${group.groupKey || group.rowType}-${row.id}`}>
+                              {isFirstItem ? (
+                                <td
+                                  rowSpan={group.items.length}
+                                  style={{ ...styles.td, ...styles.koliGroupTd, ...styles.koliCell }}
+                                >
+                                  {group.rowType === 'sample' ? (
+                                    <span style={styles.sampleBadge}>{group.label || 'Sample'}</span>
+                                  ) : (
+                                    <span style={styles.returnBadge}>Retur</span>
+                                  )}
+                                </td>
+                              ) : null}
+                              <td style={{ ...styles.td, ...groupBorderStyle, ...styles.middleCenterCell }}>
+                                {renderProductPhotoFrame(row)}
+                              </td>
+                              <td style={{ ...styles.td, ...groupBorderStyle }}>
+                                <div style={styles.tableDetailLine}>
+                                  <strong>{brand?.brand_name || '-'}</strong>
+                                  <span style={styles.itemMeta}>{getItemTypeSubcategoryLabel(row.category_id)}</span>
+                                  <span style={styles.itemMeta}>{getModelVariantLabelForRow(row)}</span>
                                 </div>
-                              ))}
-                            </div>
-                          </td>
-                          <td style={{ ...styles.td, ...styles.koliGroupTd, ...styles.middleCenterCell }}>{formatPicFirstNames(group.pic_list)}</td>
-                          <td style={{ ...styles.td, ...styles.koliGroupTd, ...styles.middleCenterCell }}>-</td>
-                        </tr>
-                      ))}
+                              </td>
+                              <td style={{ ...styles.td, ...groupBorderStyle, ...styles.middleCenterCell }}>
+                                <span
+                                  style={{
+                                    ...styles.qtyPill,
+                                    ...(group.rowType === 'sample' ? getQtyPillQcStyle(row) : {}),
+                                  }}
+                                  title={group.rowType === 'sample' ? getQcVarianceTitle(row) : undefined}
+                                >
+                                  {row.qty || 0}
+                                </span>
+                              </td>
+                              {isFirstItem ? (
+                                <td
+                                  rowSpan={group.items.length}
+                                  style={{ ...styles.td, ...styles.koliGroupTd, ...styles.middleCenterCell }}
+                                >
+                                  {formatPicFirstNames(group.pic_list)}
+                                </td>
+                              ) : null}
+                              {isFirstItem ? (
+                                <td
+                                  rowSpan={group.items.length}
+                                  style={{ ...styles.td, ...styles.koliGroupTd, ...styles.middleCenterCell }}
+                                >
+                                  -
+                                </td>
+                              ) : null}
+                            </tr>
+                          )
+                        })
+                      )}
                     </tbody>
                   </table>
                 </div>
@@ -5098,7 +5656,7 @@ export default function UnloadPage() {
           <div style={registryModalStyle}>
             <div style={styles.modalTitleRow}>
               <h2 style={{ ...styles.sectionTitle, ...styles.registryModalTitle }}>
-                {isEditingVariant ? 'Edit Model-Variant' : 'Registry New Model-Variant'}
+                {isEditingVariant ? 'Edit Variant' : 'Registry New Model-Variant'}
               </h2>
               <div style={styles.modalTitleActions}>
                 <button
@@ -5121,7 +5679,7 @@ export default function UnloadPage() {
                     ...(saving ? { opacity: 0.6, cursor: 'not-allowed' } : {}),
                   }}
                 >
-                  {saving ? 'Saving...' : isEditingVariant ? 'Save Changes' : 'Save Variant'}
+                  {saving ? 'Saving...' : 'Save Variant'}
                 </button>
               </div>
             </div>
@@ -5205,56 +5763,32 @@ export default function UnloadPage() {
               </div>
 
               <div style={styles.registryFieldsStack}>
-                <div style={styles.field}>
-                  <div style={styles.modelLabelRow}>
-                    <label style={styles.label}>
-                      Model Name <span style={styles.requiredMark}>*</span>
-                    </label>
-                    {!isEditingVariant && registryUsesNewModel && filteredModelOptions.length ? (
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setModelDraft((prev) => ({
-                            ...prev,
-                            model_id: '',
-                            model_name: '',
-                            model_notes: '',
-                            is_new_model: false,
-                          }))
-                        }
-                        style={{ ...styles.secondaryButton, minHeight: '32px', padding: '0 10px' }}
-                      >
-                        Use Existing
-                      </button>
-                    ) : null}
-                  </div>
+                {!isEditingVariant ? (
+                  <div style={styles.field}>
+                    <div style={styles.modelLabelRow}>
+                      <label style={styles.label}>
+                        Model Name <span style={styles.requiredMark}>*</span>
+                      </label>
+                      {registryUsesNewModel && filteredModelOptions.length ? (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setModelDraft((prev) => ({
+                              ...prev,
+                              model_id: '',
+                              model_name: '',
+                              model_notes: '',
+                              is_new_model: false,
+                            }))
+                          }
+                          style={{ ...styles.secondaryButton, minHeight: '32px', padding: '0 10px' }}
+                        >
+                          Use Existing
+                        </button>
+                      ) : null}
+                    </div>
 
-                  {isEditingVariant ? (
-                    <>
-                      <input
-                        value={modelDraft.model_name}
-                        onChange={(event) =>
-                          setModelDraft((prev) => ({
-                            ...prev,
-                            model_name: event.target.value.toUpperCase(),
-                          }))
-                        }
-                        style={styles.input}
-                        placeholder="MODEL NAME"
-                      />
-                      <textarea
-                        value={modelDraft.model_notes}
-                        onChange={(event) =>
-                          setModelDraft((prev) => ({
-                            ...prev,
-                            model_notes: event.target.value,
-                          }))
-                        }
-                        style={{ ...styles.textarea, minHeight: '74px' }}
-                        placeholder="Model notes"
-                      />
-                    </>
-                  ) : registryUsesNewModel ? (
+                    {registryUsesNewModel ? (
                     <>
                       <input
                         value={modelDraft.model_name}
@@ -5317,8 +5851,9 @@ export default function UnloadPage() {
                         + Add New Model
                       </button>
                     </>
-                  )}
-                </div>
+                    )}
+                  </div>
+                ) : null}
 
                 <div style={styles.field}>
                   <label style={styles.label}>
@@ -5356,15 +5891,257 @@ export default function UnloadPage() {
         </div>
       ) : null}
 
+      {showEditModelModal ? (
+        <div style={registryOverlayStyle}>
+          <div style={registryModalStyle}>
+            <div style={styles.modalTitleRow}>
+              <h2 style={{ ...styles.sectionTitle, ...styles.registryModalTitle, fontWeight: '900' }}>Edit Model</h2>
+              <div style={styles.modalTitleActions}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowEditModelModal(false)
+                    setEditingModelContext(null)
+                    setModelEditDraft({ model_name: '', model_notes: '' })
+                    setModelEditError('')
+                    setShowChooseModelModal(true)
+                  }}
+                  style={{ ...styles.secondaryButton, ...styles.modalTitleButton }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSaveModelOnly}
+                  disabled={saving}
+                  style={{
+                    ...styles.primaryButton,
+                    ...styles.modalTitleButton,
+                    ...(saving ? { opacity: 0.6, cursor: 'not-allowed' } : {}),
+                  }}
+                >
+                  {saving ? 'Saving...' : 'Save Model'}
+                </button>
+              </div>
+            </div>
+
+            <div style={styles.registryFieldsStack}>
+              <div style={styles.field}>
+                <label style={styles.label}>
+                  Model Name <span style={styles.requiredMark}>*</span>
+                </label>
+                <input
+                  value={modelEditDraft.model_name}
+                  onChange={(event) =>
+                    setModelEditDraft((prev) => ({
+                      ...prev,
+                      model_name: event.target.value.toUpperCase(),
+                    }))
+                  }
+                  style={styles.input}
+                  placeholder="MODEL NAME"
+                />
+              </div>
+
+              <textarea
+                value={modelEditDraft.model_notes}
+                onChange={(event) =>
+                  setModelEditDraft((prev) => ({
+                    ...prev,
+                    model_notes: event.target.value,
+                  }))
+                }
+                style={{ ...styles.textarea, minHeight: '92px' }}
+                placeholder="Model notes"
+              />
+
+              {editingModelContext?.model_code ? (
+                <p style={styles.helperText}>Model code stays the same: {editingModelContext.model_code}</p>
+              ) : null}
+            </div>
+
+            {modelEditError ? <p style={styles.errorText}>{modelEditError}</p> : null}
+          </div>
+        </div>
+      ) : null}
+
+      {showMoveModelModal ? (
+        <div style={registryOverlayStyle}>
+          <div style={registryModalStyle}>
+            <div style={styles.modalTitleRow}>
+              <h2 style={{ ...styles.sectionTitle, ...styles.registryModalTitle, fontWeight: '900' }}>Move Model</h2>
+              <div style={styles.modalTitleActions}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowMoveModelModal(false)
+                    setMovingVariantContext(null)
+                    setMoveModelDraft({ model_id: '', model_name: '', model_notes: '', is_new_model: false })
+                    setMoveModelError('')
+                    setShowChooseModelModal(true)
+                  }}
+                  style={{ ...styles.secondaryButton, ...styles.modalTitleButton }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleMoveVariantToModel}
+                  disabled={saving}
+                  style={{
+                    ...styles.primaryButton,
+                    ...styles.modalTitleButton,
+                    ...(saving ? { opacity: 0.6, cursor: 'not-allowed' } : {}),
+                  }}
+                >
+                  {saving ? 'Moving...' : 'Move'}
+                </button>
+              </div>
+            </div>
+
+            <div style={styles.registryFieldsStack}>
+              <div style={styles.helperBox}>
+                <p style={styles.emptyText}>
+                  {movingVariantContext?.variant
+                    ? `${getVariantDisplayName(movingVariantContext.variant)} will receive a new Product ID under the target model.`
+                    : 'Choose a variant to move.'}
+                </p>
+              </div>
+
+              <div style={styles.field}>
+                <div style={styles.modelLabelRow}>
+                  <label style={styles.label}>
+                    Target Model <span style={styles.requiredMark}>*</span>
+                  </label>
+                  {moveUsesNewModel && moveTargetModelOptions.length ? (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setMoveModelDraft({
+                          model_id: '',
+                          model_name: '',
+                          model_notes: '',
+                          is_new_model: false,
+                        })
+                      }
+                      style={{ ...styles.secondaryButton, minHeight: '32px', padding: '0 10px' }}
+                    >
+                      Use Existing
+                    </button>
+                  ) : null}
+                </div>
+
+                {moveUsesNewModel ? (
+                  <>
+                    <input
+                      value={moveModelDraft.model_name}
+                      onChange={(event) =>
+                        setMoveModelDraft((prev) => ({
+                          ...prev,
+                          model_name: event.target.value.toUpperCase(),
+                        }))
+                      }
+                      style={styles.input}
+                      placeholder="NEW MODEL NAME"
+                    />
+                    <textarea
+                      value={moveModelDraft.model_notes}
+                      onChange={(event) =>
+                        setMoveModelDraft((prev) => ({
+                          ...prev,
+                          model_notes: event.target.value,
+                        }))
+                      }
+                      style={{ ...styles.textarea, minHeight: '74px' }}
+                      placeholder="Model notes"
+                    />
+                  </>
+                ) : (
+                  <>
+                    <select
+                      value={moveModelDraft.model_id}
+                      onChange={(event) =>
+                        setMoveModelDraft((prev) => ({
+                          ...prev,
+                          model_id: event.target.value,
+                        }))
+                      }
+                      style={styles.select}
+                    >
+                      <option value="">Choose target model</option>
+                      {moveTargetModelOptions.map((model) => (
+                        <option key={model.id} value={model.id}>
+                          {model.model_code ? `${model.model_code} - ` : ''}{model.model_name}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setMoveModelDraft({
+                          model_id: '',
+                          model_name: '',
+                          model_notes: '',
+                          is_new_model: true,
+                        })
+                      }
+                      style={styles.newModelAction}
+                    >
+                      + Create New Model
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
+
+            {moveModelError ? <p style={styles.errorText}>{moveModelError}</p> : null}
+          </div>
+        </div>
+      ) : null}
+
       {showChooseModelModal ? (
         <div style={chooseOverlayStyle}>
           <div style={chooseModalStyle}>
-            <div>
-              <h2 style={styles.sectionTitle}>Choose Variant</h2>
-              <p style={styles.sectionSubtitle}>
-                Showing variants filtered by the selected brand and category only.
-              </p>
+            <div style={styles.modalTitleRow}>
+              <div>
+                <h2 style={{ ...styles.sectionTitle, fontWeight: '900' }}>Choose Variant</h2>
+              </div>
+              <div style={styles.chooseModalActions}>
+                {canRegistryModelVariant ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowChooseModelModal(false)
+                      setShowModelModal(true)
+                      resetRegistryModal({
+                        ...createModelDraft(),
+                        is_new_model: filteredModelOptions.length === 0,
+                      })
+                      setModelModalError('')
+                    }}
+                    style={{ ...styles.secondaryButton, ...styles.modalTitleButton }}
+                  >
+                    Registry New Model
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  onClick={() => setShowChooseModelModal(false)}
+                  style={{ ...styles.closeIconButton, width: '38px', minWidth: '38px', height: '38px' }}
+                  aria-label="Close choose variant"
+                  title="Close"
+                >
+                  <span style={styles.closeIconGlyph}>X</span>
+                </button>
+              </div>
             </div>
+
+            <input
+              value={variantSearch}
+              onChange={(event) => setVariantSearch(event.target.value)}
+              style={styles.chooseSearchInput}
+              placeholder="Search model, variant, or code"
+            />
 
             <div style={styles.modelPickerCard}>
               {!selectedBrandId || !selectedCategory ? (
@@ -5373,17 +6150,51 @@ export default function UnloadPage() {
                 <p style={styles.emptyText}>No existing variant found for this brand and category yet.</p>
               ) : (
                 <div style={styles.modelGroupList}>
-                  {filteredVariantGroups.map((group, groupIndex) => (
-                    <section key={group.model.id} style={styles.modelGroup}>
-                      <div style={styles.modelGroupHeader}>
-                        <span style={styles.modelGroupTitle}>Model {groupIndex + 1}</span>
-                        <span style={styles.modelGroupMeta}>
-                          {group.model.model_code ? `${group.model.model_code} / ` : ''}{group.model.model_name}
-                        </span>
-                      </div>
+                  {filteredVariantGroups.map((group, groupIndex) => {
+                    const isCollapsed = collapsedModelIds.includes(String(group.model.id))
 
-                      <div style={styles.modelGrid}>
-                        {group.variants.map(({ model, variant, photoUrl, label }) => {
+                    return (
+                      <section key={group.model.id} style={styles.modelGroup}>
+                        <div style={styles.modelGroupHeader}>
+                          <button
+                            type="button"
+                            onClick={() => toggleModelCollapse(group.model.id)}
+                            style={styles.modelGroupToggle}
+                            aria-expanded={!isCollapsed}
+                            title={isCollapsed ? 'Expand model' : 'Collapse model'}
+                          >
+                            <span
+                              style={{
+                                ...styles.modelGroupChevron,
+                                transform: isCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)',
+                              }}
+                            >
+                              <ChevronDownIcon />
+                            </span>
+                            <span style={styles.modelGroupTitle}>M.{groupIndex + 1}</span>
+                            <span style={styles.modelGroupCount}>{group.variants.length} vars</span>
+                          </button>
+                          <span style={styles.modelGroupMetaRow}>
+                            <span style={styles.modelGroupMeta}>
+                              {group.model.model_code ? `${group.model.model_code} / ` : ''}{group.model.model_name}
+                            </span>
+                            {canRegistryModelVariant ? (
+                              <button
+                                type="button"
+                                onClick={() => openModelEditor(group.model)}
+                                style={styles.modelHeaderEditButton}
+                                aria-label={`Edit model ${group.model.model_name || ''}`}
+                                title="Edit model"
+                              >
+                                <PencilIcon />
+                              </button>
+                            ) : null}
+                          </span>
+                        </div>
+
+                        {!isCollapsed ? (
+                          <div style={styles.modelGrid}>
+                            {group.variants.map(({ model, variant, photoUrl, label }) => {
                           const variantProductId = getVariantProductId(variant)
                           const variantName = getVariantDisplayName(variant)
                           const isSelected =
@@ -5410,14 +6221,26 @@ export default function UnloadPage() {
                               }}
                             >
                               {photoUrl ? (
-                                <Image
-                                  src={photoUrl}
-                                  alt={label}
-                                  width={180}
-                                  height={120}
-                                  unoptimized
-                                  style={styles.modelThumb}
-                                />
+                                <button
+                                  type="button"
+                                  onClick={(event) => {
+                                    event.stopPropagation()
+                                    openImagePreview({ src: photoUrl, title: label })
+                                  }}
+                                  onKeyDown={(event) => event.stopPropagation()}
+                                  style={styles.modelThumbButton}
+                                  aria-label="Preview variant photo"
+                                  title="Preview photo"
+                                >
+                                  <Image
+                                    src={photoUrl}
+                                    alt={label}
+                                    width={160}
+                                    height={88}
+                                    unoptimized
+                                    style={styles.modelThumb}
+                                  />
+                                </button>
                               ) : (
                                 <div
                                   style={{
@@ -5442,59 +6265,47 @@ export default function UnloadPage() {
                               ) : null}
                               <div style={styles.modelOptionActions}>
                                 {canRegistryModelVariant ? (
-                                  <button
-                                    type="button"
-                                    onClick={(event) => {
-                                      event.stopPropagation()
-                                      openVariantEditor(model, variant)
-                                    }}
-                                    onKeyDown={(event) => event.stopPropagation()}
-                                    style={styles.variantEditButton}
-                                  >
-                                    Edit
-                                  </button>
+                                  <span style={styles.modelOptionButtonGroup}>
+                                    <button
+                                      type="button"
+                                      onClick={(event) => {
+                                        event.stopPropagation()
+                                        openVariantEditor(model, variant)
+                                      }}
+                                      onKeyDown={(event) => event.stopPropagation()}
+                                      style={styles.variantEditButton}
+                                      aria-label="Edit variant"
+                                      title="Edit variant"
+                                    >
+                                      <PencilIcon />
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={(event) => {
+                                        event.stopPropagation()
+                                        openMoveModelModal(model, variant)
+                                      }}
+                                      onKeyDown={(event) => event.stopPropagation()}
+                                      style={styles.variantEditButton}
+                                      aria-label="Move model"
+                                      title="Move model"
+                                    >
+                                      <MoveIcon />
+                                    </button>
+                                  </span>
                                 ) : null}
-                                {isSelected ? (
-                                  <span style={styles.selectedVariantBadge}>Selected</span>
-                                ) : (
-                                  <span style={styles.tapHint}>Tap to choose</span>
-                                )}
+                                {isSelected ? <span style={styles.selectedVariantBadge}>Selected</span> : null}
                               </div>
                             </div>
                           )
-                        })}
-                      </div>
-                    </section>
-                  ))}
+                            })}
+                          </div>
+                        ) : null}
+                      </section>
+                    )
+                  })}
                 </div>
               )}
-            </div>
-
-            <div style={styles.buttonRow}>
-              {canRegistryModelVariant ? (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowChooseModelModal(false)
-                    setShowModelModal(true)
-                    resetRegistryModal({
-                      ...createModelDraft(),
-                      is_new_model: filteredModelOptions.length === 0,
-                    })
-                    setModelModalError('')
-                  }}
-                  style={styles.secondaryButton}
-                >
-                  Registry New Model
-                </button>
-              ) : null}
-              <button
-                type="button"
-                onClick={() => setShowChooseModelModal(false)}
-                style={styles.secondaryButton}
-              >
-                Close
-              </button>
             </div>
           </div>
         </div>
