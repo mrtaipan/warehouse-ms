@@ -1064,6 +1064,14 @@ function hasQcResult(item) {
   return getCheckedQty(item) > 0 || Number(item?.locked_qty || 0) > 0
 }
 
+function isRegularSampleTask(item) {
+  return Boolean(item?.inbound_unload?.is_sample)
+}
+
+function shouldTrackQcTiming(item, qcMode) {
+  return qcMode !== 'regular' || !isRegularSampleTask(item)
+}
+
 function getArklineTaskLabel(item, memberNameMap = {}) {
   const inspector = memberNameMap[item.assigned_to] || item.assigned_to || 'Unassigned'
   return `${inspector} | B ${Number(item.qty_b || 0)} / C ${Number(item.qty_c || 0)} | ${item.status || '-'}`
@@ -1371,6 +1379,7 @@ export default function QcDashboardPage() {
             id,
             brand_id,
             category_id,
+            is_sample,
             brands:dir_brands!brand_id (
               id,
               brand_name
@@ -1486,6 +1495,7 @@ export default function QcDashboardPage() {
               id,
               brand_id,
               category_id,
+              is_sample,
               brands:dir_brands!brand_id (
                 id,
                 brand_name
@@ -1728,7 +1738,7 @@ export default function QcDashboardPage() {
         const matchesGrn = !grnFilter || item.qc_item?.inbound?.grn_number === grnFilter
         const matchesBrand = !brandFilter || getBrandLabel(item.qc_item || {}) === brandFilter
         const matchesCategory = !categoryFilter || getCategoryLabel(item.qc_item || {}) === categoryFilter
-        return Boolean(item.qc_item_id) && matchesDate && matchesGrn && matchesBrand && matchesCategory
+        return Boolean(item.qc_item_id) && !isRegularSampleTask(item.qc_item || {}) && matchesDate && matchesGrn && matchesBrand && matchesCategory
       }),
     [brandFilter, categoryFilter, dateFrom, dateTo, grnFilter, hasInvalidDateRange, pauseLogs]
   )
@@ -2077,10 +2087,11 @@ export default function QcDashboardPage() {
     activeItems.forEach((item) => {
       const key = item.assigned_to || '-'
       const totalPcs = getCheckedQty(item)
-      const minutes = Number(item.stopwatch_seconds || 0) / 60
+      const tracksTiming = shouldTrackQcTiming(item, qcMode)
+      const minutes = tracksTiming ? Number(item.stopwatch_seconds || 0) / 60 : 0
       const startedAtMs = item.started_at ? new Date(item.started_at).getTime() : null
       const liveSeconds =
-        item.status === 'in_progress' && startedAtMs
+        tracksTiming && item.status === 'in_progress' && startedAtMs
           ? Number(item.stopwatch_seconds || 0) + Math.max(0, Math.floor((clockTick - startedAtMs) / 1000))
           : 0
       const workDate = String(item.finished_at || item.created_at || '').slice(0, 10)
@@ -2088,6 +2099,7 @@ export default function QcDashboardPage() {
         grouped.get(key) || {
           inspector: key,
           totalPcs: 0,
+          timedPcs: 0,
           totalMinutes: 0,
           daySet: new Set(),
           avgPerDay: 0,
@@ -2104,7 +2116,10 @@ export default function QcDashboardPage() {
 
       if (item.status === 'done' || hasQcResult(item)) {
         current.totalPcs += totalPcs
-        current.totalMinutes += minutes
+        if (tracksTiming) {
+          current.timedPcs += totalPcs
+          current.totalMinutes += minutes
+        }
         if (workDate) current.daySet.add(workDate)
         current.completedTaskRows.push({
           id: item.id,
@@ -2115,10 +2130,11 @@ export default function QcDashboardPage() {
           qtyB: Number(item.qty_b || 0),
           qtyC: Number(item.qty_c || 0),
           checkedQty: totalPcs,
-          seconds: Number(item.stopwatch_seconds || 0),
-          rate: minutes > 0 ? Math.round((totalPcs / minutes) * 100) / 100 : 0,
+          seconds: tracksTiming ? Number(item.stopwatch_seconds || 0) : null,
+          rate: tracksTiming && minutes > 0 ? Math.round((totalPcs / minutes) * 100) / 100 : null,
           status: item.status || '-',
           finishedAt: item.finished_at || item.updated_at || item.created_at || '',
+          isSample: isRegularSampleTask(item),
         })
       }
 
@@ -2126,7 +2142,7 @@ export default function QcDashboardPage() {
         current.activeTaskCount += 1
         current.activeAllocatedQty += Number(item.allocated_qty || 0)
         current.activeLiveSeconds += liveSeconds
-        if (item.status === 'in_progress') current.runningTaskCount += 1
+        if (tracksTiming && item.status === 'in_progress') current.runningTaskCount += 1
         current.activeTaskRows.push({
           id: item.id,
           source: qcMode !== 'regular' ? getArklinePoLabel(item) : item.inbound?.grn_number || '-',
@@ -2136,6 +2152,7 @@ export default function QcDashboardPage() {
           checkedQty: totalPcs,
           remainingQty: Math.max(0, Number(item.allocated_qty || 0) - Number(item.locked_qty || 0)),
           status: item.status || '-',
+          isSample: isRegularSampleTask(item),
         })
       }
 
@@ -2148,6 +2165,7 @@ export default function QcDashboardPage() {
         grouped.get(key) || {
           inspector: key,
           totalPcs: 0,
+          timedPcs: 0,
           totalMinutes: 0,
           daySet: new Set(),
           avgPerDay: 0,
@@ -2170,7 +2188,7 @@ export default function QcDashboardPage() {
         inspectorKey: item.inspector,
         totalPcs: item.totalPcs,
         avgPerDay: Math.round((item.totalPcs / dayCount) * 100) / 100,
-          rate: item.totalMinutes > 0 ? Math.round((item.totalPcs / item.totalMinutes) * 100) / 100 : 0,
+          rate: item.totalMinutes > 0 ? Math.round((Number(item.timedPcs || 0) / item.totalMinutes) * 100) / 100 : 0,
           nonProductiveHours: formatMinutes(item.nonProductiveSeconds),
           pauseLogs: [...(item.pauseLogs || [])].sort((a, b) => new Date(b.paused_at || 0).getTime() - new Date(a.paused_at || 0).getTime()),
           completedTaskRows: [...(item.completedTaskRows || [])].sort(
@@ -2189,7 +2207,7 @@ export default function QcDashboardPage() {
     const grouped = new Map()
 
     activeItems
-      .filter((item) => item.status === 'done' || hasQcResult(item))
+      .filter((item) => (item.status === 'done' || hasQcResult(item)) && shouldTrackQcTiming(item, qcMode))
       .forEach((item) => {
         const categoryLabel =
           qcMode !== 'regular'
@@ -2655,11 +2673,12 @@ export default function QcDashboardPage() {
     }
 
     const updates = runningTasks.map(async (item) => {
+      const tracksTiming = item.qc_table !== 'qc_items' || shouldTrackQcTiming(item, 'regular')
       const baseSeconds = Number(item.stopwatch_seconds || 0)
       const startedAtMs = item.started_at ? new Date(item.started_at).getTime() : null
-      const liveSeconds = startedAtMs
+      const liveSeconds = tracksTiming && startedAtMs
         ? baseSeconds + Math.max(0, Math.floor((Date.now() - startedAtMs) / 1000))
-        : baseSeconds
+        : tracksTiming ? baseSeconds : 0
       const pausedAt = new Date().toISOString()
       const updateResult = await supabase
         .from(item.qc_table)
@@ -2687,11 +2706,12 @@ export default function QcDashboardPage() {
     const pauseTaskInState = (prev) =>
       prev.map((item) => {
         if (item.status !== 'in_progress') return item
+        const tracksTiming = shouldTrackQcTiming(item, 'regular')
         const baseSeconds = Number(item.stopwatch_seconds || 0)
         const startedAtMs = item.started_at ? new Date(item.started_at).getTime() : null
-        const liveSeconds = startedAtMs
+        const liveSeconds = tracksTiming && startedAtMs
           ? baseSeconds + Math.max(0, Math.floor((Date.now() - startedAtMs) / 1000))
-          : baseSeconds
+          : tracksTiming ? baseSeconds : 0
 
         return {
           ...item,
@@ -3744,7 +3764,7 @@ export default function QcDashboardPage() {
                                 <td style={{ ...styles.td, ...styles.tdCenter, ...styles.inspectorTd }}>{item.qtyB}</td>
                                 <td style={{ ...styles.td, ...styles.tdCenter, ...styles.inspectorTd }}>{item.qtyC}</td>
                                 <td style={{ ...styles.td, ...styles.tdCenter, ...styles.inspectorTd }}>{item.checkedQty}</td>
-                                <td style={{ ...styles.td, ...styles.tdCenter, ...styles.inspectorTd }}>{item.rate}</td>
+                                <td style={{ ...styles.td, ...styles.tdCenter, ...styles.inspectorTd }}>{item.rate ?? '-'}</td>
                                 <td style={{ ...styles.td, ...styles.inspectorTd }}>{formatDisplayDate(item.finishedAt)}</td>
                               </tr>
                             ))

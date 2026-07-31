@@ -10,6 +10,11 @@ import { formatSeconds } from '../shared'
 const supabase = createClient()
 const BREAK_REASONS = ['TOILET', 'PRAYER', 'SUPERVISOR CALL', 'MATERIAL WAIT', 'OTHER', 'COORDINATOR BREAK']
 
+function getRegularSampleLabel(task) {
+  const sequence = Number(task?.inbound_unload?.koli_sequence || 0)
+  return sequence ? `Sample ${sequence}` : 'Sample'
+}
+
 function getTodayLocalDate() {
   const parts = new Intl.DateTimeFormat('en-CA', {
     timeZone: 'Asia/Jakarta',
@@ -28,6 +33,11 @@ function getTaskSourceLabel(task) {
     }
 
     return 'Arkline Product'
+  }
+
+  if (isRegularSampleTask(task)) {
+    const sampleLabel = getRegularSampleLabel(task)
+    return task?.inbound?.grn_number ? `${task.inbound.grn_number} - ${sampleLabel}` : sampleLabel
   }
 
   if (task?.inbound?.grn_number && task?.inbound_unload?.koli_sequence) {
@@ -210,6 +220,10 @@ const styles = {
     fontWeight: '900',
     letterSpacing: '0.04em',
   },
+  sampleTimerText: {
+    fontSize: '16px',
+    fontWeight: '800',
+  },
   fieldGrid: {
     display: 'grid',
     gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
@@ -330,6 +344,14 @@ function normalizeRegularTask(item) {
 
 function getTaskTableName(task) {
   return task?.source_type === 'arkline' ? 'arkline_qc' : 'qc_items'
+}
+
+function isRegularSampleTask(task) {
+  return task?.source_type !== 'arkline' && Boolean(task?.inbound_unload?.is_sample)
+}
+
+function shouldTrackTaskTime(task) {
+  return !isRegularSampleTask(task)
 }
 
 function getTaskGradeInputs(task, gradeInputs) {
@@ -607,6 +629,7 @@ export default function QcInspectionTaskPage() {
               category_id,
               model_name,
               photo_url,
+              is_sample,
               koli_sequence,
               brands:dir_brands!brand_id (
                 id,
@@ -770,6 +793,10 @@ export default function QcInspectionTaskPage() {
       return 0
     }
 
+    if (!shouldTrackTaskTime(activeTask)) {
+      return 0
+    }
+
     const baseSeconds = Number(activeTask.stopwatch_seconds || 0)
     const startedAtMs = activeTask.started_at ? new Date(activeTask.started_at).getTime() : null
 
@@ -782,6 +809,10 @@ export default function QcInspectionTaskPage() {
 
   useEffect(() => {
     if (!activeTask) {
+      return
+    }
+
+    if (!shouldTrackTaskTime(activeTask)) {
       return
     }
 
@@ -823,9 +854,10 @@ export default function QcInspectionTaskPage() {
       return
     }
 
-    const startedAt = new Date().toISOString()
+    const shouldTrackTime = shouldTrackTaskTime(task)
+    const startedAt = shouldTrackTime ? new Date().toISOString() : null
     const nextStatus = task.status === 'paused' ? 'in_progress' : 'in_progress'
-    if (task.status === 'paused') {
+    if (task.status === 'paused' && shouldTrackTime) {
       const pauseLogResult = await closeOpenPauseLog({
         taskId: task.id,
         sourceType: task.source_type,
@@ -859,6 +891,7 @@ export default function QcInspectionTaskPage() {
           category_id,
           model_name,
           photo_url,
+          is_sample,
           koli_sequence,
           brands:dir_brands!brand_id (
             id,
@@ -897,13 +930,16 @@ export default function QcInspectionTaskPage() {
 
     const normalizedEmail = normalizeEmail(userEmail)
     const pausedAt = new Date().toISOString()
-    const pauseLogResult = await createPauseLog({
-      taskId: task.id,
-      sourceType: task.source_type,
-      pausedBy: userEmail,
-      pauseReason: interruptReason,
-      pausedAt,
-    })
+    const shouldTrackTime = shouldTrackTaskTime(task)
+    const pauseLogResult = shouldTrackTime
+      ? await createPauseLog({
+          taskId: task.id,
+          sourceType: task.source_type,
+          pausedBy: userEmail,
+          pauseReason: interruptReason,
+          pausedAt,
+        })
+      : { error: null }
 
     if (pauseLogResult.error) {
       setError(pauseLogResult.error.message)
@@ -914,7 +950,7 @@ export default function QcInspectionTaskPage() {
       .from(getTaskTableName(task))
       .update({
         status: 'paused',
-        stopwatch_seconds: runningSeconds,
+        stopwatch_seconds: shouldTrackTime ? runningSeconds : 0,
         pause_reason: interruptReason,
         paused_at: pausedAt,
         started_at: null,
@@ -933,6 +969,7 @@ export default function QcInspectionTaskPage() {
           category_id,
           model_name,
           photo_url,
+          is_sample,
           koli_sequence,
           brands:dir_brands!brand_id (
             id,
@@ -1001,11 +1038,12 @@ export default function QcInspectionTaskPage() {
     const qtyC = Number(latestTaskRow?.qty_c || 0) + Number(currentInputs.qty_c || 0)
     const nextLockedQty = qtyA + qtyB + qtyC
     const isMarkedComplete = Boolean(completeChecks[task.id])
+    const shouldTrackTime = shouldTrackTaskTime(task)
     const isTaskComplete =
       isMarkedComplete || nextLockedQty >= Number(latestTaskRow?.allocated_qty || task.allocated_qty || 0)
     const finishedAt = new Date().toISOString()
 
-    if (isTaskComplete) {
+    if (isTaskComplete && shouldTrackTime) {
       const pauseLogResult = await closeOpenPauseLog({
         taskId: task.id,
         sourceType: task.source_type,
@@ -1026,7 +1064,7 @@ export default function QcInspectionTaskPage() {
         qty_a: qtyA,
         qty_b: qtyB,
         qty_c: qtyC,
-        stopwatch_seconds: runningSeconds,
+        stopwatch_seconds: shouldTrackTime ? runningSeconds : 0,
         finished_at: isTaskComplete ? finishedAt : null,
         locked_qty: nextLockedQty,
         started_at: null,
@@ -1047,6 +1085,7 @@ export default function QcInspectionTaskPage() {
           category_id,
           model_name,
           photo_url,
+          is_sample,
           koli_sequence,
           brands:dir_brands!brand_id (
             id,
@@ -1193,8 +1232,12 @@ export default function QcInspectionTaskPage() {
 
           <div style={styles.timerBox}>
             <div>
-              <div style={styles.metaLabel}>Stopwatch</div>
-              <div style={styles.timerValue}>{formatSeconds(runningSeconds)}</div>
+              <div style={styles.metaLabel}>{shouldTrackTaskTime(activeTask) ? 'Stopwatch' : 'Sample QC'}</div>
+              {shouldTrackTaskTime(activeTask) ? (
+                <div style={styles.timerValue}>{formatSeconds(runningSeconds)}</div>
+              ) : (
+                <div style={styles.sampleTimerText}>No timing recorded</div>
+              )}
             </div>
 
             {activeTask.status === 'queued' || activeTask.status === 'paused' ? (
@@ -1294,7 +1337,7 @@ export default function QcInspectionTaskPage() {
           </label>
 
           <div style={styles.buttonRow}>
-            {activeTask.status === 'in_progress' ? (
+            {activeTask.status === 'in_progress' && shouldTrackTaskTime(activeTask) ? (
               <>
                 <button type="button" onClick={() => setShowInterruptModal(true)} style={styles.secondaryButton}>
                   Interrupt

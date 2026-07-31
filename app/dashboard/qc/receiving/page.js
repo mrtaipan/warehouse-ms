@@ -1518,12 +1518,25 @@ export default function QcReceivingPage() {
 
   const selectedInbound = inbounds.find((item) => item.id === Number(selectedInboundId)) || null
   const sourceOptions = useMemo(() => {
+    const groupedSamples = new Map()
     const groupedKoli = new Map()
-    const sampleRows = []
 
     unloadRows.forEach((row) => {
       if (row.is_sample) {
-        sampleRows.push(row)
+        const sequence = Number(row.koli_sequence || 0)
+        const key = `sample:${sequence || row.id}`
+        if (!groupedSamples.has(key)) {
+          groupedSamples.set(key, {
+            key,
+            label: sequence ? `Sample ${sequence}` : 'Sample',
+            type: 'sample',
+            sequence,
+            sourceId: row.id,
+            rows: [],
+          })
+        }
+
+        groupedSamples.get(key).rows.push(row)
         return
       }
 
@@ -1541,16 +1554,9 @@ export default function QcReceivingPage() {
       groupedKoli.get(key).rows.push(row)
     })
 
-    const result = []
-    if (sampleRows.length) {
-      result.push({
-        key: 'sample',
-        label: 'Sample',
-        type: 'sample',
-        sourceId: sampleRows[0].id,
-        rows: sampleRows,
-      })
-    }
+    const result = Array.from(groupedSamples.values()).sort(
+      (a, b) => Number(a.sequence || 0) - Number(b.sequence || 0) || a.label.localeCompare(b.label, undefined, { numeric: true })
+    )
 
     result.push(...Array.from(groupedKoli.values()).sort((a, b) => a.label.localeCompare(b.label, undefined, { numeric: true })))
 
