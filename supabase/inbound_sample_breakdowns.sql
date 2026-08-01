@@ -129,7 +129,7 @@ begin
     select
       v.id,
       v.product_model_id,
-      coalesce(nullif(v.selling_name, ''), nullif(v.variant_name, ''), nullif(v.variant_label, ''), nullif(v.variant_code, '')) as display_variant_name,
+      coalesce(nullif(v.selling_name, ''), nullif(v.variant_name, ''), nullif(v.variant_code, '')) as display_variant_name,
       v.variant_photo_url
     into variant_row
     from public.dir_product_model_variants v
