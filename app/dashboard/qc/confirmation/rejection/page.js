@@ -966,6 +966,38 @@ function getQcItemCategoryLabel(item) {
   )
 }
 
+function isRegularSampleTask(item) {
+  return Boolean(item?.inbound_unload?.is_sample)
+}
+
+function hasProductIdentityForSampleTask(item) {
+  const modelName = String(item?.model_name || item?.inbound_unload?.model_name || '').trim().toUpperCase()
+  const variantName = String(item?.variant_name || item?.model_color || item?.inbound_unload?.variant_name || '').trim().toUpperCase()
+  const temporaryModelNames = new Set(['', 'SAMPLE', 'TEMPORARY', 'TEMPORARY SAMPLE'])
+  const temporaryVariantNames = new Set(['', 'SAMPLE', 'TEMPORARY'])
+
+  return !temporaryModelNames.has(modelName) && !temporaryVariantNames.has(variantName)
+}
+
+function isTemporarySampleTask(item) {
+  if (!isRegularSampleTask(item)) return false
+  if (item?.inbound_unload?.is_product_temporary) return true
+
+  return !hasProductIdentityForSampleTask(item)
+}
+
+function getSampleBreakdownBrandLabel(item) {
+  return item.sample_breakdown?.brands?.brand_name || 'UNBRANDED'
+}
+
+function getSampleBreakdownCategoryLabel(item) {
+  return (
+    item.sample_breakdown?.categories?.full_name ||
+    item.sample_breakdown?.categories?.category_name ||
+    'UNCATEGORIZED'
+  )
+}
+
 export default function QcConfirmationRejectionPage() {
   const searchParams = useSearchParams()
   const draftIdRef = useRef(1)
@@ -977,6 +1009,7 @@ export default function QcConfirmationRejectionPage() {
   const [picName, setPicName] = useState('')
   const grnFilter = searchParams.get('grn') || ''
   const [qcItems, setQcItems] = useState([])
+  const [qcSampleBreakdownRows, setQcSampleBreakdownRows] = useState([])
   const [confirmRows, setConfirmRows] = useState([])
   const [returnRows, setReturnRows] = useState([])
   const [qtyInputs, setQtyInputs] = useState({})
@@ -1005,6 +1038,7 @@ export default function QcConfirmationRejectionPage() {
     const [
       { data: authData, error: authError },
       { data: qcData, error: qcError },
+      { data: qcSampleData, error: qcSampleError },
       { data: confirmData, error: confirmError },
       { data: returnsData, error: returnsError },
     ] = await Promise.all([
@@ -1026,6 +1060,10 @@ export default function QcConfirmationRejectionPage() {
               id,
               brand_id,
               category_id,
+              model_name,
+              variant_name,
+              is_sample,
+              is_product_temporary,
               brands:dir_brands!brand_id (
                 id,
                 brand_name
@@ -1054,6 +1092,59 @@ export default function QcConfirmationRejectionPage() {
         .eq('status', 'done')
         .order('created_at', { ascending: false }),
       supabase
+        .from('qc_sample_breakdowns')
+        .select(`
+          id,
+          qc_item_id,
+          sample_breakdown_id,
+          qty_a,
+          qty_b,
+          qty_c,
+          qc_item:qc_item_id (
+            id,
+            inbound_id,
+            assigned_to,
+            status,
+            inbound:inbound_id (
+              id,
+              grn_number,
+              item_name,
+              inbound_date,
+              suppliers:dir_suppliers!supplier_id (
+                supplier_name
+              )
+            ),
+            inbound_unload:inbound_unload_id (
+              id,
+              is_sample,
+              is_product_temporary
+            )
+          ),
+          sample_breakdown:sample_breakdown_id (
+            id,
+            inbound_unload_id,
+            inbound_id,
+            brand_id,
+            category_id,
+            product_model_id,
+            product_model_variant_id,
+            model_name,
+            variant_name,
+            photo_url,
+            qty,
+            brands:dir_brands!brand_id (
+              id,
+              brand_name
+            ),
+            categories:dir_categories!category_id (
+              id,
+              category_name,
+              full_name
+            )
+          )
+        `)
+        .order('created_at', { ascending: true }),
+      supabase
         .from('qc_confirm')
         .select('id, inbound_id, brand_id, category_id, model_name, variant_name, photo_url, qty, koli_sequence, grade, is_adjustment, adjustment_type, pic_name')
         .in('grade', ['B', 'C'])
@@ -1065,9 +1156,9 @@ export default function QcConfirmationRejectionPage() {
         .order('koli_sequence', { ascending: true }),
     ])
 
-    if (authError || qcError || confirmError || returnsError) {
+    if (authError || qcError || qcSampleError || confirmError || returnsError) {
       if (!silent) {
-        setError(authError?.message || qcError?.message || confirmError?.message || returnsError?.message || 'Failed to load confirmation rejection.')
+        setError(authError?.message || qcError?.message || qcSampleError?.message || confirmError?.message || returnsError?.message || 'Failed to load confirmation rejection.')
         setLoading(false)
       }
       return
@@ -1080,6 +1171,7 @@ export default function QcConfirmationRejectionPage() {
     }
 
     setQcItems((qcData || []).map(normalizeQcItemRow))
+    setQcSampleBreakdownRows(qcSampleData || [])
     setConfirmRows((confirmData || []).map(normalizeConfirmRow))
     setReturnRows((returnsData || []).map(normalizeReturnRow))
     setPicName(nextPicName)
@@ -1175,8 +1267,56 @@ export default function QcConfirmationRejectionPage() {
       return nextRow
     }
 
+    function addSourceGrade({
+      inboundId,
+      brandId,
+      categoryId,
+      brandName,
+      categoryName,
+      modelName,
+      modelColor,
+      photoUrl,
+      grade,
+      qty,
+    }) {
+      if (Number(qty || 0) <= 0) {
+        return
+      }
+
+      const key = getSourceKey({
+        brand_id: brandId,
+        category_id: categoryId,
+        model_name: modelName,
+        model_color: modelColor,
+        grade,
+      })
+
+      const current = grouped.get(key) || {
+        key,
+        inbound_id: inboundId,
+        brand_id: brandId,
+        category_id: categoryId,
+        brand_name: brandName || 'UNBRANDED',
+        category_name: categoryName || 'UNCATEGORIZED',
+        model_name: modelName || 'UNKNOWN MODEL',
+        model_color: modelColor || '',
+        photo_url: photoUrl || '',
+        grade,
+        source_qty: 0,
+        taken_qty: 0,
+        returned_qty: 0,
+      }
+
+      if (!current.photo_url && photoUrl) {
+        current.photo_url = photoUrl
+      }
+      current.source_qty += Number(qty || 0)
+      grouped.set(key, current)
+      rememberFamily(current)
+    }
+
     qcItems
-      .filter((item) => item.inbound?.grn_number === grnFilter)
+      .filter((item) => item.inbound?.grn_number === grnFilter && !isTemporarySampleTask(item))
       .forEach((item) => {
         ;[
           { grade: 'B', qty: Number(item.qty_b || 0) },
@@ -1184,36 +1324,42 @@ export default function QcConfirmationRejectionPage() {
         ]
           .filter((gradeRow) => gradeRow.qty > 0)
           .forEach((gradeRow) => {
-            const key = getSourceKey({
-              brand_id: getQcItemBrandId(item),
-              category_id: getQcItemCategoryId(item),
-              model_name: item.model_name,
-              model_color: item.model_color,
+            addSourceGrade({
+              inboundId: item.inbound_id,
+              brandId: getQcItemBrandId(item),
+              categoryId: getQcItemCategoryId(item),
+              brandName: getQcItemBrandLabel(item),
+              categoryName: getQcItemCategoryLabel(item),
+              modelName: item.model_name,
+              modelColor: item.model_color,
+              photoUrl: item.photo_url,
               grade: gradeRow.grade,
+              qty: gradeRow.qty,
             })
+          })
+      })
 
-            const current = grouped.get(key) || {
-              key,
-              inbound_id: item.inbound_id,
-              brand_id: getQcItemBrandId(item),
-              category_id: getQcItemCategoryId(item),
-              brand_name: getQcItemBrandLabel(item),
-              category_name: getQcItemCategoryLabel(item),
-              model_name: item.model_name || 'UNKNOWN MODEL',
-              model_color: item.model_color || '',
-              photo_url: item.photo_url || '',
+    qcSampleBreakdownRows
+      .filter((item) => item.qc_item?.inbound?.grn_number === grnFilter && item.qc_item?.status === 'done')
+      .forEach((item) => {
+        ;[
+          { grade: 'B', qty: Number(item.qty_b || 0) },
+          { grade: 'C', qty: Number(item.qty_c || 0) },
+        ]
+          .filter((gradeRow) => gradeRow.qty > 0)
+          .forEach((gradeRow) => {
+            addSourceGrade({
+              inboundId: item.sample_breakdown?.inbound_id || item.qc_item?.inbound_id,
+              brandId: item.sample_breakdown?.brand_id || null,
+              categoryId: item.sample_breakdown?.category_id || null,
+              brandName: getSampleBreakdownBrandLabel(item),
+              categoryName: getSampleBreakdownCategoryLabel(item),
+              modelName: item.sample_breakdown?.model_name,
+              modelColor: item.sample_breakdown?.variant_name,
+              photoUrl: item.sample_breakdown?.photo_url,
               grade: gradeRow.grade,
-              source_qty: 0,
-              taken_qty: 0,
-              returned_qty: 0,
-            }
-
-            if (!current.photo_url && item.photo_url) {
-              current.photo_url = item.photo_url
-            }
-            current.source_qty += gradeRow.qty
-            grouped.set(key, current)
-            rememberFamily(current)
+              qty: gradeRow.qty,
+            })
           })
       })
 
@@ -1243,7 +1389,7 @@ export default function QcConfirmationRejectionPage() {
       if (a.grade !== b.grade) return a.grade.localeCompare(b.grade)
       return getModelLabel(a).localeCompare(getModelLabel(b))
     })
-  }, [confirmRows, grnFilter, qcItems, returnRows, selectedInbound?.id])
+  }, [confirmRows, grnFilter, qcItems, qcSampleBreakdownRows, returnRows, selectedInbound?.id])
 
   const totals = useMemo(
     () =>
