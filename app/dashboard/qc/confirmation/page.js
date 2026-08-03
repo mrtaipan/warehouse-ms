@@ -45,7 +45,27 @@ function getMonthBounds(value) {
   return { start, next }
 }
 
-function buildVerificationRows(inboundRows = [], qcRows = []) {
+function isRegularSampleTask(item) {
+  return Boolean(item?.inbound_unload?.is_sample)
+}
+
+function hasProductIdentityForSampleTask(item) {
+  const modelName = String(item?.model_name || item?.inbound_unload?.model_name || '').trim().toUpperCase()
+  const variantName = String(item?.variant_name || item?.model_color || item?.inbound_unload?.variant_name || '').trim().toUpperCase()
+  const temporaryModelNames = new Set(['', 'SAMPLE', 'TEMPORARY', 'TEMPORARY SAMPLE'])
+  const temporaryVariantNames = new Set(['', 'SAMPLE', 'TEMPORARY'])
+
+  return !temporaryModelNames.has(modelName) && !temporaryVariantNames.has(variantName)
+}
+
+function isTemporarySampleTask(item) {
+  if (!isRegularSampleTask(item)) return false
+  if (item?.inbound_unload?.is_product_temporary) return true
+
+  return !hasProductIdentityForSampleTask(item)
+}
+
+function buildVerificationRows(inboundRows = [], qcRows = [], qcSampleRows = []) {
   const rowsByInbound = new Map()
 
   inboundRows.forEach((inbound) => {
@@ -60,7 +80,24 @@ function buildVerificationRows(inboundRows = [], qcRows = []) {
   })
 
   qcRows.forEach((item) => {
+    if (isTemporarySampleTask(item)) {
+      return
+    }
+
     const row = rowsByInbound.get(String(item.inbound_id || ''))
+    if (!row) return
+
+    row.passingSourceQty += Number(item.qty_a || 0)
+    row.rejectionSourceQty += Number(item.qty_b || 0) + Number(item.qty_c || 0)
+  })
+
+  qcSampleRows.forEach((item) => {
+    if (item.qc_item?.status !== 'done') {
+      return
+    }
+
+    const inboundId = item.sample_breakdown?.inbound_id || item.qc_item?.inbound_id
+    const row = rowsByInbound.get(String(inboundId || ''))
     if (!row) return
 
     row.passingSourceQty += Number(item.qty_a || 0)
@@ -113,21 +150,60 @@ export default async function QcConfirmationPage({ searchParams }) {
 
   const inboundIds = (inboundRows || []).map((row) => row.id).filter(Boolean)
   let qcRows = []
+  let qcSampleRows = []
   let qcError = null
+  let qcSampleError = null
 
   if (inboundIds.length) {
-    const qcResult = await supabase
-      .from('qc_items')
-      .select('inbound_id, qty_a, qty_b, qty_c')
-      .eq('status', 'done')
-      .in('inbound_id', inboundIds)
+    const [qcResult, qcSampleResult] = await Promise.all([
+      supabase
+        .from('qc_items')
+        .select(`
+          inbound_id,
+          inbound_unload_id,
+          model_name,
+          variant_name,
+          qty_a,
+          qty_b,
+          qty_c,
+          inbound_unload:inbound_unload_id (
+            id,
+            model_name,
+            variant_name,
+            is_sample,
+            is_product_temporary
+          )
+        `)
+        .eq('status', 'done')
+        .in('inbound_id', inboundIds),
+      supabase
+        .from('qc_sample_breakdowns')
+        .select(`
+          id,
+          qty_a,
+          qty_b,
+          qty_c,
+          qc_item:qc_item_id (
+            id,
+            inbound_id,
+            status
+          ),
+          sample_breakdown:sample_breakdown_id (
+            id,
+            inbound_id
+          )
+        `)
+        .in('sample_breakdown.inbound_id', inboundIds),
+    ])
 
     qcRows = qcResult.data || []
+    qcSampleRows = qcSampleResult.data || []
     qcError = qcResult.error
+    qcSampleError = qcSampleResult.error
   }
 
-  const error = supplierError?.message || inboundError?.message || qcError?.message || ''
-  const rows = error ? [] : buildVerificationRows(inboundRows || [], qcRows)
+  const error = supplierError?.message || inboundError?.message || qcError?.message || qcSampleError?.message || ''
+  const rows = error ? [] : buildVerificationRows(inboundRows || [], qcRows, qcSampleRows)
 
   return (
     <section style={styles.wrapper}>

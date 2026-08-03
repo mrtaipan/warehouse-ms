@@ -1133,6 +1133,38 @@ function getQcItemCategoryLabel(item) {
   )
 }
 
+function isRegularSampleTask(item) {
+  return Boolean(item?.inbound_unload?.is_sample)
+}
+
+function hasProductIdentityForSampleTask(item) {
+  const modelName = String(item?.model_name || item?.inbound_unload?.model_name || '').trim().toUpperCase()
+  const variantName = String(item?.variant_name || item?.model_color || item?.inbound_unload?.variant_name || '').trim().toUpperCase()
+  const temporaryModelNames = new Set(['', 'SAMPLE', 'TEMPORARY', 'TEMPORARY SAMPLE'])
+  const temporaryVariantNames = new Set(['', 'SAMPLE', 'TEMPORARY'])
+
+  return !temporaryModelNames.has(modelName) && !temporaryVariantNames.has(variantName)
+}
+
+function isTemporarySampleTask(item) {
+  if (!isRegularSampleTask(item)) return false
+  if (item?.inbound_unload?.is_product_temporary) return true
+
+  return !hasProductIdentityForSampleTask(item)
+}
+
+function getSampleBreakdownBrandLabel(item) {
+  return item.sample_breakdown?.brands?.brand_name || 'UNBRANDED'
+}
+
+function getSampleBreakdownCategoryLabel(item) {
+  return (
+    item.sample_breakdown?.categories?.full_name ||
+    item.sample_breakdown?.categories?.category_name ||
+    'UNCATEGORIZED'
+  )
+}
+
 function formatItemTypeSubcategoryLabel(value) {
   const parts = String(value || '')
     .split(/\s*(?:>|\/)\s*/)
@@ -1266,6 +1298,7 @@ export default function QcConfirmationNextProcessPage() {
   const [success, setSuccess] = useState('')
   const [picName, setPicName] = useState('')
   const [qcItems, setQcItems] = useState([])
+  const [qcSampleBreakdownRows, setQcSampleBreakdownRows] = useState([])
   const [confirmRows, setConfirmRows] = useState([])
   const [displayNameByEmail, setDisplayNameByEmail] = useState({})
   const [currentKoliItems, setCurrentKoliItems] = useState([])
@@ -1296,6 +1329,7 @@ export default function QcConfirmationNextProcessPage() {
     const [
       { data: authData, error: authError },
       { data: qcData, error: qcError },
+      { data: qcSampleData, error: qcSampleError },
       { data: confirmData, error: confirmError },
       { data: profileData, error: profileError },
     ] = await Promise.all([
@@ -1345,6 +1379,59 @@ export default function QcConfirmationNextProcessPage() {
         .eq('status', 'done')
         .order('created_at', { ascending: false }),
       supabase
+        .from('qc_sample_breakdowns')
+        .select(`
+          id,
+          qc_item_id,
+          sample_breakdown_id,
+          qty_a,
+          qty_b,
+          qty_c,
+          qc_item:qc_item_id (
+            id,
+            inbound_id,
+            assigned_to,
+            status,
+            inbound:inbound_id (
+              id,
+              grn_number,
+              item_name,
+              inbound_date,
+              suppliers:dir_suppliers!supplier_id (
+                supplier_name
+              )
+            ),
+            inbound_unload:inbound_unload_id (
+              id,
+              is_sample,
+              is_product_temporary
+            )
+          ),
+          sample_breakdown:sample_breakdown_id (
+            id,
+            inbound_unload_id,
+            inbound_id,
+            brand_id,
+            category_id,
+            product_model_id,
+            product_model_variant_id,
+            model_name,
+            variant_name,
+            photo_url,
+            qty,
+            brands:dir_brands!brand_id (
+              id,
+              brand_name
+            ),
+            categories:dir_categories!category_id (
+              id,
+              category_name,
+              full_name
+            )
+          )
+        `)
+        .order('created_at', { ascending: true }),
+      supabase
         .from('qc_confirm')
         .select('id, inbound_id, brand_id, category_id, model_name, variant_name, photo_url, qty, koli_sequence, is_sample, grade, is_adjustment, adjustment_type, pic_name')
         .order('koli_sequence', { ascending: true }),
@@ -1353,9 +1440,9 @@ export default function QcConfirmationNextProcessPage() {
         .select('email, display_name'),
     ])
 
-    if (authError || qcError || confirmError || profileError) {
+    if (authError || qcError || qcSampleError || confirmError || profileError) {
       if (!silent) {
-        setError(authError?.message || qcError?.message || confirmError?.message || profileError?.message || 'Failed to load confirmation next process.')
+        setError(authError?.message || qcError?.message || qcSampleError?.message || confirmError?.message || profileError?.message || 'Failed to load confirmation next process.')
         setLoading(false)
       }
       return
@@ -1376,6 +1463,7 @@ export default function QcConfirmationNextProcessPage() {
     })
 
     setQcItems((qcData || []).map(normalizeQcItemRow))
+    setQcSampleBreakdownRows(qcSampleData || [])
     setConfirmRows((confirmData || []).map(normalizeConfirmRow))
     setDisplayNameByEmail(profileMap)
     setPicName(nextPicName)
@@ -1411,39 +1499,94 @@ export default function QcConfirmationNextProcessPage() {
 
   const sourceRows = useMemo(() => {
     const grouped = new Map()
+    const addSourceQty = ({
+      inboundId,
+      brandId,
+      categoryId,
+      brandName,
+      categoryName,
+      modelName,
+      modelColor,
+      photoUrl,
+      qtyA,
+      picName,
+    }) => {
+      if (Number(qtyA || 0) <= 0) {
+        return
+      }
+
+      const key = getSourceKey({
+        brand_id: brandId,
+        category_id: categoryId,
+        model_name: modelName,
+        model_color: modelColor,
+      })
+      const current = grouped.get(key) || {
+        key,
+        inbound_id: inboundId,
+        brand_id: brandId,
+        category_id: categoryId,
+        brand_name: brandName || 'UNBRANDED',
+        category_name: categoryName || 'UNCATEGORIZED',
+        model_name: modelName || 'UNKNOWN MODEL',
+        model_color: modelColor || '',
+        photo_url: photoUrl || '',
+        source_qty: 0,
+        confirmed_qty: 0,
+        shortage_qty: 0,
+        pic_names: new Set(),
+      }
+
+      current.source_qty += Number(qtyA || 0)
+      current.photo_url = current.photo_url || photoUrl || ''
+      if (picName) {
+        current.pic_names.add(picName)
+      }
+      grouped.set(key, current)
+    }
 
     qcItems
-      .filter((item) => item.inbound?.grn_number === grnFilter && Number(item.qty_a || 0) > 0)
+      .filter((item) => (
+        item.inbound?.grn_number === grnFilter &&
+        Number(item.qty_a || 0) > 0 &&
+        !isTemporarySampleTask(item)
+      ))
       .forEach((item) => {
-        const key = getSourceKey({
-          brand_id: getQcItemBrandId(item),
-          category_id: getQcItemCategoryId(item),
-          model_name: item.model_name,
-          model_color: item.model_color,
-        })
-        const current = grouped.get(key) || {
-          key,
-          inbound_id: item.inbound_id,
-          brand_id: getQcItemBrandId(item),
-          category_id: getQcItemCategoryId(item),
-          brand_name: getQcItemBrandLabel(item),
-          category_name: getQcItemCategoryLabel(item),
-          model_name: item.model_name || 'UNKNOWN MODEL',
-          model_color: item.model_color || '',
-          photo_url: item.photo_url || '',
-          source_qty: 0,
-          confirmed_qty: 0,
-          shortage_qty: 0,
-          pic_names: new Set(),
-        }
-
-        current.source_qty += Number(item.qty_a || 0)
         const assignedEmail = normalizeEmail(item.assigned_to)
-        const picName = getFirstName(displayNameByEmail[assignedEmail] || item.pic_name || item.assigned_to)
-        if (picName) {
-          current.pic_names.add(picName)
-        }
-        grouped.set(key, current)
+        addSourceQty({
+          inboundId: item.inbound_id,
+          brandId: getQcItemBrandId(item),
+          categoryId: getQcItemCategoryId(item),
+          brandName: getQcItemBrandLabel(item),
+          categoryName: getQcItemCategoryLabel(item),
+          modelName: item.model_name,
+          modelColor: item.model_color,
+          photoUrl: item.photo_url,
+          qtyA: item.qty_a,
+          picName: getFirstName(displayNameByEmail[assignedEmail] || item.pic_name || item.assigned_to),
+        })
+      })
+
+    qcSampleBreakdownRows
+      .filter((item) => (
+        item.qc_item?.inbound?.grn_number === grnFilter &&
+        item.qc_item?.status === 'done' &&
+        Number(item.qty_a || 0) > 0
+      ))
+      .forEach((item) => {
+        const assignedEmail = normalizeEmail(item.qc_item?.assigned_to)
+        addSourceQty({
+          inboundId: item.sample_breakdown?.inbound_id || item.qc_item?.inbound_id,
+          brandId: item.sample_breakdown?.brand_id || null,
+          categoryId: item.sample_breakdown?.category_id || null,
+          brandName: getSampleBreakdownBrandLabel(item),
+          categoryName: getSampleBreakdownCategoryLabel(item),
+          modelName: item.sample_breakdown?.model_name,
+          modelColor: item.sample_breakdown?.variant_name,
+          photoUrl: item.sample_breakdown?.photo_url,
+          qtyA: item.qty_a,
+          picName: getFirstName(displayNameByEmail[assignedEmail] || item.qc_item?.assigned_to),
+        })
       })
 
     const sourceKeyByModelOnlyKey = new Map()
@@ -1493,7 +1636,7 @@ export default function QcConfirmationNextProcessPage() {
         if (a.category_name !== b.category_name) return a.category_name.localeCompare(b.category_name)
         return getModelLabel(a).localeCompare(getModelLabel(b))
       })
-  }, [confirmRows, displayNameByEmail, grnFilter, qcItems, selectedInbound?.id])
+  }, [confirmRows, displayNameByEmail, grnFilter, qcItems, qcSampleBreakdownRows, selectedInbound?.id])
 
   const sourceRowByKey = useMemo(() => new Map(sourceRows.map((item) => [item.key, item])), [sourceRows])
   const sourceRowByModelOnlyKey = useMemo(() => {
