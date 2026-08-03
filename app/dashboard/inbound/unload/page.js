@@ -60,6 +60,24 @@ function getVariantDisplayName(variant) {
   return String(variant?.selling_name || variant?.variant_name || variant?.variant_label || variant?.variant_code || 'Variant').trim()
 }
 
+function getVersionedImageUrl(url, version) {
+  const cleanUrl = String(url || '').trim()
+  const cleanVersion = String(version || '').trim()
+
+  if (!cleanUrl || !cleanVersion || cleanUrl.startsWith('data:') || cleanUrl.startsWith('blob:')) {
+    return cleanUrl
+  }
+
+  return `${cleanUrl}${cleanUrl.includes('?') ? '&' : '?'}v=${encodeURIComponent(cleanVersion)}`
+}
+
+function getVariantDisplayPhotoUrl(variant) {
+  return getVersionedImageUrl(
+    variant?.variant_photo_url || variant?.photo_url || '',
+    variant?.updated_at || variant?.id || ''
+  )
+}
+
 function compareModelsByCode(a, b) {
   const codeCompare = String(a?.model_code || '').localeCompare(String(b?.model_code || ''), undefined, {
     numeric: true,
@@ -2799,7 +2817,7 @@ export default function UnloadPage() {
             .map((variant) => ({
               model,
               variant,
-              photoUrl: variant.variant_photo_url || '',
+              photoUrl: getVariantDisplayPhotoUrl(variant),
               label: `${model.model_name || '-'} / ${getVariantDisplayName(variant)}`,
             }))
         )
@@ -2866,12 +2884,12 @@ export default function UnloadPage() {
               .map((value) => String(value || '').toLowerCase())
               .some((value) => value.includes(query))
           })
-          .map((variant) => ({
-            model,
-            variant,
-            photoUrl: variant.variant_photo_url || '',
-            label: `${model.model_name || '-'} / ${getVariantDisplayName(variant)}`,
-          }))
+            .map((variant) => ({
+              model,
+              variant,
+              photoUrl: getVariantDisplayPhotoUrl(variant),
+              label: `${model.model_name || '-'} / ${getVariantDisplayName(variant)}`,
+            }))
       )
       .sort((a, b) => {
         const modelCompare = compareModelsByCode(a.model, b.model)
@@ -2919,7 +2937,10 @@ export default function UnloadPage() {
   const selectedVariant =
     exactSelectedVariant ||
     (!selectedVariantLabel ? selectedModelVariants[0] || null : null)
-  const selectedModelPhoto = selectedVariant?.variant_photo_url || selectedModel?.photo_url || ''
+  const selectedModelPhotoRaw = selectedVariant?.variant_photo_url || selectedModel?.photo_url || ''
+  const selectedModelPhoto = selectedVariant
+    ? getVariantDisplayPhotoUrl(selectedVariant)
+    : getVersionedImageUrl(selectedModel?.photo_url || '', selectedModel?.updated_at || selectedModel?.id || '')
   const selectedVariantDisplayName = selectedVariant
     ? getVariantDisplayName(selectedVariant)
     : selectedVariantLabel || ''
@@ -3553,7 +3574,7 @@ export default function UnloadPage() {
 
   function getVariantPhotoForRow(row) {
     const matchingVariant = getVariantForRow(row)
-    return matchingVariant?.variant_photo_url || row.photo_url || ''
+    return matchingVariant ? getVariantDisplayPhotoUrl(matchingVariant) : getVersionedImageUrl(row.photo_url || '', row.updated_at || row.id || '')
   }
 
   function getModelVariantLabelForRow(row) {
@@ -5352,7 +5373,7 @@ export default function UnloadPage() {
           : selectedVariantDisplayName || null,
       qty: Number(qty),
       pic_name: displayName,
-      photo_url: isTemporarySample ? null : selectedModelPhoto || selectedModel?.photo_url || null,
+      photo_url: isTemporarySample ? null : selectedModelPhotoRaw || selectedModel?.photo_url || null,
       is_sample: isEffectiveSampleMode,
       is_product_temporary: isTemporarySample,
       source_sample_unload_id: isSampleResolveBuilder ? Number(builderSampleResolveSource.id) : null,
