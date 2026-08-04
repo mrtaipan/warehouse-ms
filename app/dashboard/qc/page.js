@@ -1299,8 +1299,20 @@ function getArklineAdjustmentGradeLabel(item) {
   return '-'
 }
 
-function isVerificationAdjustment(item) {
-  return ['SURPLUS', 'SHORTAGE', 'REJECTION_MANUAL', 'TRANSFER'].includes(String(item?.adjustment_type || '').trim().toUpperCase())
+function getVerificationAdjustmentType(item) {
+  return String(item?.adjustment_type || '').trim().toUpperCase()
+}
+
+function compareQcPostingRows(a, b) {
+  const dateA = a?.created_at ? new Date(a.created_at).getTime() : 0
+  const dateB = b?.created_at ? new Date(b.created_at).getTime() : 0
+  if (dateA !== dateB) return dateA - dateB
+
+  const sequenceA = Number(a?.koli_sequence || 0)
+  const sequenceB = Number(b?.koli_sequence || 0)
+  if (sequenceA !== sequenceB) return sequenceA - sequenceB
+
+  return Number(a?.id || 0) - Number(b?.id || 0)
 }
 
 function InfoHint({ text }) {
@@ -1463,7 +1475,10 @@ export default function QcDashboardPage() {
           variant_name,
           photo_url,
           qty,
+          koli_sequence,
+          is_sample,
           grade,
+          source_grade,
           is_adjustment,
           adjustment_type,
           created_at,
@@ -1681,8 +1696,8 @@ export default function QcDashboardPage() {
 
     setQcItems((qcRows || []).map(normalizeQcItemRow))
     setArklineQcItems(arklineRows || [])
-    setQcConfirmRows((confirmRows || []).map((row) => ({ ...row, model_color: row.variant_name || '' })))
-    setReturnRows((returnData || []).map((row) => ({ ...row, model_color: row.variant_name || '' })))
+    setQcConfirmRows((confirmRows || []).map((row) => ({ ...row, model_color: row.variant_name || row.model_color || '' })))
+    setReturnRows((returnData || []).map((row) => ({ ...row, model_color: row.variant_name || row.model_color || '' })))
     setQcMembers(eligibleMembers)
     setQcProfiles(allProfiles)
     setPauseLogs(pauseLogRows || [])
@@ -2138,44 +2153,187 @@ export default function QcDashboardPage() {
       })
     }
 
-    if (qcMode === 'regular') filteredAdjustmentRows.forEach((item) => {
-      if (isVerificationAdjustment(item)) return
+    if (qcMode === 'regular') {
+      const regularBaseTotalsByKey = new Map()
+      grouped.forEach((current, key) => {
+        regularBaseTotalsByKey.set(key, {
+          A: Number(current.qtyA || 0),
+          B: Number(current.qtyB || 0),
+          C: Number(current.qtyC || 0),
+        })
+      })
 
-      const brand = getConfirmBrandLabel(item)
-      const category = getConfirmCategoryLabel(item)
-      const model = item.model_name || 'UNKNOWN MODEL'
-      const variant = item.model_color || item.variant_name || ''
-      const key = `${brand}|||${category}|||${model}|||${variant}`
-      const current = grouped.get(key) || { brand, category, model, variant, photoUrl: item.photo_url || '', qtyA: 0, qtyB: 0, qtyC: 0, checked: 0 }
-      const grade = String(item.grade || 'A').toUpperCase()
-      const qty = Number(item.qty || 0)
+      const chronologicalConfirmRows = [...qcConfirmRows].sort(compareQcPostingRows)
 
-      if (grade === 'A') current.qtyA += qty
-      if (grade === 'B') current.qtyB += qty
-      if (grade === 'C') current.qtyC += qty
-      current.checked += qty
-      current.photoUrl = current.photoUrl || item.photo_url || ''
-      grouped.set(key, current)
-    })
+      const getRegularSummaryParts = (item, brand, category) => {
+        const model = item.model_name || 'UNKNOWN MODEL'
+        const variant = item.model_color || item.variant_name || ''
+        return {
+          brand,
+          category,
+          model,
+          variant,
+          key: `${brand}|||${category}|||${model}|||${variant}`,
+        }
+      }
 
-    if (qcMode === 'regular') filteredReturnAdjustmentRows.forEach((item) => {
-      if (isVerificationAdjustment(item)) return
+      const getConfirmSummaryParts = (item) => getRegularSummaryParts(item, getConfirmBrandLabel(item), getConfirmCategoryLabel(item))
+      const getReturnSummaryParts = (item) => getRegularSummaryParts(item, getReturnBrandLabel(item), getReturnCategoryLabel(item))
 
-      const brand = getReturnBrandLabel(item)
-      const category = getReturnCategoryLabel(item)
-      const model = item.model_name || 'UNKNOWN MODEL'
-      const variant = item.model_color || item.variant_name || ''
-      const key = `${brand}|||${category}|||${model}|||${variant}`
-      const current = grouped.get(key) || { brand, category, model, variant, photoUrl: '', qtyA: 0, qtyB: 0, qtyC: 0, checked: 0 }
-      const grade = String(item.grade || 'A').toUpperCase()
-      const qty = Number(item.qty || 0)
+      const getOrCreateRegularSummary = (parts, photoUrl = '') => {
+        const current =
+          grouped.get(parts.key) || {
+            brand: parts.brand,
+            category: parts.category,
+            model: parts.model,
+            variant: parts.variant,
+            photoUrl,
+            qtyA: 0,
+            qtyB: 0,
+            qtyC: 0,
+            rejectTargetQty: 0,
+            checked: 0,
+            taskRows: [],
+            hasRejectDetails: false,
+          }
 
-      if (grade === 'A') current.qtyA += qty
-      if (grade === 'B') current.qtyB += qty
-      if (grade === 'C') current.qtyC += qty
-      current.checked += qty
-      grouped.set(key, current)
-    })
+        current.photoUrl = current.photoUrl || photoUrl || ''
+        return current
+      }
+
+      const getGradeField = (grade) => {
+        if (grade === 'A') return 'qtyA'
+        if (grade === 'B') return 'qtyB'
+        if (grade === 'C') return 'qtyC'
+        return ''
+      }
+
+      const addRegularGradeQty = (current, grade, rawQty) => {
+        const field = getGradeField(grade)
+        const qty = Math.max(0, Number(rawQty || 0))
+        if (!field || !qty) return 0
+
+        current[field] += qty
+        return qty
+      }
+
+      const reduceRegularGradeQty = (current, grade, rawQty) => {
+        const field = getGradeField(grade)
+        const qty = Math.max(0, Number(rawQty || 0))
+        if (!field || !qty) return 0
+
+        const appliedQty = Math.min(Number(current[field] || 0), qty)
+        current[field] -= appliedQty
+        return appliedQty
+      }
+
+      const moveRegularGradeQty = (current, fromGrade, toGrade, rawQty) => {
+        const sourceGrade = normalizeQcGrade(fromGrade)
+        const targetGrade = normalizeQcGrade(toGrade)
+        const qty = Math.max(0, Number(rawQty || 0))
+        if (!sourceGrade || !targetGrade || sourceGrade === targetGrade || !qty) return
+
+        const appliedQty = reduceRegularGradeQty(current, sourceGrade, qty)
+        addRegularGradeQty(current, targetGrade, appliedQty)
+      }
+
+      const getRegularPendingBeforeConfirmRow = (targetItem, targetKey, targetGrade) => {
+        const baseTotals = regularBaseTotalsByKey.get(targetKey) || { A: 0, B: 0, C: 0 }
+        let sourceQty = Number(baseTotals[targetGrade] || 0)
+        let confirmedQty = 0
+        let shortageQty = 0
+        const targetId = String(targetItem.id || '')
+        const targetInboundId = Number(targetItem.inbound_id || 0)
+        const targetIsSample = Boolean(targetItem.is_sample)
+        const getPendingQty = () => Math.max(0, sourceQty - confirmedQty - shortageQty)
+
+        for (const row of chronologicalConfirmRows) {
+          if (targetInboundId && Number(row.inbound_id || 0) !== targetInboundId) continue
+          if (sampleFilter && Boolean(row.is_sample) !== targetIsSample) continue
+
+          const rowParts = getConfirmSummaryParts(row)
+          if (rowParts.key !== targetKey) continue
+
+          if (targetId && String(row.id || '') === targetId) {
+            return getPendingQty()
+          }
+
+          if (targetId && String(row.id || '') !== targetId && compareQcPostingRows(row, targetItem) > 0) {
+            break
+          }
+
+          const rowType = getVerificationAdjustmentType(row)
+          const rowGrade = normalizeQcGrade(row.grade, 'A')
+          const rowSourceGrade = normalizeQcGrade(row.source_grade, rowGrade)
+          const rowQty = Math.max(0, Number(row.qty || 0))
+
+          if (!rowQty) {
+            continue
+          }
+
+          if (rowType === 'TRANSFER') {
+            if (rowGrade === targetGrade) {
+              if (rowSourceGrade !== rowGrade) {
+                sourceQty += rowQty
+              }
+              confirmedQty += rowQty
+            } else if (rowSourceGrade === targetGrade) {
+              confirmedQty += rowQty
+            }
+          } else if (rowType === 'SHORTAGE') {
+            if (rowGrade === targetGrade) {
+              const reductionQty = Math.max(0, getPendingQty() - rowQty)
+              confirmedQty += rowQty
+              shortageQty += reductionQty
+            }
+          } else if (rowType === 'SURPLUS' || rowType === 'REJECTION_MANUAL') {
+            if (rowGrade === targetGrade) {
+              sourceQty += rowType === 'SURPLUS' ? Math.max(0, rowQty - getPendingQty()) : rowQty
+              confirmedQty += rowQty
+            }
+          } else if (rowGrade === targetGrade) {
+            confirmedQty += rowQty
+          }
+        }
+
+        return getPendingQty()
+      }
+
+      filteredAdjustmentRows.forEach((item) => {
+        const parts = getConfirmSummaryParts(item)
+        const current = getOrCreateRegularSummary(parts, item.photo_url || '')
+        const grade = normalizeQcGrade(item.grade, 'A')
+        const type = getVerificationAdjustmentType(item)
+        const qty = Math.max(0, Number(item.qty || 0))
+
+        if (!qty) {
+          grouped.set(parts.key, current)
+          return
+        }
+
+        if (type === 'TRANSFER') {
+          moveRegularGradeQty(current, normalizeQcGrade(item.source_grade, grade), grade, qty)
+        } else if (type === 'SHORTAGE') {
+          reduceRegularGradeQty(current, grade, Math.max(0, getRegularPendingBeforeConfirmRow(item, parts.key, grade) - qty))
+        } else if (type === 'SURPLUS') {
+          addRegularGradeQty(current, grade, Math.max(0, qty - getRegularPendingBeforeConfirmRow(item, parts.key, grade)))
+        } else {
+          addRegularGradeQty(current, grade, qty)
+        }
+
+        grouped.set(parts.key, current)
+      })
+
+      filteredReturnAdjustmentRows.forEach((item) => {
+        const parts = getReturnSummaryParts(item)
+        const current = getOrCreateRegularSummary(parts, '')
+        const grade = normalizeQcGrade(item.grade, 'A')
+        const qty = Math.max(0, Number(item.qty || 0))
+
+        addRegularGradeQty(current, grade, qty)
+        grouped.set(parts.key, current)
+      })
+    }
 
     if (qcMode === 'regular') {
       grouped.forEach((current) => {
@@ -2198,6 +2356,7 @@ export default function QcDashboardPage() {
     filteredAdjustmentRows,
     filteredReturnAdjustmentRows,
     hasInvalidDateRange,
+    qcConfirmRows,
     qcMode,
     qcSampleSplitsByQcItemId,
     sampleFilter,
