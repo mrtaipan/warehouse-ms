@@ -1,6 +1,6 @@
 import { redirect } from 'next/navigation'
 import { createClient } from '@/utils/supabase/server'
-import { ADMIN_EMAIL, ROLE_OPTIONS, getPermissionCatalog } from '@/utils/permissions'
+import { ADMIN_EMAIL, ROLE_OPTIONS, canAccessOperationsCalendar, expandImpliedPermissions, getPermissionCatalog } from '@/utils/permissions'
 import { sendUserInvite, updateRolePermissions, updateUserRole } from './actions'
 import UserAccessClient from './user-access-client'
 
@@ -33,6 +33,16 @@ export default async function UserAccessPage({ searchParams }) {
     accumulator[item.role].push(item.permission_code)
     return accumulator
   }, {})
+
+  for (const [role, permissionCodes] of Object.entries(rolePermissionMap)) {
+    rolePermissionMap[role] = Array.from(expandImpliedPermissions(permissionCodes))
+  }
+
+  for (const role of ROLE_OPTIONS) {
+    if (role.value === 'admin') continue
+    if (!canAccessOperationsCalendar(role.value, rolePermissionMap[role.value] || [], false)) continue
+    rolePermissionMap[role.value] = Array.from(new Set([...(rolePermissionMap[role.value] || []), 'dashboard.operations_calendar.view']))
+  }
 
   const inviteStatus = String(resolvedSearchParams?.invite || '').trim().toLowerCase()
   const actionStatus = String(resolvedSearchParams?.status || '').trim().toLowerCase()

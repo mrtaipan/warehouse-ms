@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import { createClient } from '@/utils/supabase/browser'
 import { getProfileByAuthenticatedUser } from '@/utils/user-profiles'
-import { ADMIN_EMAIL, resolveRole } from '@/utils/permissions'
+import { ADMIN_EMAIL, hasPermission, resolveRole } from '@/utils/permissions'
 
 const supabase = createClient()
 const PRODUCT_PHOTOS_BUCKET = 'product-photos'
@@ -185,6 +185,40 @@ function getProductPhotoBasePath({ brand, brandFallback, category, categoryById,
 
 function getStablePhotoFileName(name, extension = 'jpg') {
   return `${getSafeStorageSegment(name, 'variant')}.${extension}`
+}
+
+function getStorageObjectPathFromPublicUrl(url, bucketName) {
+  const cleanUrl = String(url || '').trim()
+  if (!cleanUrl || cleanUrl.startsWith('data:') || cleanUrl.startsWith('blob:')) return ''
+
+  try {
+    const parsedUrl = new URL(cleanUrl)
+    const marker = `/storage/v1/object/public/${bucketName}/`
+    const markerIndex = parsedUrl.pathname.indexOf(marker)
+
+    if (markerIndex === -1) return ''
+
+    return decodeURIComponent(parsedUrl.pathname.slice(markerIndex + marker.length))
+  } catch {
+    return ''
+  }
+}
+
+function getFileExtensionFromUrl(url, fallback = 'jpg') {
+  const cleanUrl = String(url || '').split('?')[0].split('#')[0]
+  const extension = cleanUrl.split('.').pop()?.toLowerCase() || fallback
+
+  return extension.replace(/[^a-z0-9]/g, '') || fallback
+}
+
+function getImageContentType(extension) {
+  const normalizedExtension = String(extension || '').toLowerCase()
+
+  if (normalizedExtension === 'png') return 'image/png'
+  if (normalizedExtension === 'webp') return 'image/webp'
+  if (normalizedExtension === 'gif') return 'image/gif'
+
+  return 'image/jpeg'
 }
 
 function readFileAsDataUrl(file) {
@@ -2335,11 +2369,11 @@ export default function UnloadPage() {
   const pathname = usePathname()
   const searchParams = useSearchParams()
   const grnParam = searchParams.get('grn') || ''
+  const modeParam = searchParams.get('mode') || ''
   const resolveSampleIdParam = searchParams.get('resolveSample') || ''
-  const isBuilderMode = pathname.startsWith('/mobile/inbound/unload')
-  const isSampleResolveBuilder = isBuilderMode && Boolean(resolveSampleIdParam)
   const [user, setUser] = useState(null)
   const [profile, setProfile] = useState(null)
+  const [permissionCodes, setPermissionCodes] = useState([])
   const [inbounds, setInbounds] = useState([])
   const [brands, setBrands] = useState([])
   const [categories, setCategories] = useState([])
@@ -2404,6 +2438,7 @@ export default function UnloadPage() {
   const [supportsUnloadVariantCode, setSupportsUnloadVariantCode] = useState(false)
   const [supportsUnloadVariantName, setSupportsUnloadVariantName] = useState(false)
   const [supportsUnloadTemporarySample, setSupportsUnloadTemporarySample] = useState(false)
+  const [supportsUnloadSampleResolution, setSupportsUnloadSampleResolution] = useState(false)
   const [supportsSampleBreakdowns, setSupportsSampleBreakdowns] = useState(false)
   const [supportsReturnVariant, setSupportsReturnVariant] = useState(false)
   const [supportsReturnVariantCode, setSupportsReturnVariantCode] = useState(false)
@@ -2419,7 +2454,15 @@ export default function UnloadPage() {
   })
   const displayName = user ? getDisplayName(user, profile) : 'Loading...'
   const userRole = resolveRole(profile?.role, user?.email?.toLowerCase() === ADMIN_EMAIL)
-  const canRegistryModelVariant = userRole === 'admin' || userRole === 'inbound_coordinator'
+  const isAdminUser = user?.email?.toLowerCase() === ADMIN_EMAIL || userRole === 'admin'
+  const canViewUnload = hasPermission(permissionCodes, 'inbound.unload.view', isAdminUser)
+  const canAddUnload = hasPermission(permissionCodes, 'inbound.unload.add', isAdminUser)
+  const canEditUnload = hasPermission(permissionCodes, 'inbound.unload.edit', isAdminUser)
+  const canViewReceiving = hasPermission(permissionCodes, 'inbound.receiving.view', isAdminUser)
+  const canManageUnload = canAddUnload || canEditUnload
+  const isBuilderMode = pathname.startsWith('/mobile/inbound/unload') || modeParam === 'builder'
+  const isSampleResolveBuilder = isBuilderMode && Boolean(resolveSampleIdParam)
+  const canRegistryModelVariant = canEditUnload
   const isEffectiveSampleMode = isSampleResolveBuilder || isSample
   const addMode = isReturn ? 'return' : isEffectiveSampleMode ? 'sample' : 'regular'
 
@@ -2491,11 +2534,16 @@ export default function UnloadPage() {
       }
 
       const profileResult = await getProfileByAuthenticatedUser(supabase, authUser, 'id, email, display_name, role')
+      const role = resolveRole(profileResult.data?.role, authUser.email?.toLowerCase() === ADMIN_EMAIL)
+      const { data: rolePermissionRows } = role === 'admin'
+        ? { data: [] }
+        : await supabase.from('dir_user_roles').select('permission_code').eq('role', role)
 
       if (!isMounted) return
 
       setUser(authUser)
       setProfile(profileResult.data || null)
+      setPermissionCodes((rolePermissionRows || []).map((item) => item.permission_code).filter(Boolean))
     }
 
     loadAuthenticatedUser()
@@ -2574,6 +2622,7 @@ export default function UnloadPage() {
         { error: unloadVariantCodeError },
         { error: unloadVariantNameError },
         { error: unloadTemporarySampleError },
+        { error: unloadSampleResolutionError },
         { error: sampleBreakdownSupportError },
         { error: returnVariantError },
         { error: returnVariantCodeError },
@@ -2585,6 +2634,7 @@ export default function UnloadPage() {
         supabase.from('inbound_unload').select('variant_code').limit(1),
         supabase.from('inbound_unload').select('variant_name').limit(1),
         supabase.from('inbound_unload').select('is_product_temporary').limit(1),
+        supabase.from('inbound_unload').select('sample_resolved_at, sample_resolved_by').limit(1),
         supabase.from('inbound_sample_model_breakdowns').select('id').limit(1),
         supabase.from('warehouse_returns').select('variant_label').limit(1),
         supabase.from('warehouse_returns').select('variant_code').limit(1),
@@ -2597,6 +2647,7 @@ export default function UnloadPage() {
       setSupportsUnloadVariantCode(!unloadVariantCodeError)
       setSupportsUnloadVariantName(!unloadVariantNameError)
       setSupportsUnloadTemporarySample(!unloadTemporarySampleError)
+      setSupportsUnloadSampleResolution(!unloadSampleResolutionError)
       setSupportsSampleBreakdowns(!sampleBreakdownSupportError)
       setSupportsReturnVariant(!returnVariantError)
       setSupportsReturnVariantCode(!returnVariantCodeError)
@@ -2606,6 +2657,22 @@ export default function UnloadPage() {
 
     loadInitialData()
   }, [grnParam])
+
+  useEffect(() => {
+    if (!user) return
+    if (!canViewUnload && !canManageUnload) {
+      router.replace('/dashboard')
+      return
+    }
+
+    if (((userRole === 'inbound_staff' && canManageUnload) || (!canViewUnload && canManageUnload)) && !pathname.startsWith('/mobile/inbound/unload')) {
+      const params = new URLSearchParams()
+      if (grnParam) params.set('grn', grnParam)
+      if (resolveSampleIdParam) params.set('resolveSample', resolveSampleIdParam)
+      const query = params.toString()
+      router.replace(query ? `/mobile/inbound/unload?${query}` : '/mobile/inbound/unload')
+    }
+  }, [canManageUnload, canViewUnload, grnParam, pathname, resolveSampleIdParam, router, user, userRole])
 
   useEffect(() => {
     async function loadUnloadRows() {
@@ -2641,6 +2708,8 @@ export default function UnloadPage() {
             supportsUnloadVariantCode ? 'variant_code' : null,
             supportsUnloadVariantName ? 'variant_name' : null,
             supportsUnloadTemporarySample ? 'is_product_temporary' : null,
+            supportsUnloadSampleResolution ? 'sample_resolved_at' : null,
+            supportsUnloadSampleResolution ? 'sample_resolved_by' : null,
           ].filter(Boolean).join(', '))
           .eq('inbound_id', selectedInboundId)
           .order('is_sample', { ascending: true })
@@ -2707,6 +2776,7 @@ export default function UnloadPage() {
     supportsUnloadVariantCode,
     supportsUnloadVariantName,
     supportsUnloadTemporarySample,
+    supportsUnloadSampleResolution,
     supportsUnloadProductModel,
     supportsUnloadProductModelVariant,
   ])
@@ -3265,6 +3335,7 @@ export default function UnloadPage() {
 
     sampleRows.forEach((row) => {
       const key = row.koli_sequence != null ? `sample-${Number(row.koli_sequence)}` : `sample-row-${row.id}`
+      const displayRows = getSampleBreakdownDisplayRows(row)
       const current = grouped.get(key) || {
         groupKey: key,
         label: row.koli_sequence != null ? `Koli Sample ${Number(row.koli_sequence)}` : 'Sample',
@@ -3275,8 +3346,8 @@ export default function UnloadPage() {
         rowType: 'sample',
       }
 
-      current.items.push(row)
-      current.total_qty += Number(row.qty || 0)
+      current.items.push(...displayRows)
+      current.total_qty += displayRows.reduce((sum, item) => sum + Number(item.qty || 0), 0)
       if (row.pic_name) {
         current.pic_names.add(row.pic_name)
       }
@@ -3671,6 +3742,77 @@ export default function UnloadPage() {
     }
   }
 
+  function getSampleBreakdownDisplayRows(row) {
+    const sourceId = Number(row?.id || 0)
+    const breakdownRows = sampleBreakdownsByUnloadId.get(sourceId) || []
+    const sampleQty = Number(row?.qty || 0)
+    const resolvedQty = breakdownRows.reduce((sum, item) => sum + Number(item.qty || 0), 0)
+    const remainingQty = Math.max(0, sampleQty - resolvedQty)
+    const resolvedDisplayRows = breakdownRows.map((item) => ({
+      ...item,
+      id: item.id,
+      source_sample_row_id: sourceId,
+      source_sample_row: row,
+      source_sample_qty: sampleQty,
+      pic_name: row.pic_name,
+      is_sample: true,
+      is_sample_breakdown: true,
+      is_product_temporary: false,
+      koli_sequence: row.koli_sequence,
+    }))
+
+    if (!breakdownRows.length) {
+      return [row]
+    }
+
+    if (remainingQty > 0) {
+      resolvedDisplayRows.push({
+        ...row,
+        qty: remainingQty,
+        source_sample_row_id: sourceId,
+        source_sample_row: row,
+        source_sample_qty: sampleQty,
+        is_sample_remaining: true,
+        is_product_temporary: true,
+      })
+    }
+
+    return resolvedDisplayRows
+  }
+
+  function getSampleDisplayRowKey(row) {
+    if (row?.is_sample_breakdown) return `sample-breakdown-${row.inbound_unload_id || row.source_sample_row_id}-${row.id}`
+    if (row?.is_sample_remaining) return `sample-remaining-${row.source_sample_row_id || row.id}`
+    return `sample-source-${row?.id || row?.source_sample_row_id || 'unknown'}`
+  }
+
+  async function syncSampleResolutionStatus(sourceRow, postedQty, resolvedBy) {
+    if (!supportsUnloadTemporarySample || !sourceRow?.id) return
+
+    const sampleQty = Number(sourceRow.qty || 0)
+    const nextResolvedQty = getSampleResolvedQty(sourceRow) + Number(postedQty || 0)
+    const isResolved = sampleQty > 0 && nextResolvedQty >= sampleQty
+    const resolvedAt = isResolved ? new Date().toISOString() : null
+    const resolutionPatch = {
+      is_product_temporary: !isResolved,
+      updated_at: new Date().toISOString(),
+      ...(supportsUnloadSampleResolution
+        ? {
+            sample_resolved_at: resolvedAt,
+            sample_resolved_by: isResolved ? resolvedBy || null : null,
+          }
+        : {}),
+    }
+    const { error: resolutionError } = await supabase
+      .from('inbound_unload')
+      .update(resolutionPatch)
+      .eq('id', sourceRow.id)
+
+    if (resolutionError) {
+      throw new Error(resolutionError.message || 'Failed to update sample resolution status.')
+    }
+  }
+
   function getSampleResolveBadgeStyle(row) {
     const status = getSampleResolveStatus(row)
 
@@ -3702,6 +3844,7 @@ export default function UnloadPage() {
   }, [brands, categoryMaps])
 
   function openSampleResolve(row) {
+    if (!canManageUnload) return
     if (!row?.is_sample) return
 
     const params = new URLSearchParams()
@@ -3908,8 +4051,9 @@ export default function UnloadPage() {
         }
       }
 
-      await refreshUnloadData(sampleResolveSource.inbound_id)
       const postedQty = sampleResolveItems.reduce((sum, item) => sum + Number(item.qty || 0), 0)
+      await syncSampleResolutionStatus(sampleResolveSource, postedQty, displayName)
+      await refreshUnloadData(sampleResolveSource.inbound_id)
       setSampleResolveItems([])
       setSampleResolveSelected(null)
       setSampleResolveQty('')
@@ -4010,8 +4154,18 @@ export default function UnloadPage() {
   }
 
   function handleOpenBuilder() {
+    if (!canManageUnload) return
     const query = selectedInbound?.grn_number || grnParam
     router.push(query ? `/mobile/inbound/unload?grn=${encodeURIComponent(query)}` : '/mobile/inbound/unload')
+  }
+
+  function handleBuilderInboundChange(value) {
+    setSelectedInboundId(value)
+    const nextInbound = inbounds.find((item) => String(item.id) === String(value))
+    const params = new URLSearchParams()
+    if (nextInbound?.grn_number) params.set('grn', nextInbound.grn_number)
+    const query = params.toString()
+    router.replace(query ? `/mobile/inbound/unload?${query}` : '/mobile/inbound/unload')
   }
 
   function handleBackToSorting() {
@@ -4019,8 +4173,8 @@ export default function UnloadPage() {
       return
     }
 
-    if (userRole === 'inbound_staff') {
-      router.push('/dashboard/inbound/receiving')
+    if (userRole === 'inbound_staff' || !canViewUnload) {
+      router.push('/dashboard/inbound')
       return
     }
 
@@ -4029,7 +4183,7 @@ export default function UnloadPage() {
   }
 
   function handleCloseSorting() {
-    router.push('/dashboard/inbound/receiving')
+    router.push(canViewReceiving ? '/dashboard/inbound/receiving' : '/dashboard/inbound')
   }
 
   function handleModeChange(mode) {
@@ -4228,6 +4382,8 @@ export default function UnloadPage() {
           supportsUnloadVariantCode ? 'variant_code' : null,
           supportsUnloadVariantName ? 'variant_name' : null,
           supportsUnloadTemporarySample ? 'is_product_temporary' : null,
+          supportsUnloadSampleResolution ? 'sample_resolved_at' : null,
+          supportsUnloadSampleResolution ? 'sample_resolved_by' : null,
         ].filter(Boolean).join(', '))
         .eq('inbound_id', inboundId)
         .order('is_sample', { ascending: true })
@@ -4277,6 +4433,7 @@ export default function UnloadPage() {
     supportsUnloadVariantCode,
     supportsUnloadVariantName,
     supportsUnloadTemporarySample,
+    supportsUnloadSampleResolution,
     supportsUnloadProductModel,
     supportsUnloadProductModelVariant,
   ])
@@ -4854,12 +5011,67 @@ export default function UnloadPage() {
         return
       }
 
+      const sourcePhotoUrl = String(sourceVariant.variant_photo_url || '').trim()
+      let movedVariantPhotoUrl = sourcePhotoUrl
+
+      if (sourcePhotoUrl) {
+        const sourcePhotoPath = getStorageObjectPathFromPublicUrl(sourcePhotoUrl, PRODUCT_PHOTOS_BUCKET)
+
+        if (sourcePhotoPath) {
+          const fileExtension = getFileExtensionFromUrl(sourcePhotoUrl)
+          const targetPhotoPath = [
+            getProductPhotoBasePath({
+              brand: selectedBrand,
+              brandFallback: selectedBrandId,
+              category: selectedCategory,
+              categoryById: categoryMaps.byId,
+              model: targetModel,
+              modelFallback: targetModel.model_name || normalizedModelName,
+            }),
+            getStablePhotoFileName(nextVariantCode, fileExtension),
+          ].join('/')
+
+          if (sourcePhotoPath !== targetPhotoPath) {
+            const { data: photoBlob, error: downloadPhotoError } = await supabase.storage
+              .from(PRODUCT_PHOTOS_BUCKET)
+              .download(sourcePhotoPath)
+
+            if (downloadPhotoError) {
+              setMoveModelError(downloadPhotoError.message || 'Failed to read the current variant photo before moving model.')
+              setSaving(false)
+              return
+            }
+
+            const { error: uploadPhotoError } = await supabase.storage
+              .from(PRODUCT_PHOTOS_BUCKET)
+              .upload(targetPhotoPath, photoBlob, {
+                upsert: true,
+                contentType: photoBlob?.type || getImageContentType(fileExtension),
+              })
+
+            if (uploadPhotoError) {
+              setMoveModelError(uploadPhotoError.message || 'Failed to move the variant photo into the target model folder.')
+              setSaving(false)
+              return
+            }
+
+            const { data: movedPublicUrlData } = supabase.storage
+              .from(PRODUCT_PHOTOS_BUCKET)
+              .getPublicUrl(targetPhotoPath)
+
+            movedVariantPhotoUrl = movedPublicUrlData.publicUrl || sourcePhotoUrl
+          }
+        }
+      }
+
+      const movedAt = new Date().toISOString()
       const { data: updatedVariant, error: updateVariantError } = await supabase
         .from('dir_product_model_variants')
         .update({
           product_model_id: targetModel.id,
           variant_code: nextVariantCode,
-          updated_at: new Date().toISOString(),
+          variant_photo_url: movedVariantPhotoUrl || null,
+          updated_at: movedAt,
         })
         .eq('id', sourceVariant.id)
         .select('*')
@@ -5301,6 +5513,11 @@ export default function UnloadPage() {
     setError('')
     setSuccess('')
 
+    if (!canManageUnload) {
+      setError('This role only has view access for inbound unload.')
+      return
+    }
+
     if (!selectedInbound) {
       setError('Please choose GRN Number first.')
       return
@@ -5565,6 +5782,7 @@ export default function UnloadPage() {
           }
         }
 
+        await syncSampleResolutionStatus(builderSampleResolveSource, currentKoliQty, displayName)
         await refreshUnloadData(selectedInbound.id)
         setCurrentKoliItems([])
         resetEntryForm({ keepPath: true })
@@ -5717,8 +5935,21 @@ export default function UnloadPage() {
           <section style={styles.mobileDetailBand}>
             <div style={{ ...styles.mobileInfoBox, gridColumn: '1 / -1' }}>
               <span style={styles.mobileInfoLabel}>GRN Number</span>
-              <strong style={styles.mobileInfoValue}>{grnParam || '-'}</strong>
-              <p style={styles.emptyText}>Selected GRN is not available.</p>
+              <select
+                value={selectedInboundId}
+                onChange={(event) => handleBuilderInboundChange(event.target.value)}
+                style={{ ...styles.select, marginTop: '6px' }}
+              >
+                <option value="">Choose GRN Number</option>
+                {inbounds.map((item) => (
+                  <option key={item.id} value={String(item.id)}>
+                    {item.grn_number || `Inbound ${item.id}`} / {item.item_name || '-'}
+                  </option>
+                ))}
+              </select>
+              <p style={styles.emptyText}>
+                {grnParam ? 'Selected GRN is not available. Choose another GRN to start intake input.' : 'Choose a GRN number to start intake input.'}
+              </p>
             </div>
           </section>
         ) : null}
@@ -5731,30 +5962,34 @@ export default function UnloadPage() {
             <h1 style={styles.title}>Sorting & Breakdown</h1>
           </div>
           <div style={styles.overviewActions}>
-            <button
-              type="button"
-              onClick={() => setShowPerformanceModal(true)}
-              style={styles.performanceButton}
-              aria-label="Show inbound performance"
-              title="Inbound performance"
-            >
-              <PerformanceIcon />
-              Performance
-            </button>
+            {canManageUnload ? (
+              <button
+                type="button"
+                onClick={() => setShowPerformanceModal(true)}
+                style={styles.performanceButton}
+                aria-label="Show inbound performance"
+                title="Inbound performance"
+              >
+                <PerformanceIcon />
+                Performance
+              </button>
+            ) : null}
             {breakdownMode === 'model' ? (
               <button type="button" onClick={handlePrintUnloadDocument} style={styles.secondaryButton}>
                 Print
               </button>
             ) : null}
-            <button
-              type="button"
-              onClick={handleOpenBuilder}
-              style={{ ...styles.builderButton, ...styles.iconOnlyButton }}
-              aria-label="Open unload builder"
-              title="Builder"
-            >
-              <BuilderIcon />
-            </button>
+            {canManageUnload ? (
+              <button
+                type="button"
+                onClick={handleOpenBuilder}
+                style={{ ...styles.builderButton, ...styles.iconOnlyButton }}
+                aria-label="Open unload builder"
+                title="Builder"
+              >
+                <BuilderIcon />
+              </button>
+            ) : null}
             <button
               type="button"
               onClick={handleCloseSorting}
@@ -6008,10 +6243,11 @@ export default function UnloadPage() {
                           const brand = brands.find((item) => item.id === row.brand_id)
                           const isFirstItem = itemIndex === 0
                           const groupBorderStyle = isFirstItem ? styles.koliGroupTd : {}
+                          const sampleResolveSourceRow = row.source_sample_row || row
                           const shouldResolveSample = group.rowType === 'sample' && isTemporarySampleRow(row)
 
                           return (
-                            <tr key={`${group.groupKey || group.rowType}-${row.id}`}>
+                            <tr key={`${group.groupKey || group.rowType}-${getSampleDisplayRowKey(row)}`}>
                               {isFirstItem ? (
                                 <td
                                   rowSpan={group.items.length}
@@ -6053,12 +6289,12 @@ export default function UnloadPage() {
                                   {formatPicFirstNames(group.pic_list)}
                                 </td>
                               ) : null}
-                              {shouldResolveSample ? (
+                              {shouldResolveSample && canManageUnload ? (
                                 <td style={{ ...styles.td, ...groupBorderStyle, ...styles.middleCenterCell }}>
                                   <span style={styles.resolveActionStack}>
                                     <button
                                       type="button"
-                                      onClick={() => openSampleResolve(row)}
+                                      onClick={() => openSampleResolve(sampleResolveSourceRow)}
                                       style={styles.resolveButton}
                                       aria-label="Resolve sample"
                                       title="Resolve Sample"
@@ -6066,10 +6302,10 @@ export default function UnloadPage() {
                                       <ResolveIcon />
                                     </button>
                                     <span
-                                      style={getSampleResolveBadgeStyle(row)}
-                                      title={`Resolved ${formatNumber(getSampleResolveStatus(row).resolvedQty)} of ${formatNumber(getSampleResolveStatus(row).sampleQty)}`}
+                                      style={getSampleResolveBadgeStyle(sampleResolveSourceRow)}
+                                      title={`Resolved ${formatNumber(getSampleResolveStatus(sampleResolveSourceRow).resolvedQty)} of ${formatNumber(getSampleResolveStatus(sampleResolveSourceRow).sampleQty)}`}
                                     >
-                                      {formatNumber(getSampleResolveStatus(row).resolvedQty)}/{formatNumber(getSampleResolveStatus(row).sampleQty)}
+                                      {formatNumber(getSampleResolveStatus(sampleResolveSourceRow).resolvedQty)}/{formatNumber(getSampleResolveStatus(sampleResolveSourceRow).sampleQty)}
                                     </span>
                                   </span>
                                 </td>
@@ -6142,7 +6378,7 @@ export default function UnloadPage() {
       </div>
       )}
 
-      {isBuilderMode && selectedInbound ? (
+      {isBuilderMode && canManageUnload && selectedInbound ? (
       <div style={styles.card}>
         <div style={styles.unloadWorkspace}>
           <div style={styles.workPanel}>

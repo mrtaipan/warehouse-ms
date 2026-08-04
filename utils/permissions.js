@@ -45,6 +45,15 @@ const BASE_PERMISSION_GROUPS = [
         description: 'Halaman self-service untuk kebutuhan pribadi seperti leave, reimbursement, dan birthday gift.',
         actions: ['view'],
       },
+      {
+        key: 'operations_calendar',
+        label: 'Operations Calendar',
+        description: 'Lihat timeline dan kalender aktivitas operasional Inbound, QC, Packing List, dan Stockkeeping.',
+        actions: ['view'],
+      },
+      { key: 'restock_instruction', label: 'Restock Instruction', codePrefix: 'storage.restock_instruction', description: 'Pintu masuk cepat untuk restock submit dan restock picker.', actions: ['view'] },
+      { key: 'restock_instruction.submit', label: 'Restock Submit', codePrefix: 'storage.restock_submit', description: 'Buat dan ubah permintaan restock internal.', actions: ['view', 'add', 'edit'] },
+      { key: 'restock_instruction.picker', label: 'Restock Picker', codePrefix: 'storage.restock_picker', description: 'Proses pengambilan barang untuk restock instruction.', actions: ['view', 'edit'] },
     ],
   },
   {
@@ -62,13 +71,8 @@ const BASE_PERMISSION_GROUPS = [
     key: 'inbound',
     label: 'Inbound',
     items: [
-      { key: 'overview', label: 'Inbound Overview', description: 'Halaman ringkasan dan pintu masuk utama workflow inbound.', actions: ['view'] },
-      { key: 'new', label: 'New Inbound', description: 'Buat data inbound baru.', actions: ['view', 'add'] },
-      { key: 'detail', label: 'Inbound Detail', description: 'Lihat detail setiap inbound yang sudah dibuat.', actions: ['view'] },
-      { key: 'edit', label: 'Edit Inbound', description: 'Ubah data inbound yang sudah ada.', actions: ['view', 'edit'] },
-      { key: 'unload', label: 'Unload', description: 'Kelola proses bongkar dan data koli inbound.', actions: ['view', 'edit'] },
-      { key: 'receiving', label: 'Inbound Receiving', description: 'Lihat proses receiving yang berhubungan dengan inbound.', actions: ['view', 'edit'] },
-      { key: 'qc', label: 'Inbound QC', description: 'Lihat keterkaitan inbound dengan proses QC.', actions: ['view'] },
+      { key: 'receiving', label: 'Inbound Receiving', description: 'Lihat, buat, dan ubah data receiving inbound.', actions: ['view', 'add', 'edit'] },
+      { key: 'unload', label: 'Inbound Unload', description: 'Lihat sorting & breakdown, input intake, dan ubah data unload inbound.', actions: ['view', 'add', 'edit'] },
     ],
   },
   {
@@ -99,9 +103,6 @@ const BASE_PERMISSION_GROUPS = [
       { key: 'search', label: 'Search Storage', description: 'Cari stok dan lokasi penyimpanan barang.', actions: ['view'] },
       { key: 'registry', label: 'Registry Storage', description: 'Kelola pencatatan penempatan stok ke lokasi storage.', actions: ['view', 'add', 'edit', 'delete'] },
       { key: 'location', label: 'Storage Location', description: 'Lihat ringkasan dan detail lokasi storage.', actions: ['view'] },
-      { key: 'restock_instruction', label: 'Restock Instruction', description: 'Halaman penghubung untuk restock submit dan restock picker.', actions: ['view'] },
-      { key: 'restock_instruction.submit', label: 'Restock Submit', codePrefix: 'storage.restock_submit', description: 'Buat dan ubah permintaan restock internal.', actions: ['view', 'add', 'edit'] },
-      { key: 'restock_instruction.picker', label: 'Restock Picker', codePrefix: 'storage.restock_picker', description: 'Proses pengambilan barang untuk restock instruction.', actions: ['view', 'edit'] },
     ],
   },
   {
@@ -147,6 +148,24 @@ function buildPermissionDefinitions() {
 export const PERMISSION_DEFINITIONS = buildPermissionDefinitions()
 const PERMISSION_DEFINITION_MAP = new Map(PERMISSION_DEFINITIONS.map((item) => [item.code, item]))
 const PERMISSION_CODE_SET = new Set(PERMISSION_DEFINITIONS.map((item) => item.code))
+const INDEPENDENT_ACTION_PREFIXES = new Set(['inbound.receiving', 'inbound.unload'])
+const INBOUND_ACCESS_CODES = [
+  'inbound.receiving.view',
+  'inbound.receiving.add',
+  'inbound.receiving.edit',
+  'inbound.unload.view',
+  'inbound.unload.add',
+  'inbound.unload.edit',
+]
+const LEGACY_INBOUND_PERMISSION_MAP = {
+  'inbound.overview.view': ['inbound.receiving.view', 'inbound.unload.view'],
+  'inbound.detail.view': ['inbound.receiving.view', 'inbound.unload.view'],
+  'inbound.new.view': ['inbound.receiving.view'],
+  'inbound.new.add': ['inbound.receiving.add'],
+  'inbound.edit.view': ['inbound.receiving.view'],
+  'inbound.edit.edit': ['inbound.receiving.edit'],
+  'inbound.qc.view': ['inbound.unload.view'],
+}
 
 function labelizeAction(action) {
   if (action === 'view') return 'View'
@@ -232,21 +251,23 @@ const DEFAULT_ROLE_BUNDLES = {
     'hrga.public_request_links.edit',
     'hrga.benefits.view',
   ],
-  leader: ['dashboard.home.view', 'myarklife.view'],
+  leader: ['dashboard.home.view', 'myarklife.view', 'inbound.unload.view'],
   warehouse_leader: [
     'dashboard.home.view',
     'myarklife.view',
+    'dashboard.operations_calendar.view',
     'storage.overview.view',
     'storage.search.view',
     'storage.location.view',
-    'inbound.overview.view',
-    'inbound.detail.view',
+    'inbound.receiving.view',
+    'inbound.unload.view',
     'packing.overview.view',
     'qc.summary.view',
   ],
   packing_coordinator: [
     'dashboard.home.view',
     'myarklife.view',
+    'dashboard.operations_calendar.view',
     'packing.overview.view',
     'packing.receiving.view',
     'packing.receiving.add',
@@ -273,6 +294,7 @@ const DEFAULT_ROLE_BUNDLES = {
   qc_coordinator: [
     'dashboard.home.view',
     'myarklife.view',
+    'dashboard.operations_calendar.view',
     'qc.summary.view',
     'qc.receiving.view',
     'qc.receiving.add',
@@ -314,6 +336,7 @@ const DEFAULT_ROLE_BUNDLES = {
   storage_coordinator: [
     'dashboard.home.view',
     'myarklife.view',
+    'dashboard.operations_calendar.view',
     'storage.overview.view',
     'storage.search.view',
     'storage.registry.view',
@@ -347,26 +370,21 @@ const DEFAULT_ROLE_BUNDLES = {
   inbound_coordinator: [
     'dashboard.home.view',
     'myarklife.view',
-    'inbound.overview.view',
-    'inbound.new.view',
-    'inbound.new.add',
-    'inbound.detail.view',
-    'inbound.edit.view',
-    'inbound.edit.edit',
-    'inbound.unload.view',
-    'inbound.unload.edit',
+    'dashboard.operations_calendar.view',
     'inbound.receiving.view',
+    'inbound.receiving.add',
     'inbound.receiving.edit',
-    'inbound.qc.view',
+    'inbound.unload.view',
+    'inbound.unload.add',
+    'inbound.unload.edit',
   ],
   inbound_staff: [
     'dashboard.home.view',
     'myarklife.view',
-    'inbound.overview.view',
-    'inbound.detail.view',
-    'inbound.unload.view',
     'inbound.receiving.view',
-    'inbound.qc.view',
+    'inbound.receiving.edit',
+    'inbound.unload.view',
+    'inbound.unload.add',
   ],
   arkline_staff: [
     'dashboard.home.view',
@@ -458,6 +476,38 @@ export function hasAnyPermission(permissions = [], codes = [], isAdmin = false) 
   return codes.some((code) => expanded.has(code))
 }
 
+export function canAccessInbound(permissions = [], isAdmin = false) {
+  return hasAnyPermission(permissions, INBOUND_ACCESS_CODES, isAdmin)
+}
+
+export function getInboundLandingPath(role = '', permissions = [], isAdmin = false) {
+  const resolvedRole = resolveRole(role, isAdmin)
+  const canViewReceiving = hasPermission(permissions, 'inbound.receiving.view', isAdmin)
+  const canAddReceiving = hasPermission(permissions, 'inbound.receiving.add', isAdmin)
+  const canInputReceiving = hasPermission(permissions, 'inbound.receiving.edit', isAdmin)
+  const canViewUnload = hasPermission(permissions, 'inbound.unload.view', isAdmin)
+  const canManageUnload = hasAnyPermission(permissions, ['inbound.unload.add', 'inbound.unload.edit'], isAdmin)
+  const canOnlyViewUnload = canViewUnload && !canManageUnload && !canViewReceiving
+
+  if (resolvedRole === 'inbound_staff') {
+    if (canViewReceiving || canInputReceiving || canViewUnload || canManageUnload) return '/dashboard/inbound/receiving'
+    return ''
+  }
+
+  if (resolvedRole === 'leader') {
+    if (canViewUnload || canViewReceiving) return '/dashboard/inbound'
+    return ''
+  }
+
+  if (canOnlyViewUnload) return '/dashboard/inbound'
+
+  if (canViewReceiving) return '/dashboard/inbound/receiving'
+  if (canAddReceiving) return '/dashboard/inbound/new'
+  if (canViewUnload) return '/dashboard/inbound/unload'
+  if (canManageUnload) return '/mobile/inbound/unload'
+  return ''
+}
+
 export function expandImpliedPermissions(permissions = []) {
   const expanded = new Set(
     (permissions || [])
@@ -465,11 +515,22 @@ export function expandImpliedPermissions(permissions = []) {
       .filter(Boolean)
   )
 
+  for (const [legacyCode, mappedCodes] of Object.entries(LEGACY_INBOUND_PERMISSION_MAP)) {
+    if (!expanded.has(legacyCode)) continue
+    expanded.delete(legacyCode)
+    mappedCodes.forEach((code) => expanded.add(code))
+  }
+
   for (const code of Array.from(expanded)) {
     const parts = code.split('.')
     const action = parts.at(-1)
-    if (['add', 'edit', 'delete', 'print', 'export', 'submit', 'assign'].includes(action)) {
-      expanded.add(`${parts.slice(0, -1).join('.')}.view`)
+    const prefix = parts.slice(0, -1).join('.')
+
+    if (
+      ['add', 'edit', 'delete', 'print', 'export', 'submit', 'assign'].includes(action) &&
+      !INDEPENDENT_ACTION_PREFIXES.has(prefix)
+    ) {
+      expanded.add(`${prefix}.view`)
     }
   }
 
@@ -717,6 +778,14 @@ export function getStorageFeatureAccess(role, permissions = [], isAdmin = false)
   }
 }
 
+export function canAccessOperationsCalendar(role, permissions = [], isAdmin = false) {
+  const resolvedRole = resolveRole(role, isAdmin)
+  if (isAdmin || resolvedRole === 'admin') return true
+  if (hasPermission(permissions, 'dashboard.operations_calendar.view', false)) return true
+  if (resolvedRole === 'warehouse_leader') return true
+  return String(resolvedRole || '').endsWith('_coordinator')
+}
+
 export function getLandingPath(role, permissions = [], isAdmin = false) {
   const resolvedRole = resolveRole(role, isAdmin)
   if (isAdmin || resolvedRole === 'admin') return '/dashboard'
@@ -730,7 +799,8 @@ export function getLandingPath(role, permissions = [], isAdmin = false) {
   const arklineAccess = getArklineFeatureAccess(role, permissions, isAdmin)
   if (arklineAccess.menu) return arklineAccess.menuHref
   if (canAccessPeopleManagement(permissions, isAdmin)) return '/dashboard/human-resources'
-  if (hasPermission(permissions, 'inbound.overview.view', isAdmin)) return '/dashboard/inbound'
+  const inboundLandingPath = getInboundLandingPath(role, permissions, isAdmin)
+  if (inboundLandingPath) return inboundLandingPath
   if (hasPermission(permissions, 'packing.overview.view', isAdmin)) return '/dashboard/packing-list'
   if (hasPermission(permissions, 'myarklife.view', isAdmin)) return '/dashboard/myarklife'
   return '/dashboard'
@@ -748,6 +818,7 @@ export function getAllowedMenus(role, permissions = [], isAdmin = false) {
       arkline: true,
       arklineHref: '/dashboard/arkline',
       inbound: true,
+      inboundHref: '/dashboard/inbound/receiving',
       qc: true,
       qcHref: '/dashboard/qc',
       qcInspectorOnly: false,
@@ -762,6 +833,7 @@ export function getAllowedMenus(role, permissions = [], isAdmin = false) {
   const storageAccess = getStorageFeatureAccess(role, permissions, isAdmin)
   const qcAccess = getQcFeatureAccess(permissions, isAdmin, role)
   const arklineAccess = getArklineFeatureAccess(role, permissions, isAdmin)
+  const inboundHref = getInboundLandingPath(role, permissions, isAdmin)
 
   return {
     humanResources: canAccessPeopleManagement(permissions, isAdmin),
@@ -770,10 +842,8 @@ export function getAllowedMenus(role, permissions = [], isAdmin = false) {
     myArklifeHref: '/dashboard/myarklife',
     arkline: arklineAccess.menu,
     arklineHref: arklineAccess.menuHref,
-    inbound:
-      resolvedRole === 'inbound_coordinator' ||
-      resolvedRole === 'inbound_staff' ||
-      hasPermission(permissions, 'inbound.overview.view', isAdmin),
+    inbound: Boolean(inboundHref),
+    inboundHref: inboundHref || '/dashboard',
     qc: qcAccess.menu,
     qcHref: qcAccess.menuHref,
     qcInspectorOnly: qcAccess.inspectionTaskOnly,
@@ -787,6 +857,7 @@ export function getAllowedMenus(role, permissions = [], isAdmin = false) {
 
 const ROUTE_PERMISSION_MAP = [
   { matcher: (pathname) => pathname === '/dashboard', codes: ['dashboard.home.view'] },
+  { matcher: (pathname) => pathname === '/operations-calendar' || pathname.startsWith('/operations-calendar?'), codes: ['dashboard.operations_calendar.view'] },
   { matcher: (pathname) => pathname.startsWith('/dashboard/profile'), codes: ['myarklife.view'] },
   { matcher: (pathname) => pathname === '/dashboard/myarklife' || pathname.startsWith('/dashboard/myarklife/'), codes: ['myarklife.view'] },
   { matcher: (pathname) => pathname === '/dashboard/human-resources' || pathname.startsWith('/dashboard/human-resources/'), codes: ['hrga.home.view'] },
@@ -804,14 +875,17 @@ const ROUTE_PERMISSION_MAP = [
   { matcher: (pathname) => pathname.startsWith('/dashboard/qc/inspection-task') || pathname.startsWith('/mobile/qc/inspection-task'), codes: ['qc.grading_task.view'] },
   { matcher: (pathname) => pathname.startsWith('/dashboard/qc/confirmation'), codes: ['qc.confirmation.view'] },
   { matcher: (pathname) => pathname.startsWith('/dashboard/qc/retur-report'), codes: ['qc.retur_report.view'] },
-  { matcher: (pathname) => pathname === '/dashboard/inbound' || pathname.startsWith('/dashboard/inbound?'), codes: ['inbound.overview.view'] },
-  { matcher: (pathname) => pathname.startsWith('/dashboard/inbound/new'), codes: ['inbound.new.view'] },
-  { matcher: (pathname) => pathname.startsWith('/dashboard/inbound/unload'), codes: ['inbound.unload.view'] },
-  { matcher: (pathname) => pathname.startsWith('/dashboard/inbound/receiving'), codes: ['inbound.receiving.view'] },
-  { matcher: (pathname) => pathname.startsWith('/dashboard/inbound/qc'), codes: ['inbound.qc.view'] },
-  { matcher: (pathname) => pathname.startsWith('/dashboard/inbound/'), codes: ['inbound.detail.view', 'inbound.edit.view'] },
-  { matcher: (pathname) => pathname.startsWith('/mobile/inbound/receiving'), codes: ['inbound.receiving.view'] },
-  { matcher: (pathname) => pathname.startsWith('/mobile/inbound/unload'), codes: ['inbound.unload.view'] },
+  { matcher: (pathname) => pathname === '/dashboard/inbound' || pathname.startsWith('/dashboard/inbound?'), codes: INBOUND_ACCESS_CODES },
+  { matcher: (pathname) => pathname.startsWith('/dashboard/inbound/new'), codes: ['inbound.receiving.add'] },
+  { matcher: (pathname) => pathname.startsWith('/dashboard/inbound/unload'), codes: ['inbound.unload.view', 'inbound.unload.add', 'inbound.unload.edit'] },
+  { matcher: (pathname) => pathname.startsWith('/dashboard/inbound/receiving'), codes: INBOUND_ACCESS_CODES },
+  { matcher: (pathname) => pathname.startsWith('/dashboard/inbound/qc'), codes: ['qc.receiving.view'] },
+  { matcher: (pathname) => /^\/dashboard\/inbound\/[^/]+\/input/.test(pathname), codes: ['inbound.receiving.edit'] },
+  { matcher: (pathname) => /^\/dashboard\/inbound\/[^/]+\/edit/.test(pathname), codes: ['inbound.receiving.edit'] },
+  { matcher: (pathname) => pathname.startsWith('/dashboard/inbound/'), codes: ['inbound.receiving.view'] },
+  { matcher: (pathname) => pathname.startsWith('/mobile/inbound/receiving'), codes: ['inbound.receiving.edit'] },
+  { matcher: (pathname) => pathname.startsWith('/mobile/inbound/unload'), codes: ['inbound.unload.add', 'inbound.unload.edit'] },
+  { matcher: (pathname) => pathname === '/mobile/inbound' || pathname.startsWith('/mobile/inbound?'), codes: INBOUND_ACCESS_CODES },
   { matcher: (pathname) => pathname === '/dashboard/packing-list' || pathname.startsWith('/dashboard/packing-list?'), codes: ['packing.overview.view'] },
   { matcher: (pathname) => pathname.startsWith('/dashboard/packing-list/receiving'), codes: ['packing.receiving.view'] },
   { matcher: (pathname) => pathname.startsWith('/dashboard/packing-list/size-breakdown'), codes: ['packing.size_breakdown.view'] },
@@ -851,22 +925,8 @@ export function canAccessPath(pathname, role, permissions = [], isAdmin = false)
 
   if (isAdmin || resolvedRole === 'admin') return true
 
-  if (resolvedRole === 'inbound_coordinator') {
-    if (pathname === '/dashboard') return true
-    if (pathname === '/dashboard/inbound' || pathname.startsWith('/dashboard/inbound/')) return true
-    if (pathname.startsWith('/mobile/inbound/')) return true
-  }
-
-  if (resolvedRole === 'inbound_staff') {
-    if (pathname === '/dashboard') return true
-    if (pathname === '/dashboard/inbound' || pathname.startsWith('/dashboard/inbound?')) return true
-    if (pathname.startsWith('/dashboard/inbound/receiving')) return true
-    if (pathname.startsWith('/dashboard/inbound/new')) return false
-    if (pathname.startsWith('/dashboard/inbound/unload')) return false
-    if (/^\/dashboard\/inbound\/[^/]+\/edit/.test(pathname)) return false
-    if (/^\/dashboard\/inbound\/[^/]+\/input/.test(pathname)) return true
-    if (pathname.startsWith('/mobile/inbound/receiving')) return true
-    if (pathname.startsWith('/mobile/inbound/unload')) return true
+  if (pathname === '/operations-calendar' || pathname.startsWith('/operations-calendar?')) {
+    return canAccessOperationsCalendar(resolvedRole, permissions, false)
   }
 
   if ((resolvedRole === 'packing_staff' || resolvedRole === 'packing_coordinator') && (pathname === '/take-requests' || pathname.startsWith('/take-requests?'))) {

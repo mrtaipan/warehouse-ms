@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { createClient } from '@/utils/supabase/browser'
 import { getProfileByAuthenticatedUser } from '@/utils/user-profiles'
-import { ADMIN_EMAIL, resolveRole } from '@/utils/permissions'
+import { ADMIN_EMAIL, hasPermission, resolveRole } from '@/utils/permissions'
 
 const supabase = createClient()
 
@@ -96,6 +96,7 @@ export default function ReceivingInputPage() {
   const inboundId = params.id
   const [user, setUser] = useState(null)
   const [profile, setProfile] = useState(null)
+  const [permissionCodes, setPermissionCodes] = useState([])
   const [inbound, setInbound] = useState(null)
   const [rows, setRows] = useState([])
   const [draft, setDraft] = useState(createBlankDraft)
@@ -107,6 +108,9 @@ export default function ReceivingInputPage() {
   const displayName = getDisplayName(user, profile)
   const displayFirstName = getFirstName(displayName)
   const userRole = resolveRole(profile?.role, user?.email?.toLowerCase() === ADMIN_EMAIL)
+  const isAdminUser = user?.email?.toLowerCase() === ADMIN_EMAIL || userRole === 'admin'
+  const canViewReceiving = hasPermission(permissionCodes, 'inbound.receiving.view', isAdminUser)
+  const canInputReceiving = hasPermission(permissionCodes, 'inbound.receiving.edit', isAdminUser)
   const submittedCount = rows.filter((row) => String(row.unload_pic || '').trim()).length
   const totalKoli = Math.max(Number(inbound?.total_koli || 0), 1)
   const isCompleted = submittedCount >= totalKoli
@@ -163,8 +167,21 @@ export default function ReceivingInputPage() {
 
       const nextRows = buildRows(inboundRow.total_koli, detailRows || [])
 
+      const role = resolveRole(profileResult.data?.role, authUser.email?.toLowerCase() === ADMIN_EMAIL)
+      const { data: rolePermissionRows } = role === 'admin'
+        ? { data: [] }
+        : await supabase.from('dir_user_roles').select('permission_code').eq('role', role)
+      const nextPermissionCodes = (rolePermissionRows || []).map((item) => item.permission_code).filter(Boolean)
+      const canOpenInputPage = hasPermission(nextPermissionCodes, 'inbound.receiving.edit', authUser.email?.toLowerCase() === ADMIN_EMAIL || role === 'admin')
+
+      if (!canOpenInputPage) {
+        router.replace(`/dashboard/inbound/${inboundId}`)
+        return
+      }
+
       setUser(authUser)
       setProfile(profileResult.data || null)
+      setPermissionCodes(nextPermissionCodes)
       setInbound(inboundRow)
       setRows(nextRows)
       setDraft(createBlankDraft())
@@ -249,6 +266,11 @@ export default function ReceivingInputPage() {
     event.preventDefault()
 
     if (saving) return
+
+    if (!canInputReceiving) {
+      setError('This role only has view access for inbound receiving.')
+      return
+    }
 
     if (isCompleted) {
       setError('')
@@ -357,12 +379,7 @@ export default function ReceivingInputPage() {
       return
     }
 
-    if (userRole === 'inbound_staff') {
-      router.push('/dashboard/inbound/receiving')
-      return
-    }
-
-    router.push(`/dashboard/inbound/${inboundId}/edit`)
+    router.push(canViewReceiving ? '/dashboard/inbound/receiving' : '/dashboard/inbound')
   }
 
   if (loadingPage) {

@@ -84,6 +84,14 @@ function normalizeActionLabel(value) {
   return value
 }
 
+function getPermissionPrefix(code) {
+  return String(code || '').replace(/\.[^.]+$/, '')
+}
+
+function hasIndependentActions(code) {
+  return ['inbound.receiving', 'inbound.unload'].includes(getPermissionPrefix(code))
+}
+
 function sortTreeNodes(nodes) {
   return [...(nodes || [])].sort((left, right) => {
     const leftOrder = Number.isFinite(left.order) ? left.order : Number.MAX_SAFE_INTEGER
@@ -301,12 +309,12 @@ export default function UserAccessClient({
 
       if (checked) {
         nextSet.add(code)
-        if (['add', 'edit', 'delete', 'print', 'export', 'submit', 'assign'].includes(actionKey)) {
+        if (['add', 'edit', 'delete', 'print', 'export', 'submit', 'assign'].includes(actionKey) && !hasIndependentActions(code)) {
           nextSet.add(code.replace(/\.[^.]+$/, '.view'))
         }
       } else {
         nextSet.delete(code)
-        if (actionKey === 'view') {
+        if (actionKey === 'view' && !hasIndependentActions(code)) {
           const prefix = code.replace(/\.view$/, '')
           for (const existingCode of Array.from(nextSet)) {
             if (existingCode.startsWith(`${prefix}.`) && existingCode !== code) {

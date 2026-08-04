@@ -3,6 +3,8 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/utils/supabase/browser'
+import { getProfileByAuthenticatedUser } from '@/utils/user-profiles'
+import { ADMIN_EMAIL, hasPermission, resolveRole } from '@/utils/permissions'
 
 const supabase = createClient()
 const ROMAN_MONTHS = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X', 'XI', 'XII']
@@ -439,6 +441,7 @@ export default function NewInboundPage() {
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
   const [isCompactLayout, setIsCompactLayout] = useState(false)
+  const [canCreateReceiving, setCanCreateReceiving] = useState(false)
   const [form, setForm] = useState({
     grn_number: '',
     inbound_date: normalizeDateInput(formatToday()),
@@ -466,6 +469,31 @@ export default function NewInboundPage() {
       setLoadingOptions(true)
       setLoadingRoNumber(true)
       setError('')
+
+      const {
+        data: { user: authUser },
+      } = await supabase.auth.getUser()
+
+      if (!authUser) {
+        router.push('/login')
+        return
+      }
+
+      const profileResult = await getProfileByAuthenticatedUser(supabase, authUser, 'role')
+      const role = resolveRole(profileResult.data?.role, authUser.email?.toLowerCase() === ADMIN_EMAIL)
+      const { data: rolePermissionRows } = role === 'admin'
+        ? { data: [] }
+        : await supabase.from('dir_user_roles').select('permission_code').eq('role', role)
+      const permissionCodes = (rolePermissionRows || []).map((item) => item.permission_code).filter(Boolean)
+      const isCoordinatorOrAdmin = authUser.email?.toLowerCase() === ADMIN_EMAIL || role === 'admin' || role === 'inbound_coordinator'
+      const hasCreateAccess = isCoordinatorOrAdmin && hasPermission(permissionCodes, 'inbound.receiving.add', authUser.email?.toLowerCase() === ADMIN_EMAIL || role === 'admin')
+
+      if (!hasCreateAccess) {
+        router.replace('/dashboard/inbound/receiving')
+        return
+      }
+
+      setCanCreateReceiving(true)
 
       const [
         { data: supplierRows, error: supplierError },
@@ -496,7 +524,7 @@ export default function NewInboundPage() {
     }
 
     loadInitialData()
-  }, [])
+  }, [router])
 
   function handleChange(event) {
     const { name, value } = event.target
@@ -573,6 +601,11 @@ export default function NewInboundPage() {
     event.preventDefault()
 
     if (loading) {
+      return
+    }
+
+    if (!canCreateReceiving) {
+      setError('This role only has view access for inbound receiving.')
       return
     }
 

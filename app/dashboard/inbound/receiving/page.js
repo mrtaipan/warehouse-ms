@@ -1,7 +1,7 @@
 import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { createClient } from '@/utils/supabase/server'
-import { hasPermission } from '@/utils/permissions'
+import { hasAnyPermission, hasPermission } from '@/utils/permissions'
 import { loadAccessContext } from '@/utils/access-control'
 import ReceivingFiltersClient from './receiving-filters-client'
 
@@ -79,13 +79,26 @@ export default async function InboundReceivingPage({ searchParams }) {
   }
 
   const { role, permissions, isAdmin } = await loadAccessContext(supabase, user, 'role')
-  const isInboundStaff = role === 'inbound_staff'
-  const canCreateReceiving =
-    !isInboundStaff &&
-    (isAdmin || role === 'admin' || role === 'inbound_coordinator' || hasPermission(permissions, 'inbound.new.add', isAdmin))
-  const canEditReceiving =
-    !isInboundStaff &&
-    (isAdmin || role === 'admin' || role === 'inbound_coordinator' || hasPermission(permissions, 'inbound.edit.edit', isAdmin))
+  const canViewReceiving = hasPermission(permissions, 'inbound.receiving.view', isAdmin)
+  const canManageReceivingMaster = isAdmin || role === 'inbound_coordinator'
+  const canCreateReceiving = canManageReceivingMaster && hasPermission(permissions, 'inbound.receiving.add', isAdmin)
+  const canInputReceiving = hasPermission(permissions, 'inbound.receiving.edit', isAdmin)
+  const canEditReceiving = canManageReceivingMaster && canInputReceiving
+  const canViewUnload = hasPermission(permissions, 'inbound.unload.view', isAdmin)
+  const canAddUnload = hasPermission(permissions, 'inbound.unload.add', isAdmin)
+  const canEditUnload = hasPermission(permissions, 'inbound.unload.edit', isAdmin)
+  const canOpenInboundOverview = hasAnyPermission(permissions, [
+    'inbound.receiving.view',
+    'inbound.receiving.add',
+    'inbound.receiving.edit',
+    'inbound.unload.view',
+    'inbound.unload.add',
+    'inbound.unload.edit',
+  ], isAdmin)
+
+  if (!canOpenInboundOverview) {
+    redirect('/dashboard')
+  }
 
   const params = await searchParams
   const search = sanitizeSearch(getSingleValue(params?.search))
@@ -167,8 +180,12 @@ export default async function InboundReceivingPage({ searchParams }) {
         initialTotalItems={totalItems}
         initialFilters={{ supplierId, month, search, page: safeCurrentPage }}
         initialError={supplierError?.message || error?.message || ''}
+        canViewReceiving={canViewReceiving}
         canEditReceiving={canEditReceiving}
-        isInboundStaff={isInboundStaff}
+        canInputReceiving={canInputReceiving}
+        canViewUnload={canViewUnload}
+        canAddUnload={canAddUnload}
+        canEditUnload={canEditUnload}
       />
     </section>
   )
@@ -176,6 +193,9 @@ export default async function InboundReceivingPage({ searchParams }) {
 
 const styles = {
   panel: {
+    width: '100%',
+    minWidth: 0,
+    boxSizing: 'border-box',
     background: '#f7f9fb',
     border: '1px solid #e2e8f0',
     borderRadius: '22px',
@@ -185,6 +205,7 @@ const styles = {
     gap: '16px',
   },
   header: {
+    minWidth: 0,
     display: 'flex',
     justifyContent: 'space-between',
     alignItems: 'flex-start',
@@ -215,6 +236,7 @@ const styles = {
     maxWidth: '640px',
   },
   primaryButton: {
+    flex: '0 0 auto',
     display: 'inline-flex',
     alignItems: 'center',
     justifyContent: 'center',

@@ -121,8 +121,12 @@ export default function ReceivingFiltersClient({
   initialTotalItems = 0,
   initialFilters = {},
   initialError = '',
+  canViewReceiving = false,
   canEditReceiving = true,
-  isInboundStaff = false,
+  canInputReceiving = false,
+  canViewUnload = true,
+  canAddUnload = false,
+  canEditUnload = false,
 }) {
   const requestIdRef = useRef(0)
   const didMountRef = useRef(false)
@@ -241,7 +245,7 @@ export default function ReceivingFiltersClient({
   return (
     <>
       <div style={styles.filters}>
-        <label style={styles.field}>
+        <label style={{ ...styles.field, ...styles.searchField }}>
           <span style={styles.label}>Search</span>
           <input
             type="search"
@@ -264,9 +268,9 @@ export default function ReceivingFiltersClient({
           </select>
         </label>
 
-        <label style={styles.field}>
+        <label style={{ ...styles.field, ...styles.monthField }}>
           <span style={styles.label}>Month</span>
-          <input type="month" value={filters.month} onChange={(event) => updateFilter('month', event.target.value)} style={styles.input} />
+          <input type="month" value={filters.month} onChange={(event) => updateFilter('month', event.target.value)} style={{ ...styles.input, ...styles.monthInput }} />
         </label>
 
         <button type="button" onClick={resetFilters} style={styles.resetButton}>
@@ -300,34 +304,50 @@ export default function ReceivingFiltersClient({
                 {orders.map((order) => (
                   (() => {
                     const grnValue = order.grn_number || ''
-                    const receivingHref = canEditReceiving
+                    const receivingHref = canInputReceiving && !canEditReceiving
+                      ? `/mobile/inbound/receiving/${order.id}`
+                      : canEditReceiving
                       ? `/dashboard/inbound/${order.id}/edit`
-                      : `/mobile/inbound/receiving/${order.id}`
-                    const sortingHref = isInboundStaff
+                      : `/dashboard/inbound/${order.id}`
+                    const receivingTitle = canInputReceiving && !canEditReceiving
+                      ? 'Receiving Input'
+                      : canEditReceiving
+                        ? 'Receiving'
+                        : 'Receiving Detail'
+                    const canOpenReceiving = canViewReceiving || canInputReceiving || canEditReceiving
+                    const shouldOpenUnloadInput = canAddUnload && !canEditUnload
+                    const sortingHref = shouldOpenUnloadInput
                       ? `/mobile/inbound/unload?grn=${encodeURIComponent(grnValue)}`
-                      : `/dashboard/inbound/unload?grn=${encodeURIComponent(grnValue)}`
-                    const sortingTitle = isInboundStaff ? 'Inbound Intake Input' : 'Sorting'
+                      : canViewUnload
+                      ? `/dashboard/inbound/unload?grn=${encodeURIComponent(grnValue)}`
+                      : `/mobile/inbound/unload?grn=${encodeURIComponent(grnValue)}`
+                    const sortingTitle = shouldOpenUnloadInput || !canViewUnload ? 'Inbound Intake Input' : 'Sorting'
+                    const canOpenUnload = canViewUnload || canAddUnload || canEditUnload
 
                     return (
                     <tr key={order.id} style={styles.bodyRow}>
                       <td style={{ ...td, whiteSpace: 'nowrap' }}>
                         <div style={styles.actionGroup}>
-                          <Link
-                            href={receivingHref}
-                            style={styles.iconButton}
-                            aria-label={`Receiving ${order.grn_number}`}
-                            title={canEditReceiving ? 'Receiving' : 'Receiving Input'}
-                          >
-                            <ActionIcon kind="receiving" />
-                          </Link>
-                          <Link
-                            href={sortingHref}
-                            style={styles.iconButton}
-                            aria-label={`${sortingTitle} ${order.grn_number}`}
-                            title={sortingTitle}
-                          >
-                            <ActionIcon kind="unload" />
-                          </Link>
+                          {canOpenReceiving ? (
+                            <Link
+                              href={receivingHref}
+                              style={styles.iconButton}
+                              aria-label={`Receiving ${order.grn_number}`}
+                              title={receivingTitle}
+                            >
+                              <ActionIcon kind="receiving" />
+                            </Link>
+                          ) : null}
+                          {canOpenUnload ? (
+                            <Link
+                              href={sortingHref}
+                              style={styles.iconButton}
+                              aria-label={`${sortingTitle} ${order.grn_number}`}
+                              title={sortingTitle}
+                            >
+                              <ActionIcon kind="unload" />
+                            </Link>
+                          ) : null}
                         </div>
                       </td>
                       <td style={td}>
@@ -403,15 +423,27 @@ const textButtonBase = {
 
 const styles = {
   filters: {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+    width: '100%',
+    minWidth: 0,
+    display: 'flex',
+    flexWrap: 'wrap',
     gap: '12px',
     alignItems: 'end',
   },
   field: {
+    minWidth: 0,
+    flex: '1 1 180px',
     display: 'flex',
     flexDirection: 'column',
     gap: '7px',
+  },
+  searchField: {
+    minWidth: 0,
+    flex: '2 1 260px',
+  },
+  monthField: {
+    minWidth: 0,
+    flex: '0 1 148px',
   },
   label: {
     fontSize: '12px',
@@ -419,6 +451,9 @@ const styles = {
     color: '#334155',
   },
   input: {
+    boxSizing: 'border-box',
+    minWidth: 0,
+    maxWidth: '100%',
     height: '40px',
     padding: '0 11px',
     border: '1px solid #cbd5e1',
@@ -427,8 +462,17 @@ const styles = {
     width: '100%',
     background: '#fff',
     color: '#111827',
+    WebkitTextFillColor: '#111827',
+    colorScheme: 'light',
+  },
+  monthInput: {
+    width: '100%',
+    minWidth: 0,
   },
   select: {
+    boxSizing: 'border-box',
+    minWidth: 0,
+    maxWidth: '100%',
     height: '40px',
     padding: '0 11px',
     border: '1px solid #cbd5e1',
@@ -437,8 +481,13 @@ const styles = {
     width: '100%',
     background: '#fff',
     color: '#111827',
+    WebkitTextFillColor: '#111827',
+    colorScheme: 'light',
   },
   resetButton: {
+    boxSizing: 'border-box',
+    minWidth: 0,
+    flex: '0 0 auto',
     display: 'inline-flex',
     alignItems: 'center',
     justifyContent: 'center',

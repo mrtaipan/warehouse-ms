@@ -1,6 +1,8 @@
 import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { createClient } from '@/utils/supabase/server'
+import { loadAccessContext } from '@/utils/access-control'
+import { hasPermission } from '@/utils/permissions'
 
 function formatDateDisplay(value) {
   if (!value) return '-'
@@ -32,6 +34,14 @@ export default async function ReceivingDetailPage({ params }) {
     redirect('/login')
   }
 
+  const { role, permissions, isAdmin } = await loadAccessContext(supabase, user, 'role')
+  const canViewReceiving = hasPermission(permissions, 'inbound.receiving.view', isAdmin)
+  const canEditReceiving = (isAdmin || role === 'inbound_coordinator') && hasPermission(permissions, 'inbound.receiving.edit', isAdmin)
+
+  if (!canViewReceiving) {
+    redirect('/dashboard')
+  }
+
   const [
     { data: order, error: orderError },
     { data: inboundItems, error: inboundError },
@@ -54,7 +64,7 @@ export default async function ReceivingDetailPage({ params }) {
         <div style={styles.card}>
           <h1 style={styles.title}>Receiving Detail</h1>
           <p style={styles.errorText}>Error: {orderError?.message || 'Receiving data not found.'}</p>
-          <Link href="/dashboard/inbound" style={styles.link}>
+          <Link href="/dashboard/inbound/receiving" style={styles.link}>
             Back to Receiving
           </Link>
         </div>
@@ -79,10 +89,12 @@ export default async function ReceivingDetailPage({ params }) {
         </div>
 
         <div style={styles.headerActions}>
-          <Link href={`/dashboard/inbound/${order.id}/edit`} style={styles.primaryLink}>
-            Edit Receiving
-          </Link>
-          <Link href="/dashboard/inbound" style={styles.secondaryLink}>
+          {canEditReceiving ? (
+            <Link href={`/dashboard/inbound/${order.id}/edit`} style={styles.primaryLink}>
+              Edit Receiving
+            </Link>
+          ) : null}
+          <Link href="/dashboard/inbound/receiving" style={styles.secondaryLink}>
             Back to Receiving
           </Link>
         </div>

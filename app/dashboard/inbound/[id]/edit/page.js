@@ -4,7 +4,7 @@ import { useEffect, useEffectEvent, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { createClient } from '@/utils/supabase/browser'
 import { getProfileByAuthenticatedUser } from '@/utils/user-profiles'
-import { ADMIN_EMAIL, resolveRole } from '@/utils/permissions'
+import { ADMIN_EMAIL, hasPermission, resolveRole } from '@/utils/permissions'
 
 const supabase = createClient()
 const QUANTITY_FIELDS = new Set(['qty_surat_jalan', 'total_koli', 'supplier_qty', 'sample_qty', 'bongkar_qty'])
@@ -604,6 +604,7 @@ export default function EditReceivingPage() {
   const [isEditing, setIsEditing] = useState(false)
   const [userRole, setUserRole] = useState('')
   const [isAdminUser, setIsAdminUser] = useState(false)
+  const [permissionCodes, setPermissionCodes] = useState([])
   const [savedSnapshot, setSavedSnapshot] = useState(null)
   const [form, setForm] = useState({
     grn_number: '',
@@ -669,9 +670,19 @@ export default function EditReceivingPage() {
       unload_pic: row.unload_pic || '',
     }))
     const role = resolveRole(profileResult.data?.role, emailAdmin)
+    const { data: rolePermissionRows } = role === 'admin'
+      ? { data: [] }
+      : await supabase.from('dir_user_roles').select('permission_code').eq('role', role)
+    const nextPermissionCodes = (rolePermissionRows || []).map((item) => item.permission_code).filter(Boolean)
+    const canOpenEditPage = hasPermission(nextPermissionCodes, 'inbound.receiving.edit', emailAdmin || role === 'admin')
 
-    if (!emailAdmin && role === 'inbound_staff') {
+    if (role === 'inbound_staff' && canOpenEditPage) {
       router.replace(`/mobile/inbound/receiving/${inboundId}`)
+      return
+    }
+
+    if (!canOpenEditPage) {
+      router.replace(`/dashboard/inbound/${inboundId}`)
       return
     }
 
@@ -689,6 +700,7 @@ export default function EditReceivingPage() {
 
     setUserRole(role)
     setIsAdminUser(emailAdmin || role === 'admin')
+    setPermissionCodes(nextPermissionCodes)
     setSuppliers((supplierRows || []).filter((supplier) => normalizeGroup(supplier.group) === 'MOB'))
     setLoadedDetailIds((detailRows || []).map((row) => row.id))
     setForm(nextForm)
@@ -726,6 +738,7 @@ export default function EditReceivingPage() {
   }
 
   function handleOpenInput() {
+    if (!canEditReceiving) return
     router.push(`/mobile/inbound/receiving/${inboundId}`)
   }
 
@@ -812,7 +825,7 @@ export default function EditReceivingPage() {
       },
     },
   ]
-  const canEditReceiving = isAdminUser || userRole === 'admin' || userRole === 'inbound_coordinator'
+  const canEditReceiving = hasPermission(permissionCodes, 'inbound.receiving.edit', isAdminUser || userRole === 'admin')
   const inputStyle = isEditing ? styles.input : { ...styles.input, ...styles.disabledControl }
   const selectStyle = isEditing ? styles.select : { ...styles.select, ...styles.disabledControl }
   const textareaStyle = isEditing ? styles.textarea : { ...styles.textarea, ...styles.disabledTextarea }

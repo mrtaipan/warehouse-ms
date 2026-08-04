@@ -2,6 +2,7 @@ import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { createClient } from '@/utils/supabase/server'
 import { loadAccessContext } from '@/utils/access-control'
+import { canAccessOperationsCalendar } from '@/utils/permissions'
 import OperationsCalendarClient from './page-client'
 import styles from './page.module.css'
 
@@ -11,12 +12,6 @@ const DIVISIONS = [
   { key: 'packing', label: 'Packing List', accent: 'rose' },
   { key: 'storage', label: 'Stockkeeping', accent: 'emerald' },
 ]
-
-function canAccessOperationsCalendar(role, isAdmin) {
-  if (isAdmin) return true
-  if (role === 'warehouse_leader') return true
-  return String(role || '').endsWith('_coordinator')
-}
 
 function getTodayMonthValue() {
   const now = new Date()
@@ -571,9 +566,9 @@ export default async function OperationsCalendarPage({ searchParams }) {
     redirect('/login')
   }
 
-  const { role, isAdmin } = await loadAccessContext(supabase, user, 'role, display_name')
+  const { role, permissions, isAdmin } = await loadAccessContext(supabase, user, 'role, display_name')
 
-  if (!canAccessOperationsCalendar(role, isAdmin)) {
+  if (!canAccessOperationsCalendar(role, permissions, isAdmin)) {
     redirect('/dashboard')
   }
 

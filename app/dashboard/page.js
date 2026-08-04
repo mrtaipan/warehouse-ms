@@ -1,7 +1,7 @@
 import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { createClient } from '@/utils/supabase/server'
-import { getAllowedMenus, getStorageFeatureAccess } from '@/utils/permissions'
+import { canAccessOperationsCalendar, getAllowedMenus, getStorageFeatureAccess } from '@/utils/permissions'
 import { loadAccessContext } from '@/utils/access-control'
 import RestockShortcutButton from './restock-shortcut-client'
 import ItemSearchShortcutButton from './item-search-shortcut-client'
@@ -140,12 +140,6 @@ function getTodayDateString() {
 
 function formatNumber(value) {
   return new Intl.NumberFormat('id-ID', { maximumFractionDigits: 0 }).format(Number(value || 0))
-}
-
-function canAccessOperationsCalendar(role, isAdmin) {
-  if (isAdmin) return true
-  if (role === 'warehouse_leader') return true
-  return String(role || '').endsWith('_coordinator')
 }
 
 function CalendarIcon() {
@@ -580,7 +574,7 @@ export default async function DashboardPage({ searchParams }) {
   const todayDate = getTodayDateString()
   const params = await searchParams
   const selectedGrn = String(params?.grn || '').trim()
-  const showOperationsCalendarButton = canAccessOperationsCalendar(role, isAdmin)
+  const showOperationsCalendarButton = canAccessOperationsCalendar(role, permissions, isAdmin)
 
   const { data: announcementRows } = await supabase.from('dir_user_profiles').select('*')
   const { data: broadcastRows, error: broadcastError } = await supabase
