@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createClient } from '@/utils/supabase/browser'
 import { getProfileByAuthenticatedUser } from '@/utils/user-profiles'
+import { ADMIN_EMAIL, hasPermission } from '@/utils/permissions'
 
 const supabase = createClient()
 
@@ -1165,6 +1166,14 @@ function getSampleBreakdownCategoryLabel(item) {
   )
 }
 
+function getConfirmBrandLabel(item) {
+  return item.brands?.brand_name || 'UNBRANDED'
+}
+
+function getConfirmCategoryLabel(item) {
+  return item.categories?.full_name || item.categories?.category_name || 'UNCATEGORIZED'
+}
+
 function formatItemTypeSubcategoryLabel(value) {
   const parts = String(value || '')
     .split(/\s*(?:>|\/)\s*/)
@@ -1293,6 +1302,7 @@ export default function QcConfirmationNextProcessPage() {
   const searchParams = useSearchParams()
   const draftIdRef = useRef(1)
   const [loading, setLoading] = useState(true)
+  const [canEditConfirmation, setCanEditConfirmation] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
@@ -1351,6 +1361,10 @@ export default function QcConfirmationNextProcessPage() {
               id,
               brand_id,
               category_id,
+              model_name,
+              variant_name,
+              is_sample,
+              is_product_temporary,
               brands:dir_brands!brand_id (
                 id,
                 brand_name
@@ -1433,7 +1447,31 @@ export default function QcConfirmationNextProcessPage() {
         .order('created_at', { ascending: true }),
       supabase
         .from('qc_confirm')
-        .select('id, inbound_id, brand_id, category_id, model_name, variant_name, photo_url, qty, koli_sequence, is_sample, grade, is_adjustment, adjustment_type, pic_name')
+        .select(`
+          id,
+          inbound_id,
+          brand_id,
+          category_id,
+          model_name,
+          variant_name,
+          photo_url,
+          qty,
+          koli_sequence,
+          is_sample,
+          grade,
+          is_adjustment,
+          adjustment_type,
+          pic_name,
+          brands:dir_brands!brand_id (
+            id,
+            brand_name
+          ),
+          categories:dir_categories!category_id (
+            id,
+            category_name,
+            full_name
+          )
+        `)
         .order('koli_sequence', { ascending: true }),
       supabase
         .from('dir_user_profiles')
@@ -1450,7 +1488,13 @@ export default function QcConfirmationNextProcessPage() {
 
     let nextPicName = ''
     if (authData?.user) {
-      const { data: profileRow } = await getProfileByAuthenticatedUser(supabase, authData.user, 'display_name')
+      const { data: profileRow } = await getProfileByAuthenticatedUser(supabase, authData.user, 'display_name, role')
+      const isAdminUser = authData.user.email?.toLowerCase() === ADMIN_EMAIL || profileRow?.role === 'admin'
+      const { data: rolePermissionRows } = isAdminUser
+        ? { data: [] }
+        : await supabase.from('dir_user_roles').select('permission_code').eq('role', profileRow?.role || '')
+      const rolePermissions = (rolePermissionRows || []).map((item) => item.permission_code).filter(Boolean)
+      setCanEditConfirmation(hasPermission(rolePermissions, 'qc.confirmation.edit', isAdminUser))
       nextPicName = getDisplayName(authData.user, profileRow)
     }
 
@@ -1606,11 +1650,35 @@ export default function QcConfirmationNextProcessPage() {
         const key = getSourceKey(item)
         const fallbackKey = sourceKeyByModelOnlyKey.get(getModelOnlyKey(item))
         const exactCurrent = grouped.get(key)
-        const current = exactCurrent || grouped.get(fallbackKey)
-        const targetKey = exactCurrent ? key : fallbackKey
+        let current = exactCurrent || grouped.get(fallbackKey)
+        let targetKey = exactCurrent ? key : fallbackKey
 
-        if (!current) {
+        if (!current && isTransferAdjustment(item)) {
+          current = {
+            key,
+            inbound_id: item.inbound_id,
+            brand_id: item.brand_id || null,
+            category_id: item.category_id || null,
+            brand_name: getConfirmBrandLabel(item),
+            category_name: getConfirmCategoryLabel(item),
+            model_name: item.model_name || 'UNKNOWN MODEL',
+            model_color: item.model_color || '',
+            photo_url: item.photo_url || '',
+            source_qty: 0,
+            confirmed_qty: 0,
+            shortage_qty: 0,
+            pic_names: new Set(),
+            is_adjustment_source: true,
+          }
+          targetKey = key
+        }
+
+        if (!current || !targetKey) {
           return
+        }
+
+        if (isTransferAdjustment(item)) {
+          current.source_qty += Number(item.qty || 0)
         }
 
         if (isShortageType(item)) {
@@ -1845,6 +1913,8 @@ export default function QcConfirmationNextProcessPage() {
   )
 
   function handleAddSelectedSourceItem() {
+    if (!canEditConfirmation) return
+
     setError('')
     setSuccess('')
 
@@ -1922,6 +1992,8 @@ export default function QcConfirmationNextProcessPage() {
   }
 
   function handleViewModeChange(nextIsFormMode) {
+    if (!canEditConfirmation) return
+
     const params = new URLSearchParams(searchParams.toString())
     if (grnFilter) {
       params.set('grn', grnFilter)
@@ -2017,6 +2089,8 @@ export default function QcConfirmationNextProcessPage() {
   }
 
   async function handlePostCurrentKoli() {
+    if (!canEditConfirmation) return
+
     setError('')
     setSuccess('')
 
@@ -2086,7 +2160,7 @@ export default function QcConfirmationNextProcessPage() {
     return <p style={styles.emptyText}>Loading confirmation next process...</p>
   }
 
-  if (isFormMode) {
+  if (isFormMode && canEditConfirmation) {
     return (
       <div style={styles.mobileFormShell}>
         <header style={styles.mobileTopBar}>
@@ -2382,15 +2456,17 @@ export default function QcConfirmationNextProcessPage() {
             <h1 style={styles.title}>Passing Grade</h1>
           </div>
           <div style={styles.overviewActions}>
-            <button
-              type="button"
-              onClick={() => handleViewModeChange(true)}
-              style={styles.builderButton}
-              aria-label="Open Grade A form"
-              title="Grade A"
-            >
-              <BuilderIcon />
-            </button>
+            {canEditConfirmation ? (
+              <button
+                type="button"
+                onClick={() => handleViewModeChange(true)}
+                style={styles.builderButton}
+                aria-label="Open Grade A form"
+                title="Grade A"
+              >
+                <BuilderIcon />
+              </button>
+            ) : null}
             <Link href="/dashboard/qc/confirmation" style={styles.closeIconButton} aria-label="Back to Grading Verification" title="Back to Grading Verification">
               <span style={styles.closeIconGlyph}>
                 <XIcon />

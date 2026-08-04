@@ -3636,6 +3636,19 @@ export default function QcReceivingPage() {
                       style={{ ...styles.input, ...(!canEditSavedPlan ? styles.inputDisabled : {}) }}
                       disabled={!canEditSavedPlan}
                     />
+                    {Number(row.qty_qc || 0) !== Number(row.qty_in || 0) ? (
+                      <p
+                        style={{
+                          ...styles.infoText,
+                          color: Number(row.qty_qc || 0) > Number(row.qty_in || 0) ? '#b45309' : '#dc2626',
+                          fontWeight: '700',
+                        }}
+                      >
+                        {Number(row.qty_qc || 0) > Number(row.qty_in || 0)
+                          ? `Surplus ${Number(row.qty_qc || 0) - Number(row.qty_in || 0)} pcs from inbound qty.`
+                          : `Shortage ${Number(row.qty_in || 0) - Number(row.qty_qc || 0)} pcs from inbound qty.`}
+                      </p>
+                    ) : null}
                   </div>
                 </div>
 

@@ -25,5 +25,9 @@ export default async function QcLayout({ children }) {
     access.retur ? { href: '/dashboard/qc/retur-report', label: 'Return Report' } : null,
   ].filter(Boolean)
 
+  if (items.length <= 1) {
+    return children
+  }
+
   return <DashboardSubnav items={items} variant="qcMenu">{children}</DashboardSubnav>
 }

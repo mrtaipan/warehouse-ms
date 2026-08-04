@@ -1942,6 +1942,7 @@ export default function QcDashboardPage() {
     const activeArklineRoundByCycle = new Map(
       activeItems.map((item) => [String(item.qc_cycle_id || ''), Number(item.qc_round_number || 2)])
     )
+    const shouldSeparateSampleSummary = qcMode === 'regular' && sampleFilter === 'yes'
 
     if (qcMode !== 'regular') {
       arklineRejectDetails
@@ -2004,7 +2005,9 @@ export default function QcDashboardPage() {
           const breakdown = split.sample_breakdown || {}
           const splitModel = breakdown.model_name || 'UNKNOWN MODEL'
           const splitVariant = breakdown.variant_name || ''
-          const splitKey = `${brand}|||${category}|||${sampleSourceId}|||${splitModel}|||${splitVariant}|||split:${breakdown.id || split.sample_breakdown_id}`
+          const splitKey = shouldSeparateSampleSummary
+            ? `${brand}|||${category}|||${sampleSourceId}|||${splitModel}|||${splitVariant}|||split:${breakdown.id || split.sample_breakdown_id}`
+            : `${brand}|||${category}|||${splitModel}|||${splitVariant}`
           const current =
             grouped.get(splitKey) || {
               brand,
@@ -2020,9 +2023,9 @@ export default function QcDashboardPage() {
               checked: 0,
               taskRows: [],
               hasRejectDetails: false,
-              isSampleSummary: true,
-              isTemporarySampleSummary: true,
-              sampleSourceId,
+              isSampleSummary: shouldSeparateSampleSummary,
+              isTemporarySampleSummary: shouldSeparateSampleSummary,
+              sampleSourceId: shouldSeparateSampleSummary ? sampleSourceId : null,
             }
 
           current.qtyA += Number(split.qty_a || 0)
@@ -2043,7 +2046,9 @@ export default function QcDashboardPage() {
         const residualQtyC = Math.max(0, Number(item.qty_c || 0) - splitQtyC)
 
         if (residualQtyA || residualQtyB || residualQtyC) {
-          const residualKey = `${brand}|||${category}|||${sampleSourceId}|||TEMPORARY SAMPLE|||TEMPORARY`
+          const residualKey = shouldSeparateSampleSummary
+            ? `${brand}|||${category}|||${sampleSourceId}|||TEMPORARY SAMPLE|||TEMPORARY`
+            : `${brand}|||${category}|||TEMPORARY SAMPLE|||TEMPORARY`
           const current =
             grouped.get(residualKey) || {
               brand,
@@ -2059,9 +2064,9 @@ export default function QcDashboardPage() {
               checked: 0,
               taskRows: [],
               hasRejectDetails: false,
-              isSampleSummary: true,
-              isTemporarySampleSummary: true,
-              sampleSourceId,
+              isSampleSummary: shouldSeparateSampleSummary,
+              isTemporarySampleSummary: shouldSeparateSampleSummary,
+              sampleSourceId: shouldSeparateSampleSummary ? sampleSourceId : null,
             }
 
           current.qtyA += residualQtyA
@@ -2077,7 +2082,7 @@ export default function QcDashboardPage() {
       }
 
       const baseKey = qcMode === 'regular'
-        ? isSampleTask
+        ? isSampleTask && shouldSeparateSampleSummary
           ? `${brand}|||${category}|||${sampleSourceId}|||${model}|||${variant}`
           : `${brand}|||${category}|||${model}|||${variant}`
         : getSummaryRejectKey({ brand, category, model })
@@ -2097,9 +2102,9 @@ export default function QcDashboardPage() {
           checked: 0,
           taskRows: [],
           hasRejectDetails: false,
-          isSampleSummary: isSampleTask,
-          isTemporarySampleSummary: isTemporarySample,
-          sampleSourceId: isSampleTask ? sampleSourceId : null,
+          isSampleSummary: isSampleTask && shouldSeparateSampleSummary,
+          isTemporarySampleSummary: isTemporarySample && shouldSeparateSampleSummary,
+          sampleSourceId: isSampleTask && shouldSeparateSampleSummary ? sampleSourceId : null,
         }
 
       current.qtyA += Number(item.qty_a || 0)
@@ -2195,6 +2200,7 @@ export default function QcDashboardPage() {
     hasInvalidDateRange,
     qcMode,
     qcSampleSplitsByQcItemId,
+    sampleFilter,
   ])
 
   const selectedRejectTaskRows = useMemo(
@@ -2507,6 +2513,7 @@ export default function QcDashboardPage() {
     .sort((a, b) => Number(a.secondsPerPcs || 0) - Number(b.secondsPerPcs || 0))
   const maxProductThroughputSeconds = rankedProductThroughputRows.reduce((max, item) => Math.max(max, Number(item.secondsPerPcs || 0)), 0)
   const activeSummaryLabel = qcMode === 'regular' ? 'Reguler' : qcMode === 're_qc' ? 'Re-QC' : 'Arkline'
+  const showRegularSplitColumn = qcMode === 'regular' && sampleFilter === 'yes'
   const selectedInspectorPerformance = inspectorPerformance.find((item) => item.inspectorKey === pauseDetailInspector)
   const selectedInspectorPauseLogs = selectedInspectorPerformance?.pauseLogs || []
   const selectedInspectorCompletedTaskRows = selectedInspectorPerformance?.completedTaskRows || []
@@ -3498,7 +3505,7 @@ export default function QcDashboardPage() {
                 <th style={{ ...styles.th, ...styles.thCenter }}>Qty B</th>
                 <th style={{ ...styles.th, ...styles.thCenter }}>Qty C</th>
                 <th style={{ ...styles.th, ...styles.thCenter }}>Total Inspected</th>
-                {qcMode === 'regular' ? <th style={{ ...styles.th, ...styles.thCenter }}>Split</th> : null}
+                {showRegularSplitColumn ? <th style={{ ...styles.th, ...styles.thCenter }}>Split</th> : null}
                 {qcMode !== 'regular' ? <th style={{ ...styles.th, ...styles.thCenter }}>Detail</th> : null}
               </tr>
             </thead>
@@ -3527,7 +3534,7 @@ export default function QcDashboardPage() {
                     <td style={{ ...styles.td, ...styles.tdCenter }}>{item.qtyB}</td>
                     <td style={{ ...styles.td, ...styles.tdCenter }}>{item.qtyC}</td>
                     <td style={{ ...styles.td, ...styles.tdCenter }}>{item.checked}</td>
-                    {qcMode === 'regular' ? (
+                    {showRegularSplitColumn ? (
                       <td style={{ ...styles.td, ...styles.tdCenter }}>
                         {item.isTemporarySampleSummary ? (
                           <button
@@ -3566,7 +3573,7 @@ export default function QcDashboardPage() {
                 })
               ) : (
                 <tr>
-                  <td style={styles.td} colSpan={qcMode === 're_qc' ? 9 : qcMode === 'arkline' ? 8 : 10}>
+                  <td style={styles.td} colSpan={qcMode === 're_qc' ? 9 : qcMode === 'arkline' ? 8 : showRegularSplitColumn ? 10 : 9}>
                     No QC result found for this filter.
                   </td>
                 </tr>

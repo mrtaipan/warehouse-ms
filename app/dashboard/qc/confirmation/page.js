@@ -183,12 +183,12 @@ export default async function QcConfirmationPage({ searchParams }) {
           qty_a,
           qty_b,
           qty_c,
-          qc_item:qc_item_id (
+          qc_item:qc_item_id!inner (
             id,
             inbound_id,
             status
           ),
-          sample_breakdown:sample_breakdown_id (
+          sample_breakdown:sample_breakdown_id!inner (
             id,
             inbound_id
           )

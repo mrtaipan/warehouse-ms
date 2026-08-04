@@ -5,6 +5,7 @@ import { useSearchParams } from 'next/navigation'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createClient } from '@/utils/supabase/browser'
 import { getProfileByAuthenticatedUser } from '@/utils/user-profiles'
+import { ADMIN_EMAIL, hasPermission } from '@/utils/permissions'
 
 const supabase = createClient()
 
@@ -892,7 +893,12 @@ function getAdjustmentLabel(value) {
   if (normalized === 'REJECTION_MANUAL') return 'Manual Adjustment'
   if (normalized === 'SURPLUS') return 'Surplus'
   if (normalized === 'SHORTAGE') return 'Shortage'
+  if (normalized === 'TRANSFER') return 'Transfer'
   return 'Adjustment'
+}
+
+function isTransferAdjustment(item) {
+  return Boolean(item?.is_adjustment) && String(item?.adjustment_type || '').toUpperCase() === 'TRANSFER'
 }
 
 function normalizeFilterValue(value) {
@@ -1020,6 +1026,10 @@ export default function QcConfirmationRejectionPage() {
   const [adjustmentGrade, setAdjustmentGrade] = useState('B')
   const [adjustmentQty, setAdjustmentQty] = useState('')
   const [adjustmentModalOpen, setAdjustmentModalOpen] = useState(false)
+  const [takeGradeModalOpen, setTakeGradeModalOpen] = useState(false)
+  const [takeGradeSelection, setTakeGradeSelection] = useState('')
+  const [pendingTakeRows, setPendingTakeRows] = useState([])
+  const [supportsConfirmSourceGrade, setSupportsConfirmSourceGrade] = useState(false)
   const [previewPhotoUrl, setPreviewPhotoUrl] = useState('')
   const [resultFilters, setResultFilters] = useState({
     brandId: '',
@@ -1038,6 +1048,7 @@ export default function QcConfirmationRejectionPage() {
     const [
       { data: authData, error: authError },
       { data: qcData, error: qcError },
+      { error: sourceGradeSupportError },
       { data: qcSampleData, error: qcSampleError },
       { data: confirmData, error: confirmError },
       { data: returnsData, error: returnsError },
@@ -1091,6 +1102,10 @@ export default function QcConfirmationRejectionPage() {
           `)
         .eq('status', 'done')
         .order('created_at', { ascending: false }),
+      supabase
+        .from('qc_confirm')
+        .select('source_grade')
+        .limit(1),
       supabase
         .from('qc_sample_breakdowns')
         .select(`
@@ -1146,8 +1161,7 @@ export default function QcConfirmationRejectionPage() {
         .order('created_at', { ascending: true }),
       supabase
         .from('qc_confirm')
-        .select('id, inbound_id, brand_id, category_id, model_name, variant_name, photo_url, qty, koli_sequence, grade, is_adjustment, adjustment_type, pic_name')
-        .in('grade', ['B', 'C'])
+        .select('*')
         .order('koli_sequence', { ascending: true }),
       supabase
         .from('warehouse_returns')
@@ -1166,7 +1180,13 @@ export default function QcConfirmationRejectionPage() {
 
     let nextPicName = ''
     if (authData?.user) {
-      const { data: profileRow } = await getProfileByAuthenticatedUser(supabase, authData.user, 'display_name')
+      const { data: profileRow } = await getProfileByAuthenticatedUser(supabase, authData.user, 'display_name, role')
+      const isAdminUser = authData.user.email?.toLowerCase() === ADMIN_EMAIL || profileRow?.role === 'admin'
+      const { data: rolePermissionRows } = isAdminUser
+        ? { data: [] }
+        : await supabase.from('dir_user_roles').select('permission_code').eq('role', profileRow?.role || '')
+      const rolePermissions = (rolePermissionRows || []).map((item) => item.permission_code).filter(Boolean)
+      setCanEditConfirmation(hasPermission(rolePermissions, 'qc.confirmation.edit', isAdminUser))
       nextPicName = getDisplayName(authData.user, profileRow)
     }
 
@@ -1175,6 +1195,7 @@ export default function QcConfirmationRejectionPage() {
     setConfirmRows((confirmData || []).map(normalizeConfirmRow))
     setReturnRows((returnsData || []).map(normalizeReturnRow))
     setPicName(nextPicName)
+    setSupportsConfirmSourceGrade(!sourceGradeSupportError)
     if (!silent) {
       setLoading(false)
     }
@@ -1199,7 +1220,8 @@ export default function QcConfirmationRejectionPage() {
         adjustmentModalOpen ||
         adjustmentModelLabel ||
         adjustmentModelMenuOpen ||
-        adjustmentQty
+        adjustmentQty ||
+        takeGradeModalOpen
       ) {
         return
       }
@@ -1219,6 +1241,7 @@ export default function QcConfirmationRejectionPage() {
     previewPhotoUrl,
     savingReturn,
     savingTake,
+    takeGradeModalOpen,
   ])
 
   const selectedInbound = useMemo(
@@ -1364,9 +1387,17 @@ export default function QcConfirmationRejectionPage() {
       })
 
     confirmRows
-      .filter((item) => Number(item.inbound_id) === Number(selectedInbound?.id))
+      .filter((item) => {
+        if (Number(item.inbound_id) !== Number(selectedInbound?.id)) {
+          return false
+        }
+
+        const grade = String(item.grade || '').toUpperCase()
+        return ['B', 'C'].includes(grade) || isTransferAdjustment(item)
+      })
       .forEach((item) => {
-        const current = getOrCreateAdjustmentRow(item)
+        const sourceGrade = String(item.source_grade || item.grade || '').toUpperCase()
+        const current = getOrCreateAdjustmentRow({ ...item, grade: sourceGrade })
         if (current) {
           current.taken_qty += Number(item.qty || 0)
           grouped.set(current.key, current)
@@ -1528,6 +1559,8 @@ export default function QcConfirmationRejectionPage() {
   }
 
   function handleQtyInputChange(row, value) {
+    if (!canEditConfirmation) return
+
     const remainingQty = getRemainingQty(row)
 
     if (value === '') {
@@ -1545,7 +1578,7 @@ export default function QcConfirmationRejectionPage() {
     }))
   }
 
-  function createDecisionItem(row, type, qty) {
+  function createDecisionItem(row, type, qty, targetGrade = '') {
     return {
       id: `${type}-${draftIdRef.current++}`,
       source_key: row.key,
@@ -1558,21 +1591,71 @@ export default function QcConfirmationRejectionPage() {
       model_color: row.model_color,
       photo_url: row.photo_url || '',
       qty,
-      grade: row.grade,
+      grade: type === 'take' ? targetGrade : row.grade,
+      source_grade: row.grade,
     }
   }
 
-  function handleAddFilledRows(type) {
-    setError('')
-    setSuccess('')
-
-    const rowsToAdd = filteredSourceRows
+  function getFilledRowsForDecision() {
+    return filteredSourceRows
       .map((row) => ({
         row,
         qty: Number(qtyInputs[row.key] || 0),
         remainingQty: getRemainingQty(row),
       }))
       .filter((item) => item.qty > 0)
+  }
+
+  function clearQtyInputsForRows(rowsToAdd) {
+    setQtyInputs((prev) => {
+      const next = { ...prev }
+      rowsToAdd.forEach((item) => {
+        next[item.row.key] = ''
+      })
+      return next
+    })
+  }
+
+  function handleAddFilledRows(type, targetGrade = '') {
+    if (!canEditConfirmation) return
+
+    setError('')
+    setSuccess('')
+
+    const rowsToAdd = getFilledRowsForDecision()
+
+    if (!rowsToAdd.length) {
+      setError('Input at least one qty first.')
+      return
+    }
+
+    if (type === 'take' && !targetGrade) {
+      setError('Choose Take Grade first.')
+      return
+    }
+
+    const invalidRow = rowsToAdd.find((item) => item.qty > item.remainingQty)
+    if (invalidRow) {
+      setError(`Qty for ${invalidRow.row.model_name} grade ${invalidRow.row.grade} cannot be greater than the remaining qty (${invalidRow.remainingQty}).`)
+      return
+    }
+
+    const nextItems = rowsToAdd.map((item) => createDecisionItem(item.row, type, item.qty, targetGrade))
+
+    if (type === 'take') {
+      setCurrentTakeKoliItems((prev) => [...prev, ...nextItems])
+    } else {
+      setCurrentReturnKoliItems((prev) => [...prev, ...nextItems])
+    }
+
+    clearQtyInputsForRows(rowsToAdd)
+  }
+
+  function handleOpenTakeGradeModal() {
+    setError('')
+    setSuccess('')
+
+    const rowsToAdd = getFilledRowsForDecision()
 
     if (!rowsToAdd.length) {
       setError('Input at least one qty first.')
@@ -1585,24 +1668,37 @@ export default function QcConfirmationRejectionPage() {
       return
     }
 
-    const nextItems = rowsToAdd.map((item) => createDecisionItem(item.row, type, item.qty))
+    setPendingTakeRows(rowsToAdd)
+    setTakeGradeSelection('')
+    setTakeGradeModalOpen(true)
+  }
 
-    if (type === 'take') {
-      setCurrentTakeKoliItems((prev) => [...prev, ...nextItems])
-    } else {
-      setCurrentReturnKoliItems((prev) => [...prev, ...nextItems])
+  function handleConfirmTakeGrade() {
+    setError('')
+    setSuccess('')
+
+    if (!takeGradeSelection) {
+      setError('Choose Take Grade first.')
+      return
     }
 
-    setQtyInputs((prev) => {
-      const next = { ...prev }
-      rowsToAdd.forEach((item) => {
-        next[item.row.key] = ''
-      })
-      return next
-    })
+    const nextItems = pendingTakeRows.map((item) => createDecisionItem(item.row, 'take', item.qty, takeGradeSelection))
+    setCurrentTakeKoliItems((prev) => [...prev, ...nextItems])
+    clearQtyInputsForRows(pendingTakeRows)
+    setPendingTakeRows([])
+    setTakeGradeSelection('')
+    setTakeGradeModalOpen(false)
+  }
+
+  function handleCloseTakeGradeModal() {
+    setPendingTakeRows([])
+    setTakeGradeSelection('')
+    setTakeGradeModalOpen(false)
   }
 
   function handleAddAdjustmentItem(type) {
+    if (!canEditConfirmation) return
+
     setError('')
     setSuccess('')
 
@@ -1662,6 +1758,8 @@ export default function QcConfirmationRejectionPage() {
   }
 
   async function handlePostTakeKoli() {
+    if (!canEditConfirmation) return
+
     setError('')
     setSuccess('')
 
@@ -1672,6 +1770,14 @@ export default function QcConfirmationRejectionPage() {
 
     if (!currentTakeKoliItems.length) {
       setError('Take koli is still empty.')
+      return
+    }
+
+    const needsSourceGrade = currentTakeKoliItems.some(
+      (item) => item.source_grade && String(item.source_grade || '').toUpperCase() !== String(item.grade || '').toUpperCase()
+    )
+    if (needsSourceGrade && !supportsConfirmSourceGrade) {
+      setError('Run `supabase/qc_confirm_source_grade.sql` first before transferring rejected goods into a different grade.')
       return
     }
 
@@ -1690,25 +1796,33 @@ export default function QcConfirmationRejectionPage() {
     const nextKoliSequence =
       (latestConfirmRows || []).reduce((maxValue, item) => Math.max(maxValue, Number(item.koli_sequence || 0)), 0) + 1
 
-    const payload = currentTakeKoliItems.map((item) => ({
-      inbound_id: item.inbound_id,
-      brand_id: item.brand_id,
-      category_id: item.category_id,
-      model_name: item.model_name,
-      variant_name: item.model_color || null,
-      photo_url: item.photo_url || null,
-      qty: Number(item.qty || 0),
-      koli_sequence: nextKoliSequence,
-      grade: item.grade,
-      pic_name: picName || 'QC Staff',
-      is_adjustment: true,
-      adjustment_type: 'TRANSFER',
-    }))
+    const payload = currentTakeKoliItems.map((item) => {
+      const row = {
+        inbound_id: item.inbound_id,
+        brand_id: item.brand_id,
+        category_id: item.category_id,
+        model_name: item.model_name,
+        variant_name: item.model_color || null,
+        photo_url: item.photo_url || null,
+        qty: Number(item.qty || 0),
+        koli_sequence: nextKoliSequence,
+        grade: item.grade,
+        pic_name: picName || 'QC Staff',
+        is_adjustment: true,
+        adjustment_type: 'TRANSFER',
+      }
+
+      if (supportsConfirmSourceGrade) {
+        row.source_grade = item.source_grade || item.grade
+      }
+
+      return row
+    })
 
     const { data, error: insertError } = await supabase
       .from('qc_confirm')
       .insert(payload)
-      .select('id, inbound_id, brand_id, category_id, model_name, variant_name, photo_url, qty, koli_sequence, grade, is_adjustment, adjustment_type, pic_name')
+      .select('*')
 
     if (insertError) {
       setError(insertError.message)
@@ -1723,6 +1837,8 @@ export default function QcConfirmationRejectionPage() {
   }
 
   async function handlePostReturnKoli() {
+    if (!canEditConfirmation) return
+
     setError('')
     setSuccess('')
 
@@ -1812,7 +1928,9 @@ export default function QcConfirmationRejectionPage() {
                 </td>
                 <td style={styles.td}>{getModelLabel(item)}</td>
                 <td style={{ ...styles.td, ...styles.centerCell }}>
-                  {item.grade}
+                  {type === 'take' && item.source_grade
+                    ? `${item.source_grade} -> ${item.grade}`
+                    : item.grade}
                   {item.is_adjustment ? ` - ${getAdjustmentLabel(item.adjustment_type)}` : ''}
                 </td>
                 <td style={styles.td}>{item.category_name || 'UNCATEGORIZED'}</td>
@@ -1851,6 +1969,8 @@ export default function QcConfirmationRejectionPage() {
             <h1 style={styles.title}>Rejection Grade</h1>
           </div>
           <div style={styles.headerActions}>
+            {canEditConfirmation ? (
+              <>
             <button
               type="button"
               onClick={() => setAdjustmentModalOpen(true)}
@@ -1862,7 +1982,7 @@ export default function QcConfirmationRejectionPage() {
             </button>
             <button
               type="button"
-              onClick={() => handleAddFilledRows('take')}
+              onClick={handleOpenTakeGradeModal}
               disabled={!canUseSourceActions}
               style={{
                 ...styles.headerIconButton,
@@ -1888,6 +2008,8 @@ export default function QcConfirmationRejectionPage() {
             >
               <ReturnIcon />
             </button>
+              </>
+            ) : null}
             <Link href="/dashboard/qc/confirmation" style={styles.closeIconButton} aria-label="Back to Grading Verification" title="Back to Grading Verification">
               <span style={styles.closeIconGlyph}>
                 <XIcon />
@@ -2067,19 +2189,23 @@ export default function QcConfirmationRejectionPage() {
                       <td style={{ ...styles.td, ...styles.centerCell }}>{formatNumber(row.taken_qty)}</td>
                       <td style={{ ...styles.td, ...styles.centerCell }}>{formatNumber(row.returned_qty)}</td>
                       <td style={{ ...styles.td, ...styles.centerCell }}>
-                        <input
-                          type="number"
-                          min="0"
-                          max={remainingQty}
-                          value={qtyInputs[row.key] || ''}
-                          onChange={(event) => handleQtyInputChange(row, event.target.value)}
-                          style={{
-                            ...styles.compactInput,
-                            ...(isActionDisabled ? styles.compactInputDisabled : {}),
-                          }}
-                          placeholder="Qty"
-                          disabled={isActionDisabled}
-                        />
+                        {canEditConfirmation ? (
+                          <input
+                            type="number"
+                            min="0"
+                            max={remainingQty}
+                            value={qtyInputs[row.key] || ''}
+                            onChange={(event) => handleQtyInputChange(row, event.target.value)}
+                            style={{
+                              ...styles.compactInput,
+                              ...(isActionDisabled ? styles.compactInputDisabled : {}),
+                            }}
+                            placeholder="Qty"
+                            disabled={isActionDisabled}
+                          />
+                        ) : (
+                          formatNumber(remainingQty)
+                        )}
                       </td>
                     </tr>
                   )
@@ -2090,7 +2216,7 @@ export default function QcConfirmationRejectionPage() {
         ) : null}
       </div>
 
-      <div style={styles.basketGrid}>
+      {canEditConfirmation ? <div style={styles.basketGrid}>
         <div style={styles.card}>
           <div style={styles.sectionHeaderRow}>
             <h2 style={styles.sectionTitle}>Take Koli</h2>
@@ -2130,8 +2256,8 @@ export default function QcConfirmationRejectionPage() {
           {!currentReturnKoliItems.length ? <p style={styles.emptyText}>Return koli is still empty.</p> : null}
           {renderBasketTable(currentReturnKoliItems, 'return')}
         </div>
-      </div>
-      {adjustmentModalOpen ? (
+      </div> : null}
+      {canEditConfirmation && adjustmentModalOpen ? (
         <div style={styles.modalOverlay} role="dialog" aria-modal="true" onClick={() => setAdjustmentModalOpen(false)}>
           <div style={styles.modalCard} onClick={(event) => event.stopPropagation()}>
             <div style={styles.sectionHeaderRow}>
@@ -2222,6 +2348,57 @@ export default function QcConfirmationRejectionPage() {
                 </div>
               </>
             ) : null}
+          </div>
+        </div>
+      ) : null}
+      {takeGradeModalOpen ? (
+        <div style={styles.modalOverlay} role="dialog" aria-modal="true" onClick={handleCloseTakeGradeModal}>
+          <div style={styles.modalCard} onClick={(event) => event.stopPropagation()}>
+            <div style={styles.sectionHeaderRow}>
+              <h2 style={styles.sectionTitle}>Take Grade</h2>
+              <button
+                type="button"
+                onClick={handleCloseTakeGradeModal}
+                style={styles.removeIconButton}
+                aria-label="Close take grade"
+                title="Close"
+              >
+                <XIcon />
+              </button>
+            </div>
+
+            <p style={styles.emptyText}>
+              Choose the grade for {formatNumber(pendingTakeRows.reduce((sum, item) => sum + Number(item.qty || 0), 0))} qty before adding to Take Koli.
+            </p>
+
+            <select
+              value={takeGradeSelection}
+              onChange={(event) => setTakeGradeSelection(event.target.value)}
+              style={styles.input}
+              aria-label="Take Grade"
+            >
+              <option value="">Choose grade</option>
+              <option value="A">Grade A</option>
+              <option value="B">Grade B</option>
+              <option value="C">Grade C</option>
+            </select>
+
+            <div style={styles.buttonRow}>
+              <button type="button" onClick={handleCloseTakeGradeModal} style={styles.secondaryButton}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmTakeGrade}
+                style={{
+                  ...styles.primaryButton,
+                  ...(!takeGradeSelection ? { opacity: 0.6, cursor: 'not-allowed' } : {}),
+                }}
+                disabled={!takeGradeSelection}
+              >
+                Add to Take Koli
+              </button>
+            </div>
           </div>
         </div>
       ) : null}
