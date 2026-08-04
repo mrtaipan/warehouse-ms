@@ -1781,8 +1781,8 @@ function normalizeSizeLabel(value) {
 
 function getSummarySizeLabel(value) {
   const normalized = normalizeSizeLabel(value)
-  if (!normalized.includes('X')) return normalized
-  return normalized.split('X')[0] || normalized
+  const inseamMatch = normalized.match(/^(\d+(?:\.\d+)?)X\d+(?:\.\d+)?$/)
+  return inseamMatch?.[1] || normalized
 }
 
 function getSizeSummary(sizeRows = []) {
