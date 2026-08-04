@@ -1008,6 +1008,7 @@ export default function QcConfirmationRejectionPage() {
   const searchParams = useSearchParams()
   const draftIdRef = useRef(1)
   const [loading, setLoading] = useState(true)
+  const [canEditConfirmation, setCanEditConfirmation] = useState(false)
   const [savingTake, setSavingTake] = useState(false)
   const [savingReturn, setSavingReturn] = useState(false)
   const [error, setError] = useState('')
