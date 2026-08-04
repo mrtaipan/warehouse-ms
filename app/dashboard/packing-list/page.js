@@ -2,6 +2,7 @@ import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { createClient } from '@/utils/supabase/server'
 import { loadAccessContext } from '@/utils/access-control'
+import responsiveStyles from './page.module.css'
 
 function formatDateDisplay(value) {
   if (!value) return '-'
@@ -139,25 +140,26 @@ export default async function PackingListOverviewPage() {
   const totalPendingQty = allRows.reduce((sum, row) => sum + row.pending_qty, 0)
 
   return (
-    <section style={styles.panel}>
-      <div style={styles.header}>
-        <div style={styles.headerText}>
+    <section style={styles.panel} className={responsiveStyles.panel}>
+      <div style={styles.header} className={responsiveStyles.header}>
+        <div style={styles.headerText} className={responsiveStyles.headerText}>
           <p style={styles.eyebrow}>Packing List</p>
           <h1 style={styles.title}>Overview</h1>
           <p style={styles.subtitle}>Monitor QC Confirm data before Packing List size breakdown and storage handoff.</p>
         </div>
 
-        <div style={styles.summaryGrid}>
-          <div style={styles.summaryCard}>
+        <div style={styles.summaryGrid} className={responsiveStyles.summaryGrid}>
+          <div style={styles.summaryCard} className={responsiveStyles.summaryCard}>
             <span style={styles.summaryLabel}>GRN Ready</span>
             <strong style={styles.summaryValue}>{allRows.length}</strong>
           </div>
-          <div style={styles.summaryCard}>
+          <div style={styles.summaryCard} className={responsiveStyles.summaryCard}>
             <span style={styles.summaryLabel}>Total Pending Koli</span>
             <strong style={styles.summaryValue}>{totalPending}</strong>
           </div>
           <div
             style={styles.summaryCard}
+            className={responsiveStyles.summaryCard}
             title="Not yet received by Packing List"
             aria-label="Total Pending Qty. Not yet received by Packing List"
           >
