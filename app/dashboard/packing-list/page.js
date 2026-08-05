@@ -39,12 +39,27 @@ function BreakdownIcon() {
   )
 }
 
-function buildOverviewRows(confirmRows = [], validationRows = []) {
+function buildOverviewRows(confirmRows = [], validationRows = [], breakdownRows = []) {
   const validationMap = new Map()
+  const receivedQtyByInbound = new Map()
+  const breakdownQtyByInbound = new Map()
 
   validationRows.forEach((row) => {
     const key = `${row.inbound_id}::${Number(row.source_koli_sequence || 0)}`
     validationMap.set(key, true)
+    const inboundId = Number(row.inbound_id || 0)
+    receivedQtyByInbound.set(
+      inboundId,
+      (receivedQtyByInbound.get(inboundId) || 0) + Number(row.received_qty || 0)
+    )
+  })
+
+  breakdownRows.forEach((row) => {
+    const inboundId = Number(row.inbound_id || 0)
+    breakdownQtyByInbound.set(
+      inboundId,
+      (breakdownQtyByInbound.get(inboundId) || 0) + Number(row.qty || 0)
+    )
   })
 
   const grouped = new Map()
@@ -60,7 +75,6 @@ function buildOverviewRows(confirmRows = [], validationRows = []) {
       validatedSet: new Set(),
       item_name: row.inbound?.item_name || '-',
       qc_confirm_qty: 0,
-      pending_qty: 0,
     }
     const koliSequence = Number(row.koli_sequence || 0)
     const validationKey = `${inboundId}::${koliSequence}`
@@ -69,8 +83,6 @@ function buildOverviewRows(confirmRows = [], validationRows = []) {
     current.koliSet.add(koliSequence)
     if (isValidated) {
       current.validatedSet.add(koliSequence)
-    } else {
-      current.pending_qty += Number(row.qty || 0)
     }
     current.item_name = current.item_name === '-' ? row.inbound?.item_name || '-' : current.item_name
     current.qc_confirm_qty += Number(row.qty || 0)
@@ -79,17 +91,25 @@ function buildOverviewRows(confirmRows = [], validationRows = []) {
   })
 
   return Array.from(grouped.values())
-    .map((row) => ({
-      inbound_id: row.inbound_id,
-      grn_number: row.grn_number,
-      inbound_date: row.inbound_date,
-      total_koli: row.koliSet.size,
-      validated_koli: row.validatedSet.size,
-      pending_koli: Math.max(0, row.koliSet.size - row.validatedSet.size),
-      qc_confirm_qty: row.qc_confirm_qty,
-      pending_qty: row.pending_qty,
-      item_name: row.item_name || '-',
-    }))
+    .map((row) => {
+      const plReceivedQty = receivedQtyByInbound.get(Number(row.inbound_id || 0)) || 0
+      const breakdownQty = breakdownQtyByInbound.get(Number(row.inbound_id || 0)) || 0
+      const receivingRemainingQty = row.qc_confirm_qty - plReceivedQty
+      return {
+        inbound_id: row.inbound_id,
+        grn_number: row.grn_number,
+        inbound_date: row.inbound_date,
+        total_koli: row.koliSet.size,
+        validated_koli: row.validatedSet.size,
+        pending_koli: Math.max(0, row.koliSet.size - row.validatedSet.size),
+        qc_confirm_qty: row.qc_confirm_qty,
+        pl_received_qty: plReceivedQty,
+        breakdown_qty: breakdownQty,
+        breakdown_remaining_qty: plReceivedQty - breakdownQty,
+        pending_qty: Math.max(0, receivingRemainingQty),
+        item_name: row.item_name || '-',
+      }
+    })
     .sort((a, b) => new Date(b.inbound_date || 0).getTime() - new Date(a.inbound_date || 0).getTime())
 }
 
@@ -110,6 +130,7 @@ export default async function PackingListOverviewPage() {
   const [
     { data: confirmRows, error: confirmError },
     { data: validationRows, error: validationError },
+    { data: breakdownRows, error: breakdownError },
   ] = await Promise.all([
     supabase
       .from('qc_confirm')
@@ -129,12 +150,16 @@ export default async function PackingListOverviewPage() {
       .limit(500),
     supabase
       .from('pl_receiving')
-      .select('id, inbound_id, source_koli_sequence, validated_at')
+      .select('id, inbound_id, source_koli_sequence, received_qty, validated_at')
       .order('validated_at', { ascending: false })
       .limit(500),
+    supabase
+      .from('pl_size_breakdown')
+      .select('id, inbound_id, qty')
+      .limit(5000),
   ])
 
-  const allRows = buildOverviewRows(confirmRows || [], validationRows || [])
+  const allRows = buildOverviewRows(confirmRows || [], validationRows || [], breakdownRows || [])
   const rows = allRows.slice(0, 25)
   const totalPending = allRows.reduce((sum, row) => sum + row.pending_koli, 0)
   const totalPendingQty = allRows.reduce((sum, row) => sum + row.pending_qty, 0)
@@ -169,9 +194,9 @@ export default async function PackingListOverviewPage() {
         </div>
       </div>
 
-      {confirmError || validationError ? (
+      {confirmError || validationError || breakdownError ? (
         <div style={styles.emptyBox}>
-          <p style={styles.errorText}>Error: {confirmError?.message || validationError?.message}</p>
+          <p style={styles.errorText}>Error: {confirmError?.message || validationError?.message || breakdownError?.message}</p>
         </div>
       ) : (
         <>
@@ -189,8 +214,13 @@ export default async function PackingListOverviewPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {rows.map((row) => (
-                    <tr key={row.inbound_id} style={styles.bodyRow}>
+                  {rows.map((row) => {
+                    const isCompleted = row.breakdown_remaining_qty === 0 && row.pending_koli === 0
+                    return (
+                      <tr
+                        key={row.inbound_id}
+                        style={isCompleted ? { ...styles.bodyRow, ...styles.completedRow } : styles.bodyRow}
+                      >
                       <td style={styles.actionTd}>
                         <div style={styles.rowActions}>
                           <Link
@@ -228,8 +258,9 @@ export default async function PackingListOverviewPage() {
                         {row.pending_koli}
                       </td>
                       <td style={styles.itemTd}>{row.item_name}</td>
-                    </tr>
-                  ))}
+                      </tr>
+                    )
+                  })}
                 </tbody>
               </table>
             </div>
@@ -363,6 +394,9 @@ const styles = {
   },
   bodyRow: {
     borderTop: '1px solid #f1f5f9',
+  },
+  completedRow: {
+    background: '#ecfdf5',
   },
   th: {
     padding: '12px 14px',

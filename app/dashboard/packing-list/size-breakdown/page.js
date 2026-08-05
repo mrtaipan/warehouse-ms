@@ -899,6 +899,14 @@ const styles = {
     justifyContent: 'center',
     gap: '8px',
   },
+  koliSelectAllLabel: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: '7px',
+    cursor: 'pointer',
+    whiteSpace: 'nowrap',
+  },
   koliCheckbox: {
     width: '18px',
     height: '18px',
@@ -1897,6 +1905,41 @@ function hasPdfMeasurementValue(value) {
   return Boolean(text && text !== '-')
 }
 
+function getPdfMeasurementNumber(value) {
+  const match = String(value ?? '').trim().replace(',', '.').match(/-?\d+(?:\.\d+)?/)
+  if (!match) return null
+  const number = Number(match[0])
+  return Number.isFinite(number) ? number : null
+}
+
+function comparePdfSizeChartRows(left, right) {
+  const leftLength = getPdfMeasurementNumber(left.length_value)
+  const rightLength = getPdfMeasurementNumber(right.length_value)
+
+  if (leftLength !== null && rightLength !== null && leftLength !== rightLength) return leftLength - rightLength
+  if (leftLength !== null && rightLength === null) return -1
+  if (leftLength === null && rightLength !== null) return 1
+  return left.size_label.localeCompare(right.size_label, undefined, { numeric: true })
+}
+
+function haveConflictingPdfMeasurements(leftRow, rightRow) {
+  return PDF_SIZE_CHART_COLUMNS.some((column) => {
+    const leftValue = leftRow[column.key]
+    const rightValue = rightRow[column.key]
+    return hasPdfMeasurementValue(leftValue) && hasPdfMeasurementValue(rightValue) && leftValue !== rightValue
+  })
+}
+
+function mergePdfSizeChartRows(currentRow, incomingRow) {
+  const mergedRow = { ...currentRow }
+  PDF_SIZE_CHART_COLUMNS.forEach((column) => {
+    if (!hasPdfMeasurementValue(mergedRow[column.key]) && hasPdfMeasurementValue(incomingRow[column.key])) {
+      mergedRow[column.key] = incomingRow[column.key]
+    }
+  })
+  return mergedRow
+}
+
 function buildPdfSizeChartGroups(rows = []) {
   const rowsByPlId = new Map()
   rows.forEach((row) => {
@@ -1906,8 +1949,7 @@ function buildPdfSizeChartGroups(rows = []) {
     rowsByPlId.set(plId, current)
   })
 
-  const groupsBySignature = new Map()
-  rowsByPlId.forEach((plRows, plId) => {
+  const charts = Array.from(rowsByPlId.entries()).map(([plId, plRows], sourceIndex) => {
     const canonicalRows = plRows
       .map((row) => ({
         size_label: formatPdfValue(row.size_label),
@@ -1916,27 +1958,74 @@ function buildPdfSizeChartGroups(rows = []) {
         ),
       }))
       .sort((a, b) => a.size_label.localeCompare(b.size_label, undefined, { numeric: true }))
-    const signature = JSON.stringify(canonicalRows)
-    const current = groupsBySignature.get(signature) || {
-      plIds: [],
-      rows: plRows,
+
+    return {
+      plId,
+      sourceIndex,
+      rowsBySize: new Map(canonicalRows.map((row) => [row.size_label, row])),
     }
-    current.plIds.push(plId)
-    groupsBySignature.set(signature, current)
   })
 
-  return Array.from(groupsBySignature.values()).map((group) => {
-    const visibleMeasurementColumns = PDF_SIZE_CHART_COLUMNS.filter((column) =>
-      group.rows.some((row) => hasPdfMeasurementValue(row[column.key]))
+  const groups = []
+  charts
+    .sort((a, b) => b.rowsBySize.size - a.rowsBySize.size || a.sourceIndex - b.sourceIndex)
+    .forEach((chart) => {
+      let matchedGroup = null
+      let matchedOverlap = 0
+
+      groups.forEach((group) => {
+        const overlappingSizes = Array.from(chart.rowsBySize.keys()).filter((size) => group.rowsBySize.has(size))
+        if (!overlappingSizes.length) return
+
+        const hasConflict = overlappingSizes.some((size) => {
+          const groupRow = group.rowsBySize.get(size)
+          const chartRow = chart.rowsBySize.get(size)
+          return haveConflictingPdfMeasurements(groupRow, chartRow)
+        })
+        if (!hasConflict && overlappingSizes.length > matchedOverlap) {
+          matchedGroup = group
+          matchedOverlap = overlappingSizes.length
+        }
+      })
+
+      if (!matchedGroup) {
+        groups.push({
+          members: [{ plId: chart.plId, sourceIndex: chart.sourceIndex }],
+          rowsBySize: new Map(chart.rowsBySize),
+        })
+        return
+      }
+
+      matchedGroup.members.push({ plId: chart.plId, sourceIndex: chart.sourceIndex })
+      chart.rowsBySize.forEach((row, size) => {
+        const currentRow = matchedGroup.rowsBySize.get(size)
+        matchedGroup.rowsBySize.set(size, currentRow ? mergePdfSizeChartRows(currentRow, row) : row)
+      })
+    })
+
+  return groups
+    .sort(
+      (a, b) =>
+        Math.min(...a.members.map((member) => member.sourceIndex)) -
+        Math.min(...b.members.map((member) => member.sourceIndex))
     )
-    return {
-      ...group,
-      headers: [
-        { key: 'size_label', label: 'Size', width: 22 },
-        ...visibleMeasurementColumns,
-      ],
-    }
-  })
+    .map((group) => {
+      const groupRows = Array.from(group.rowsBySize.values())
+        .sort(comparePdfSizeChartRows)
+      const visibleMeasurementColumns = PDF_SIZE_CHART_COLUMNS.filter((column) =>
+        groupRows.some((row) => hasPdfMeasurementValue(row[column.key]))
+      )
+      return {
+        plIds: group.members
+          .sort((a, b) => a.sourceIndex - b.sourceIndex)
+          .map((member) => member.plId),
+        rows: groupRows,
+        headers: [
+          { key: 'size_label', label: 'Size', width: 22 },
+          ...visibleMeasurementColumns,
+        ],
+      }
+    })
 }
 
 function toPdfTitleCase(value) {
@@ -4093,19 +4182,17 @@ export default function PackingListSizeBreakdownPage() {
 
         y += metricHeight + 5
         doc.setFont(PDF_FONT_FAMILY, 'bold')
-        doc.setFontSize(8)
-        doc.setTextColor(71, 85, 105)
+        doc.setFontSize(10.5)
+        doc.setTextColor(15, 23, 42)
         const brandLabel = 'Brand:'
         doc.text(brandLabel, margin, y)
         const brandValueX = margin + doc.getTextWidth(brandLabel) + 2
-        doc.setFont(PDF_FONT_FAMILY, 'normal')
-        doc.setTextColor(15, 23, 42)
         const brandLines = doc.splitTextToSize(
           getBrandCategorySummary(section),
           contentWidth - (brandValueX - margin)
         )
         doc.text(brandLines, brandValueX, y)
-        y += Math.max(1, brandLines.length) * 4.2 + 3
+        y += Math.max(1, brandLines.length) * 4.6 + 1.5
 
         drawInlineField('Group', getPdfGroupLabel(qtyMode), margin, y)
         y += 6
@@ -4714,6 +4801,8 @@ export default function PackingListSizeBreakdownPage() {
       : Boolean(payload.modelRows?.length)
   })
   const selectedKoliPrintRows = packingKoliRows.filter((row) => selectedKoliPrintKeys.includes(row.key))
+  const visibleKoliPrintKeys = packingKoliRows.map((row) => row.key)
+  const allVisibleKoliSelected = visibleKoliPrintKeys.length > 0 && visibleKoliPrintKeys.every((key) => selectedKoliPrintKeys.includes(key))
   const activePrintGrnNumber = pageMode === 'multipage'
     ? activeMultipageGroup?.print_label || initialGrn || '-'
     : initialGrn || '-'
@@ -4727,6 +4816,15 @@ export default function PackingListSizeBreakdownPage() {
         ? prev.filter((key) => key !== koliKey)
         : [...prev, koliKey]
     )
+  }
+
+  function toggleAllVisibleKoliPrintSelection() {
+    const visibleKeys = new Set(visibleKoliPrintKeys)
+    setSelectedKoliPrintKeys((prev) => {
+      const hasSelectedAll = visibleKoliPrintKeys.every((key) => prev.includes(key))
+      if (hasSelectedAll) return prev.filter((key) => !visibleKeys.has(key))
+      return Array.from(new Set([...prev, ...visibleKoliPrintKeys]))
+    })
   }
 
   function openPrintModal() {
@@ -4781,11 +4879,11 @@ export default function PackingListSizeBreakdownPage() {
       const rowsHtml = koliRow.items
         .map((item) => `
         <tr>
-          <td>${escapeHtml(item.brand_name || '-')}</td>
-          <td>${escapeHtml(item.source_variant_code || '-')}</td>
-          <td>${escapeHtml(item.item_name || '-')}</td>
-          <td class="center">${escapeHtml(item.size_label || '-')}</td>
-          <td class="qty">${escapeHtml(formatPdfQty(item.qty || 0))}</td>
+          <td class="brandCell">${escapeHtml(item.brand_name || '-')}</td>
+          <td class="variantCell">${escapeHtml(item.source_variant_code || '-')}</td>
+          <td class="itemCell">${escapeHtml(item.item_name || '-')}</td>
+          <td class="sizeCell">${escapeHtml(item.size_label || '-')}</td>
+          <td class="qtyCell">${escapeHtml(formatPdfQty(item.qty || 0))}</td>
         </tr>
       `)
         .join('')
@@ -4847,12 +4945,15 @@ export default function PackingListSizeBreakdownPage() {
       .value { display: block; margin-top: 3px; font-size: 16px; font-weight: 800; }
       .highlight { margin: 0 0 10px; color: var(--ink); font-size: 22px; font-weight: 950; line-height: 1.12; text-align: left; -webkit-text-stroke: 0.18px var(--ink); }
       .group { display: inline-flex; align-items: center; min-height: 24px; padding: 0 10px; border-radius: 999px; background: #ecfeff; color: #0e7490; font-size: 11px; font-weight: 900; white-space: nowrap; }
-      table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-      th, td { border: 1px solid var(--line); padding: 7px; font-size: 11px; vertical-align: middle; }
-      th { background: var(--ink); color: #fff; font-weight: 800; text-align: center; }
-      td:first-child { font-weight: 700; }
-      .center { text-align: center; }
-      .qty { text-align: center; font-weight: 800; font-variant-numeric: tabular-nums; }
+      table { width: 100%; table-layout: fixed; border-collapse: collapse; margin-top: 10px; }
+      th, td { border: 1px solid var(--line); padding: 7px 6px; vertical-align: middle; }
+      th { background: var(--ink); color: #fff; font-size: 11.5px; font-weight: 700; line-height: 1.15; text-align: center; }
+      th:nth-child(1) { width: 18%; }
+      th:nth-child(2) { width: 24%; }
+      th:nth-child(3) { width: 30%; }
+      th:nth-child(4), th:nth-child(5) { width: 14%; }
+      .brandCell, .variantCell, .itemCell { font-size: 12.5px; font-weight: 700; line-height: 1.22; overflow-wrap: anywhere; }
+      .sizeCell, .qtyCell { font-size: 15px; font-weight: 700; line-height: 1.1; text-align: center; font-variant-numeric: tabular-nums; }
       .total { margin-top: 10px; border: 2px solid var(--ink); border-radius: 12px; padding: 8px; text-align: center; }
       .totalLabel { display: block; color: var(--muted); font-size: 10px; font-weight: 800; letter-spacing: 0.05em; text-transform: uppercase; }
       .totalValue { display: block; margin-top: 4px; font-size: 42px; line-height: 1; font-weight: 800; font-variant-numeric: tabular-nums; }
@@ -5258,7 +5359,18 @@ export default function PackingListSizeBreakdownPage() {
                     <table style={styles.table}>
                       <thead>
                         <tr>
-                          <th style={styles.th}>Select</th>
+                          <th style={styles.th}>
+                            <label style={styles.koliSelectAllLabel}>
+                              <input
+                                type="checkbox"
+                                checked={allVisibleKoliSelected}
+                                onChange={toggleAllVisibleKoliPrintSelection}
+                                style={styles.koliCheckbox}
+                                aria-label="Select all visible koli for PL Card print"
+                              />
+                              <span>All</span>
+                            </label>
+                          </th>
                           <th style={styles.th}>Koli</th>
                           <th style={styles.th}>Brand Name</th>
                           <th style={styles.th}>Items</th>
