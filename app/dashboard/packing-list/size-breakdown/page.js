@@ -2128,6 +2128,33 @@ function drawPdfImageContain(doc, imageData, x, y, width, height) {
   }
 }
 
+function getPdfPhotoDetailGroups(rows = []) {
+  const groups = new Map()
+
+  rows.forEach((row, rowIndex) => {
+    const detailPhotoUrls = normalizePhotoUrls(row.detail_photo_urls)
+      .filter((photoUrl) => photoUrl !== row.photo_url)
+    if (!detailPhotoUrls.length) return
+
+    const key = row.product_key || [row.pl_id, row.item_name, row.brand_name].join('::')
+    const current = groups.get(key) || {
+      key,
+      firstIndex: rowIndex,
+      pl_id: row.pl_id || '-',
+      item_name: row.item_name || '-',
+      brand_name: row.brand_name || '',
+      photo_urls: [],
+    }
+
+    detailPhotoUrls.forEach((photoUrl) => {
+      if (!current.photo_urls.includes(photoUrl)) current.photo_urls.push(photoUrl)
+    })
+    groups.set(key, current)
+  })
+
+  return Array.from(groups.values()).sort((a, b) => a.firstIndex - b.firstIndex)
+}
+
 function getPdfCellLines(doc, value, width, height, fontSize = 7) {
   const lineHeight = fontSize * 0.43
   const maxLines = Math.max(1, Math.floor((height - 4) / lineHeight))
@@ -2371,6 +2398,96 @@ function drawPdfProductTable(doc, config) {
   })
 
   return y + 9
+}
+
+function drawPdfPhotoDetailSection(doc, config) {
+  const {
+    rows,
+    startY,
+    margin = 10,
+    imageCache = new Map(),
+    onPageBreak,
+  } = config
+  const groups = getPdfPhotoDetailGroups(rows)
+  if (!groups.length) return startY
+
+  const pageWidth = doc.internal.pageSize.getWidth()
+  const pageBottom = doc.internal.pageSize.getHeight() - margin - 7
+  const contentWidth = pageWidth - margin * 2
+  const columnCount = 3
+  const columnGap = 4
+  const cardWidth = (contentWidth - columnGap * (columnCount - 1)) / columnCount
+  const cardHeight = 42
+  let y = startY
+
+  const drawSectionHeading = (continued = false) => {
+    doc.setFont(PDF_FONT_FAMILY, 'bold')
+    doc.setFontSize(10)
+    doc.setTextColor(15, 23, 42)
+    doc.text(`Photo Detail${continued ? ' (continued)' : ''}`, margin, y)
+    y += 7
+  }
+
+  const startContinuationPage = () => {
+    doc.addPage()
+    y = typeof onPageBreak === 'function' ? onPageBreak() : margin
+    drawSectionHeading(true)
+  }
+
+  if (y + 14 > pageBottom) {
+    doc.addPage()
+    y = typeof onPageBreak === 'function' ? onPageBreak() : margin
+  }
+  drawSectionHeading(false)
+
+  groups.forEach((group) => {
+    const itemLabel = [group.brand_name, group.item_name].filter(Boolean).join(' ')
+    const groupLabel = `PL ID ${group.pl_id} - ${itemLabel || '-'}`
+    doc.setFont(PDF_FONT_FAMILY, 'bold')
+    doc.setFontSize(7.5)
+    const labelLines = doc.splitTextToSize(groupLabel, contentWidth)
+    const labelHeight = Math.max(5, labelLines.length * 3.4)
+
+    if (y + labelHeight + cardHeight > pageBottom) startContinuationPage()
+
+    doc.setFont(PDF_FONT_FAMILY, 'bold')
+    doc.setFontSize(7.5)
+    doc.setTextColor(51, 65, 85)
+    doc.text(labelLines, margin, y + 2.8)
+    y += labelHeight
+
+    group.photo_urls.forEach((photoUrl, photoIndex) => {
+      const columnIndex = photoIndex % columnCount
+      if (columnIndex === 0 && y + cardHeight > pageBottom) startContinuationPage()
+
+      const x = margin + columnIndex * (cardWidth + columnGap)
+      doc.setFillColor(248, 250, 252)
+      doc.setDrawColor(226, 232, 240)
+      doc.roundedRect(x, y, cardWidth, cardHeight, 2, 2, 'FD')
+
+      const imageData = imageCache.get(photoUrl)
+      const imageDrawn = drawPdfImageContain(doc, imageData, x + 2, y + 2, cardWidth - 4, cardHeight - 9)
+      if (!imageDrawn) {
+        drawPdfCellText(doc, 'Photo unavailable', x + 2, y + 2, cardWidth - 4, cardHeight - 9, {
+          align: 'center',
+          fontSize: 6.5,
+          color: [148, 163, 184],
+        })
+      }
+
+      doc.setFont(PDF_FONT_FAMILY, 'normal')
+      doc.setFontSize(6)
+      doc.setTextColor(100, 116, 139)
+      doc.text(`Detail ${photoIndex + 1}`, x + cardWidth / 2, y + cardHeight - 2.5, { align: 'center' })
+
+      const isRowEnd = columnIndex === columnCount - 1 || photoIndex === group.photo_urls.length - 1
+      if (isRowEnd) y += cardHeight + 3
+    })
+
+    y += 3
+  })
+
+  return y + 3
 }
 
 function getPdfTableRowHeight(doc, headers, row) {
@@ -3929,6 +4046,8 @@ export default function PackingListSizeBreakdownPage() {
         const isDefaultVariantOnlyName = normalize(savedPlName) === normalize(card.catalogName)
         const itemName = savedPlName && !isDefaultVariantOnlyName ? savedPlName : modelVariantLabel
         const photoUrl = plRow.pl_photo_url || card.photo_url || ''
+        const detailPhotoUrls = normalizePhotoUrls(plRow.pl_photo_urls)
+          .filter((detailPhotoUrl) => detailPhotoUrl !== photoUrl)
         const printableSizeRows = (plRow.sizeRows || [])
           .map((sizeRow) => {
             const totalQty = Number(sizeRow.qty || 0)
@@ -3941,6 +4060,7 @@ export default function PackingListSizeBreakdownPage() {
         const commonRow = {
           product_key: `${card.key}::${plRow.id}`,
           photo_url: photoUrl,
+          detail_photo_urls: detailPhotoUrls,
           pl_notes: String(plRow.pl_notes || '').trim(),
           pl_id: plId,
           brand_name: card.brand_name || 'UNBRANDED',
@@ -4044,6 +4164,7 @@ export default function PackingListSizeBreakdownPage() {
         current.rows.push({
           product_key: breakdownInfo.product_key || `${breakdownInfo.pl_id || '-'}::${breakdownInfo.raw_item_name || '-'}`,
           photo_url: breakdownInfo.photo_url || '',
+          detail_photo_urls: breakdownInfo.detail_photo_urls || [],
           pl_notes: breakdownInfo.pl_notes || '',
           pl_id: breakdownInfo.pl_id || '-',
           brand_name: breakdownInfo.brand_name || 'UNBRANDED',
@@ -4113,7 +4234,7 @@ export default function PackingListSizeBreakdownPage() {
           ? payload.koliGroups.flatMap((group) => group.rows)
           : payload.modelRows
         rowsForImages.forEach((row) => {
-          if (row.photo_url) imageUrls.add(row.photo_url)
+          normalizePhotoUrls(row.detail_photo_urls, row.photo_url).forEach((photoUrl) => imageUrls.add(photoUrl))
         })
         return { section, payload }
       })
@@ -4235,6 +4356,18 @@ export default function PackingListSizeBreakdownPage() {
         }
         let cursorY = drawDocumentHeader(section, payload, margin + 4)
 
+        const drawPhotoDetails = () => {
+          const detailRows = overviewMode === 'koli'
+            ? (payload.koliGroups || []).flatMap((group) => group.rows)
+            : payload.modelRows || []
+          cursorY = drawPdfPhotoDetailSection(doc, {
+            rows: detailRows,
+            startY: cursorY,
+            imageCache,
+            onPageBreak: drawContinuationHeader,
+          })
+        }
+
         const drawSizeCharts = () => {
           const chartGroups = buildPdfSizeChartGroups(payload.sizeChartRows || [])
           if (!chartGroups.length) {
@@ -4316,6 +4449,7 @@ export default function PackingListSizeBreakdownPage() {
               picLabel: 'PIC Koli',
             })
           })
+          drawPhotoDetails()
           drawSizeCharts()
         } else {
           cursorY = drawPdfProductTable(doc, {
@@ -4327,6 +4461,7 @@ export default function PackingListSizeBreakdownPage() {
             picKey: 'data_pic',
             picLabel: 'PIC Data',
           })
+          drawPhotoDetails()
           drawSizeCharts()
         }
       })
@@ -5628,7 +5763,7 @@ export default function PackingListSizeBreakdownPage() {
                                       ...(saving ? styles.disabledButton : {}),
                                     }}
                                   >
-                                    Size Breakdown
+                                    Breakdown
                                   </button>
                                   <button
                                     type="button"
@@ -5640,7 +5775,7 @@ export default function PackingListSizeBreakdownPage() {
                                       ...(saving ? styles.disabledButton : {}),
                                     }}
                                   >
-                                    Size Chart
+                                    Chart
                                   </button>
                                 </div>
                                 <button
