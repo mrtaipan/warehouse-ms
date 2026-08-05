@@ -198,7 +198,7 @@ function getExpectedRowKey(row = {}) {
 }
 
 async function loadInboundUnloadRows(inboundId) {
-  const coreSelect = 'id, inbound_id, brand_id, category_id, model_name, qty, pic_name, is_sample, koli_sequence, photo_url'
+  const coreSelect = 'id, inbound_id, brand_id, category_id, product_model_id, product_model_variant_id, model_name, qty, pic_name, is_sample, koli_sequence, photo_url'
   const relationSelect = `${coreSelect}, brands:dir_brands!brand_id(id, brand_name), categories:dir_categories!category_id(id, category_name, full_name)`
   const selectCandidates = [
     `${relationSelect}, variant_name`,
@@ -810,7 +810,8 @@ function createDefaultModelRow(expectedRow) {
   return {
     id: `expected-${expectedRow.id}`,
     source_id: expectedRow.id,
-    model_id: '',
+    model_id: expectedRow.product_model_id ? String(expectedRow.product_model_id) : '',
+    product_model_variant_id: expectedRow.product_model_variant_id || null,
     model_name: expectedRow.model_name || '',
     model_color: expectedRow.model_color || '',
     original_model_name: expectedRow.model_name || '',
@@ -995,10 +996,31 @@ function getModelKey(modelName, modelColor) {
   return `${String(modelName || '').trim().toUpperCase()}::${String(modelColor || '').trim().toUpperCase()}`
 }
 
+function getProductRowIdentityKey(row = {}) {
+  const sourceId = Number(row.inbound_unload_id || row.source_id || row.id || 0)
+  const variantId = Number(row.product_model_variant_id || row.variant_id || 0)
+  const modelId = Number(row.product_model_id || row.model_id || 0)
+
+  if (variantId) {
+    return `variant:${variantId}`
+  }
+
+  if (modelId) {
+    return `model:${modelId}`
+  }
+
+  if (sourceId) {
+    return `source:${sourceId}`
+  }
+
+  return `text:${getModelKey(row.model_name, row.model_color || row.variant_name)}`
+}
+
 function getProductIdentityKey(row = {}) {
   return [
     Number(row.brand_id || 0),
     Number(row.category_id || 0),
+    getProductRowIdentityKey(row),
     String(row.model_name || '').trim().toUpperCase(),
     String(row.model_color || row.variant_name || '').trim().toUpperCase(),
   ].join('::')
@@ -1108,7 +1130,7 @@ function getSourceAllocationCoverage(source, qcItems) {
     const sourceId = Number(item.inbound_unload_id || 0)
     if (!sourceId) return
 
-    const productKey = getModelKey(item.model_name, item.model_color || item.variant_name)
+    const productKey = getProductRowIdentityKey(item)
     const productQtyMap = plannedQtyBySourceId.get(sourceId) || new Map()
     productQtyMap.set(productKey, Math.max(Number(productQtyMap.get(productKey) || 0), Number(item.qty_in || 0)))
     plannedQtyBySourceId.set(sourceId, productQtyMap)
@@ -1173,13 +1195,14 @@ function buildModelRowsForSource(source, unloadRows, qcItems) {
       ...createDefaultModelRow(row),
       id: `expected-${source.sourceId}-${key}`,
       qty_in: 0,
-      qty_qc: String(row.qty || 0),
+      qty_qc: '0',
       has_saved_qc_in: false,
       allocations: [],
     }
 
-    existingRow.qty_in += Number(row.qty || 0)
-    existingRow.qty_qc = String(Math.max(Number(existingRow.qty_qc || 0), Number(row.qty || 0)))
+    const rowQty = Number(row.qty || 0)
+    existingRow.qty_in += rowQty
+    existingRow.qty_qc = String(Number(existingRow.qty_qc || 0) + rowQty)
     existingRow.photo_url = existingRow.photo_url || row.photo_url || ''
     rowMap.set(key, existingRow)
   })

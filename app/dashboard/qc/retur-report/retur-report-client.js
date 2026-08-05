@@ -82,6 +82,7 @@ export default function ReturReportClient({ rows, canAdd = false }) {
   const [isPrinting, setIsPrinting] = useState(false)
   const [paymentInfoOpen, setPaymentInfoOpen] = useState(false)
   const [printError, setPrintError] = useState('')
+  const [printCardModeOpen, setPrintCardModeOpen] = useState(false)
   const [activeReturnTab, setActiveReturnTab] = useState('preparation')
   const [grnFilter, setGrnFilter] = useState('')
   const [supplierFilter, setSupplierFilter] = useState('')
@@ -467,19 +468,52 @@ export default function ReturReportClient({ rows, canAdd = false }) {
     setIsModalOpen(true)
   }
 
-  function buildReturnCardHtml(group) {
+  function getSimpleReturnCardItems(items = []) {
+    const grouped = new Map()
+
+    items.forEach((item) => {
+      const brandName = item.brands?.brand_name || '-'
+      const categoryName = item.categories?.full_name || item.categories?.category_name || '-'
+      const key = `${brandName}::${categoryName}`
+      const current = grouped.get(key) || {
+        brandName,
+        categoryName,
+        qty: 0,
+      }
+
+      current.qty += Number(item.qty || 0)
+      grouped.set(key, current)
+    })
+
+    return Array.from(grouped.values()).sort((a, b) => {
+      if (a.brandName !== b.brandName) return a.brandName.localeCompare(b.brandName)
+      return a.categoryName.localeCompare(b.categoryName)
+    })
+  }
+
+  function buildReturnCardHtml(group, mode = 'detail') {
     const grnNumber = group.inbound?.grn_number || '-'
     const supplierName = group.inbound?.suppliers?.supplier_name || '-'
     const rowLabel = group.koli_sequence ? `Koli ${group.koli_sequence}` : `Row ${group.items[0]?.id || '-'}`
     const returnDate = formatDateDisplay(group.created_at || group.inbound?.inbound_date)
     const phaseLabel = String(group.source_phase || group.items[0]?.source_phase || '-').toUpperCase()
-    const rowsHtml = group.items
-      .map((item) => {
-        const brandName = item.brands?.brand_name || '-'
-        const categoryName = item.categories?.full_name || item.categories?.category_name || '-'
-        const modelLabel = getModelLabel(item) || '-'
+    const isSimple = mode === 'simple'
+    const rowsHtml = isSimple
+      ? getSimpleReturnCardItems(group.items)
+        .map((item) => `
+          <tr>
+            <td>${escapeHtml(item.brandName)}</td>
+            <td>${escapeHtml(item.categoryName)}</td>
+            <td class="qty">${escapeHtml(item.qty || 0)}</td>
+          </tr>`)
+        .join('')
+      : group.items
+        .map((item) => {
+          const brandName = item.brands?.brand_name || '-'
+          const categoryName = item.categories?.full_name || item.categories?.category_name || '-'
+          const modelLabel = getModelLabel(item) || '-'
 
-        return `
+          return `
           <tr>
             <td>${escapeHtml(brandName)}</td>
             <td>${escapeHtml(categoryName)}</td>
@@ -487,8 +521,23 @@ export default function ReturReportClient({ rows, canAdd = false }) {
             <td class="center">${escapeHtml(item.grade || '-')}</td>
             <td class="qty">${escapeHtml(item.qty || 0)}</td>
           </tr>`
-      })
-      .join('')
+        })
+        .join('')
+    const tableHeaderHtml = isSimple
+      ? `
+          <tr>
+            <th>Brand</th>
+            <th>Category</th>
+            <th>Qty</th>
+          </tr>`
+      : `
+          <tr>
+            <th>Brand</th>
+            <th>Category</th>
+            <th>Model - Variant</th>
+            <th>Grade</th>
+            <th>Qty</th>
+          </tr>`
 
     return `
     <div class="card">
@@ -499,13 +548,7 @@ export default function ReturReportClient({ rows, canAdd = false }) {
       <div class="row"><div class="label">Supplier</div><div class="value">${escapeHtml(supplierName)}</div></div>
       <table>
         <thead>
-          <tr>
-            <th>Brand</th>
-            <th>Category</th>
-            <th>Model - Variant</th>
-            <th>Grade</th>
-            <th>Qty</th>
-          </tr>
+          ${tableHeaderHtml}
         </thead>
         <tbody>
           ${rowsHtml}
@@ -519,13 +562,28 @@ export default function ReturReportClient({ rows, canAdd = false }) {
     </div>`
   }
 
-  function handlePrintReturnCards() {
+  function openPrintCardModeModal() {
     if (!selectedRows.length) {
       setPrintError('Checklist at least one return row first.')
       return
     }
 
     setPrintError('')
+    setPrintCardModeOpen(true)
+  }
+
+  function closePrintCardModeModal() {
+    setPrintCardModeOpen(false)
+  }
+
+  function handlePrintReturnCards(mode = 'detail') {
+    if (!selectedRows.length) {
+      setPrintError('Checklist at least one return row first.')
+      return
+    }
+
+    setPrintError('')
+    setPrintCardModeOpen(false)
 
     const printWindow = window.open('', '_blank', 'width=720,height=820')
 
@@ -561,7 +619,7 @@ export default function ReturReportClient({ rows, canAdd = false }) {
     </style>
   </head>
   <body>
-    ${selectedReturnCardGroups.map((group) => buildReturnCardHtml(group)).join('')}
+    ${selectedReturnCardGroups.map((group) => buildReturnCardHtml(group, mode)).join('')}
     <script>window.onload = function () { window.print(); };</script>
   </body>
 </html>`
@@ -936,7 +994,7 @@ export default function ReturReportClient({ rows, canAdd = false }) {
             <span>Selected Koli</span>
             <strong>{selectedReturnCardGroups.length}</strong>
           </div>
-          <button type="button" className={reportStyles.secondaryButton} onClick={handlePrintReturnCards} disabled={!selectedRows.length}>
+          <button type="button" className={reportStyles.secondaryButton} onClick={openPrintCardModeModal} disabled={!selectedRows.length}>
             Print Return Card
           </button>
           <button type="button" className={reportStyles.primaryButton} onClick={openReturModal} disabled={!canAdd || !selectedRows.length}>
@@ -1154,6 +1212,39 @@ export default function ReturReportClient({ rows, canAdd = false }) {
               </button>
               <button type="button" style={styles.primaryButton} onClick={confirmMultiSupplier}>
                 Ya, Lanjutkan
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {printCardModeOpen ? (
+        <div style={styles.overlay}>
+          <div style={styles.confirmModal}>
+            <div style={styles.modalHeader}>
+              <div>
+                <h2 style={styles.modalTitle}>Print Return Card</h2>
+                <p style={styles.modalSubtitle}>Choose the print layout for the selected return Koli.</p>
+              </div>
+              <button type="button" style={styles.closeButton} onClick={closePrintCardModeModal}>
+                X
+              </button>
+            </div>
+
+            <div style={styles.printModeGrid}>
+              <button type="button" style={styles.printModeCard} onClick={() => handlePrintReturnCards('simple')}>
+                <span style={styles.printModeTitle}>Simple</span>
+                <span style={styles.printModeText}>Aggregate qty by Brand and Category.</span>
+              </button>
+              <button type="button" style={styles.printModeCard} onClick={() => handlePrintReturnCards('detail')}>
+                <span style={styles.printModeTitle}>Detail</span>
+                <span style={styles.printModeText}>Show Brand, Category, Model-Variant, Grade, and Qty.</span>
+              </button>
+            </div>
+
+            <div style={styles.modalButtonRow}>
+              <button type="button" style={styles.secondaryButton} onClick={closePrintCardModeModal}>
+                Cancel
               </button>
             </div>
           </div>
@@ -1440,6 +1531,34 @@ const styles = {
     color: '#111827',
     fontSize: '13px',
     fontWeight: '600',
+  },
+  printModeGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+    gap: '12px',
+  },
+  printModeCard: {
+    minHeight: '112px',
+    padding: '16px',
+    border: '1px solid #dbe4f0',
+    borderRadius: '12px',
+    background: '#f8fafc',
+    color: '#111827',
+    textAlign: 'left',
+    cursor: 'pointer',
+    display: 'flex',
+    flexDirection: 'column',
+    justifyContent: 'center',
+    gap: '8px',
+  },
+  printModeTitle: {
+    fontSize: '18px',
+    fontWeight: '800',
+  },
+  printModeText: {
+    color: '#64748b',
+    fontSize: '13px',
+    lineHeight: 1.45,
   },
   metaCard: {
     background: '#f9fafb',

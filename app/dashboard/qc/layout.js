@@ -19,8 +19,8 @@ export default async function QcLayout({ children }) {
 
   const items = [
     access.dashboard ? { href: '/dashboard/qc', label: 'Summary', exact: true } : null,
-    access.receiving ? { href: '/mobile/qc/receiving', label: 'Receiving' } : null,
-    access.inspectionTask ? { href: '/mobile/qc/inspection-task', label: 'Grading Task' } : null,
+    access.receiving ? { href: '/mobile/qc/receiving', label: 'Receiving', match: ['/mobile/qc/receiving', '/dashboard/qc/receiving'] } : null,
+    access.inspectionTask ? { href: '/mobile/qc/inspection-task', label: 'Grading Task', match: ['/mobile/qc/inspection-task', '/dashboard/qc/inspection-task'] } : null,
     access.confirmation ? { href: '/dashboard/qc/confirmation', label: 'Grading Verification' } : null,
     access.retur ? { href: '/dashboard/qc/retur-report', label: 'Return Report' } : null,
   ].filter(Boolean)
