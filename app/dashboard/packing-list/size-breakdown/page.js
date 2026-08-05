@@ -30,21 +30,24 @@ const styles = {
   header: {
     display: 'flex',
     justifyContent: 'space-between',
-    alignItems: 'flex-start',
+    alignItems: 'center',
     gap: '16px',
-    flexWrap: 'wrap',
+    flexWrap: 'nowrap',
+    overflowX: 'auto',
   },
   headerMain: {
     display: 'flex',
     alignItems: 'center',
     gap: '16px',
-    flexWrap: 'wrap',
+    flex: '1 0 auto',
+    flexWrap: 'nowrap',
   },
   headerActions: {
     display: 'flex',
     alignItems: 'center',
     gap: '8px',
-    flexWrap: 'wrap',
+    flex: '0 0 auto',
+    flexWrap: 'nowrap',
     justifyContent: 'flex-end',
   },
   editorActionGroup: {
@@ -122,7 +125,7 @@ const styles = {
     display: 'flex',
     alignItems: 'baseline',
     gap: '12px',
-    flexWrap: 'wrap',
+    flexWrap: 'nowrap',
   },
   title: {
     margin: '4px 0 0',
@@ -174,7 +177,8 @@ const styles = {
     display: 'flex',
     alignItems: 'center',
     gap: '8px',
-    flexWrap: 'wrap',
+    flex: '0 0 auto',
+    flexWrap: 'nowrap',
   },
   compactMetricPillGrid: {
     display: 'flex',
@@ -183,6 +187,7 @@ const styles = {
     flexWrap: 'wrap',
   },
   metricPill: {
+    flex: '0 0 auto',
     minHeight: '40px',
     border: '1px solid #e2e8f0',
     borderRadius: '12px',
@@ -510,7 +515,9 @@ const styles = {
     display: 'flex',
     alignItems: 'center',
     gap: '8px',
-    flexWrap: 'wrap',
+    flexWrap: 'nowrap',
+    maxWidth: '100%',
+    overflowX: 'auto',
   },
   editorQtyBox: {
     minWidth: '96px',
@@ -1783,6 +1790,13 @@ function getPlRowsBreakdownQty(rows = []) {
   return rows.reduce((sum, row) => sum + getPlRowQty(row), 0)
 }
 
+function getPlRowsReturnQty(rows = []) {
+  return rows.reduce(
+    (sum, row) => sum + (row.returnRows || []).reduce((returnSum, returnRow) => returnSum + Number(returnRow.qty || 0), 0),
+    0
+  )
+}
+
 function normalizeSizeLabel(value) {
   return String(value || '').trim().toUpperCase().replace(/\s+/g, '')
 }
@@ -3036,13 +3050,18 @@ export default function PackingListSizeBreakdownPage() {
   const summary = useMemo(() => {
     const plReceivingQty = cards.reduce((sum, card) => sum + Number(card.receiving_qty || 0), 0)
     const breakdownQty = cards.reduce((sum, card) => sum + Number(card.breakdown_qty || 0), 0)
+    const inboundIds = new Set(cards.map((card) => Number(card.inbound_id || 0)).filter(Boolean))
+    const plReturnQty = plReturnRows
+      .filter((row) => inboundIds.has(Number(row.inbound_id || 0)))
+      .reduce((sum, row) => sum + Number(row.qty || 0), 0)
     return {
       availableModels: cards.length,
       plReceivingQty,
       breakdownQty,
-      remainingQty: plReceivingQty - breakdownQty,
+      plReturnQty,
+      remainingQty: plReceivingQty - breakdownQty - plReturnQty,
     }
-  }, [cards])
+  }, [cards, plReturnRows])
 
   const multipageGroups = useMemo(() => {
     const grouped = new Map()
@@ -4356,8 +4375,9 @@ export default function PackingListSizeBreakdownPage() {
     }
 
     const totalQty = plRows.reduce((sum, row) => sum + row.sizeRows.reduce((sizeSum, sizeRow) => sizeSum + Number(sizeRow.qty || 0), 0), 0)
-    if (totalQty > Number(selectedCard.receiving_qty || 0)) {
-      setError('Breakdown Qty cannot be greater than PL Receiving Qty.')
+    const totalReturnQty = getPlRowsReturnQty(plRows)
+    if (totalQty + totalReturnQty > Number(selectedCard.receiving_qty || 0)) {
+      setError('Breakdown Qty and PL Return Qty cannot be greater than PL Receiving Qty.')
       setSuccess('')
       return
     }
@@ -4991,7 +5011,8 @@ export default function PackingListSizeBreakdownPage() {
 
   const editorReceivingQty = Number(selectedCard?.receiving_qty || 0)
   const editorBreakdownQty = getPlRowsBreakdownQty(plRows)
-  const editorRemainingQty = editorReceivingQty - editorBreakdownQty
+  const editorReturnQty = getPlRowsReturnQty(plRows)
+  const editorRemainingQty = editorReceivingQty - editorBreakdownQty - editorReturnQty
   const allocationOverrideCount = plRows.reduce(
     (sum, row) => sum + row.sizeRows.filter((sizeRow) => sizeRow.allocation_source === 'MANUAL_OVERRIDE').length,
     0
@@ -5022,12 +5043,16 @@ export default function PackingListSizeBreakdownPage() {
             </div>
             <div style={styles.metricPillGrid}>
               <div style={styles.metricPill}>
-                <span style={styles.metricPillLabel}>PL Receiving Qty</span>
+                <span style={styles.metricPillLabel}>PL Receiving</span>
                 <strong style={styles.metricPillValue}>{summary.plReceivingQty}</strong>
               </div>
               <div style={styles.metricPill}>
-                <span style={styles.metricPillLabel}>Breakdown Qty</span>
+                <span style={styles.metricPillLabel}>Breakdown</span>
                 <strong style={styles.metricPillValue}>{summary.breakdownQty}</strong>
+              </div>
+              <div style={styles.metricPill}>
+                <span style={styles.metricPillLabel}>PL Return</span>
+                <strong style={styles.metricPillValue}>{summary.plReturnQty}</strong>
               </div>
               <div style={styles.metricPill}>
                 <span style={styles.metricPillLabel}>Remaining</span>
@@ -5579,8 +5604,12 @@ export default function PackingListSizeBreakdownPage() {
                                   <strong style={styles.editorQtyValue}>{editorReceivingQty}</strong>
                                 </div>
                                 <div style={styles.editorQtyBox}>
-                                  <span style={styles.editorQtyLabel}>Breakdown Qty</span>
+                                  <span style={styles.editorQtyLabel}>Breakdown</span>
                                   <strong style={styles.editorQtyValue}>{editorBreakdownQty}</strong>
+                                </div>
+                                <div style={styles.editorQtyBox}>
+                                  <span style={styles.editorQtyLabel}>PL Return</span>
+                                  <strong style={styles.editorQtyValue}>{editorReturnQty}</strong>
                                 </div>
                                 <div style={styles.editorQtyBox}>
                                   <span style={styles.editorQtyLabel}>Remaining</span>

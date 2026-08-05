@@ -39,10 +39,11 @@ function BreakdownIcon() {
   )
 }
 
-function buildOverviewRows(confirmRows = [], validationRows = [], breakdownRows = []) {
+function buildOverviewRows(confirmRows = [], validationRows = [], breakdownRows = [], returnRows = []) {
   const validationMap = new Map()
   const receivedQtyByInbound = new Map()
   const breakdownQtyByInbound = new Map()
+  const returnQtyByInbound = new Map()
 
   validationRows.forEach((row) => {
     const key = `${row.inbound_id}::${Number(row.source_koli_sequence || 0)}`
@@ -59,6 +60,14 @@ function buildOverviewRows(confirmRows = [], validationRows = [], breakdownRows 
     breakdownQtyByInbound.set(
       inboundId,
       (breakdownQtyByInbound.get(inboundId) || 0) + Number(row.qty || 0)
+    )
+  })
+
+  returnRows.forEach((row) => {
+    const inboundId = Number(row.inbound_id || 0)
+    returnQtyByInbound.set(
+      inboundId,
+      (returnQtyByInbound.get(inboundId) || 0) + Number(row.qty || 0)
     )
   })
 
@@ -94,6 +103,7 @@ function buildOverviewRows(confirmRows = [], validationRows = [], breakdownRows 
     .map((row) => {
       const plReceivedQty = receivedQtyByInbound.get(Number(row.inbound_id || 0)) || 0
       const breakdownQty = breakdownQtyByInbound.get(Number(row.inbound_id || 0)) || 0
+      const plReturnQty = returnQtyByInbound.get(Number(row.inbound_id || 0)) || 0
       const receivingRemainingQty = row.qc_confirm_qty - plReceivedQty
       return {
         inbound_id: row.inbound_id,
@@ -105,7 +115,8 @@ function buildOverviewRows(confirmRows = [], validationRows = [], breakdownRows 
         qc_confirm_qty: row.qc_confirm_qty,
         pl_received_qty: plReceivedQty,
         breakdown_qty: breakdownQty,
-        breakdown_remaining_qty: plReceivedQty - breakdownQty,
+        pl_return_qty: plReturnQty,
+        breakdown_remaining_qty: plReceivedQty - breakdownQty - plReturnQty,
         pending_qty: Math.max(0, receivingRemainingQty),
         item_name: row.item_name || '-',
       }
@@ -131,6 +142,7 @@ export default async function PackingListOverviewPage() {
     { data: confirmRows, error: confirmError },
     { data: validationRows, error: validationError },
     { data: breakdownRows, error: breakdownError },
+    { data: returnRows, error: returnError },
   ] = await Promise.all([
     supabase
       .from('qc_confirm')
@@ -157,9 +169,14 @@ export default async function PackingListOverviewPage() {
       .from('pl_size_breakdown')
       .select('id, inbound_id, qty')
       .limit(5000),
+    supabase
+      .from('warehouse_returns')
+      .select('id, inbound_id, qty')
+      .in('source_phase', ['Packing List', 'packing_list'])
+      .limit(5000),
   ])
 
-  const allRows = buildOverviewRows(confirmRows || [], validationRows || [], breakdownRows || [])
+  const allRows = buildOverviewRows(confirmRows || [], validationRows || [], breakdownRows || [], returnRows || [])
   const rows = allRows.slice(0, 25)
   const totalPending = allRows.reduce((sum, row) => sum + row.pending_koli, 0)
   const totalPendingQty = allRows.reduce((sum, row) => sum + row.pending_qty, 0)
@@ -194,9 +211,9 @@ export default async function PackingListOverviewPage() {
         </div>
       </div>
 
-      {confirmError || validationError || breakdownError ? (
+      {confirmError || validationError || breakdownError || returnError ? (
         <div style={styles.emptyBox}>
-          <p style={styles.errorText}>Error: {confirmError?.message || validationError?.message || breakdownError?.message}</p>
+          <p style={styles.errorText}>Error: {confirmError?.message || validationError?.message || breakdownError?.message || returnError?.message}</p>
         </div>
       ) : (
         <>
