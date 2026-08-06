@@ -6,6 +6,7 @@ import { useSearchParams } from 'next/navigation'
 import { createClient } from '@/utils/supabase/browser'
 import { ADMIN_EMAIL, resolveRole } from '@/utils/permissions'
 import { getProfileByAuthenticatedUser } from '@/utils/user-profiles'
+import { useRealtimeRefresh } from '@/utils/supabase/use-realtime-refresh'
 import ProductDirectoryClient from '../daftar-barang/product-directory-client'
 
 const supabase = createClient()
@@ -466,17 +467,14 @@ export default function StorageOverviewPage() {
       refreshInventoryData({ showLoading: true })
     }, 0)
 
-    const intervalId = window.setInterval(() => {
-      if (document.visibilityState === 'visible') {
-        refreshInventoryData()
-      }
-    }, 7000)
-
-    return () => {
-      window.clearTimeout(initialRefreshId)
-      window.clearInterval(intervalId)
-    }
+    return () => window.clearTimeout(initialRefreshId)
   }, [refreshInventoryData])
+
+  useRealtimeRefresh({
+    supabase,
+    topic: 'warehouse:storage',
+    onRefresh: () => refreshInventoryData(),
+  })
 
   const locationById = useMemo(
     () => new Map(rackLocations.map((item) => [item.id, item])),
@@ -1351,17 +1349,20 @@ export default function StorageOverviewPage() {
     const storedBy = await getCurrentUserEmail()
     const inbound = inboundById.get(Number(queueModalEntry.inbound_id))
     const grnNumber = inbound?.grn_number || ''
-    const storagePayload = queueItems.map((item) => ({
-      rack_location_id: selectedQueueLocation.id,
-      sku_id: String(item.source_variant_code || '').trim() || null,
-      item_name: formatStoredQueueItemName(getQueueItemName(item), grnNumber),
-      size: normalizeSizeValue(item.size_label) || null,
-      qty: Number(item.qty || 0),
-      notes:
-        queueForm.notes.trim() ||
-        `Stored from ${getQueueKoliLabel(queueModalEntry)}${item.source_variant_code ? ` / SKU ${item.source_variant_code}` : ''}`,
-      updated_by: storedBy,
-    }))
+    const storagePayload = queueItems.map((item) => {
+      const sourceNote = `Stored from ${getQueueKoliLabel(queueModalEntry)}${item.source_variant_code ? ` / SKU ${item.source_variant_code}` : ''}`
+      const userNote = queueForm.notes.trim()
+
+      return {
+        rack_location_id: selectedQueueLocation.id,
+        sku_id: String(item.source_variant_code || '').trim() || null,
+        item_name: formatStoredQueueItemName(getQueueItemName(item), grnNumber),
+        size: normalizeSizeValue(item.size_label) || null,
+        qty: Number(item.qty || 0),
+        notes: userNote ? `${sourceNote} | ${userNote}` : sourceNote,
+        updated_by: storedBy,
+      }
+    })
 
     const { data: insertedRows, error: insertError } = await supabase
       .from('warehouse_storage')

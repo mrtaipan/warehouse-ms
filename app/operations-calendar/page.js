@@ -1,4 +1,3 @@
-import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { createClient } from '@/utils/supabase/server'
 import { loadAccessContext } from '@/utils/access-control'
@@ -12,6 +11,34 @@ const DIVISIONS = [
   { key: 'packing', label: 'Packing List', accent: 'rose' },
   { key: 'storage', label: 'Stockkeeping', accent: 'emerald' },
 ]
+
+const TARGET_MANAGER_ROLES = new Set([
+  'admin',
+  'leader',
+  'warehouse_leader',
+])
+
+const ROLE_DIVISION_MAP = {
+  admin: 'storage',
+  warehouse_leader: 'storage',
+  inbound_coordinator: 'inbound',
+  inbound_staff: 'inbound',
+  qc_coordinator: 'qc',
+  qc_staff: 'qc',
+  qc_inspector: 'qc',
+  packing_coordinator: 'packing',
+  packing_staff: 'packing',
+  storage_coordinator: 'storage',
+  storage_staff: 'storage',
+}
+
+function getRoleDivision(role) {
+  return ROLE_DIVISION_MAP[String(role || '').trim()] || ''
+}
+
+function canManageOperationsTargets(role, isAdmin) {
+  return Boolean(isAdmin || TARGET_MANAGER_ROLES.has(role))
+}
 
 function getTodayMonthValue() {
   const now = new Date()
@@ -74,6 +101,28 @@ function formatNumber(value) {
   return new Intl.NumberFormat('id-ID', { maximumFractionDigits: 0 }).format(Number(value || 0))
 }
 
+function normalizeStorageKoliLabel(value = '') {
+  const text = String(value || '').trim()
+  if (!text) return ''
+
+  const segment = text.split('|')[0].split('/')[0].trim()
+  const match = segment.match(/\b(?:koli|k)\s*[-:#]?\s*([a-z0-9]+)/i)
+
+  if (match) {
+    return `K${String(match[1] || '').toUpperCase()}`
+  }
+
+  return segment.toUpperCase().replace(/\s+/g, ' ')
+}
+
+function getStorageKoliKey(row = {}) {
+  const note = String(row.notes || '')
+  const queueMatch = note.match(/Stored from\s+([^|]+)/i)
+  const queueLabel = normalizeStorageKoliLabel(queueMatch?.[1] || note)
+
+  return queueLabel
+}
+
 function GridIcon() {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -126,6 +175,16 @@ function pushTimelineItem(map, divisionKey, dateKey, item) {
 
   const entry = getDivisionDayEntry(map, divisionKey, dateKey)
   entry.items.push(item)
+  entry.items.sort((left, right) => {
+    const priority = {
+      Target: -10,
+      'GRN Received': 0,
+      'Arkline Inbound': 1,
+    }
+    const leftPriority = left.tone === 'target' ? -10 : priority[left.label] ?? 10
+    const rightPriority = right.tone === 'target' ? -10 : priority[right.label] ?? 10
+    return leftPriority - rightPriority || String(left.label || '').localeCompare(String(right.label || ''))
+  })
   entry.totals.activities += 1
   entry.totals.qty += Number(item.qty || 0)
   entry.totals.count += Number(item.count || 0)
@@ -154,6 +213,59 @@ function groupRowsByDate(rows, getDateKey) {
   }, new Map())
 }
 
+function groupRowsByValue(rows, getKey) {
+  return rows.reduce((grouped, row) => {
+    const key = getKey(row)
+    if (!key) return grouped
+    const current = grouped.get(key) || []
+    current.push(row)
+    grouped.set(key, current)
+    return grouped
+  }, new Map())
+}
+
+function buildCalendarTimestampFilter(fields, start, end) {
+  const startStamp = `${start}T00:00:00`
+  const endStamp = `${end}T00:00:00`
+
+  return fields.map((field) => `and(${field}.gte.${startStamp},${field}.lt.${endStamp})`).join(',')
+}
+
+function getDistinctOptions(values = []) {
+  return Array.from(
+    new Set(
+      values
+        .map((value) => String(value || '').trim())
+        .filter(Boolean)
+    )
+  ).sort((left, right) => left.localeCompare(right, undefined, { numeric: true }))
+}
+
+const NON_BLOCKING_CALENDAR_ERROR_CODES = new Set(['42P01', '42703', '42501', 'PGRST100', 'PGRST200', 'PGRST204'])
+
+function isNonBlockingCalendarError(error) {
+  if (!error) return false
+
+  const code = String(error.code || '')
+  const message = String(error.message || '').toLowerCase()
+
+  return (
+    NON_BLOCKING_CALENDAR_ERROR_CODES.has(code) ||
+    message.includes('does not exist') ||
+    message.includes('could not find') ||
+    message.includes('schema cache') ||
+    message.includes('permission denied')
+  )
+}
+
+function normalizeCalendarResult(result, sourceName = 'calendar source') {
+  if (!result?.error) return result
+  if (!isNonBlockingCalendarError(result.error)) return result
+
+  console.warn(`Operations Calendar skipped ${sourceName}: ${result.error.message}`)
+  return { data: [], error: null }
+}
+
 function createDaySummaryMap(monthDays, timelineMap) {
   return monthDays.reduce((result, day) => {
     const divisions = DIVISIONS.map((division) => {
@@ -170,136 +282,606 @@ function createDaySummaryMap(monthDays, timelineMap) {
   }, new Map())
 }
 
+async function loadInboundRowsForCalendar(supabase, start, end) {
+  const selectOptions = [
+    'id, grn_number, inbound_date, total_koli, total_claimed_qty, total_received_qty, item_name',
+    'id, grn_number, inbound_date, total_koli, total_claimed_qty, item_name',
+    'id, grn_number, inbound_date, total_koli, item_name',
+    'id, grn_number, inbound_date',
+  ]
+
+  let lastError = null
+
+  for (const selectColumns of selectOptions) {
+    const result = await supabase
+      .from('inbound')
+      .select(selectColumns)
+      .gte('inbound_date', start)
+      .lt('inbound_date', end)
+      .order('inbound_date', { ascending: true })
+
+    if (!result.error) {
+      return result
+    }
+
+    lastError = result.error
+    if (!isNonBlockingCalendarError(result.error)) {
+      return result
+    }
+
+    if (result.error.code !== '42703' && result.error.code !== 'PGRST204') {
+      return normalizeCalendarResult(result, 'inbound')
+    }
+  }
+
+  return normalizeCalendarResult({ data: null, error: lastError }, 'inbound')
+}
+
+async function loadInboundUnloadRowsForCalendar(supabase, start, end) {
+  const selectOptions = [
+    'id, inbound_id, product_model_id, product_model_variant_id, model_name, variant_name, variant_label, variant_code, qty, created_at',
+    'id, inbound_id, product_model_id, model_name, variant_name, variant_label, variant_code, qty, created_at',
+    'id, inbound_id, model_name, variant_name, variant_label, variant_code, qty, created_at',
+    'id, inbound_id, model_name, variant_name, qty, created_at',
+    'id, inbound_id, model_name, qty, created_at',
+    'id, inbound_id, qty, created_at',
+  ]
+
+  let lastError = null
+
+  for (const selectColumns of selectOptions) {
+    const result = await supabase
+      .from('inbound_unload')
+      .select(selectColumns)
+      .gte('created_at', `${start}T00:00:00`)
+      .lt('created_at', `${end}T00:00:00`)
+      .order('created_at', { ascending: true })
+
+    if (!result.error) {
+      return result
+    }
+
+    lastError = result.error
+    if (!isNonBlockingCalendarError(result.error)) {
+      return result
+    }
+
+    if (result.error.code !== '42703' && result.error.code !== 'PGRST204') {
+      return normalizeCalendarResult(result, 'inbound sorting')
+    }
+  }
+
+  return normalizeCalendarResult({ data: null, error: lastError }, 'inbound sorting')
+}
+
+async function loadArklineReceiptRowsForCalendar(supabase, start, end) {
+  const result = await supabase
+    .from('arkline_po_item_receipts')
+    .select('id, po_id, received_qty, receive_date')
+    .gte('receive_date', start)
+    .lt('receive_date', end)
+    .order('receive_date', { ascending: true })
+
+  return normalizeCalendarResult(result, 'Arkline inbound')
+}
+
+async function loadQcItemRowsForCalendar(supabase, start, end) {
+  const selectOptions = [
+    `
+      id,
+      inbound_id,
+      inbound_unload_id,
+      allocated_qty,
+      qty_in,
+      qty_a,
+      qty_b,
+      qty_c,
+      model_name,
+      variant_name,
+      assigned_to,
+      created_at,
+      updated_at,
+      inbound:inbound_id (
+        grn_number
+      ),
+      inbound_unload:inbound_unload_id (
+        brand_id,
+        category_id,
+        model_name,
+        variant_name,
+        brands:dir_brands!brand_id (
+          brand_name
+        ),
+        categories:dir_categories!category_id (
+          category_name,
+          full_name
+        )
+      )
+    `,
+    `
+      id,
+      inbound_id,
+      inbound_unload_id,
+      allocated_qty,
+      qty_in,
+      qty_a,
+      qty_b,
+      qty_c,
+      model_name,
+      variant_name,
+      assigned_to,
+      created_at,
+      updated_at,
+      inbound:inbound_id (
+        grn_number
+      ),
+      inbound_unload:inbound_unload_id (
+        brand_id,
+        category_id,
+        model_name,
+        variant_name,
+        brands:dir_brands!brand_id (
+          brand_name
+        ),
+        categories:dir_categories!category_id (
+          category_name
+        )
+      )
+    `,
+    `
+      id,
+      inbound_id,
+      inbound_unload_id,
+      allocated_qty,
+      qty_in,
+      qty_a,
+      qty_b,
+      qty_c,
+      model_name,
+      variant_name,
+      assigned_to,
+      created_at,
+      updated_at,
+      inbound:inbound_id (
+        grn_number
+      ),
+      inbound_unload:inbound_unload_id (
+        model_name,
+        variant_name
+      )
+    `,
+    'id, inbound_id, inbound_unload_id, allocated_qty, qty_in, qty_a, qty_b, qty_c, model_name, variant_name, assigned_to, created_at, updated_at',
+    'id, inbound_id, allocated_qty, qty_in, qty_a, qty_b, qty_c, model_name, variant_name, assigned_to, created_at, updated_at',
+    'id, inbound_id, allocated_qty, qty_in, qty_a, qty_b, qty_c, created_at, updated_at',
+  ]
+
+  let lastError = null
+
+  for (const selectColumns of selectOptions) {
+    const result = await supabase
+      .from('qc_items')
+      .select(selectColumns)
+      .or(buildCalendarTimestampFilter(['created_at', 'updated_at'], start, end))
+      .order('created_at', { ascending: true })
+
+    if (!result.error) {
+      return result
+    }
+
+    lastError = result.error
+    if (!isNonBlockingCalendarError(result.error)) {
+      return result
+    }
+
+    if (result.error.code !== '42703' && result.error.code !== 'PGRST200' && result.error.code !== 'PGRST204') {
+      return normalizeCalendarResult(result, 'regular QC grading')
+    }
+  }
+
+  return normalizeCalendarResult({ data: null, error: lastError }, 'regular QC grading')
+}
+
+async function loadArklineQcRowsForCalendar(supabase, start, end) {
+  const selectOptions = [
+    `
+      id,
+      po_id,
+      arkline_po_item_id,
+      sku_induk,
+      allocated_qty,
+      qty_a,
+      qty_b,
+      qty_c,
+      model_name,
+      created_at,
+      finished_at,
+      updated_at,
+      arkline_po_items:arkline_po_item_id (
+        nama_produk,
+        sku_induk
+      )
+    `,
+    'id, po_id, arkline_po_item_id, sku_induk, allocated_qty, qty_a, qty_b, qty_c, model_name, created_at, finished_at, updated_at',
+  ]
+
+  let lastError = null
+
+  for (const selectColumns of selectOptions) {
+    const result = await supabase
+      .from('arkline_qc')
+      .select(selectColumns)
+      .or(buildCalendarTimestampFilter(['created_at', 'updated_at', 'finished_at'], start, end))
+      .order('created_at', { ascending: true })
+
+    if (!result.error) {
+      return result
+    }
+
+    lastError = result.error
+    if (!isNonBlockingCalendarError(result.error)) {
+      return result
+    }
+
+    if (result.error.code !== '42703' && result.error.code !== 'PGRST200' && result.error.code !== 'PGRST204') {
+      return normalizeCalendarResult(result, 'Arkline grading')
+    }
+  }
+
+  return normalizeCalendarResult({ data: null, error: lastError }, 'Arkline grading')
+}
+
+async function loadOperationsCalendarTargets(supabase, start, end) {
+  const result = await supabase
+    .from('operations_calendar_targets')
+    .select('*')
+    .gte('target_date', start)
+    .lt('target_date', end)
+    .order('target_date', { ascending: true })
+    .order('created_at', { ascending: true })
+
+  return normalizeCalendarResult(result, 'manual targets')
+}
+
+async function loadOperationsCalendarManualReports(supabase, start, end) {
+  const result = await supabase
+    .from('operations_calendar_manual_reports')
+    .select('*')
+    .gte('report_date', start)
+    .lt('report_date', end)
+    .order('report_date', { ascending: true })
+    .order('created_at', { ascending: true })
+
+  return normalizeCalendarResult(result, 'manual reports')
+}
+
+async function loadPlReceivingRowsForCalendar(supabase, start, end) {
+  const withValidatedAt = await supabase
+    .from('pl_receiving')
+    .select('*')
+    .or(buildCalendarTimestampFilter(['created_at', 'validated_at'], start, end))
+    .order('created_at', { ascending: true })
+
+  if (!withValidatedAt.error) {
+    return withValidatedAt
+  }
+
+  if (!isNonBlockingCalendarError(withValidatedAt.error)) {
+    return withValidatedAt
+  }
+
+  if (withValidatedAt.error.code !== '42703' && withValidatedAt.error.code !== 'PGRST204') {
+    return normalizeCalendarResult(withValidatedAt, 'packing receiving')
+  }
+
+  const byCreatedAt = await supabase
+    .from('pl_receiving')
+    .select('*')
+    .gte('created_at', `${start}T00:00:00`)
+    .lt('created_at', `${end}T00:00:00`)
+    .order('created_at', { ascending: true })
+
+  return normalizeCalendarResult(byCreatedAt, 'packing receiving')
+}
+
+async function loadPlBreakdownRowsForCalendar(supabase, start, end) {
+  const byUpdatedAt = await supabase
+    .from('pl_size_breakdown')
+    .select('*')
+    .gte('updated_at', `${start}T00:00:00`)
+    .lt('updated_at', `${end}T00:00:00`)
+    .order('updated_at', { ascending: true })
+
+  if (!byUpdatedAt.error) {
+    return byUpdatedAt
+  }
+
+  if (!isNonBlockingCalendarError(byUpdatedAt.error)) {
+    return byUpdatedAt
+  }
+
+  if (byUpdatedAt.error.code !== '42703' && byUpdatedAt.error.code !== 'PGRST204') {
+    return normalizeCalendarResult(byUpdatedAt, 'packing breakdown')
+  }
+
+  const byCreatedAt = await supabase
+    .from('pl_size_breakdown')
+    .select('*')
+    .gte('created_at', `${start}T00:00:00`)
+    .lt('created_at', `${end}T00:00:00`)
+    .order('created_at', { ascending: true })
+
+  return normalizeCalendarResult(byCreatedAt, 'packing breakdown')
+}
+
+async function loadWarehouseStorageRowsForCalendar(supabase, start, end) {
+  const selectOptions = [
+    'id, item_name, qty, notes, created_at',
+    'id, item_name, qty, created_at',
+    'id, qty, created_at',
+  ]
+
+  let lastError = null
+
+  for (const selectColumns of selectOptions) {
+    const result = await supabase
+      .from('warehouse_storage')
+      .select(selectColumns)
+      .gte('created_at', `${start}T00:00:00`)
+      .lt('created_at', `${end}T00:00:00`)
+      .order('created_at', { ascending: true })
+
+    if (!result.error) {
+      return result
+    }
+
+    lastError = result.error
+    if (!isNonBlockingCalendarError(result.error)) {
+      return result
+    }
+
+    if (result.error.code !== '42703' && result.error.code !== 'PGRST204') {
+      return normalizeCalendarResult(result, 'storage rack')
+    }
+  }
+
+  return normalizeCalendarResult({ data: null, error: lastError }, 'storage rack')
+}
+
+async function loadRestockRowsForCalendar(supabase, start, end) {
+  const byCompletedAt = await supabase
+    .from('restock_request')
+    .select('id, item_name, qty, request_status, completed_at, created_at')
+    .gte('completed_at', `${start}T00:00:00`)
+    .lt('completed_at', `${end}T00:00:00`)
+    .order('completed_at', { ascending: true })
+
+  if (!byCompletedAt.error) {
+    return byCompletedAt
+  }
+
+  if (!isNonBlockingCalendarError(byCompletedAt.error)) {
+    return byCompletedAt
+  }
+
+  if (byCompletedAt.error.code !== '42703' && byCompletedAt.error.code !== 'PGRST204') {
+    return normalizeCalendarResult(byCompletedAt, 'restock')
+  }
+
+  const byCreatedAt = await supabase
+    .from('restock_request')
+    .select('id, item_name, qty, request_status, created_at')
+    .gte('created_at', `${start}T00:00:00`)
+    .lt('created_at', `${end}T00:00:00`)
+    .order('created_at', { ascending: true })
+
+  return normalizeCalendarResult(byCreatedAt, 'restock')
+}
+
+async function loadOperationsCalendarFormOptions(supabase) {
+  const [{ data: inboundRows }, { data: unloadRows }] = await Promise.all([
+    supabase
+      .from('inbound')
+      .select('id, grn_number')
+      .order('inbound_date', { ascending: false })
+      .limit(500),
+    supabase
+      .from('inbound_unload')
+      .select(`
+        inbound_id,
+        brands:dir_brands!brand_id (
+          brand_name
+        )
+      `)
+      .order('created_at', { ascending: false })
+      .limit(1500),
+  ])
+  const inboundById = new Map((inboundRows || []).map((row) => [String(row.id), String(row.grn_number || '').trim()]))
+  const targetPairMap = new Map()
+
+  ;(unloadRows || []).forEach((row) => {
+    const grnNumber = inboundById.get(String(row.inbound_id || '')) || ''
+    const brandName = String(row.brands?.brand_name || '').trim()
+
+    if (!grnNumber || !brandName) return
+    targetPairMap.set(`${grnNumber}::${brandName}`, { grnNumber, brandName })
+  })
+
+  return {
+    grnOptions: getDistinctOptions((inboundRows || []).map((row) => row.grn_number)),
+    brandOptions: getDistinctOptions((unloadRows || []).map((row) => row.brands?.brand_name)),
+    targetOptionPairs: Array.from(targetPairMap.values()).sort((left, right) => (
+      left.grnNumber.localeCompare(right.grnNumber, undefined, { numeric: true }) ||
+      left.brandName.localeCompare(right.brandName, undefined, { numeric: true })
+    )),
+  }
+}
+
 async function loadOperationsCalendarData(supabase, monthValue) {
   const { start, end } = getMonthBounds(monthValue)
   const timelineMap = createDivisionDayMap()
 
   const [
     { data: inboundRows, error: inboundError },
-    { data: inboundReceivingRows, error: inboundReceivingError },
     { data: inboundUnloadRows, error: inboundUnloadError },
+    { data: arklineReceiptRows, error: arklineReceiptError },
     { data: qcItemRows, error: qcItemError },
-    { data: qcConfirmRows, error: qcConfirmError },
     { data: arklineQcRows, error: arklineQcError },
     { data: plReceivingRows, error: plReceivingError },
     { data: plBreakdownRows, error: plBreakdownError },
     { data: warehouseStorageRows, error: warehouseStorageError },
     { data: restockRows, error: restockError },
+    { data: targetRows, error: targetError },
+    { data: manualReportRows, error: manualReportError },
   ] = await Promise.all([
-    supabase
-      .from('inbound')
-      .select('id, grn_number, inbound_date, total_koli, total_claimed_qty, total_received_qty, item_name')
-      .gte('inbound_date', start)
-      .lt('inbound_date', end)
-      .order('inbound_date', { ascending: true }),
-    supabase
-      .from('inbound_receiving')
-      .select('id, inbound_id, actual_qty, sample_qty, koli_sequence, created_at, updated_at')
-      .gte('updated_at', `${start}T00:00:00`)
-      .lt('updated_at', `${end}T00:00:00`)
-      .order('updated_at', { ascending: true }),
-    supabase
-      .from('inbound_unload')
-      .select('id, inbound_id, qty, created_at')
-      .gte('created_at', `${start}T00:00:00`)
-      .lt('created_at', `${end}T00:00:00`)
-      .order('created_at', { ascending: true }),
-    supabase
-      .from('qc_items')
-      .select('id, inbound_id, allocated_qty, qty_in, qty_a, qty_b, qty_c, created_at, updated_at')
-      .gte('created_at', `${start}T00:00:00`)
-      .lt('created_at', `${end}T00:00:00`)
-      .order('created_at', { ascending: true }),
-    supabase
-      .from('qc_confirm')
-      .select('id, inbound_id, qty, created_at')
-      .gte('created_at', `${start}T00:00:00`)
-      .lt('created_at', `${end}T00:00:00`)
-      .order('created_at', { ascending: true }),
-    supabase
-      .from('arkline_qc')
-      .select('id, po_id, sku_induk, allocated_qty, qty_a, qty_b, qty_c, created_at, finished_at, updated_at')
-      .or(`created_at.gte.${start}T00:00:00,updated_at.gte.${start}T00:00:00`)
-      .lt('created_at', `${end}T00:00:00`)
-      .order('created_at', { ascending: true }),
-    supabase
-      .from('pl_receiving')
-      .select('*')
-      .gte('created_at', `${start}T00:00:00`)
-      .lt('created_at', `${end}T00:00:00`)
-      .order('created_at', { ascending: true }),
-    supabase
-      .from('pl_size_breakdown')
-      .select('*')
-      .gte('updated_at', `${start}T00:00:00`)
-      .lt('updated_at', `${end}T00:00:00`)
-      .order('updated_at', { ascending: true }),
-    supabase
-      .from('warehouse_storage')
-      .select('id, item_name, qty, created_at')
-      .gte('created_at', `${start}T00:00:00`)
-      .lt('created_at', `${end}T00:00:00`)
-      .order('created_at', { ascending: true }),
-    supabase
-      .from('restock_request')
-      .select('id, item_name, qty, request_status, completed_at, created_at')
-      .gte('completed_at', `${start}T00:00:00`)
-      .lt('completed_at', `${end}T00:00:00`)
-      .order('completed_at', { ascending: true }),
+    loadInboundRowsForCalendar(supabase, start, end),
+    loadInboundUnloadRowsForCalendar(supabase, start, end),
+    loadArklineReceiptRowsForCalendar(supabase, start, end),
+    loadQcItemRowsForCalendar(supabase, start, end),
+    loadArklineQcRowsForCalendar(supabase, start, end),
+    loadPlReceivingRowsForCalendar(supabase, start, end),
+    loadPlBreakdownRowsForCalendar(supabase, start, end),
+    loadWarehouseStorageRowsForCalendar(supabase, start, end),
+    loadRestockRowsForCalendar(supabase, start, end),
+    loadOperationsCalendarTargets(supabase, start, end),
+    loadOperationsCalendarManualReports(supabase, start, end),
   ])
 
   const error =
     inboundError ||
-    inboundReceivingError ||
     inboundUnloadError ||
+    arklineReceiptError ||
     qcItemError ||
-    qcConfirmError ||
     arklineQcError ||
     plReceivingError ||
     plBreakdownError ||
     warehouseStorageError ||
-    restockError
+    restockError ||
+    targetError ||
+    manualReportError
 
   if (error) {
     throw error
   }
 
-  const inboundById = new Map((inboundRows || []).map((row) => [String(row.id), row]))
+  groupRowsByDate(targetRows || [], (row) => extractDateKey(row.target_date)).forEach((rows, dateKey) => {
+    rows.forEach((row) => {
+      const brandName = String(row.brand_name || '').trim()
 
-  groupRowsByDate(inboundRows || [], (row) => extractDateKey(row.inbound_date)).forEach((rows, dateKey) => {
-    pushTimelineItem(timelineMap, 'inbound', dateKey, {
-      label: 'GRN Received',
-      count: rows.length,
-      qty: sumBy(rows, 'total_received_qty'),
-      note: `${rows.length} GRN masuk | ${formatNumber(sumBy(rows, 'total_koli'))} koli | SJ ${formatNumber(sumBy(rows, 'total_claimed_qty'))}`,
-      detail: rows.slice(0, 3).map((row) => row.grn_number).filter(Boolean).join(', '),
+      pushTimelineItem(timelineMap, row.division_key, dateKey, {
+        label: 'Target',
+        eyebrow: 'Urgent',
+        count: 1,
+        qty: 0,
+        note: `${row.grn_number || 'GRN'} | ${brandName || 'All Brands'}`,
+        detail: '',
+        tone: 'target',
+        recordId: row.id,
+        targetDate: dateKey,
+        divisionKey: row.division_key,
+        grnNumber: row.grn_number,
+        brandName,
+      })
     })
   })
 
-  groupRowsByDate(inboundReceivingRows || [], (row) => extractDateKey(row.updated_at || row.created_at)).forEach((rows, dateKey) => {
-    pushTimelineItem(timelineMap, 'inbound', dateKey, {
-      label: 'Receiving Input',
-      count: rows.length,
-      qty: sumBy(rows, 'actual_qty'),
-      note: `${formatNumber(sumBy(rows, 'actual_qty'))} qty actual | Sample ${formatNumber(sumBy(rows, 'sample_qty'))}`,
-      detail: `${rows.length} baris receiving diperbarui`,
+  groupRowsByDate(manualReportRows || [], (row) => extractDateKey(row.report_date)).forEach((rows, dateKey) => {
+    rows.forEach((row) => {
+      pushTimelineItem(timelineMap, row.division_key, dateKey, {
+        label: row.title || 'Manual Report',
+        eyebrow: 'Manual',
+        count: 1,
+        qty: 0,
+        note: row.description || row.pic_name || '',
+        detail: row.pic_name ? `PIC ${row.pic_name}` : '',
+        tone: 'manual',
+        recordId: row.id,
+        reportDate: dateKey,
+        divisionKey: row.division_key,
+        title: row.title || '',
+        description: row.description || '',
+      })
+    })
+  })
+
+  const inboundById = new Map((inboundRows || []).map((row) => [String(row.id), row]))
+  const missingInboundIds = Array.from(
+    new Set(
+      (inboundUnloadRows || [])
+        .map((row) => String(row.inbound_id || '').trim())
+        .filter((id) => id && !inboundById.has(id))
+    )
+  )
+
+  if (missingInboundIds.length) {
+    const { data: missingInboundRows, error: missingInboundError } = await supabase
+      .from('inbound')
+      .select('id, grn_number, inbound_date, total_koli, total_claimed_qty, total_received_qty, item_name')
+      .in('id', missingInboundIds)
+
+    if (missingInboundError) {
+      throw missingInboundError
+    }
+
+    ;(missingInboundRows || []).forEach((row) => {
+      inboundById.set(String(row.id), row)
+    })
+  }
+
+  groupRowsByDate(inboundRows || [], (row) => extractDateKey(row.inbound_date)).forEach((rows, dateKey) => {
+    rows.forEach((row) => {
+      pushTimelineItem(timelineMap, 'inbound', dateKey, {
+        label: 'GRN Received',
+        count: 1,
+        qty: Number(row.total_received_qty || 0),
+        note: `${row.grn_number || 'GRN'} | ${formatNumber(row.total_koli)} koli | SJ ${formatNumber(row.total_claimed_qty)}`,
+        detail: row.item_name || '',
+        tone: 'received',
+      })
     })
   })
 
   groupRowsByDate(inboundUnloadRows || [], (row) => extractDateKey(row.created_at)).forEach((rows, dateKey) => {
-    const inboundIds = new Set(rows.map((row) => String(row.inbound_id || '')).filter(Boolean))
-    const grnList = Array.from(inboundIds)
-      .map((id) => inboundById.get(id)?.grn_number)
-      .filter(Boolean)
-      .slice(0, 3)
-      .join(', ')
+    const summary = rows.reduce((result, row) => {
+      const inbound = inboundById.get(String(row.inbound_id || ''))
+      const grnNumber = String(inbound?.grn_number || row.inbound_id || '').trim()
+      const modelKey = String(row.product_model_id || row.model_name || '').trim()
+      const variantKey = [
+        row.product_model_variant_id,
+        row.variant_code,
+        row.variant_label,
+        row.variant_name,
+        row.model_name,
+      ].map((value) => String(value || '').trim()).find(Boolean)
+
+      result.qty += Number(row.qty || 0)
+      result.count += 1
+      if (grnNumber) result.grnKeys.add(grnNumber)
+      if (modelKey) result.modelKeys.add(modelKey)
+      if (variantKey) result.variantKeys.add(variantKey)
+      return result
+    }, { qty: 0, count: 0, grnKeys: new Set(), modelKeys: new Set(), variantKeys: new Set() })
 
     pushTimelineItem(timelineMap, 'inbound', dateKey, {
-      label: 'Sorting & Unload',
-      count: rows.length,
-      qty: sumBy(rows, 'qty'),
-      note: `${formatNumber(sumBy(rows, 'qty'))} qty tersortir`,
-      detail: grnList || `${rows.length} baris unload`,
+      label: 'Sorting Process',
+      count: summary.count,
+      qty: summary.qty,
+      note: `${formatNumber(summary.grnKeys.size)} GRN | Sorted Qty ${formatNumber(summary.qty)}`,
+      detail: `${formatNumber(summary.modelKeys.size)} model | ${formatNumber(summary.variantKeys.size)} variant`,
+    })
+  })
+
+  groupRowsByDate(arklineReceiptRows || [], (row) => extractDateKey(row.receive_date)).forEach((rows, dateKey) => {
+    groupRowsByValue(rows, (row) => String(row.po_id || '').trim()).forEach((poRows, poId) => {
+      if (!poId) return
+
+      pushTimelineItem(timelineMap, 'inbound', dateKey, {
+        label: 'Arkline Inbound',
+        count: poRows.length,
+        qty: sumBy(poRows, 'received_qty'),
+        note: `${poId} | Qty ${formatNumber(sumBy(poRows, 'received_qty'))}`,
+        detail: `${poRows.length} receipt line`,
+        tone: 'received',
+      })
     })
   })
 
@@ -307,90 +889,126 @@ async function loadOperationsCalendarData(supabase, monthValue) {
     (qcItemRows || []).filter((row) => Number(row.qty_a || 0) + Number(row.qty_b || 0) + Number(row.qty_c || 0) > 0),
     (row) => extractDateKey(row.updated_at || row.created_at)
   ).forEach((rows, dateKey) => {
-    const totalQty = rows.reduce((total, row) => total + Number(row.qty_a || 0) + Number(row.qty_b || 0) + Number(row.qty_c || 0), 0)
-    pushTimelineItem(timelineMap, 'qc', dateKey, {
-      label: 'QC Grading',
-      count: rows.length,
-      qty: totalQty,
-      note: `Total qty ${formatNumber(totalQty)}`,
-      detail: `${rows.length} task selesai grading`,
-    })
-  })
+    const summary = rows.reduce((result, row) => {
+      const brandName = String(row.inbound_unload?.brands?.brand_name || 'Unbranded').trim()
+      const categoryName = String(row.inbound_unload?.categories?.full_name || row.inbound_unload?.categories?.category_name || 'Uncategorized').trim()
+      const grnNumber = String(row.inbound?.grn_number || '').trim()
+      const sourceKey = grnNumber || String(row.inbound_id || '').trim()
 
-  groupRowsByDate(qcConfirmRows || [], (row) => extractDateKey(row.created_at)).forEach((rows, dateKey) => {
-    pushTimelineItem(timelineMap, 'qc', dateKey, {
-      label: 'QC Confirmation',
-      count: rows.length,
-      qty: sumBy(rows, 'qty'),
-      note: `${formatNumber(sumBy(rows, 'qty'))} qty terverifikasi`,
-      detail: `${rows.length} baris confirm QC`,
-    })
-  })
+      result.qty += Number(row.qty_a || 0) + Number(row.qty_b || 0) + Number(row.qty_c || 0)
+      result.count += 1
+      if (sourceKey) result.grnKeys.add(sourceKey)
+      result.categoryKeys.add(`${brandName}::${categoryName}`)
+      return result
+    }, { qty: 0, count: 0, grnKeys: new Set(), categoryKeys: new Set() })
 
-  groupRowsByDate(arklineQcRows || [], (row) => extractDateKey(row.created_at)).forEach((rows, dateKey) => {
     pushTimelineItem(timelineMap, 'qc', dateKey, {
-      label: 'Arkline QC Start',
-      count: rows.length,
-      qty: sumBy(rows, 'allocated_qty'),
-      note: `Total qty ${formatNumber(sumBy(rows, 'allocated_qty'))}`,
-      detail: `${rows.length} task Arkline dibuat`,
+      label: 'Reguler Grading',
+      count: summary.count,
+      qty: summary.qty,
+      note: `${formatNumber(summary.grnKeys.size)} GRN | Qty ${formatNumber(summary.qty)}`,
+      detail: `${formatNumber(summary.categoryKeys.size)} brand/category group`,
     })
   })
 
   groupRowsByDate(
-    (arklineQcRows || []).filter((row) => Number(row.qty_a || 0) + Number(row.qty_b || 0) + Number(row.qty_c || 0) > 0),
+    (arklineQcRows || []).filter((row) => Number(row.allocated_qty || 0) + Number(row.qty_a || 0) + Number(row.qty_b || 0) + Number(row.qty_c || 0) > 0),
     (row) => extractDateKey(row.finished_at || row.updated_at || row.created_at)
   ).forEach((rows, dateKey) => {
-    const totalQty = rows.reduce((total, row) => total + Number(row.qty_a || 0) + Number(row.qty_b || 0) + Number(row.qty_c || 0), 0)
-    pushTimelineItem(timelineMap, 'qc', dateKey, {
-      label: 'Arkline QC Finish',
-      count: rows.length,
-      qty: totalQty,
-      note: `Total qty ${formatNumber(totalQty)}`,
-      detail: `${rows.length} task Arkline selesai`,
+    const groupedRows = rows.reduce((result, row) => {
+      const poId = String(row.po_id || '').trim()
+      const skuInduk = String(row.sku_induk || row.arkline_po_items?.sku_induk || '').trim()
+      const itemName = String(row.arkline_po_items?.nama_produk || row.model_name || 'Arkline item').trim()
+      const key = `${poId}::${skuInduk || itemName}`
+      const gradedQty = Number(row.qty_a || 0) + Number(row.qty_b || 0) + Number(row.qty_c || 0)
+      const current = result.get(key) || {
+        poId,
+        skuInduk,
+        itemName,
+        qty: 0,
+        count: 0,
+      }
+
+      current.qty += gradedQty || Number(row.allocated_qty || 0)
+      current.count += 1
+      result.set(key, current)
+      return result
+    }, new Map())
+
+    Array.from(groupedRows.values()).forEach((group) => {
+      pushTimelineItem(timelineMap, 'qc', dateKey, {
+        label: 'Arkline Grading',
+        count: group.count,
+        qty: group.qty,
+        note: `${group.poId || 'PO'} | ${group.skuInduk ? `${group.skuInduk} - ` : ''}${group.itemName}`,
+        detail: `Qty ${formatNumber(group.qty)}`,
+      })
     })
   })
 
-  groupRowsByDate(plReceivingRows || [], (row) => extractDateKey(row.created_at)).forEach((rows, dateKey) => {
+  const plReceivingByDate = new Map()
+  const getPlReceivingSummary = (dateKey) => {
+    const current = plReceivingByDate.get(dateKey) || {
+      receivedQty: 0,
+      validatedQty: 0,
+      receivedRows: 0,
+      validatedRows: 0,
+    }
+    plReceivingByDate.set(dateKey, current)
+    return current
+  }
+
+  ;(plReceivingRows || []).forEach((row) => {
+    const rowQty = Number(row.received_qty ?? row.qty ?? row.qc_confirm_qty ?? 0)
+    const receivedDateKey = extractDateKey(row.created_at)
+    const validatedDateKey = extractDateKey(row.validated_at)
+
+    if (receivedDateKey) {
+      const summary = getPlReceivingSummary(receivedDateKey)
+      summary.receivedQty += rowQty
+      summary.receivedRows += 1
+    }
+
+    if (validatedDateKey) {
+      const summary = getPlReceivingSummary(validatedDateKey)
+      summary.validatedQty += rowQty
+      summary.validatedRows += 1
+    }
+  })
+
+  plReceivingByDate.forEach((summary, dateKey) => {
     pushTimelineItem(timelineMap, 'packing', dateKey, {
       label: 'PL Receiving',
-      count: rows.length,
-      qty: sumBy(rows, ['received_qty', 'qty', 'qc_confirm_qty']),
-      note: `${formatNumber(sumBy(rows, ['received_qty', 'qty', 'qc_confirm_qty']))} qty diterima`,
-      detail: `${rows.length} baris PL receiving`,
-    })
-  })
-
-  groupRowsByDate(
-    (plReceivingRows || []).filter((row) => row.validated_at),
-    (row) => extractDateKey(row.validated_at)
-  ).forEach((rows, dateKey) => {
-    pushTimelineItem(timelineMap, 'packing', dateKey, {
-      label: 'PL Validation',
-      count: rows.length,
-      qty: sumBy(rows, ['received_qty', 'qty']),
-      note: `${rows.length} koli/baris tervalidasi`,
-      detail: `Qty valid ${formatNumber(sumBy(rows, ['received_qty', 'qty']))}`,
+      count: summary.receivedRows + summary.validatedRows,
+      qty: summary.receivedQty,
+      note: `Received Qty ${formatNumber(summary.receivedQty)} | Validated Qty ${formatNumber(summary.validatedQty)}`,
+      detail: `${formatNumber(summary.validatedRows)} validated row(s)`,
     })
   })
 
   groupRowsByDate(plBreakdownRows || [], (row) => extractDateKey(row.updated_at || row.created_at)).forEach((rows, dateKey) => {
+    const grnKeys = new Set(rows.map((row) => String(row.inbound_id || row.grn_number || '').trim()).filter(Boolean))
+    const breakdownQty = sumBy(rows, ['qty', 'received_qty', 'breakdown_qty'])
+
     pushTimelineItem(timelineMap, 'packing', dateKey, {
-      label: 'Size Breakdown',
+      label: 'PL Breakdown',
       count: rows.length,
-      qty: sumBy(rows, ['qty', 'received_qty']),
-      note: `${rows.length} detail size diproses`,
-      detail: `Qty breakdown ${formatNumber(sumBy(rows, ['qty', 'received_qty']))}`,
+      qty: breakdownQty,
+      note: `${formatNumber(grnKeys.size)} GRN | Breakdown Qty ${formatNumber(breakdownQty)}`,
+      detail: `${formatNumber(rows.length)} breakdown line(s)`,
     })
   })
 
   groupRowsByDate(warehouseStorageRows || [], (row) => extractDateKey(row.created_at)).forEach((rows, dateKey) => {
+    const storedQty = sumBy(rows, 'qty')
+    const storageKoliCount = new Set(rows.map(getStorageKoliKey).filter(Boolean)).size
+
     pushTimelineItem(timelineMap, 'storage', dateKey, {
       label: 'Stored to Rack',
       count: rows.length,
-      qty: sumBy(rows, 'qty'),
-      note: `${formatNumber(sumBy(rows, 'qty'))} qty disimpan`,
-      detail: `${rows.length} entry storage masuk`,
+      qty: storedQty,
+      note: `Stored Qty ${formatNumber(storedQty)} | ${formatNumber(storageKoliCount)} K`,
+      detail: `${formatNumber(rows.length)} storage line(s)`,
     })
   })
 
@@ -398,12 +1016,14 @@ async function loadOperationsCalendarData(supabase, monthValue) {
     (restockRows || []).filter((row) => String(row.request_status || '').toLowerCase() === 'completed'),
     (row) => extractDateKey(row.completed_at || row.created_at)
   ).forEach((rows, dateKey) => {
+    const restockQty = sumBy(rows, 'qty')
+
     pushTimelineItem(timelineMap, 'storage', dateKey, {
-      label: 'Restock / Take',
+      label: 'Restock',
       count: rows.length,
-      qty: sumBy(rows, 'qty'),
-      note: `${formatNumber(sumBy(rows, 'qty'))} qty diambil untuk restock`,
-      detail: `${rows.length} request selesai`,
+      qty: restockQty,
+      note: `Picked Qty ${formatNumber(restockQty)}`,
+      detail: `${formatNumber(rows.length)} completed request(s)`,
     })
   })
 
@@ -578,6 +1198,8 @@ export default async function OperationsCalendarPage({ searchParams }) {
   const monthDays = getMonthDays(month)
   const currentDateKey = extractDateKey(new Date().toISOString())
   const timelineMap = await loadOperationsCalendarData(supabase, month)
+  const formOptions = await loadOperationsCalendarFormOptions(supabase)
+  const manualDivisionKey = getRoleDivision(isAdmin ? 'admin' : role)
   const daySummaryMap = createDaySummaryMap(monthDays, timelineMap)
   const timelineEntries = Array.from(timelineMap.entries()).map(([key, value]) => ({
     key,
@@ -598,6 +1220,13 @@ export default async function OperationsCalendarPage({ searchParams }) {
         currentDateKey={currentDateKey}
         timelineEntries={timelineEntries}
         daySummaries={daySummaries}
+        formOptions={formOptions}
+        canAddTarget={canManageOperationsTargets(role, isAdmin)}
+        manualDivisionKey={manualDivisionKey}
+        statusMessage={{
+          type: String(params?.status || ''),
+          text: String(params?.message || ''),
+        }}
       />
     </div>
   )

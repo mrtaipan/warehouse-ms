@@ -1262,6 +1262,11 @@ export default function QcConfirmationRejectionPage() {
     }
 
     function getOrCreateAdjustmentRow(item) {
+      const sourceGrade = String(item.grade || '').trim().toUpperCase()
+      if (!['B', 'C'].includes(sourceGrade)) {
+        return null
+      }
+
       const key = getSourceKey(item)
       const existing = grouped.get(key)
       if (existing) return existing
@@ -1279,7 +1284,7 @@ export default function QcConfirmationRejectionPage() {
         model_name: item.model_name || familyRow?.model_name || 'UNKNOWN MODEL',
         model_color: item.model_color || item.variant_name || familyRow?.model_color || '',
         photo_url: item.photo_url || familyRow?.photo_url || '',
-        grade: item.grade,
+        grade: sourceGrade,
         source_qty: 0,
         taken_qty: 0,
         returned_qty: 0,
@@ -1771,6 +1776,14 @@ export default function QcConfirmationRejectionPage() {
 
     if (!currentTakeKoliItems.length) {
       setError('Take koli is still empty.')
+      return
+    }
+
+    const invalidSourceGradeItem = currentTakeKoliItems.find(
+      (item) => !['B', 'C'].includes(String(item.source_grade || '').trim().toUpperCase())
+    )
+    if (invalidSourceGradeItem) {
+      setError('Take items must keep their original rejection grade before posting.')
       return
     }
 

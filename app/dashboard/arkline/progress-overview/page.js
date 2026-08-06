@@ -1,5 +1,6 @@
 'use client'
 import Link from 'next/link'
+import { useSearchParams } from 'next/navigation'
 import { Fragment, useEffect, useMemo, useState } from 'react'
 
 import { createClient } from '@/utils/supabase/browser'
@@ -1127,7 +1128,9 @@ async function loadOptionalRows(queryFactory) {
 
 export default function ArklineProgressOverviewPage() {
   const { access, loading: accessLoading, role } = useArklineAccess()
+  const searchParams = useSearchParams()
   const canOpenKanbanDetail = role === 'admin' || access.progressKanbanAdd || access.progressKanbanEdit
+  const requestedPoId = String(searchParams.get('po') || '').trim().toUpperCase()
   const [view, setView] = useState('')
   const [monthDate, setMonthDate] = useState(() => new Date())
   const [lastRefresh, setLastRefresh] = useState(() => new Date())
@@ -1139,6 +1142,7 @@ export default function ArklineProgressOverviewPage() {
   const [materialRows, setMaterialRows] = useState([])
   const [updateReasons, setUpdateReasons] = useState([])
   const [selectedPoDetail, setSelectedPoDetail] = useState(null)
+  const [openedPoParam, setOpenedPoParam] = useState('')
   const [poDetailSections, setPoDetailSections] = useState({
     productLists: false,
     finance: false,
@@ -1486,6 +1490,17 @@ export default function ArklineProgressOverviewPage() {
       }
     })
   }
+
+  useEffect(() => {
+    if (!requestedPoId || loading || !canOpenKanbanDetail || openedPoParam === requestedPoId) return
+
+    const targetPo = filteredRows.find((item) => String(item.poId || '').trim().toUpperCase() === requestedPoId)
+    if (!targetPo) return
+
+    setView('kanban')
+    setOpenedPoParam(requestedPoId)
+    void openPoDetail(targetPo)
+  }, [canOpenKanbanDetail, filteredRows, loading, openedPoParam, requestedPoId])
 
   function togglePoDetailSection(sectionKey) {
     setPoDetailSections((prev) => ({

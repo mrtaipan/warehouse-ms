@@ -3,6 +3,11 @@
 import Image from 'next/image'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import { useEffect, useMemo, useState } from 'react'
+import {
+  buildCatalogIdentityLookup,
+  getProductCatalogIdentityKey,
+  resolveProductCatalogIdentity,
+} from '@/utils/catalog-identity'
 import { createClient } from '@/utils/supabase/browser'
 import { getProfileByAuthenticatedUser } from '@/utils/user-profiles'
 
@@ -44,6 +49,17 @@ function TrashIcon() {
       <path d="m6 6 1 14h10l1-14" />
     </svg>
   )
+}
+
+function getUniqueOptions(items = []) {
+  return Array.from(new Set(items.filter(Boolean))).sort((a, b) => a.localeCompare(b))
+}
+
+function matchesReceivingModelFilter(row = {}, filters = {}, excludeKey = '') {
+  if (excludeKey !== 'brand' && filters.brand && row.brand_name !== filters.brand) return false
+  if (excludeKey !== 'category' && filters.category && row.category_name !== filters.category) return false
+  if (excludeKey !== 'model' && filters.model && getModelLabel(row) !== filters.model) return false
+  return true
 }
 
 const styles = {
@@ -584,6 +600,40 @@ const styles = {
     borderRadius: '18px',
     overflowX: 'auto',
   },
+  modelFilterBar: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '10px',
+    flexWrap: 'wrap',
+  },
+  modelFilterSelect: {
+    flex: '1 1 180px',
+    minWidth: '150px',
+    height: '40px',
+    borderWidth: '1px',
+    borderStyle: 'solid',
+    borderColor: '#cbd5e1',
+    borderRadius: '10px',
+    background: '#fff',
+    color: '#0f172a',
+    padding: '0 12px',
+    fontSize: '13px',
+    fontWeight: 700,
+  },
+  modelFilterReset: {
+    width: '40px',
+    height: '40px',
+    flex: '0 0 40px',
+    borderWidth: '1px',
+    borderStyle: 'solid',
+    borderColor: '#cbd5e1',
+    borderRadius: '999px',
+    background: '#fff',
+    color: '#475569',
+    fontSize: '17px',
+    fontWeight: 900,
+    cursor: 'pointer',
+  },
   overviewTable: {
     width: '100%',
     borderCollapse: 'collapse',
@@ -1046,50 +1096,12 @@ function getModelKey(modelName, modelColor) {
   return `${String(modelName || '').trim().toUpperCase()}::${String(modelColor || '').trim().toUpperCase()}`
 }
 
-function normalizeCatalogValue(value) {
-  return String(value || '').trim().toUpperCase()
-}
-
 function getModelLabel(item) {
   return item.model_color ? `${item.model_name} / ${item.model_color}` : item.model_name
 }
 
 function getVariantDisplayName(variant) {
   return variant?.variant_name || variant?.variant_label || variant?.variant_code || ''
-}
-
-function getVariantCode(variant) {
-  return variant?.variant_code || variant?.variant_label || ''
-}
-
-function resolveCatalogIdentity(item, catalogLookup) {
-  const existingModelId = Number(item?.product_model_id || 0) || null
-  const existingVariantId = Number(item?.product_model_variant_id || 0) || null
-
-  if (!catalogLookup) {
-    return {
-      product_model_id: existingModelId,
-      product_model_variant_id: existingVariantId,
-      source_variant_code: item?.source_variant_code || null,
-    }
-  }
-
-  const modelName = normalizeCatalogValue(item?.model_name)
-  const variantName = normalizeCatalogValue(item?.model_color || item?.variant_name || item?.source_variant_code)
-  const model = existingModelId
-    ? catalogLookup.modelById.get(existingModelId)
-    : catalogLookup.modelByName.get(modelName)
-  const productModelId = Number(model?.id || existingModelId || 0) || null
-  const variant = existingVariantId
-    ? catalogLookup.variantById.get(existingVariantId)
-    : catalogLookup.variantByModelAndLabel.get(`${productModelId || 0}::${variantName}`) ||
-      catalogLookup.variantByGlobalLabel.get(variantName)
-
-  return {
-    product_model_id: productModelId,
-    product_model_variant_id: Number(variant?.id || existingVariantId || 0) || null,
-    source_variant_code: item?.source_variant_code || getVariantCode(variant) || null,
-  }
 }
 
 function getPicLabel(value, userNameMap) {
@@ -1105,13 +1117,16 @@ function buildPackingRows(confirmRows, catalogLookup = null) {
   const grouped = new Map()
 
   ;(confirmRows || []).forEach((item) => {
-    const key = getModelKey(item.model_name, item.model_color)
-    const catalogIdentity = resolveCatalogIdentity(item, catalogLookup)
+    const catalogIdentity = resolveProductCatalogIdentity(item, catalogLookup)
+    const key = getProductCatalogIdentityKey(item, catalogIdentity)
     const current = grouped.get(key) || {
       id: `source-${key}`,
       source_key: key,
       model_name: item.model_name || '',
       model_color: item.model_color || '',
+      brand_id: item.brand_id || catalogIdentity.model?.brand_id || null,
+      category_id: item.category_id || catalogIdentity.model?.category_id || null,
+      brand_name: item.brands?.brand_name || '',
       photo_url: item.photo_url || '',
       product_model_id: catalogIdentity.product_model_id,
       product_model_variant_id: catalogIdentity.product_model_variant_id,
@@ -1141,6 +1156,9 @@ function createDraftRows(sourceRows) {
     source_qc_confirm_id: row.qcConfirmIds?.[0] || null,
     model_name: row.model_name,
     model_color: row.model_color,
+    brand_id: row.brand_id || null,
+    category_id: row.category_id || null,
+    brand_name: row.brand_name || '',
     photo_url: row.photo_url || '',
     product_model_id: row.product_model_id || null,
     product_model_variant_id: row.product_model_variant_id || null,
@@ -1172,6 +1190,11 @@ export default function PackingListReceivingPage() {
   const [validationRows, setValidationRows] = useState([])
   const [previewPhoto, setPreviewPhoto] = useState(null)
   const [detailTableMode, setDetailTableMode] = useState('koli')
+  const [detailModelFilters, setDetailModelFilters] = useState({
+    brand: '',
+    category: '',
+    model: '',
+  })
   const [showInputForm, setShowInputForm] = useState(isInputRoute || searchParams.get('form') === '1')
   const [detailGrn, setDetailGrn] = useState(initialGrn)
   const [isPackingStaff, setIsPackingStaff] = useState(false)
@@ -1225,6 +1248,7 @@ export default function PackingListReceivingPage() {
             id,
             inbound_id,
             brand_id,
+            category_id,
             model_name,
             model_color:variant_name,
             photo_url,
@@ -1233,6 +1257,10 @@ export default function PackingListReceivingPage() {
             is_sample,
             brands:dir_brands!brand_id (
               brand_name
+            ),
+            categories:dir_categories!category_id (
+              category_name,
+              full_name
             ),
             inbound:inbound_id (
               id,
@@ -1243,14 +1271,23 @@ export default function PackingListReceivingPage() {
           .order('created_at', { ascending: false }),
         supabase
           .from('pl_receiving')
-          .select('id, inbound_id, source_koli_sequence, product_model_id, product_model_variant_id, source_variant_code, model_name, model_color:variant_name, source_qty, received_qty, qty_diff, validated_by, validated_at')
+          .select('id, inbound_id, source_koli_sequence, source_qc_confirm_id, product_model_id, product_model_variant_id, source_variant_code, model_name, model_color:variant_name, source_qty, received_qty, qty_diff, validated_by, validated_at')
           .order('validated_at', { ascending: false }),
         supabase
           .from('dir_user_profiles')
           .select('email, display_name'),
         supabase
           .from('dir_product_models')
-          .select('*')
+          .select(`
+            *,
+            brands:dir_brands!brand_id (
+              brand_name
+            ),
+            categories:dir_categories!category_id (
+              category_name,
+              full_name
+            )
+          `)
           .order('model_name', { ascending: true }),
         supabase
           .from('dir_product_model_variants')
@@ -1295,42 +1332,7 @@ export default function PackingListReceivingPage() {
   }, [userProfiles])
 
   const catalogLookup = useMemo(() => {
-    const modelById = new Map()
-    const modelByName = new Map()
-    const variantById = new Map()
-    const variantByModelAndLabel = new Map()
-    const variantByGlobalLabel = new Map()
-
-    productModels.forEach((model) => {
-      const modelId = Number(model.id || 0)
-      if (!modelId) return
-      modelById.set(modelId, model)
-      modelByName.set(normalizeCatalogValue(model.model_name), model)
-    })
-
-    productModelVariants.forEach((variant) => {
-      const variantId = Number(variant.id || 0)
-      const modelId = Number(variant.product_model_id || 0)
-      if (!variantId) return
-
-      variantById.set(variantId, variant)
-      ;[variant.variant_code, variant.variant_label, variant.variant_name].forEach((value) => {
-        const normalized = normalizeCatalogValue(value)
-        if (!normalized) return
-        variantByModelAndLabel.set(`${modelId}::${normalized}`, variant)
-        if (!variantByGlobalLabel.has(normalized)) {
-          variantByGlobalLabel.set(normalized, variant)
-        }
-      })
-    })
-
-    return {
-      modelById,
-      modelByName,
-      variantById,
-      variantByModelAndLabel,
-      variantByGlobalLabel,
-    }
+    return buildCatalogIdentityLookup(productModels, productModelVariants)
   }, [productModelVariants, productModels])
 
   const overviewRows = useMemo(() => {
@@ -1452,18 +1454,50 @@ export default function PackingListReceivingPage() {
 
     const inboundIds = new Set()
     const grouped = new Map()
+    const confirmById = new Map(confirmRows.map((row) => [Number(row.id || 0), row]))
+    const validationIdentityByConfirmId = new Map()
+
+    validationSummaryRows.forEach((row) => {
+      const sourceConfirm = confirmById.get(Number(row.source_qc_confirm_id || 0)) || null
+      if (sourceConfirm?.inbound?.grn_number !== detailGrn) return
+
+      const identity = resolveProductCatalogIdentity(row, catalogLookup)
+      if (identity.product_model_id) {
+        validationIdentityByConfirmId.set(Number(row.source_qc_confirm_id), identity)
+      }
+    })
 
     confirmRows
       .filter((item) => item.inbound?.grn_number === detailGrn)
       .forEach((item) => {
         const inboundId = item.inbound?.id || item.inbound_id || 0
-        const key = getModelKey(item.model_name, item.model_color)
+        const sourceIdentity = resolveProductCatalogIdentity(item, catalogLookup)
+        const identity = validationIdentityByConfirmId.get(Number(item.id || 0)) || sourceIdentity
+        const key = getProductCatalogIdentityKey(item, identity)
+        const sourceKey = getProductCatalogIdentityKey(item, sourceIdentity)
+        const catalogModel = identity.model || catalogLookup.modelById.get(Number(identity.product_model_id || 0)) || null
+        const catalogVariant = identity.variant || catalogLookup.variantById.get(Number(identity.product_model_variant_id || 0)) || null
+        const brandName = catalogModel?.brands?.brand_name || item.brands?.brand_name || 'UNBRANDED'
+        const categoryName =
+          catalogModel?.categories?.full_name ||
+          catalogModel?.categories?.category_name ||
+          item.categories?.full_name ||
+          item.categories?.category_name ||
+          'UNCATEGORIZED'
+        const photoUrl = key === sourceKey
+          ? item.photo_url || catalogVariant?.variant_photo_url || ''
+          : catalogVariant?.variant_photo_url || item.photo_url || ''
+        const modelName = key === sourceKey ? item.model_name || '' : catalogModel?.model_name || item.model_name || ''
+        const modelColor = key === sourceKey
+          ? item.model_color || ''
+          : getVariantDisplayName(catalogVariant) || item.model_color || ''
         const current = grouped.get(key) || {
           key,
-          brand_name: item.brands?.brand_name || 'UNBRANDED',
-          model_name: item.model_name || '',
-          model_color: item.model_color || '',
-          photo_url: item.photo_url || '',
+          brand_name: brandName,
+          category_name: categoryName,
+          model_name: modelName,
+          model_color: modelColor,
+          photo_url: photoUrl,
           qc_confirm_qty: 0,
           received_qty: 0,
           koliSet: new Set(),
@@ -1472,8 +1506,9 @@ export default function PackingListReceivingPage() {
 
         inboundIds.add(Number(inboundId))
         current.qc_confirm_qty += Number(item.qty || 0)
-        current.brand_name = current.brand_name || item.brands?.brand_name || 'UNBRANDED'
-        current.photo_url = current.photo_url || item.photo_url || ''
+        current.brand_name = current.brand_name || brandName
+        current.category_name = current.category_name || categoryName
+        current.photo_url = current.photo_url || photoUrl
         if (item.koli_sequence) {
           current.koliSet.add(Number(item.koli_sequence || 0))
         }
@@ -1483,13 +1518,42 @@ export default function PackingListReceivingPage() {
     validationSummaryRows
       .filter((row) => inboundIds.has(Number(row.inbound_id || 0)))
       .forEach((row) => {
-        const key = getModelKey(row.model_name, row.model_color)
+        const sourceConfirm = confirmById.get(Number(row.source_qc_confirm_id || 0)) || null
+        const sourceIdentity = sourceConfirm
+          ? resolveProductCatalogIdentity(sourceConfirm, catalogLookup)
+          : null
+        const matchesSourceLabel = sourceConfirm
+          ? getModelKey(row.model_name, row.model_color) === getModelKey(sourceConfirm.model_name, sourceConfirm.model_color)
+          : false
+        const rowIdentity = resolveProductCatalogIdentity(row, catalogLookup)
+        const identity = !rowIdentity.product_model_id && matchesSourceLabel && sourceIdentity
+          ? sourceIdentity
+          : rowIdentity
+        const key = getProductCatalogIdentityKey(row, identity)
+        const sourceKey = sourceConfirm && sourceIdentity
+          ? getProductCatalogIdentityKey(sourceConfirm, sourceIdentity)
+          : ''
+        const sourceMatchesIdentity = sourceKey === key
+        const catalogModel = identity.model || catalogLookup.modelById.get(Number(identity.product_model_id || 0)) || null
+        const catalogVariant = identity.variant || catalogLookup.variantById.get(Number(identity.product_model_variant_id || 0)) || null
+        const brandName =
+          catalogModel?.brands?.brand_name ||
+          (sourceMatchesIdentity ? sourceConfirm?.brands?.brand_name : '') ||
+          'UNBRANDED'
+        const categoryName =
+          catalogModel?.categories?.full_name ||
+          catalogModel?.categories?.category_name ||
+          (sourceMatchesIdentity ? sourceConfirm?.categories?.full_name || sourceConfirm?.categories?.category_name : '') ||
+          'UNCATEGORIZED'
         const current = grouped.get(key) || {
           key,
-          brand_name: 'UNBRANDED',
+          brand_name: brandName,
+          category_name: categoryName,
           model_name: row.model_name || '',
           model_color: row.model_color || '',
-          photo_url: '',
+          photo_url: sourceMatchesIdentity
+            ? sourceConfirm?.photo_url || catalogVariant?.variant_photo_url || ''
+            : catalogVariant?.variant_photo_url || '',
           qc_confirm_qty: 0,
           received_qty: 0,
           koliSet: new Set(),
@@ -1497,6 +1561,8 @@ export default function PackingListReceivingPage() {
         }
 
         current.received_qty += Number(row.received_qty || 0)
+        current.brand_name = current.brand_name || brandName
+        current.category_name = current.category_name || categoryName
         if (row.source_koli_sequence) {
           current.validatedKoliSet.add(Number(row.source_koli_sequence || 0))
         }
@@ -1518,7 +1584,33 @@ export default function PackingListReceivingPage() {
         }
       })
       .sort((a, b) => getModelLabel(a).localeCompare(getModelLabel(b)))
-  }, [confirmRows, detailGrn, validationSummaryRows])
+  }, [catalogLookup, confirmRows, detailGrn, validationSummaryRows])
+
+  const detailModelFilterOptions = useMemo(
+    () => ({
+      brands: getUniqueOptions(
+        detailModelRows
+          .filter((row) => matchesReceivingModelFilter(row, detailModelFilters, 'brand'))
+          .map((row) => row.brand_name)
+      ),
+      categories: getUniqueOptions(
+        detailModelRows
+          .filter((row) => matchesReceivingModelFilter(row, detailModelFilters, 'category'))
+          .map((row) => row.category_name)
+      ),
+      models: getUniqueOptions(
+        detailModelRows
+          .filter((row) => matchesReceivingModelFilter(row, detailModelFilters, 'model'))
+          .map((row) => getModelLabel(row))
+      ),
+    }),
+    [detailModelFilters, detailModelRows]
+  )
+
+  const filteredDetailModelRows = useMemo(
+    () => detailModelRows.filter((row) => matchesReceivingModelFilter(row, detailModelFilters)),
+    [detailModelFilters, detailModelRows]
+  )
 
   const selectedInbound = useMemo(
     () => confirmRows.find((item) => item.inbound?.grn_number === grnFilter)?.inbound || null,
@@ -1575,10 +1667,13 @@ export default function PackingListReceivingPage() {
 
     return buildPackingRows(rowsForGrn, catalogLookup)
       .map((row) => ({
-        key: getModelKey(row.model_name, row.model_color),
+        key: row.source_key || getProductCatalogIdentityKey(row),
         source_key: row.source_key || '',
         model_name: row.model_name || '',
         model_color: row.model_color || '',
+        brand_id: row.brand_id || null,
+        category_id: row.category_id || null,
+        brand_name: row.brand_name || '',
         photo_url: row.photo_url || '',
         product_model_id: row.product_model_id || null,
         product_model_variant_id: row.product_model_variant_id || null,
@@ -1599,7 +1694,7 @@ export default function PackingListReceivingPage() {
     const grouped = new Map()
 
     sourceRows.forEach((item) => {
-      const key = getModelKey(item.model_name, item.model_color)
+      const key = item.source_key || getProductCatalogIdentityKey(item)
       grouped.set(key, item)
     })
 
@@ -1651,9 +1746,23 @@ export default function PackingListReceivingPage() {
 
       setDraftRows(
         nextRows.map((row, index) => {
-          const sourceKey = getModelKey(row.model_name, row.model_color)
-          const matchedSource = sourceRowMap.get(sourceKey)
-          const matchedModel = grnModelMap.get(sourceKey)
+          const sourceByConfirmId = sourceRows.find((sourceRow) =>
+            (sourceRow.qcConfirmIds || []).includes(row.source_qc_confirm_id)
+          ) || null
+          const rowIdentity = resolveProductCatalogIdentity(row, catalogLookup)
+          const rowIdentityKey = getProductCatalogIdentityKey(row, rowIdentity)
+          const matchedSource = sourceByConfirmId || sourceRowMap.get(rowIdentityKey) || null
+          const matchedModel = grnModelMap.get(rowIdentityKey) || null
+          const matchesSourceLabel = matchedSource
+            ? getModelKey(row.model_name, row.model_color) === getModelKey(matchedSource.model_name, matchedSource.model_color)
+            : false
+          const effectiveIdentity = !rowIdentity.product_model_id && matchesSourceLabel && matchedSource
+            ? {
+                product_model_id: matchedSource.product_model_id,
+                product_model_variant_id: matchedSource.product_model_variant_id,
+                source_variant_code: matchedSource.source_variant_code,
+              }
+            : rowIdentity
 
           return {
             id: `saved-${row.id || index}`,
@@ -1661,11 +1770,13 @@ export default function PackingListReceivingPage() {
             source_qc_confirm_id: row.source_qc_confirm_id || matchedSource?.qcConfirmIds?.[0] || null,
             model_name: row.model_name || '',
             model_color: row.model_color || '',
-            product_model_id: row.product_model_id || matchedSource?.product_model_id || matchedModel?.product_model_id || null,
-            product_model_variant_id:
-              row.product_model_variant_id || matchedSource?.product_model_variant_id || matchedModel?.product_model_variant_id || null,
-            source_variant_code: row.source_variant_code || matchedSource?.source_variant_code || matchedModel?.source_variant_code || null,
-            photo_url: matchedSource?.photo_url || matchedModel?.photo_url || '',
+            brand_id: matchedModel?.brand_id || matchedSource?.brand_id || null,
+            category_id: matchedModel?.category_id || matchedSource?.category_id || null,
+            brand_name: matchedModel?.brand_name || matchedSource?.brand_name || '',
+            product_model_id: effectiveIdentity.product_model_id || matchedModel?.product_model_id || null,
+            product_model_variant_id: effectiveIdentity.product_model_variant_id || matchedModel?.product_model_variant_id || null,
+            source_variant_code: effectiveIdentity.source_variant_code || matchedModel?.source_variant_code || null,
+            photo_url: matchedModel?.photo_url || (matchesSourceLabel ? matchedSource?.photo_url : '') || '',
             qty: String(row.received_qty || 0),
           }
         })
@@ -1673,7 +1784,7 @@ export default function PackingListReceivingPage() {
     }
 
     loadValidationRows()
-  }, [grnModelMap, selectedInbound?.id, selectedSource?.koli_sequence, sourceRowMap, sourceRows])
+  }, [catalogLookup, grnModelMap, selectedInbound?.id, selectedSource?.koli_sequence, sourceRowMap, sourceRows])
 
   function openInputForm(nextGrn = detailGrn) {
     const targetGrn = nextGrn || detailGrn
@@ -1729,7 +1840,9 @@ export default function PackingListReceivingPage() {
   function applyDraftModel(rowId, selectedModel) {
     if (!selectedModel) return
 
-    const isAlreadyUsed = draftRows.some((row) => row.id !== rowId && getModelKey(row.model_name, row.model_color) === selectedModel.key)
+    const isAlreadyUsed = draftRows.some(
+      (row) => row.id !== rowId && getProductCatalogIdentityKey(row) === selectedModel.key
+    )
     if (isAlreadyUsed) {
       setSuccess('')
       setError('Model is already listed in this receiving input.')
@@ -1743,6 +1856,9 @@ export default function PackingListReceivingPage() {
               ...row,
               model_name: selectedModel.model_name,
               model_color: selectedModel.model_color || '',
+              brand_id: selectedModel.brand_id || null,
+              category_id: selectedModel.category_id || null,
+              brand_name: selectedModel.brand_name || '',
               photo_url: selectedModel.photo_url || row.photo_url || '',
               product_model_id: selectedModel.product_model_id || null,
               product_model_variant_id: selectedModel.product_model_variant_id || null,
@@ -1762,7 +1878,7 @@ export default function PackingListReceivingPage() {
       return
     }
 
-    const isAlreadyAdded = draftRows.some((row) => getModelKey(row.model_name, row.model_color) === selectedModel.key)
+    const isAlreadyAdded = draftRows.some((row) => getProductCatalogIdentityKey(row) === selectedModel.key)
     if (isAlreadyAdded) {
       setSuccess('')
       setError('Model is already listed in this receiving input.')
@@ -1777,6 +1893,9 @@ export default function PackingListReceivingPage() {
         source_qc_confirm_id: null,
         model_name: selectedModel.model_name,
         model_color: selectedModel.model_color || '',
+        brand_id: selectedModel.brand_id || null,
+        category_id: selectedModel.category_id || null,
+        brand_name: selectedModel.brand_name || '',
         photo_url: selectedModel.photo_url || '',
         product_model_id: selectedModel.product_model_id || null,
         product_model_variant_id: selectedModel.product_model_variant_id || null,
@@ -1814,22 +1933,23 @@ export default function PackingListReceivingPage() {
   }
 
   const comparisonRows = useMemo(() => {
-    const sourceMap = new Map(sourceRows.map((row) => [getModelKey(row.model_name, row.model_color), row]))
+    const sourceMap = new Map(
+      sourceRows.map((row) => [row.source_key || getProductCatalogIdentityKey(row), row])
+    )
     const sourceBySourceKey = new Map(sourceRows.map((row) => [row.source_key, row]))
     const draftMap = new Map()
     const consumedSourceKeys = new Set()
 
     draftRows.forEach((row) => {
-      const key = getModelKey(row.model_name, row.model_color)
-      if (!key || key === '::') {
-        return
-      }
+      const key = getProductCatalogIdentityKey(row)
 
       const sourceForDraft = row.source_key ? sourceBySourceKey.get(row.source_key) : sourceMap.get(key)
       const current = draftMap.get(key) || {
         key,
         model_name: row.model_name,
         model_color: row.model_color,
+        brand_id: row.brand_id || null,
+        category_id: row.category_id || null,
         product_model_id: row.product_model_id || null,
         product_model_variant_id: row.product_model_variant_id || null,
         source_variant_code: row.source_variant_code || null,
@@ -1839,6 +1959,8 @@ export default function PackingListReceivingPage() {
       }
 
       current.qty += Number(row.qty || 0)
+      current.brand_id = current.brand_id || row.brand_id || null
+      current.category_id = current.category_id || row.category_id || null
       current.product_model_id = current.product_model_id || row.product_model_id || null
       current.product_model_variant_id = current.product_model_variant_id || row.product_model_variant_id || null
       current.source_variant_code = current.source_variant_code || row.source_variant_code || null
@@ -1861,6 +1983,8 @@ export default function PackingListReceivingPage() {
         key: row.key,
         model_name: row.model_name || '',
         model_color: row.model_color || '',
+        brand_id: row.brand_id || null,
+        category_id: row.category_id || null,
         product_model_id: row.product_model_id || null,
         product_model_variant_id: row.product_model_variant_id || null,
         source_variant_code: row.source_variant_code || null,
@@ -1874,9 +1998,11 @@ export default function PackingListReceivingPage() {
     const untouchedSourceRows = sourceRows
       .filter((row) => !consumedSourceKeys.has(row.source_key))
       .map((row) => ({
-        key: getModelKey(row.model_name, row.model_color),
+        key: row.source_key || getProductCatalogIdentityKey(row),
         model_name: row.model_name || '',
         model_color: row.model_color || '',
+        brand_id: row.brand_id || null,
+        category_id: row.category_id || null,
         product_model_id: row.product_model_id || null,
         product_model_variant_id: row.product_model_variant_id || null,
         source_variant_code: row.source_variant_code || null,
@@ -1899,8 +2025,8 @@ export default function PackingListReceivingPage() {
   const inputRows = useMemo(
     () =>
       draftRows.map((row) => {
-        const key = getModelKey(row.model_name, row.model_color)
-        const sourceRow = sourceRowMap.get(key) || sourceRows.find((item) => item.source_key === row.source_key) || null
+        const key = getProductCatalogIdentityKey(row)
+        const sourceRow = sourceRows.find((item) => item.source_key === row.source_key) || sourceRowMap.get(key) || null
 
         return {
           ...row,
@@ -1954,13 +2080,14 @@ export default function PackingListReceivingPage() {
     const payload = comparisonRows
       .filter((row) => row.sourceQty > 0 || row.receivedQty > 0)
       .map((row) => {
+        const identity = resolveProductCatalogIdentity(row, catalogLookup)
         return {
           inbound_id: selectedInbound.id,
           source_koli_sequence: selectedSource.koli_sequence,
           source_qc_confirm_id: row.source_qc_confirm_id || null,
-          product_model_id: row.product_model_id || null,
-          product_model_variant_id: row.product_model_variant_id || null,
-          source_variant_code: row.source_variant_code || null,
+          product_model_id: identity.product_model_id || null,
+          product_model_variant_id: identity.product_model_variant_id || null,
+          source_variant_code: identity.source_variant_code || null,
           model_name: row.model_name,
           variant_name: row.model_color || null,
           source_qty: row.sourceQty,
@@ -2023,10 +2150,11 @@ export default function PackingListReceivingPage() {
 
       return [
         ...((insertedRows || []).map((row) => ({
-          id: row.id,
-          inbound_id: row.inbound_id,
-          source_koli_sequence: row.source_koli_sequence,
-          product_model_id: row.product_model_id,
+           id: row.id,
+           inbound_id: row.inbound_id,
+           source_koli_sequence: row.source_koli_sequence,
+           source_qc_confirm_id: row.source_qc_confirm_id,
+           product_model_id: row.product_model_id,
           product_model_variant_id: row.product_model_variant_id,
           source_variant_code: row.source_variant_code,
           model_name: row.model_name,
@@ -2139,6 +2267,59 @@ export default function PackingListReceivingPage() {
             </div>
           </div>
 
+          {detailTableMode === 'model' ? (
+            <div style={styles.modelFilterBar}>
+              <select
+                value={detailModelFilters.brand}
+                onChange={(event) => setDetailModelFilters((current) => ({ ...current, brand: event.target.value }))}
+                style={styles.modelFilterSelect}
+                aria-label="Filter by brand"
+              >
+                <option value="">All Brands</option>
+                {detailModelFilterOptions.brands.map((brandName) => (
+                  <option key={`brand-${brandName}`} value={brandName}>
+                    {brandName}
+                  </option>
+                ))}
+              </select>
+              <select
+                value={detailModelFilters.category}
+                onChange={(event) => setDetailModelFilters((current) => ({ ...current, category: event.target.value }))}
+                style={styles.modelFilterSelect}
+                aria-label="Filter by category"
+              >
+                <option value="">All Categories</option>
+                {detailModelFilterOptions.categories.map((categoryName) => (
+                  <option key={`category-${categoryName}`} value={categoryName}>
+                    {categoryName}
+                  </option>
+                ))}
+              </select>
+              <select
+                value={detailModelFilters.model}
+                onChange={(event) => setDetailModelFilters((current) => ({ ...current, model: event.target.value }))}
+                style={styles.modelFilterSelect}
+                aria-label="Filter by model"
+              >
+                <option value="">All Models</option>
+                {detailModelFilterOptions.models.map((modelName) => (
+                  <option key={`model-${modelName}`} value={modelName}>
+                    {modelName}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                onClick={() => setDetailModelFilters({ brand: '', category: '', model: '' })}
+                style={styles.modelFilterReset}
+                title="Reset filters"
+                aria-label="Reset filters"
+              >
+                &#8634;
+              </button>
+            </div>
+          ) : null}
+
           <div style={styles.overviewTableWrap}>
             {detailTableMode === 'koli' ? (
               <table style={styles.overviewTable}>
@@ -2205,7 +2386,7 @@ export default function PackingListReceivingPage() {
                 </tr>
               </thead>
               <tbody>
-                {detailModelRows.map((row, index) => {
+                {filteredDetailModelRows.map((row, index) => {
                   const varianceStyle =
                     row.variance === 0
                       ? { background: '#ecfdf5', color: '#047857', border: '1px solid #bbf7d0' }
@@ -2247,6 +2428,11 @@ export default function PackingListReceivingPage() {
                     </tr>
                   )
                 })}
+                {!filteredDetailModelRows.length ? (
+                  <tr>
+                    <td colSpan={9} style={styles.overviewTd}>No models match the selected filters.</td>
+                  </tr>
+                ) : null}
               </tbody>
               </table>
             )}
@@ -2489,7 +2675,9 @@ export default function PackingListReceivingPage() {
                     )}
                     <span>
                       <span style={styles.modelPickerName}>{item.label || '-'}</span>
-                      <span style={styles.modelPickerMeta}>QC Confirm Qty {item.qty || 0}</span>
+                      <span style={styles.modelPickerMeta}>
+                        {item.brand_name || 'UNBRANDED'} | QC Confirm Qty {item.qty || 0}
+                      </span>
                     </span>
                   </button>
                 ))

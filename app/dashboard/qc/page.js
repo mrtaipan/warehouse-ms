@@ -4,6 +4,7 @@ import Image from 'next/image'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { createClient } from '@/utils/supabase/browser'
 import { ADMIN_EMAIL } from '@/utils/permissions'
+import { useRealtimeRefresh } from '@/utils/supabase/use-realtime-refresh'
 
 const supabase = createClient()
 const QC_GRADE_OPTIONS = ['A', 'B', 'C']
@@ -1723,14 +1724,12 @@ export default function QcDashboardPage() {
     void loadDashboard()
   }, [loadDashboard])
 
-  useEffect(() => {
-    const intervalId = window.setInterval(() => {
-      if (showPauseConfirm || previewPhoto || rejectDetailSummary || pauseDetailInspector || savingRejectDetail) return
-      void loadDashboard(true)
-    }, 10000)
-
-    return () => window.clearInterval(intervalId)
-  }, [loadDashboard, pauseDetailInspector, previewPhoto, rejectDetailSummary, savingRejectDetail, showPauseConfirm])
+  useRealtimeRefresh({
+    supabase,
+    topic: 'qc:summary',
+    onRefresh: () => loadDashboard(true),
+    paused: Boolean(showPauseConfirm || previewPhoto || rejectDetailSummary || pauseDetailInspector || savingRejectDetail),
+  })
 
   const hasInvalidDateRange = Boolean(dateFrom && dateTo && dateFrom > dateTo)
   const matchesRegularFilterValues = useCallback((item, ignoredFilter = '') => {

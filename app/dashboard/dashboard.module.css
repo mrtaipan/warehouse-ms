@@ -161,7 +161,8 @@
 }
 
 .leftColumn,
-.rightColumn {
+.rightColumn,
+.fullColumn {
   display: flex;
   flex-direction: column;
   gap: 18px;
@@ -649,6 +650,47 @@
   margin-top: 16px;
 }
 
+.grnSummaryTopRow {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.grnSummaryTitle {
+  margin: 0;
+  color: #0f172a;
+  font-size: 34px;
+  line-height: 1;
+  font-weight: 900;
+  letter-spacing: -0.04em;
+}
+
+.grnSummaryInlineForm {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  flex: 1;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+.grnSummaryInlineField {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: min(100%, 280px);
+}
+
+.grnSummaryInlineField span {
+  color: #475569;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
 .grnSummaryField {
   display: flex;
   flex-direction: column;
@@ -693,6 +735,30 @@
   cursor: pointer;
 }
 
+.grnSummaryIconButton {
+  width: 44px;
+  height: 44px;
+  border: 1px solid #111827;
+  border-radius: 16px;
+  background: #111827;
+  color: #ffffff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: transform 160ms ease, box-shadow 160ms ease, background 160ms ease;
+}
+
+.grnSummaryIconButton:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 12px 24px rgba(15, 23, 42, 0.12);
+}
+
+.grnSummaryIconButton svg {
+  width: 18px;
+  height: 18px;
+}
+
 .grnSummaryMeta {
   display: flex;
   flex-direction: column;
@@ -717,13 +783,13 @@
 
 .grnMetricGrid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 12px;
   margin-top: 12px;
 }
 
 .grnMetricCard {
-  min-height: 126px;
+  min-height: 150px;
   border: 1px solid #edf0f4;
   border-radius: 20px;
   background: #ffffff;
@@ -755,6 +821,43 @@
   font-size: 12px;
   font-weight: 700;
   line-height: 1.4;
+}
+
+.grnSummaryDetailCard {
+  margin-top: 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 20px;
+  background: #fafbfc;
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.grnSummaryDetailTitle {
+  color: #0f172a;
+  font-size: 18px;
+  line-height: 1.25;
+  font-weight: 800;
+}
+
+.grnSummaryNarrative {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.grnSummaryNarrative p {
+  margin: 0;
+  color: #334155;
+  font-size: 14px;
+  line-height: 1.65;
+}
+
+.grnSummaryRejectBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 
 .grnSummaryEmpty,
@@ -866,7 +969,7 @@
   }
 
   .contentGrid {
-    grid-template-columns: minmax(0, 1.35fr) minmax(300px, 0.9fr);
+    grid-template-columns: 1fr;
   }
 
   .actionGrid {
@@ -910,12 +1013,26 @@
     grid-template-columns: 1fr;
   }
 
+  .grnSummaryInlineForm,
+  .grnSummaryTopRow {
+    align-items: stretch;
+  }
+
+  .grnSummaryInlineForm {
+    justify-content: stretch;
+  }
+
+  .grnSummaryInlineField {
+    min-width: 100%;
+  }
+
   .itemSearchResultCard p {
     text-align: left;
   }
 
   .itemSearchButton,
-  .grnSummaryButton {
+  .grnSummaryButton,
+  .grnSummaryIconButton {
     width: 100%;
   }
 

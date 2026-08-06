@@ -142,6 +142,35 @@ function formatNumber(value) {
   return new Intl.NumberFormat('id-ID', { maximumFractionDigits: 0 }).format(Number(value || 0))
 }
 
+function cleanSummaryText(value) {
+  return String(value || '').trim()
+}
+
+function dedupeSummaryParts(parts = []) {
+  const seen = new Set()
+
+  return parts.filter((part) => {
+    const normalized = cleanSummaryText(part)
+    if (!normalized) return false
+    const key = normalized.toLowerCase()
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+}
+
+function getSjComparisonLabel(value) {
+  if (value == null) {
+    return 'Tidak ada SJ'
+  }
+
+  if (Number(value) === 0) {
+    return 'sesuai SJ'
+  }
+
+  return `${Number(value) > 0 ? '+' : ''}${formatNumber(value)}pcs dari SJ`
+}
+
 function CalendarIcon() {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -166,70 +195,6 @@ function addGradeTotals(total, row = {}) {
   if (grade === 'A') total.gradeA += qty
   if (grade === 'B') total.gradeB += qty
   if (grade === 'C') total.gradeC += qty
-}
-
-function cleanDimension(value, fallback) {
-  const normalized = String(value || '').trim()
-  return normalized || fallback
-}
-
-function getVariantLabel(row = {}) {
-  return cleanDimension(
-    row.variant_name || row.variant_label || row.variant_code || row.model_color || row.model_colour || row.color,
-    'NO VARIANT'
-  )
-}
-
-function getBreakdownKey({ brand, model, variant }) {
-  return `${brand}|||${model}|||${variant}`
-}
-
-function getBreakdownRow(grouped, dimensions = {}) {
-  const brand = cleanDimension(dimensions.brand, 'UNBRANDED')
-  const model = cleanDimension(dimensions.model, 'UNKNOWN MODEL')
-  const variant = cleanDimension(dimensions.variant, 'NO VARIANT')
-  const key = getBreakdownKey({ brand, model, variant })
-  const current =
-    grouped.get(key) || {
-      key,
-      brand,
-      model,
-      variant,
-      inboundTotal: 0,
-      gradeA: 0,
-      gradeB: 0,
-      gradeC: 0,
-      qcInTotal: 0,
-      qcOutTotal: 0,
-    }
-
-  grouped.set(key, current)
-  return current
-}
-
-function addBreakdownGradeTotals(rowTotal, source = {}) {
-  const grade = String(source.grade || '').toUpperCase()
-  const qty = Number(source.qty || 0)
-
-  if (grade === 'A') rowTotal.gradeA += qty
-  if (grade === 'B') rowTotal.gradeB += qty
-  if (grade === 'C') rowTotal.gradeC += qty
-}
-
-function finalizeBreakdownRows(grouped) {
-  return Array.from(grouped.values())
-    .map((row) => ({
-      ...row,
-      qcInTotal: Number(row.gradeA || 0) + Number(row.gradeB || 0) + Number(row.gradeC || 0),
-      qcOutTotal: Number(row.gradeA || 0),
-    }))
-    .sort((left, right) => {
-      const brandCompare = left.brand.localeCompare(right.brand)
-      if (brandCompare) return brandCompare
-      const modelCompare = left.model.localeCompare(right.model)
-      if (modelCompare) return modelCompare
-      return left.variant.localeCompare(right.variant, undefined, { numeric: true })
-    })
 }
 
 async function loadInboundUnloadRowsForDashboard(supabase, inboundId) {
@@ -276,7 +241,7 @@ async function loadInboundUnloadRowsForDashboard(supabase, inboundId) {
 async function loadAdminGrnSummary(supabase, selectedGrn = '') {
   const { data: inboundRows, error: inboundError } = await supabase
     .from('inbound')
-    .select('id, grn_number, inbound_date, item_name, total_received_qty')
+    .select('id, grn_number, inbound_date, item_name, total_received_qty, total_claimed_qty, suppliers:dir_suppliers!supplier_id (supplier_name)')
     .order('created_at', { ascending: false })
     .limit(250)
 
@@ -292,7 +257,7 @@ async function loadAdminGrnSummary(supabase, selectedGrn = '') {
   if (selectedGrn && !selectedInbound) {
     const { data: exactInbound, error: exactInboundError } = await supabase
       .from('inbound')
-      .select('id, grn_number, inbound_date, item_name, total_received_qty')
+      .select('id, grn_number, inbound_date, item_name, total_received_qty, total_claimed_qty, suppliers:dir_suppliers!supplier_id (supplier_name)')
       .eq('grn_number', selectedGrn)
       .maybeSingle()
 
@@ -313,8 +278,10 @@ async function loadAdminGrnSummary(supabase, selectedGrn = '') {
   const [
     { data: unloadRows, error: unloadError },
     { data: qcRows, error: qcError },
-    { data: confirmAdjustmentRows, error: confirmAdjustmentError },
-    { data: returnAdjustmentRows, error: returnAdjustmentError },
+    { data: qcConfirmRows, error: qcConfirmError },
+    { data: plReceivingRows, error: plReceivingError },
+    { data: plBreakdownRows, error: plBreakdownError },
+    { data: returnRows, error: returnError },
   ] = await Promise.all([
     loadInboundUnloadRowsForDashboard(supabase, selectedInbound.id),
     supabase
@@ -352,98 +319,92 @@ async function loadAdminGrnSummary(supabase, selectedGrn = '') {
       .eq('inbound_id', selectedInbound.id),
     supabase
       .from('qc_confirm')
-      .select(`
-        *,
-        brands:dir_brands!brand_id (
-          id,
-          brand_name
-        ),
-        categories:dir_categories!category_id (
-          id,
-          category_name,
-          full_name
-        )
-      `)
+      .select('id, qty, grade')
+      .eq('inbound_id', selectedInbound.id),
+    supabase
+      .from('pl_receiving')
+      .select('id, received_qty')
       .eq('inbound_id', selectedInbound.id)
-      .eq('is_adjustment', true),
+      .limit(5000),
+    supabase
+      .from('pl_size_breakdown')
+      .select('id, qty')
+      .eq('inbound_id', selectedInbound.id)
+      .limit(5000),
     supabase
       .from('warehouse_returns')
-      .select(`
-        *,
-        brands:dir_brands!brand_id (
-          id,
-          brand_name
-        ),
-        categories:dir_categories!category_id (
-          id,
-          category_name,
-          full_name
-        )
-      `)
+      .select('id, qty, source_phase')
       .eq('inbound_id', selectedInbound.id)
-      .eq('source_phase', 'qc')
-      .eq('is_adjustment', true),
+      .limit(5000),
   ])
 
-  const firstError = unloadError || qcError || confirmAdjustmentError || returnAdjustmentError
+  const firstError = unloadError || qcError || qcConfirmError || plReceivingError || plBreakdownError || returnError
   if (firstError) {
     return { grnOptions, selectedGrn, selectedInbound, summary: null, error: firstError.message }
   }
 
-  const inboundTotalFromUnload = (unloadRows || []).reduce((sum, item) => sum + Number(item.qty || 0), 0)
-  const breakdownByKey = new Map()
-
-  ;(unloadRows || []).forEach((item) => {
-    const breakdownRow = getBreakdownRow(breakdownByKey, {
-      brand: item.brands?.brand_name,
-      model: item.model_name,
-      variant: getVariantLabel(item),
-    })
-    breakdownRow.inboundTotal += Number(item.qty || 0)
-  })
-
-  const gradeTotals = (qcRows || []).reduce(
-    (total, item) => {
-      const breakdownRow = getBreakdownRow(breakdownByKey, {
-        brand: item.product_model?.brands?.brand_name || item.inbound_unload?.brands?.brand_name,
-        model: item.model_name || item.inbound_unload?.model_name,
-        variant: getVariantLabel(item),
-      })
-      breakdownRow.gradeA += Number(item.qty_a || 0)
-      breakdownRow.gradeB += Number(item.qty_b || 0)
-      breakdownRow.gradeC += Number(item.qty_c || 0)
-      total.gradeA += Number(item.qty_a || 0)
-      total.gradeB += Number(item.qty_b || 0)
-      total.gradeC += Number(item.qty_c || 0)
-      return total
-    },
-    { gradeA: 0, gradeB: 0, gradeC: 0 }
+  const totalReceivingQty = Number(selectedInbound.total_received_qty || 0)
+  const totalUnloadQty = (unloadRows || []).reduce((sum, item) => sum + Number(item.qty || 0), 0)
+  const totalAllocatedQty = (qcRows || []).reduce((sum, item) => sum + Number(item.allocated_qty || 0), 0)
+  const totalQcIn = (qcRows || []).reduce(
+    (sum, item) => sum + Number(item.qty_a || 0) + Number(item.qty_b || 0) + Number(item.qty_c || 0),
+    0
   )
-
-  ;[...(confirmAdjustmentRows || []), ...(returnAdjustmentRows || [])].forEach((item) => {
-    addGradeTotals(gradeTotals, item)
-    const breakdownRow = getBreakdownRow(breakdownByKey, {
-      brand: item.brands?.brand_name,
-      model: item.model_name,
-      variant: getVariantLabel(item),
-    })
-    addBreakdownGradeTotals(breakdownRow, item)
-  })
-
-  const breakdownRows = finalizeBreakdownRows(breakdownByKey)
+  const totalQcConfirm = (qcConfirmRows || []).reduce((sum, item) => sum + Number(item.qty || 0), 0)
+  const plReceivingQty = (plReceivingRows || []).reduce((sum, item) => sum + Number(item.received_qty || 0), 0)
+  const plBreakdownQty = (plBreakdownRows || []).reduce((sum, item) => sum + Number(item.qty || 0), 0)
+  const qcConfirmGradeAQty = (qcConfirmRows || [])
+    .filter((item) => String(item.grade || '').trim().toUpperCase() === 'A')
+    .reduce((sum, item) => sum + Number(item.qty || 0), 0)
+  const qcConfirmGradeBQty = (qcConfirmRows || [])
+    .filter((item) => String(item.grade || '').trim().toUpperCase() === 'B')
+    .reduce((sum, item) => sum + Number(item.qty || 0), 0)
+  const returBongkarQty = (returnRows || [])
+    .filter((item) => ['inbound', 'bongkar'].includes(String(item.source_phase || '').trim().toLowerCase()))
+    .reduce((sum, item) => sum + Number(item.qty || 0), 0)
+  const returQcQty = (returnRows || [])
+    .filter((item) => String(item.source_phase || '').trim().toLowerCase() === 'qc')
+    .reduce((sum, item) => sum + Number(item.qty || 0), 0)
+  const returPlQty = (returnRows || [])
+    .filter((item) => ['packing list', 'packing_list'].includes(String(item.source_phase || '').trim().toLowerCase()))
+    .reduce((sum, item) => sum + Number(item.qty || 0), 0)
+  const totalReturQty = returBongkarQty + returQcQty + returPlQty
+  const displayGradeAQty = plBreakdownQty
+  const displayGradeBQty = qcConfirmGradeBQty
+  const totalSummaryQty = displayGradeAQty + totalReturQty
+  const sjQty = selectedInbound.total_claimed_qty == null ? null : Number(selectedInbound.total_claimed_qty || 0)
+  const sjVarianceQty = sjQty == null ? null : totalSummaryQty - sjQty
+  const supplierName = selectedInbound.suppliers?.supplier_name || '-'
+  const firstUnloadRow = (unloadRows || [])[0] || {}
+  const brandName = cleanSummaryText(firstUnloadRow.brands?.brand_name)
+  const categoryName = cleanSummaryText(firstUnloadRow.categories?.full_name || firstUnloadRow.categories?.category_name)
+  const itemName = cleanSummaryText(selectedInbound.item_name)
+  const productSummary = dedupeSummaryParts([brandName, itemName, categoryName]).join(' ')
 
   return {
     grnOptions,
     selectedGrn,
     selectedInbound,
     summary: {
-      inboundTotal: inboundTotalFromUnload || Number(selectedInbound.total_received_qty || 0),
-      qcInTotal: gradeTotals.gradeA + gradeTotals.gradeB + gradeTotals.gradeC,
-      qcOutTotal: gradeTotals.gradeA,
-      gradeA: gradeTotals.gradeA,
-      gradeB: gradeTotals.gradeB,
-      gradeC: gradeTotals.gradeC,
-      breakdownRows,
+      totalReceivingQty,
+      totalUnloadQty,
+      totalAllocatedQty,
+      totalQcIn,
+      totalQcConfirm,
+      plReceivingQty,
+      plBreakdownQty,
+      displayGradeAQty,
+      displayGradeBQty,
+      qcConfirmGradeAQty,
+      returBongkarQty,
+      returQcQty,
+      returPlQty,
+      totalReturQty,
+      totalSummaryQty,
+      sjQty,
+      sjVarianceQty,
+      supplierName,
+      productSummary,
     },
     error: '',
   }
@@ -452,99 +413,97 @@ async function loadAdminGrnSummary(supabase, selectedGrn = '') {
 function AdminGrnSummaryCard({ grnOptions = [], selectedGrn = '', selectedInbound = null, summary = null, error = '' }) {
   return (
     <section className={styles.sectionCard}>
-      <div className={styles.sectionHead}>
-        <div>
-          <p className={styles.sectionKicker}>QC Snapshot</p>
-          <h2 className={styles.sectionTitle}>GRN Summary</h2>
-        </div>
+      <div className={styles.grnSummaryTopRow}>
+        <h2 className={styles.grnSummaryTitle}>GRN Summary</h2>
+        <form className={styles.grnSummaryInlineForm} method="get">
+          <label className={styles.grnSummaryInlineField}>
+            <input
+              name="grn"
+              list="dashboard-grn-options"
+              defaultValue={selectedGrn}
+              className={styles.grnSummaryInput}
+              placeholder="Select GRN number"
+            />
+            <datalist id="dashboard-grn-options">
+              {grnOptions.map((item) => (
+                <option key={item.id} value={item.grn_number} />
+              ))}
+            </datalist>
+          </label>
+          <button type="submit" className={styles.grnSummaryIconButton} aria-label="Show summary" title="Show summary">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <circle cx="11" cy="11" r="7" />
+              <path d="m20 20-3.5-3.5" />
+            </svg>
+          </button>
+        </form>
       </div>
-
-      <form className={styles.grnSummaryForm} method="get">
-        <label className={styles.grnSummaryField}>
-          <span>GRN Number</span>
-          <input
-            name="grn"
-            list="dashboard-grn-options"
-            defaultValue={selectedGrn}
-            className={styles.grnSummaryInput}
-            placeholder="Select GRN number"
-          />
-          <datalist id="dashboard-grn-options">
-            {grnOptions.map((item) => (
-              <option key={item.id} value={item.grn_number} />
-            ))}
-          </datalist>
-        </label>
-        <button type="submit" className={styles.grnSummaryButton}>Show Summary</button>
-      </form>
 
       {error ? <p className={styles.grnSummaryError}>{error}</p> : null}
 
       {!selectedGrn ? (
-        <div className={styles.grnSummaryEmpty}>Choose a GRN number to show inbound and QC totals.</div>
+        <div className={styles.grnSummaryEmpty}>Choose a GRN number to show the operational summary.</div>
       ) : !selectedInbound ? (
         <div className={styles.grnSummaryEmpty}>No matching GRN found.</div>
       ) : summary ? (
         <>
           <div className={styles.grnSummaryMeta}>
             <strong>{selectedInbound.grn_number}</strong>
-            <span>{selectedInbound.item_name || 'Inbound item'}</span>
+            <span>{summary.supplierName}</span>
           </div>
           <div className={styles.grnMetricGrid}>
             <div className={styles.grnMetricCard}>
-              <span>Inbound Total</span>
-              <strong>{formatNumber(summary.inboundTotal)}</strong>
+              <span>Inbound</span>
+              <strong>{formatNumber(summary.totalUnloadQty)}</strong>
+              <small>
+                Total Receiving Qty {formatNumber(summary.totalReceivingQty)}<br />
+                Total Unload Qty {formatNumber(summary.totalUnloadQty)}
+              </small>
             </div>
             <div className={styles.grnMetricCard}>
-              <span>QC In Total</span>
-              <strong>{formatNumber(summary.qcInTotal)}</strong>
-              <small>A {formatNumber(summary.gradeA)} / B {formatNumber(summary.gradeB)} / C {formatNumber(summary.gradeC)}</small>
+              <span>QC</span>
+              <strong>{formatNumber(summary.totalAllocatedQty)}</strong>
+              <small>
+                Total Allocated {formatNumber(summary.totalAllocatedQty)}<br />
+                Total QC Confirm {formatNumber(summary.totalQcConfirm)}
+              </small>
             </div>
             <div className={styles.grnMetricCard}>
-              <span>QC Out Total</span>
-              <strong>{formatNumber(summary.qcOutTotal)}</strong>
-              <small>Grade A only</small>
+              <span>Packing List</span>
+              <strong>{formatNumber(summary.plBreakdownQty)}</strong>
+              <small>
+                PL Receiving {formatNumber(summary.plReceivingQty)}<br />
+                PL Breakdown {formatNumber(summary.plBreakdownQty)}
+              </small>
+            </div>
+            <div className={styles.grnMetricCard}>
+              <span>Retur</span>
+              <strong>{formatNumber(summary.totalReturQty)}</strong>
+              <small>
+                Retur Bongkar {formatNumber(summary.returBongkarQty)}<br />
+                Retur QC {formatNumber(summary.returQcQty)}<br />
+                Retur Packing List {formatNumber(summary.returPlQty)}
+              </small>
             </div>
           </div>
-          <div className={styles.grnBreakdownWrap}>
-            <div className={styles.grnBreakdownHeader}>
-              <strong>Breakdown</strong>
-              <span>Per brand, model, and variant</span>
+          <div className={styles.grnSummaryDetailCard}>
+            <strong className={styles.grnSummaryDetailTitle}>
+              {selectedInbound.grn_number} - {summary.supplierName}
+            </strong>
+            <div className={styles.grnSummaryNarrative}>
+              {summary.productSummary ? <p>{summary.productSummary}.</p> : null}
+              <p>Grade A: {formatNumber(summary.displayGradeAQty)} pcs.</p>
+              <p>Grade B: {formatNumber(summary.displayGradeBQty)} pcs.</p>
+              {summary.totalReturQty > 0 ? (
+                <div className={styles.grnSummaryRejectBlock}>
+                  <p>Total Reject: {formatNumber(summary.totalReturQty)} pcs.</p>
+                  {summary.returQcQty > 0 ? <p>- Reject QC: {formatNumber(summary.returQcQty)} pcs.</p> : null}
+                  {summary.returPlQty > 0 ? <p>- Reject Packing List: {formatNumber(summary.returPlQty)} pcs.</p> : null}
+                  {summary.returBongkarQty > 0 ? <p>- Reject Bongkar: {formatNumber(summary.returBongkarQty)} pcs.</p> : null}
+                </div>
+              ) : null}
+              <p>Total: {formatNumber(summary.totalSummaryQty)} pcs [{getSjComparisonLabel(summary.sjVarianceQty)}].</p>
             </div>
-            {summary.breakdownRows?.length ? (
-              <div className={styles.grnBreakdownTableWrap}>
-                <table className={styles.grnBreakdownTable}>
-                  <thead>
-                    <tr>
-                      <th>Brand</th>
-                      <th>Model</th>
-                      <th>Variant</th>
-                      <th>Inbound</th>
-                      <th>QC In</th>
-                      <th>QC Out</th>
-                      <th>A / B / C</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {summary.breakdownRows.map((item) => (
-                      <tr key={item.key}>
-                        <td>{item.brand}</td>
-                        <td>{item.model}</td>
-                        <td>{item.variant}</td>
-                        <td>{formatNumber(item.inboundTotal)}</td>
-                        <td>{formatNumber(item.qcInTotal)}</td>
-                        <td>{formatNumber(item.qcOutTotal)}</td>
-                        <td>
-                          A {formatNumber(item.gradeA)} / B {formatNumber(item.gradeB)} / C {formatNumber(item.gradeC)}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            ) : (
-              <div className={styles.grnSummaryEmpty}>No brand, model, or variant detail found for this GRN.</div>
-            )}
           </div>
         </>
       ) : null}
@@ -729,16 +688,7 @@ export default async function DashboardPage({ searchParams }) {
       </section>
 
       <div className={styles.contentGrid}>
-        <div className={styles.leftColumn}>
-          <AdminGrnSummaryCard
-            grnOptions={adminGrnSummary?.grnOptions || []}
-            selectedGrn={adminGrnSummary?.selectedGrn || ''}
-            selectedInbound={adminGrnSummary?.selectedInbound || null}
-            summary={adminGrnSummary?.summary || null}
-            error={adminGrnSummary?.error || ''}
-          />
-        </div>
-        <div className={styles.rightColumn}>
+        <div className={styles.fullColumn}>
           <section className={`${styles.sectionCard} ${styles.compactCard}`}>
             <p className={styles.sectionKicker}>News &amp; Updates</p>
 
@@ -784,6 +734,14 @@ export default async function DashboardPage({ searchParams }) {
               )}
             </div>
           </section>
+
+          <AdminGrnSummaryCard
+            grnOptions={adminGrnSummary?.grnOptions || []}
+            selectedGrn={adminGrnSummary?.selectedGrn || ''}
+            selectedInbound={adminGrnSummary?.selectedInbound || null}
+            summary={adminGrnSummary?.summary || null}
+            error={adminGrnSummary?.error || ''}
+          />
         </div>
       </div>
     </div>

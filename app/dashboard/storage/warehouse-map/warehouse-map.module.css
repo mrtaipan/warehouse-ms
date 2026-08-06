@@ -1102,6 +1102,79 @@
   box-shadow: 0 0 0 3px rgba(15, 23, 42, 0.12);
 }
 
+.arklineRackFrame {
+  min-height: 260px;
+  padding: 20px;
+  border: 1px solid #e2e8f0;
+  border-radius: 16px;
+  background: #ffffff;
+}
+
+.arklineBoxSlot {
+  min-height: 220px;
+  padding: 18px;
+  border: 1px dashed #cbd5e1;
+  border-radius: 14px;
+  background: #f8fafc;
+  color: #475569;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.arklineBoxSlotOccupied {
+  border-style: solid;
+  border-color: #93c5fd;
+  background: #eff6ff;
+}
+
+.arklineBoxSlotSelected {
+  border-color: #0f172a;
+  background: rgba(15, 23, 42, 0.08);
+  box-shadow:
+    0 0 0 4px rgba(15, 23, 42, 0.1),
+    0 16px 28px rgba(15, 23, 42, 0.14);
+}
+
+.arklineBoxSlot strong {
+  color: #0f172a;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.arklineBoxPreview {
+  display: grid;
+  grid-template-columns: repeat(4, 24px);
+  gap: 8px;
+  align-content: center;
+  justify-content: center;
+  min-height: 118px;
+}
+
+.arklineBoxUnit {
+  width: 24px;
+  height: 20px;
+  border: 1px solid #93c5fd;
+  border-radius: 5px;
+  background: #dbeafe;
+  box-shadow: inset 0 -3px 0 rgba(37, 99, 235, 0.12);
+}
+
+.rackKindBadge {
+  min-height: 34px;
+  padding: 0 12px;
+  border: 1px solid #d7dee7;
+  border-radius: 10px;
+  background: #ffffff;
+  color: #475569;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 900;
+}
+
 .subLocationPanel {
   display: flex;
   flex-direction: column;

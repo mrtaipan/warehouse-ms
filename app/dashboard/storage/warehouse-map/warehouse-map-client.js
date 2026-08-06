@@ -107,13 +107,13 @@ const WAREHOUSES = {
     title: 'Warehouse LV83',
     mapRatio: '420 / 680',
     zones: [
-      { code: '7', x: 1.5, y: 5, w: 8, h: 12, variant: 'standard' },
-      { code: '6', x: 1.5, y: 17, w: 8, h: 12, variant: 'standard' },
-      { code: '5', x: 1.5, y: 29, w: 8, h: 12, variant: 'standard' },
-      { code: '4', x: 1.5, y: 41, w: 8, h: 12, variant: 'standard' },
-      { code: '3', x: 1.5, y: 53, w: 8, h: 12, variant: 'standard' },
-      { code: '2', x: 1.5, y: 65, w: 8, h: 12, variant: 'standard' },
-      { code: '1', x: 1.5, y: 77, w: 8, h: 12, variant: 'standard' },
+      { code: '7', x: 1.5, y: 5, w: 8, h: 12, variant: 'arkline' },
+      { code: '6', x: 1.5, y: 17, w: 8, h: 12, variant: 'arkline' },
+      { code: '5', x: 1.5, y: 29, w: 8, h: 12, variant: 'arkline' },
+      { code: '4', x: 1.5, y: 41, w: 8, h: 12, variant: 'arkline' },
+      { code: '3', x: 1.5, y: 53, w: 8, h: 12, variant: 'arkline' },
+      { code: '2', x: 1.5, y: 65, w: 8, h: 12, variant: 'arkline' },
+      { code: '1', x: 1.5, y: 77, w: 8, h: 12, variant: 'arkline' },
       { code: '36', x: 47, y: 5, w: 8, h: 12, variant: 'standard' },
       { code: '35', x: 47, y: 17, w: 8, h: 12, variant: 'standard' },
       { code: '34', x: 47, y: 29, w: 8, h: 12, variant: 'standard' },
@@ -148,6 +148,7 @@ const WAREHOUSES = {
 }
 
 const WAREHOUSE_ORDER = ['LV83', 'LV85', 'LV87']
+const LV83_ARKLINE_ZONE_CODES = new Set(['1', '2', '3', '4', '5', '6', '7'])
 const MAP_BUILDER_STORAGE_KEY = 'warehouse-map-builder-layout-v2'
 const EMBEDDED_MAP_LAYOUTS = embeddedMapLayouts
 const SNAP_STEP = 1
@@ -192,8 +193,55 @@ function normalizeSavedElement(element) {
   }
 }
 
+function normalizeMapElementForWarehouse(element, warehouseKey) {
+  const normalized = normalizeSavedElement(element)
+
+  if (normalized.type === 'pallet' && isArklineZone(normalized, warehouseKey)) {
+    return {
+      ...normalized,
+      variant: 'arkline',
+    }
+  }
+
+  return normalized
+}
+
 function getStorageType(value) {
   return String(value || '').trim().toUpperCase()
+}
+
+function normalizeGroupCode(value) {
+  return String(value || '').trim().toUpperCase().replace(/\s+/g, '')
+}
+
+function isArklineLocation(location) {
+  return normalizeGroupCode(location?.group_code) === 'ARKLINE'
+}
+
+function getArklineRackNumber(value) {
+  const compact = String(value || '').trim().toUpperCase().replace(/\s+/g, '')
+  const match = compact.match(/^ARK[._-]?0*(\d+)$/) || compact.match(/^0*(\d+)$/)
+
+  return match ? String(Number(match[1])) : ''
+}
+
+function isArklineZone(zone, warehouseKey) {
+  return (
+    normalizeWarehouseValue(warehouseKey) === 'LV83' &&
+    (zone?.variant === 'arkline' || LV83_ARKLINE_ZONE_CODES.has(getArklineRackNumber(zone?.code)))
+  )
+}
+
+function getZoneDisplayCode(zone, warehouseKey) {
+  if (!zone?.code) {
+    return ''
+  }
+
+  if (isArklineZone(zone, warehouseKey)) {
+    return `ARK.${getArklineRackNumber(zone.code) || zone.code}`
+  }
+
+  return String(zone.label || zone.code)
 }
 
 function getShelvingCode(location) {
@@ -408,7 +456,7 @@ function normalizeLocationCode(value) {
     .toUpperCase()
     .replace(/\s+/g, '')
 
-  const arkMatch = compact.match(/^ARK-?0*(\d+)$/)
+  const arkMatch = compact.match(/^ARK[._-]?0*(\d+)$/)
   if (arkMatch) {
     return `ARK-${Number(arkMatch[1])}`
   }
@@ -427,7 +475,7 @@ function splitLocationIdentifier(value) {
     return { base: '', suffix: '' }
   }
 
-  const arkMatch = normalized.match(/^ARK-?0*(\d+)[-_/]?([A-Z])?$/)
+  const arkMatch = normalized.match(/^ARK[._-]?0*(\d+)[-_/]?([A-Z])?$/)
   if (arkMatch) {
     return {
       base: `ARK-${Number(arkMatch[1])}`,
@@ -509,6 +557,23 @@ function getSubLocationLabel(key) {
   return key === UNASSIGNED_SUBLOCATION_KEY ? 'Unassigned' : key
 }
 
+function escapeRegex(value) {
+  return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function includesLocationToken(value, token) {
+  const compactValue = String(value || '').toUpperCase().replace(/\s+/g, '')
+  const compactToken = String(token || '').toUpperCase().replace(/\s+/g, '')
+
+  if (!compactToken) {
+    return false
+  }
+
+  const tokenPattern = compactToken.split(/[-._]+/).map(escapeRegex).join('[-._]?')
+
+  return new RegExp(`(?:^|[^A-Z0-9])${tokenPattern}(?:$|[^A-Z0-9])`).test(compactValue)
+}
+
 function getRackSlotCode(zoneCode, slot) {
   const baseCode = getLocationBaseCode(zoneCode) || normalizeLocationCode(zoneCode)
   return `${baseCode}${slot.suffix}`
@@ -519,6 +584,10 @@ function matchesWarehouse(location, warehouseKey) {
   const warehouseCode = normalizeWarehouseValue(warehouseKey)
   const warehouseNumber = warehouseCode.replace('LV', '')
 
+  if (warehouseCode === 'LV83' && isArklineLocation(location)) {
+    return true
+  }
+
   return (
     warehouseValue.includes(warehouseCode) ||
     warehouseValue === warehouseNumber ||
@@ -526,8 +595,12 @@ function matchesWarehouse(location, warehouseKey) {
   )
 }
 
-function matchesZone(location, zoneCode) {
-  const targetCode = getLocationBaseCode(zoneCode)
+function matchesZone(location, zone, warehouseKey) {
+  if (isArklineZone(zone, warehouseKey)) {
+    return isArklineLocation(location) && getArklineRackNumber(location.location_code || location.location_name) === getArklineRackNumber(zone.code)
+  }
+
+  const targetCode = getLocationBaseCode(zone?.code || zone)
   const locationCode = getLocationBaseCode(location.location_code)
   const locationName = getLocationBaseCode(location.location_name)
 
@@ -581,7 +654,7 @@ async function fetchAllRackLocations() {
     const to = from + BATCH_SIZE - 1
     const { data, error } = await supabase
       .from('dir_rack_locations')
-      .select('id, location_type, location_id, location_code, sub_location, location_name')
+      .select('id, location_type, location_id, location_code, sub_location, location_name, group_code')
       .order('location_type', { ascending: true })
       .order('location_id', { ascending: true })
       .order('location_code', { ascending: true })
@@ -701,6 +774,7 @@ function normalizeRackLocations(rows) {
     location_code: typeof item.location_code === 'string' ? item.location_code.trim() : item.location_code,
     sub_location: typeof item.sub_location === 'string' ? item.sub_location.trim() : item.sub_location,
     location_name: typeof item.location_name === 'string' ? item.location_name.trim() : item.location_name,
+    group_code: typeof item.group_code === 'string' ? item.group_code.trim() : item.group_code,
   }))
 }
 
@@ -754,6 +828,22 @@ function RackSlotSubLocationPreview({ slot, selectedSlotKey, selectedSubLocation
             )
           })}
         </span>
+      ))}
+    </span>
+  )
+}
+
+function ArklineBoxPreview({ entries }) {
+  if (!entries?.length) {
+    return <span className={styles.emptyPalletLine} />
+  }
+
+  const boxCount = Math.min(12, Math.max(1, entries.length))
+
+  return (
+    <span className={styles.arklineBoxPreview} aria-hidden="true">
+      {Array.from({ length: boxCount }, (_, index) => (
+        <span key={`arkline-box-${index}`} className={styles.arklineBoxUnit} />
       ))}
     </span>
   )
@@ -960,9 +1050,17 @@ function matchesHistoryRow(row, options) {
   const takeFrom = String(row.take_from || '').toUpperCase().replace(/\s+/g, '')
   const normalizedWarehouse = normalizeWarehouseValue(selectedWarehouseKey)
   const normalizedSlotCode = normalizeLocationCode(selectedSlotCode)
+  const arklineRackNumber = getArklineRackNumber(selectedSlotCode)
+  const normalizedSlotAliases = new Set([normalizedSlotCode])
+
+  if (arklineRackNumber) {
+    normalizedSlotAliases.add(normalizeLocationCode(arklineRackNumber))
+    normalizedSlotAliases.add(normalizeLocationCode(`ARK-${arklineRackNumber}`))
+  }
+
   const storageId = row.storage_id ? String(row.storage_id) : ''
   const matchesCurrentStorage = storageId ? selectedSlotStorageIds.has(storageId) : false
-  const matchesSlotLabel = takeFrom.includes(normalizedSlotCode)
+  const matchesSlotLabel = Array.from(normalizedSlotAliases).some((slotCode) => includesLocationToken(takeFrom, slotCode))
   const matchesWarehouseLabel = takeFrom.includes(normalizedWarehouse)
 
   if (!matchesCurrentStorage && !(matchesSlotLabel && matchesWarehouseLabel)) {
@@ -1110,7 +1208,7 @@ export default function WarehouseMapClient({ canEditMap = false }) {
   }, [])
 
   const locationById = useMemo(
-    () => new Map(rackLocations.map((location) => [location.id, location])),
+    () => new Map(rackLocations.map((location) => [String(location.id), location])),
     [rackLocations]
   )
 
@@ -1119,7 +1217,7 @@ export default function WarehouseMapClient({ canEditMap = false }) {
       storageEntries
         .map((entry) => ({
           ...entry,
-          location: locationById.get(entry.rack_location_id) || null,
+          location: locationById.get(String(entry.rack_location_id)) || null,
         }))
         .filter((entry) => entry.location),
     [locationById, storageEntries]
@@ -1132,7 +1230,10 @@ export default function WarehouseMapClient({ canEditMap = false }) {
   const warehouse = WAREHOUSES[selectedWarehouseKey]
   const defaultMapLayouts = useMemo(() => createDefaultLayouts(rackLocations), [rackLocations])
   const activeMapElements = useMemo(
-    () => (mapLayouts[warehouse.key]?.elements || defaultMapLayouts[warehouse.key]?.elements || []).map(normalizeSavedElement),
+    () =>
+      (mapLayouts[warehouse.key]?.elements || defaultMapLayouts[warehouse.key]?.elements || []).map((element) =>
+        normalizeMapElementForWarehouse(element, warehouse.key)
+      ),
     [defaultMapLayouts, mapLayouts, warehouse.key]
   )
   const wallElements = activeMapElements.filter((element) => element.type === 'wall')
@@ -1162,10 +1263,10 @@ export default function WarehouseMapClient({ canEditMap = false }) {
 
     assignedPalletElements.forEach((zone) => {
       const locations = rackLocations.filter(
-        (location) => matchesWarehouse(location, warehouse.key) && matchesZone(location, zone.code)
+        (location) => matchesWarehouse(location, warehouse.key) && matchesZone(location, zone, warehouse.key)
       )
-      const locationIds = new Set(locations.map((location) => location.id))
-      const entries = storageRows.filter((entry) => locationIds.has(entry.rack_location_id))
+      const locationIds = new Set(locations.map((location) => String(location.id)))
+      const entries = storageRows.filter((entry) => locationIds.has(String(entry.rack_location_id)))
       const totalQty = entries.reduce((sum, entry) => sum + Number(entry.qty || 0), 0)
 
       dataMap.set(zone.code, {
@@ -1183,8 +1284,8 @@ export default function WarehouseMapClient({ canEditMap = false }) {
 
     assignedShelvingElements.forEach((shelving) => {
       const locations = rackLocations.filter((location) => matchesShelving(location, shelving.code))
-      const locationIds = new Set(locations.map((location) => location.id))
-      const entries = storageRows.filter((entry) => locationIds.has(entry.rack_location_id))
+      const locationIds = new Set(locations.map((location) => String(location.id)))
+      const entries = storageRows.filter((entry) => locationIds.has(String(entry.rack_location_id)))
       const totalQty = entries.reduce((sum, entry) => sum + Number(entry.qty || 0), 0)
 
       dataMap.set(shelving.code, {
@@ -1202,6 +1303,8 @@ export default function WarehouseMapClient({ canEditMap = false }) {
     () => assignedPalletElements.find((zone) => zone.code === selectedZoneCode) || null,
     [assignedPalletElements, selectedZoneCode]
   )
+  const selectedZoneIsArkline = selectedZone ? isArklineZone(selectedZone, warehouse.key) : false
+  const selectedZoneDisplayCode = selectedZone ? getZoneDisplayCode(selectedZone, warehouse.key) : ''
   const selectedShelving = useMemo(
     () => assignedShelvingElements.find((shelving) => shelving.code === selectedZoneCode) || null,
     [assignedShelvingElements, selectedZoneCode]
@@ -1250,7 +1353,12 @@ export default function WarehouseMapClient({ canEditMap = false }) {
     [selectedZoneData]
   )
   const selectedSlot = rackSlots.find((slot) => slot.key === selectedSlotKey) || rackSlots[0]
-  const selectedSlotCode = selectedZone && selectedSlot ? getRackSlotCode(selectedZone.code, selectedSlot) : ''
+  const selectedSlotCode =
+    selectedZone && selectedSlot
+      ? selectedZoneIsArkline
+        ? selectedZoneDisplayCode
+        : getRackSlotCode(selectedZone.code, selectedSlot)
+      : ''
   const subLocationSlots = useMemo(
     () => buildSubLocationSlots(selectedSlot),
     [selectedSlot]
@@ -1279,8 +1387,26 @@ export default function WarehouseMapClient({ canEditMap = false }) {
   const selectedRegistryLocation = registrySubLocationOptions.find(
     (option) => option.key === registryForm.subLocationKey
   )?.location || null
+  const selectedArklineRegistryLocation =
+    selectedZoneIsArkline && selectedZoneData?.locations?.length
+      ? selectedZoneData.locations.find((location) => isArklineLocation(location)) || selectedZoneData.locations[0]
+      : null
+  const activeRegistryLocation = selectedZoneIsArkline ? selectedArklineRegistryLocation : selectedRegistryLocation
   const selectedSubLocation = subLocationSlots.find((slot) => slot.key === selectedSubLocationKey) || null
   const currentGoodsGroups = useMemo(() => {
+    if (selectedZoneIsArkline) {
+      const entries = selectedZoneData?.entries || []
+
+      return entries.length > 0
+        ? [{
+            key: 'ARKLINE_BOX',
+            label: 'Box',
+            entries,
+            qty: entries.reduce((sum, entry) => sum + Number(entry.qty || 0), 0),
+          }]
+        : []
+    }
+
     if (!selectedSlot) {
       return []
     }
@@ -1299,10 +1425,15 @@ export default function WarehouseMapClient({ canEditMap = false }) {
           qty: entries.reduce((sum, entry) => sum + Number(entry.qty || 0), 0),
         }]
       : []
-  }, [selectedSlot, selectedSubLocation, selectedSubLocationKey])
+  }, [selectedSlot, selectedSubLocation, selectedSubLocationKey, selectedZoneData, selectedZoneIsArkline])
   const selectedSlotStorageIds = useMemo(
-    () => new Set((selectedSlot?.entries || []).map((entry) => String(entry.id))),
-    [selectedSlot]
+    () =>
+      new Set(
+        (selectedZoneIsArkline ? selectedZoneData?.entries || [] : selectedSlot?.entries || []).map((entry) =>
+          String(entry.id)
+        )
+      ),
+    [selectedSlot, selectedZoneData, selectedZoneIsArkline]
   )
   const historyRows = useMemo(() => {
     if (!selectedZone || !selectedSlotCode) {
@@ -1335,7 +1466,10 @@ export default function WarehouseMapClient({ canEditMap = false }) {
         return
       }
 
-      const code = getLocationBaseCode(location.location_code || location.location_name)
+      const code =
+        warehouse.key === 'LV83' && isArklineLocation(location)
+          ? getArklineRackNumber(location.location_code || location.location_name)
+          : getLocationBaseCode(location.location_code || location.location_name)
 
       if (code) {
         codes.add(code)
@@ -1854,8 +1988,12 @@ export default function WarehouseMapClient({ canEditMap = false }) {
     setRegistryError('')
     setRegistrySuccess('')
 
-    if (!selectedRegistryLocation) {
-      setRegistryError('Please choose a K position first.')
+    if (!activeRegistryLocation) {
+      setRegistryError(
+        selectedZoneIsArkline
+          ? 'No mapped ARKLINE box location found for this rack.'
+          : 'Please choose a K position first.'
+      )
       setRegistrySaving(false)
       return
     }
@@ -1867,7 +2005,7 @@ export default function WarehouseMapClient({ canEditMap = false }) {
     }
 
     const payload = {
-      rack_location_id: selectedRegistryLocation.id,
+      rack_location_id: activeRegistryLocation.id,
       item_name: registryForm.itemName.trim(),
       size: normalizeSizeValue(registryForm.size) || null,
       qty: Number(registryForm.qty || 0),
@@ -2117,7 +2255,7 @@ export default function WarehouseMapClient({ canEditMap = false }) {
                 }
                 const isSelected = selectedZoneCode === zone.code
                 const isElementSelected = editMode && selectedElementId === zone.id
-                const zoneLabel = zone.label || zone.code || 'Unassigned'
+                const zoneLabel = zone.label || getZoneDisplayCode(zone, warehouse.key) || 'Unassigned'
 
                 return (
                   <button
@@ -2136,7 +2274,7 @@ export default function WarehouseMapClient({ canEditMap = false }) {
                       handleZoneSelect(zone.code)
                     }}
                     aria-pressed={editMode ? isElementSelected : isSelected}
-                    aria-label={`${warehouse.title} pallet ${zoneLabel}, ${zoneData.entries.length > 0 ? 'occupied' : 'empty'}`}
+                    aria-label={`${warehouse.title} rack ${zoneLabel}, ${zoneData.entries.length > 0 ? 'occupied' : 'empty'}`}
                   >
                     <span className={styles.zoneNumber}>{zoneLabel}</span>
                     {zoneData.entries.length > 0 ? (
@@ -2421,62 +2559,82 @@ export default function WarehouseMapClient({ canEditMap = false }) {
                   <div className={styles.rackHeader}>
                     <div>
                       <p className={styles.eyebrow}>Rack View</p>
-                      <h3>{warehouse.key} / {selectedZone.code}</h3>
+                      <h3>{warehouse.key} / {selectedZoneDisplayCode}</h3>
                       <p>
-                        {selectedZoneData.locations.length} registered slot(s), {formatNumber(selectedZoneData.totalQty)} item qty.
+                        {selectedZoneData.locations.length} registered {selectedZoneIsArkline ? 'box location' : 'slot'}(s), {formatNumber(selectedZoneData.totalQty)} item qty.
                       </p>
                     </div>
-                    <button
-                      type="button"
-                      className={`${styles.subLocationAllButton} ${selectedSubLocationKey === SUBLOCATION_ALL_KEY ? styles.subLocationAllButtonActive : ''}`.trim()}
-                      onClick={() => handleSlotSelect(selectedSlot.key)}
-                      aria-pressed={selectedSubLocationKey === SUBLOCATION_ALL_KEY}
-                    >
-                      All K
-                    </button>
+                    {selectedZoneIsArkline ? (
+                      <span className={styles.rackKindBadge}>Box location</span>
+                    ) : (
+                      <button
+                        type="button"
+                        className={`${styles.subLocationAllButton} ${selectedSubLocationKey === SUBLOCATION_ALL_KEY ? styles.subLocationAllButtonActive : ''}`.trim()}
+                        onClick={() => selectedSlot && handleSlotSelect(selectedSlot.key)}
+                        aria-pressed={selectedSubLocationKey === SUBLOCATION_ALL_KEY}
+                      >
+                        All K
+                      </button>
+                    )}
                   </div>
 
-                  <div className={styles.rackFrame} aria-label={`Rack layout for pallet ${selectedZone.code}`}>
-                    <span className={styles.rackPostLeft} />
-                    <span className={styles.rackPostRight} />
-                    {[0, 1, 2].map((levelIndex) => (
-                      <span key={levelIndex} className={styles.rackBeam} style={{ '--beam-index': levelIndex }} />
-                    ))}
-
-                    <div className={styles.rackGrid}>
-                      {rackSlots.map((slot) => {
-                        const isSlotSelected = selectedSlotKey === slot.key
-                        const slotIsOccupied = slot.entries.length > 0
-                        const slotCode = getRackSlotCode(selectedZone.code, slot)
-
-                        return (
-                          <div
-                            key={slot.key}
-                            role="button"
-                            tabIndex={0}
-                            className={`${styles.rackSlot} ${slotIsOccupied ? styles.rackSlotOccupied : ''} ${isSlotSelected ? styles.rackSlotSelected : ''}`.trim()}
-                            onClick={() => handleSlotSelect(slot.key)}
-                            onKeyDown={(event) => {
-                              if (event.key === 'Enter' || event.key === ' ') {
-                                event.preventDefault()
-                                handleSlotSelect(slot.key)
-                              }
-                            }}
-                            aria-pressed={isSlotSelected}
-                          >
-                            <span className={styles.rackSlotLabel}>{slotCode}</span>
-                            <RackSlotSubLocationPreview
-                              slot={slot}
-                              selectedSlotKey={selectedSlotKey}
-                              selectedSubLocationKey={selectedSubLocationKey}
-                              onSelect={handleSlotSelect}
-                            />
-                            <strong>{slotIsOccupied ? `${formatNumber(slot.qty)} qty` : 'Empty'}</strong>
-                          </div>
-                        )
-                      })}
+                  {selectedZoneIsArkline ? (
+                    <div className={styles.arklineRackFrame} aria-label={`Rack layout for ${selectedZoneDisplayCode}`}>
+                      <div
+                        className={`${styles.arklineBoxSlot} ${selectedZoneData.entries.length > 0 ? styles.arklineBoxSlotOccupied : ''} ${styles.arklineBoxSlotSelected}`.trim()}
+                      >
+                        <span className={styles.rackSlotLabel}>{selectedZoneDisplayCode}</span>
+                        <ArklineBoxPreview entries={selectedZoneData.entries} />
+                        <strong>
+                          {selectedZoneData.entries.length > 0
+                            ? `${formatNumber(selectedZoneData.totalQty)} qty`
+                            : 'Empty'}
+                        </strong>
+                      </div>
                     </div>
-                  </div>
+                  ) : (
+                    <div className={styles.rackFrame} aria-label={`Rack layout for pallet ${selectedZone.code}`}>
+                      <span className={styles.rackPostLeft} />
+                      <span className={styles.rackPostRight} />
+                      {[0, 1, 2].map((levelIndex) => (
+                        <span key={levelIndex} className={styles.rackBeam} style={{ '--beam-index': levelIndex }} />
+                      ))}
+
+                      <div className={styles.rackGrid}>
+                        {rackSlots.map((slot) => {
+                          const isSlotSelected = selectedSlotKey === slot.key
+                          const slotIsOccupied = slot.entries.length > 0
+                          const slotCode = getRackSlotCode(selectedZone.code, slot)
+
+                          return (
+                            <div
+                              key={slot.key}
+                              role="button"
+                              tabIndex={0}
+                              className={`${styles.rackSlot} ${slotIsOccupied ? styles.rackSlotOccupied : ''} ${isSlotSelected ? styles.rackSlotSelected : ''}`.trim()}
+                              onClick={() => handleSlotSelect(slot.key)}
+                              onKeyDown={(event) => {
+                                if (event.key === 'Enter' || event.key === ' ') {
+                                  event.preventDefault()
+                                  handleSlotSelect(slot.key)
+                                }
+                              }}
+                              aria-pressed={isSlotSelected}
+                            >
+                              <span className={styles.rackSlotLabel}>{slotCode}</span>
+                              <RackSlotSubLocationPreview
+                                slot={slot}
+                                selectedSlotKey={selectedSlotKey}
+                                selectedSubLocationKey={selectedSubLocationKey}
+                                onSelect={handleSlotSelect}
+                              />
+                              <strong>{slotIsOccupied ? `${formatNumber(slot.qty)} qty` : 'Empty'}</strong>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  )}
 
                   <div className={styles.segmentedControl} aria-label="Rack detail mode">
                     <button
@@ -2542,7 +2700,7 @@ export default function WarehouseMapClient({ canEditMap = false }) {
                           <div>
                             <h4>{row.item_name}</h4>
                             <p>
-                              {formatNumber(row.qty)} qty taken from {getSubLocationLabel(getHistorySubLocationKey(row, storageEntryById))}
+                              {formatNumber(row.qty)} qty taken from {selectedZoneIsArkline ? 'Box' : getSubLocationLabel(getHistorySubLocationKey(row, storageEntryById))}
                               {row.requester_name ? ` for ${row.requester_name}` : ''}
                             </p>
                             <p>Picked by {getDisplayNameByEmail(row.completed_by, userProfilesByEmail)}</p>
@@ -2557,26 +2715,39 @@ export default function WarehouseMapClient({ canEditMap = false }) {
                             <h3>Registry Storage</h3>
                             <p>{warehouse.key} / {selectedSlotCode}</p>
                           </div>
-                          <span>{registrySubLocationOptions.length} K position(s)</span>
+                          <span>
+                            {selectedZoneIsArkline
+                              ? activeRegistryLocation
+                                ? 'Box location'
+                                : 'No mapped box'
+                              : `${registrySubLocationOptions.length} K position(s)`}
+                          </span>
                         </div>
 
                         <div className={styles.registryGrid}>
-                          <label className={styles.registryField}>
-                            <span>K Position</span>
-                            <select
-                              name="subLocationKey"
-                              value={registryForm.subLocationKey}
-                              onChange={handleRegistryInputChange}
-                              required
-                            >
-                              <option value="">Select K</option>
-                              {registrySubLocationOptions.map((option) => (
-                                <option key={option.key} value={option.key}>
-                                  {option.key}
-                                </option>
-                              ))}
-                            </select>
-                          </label>
+                          {selectedZoneIsArkline ? (
+                            <label className={styles.registryField}>
+                              <span>Box Position</span>
+                              <input value={activeRegistryLocation ? 'Box' : 'Not mapped'} readOnly />
+                            </label>
+                          ) : (
+                            <label className={styles.registryField}>
+                              <span>K Position</span>
+                              <select
+                                name="subLocationKey"
+                                value={registryForm.subLocationKey}
+                                onChange={handleRegistryInputChange}
+                                required
+                              >
+                                <option value="">Select K</option>
+                                {registrySubLocationOptions.map((option) => (
+                                  <option key={option.key} value={option.key}>
+                                    {option.key}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                          )}
 
                           <label className={styles.registryField}>
                             <span>Qty</span>
@@ -2615,7 +2786,16 @@ export default function WarehouseMapClient({ canEditMap = false }) {
 
                           <label className={styles.registryField}>
                             <span>Selected Slot</span>
-                            <input value={selectedRegistryLocation ? `${selectedSlotCode} / ${registryForm.subLocationKey}` : selectedSlotCode} readOnly />
+                            <input
+                              value={
+                                selectedZoneIsArkline
+                                  ? `${selectedSlotCode} / Box`
+                                  : activeRegistryLocation
+                                    ? `${selectedSlotCode} / ${registryForm.subLocationKey}`
+                                    : selectedSlotCode
+                              }
+                              readOnly
+                            />
                           </label>
                         </div>
 
@@ -2629,8 +2809,11 @@ export default function WarehouseMapClient({ canEditMap = false }) {
                           />
                         </label>
 
-                        {registrySubLocationOptions.length === 0 ? (
+                        {!selectedZoneIsArkline && registrySubLocationOptions.length === 0 ? (
                           <p className={styles.registryWarning}>No mapped K position found for this rack slot.</p>
+                        ) : null}
+                        {selectedZoneIsArkline && !activeRegistryLocation ? (
+                          <p className={styles.registryWarning}>No mapped ARKLINE box location found for this rack.</p>
                         ) : null}
                         {registryError ? <p className={styles.registryError}>{registryError}</p> : null}
                         {registrySuccess ? <p className={styles.registrySuccess}>{registrySuccess}</p> : null}
@@ -2638,7 +2821,7 @@ export default function WarehouseMapClient({ canEditMap = false }) {
                         <button
                           type="submit"
                           className={styles.registrySubmit}
-                          disabled={registrySaving || !selectedRegistryLocation}
+                          disabled={registrySaving || !activeRegistryLocation}
                         >
                           {registrySaving ? 'Saving...' : 'Save to Storage'}
                         </button>

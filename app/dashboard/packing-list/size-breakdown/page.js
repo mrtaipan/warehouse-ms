@@ -3,6 +3,11 @@
 import Image from 'next/image'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useEffect, useMemo, useState } from 'react'
+import {
+  buildCatalogIdentityLookup,
+  getProductCatalogIdentityKey,
+  resolveProductCatalogIdentity,
+} from '@/utils/catalog-identity'
 import { createClient } from '@/utils/supabase/browser'
 import { getProfileByAuthenticatedUser } from '@/utils/user-profiles'
 
@@ -553,6 +558,15 @@ const styles = {
     borderRadius: '12px',
     background: '#f1f5f9',
   },
+  featureImageButton: {
+    width: '100%',
+    padding: 0,
+    border: 'none',
+    borderRadius: '12px',
+    background: 'transparent',
+    cursor: 'zoom-in',
+    overflow: 'hidden',
+  },
   featureNoPhoto: {
     width: '100%',
     height: '240px',
@@ -1059,6 +1073,11 @@ const styles = {
     fontSize: '13px',
     fontWeight: 900,
     cursor: 'pointer',
+  },
+  secondaryUploadButton: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   compactActionButton: {
     minHeight: '34px',
@@ -2407,6 +2426,8 @@ function drawPdfPhotoDetailSection(doc, config) {
     margin = 10,
     imageCache = new Map(),
     onPageBreak,
+    title = 'Photo Detail',
+    showGroupLabel = true,
   } = config
   const groups = getPdfPhotoDetailGroups(rows)
   if (!groups.length) return startY
@@ -2424,7 +2445,7 @@ function drawPdfPhotoDetailSection(doc, config) {
     doc.setFont(PDF_FONT_FAMILY, 'bold')
     doc.setFontSize(10)
     doc.setTextColor(15, 23, 42)
-    doc.text(`Photo Detail${continued ? ' (continued)' : ''}`, margin, y)
+    doc.text(`${title}${continued ? ' (continued)' : ''}`, margin, y)
     y += 7
   }
 
@@ -2445,16 +2466,18 @@ function drawPdfPhotoDetailSection(doc, config) {
     const groupLabel = `PL ID ${group.pl_id} - ${itemLabel || '-'}`
     doc.setFont(PDF_FONT_FAMILY, 'bold')
     doc.setFontSize(7.5)
-    const labelLines = doc.splitTextToSize(groupLabel, contentWidth)
-    const labelHeight = Math.max(5, labelLines.length * 3.4)
+    const labelLines = showGroupLabel ? doc.splitTextToSize(groupLabel, contentWidth) : []
+    const labelHeight = showGroupLabel ? Math.max(5, labelLines.length * 3.4) : 0
 
     if (y + labelHeight + cardHeight > pageBottom) startContinuationPage()
 
-    doc.setFont(PDF_FONT_FAMILY, 'bold')
-    doc.setFontSize(7.5)
-    doc.setTextColor(51, 65, 85)
-    doc.text(labelLines, margin, y + 2.8)
-    y += labelHeight
+    if (showGroupLabel) {
+      doc.setFont(PDF_FONT_FAMILY, 'bold')
+      doc.setFontSize(7.5)
+      doc.setTextColor(51, 65, 85)
+      doc.text(labelLines, margin, y + 2.8)
+      y += labelHeight
+    }
 
     group.photo_urls.forEach((photoUrl, photoIndex) => {
       const columnIndex = photoIndex % columnCount
@@ -2832,6 +2855,7 @@ export default function PackingListSizeBreakdownPage() {
   const [success, setSuccess] = useState('')
   const [plReceivingRows, setPlReceivingRows] = useState([])
   const [breakdownRows, setBreakdownRows] = useState([])
+  const [generalPhotoRows, setGeneralPhotoRows] = useState([])
   const [packingRows, setPackingRows] = useState([])
   const [plReturnRows, setPlReturnRows] = useState([])
   const [confirmRows, setConfirmRows] = useState([])
@@ -2843,6 +2867,7 @@ export default function PackingListSizeBreakdownPage() {
   const [selectedCardKey, setSelectedCardKey] = useState('')
   const [previewCardKey, setPreviewCardKey] = useState('')
   const [previewPhoto, setPreviewPhoto] = useState(null)
+  const [uploadingGeneralPhoto, setUploadingGeneralPhoto] = useState(false)
   const [viewMode, setViewMode] = useState('table')
   const [overviewMode, setOverviewMode] = useState('model')
   const [pageMode, setPageMode] = useState('all')
@@ -2868,6 +2893,10 @@ export default function PackingListSizeBreakdownPage() {
     brand: '',
     categoryPath: '',
     model: '',
+  })
+  const [editCatalogFilters, setEditCatalogFilters] = useState({
+    brand: '',
+    categoryPath: '',
   })
 
   useEffect(() => {
@@ -2895,6 +2924,7 @@ export default function PackingListSizeBreakdownPage() {
       const [
         { data: receivingData, error: receivingError },
         { data: breakdownData, error: breakdownError },
+        { data: generalPhotoData, error: generalPhotoError },
         { data: packingData, error: packingError },
         { data: returnData, error: returnError },
         { data: confirmData, error: confirmError },
@@ -2909,6 +2939,7 @@ export default function PackingListSizeBreakdownPage() {
           .select(`
             id,
             inbound_id,
+            source_qc_confirm_id,
             source_koli_sequence,
             product_model_id,
             product_model_variant_id,
@@ -2925,6 +2956,7 @@ export default function PackingListSizeBreakdownPage() {
           `)
           .order('validated_at', { ascending: true }),
         supabase.from('pl_size_breakdown').select('*').order('detail_order', { ascending: true }).order('id', { ascending: true }),
+        supabase.from('pl_general_photos').select('*').order('display_order', { ascending: true }).order('id', { ascending: true }),
         supabase.from('pl_packing_items').select('*').order('koli_sequence', { ascending: true }).order('id', { ascending: true }),
         supabase
           .from('warehouse_returns')
@@ -2933,7 +2965,7 @@ export default function PackingListSizeBreakdownPage() {
           .order('id', { ascending: true }),
         supabase
           .from('qc_confirm')
-          .select('inbound_id, model_name, model_color:variant_name, photo_url')
+          .select('id, inbound_id, brand_id, category_id, model_name, model_color:variant_name, photo_url')
           .order('created_at', { ascending: false }),
         supabase.from('dir_product_models').select('*').order('created_at', { ascending: true }),
         supabase.from('dir_product_model_variants').select('*').order('id', { ascending: true }),
@@ -2942,10 +2974,11 @@ export default function PackingListSizeBreakdownPage() {
         supabase.from('dir_user_profiles').select('*').order('display_name', { ascending: true }),
       ])
 
-      if (receivingError || breakdownError || returnError || confirmError || productModelError || variantError || brandError || categoryError) {
+      if (receivingError || breakdownError || generalPhotoError || returnError || confirmError || productModelError || variantError || brandError || categoryError) {
         setError(
           receivingError?.message ||
             breakdownError?.message ||
+            generalPhotoError?.message ||
             returnError?.message ||
             confirmError?.message ||
             productModelError?.message ||
@@ -2960,6 +2993,7 @@ export default function PackingListSizeBreakdownPage() {
 
       setPlReceivingRows(receivingData || [])
       setBreakdownRows(breakdownData || [])
+      setGeneralPhotoRows(generalPhotoData || [])
       setPackingRows(packingError ? [] : packingData || [])
       setPlReturnRows(returnData || [])
       setConfirmRows(confirmData || [])
@@ -2985,63 +3019,62 @@ export default function PackingListSizeBreakdownPage() {
       categoryById.set(Number(category.id || 0), category)
     })
 
-    const modelById = new Map()
-    const modelByName = new Map()
-    productModels.forEach((model) => {
-      modelById.set(Number(model.id), model)
-      modelByName.set(normalize(model.model_name), model)
-    })
-
-    const variantById = new Map()
-    catalogVariants.forEach((variant) => {
-      variantById.set(Number(variant.id), variant)
-    })
-
-    const variantByModelAndName = new Map()
-    catalogVariants.forEach((variant) => {
-      const modelId = Number(variant.product_model_id || 0)
-      ;[variant.variant_code, variant.variant_label, variant.selling_name, variant.variant_name].forEach((value) => {
-        const key = `${modelId}::${normalize(value)}`
-        if (normalize(value) && !variantByModelAndName.has(key)) {
-          variantByModelAndName.set(key, variant)
-        }
-      })
-    })
-
-    return { brandById, categoryById, modelById, modelByName, variantById, variantByModelAndName }
+    return {
+      ...buildCatalogIdentityLookup(productModels, catalogVariants),
+      brandById,
+      categoryById,
+    }
   }, [brands, catalogVariants, categories, productModels])
 
   const photoMap = useMemo(() => {
     const nextMap = new Map()
     confirmRows.forEach((row) => {
-      const key = `${row.inbound_id}::${getModelKey(row.model_name, row.model_color)}`
+      const identity = resolveProductCatalogIdentity(row, catalogContext)
+      const key = `${Number(row.inbound_id || 0)}::${getProductCatalogIdentityKey(row, identity)}`
       if (!nextMap.has(key) && row.photo_url) {
         nextMap.set(key, row.photo_url)
       }
     })
     return nextMap
-  }, [confirmRows])
+  }, [catalogContext, confirmRows])
 
   const cards = useMemo(() => {
     const grouped = new Map()
+    const confirmById = new Map(confirmRows.map((row) => [Number(row.id || 0), row]))
 
     plReceivingRows
       .filter((row) => row.inbound?.grn_number === initialGrn)
       .forEach((row) => {
-        const fallbackModel = catalogContext.modelByName.get(normalize(row.model_name)) || null
-        const productModelId = Number(row.product_model_id || fallbackModel?.id || 0) || null
-        const catalogVariant =
-          catalogContext.variantById.get(Number(row.product_model_variant_id || 0)) ||
-          catalogContext.variantByModelAndName.get(`${Number(productModelId || 0)}::${normalize(row.model_color)}`) ||
-          null
-        const productModelVariantId = Number(row.product_model_variant_id || catalogVariant?.id || 0) || null
-        const catalogModel = catalogContext.modelById.get(Number(productModelId || 0)) || fallbackModel || null
-        const brand = catalogContext.brandById.get(Number(catalogModel?.brand_id || row.brand_id || 0)) || null
-        const category = catalogContext.categoryById.get(Number(catalogModel?.category_id || row.category_id || 0)) || null
+        const sourceConfirm = confirmById.get(Number(row.source_qc_confirm_id || 0)) || null
+        const rowIdentity = resolveProductCatalogIdentity(row, catalogContext)
+        const sourceIdentity = sourceConfirm
+          ? resolveProductCatalogIdentity(sourceConfirm, catalogContext)
+          : null
+        const matchesSourceLabel = sourceConfirm
+          ? getModelKey(row.model_name, row.model_color) === getModelKey(sourceConfirm.model_name, sourceConfirm.model_color)
+          : false
+        const identity = !rowIdentity.product_model_id && matchesSourceLabel && sourceIdentity
+          ? sourceIdentity
+          : rowIdentity
+        const productModelId = identity.product_model_id
+        const productModelVariantId = identity.product_model_variant_id
+        const catalogModel = identity.model || catalogContext.modelById.get(Number(productModelId || 0)) || null
+        const catalogVariant = identity.variant || catalogContext.variantById.get(Number(productModelVariantId || 0)) || null
+        const brand = catalogContext.brandById.get(Number(catalogModel?.brand_id || sourceConfirm?.brand_id || 0)) || null
+        const category = catalogContext.categoryById.get(Number(catalogModel?.category_id || sourceConfirm?.category_id || 0)) || null
         const categoryPath = getCategoryPath(category, catalogContext.categoryById)
-        const sourceVariantCode = getVariantCode(catalogVariant) || row.source_variant_code || ''
-        const key = productModelVariantId ? `variant:${productModelVariantId}` : `model:${productModelId || getModelKey(row.model_name, row.model_color)}`
-        const photoKey = `${row.inbound_id}::${getModelKey(row.model_name, row.model_color)}`
+        const sourceVariantCode = getVariantCode(catalogVariant) || identity.source_variant_code || row.source_variant_code || ''
+        const identitySource = {
+          ...row,
+          brand_id: catalogModel?.brand_id || sourceConfirm?.brand_id || null,
+          category_id: catalogModel?.category_id || sourceConfirm?.category_id || null,
+        }
+        const key = getProductCatalogIdentityKey(identitySource, identity)
+        const photoKey = `${Number(row.inbound_id || 0)}::${key}`
+        const sourceKey = sourceConfirm && sourceIdentity
+          ? getProductCatalogIdentityKey(sourceConfirm, sourceIdentity)
+          : ''
+        const sourcePhotoUrl = sourceKey === key ? sourceConfirm?.photo_url || '' : ''
         const current = grouped.get(key) || {
           key,
           inbound_id: row.inbound_id,
@@ -3049,8 +3082,8 @@ export default function PackingListSizeBreakdownPage() {
           product_model_id: productModelId,
           product_model_variant_id: productModelVariantId,
           source_variant_code: sourceVariantCode,
-          brand_id: catalogModel?.brand_id || row.brand_id || null,
-          category_id: catalogModel?.category_id || row.category_id || null,
+          brand_id: catalogModel?.brand_id || sourceConfirm?.brand_id || null,
+          category_id: catalogModel?.category_id || sourceConfirm?.category_id || null,
           brand_code: brand?.brand_code || '',
           brand_name: brand?.brand_name || brand?.name || 'UNBRANDED',
           category_code: category?.full_code || category?.category_code || '',
@@ -3064,7 +3097,7 @@ export default function PackingListSizeBreakdownPage() {
           model_name: row.model_name || catalogModel?.model_name || '',
           catalogName: getCatalogName(catalogVariant) || row.model_color || '',
           catalogVariant,
-          photo_url: photoMap.get(photoKey) || catalogVariant?.variant_photo_url || '',
+          photo_url: sourcePhotoUrl || photoMap.get(photoKey) || catalogVariant?.variant_photo_url || '',
           receiving_qty: 0,
           firstSort: new Date(row.validated_at || 0).getTime() || Number(row.id || 0),
           registrationOrder: Number(row.id || 0),
@@ -3082,7 +3115,7 @@ export default function PackingListSizeBreakdownPage() {
         current.model_code = current.model_code || catalogModel?.model_code || ''
         current.variant_code = current.variant_code || getVariantCode(catalogVariant) || sourceVariantCode || ''
         current.source_variant_code = current.source_variant_code || sourceVariantCode
-        current.photo_url = current.photo_url || photoMap.get(photoKey) || catalogVariant?.variant_photo_url || ''
+        current.photo_url = current.photo_url || sourcePhotoUrl || photoMap.get(photoKey) || catalogVariant?.variant_photo_url || ''
         current.firstSort = Math.min(current.firstSort || Number(row.id || 0), new Date(row.validated_at || 0).getTime() || Number(row.id || 0))
         current.registrationOrder = Math.min(current.registrationOrder || Number(row.id || 0), Number(row.id || 0))
         grouped.set(key, current)
@@ -3098,21 +3131,19 @@ export default function PackingListSizeBreakdownPage() {
     breakdownRows
       .filter((row) => currentInboundIds.has(Number(row.inbound_id || 0)))
       .forEach((row) => {
-        const fallbackModel = catalogContext.modelById.get(Number(row.product_model_id || 0)) || catalogContext.modelByName.get(normalize(row.model_name)) || null
-        const productModelId = Number(row.product_model_id || fallbackModel?.id || 0) || null
-        const catalogVariant =
-          catalogContext.variantById.get(Number(row.product_model_variant_id || 0)) ||
-          catalogContext.variantByModelAndName.get(`${Number(productModelId || 0)}::${normalize(row.variant_name)}`) ||
-          null
-        const productModelVariantId = Number(row.product_model_variant_id || catalogVariant?.id || 0) || null
-        const key = productModelVariantId ? `variant:${productModelVariantId}` : `model:${productModelId || getModelKey(row.model_name, row.variant_name)}`
+        const identity = resolveProductCatalogIdentity(row, catalogContext)
+        const productModelId = identity.product_model_id
+        const productModelVariantId = identity.product_model_variant_id
+        const catalogModel = identity.model || catalogContext.modelById.get(Number(productModelId || 0)) || null
+        const catalogVariant = identity.variant || catalogContext.variantById.get(Number(productModelVariantId || 0)) || null
+        const key = getProductCatalogIdentityKey(row, identity)
 
         if (grouped.has(key)) return
 
-        const brand = catalogContext.brandById.get(Number(fallbackModel?.brand_id || 0)) || null
-        const category = catalogContext.categoryById.get(Number(fallbackModel?.category_id || 0)) || null
+        const brand = catalogContext.brandById.get(Number(catalogModel?.brand_id || 0)) || null
+        const category = catalogContext.categoryById.get(Number(catalogModel?.category_id || 0)) || null
         const categoryPath = getCategoryPath(category, catalogContext.categoryById)
-        const photoKey = `${row.inbound_id}::${getModelKey(row.model_name, row.variant_name)}`
+        const photoKey = `${Number(row.inbound_id || 0)}::${key}`
         const sourceVariantCode = row.source_variant_code || getVariantCode(catalogVariant) || ''
 
         grouped.set(key, {
@@ -3122,8 +3153,8 @@ export default function PackingListSizeBreakdownPage() {
           product_model_id: productModelId,
           product_model_variant_id: productModelVariantId,
           source_variant_code: sourceVariantCode,
-          brand_id: fallbackModel?.brand_id || null,
-          category_id: fallbackModel?.category_id || null,
+          brand_id: catalogModel?.brand_id || null,
+          category_id: catalogModel?.category_id || null,
           brand_code: brand?.brand_code || '',
           brand_name: brand?.brand_name || brand?.name || 'UNBRANDED',
           category_code: category?.full_code || category?.category_code || '',
@@ -3132,9 +3163,9 @@ export default function PackingListSizeBreakdownPage() {
           category_root: categoryPath[0] || '',
           sub_category: categoryPath[1] || '',
           item_type: categoryPath[2] || '',
-          model_code: fallbackModel?.model_code || '',
+          model_code: catalogModel?.model_code || '',
           variant_code: sourceVariantCode,
-          model_name: row.model_name || fallbackModel?.model_name || '',
+          model_name: row.model_name || catalogModel?.model_name || '',
           catalogName: row.variant_name || getCatalogName(catalogVariant) || '',
           catalogVariant,
           photo_url: row.pl_photo_url || row.variant_photo_url || photoMap.get(photoKey) || catalogVariant?.variant_photo_url || '',
@@ -3160,7 +3191,31 @@ export default function PackingListSizeBreakdownPage() {
       ...card,
       breakdown_qty: breakdownByIdentity.get(card.product_model_variant_id ? `variant:${card.product_model_variant_id}` : `model:${card.product_model_id}`) || 0,
     }))
-  }, [breakdownRows, catalogContext, initialGrn, photoMap, plReceivingRows])
+  }, [breakdownRows, catalogContext, confirmRows, initialGrn, photoMap, plReceivingRows])
+
+  const editCatalogFilterOptions = useMemo(() => {
+    const categoryCards = editCatalogFilters.categoryPath
+      ? cards.filter((card) => getCategoryPathLabel(card) === editCatalogFilters.categoryPath)
+      : cards
+    const brandCards = editCatalogFilters.brand
+      ? cards.filter((card) => (card.brand_name || 'UNBRANDED') === editCatalogFilters.brand)
+      : cards
+
+    return {
+      brands: getUniqueOptions(categoryCards.map((card) => card.brand_name || 'UNBRANDED')),
+      categoryPaths: getUniqueOptions(brandCards.map((card) => getCategoryPathLabel(card))),
+    }
+  }, [cards, editCatalogFilters.brand, editCatalogFilters.categoryPath])
+
+  const editCatalogCards = useMemo(
+    () =>
+      cards.filter((card) => {
+        if (editCatalogFilters.brand && (card.brand_name || 'UNBRANDED') !== editCatalogFilters.brand) return false
+        if (editCatalogFilters.categoryPath && getCategoryPathLabel(card) !== editCatalogFilters.categoryPath) return false
+        return true
+      }),
+    [cards, editCatalogFilters.brand, editCatalogFilters.categoryPath]
+  )
 
   const selectedCard = cards.find((card) => card.key === selectedCardKey) || null
 
@@ -3216,6 +3271,19 @@ export default function PackingListSizeBreakdownPage() {
         cards: assignPlIdentities(group.cards),
       }))
   }, [cards, initialGrn])
+
+  const selectedGeneralPhotoGroupKey = selectedCard ? getMultipageGroupKey(selectedCard) : ''
+  const selectedGeneralPhotoGroup = selectedGeneralPhotoGroupKey
+    ? multipageGroups.find((group) => group.key === selectedGeneralPhotoGroupKey) || null
+    : null
+  const selectedGeneralPhotos = useMemo(() => {
+    if (!selectedCard || !selectedGeneralPhotoGroupKey) return []
+    return generalPhotoRows.filter(
+      (row) =>
+        Number(row.inbound_id || 0) === Number(selectedCard.inbound_id || 0) &&
+        row.page_group_key === selectedGeneralPhotoGroupKey
+    )
+  }, [generalPhotoRows, selectedCard, selectedGeneralPhotoGroupKey])
 
   const effectiveModelFilters = useMemo(
     () => (pageMode === 'multipage' ? { ...modelFilters, brand: '', categoryPath: '' } : modelFilters),
@@ -3962,6 +4030,126 @@ export default function PackingListSizeBreakdownPage() {
     }
   }
 
+  async function handleGeneralPhotoChange(event) {
+    const input = event.currentTarget
+    const files = Array.from(input.files || [])
+    if (!files.length) return
+    if (!selectedCard || !selectedGeneralPhotoGroupKey) {
+      setError('Choose a model before adding a General Photo.')
+      input.value = ''
+      return
+    }
+
+    const uploadedPaths = []
+    let photosSaved = false
+    setUploadingGeneralPhoto(true)
+    setError('')
+    setSuccess('')
+
+    try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser()
+      const uploadedBy = getUserDisplayName(user, packingStaffProfiles)
+      const variantSegment =
+        selectedCard.variant_code ||
+        selectedCard.source_variant_code ||
+        selectedCard.catalogName ||
+        'variant'
+      const nextDisplayOrder = selectedGeneralPhotos.reduce(
+        (highest, row) => Math.max(highest, Number(row.display_order || 0)),
+        0
+      ) + 1
+      const uploadRows = []
+
+      for (const [fileIndex, file] of files.entries()) {
+        const compressedFile = await compressImageFile(file)
+        const fileExt = compressedFile.name.split('.').pop()?.toLowerCase() || 'jpg'
+        const fileName = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}.${fileExt}`
+        const filePath = [
+          getProductPhotoBasePathFromCard(selectedCard),
+          getSafeStorageSegment(variantSegment, 'variant'),
+          'general',
+          getSafeStorageSegment(selectedGeneralPhotoGroupKey, 'page'),
+          fileName,
+        ].join('/')
+
+        const { error: uploadError } = await supabase.storage
+          .from(PRODUCT_PHOTOS_BUCKET)
+          .upload(filePath, compressedFile, { upsert: false })
+
+        if (uploadError) throw new Error(uploadError.message || 'Failed to upload General Photo.')
+        uploadedPaths.push(filePath)
+
+        const { data: publicUrlData } = supabase.storage
+          .from(PRODUCT_PHOTOS_BUCKET)
+          .getPublicUrl(filePath)
+
+        if (publicUrlData?.publicUrl) {
+          uploadRows.push({
+            inbound_id: selectedCard.inbound_id,
+            page_group_key: selectedGeneralPhotoGroupKey,
+            photo_url: publicUrlData.publicUrl,
+            display_order: nextDisplayOrder + fileIndex,
+            source_product_model_id: selectedCard.product_model_id || null,
+            source_product_model_variant_id: selectedCard.product_model_variant_id || null,
+            uploaded_by: uploadedBy || null,
+          })
+        }
+      }
+
+      const { data: savedPhotos, error: savePhotoError } = await supabase
+        .from('pl_general_photos')
+        .insert(uploadRows)
+        .select('*')
+
+      if (savePhotoError) throw new Error(savePhotoError.message || 'Failed to save General Photo.')
+
+      photosSaved = true
+      setGeneralPhotoRows((current) => [...current, ...(savedPhotos || [])])
+      setSuccess(
+        `${files.length} General Photo${files.length > 1 ? 's' : ''} added to ${selectedGeneralPhotoGroup?.page_label || 'this Packing List page'}.`
+      )
+    } catch (photoError) {
+      if (!photosSaved && uploadedPaths.length) {
+        await supabase.storage.from(PRODUCT_PHOTOS_BUCKET).remove(uploadedPaths)
+      }
+      setError(photoError.message || 'Failed to add General Photo.')
+    } finally {
+      setUploadingGeneralPhoto(false)
+      input.value = ''
+    }
+  }
+
+  async function removeGeneralPhoto(photoRow) {
+    if (!photoRow?.id) return
+    setError('')
+    setSuccess('')
+
+    const { error: deleteError } = await supabase
+      .from('pl_general_photos')
+      .delete()
+      .eq('id', photoRow.id)
+
+    if (deleteError) {
+      setError(deleteError.message || 'Failed to remove General Photo.')
+      return
+    }
+
+    setGeneralPhotoRows((current) => current.filter((row) => row.id !== photoRow.id))
+
+    const storagePath = getProductPhotoStoragePath(photoRow.photo_url)
+    if (!storagePath || !storagePath.includes('/general/')) return
+
+    const { error: removeError } = await supabase.storage
+      .from(PRODUCT_PHOTOS_BUCKET)
+      .remove([storagePath])
+
+    if (removeError) {
+      setError(`General Photo removed from the page, but storage cleanup failed: ${removeError.message}`)
+    }
+  }
+
   function setMainPhoto(plRowId, photoUrl) {
     setPlRows((prev) =>
       prev.map((row) =>
@@ -3999,6 +4187,24 @@ export default function PackingListSizeBreakdownPage() {
     if (removeError) {
       setError(`Photo removed from form, but storage cleanup failed: ${removeError.message}`)
     }
+  }
+
+  function getGeneralPhotosForCards(sectionCards = []) {
+    const sectionScopes = new Set(
+      sectionCards.map((card) => `${Number(card.inbound_id || 0)}::${getMultipageGroupKey(card)}`)
+    )
+    const pageLabelByGroupKey = new Map(
+      multipageGroups.map((group) => [group.key, group.page_label])
+    )
+
+    return generalPhotoRows
+      .filter((photoRow) =>
+        sectionScopes.has(`${Number(photoRow.inbound_id || 0)}::${photoRow.page_group_key}`)
+      )
+      .map((photoRow) => ({
+        ...photoRow,
+        page_label: pageLabelByGroupKey.get(photoRow.page_group_key) || 'Packing List Page',
+      }))
   }
 
   function buildPrintSections() {
@@ -4137,11 +4343,16 @@ export default function PackingListSizeBreakdownPage() {
       })
     })
 
-    return { modelRows, sizeChartRows, breakdownInfoById }
+    return {
+      modelRows,
+      sizeChartRows,
+      breakdownInfoById,
+      generalPhotos: getGeneralPhotosForCards(sectionCards),
+    }
   }
 
   function buildPrintKoliGroups(sectionCards = []) {
-    const { breakdownInfoById, sizeChartRows } = buildPrintRowsForCards(sectionCards)
+    const { breakdownInfoById, sizeChartRows, generalPhotos } = buildPrintRowsForCards(sectionCards)
     const groups = new Map()
 
     packingRows
@@ -4197,6 +4408,7 @@ export default function PackingListSizeBreakdownPage() {
     return {
       koliGroups: koliGroups.sort((a, b) => a.title.localeCompare(b.title, undefined, { numeric: true })),
       sizeChartRows,
+      generalPhotos,
     }
   }
 
@@ -4235,6 +4447,9 @@ export default function PackingListSizeBreakdownPage() {
           : payload.modelRows
         rowsForImages.forEach((row) => {
           normalizePhotoUrls(row.detail_photo_urls, row.photo_url).forEach((photoUrl) => imageUrls.add(photoUrl))
+        })
+        ;(payload.generalPhotos || []).forEach((photoRow) => {
+          if (photoRow.photo_url) imageUrls.add(photoRow.photo_url)
         })
         return { section, payload }
       })
@@ -4368,6 +4583,38 @@ export default function PackingListSizeBreakdownPage() {
           })
         }
 
+        const drawGeneralPhotos = () => {
+          const groupedPhotos = (payload.generalPhotos || []).reduce((groups, photoRow) => {
+            const key = photoRow.page_group_key || 'general'
+            const current = groups.get(key) || {
+              key,
+              pageLabel: photoRow.page_label || 'Packing List Page',
+              photoUrls: [],
+            }
+            if (photoRow.photo_url && !current.photoUrls.includes(photoRow.photo_url)) {
+              current.photoUrls.push(photoRow.photo_url)
+            }
+            groups.set(key, current)
+            return groups
+          }, new Map())
+
+          groupedPhotos.forEach((group) => {
+            cursorY = drawPdfPhotoDetailSection(doc, {
+              rows: [
+                {
+                  product_key: `general::${group.key}`,
+                  detail_photo_urls: group.photoUrls,
+                },
+              ],
+              startY: cursorY,
+              imageCache,
+              onPageBreak: drawContinuationHeader,
+              title: `General Photo - ${group.pageLabel}`,
+              showGroupLabel: false,
+            })
+          })
+        }
+
         const drawSizeCharts = () => {
           const chartGroups = buildPdfSizeChartGroups(payload.sizeChartRows || [])
           if (!chartGroups.length) {
@@ -4450,6 +4697,7 @@ export default function PackingListSizeBreakdownPage() {
             })
           })
           drawPhotoDetails()
+          drawGeneralPhotos()
           drawSizeCharts()
         } else {
           cursorY = drawPdfProductTable(doc, {
@@ -4462,6 +4710,7 @@ export default function PackingListSizeBreakdownPage() {
             picLabel: 'PIC Data',
           })
           drawPhotoDetails()
+          drawGeneralPhotos()
           drawSizeCharts()
         }
       })
@@ -5610,42 +5859,89 @@ export default function PackingListSizeBreakdownPage() {
         {viewMode !== 'table' ? (
           <div style={styles.section}>
             {cards.length ? (
-              <div style={styles.cardGrid}>
-                {cards.map((card, index) => {
-                  const isPreviewOpen = previewCardKey === card.key
-                  return (
-                    <button
-                      key={card.key}
-                      type="button"
-                      disabled={saving}
-                      onClick={() => handleSelectCard(card.key)}
-                      onMouseEnter={() => setPreviewCardKey(card.key)}
-                      onMouseLeave={() => setPreviewCardKey('')}
-                      onFocus={() => setPreviewCardKey(card.key)}
-                      onBlur={() => setPreviewCardKey('')}
-                      aria-label={`Choose ${card.brand_name || 'UNBRANDED'} ${getModelLabel(card)}`}
-                      style={{
-                        ...styles.productCard,
-                        ...(selectedCardKey === card.key ? styles.productCardActive : {}),
-                        ...(isPreviewOpen ? styles.productCardPreview : {}),
-                        ...(saving ? styles.lockedArea : {}),
-                      }}
+              <>
+                <div style={styles.filterBar}>
+                  <label style={styles.filterField}>
+                    <span style={styles.filterLabel}>Brand</span>
+                    <select
+                      value={editCatalogFilters.brand}
+                      onChange={(event) => setEditCatalogFilters((prev) => ({ ...prev, brand: event.target.value }))}
+                      style={styles.filterSelect}
                     >
-                      {card.photo_url ? (
-                        <Image src={card.photo_url} alt={getModelLabel(card)} width={320} height={220} unoptimized style={styles.cardImage} />
-                      ) : (
-                        <div style={styles.noPhoto}>NO PHOTO</div>
-                      )}
-                      {isPreviewOpen ? (
-                        <span style={{ ...styles.cardPopover, ...(index < 8 ? styles.cardPopoverBelow : {}) }}>
-                          <span style={styles.cardPopoverEyebrow}>{card.brand_name || 'UNBRANDED'}</span>
-                          <span style={styles.cardTitle}>{getModelLabel(card)}</span>
-                        </span>
-                      ) : null}
-                    </button>
-                  )
-                })}
-              </div>
+                      <option value="">All Brands</option>
+                      {editCatalogFilterOptions.brands.map((brandName) => (
+                        <option key={`edit-brand-${brandName}`} value={brandName}>
+                          {brandName}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label style={styles.filterField}>
+                    <span style={styles.filterLabel}>Category</span>
+                    <select
+                      value={editCatalogFilters.categoryPath}
+                      onChange={(event) => setEditCatalogFilters((prev) => ({ ...prev, categoryPath: event.target.value }))}
+                      style={styles.filterSelect}
+                    >
+                      <option value="">All Categories</option>
+                      {editCatalogFilterOptions.categoryPaths.map((categoryPath) => (
+                        <option key={`edit-category-${categoryPath}`} value={categoryPath}>
+                          {categoryPath}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setEditCatalogFilters({ brand: '', categoryPath: '' })}
+                    style={styles.compactResetButton}
+                    title="Reset catalog filters"
+                    aria-label="Reset catalog filters"
+                  >
+                    &#8634;
+                  </button>
+                </div>
+                {editCatalogCards.length ? (
+                  <div style={styles.cardGrid}>
+                    {editCatalogCards.map((card, index) => {
+                      const isPreviewOpen = previewCardKey === card.key
+                      return (
+                        <button
+                          key={card.key}
+                          type="button"
+                          disabled={saving}
+                          onClick={() => handleSelectCard(card.key)}
+                          onMouseEnter={() => setPreviewCardKey(card.key)}
+                          onMouseLeave={() => setPreviewCardKey('')}
+                          onFocus={() => setPreviewCardKey(card.key)}
+                          onBlur={() => setPreviewCardKey('')}
+                          aria-label={`Choose ${card.brand_name || 'UNBRANDED'} ${getModelLabel(card)}`}
+                          style={{
+                            ...styles.productCard,
+                            ...(selectedCardKey === card.key ? styles.productCardActive : {}),
+                            ...(isPreviewOpen ? styles.productCardPreview : {}),
+                            ...(saving ? styles.lockedArea : {}),
+                          }}
+                        >
+                          {card.photo_url ? (
+                            <Image src={card.photo_url} alt={getModelLabel(card)} width={320} height={220} unoptimized style={styles.cardImage} />
+                          ) : (
+                            <div style={styles.noPhoto}>NO PHOTO</div>
+                          )}
+                          {isPreviewOpen ? (
+                            <span style={{ ...styles.cardPopover, ...(index < 8 ? styles.cardPopoverBelow : {}) }}>
+                              <span style={styles.cardPopoverEyebrow}>{card.brand_name || 'UNBRANDED'}</span>
+                              <span style={styles.cardTitle}>{getModelLabel(card)}</span>
+                            </span>
+                          ) : null}
+                        </button>
+                      )
+                    })}
+                  </div>
+                ) : (
+                  <p style={styles.emptyText}>No model matches the selected Brand and Category.</p>
+                )}
+              </>
             ) : (
               <p style={styles.emptyText}>No PL Receiving data is ready for this GRN.</p>
             )}
@@ -5664,7 +5960,19 @@ export default function PackingListSizeBreakdownPage() {
                     <div style={styles.editorGrid}>
                       <div style={styles.featureCard}>
                         {plRow.pl_photo_url || selectedCard.photo_url ? (
-                          <Image src={plRow.pl_photo_url || selectedCard.photo_url} alt={getModelLabel(selectedCard)} width={360} height={320} unoptimized style={styles.featureImage} />
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setPreviewPhoto({
+                                src: plRow.pl_photo_url || selectedCard.photo_url,
+                                alt: getModelLabel(selectedCard),
+                              })
+                            }
+                            style={styles.featureImageButton}
+                            title="Click to preview full photo"
+                          >
+                            <Image src={plRow.pl_photo_url || selectedCard.photo_url} alt={getModelLabel(selectedCard)} width={360} height={320} unoptimized style={styles.featureImage} />
+                          </button>
                         ) : (
                           <div style={styles.featureNoPhoto}>NO PHOTO</div>
                         )}
@@ -5907,6 +6215,25 @@ export default function PackingListSizeBreakdownPage() {
                                 + Add PL Returns
                               </button>
                               {isLastPlRow ? (
+                                <label
+                                  style={
+                                    uploadingGeneralPhoto
+                                      ? { ...styles.secondaryButton, ...styles.secondaryUploadButton, ...styles.disabledButton }
+                                      : { ...styles.secondaryButton, ...styles.secondaryUploadButton }
+                                  }
+                                >
+                                  {uploadingGeneralPhoto ? 'Uploading...' : '+ Add General Photo'}
+                                  <input
+                                    type="file"
+                                    accept="image/*"
+                                    multiple
+                                    disabled={uploadingGeneralPhoto}
+                                    onChange={handleGeneralPhotoChange}
+                                    style={styles.hiddenFileInput}
+                                  />
+                                </label>
+                              ) : null}
+                              {isLastPlRow ? (
                                 <button type="button" onClick={addPlRow} style={styles.secondaryButton}>
                                   + Add Model Variations
                                 </button>
@@ -5922,6 +6249,48 @@ export default function PackingListSizeBreakdownPage() {
                                 </button>
                               ) : null}
                             </div>
+                            {isLastPlRow && selectedGeneralPhotos.length ? (
+                              <div style={styles.field}>
+                                <div style={styles.photoDetailHeader}>
+                                  <label style={styles.label}>General Photo</label>
+                                  <span style={styles.sourceInline}>{selectedGeneralPhotoGroup?.page_label || 'PACKING LIST PAGE'}</span>
+                                </div>
+                                <div style={styles.photoGrid}>
+                                  {selectedGeneralPhotos.map((photoRow) => (
+                                    <span key={photoRow.id} style={styles.photoThumbWrap}>
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          setPreviewPhoto({
+                                            src: photoRow.photo_url,
+                                            alt: `${selectedGeneralPhotoGroup?.page_label || 'Packing List page'} General Photo`,
+                                          })
+                                        }
+                                        style={styles.photoThumbButton}
+                                        title="Click to preview General Photo"
+                                      >
+                                        <Image
+                                          src={photoRow.photo_url}
+                                          alt={`${selectedGeneralPhotoGroup?.page_label || 'Packing List page'} General Photo`}
+                                          width={62}
+                                          height={62}
+                                          unoptimized
+                                          style={styles.photoThumbImage}
+                                        />
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => removeGeneralPhoto(photoRow)}
+                                        style={styles.photoRemoveButton}
+                                        aria-label="Remove General Photo"
+                                      >
+                                        X
+                                      </button>
+                                    </span>
+                                  ))}
+                                </div>
+                              </div>
+                            ) : null}
                           </div>
                         ) : (
                           <div style={styles.measurementPanel}>
