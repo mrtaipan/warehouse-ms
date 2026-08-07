@@ -1500,11 +1500,11 @@ function getModelKey(modelName, catalogName) {
 }
 
 function getCatalogName(row = {}) {
-  return row.catalogName || row.selling_name || row.variant_name || row.variant_label || row.variant_code || row.model_color || ''
+  return row?.catalogName || row?.selling_name || row?.variant_name || row?.variant_label || row?.variant_code || row?.model_color || ''
 }
 
 function getVariantCode(row = {}) {
-  return row.sku_code || row.sku || row.source_variant_code || row.variant_code || row.variant_label || ''
+  return row?.sku_code || row?.sku || row?.source_variant_code || row?.variant_code || row?.variant_label || ''
 }
 
 function normalizePhotoUrls(value, fallback = '') {
