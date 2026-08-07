@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/utils/supabase/browser'
 import reportStyles from './retur-report.module.css'
@@ -115,26 +115,51 @@ export default function ReturReportClient({ rows, canAdd = false }) {
   )
   const filterSourceRows = activeReturnTab === 'preparation' ? preparationRows : arrangementRows
 
+  const matchesActiveFilters = useCallback((row, ignoredFilter = '') => {
+    const matchesGrn = ignoredFilter === 'grn' || !grnFilter || row.inbound?.grn_number === grnFilter
+    const matchesSupplier = ignoredFilter === 'supplier' || !supplierFilter || row.inbound?.suppliers?.supplier_name === supplierFilter
+    const matchesStatus = ignoredFilter === 'status' || !statusFilter || String(row.status || 'waiting') === statusFilter
+    const matchesPhase = ignoredFilter === 'phase' || !phaseFilter || String(row.source_phase || '') === phaseFilter
+    const matchesBrand = ignoredFilter === 'brand' || !brandFilter || String(row.brand_id || '') === brandFilter
+    const matchesCategory = ignoredFilter === 'category' || !categoryFilter || String(row.category_id || '') === categoryFilter
+    const matchesModel = ignoredFilter === 'model' || !modelFilter || getModelLabel(row) === modelFilter
+    const matchesGrade = ignoredFilter === 'grade' || !gradeFilter || String(row.grade || '') === gradeFilter
+
+    return matchesGrn && matchesSupplier && matchesStatus && matchesPhase && matchesBrand && matchesCategory && matchesModel && matchesGrade
+  }, [brandFilter, categoryFilter, gradeFilter, grnFilter, modelFilter, phaseFilter, statusFilter, supplierFilter])
+
   const grnOptions = useMemo(
-    () => Array.from(new Set(filterSourceRows.map((row) => row.inbound?.grn_number).filter(Boolean))).sort((a, b) => a.localeCompare(b)),
-    [filterSourceRows]
+    () =>
+      Array.from(new Set(filterSourceRows.filter((row) => matchesActiveFilters(row, 'grn')).map((row) => row.inbound?.grn_number).filter(Boolean))).sort((a, b) =>
+        a.localeCompare(b)
+      ),
+    [filterSourceRows, matchesActiveFilters]
   )
   const supplierOptions = useMemo(
-    () => Array.from(new Set(filterSourceRows.map((row) => row.inbound?.suppliers?.supplier_name).filter(Boolean))).sort((a, b) => a.localeCompare(b)),
-    [filterSourceRows]
+    () =>
+      Array.from(
+        new Set(filterSourceRows.filter((row) => matchesActiveFilters(row, 'supplier')).map((row) => row.inbound?.suppliers?.supplier_name).filter(Boolean))
+      ).sort((a, b) => a.localeCompare(b)),
+    [filterSourceRows, matchesActiveFilters]
   )
   const statusOptions = useMemo(
-    () => Array.from(new Set(filterSourceRows.map((row) => row.status || 'waiting').filter(Boolean))).sort((a, b) => a.localeCompare(b)),
-    [filterSourceRows]
+    () =>
+      Array.from(new Set(filterSourceRows.filter((row) => matchesActiveFilters(row, 'status')).map((row) => row.status || 'waiting').filter(Boolean))).sort((a, b) =>
+        a.localeCompare(b)
+      ),
+    [filterSourceRows, matchesActiveFilters]
   )
   const phaseOptions = useMemo(
-    () => Array.from(new Set(filterSourceRows.map((row) => row.source_phase).filter(Boolean))).sort((a, b) => a.localeCompare(b)),
-    [filterSourceRows]
+    () =>
+      Array.from(new Set(filterSourceRows.filter((row) => matchesActiveFilters(row, 'phase')).map((row) => row.source_phase).filter(Boolean))).sort((a, b) =>
+        a.localeCompare(b)
+      ),
+    [filterSourceRows, matchesActiveFilters]
   )
   const brandOptions = useMemo(
     () =>
       Array.from(
-        filterSourceRows.reduce((options, row) => {
+        filterSourceRows.filter((row) => matchesActiveFilters(row, 'brand')).reduce((options, row) => {
           if (row.brand_id && getBrandLabel(row) !== '-') {
             options.set(String(row.brand_id), getBrandLabel(row))
           }
@@ -143,12 +168,12 @@ export default function ReturReportClient({ rows, canAdd = false }) {
       )
         .map(([id, name]) => ({ id, name }))
         .sort((a, b) => a.name.localeCompare(b.name)),
-    [filterSourceRows]
+    [filterSourceRows, matchesActiveFilters]
   )
   const categoryOptions = useMemo(
     () =>
       Array.from(
-        filterSourceRows.reduce((options, row) => {
+        filterSourceRows.filter((row) => matchesActiveFilters(row, 'category')).reduce((options, row) => {
           if (row.category_id && getCategoryLabel(row) !== '-') {
             options.set(String(row.category_id), getCategoryLabel(row))
           }
@@ -157,48 +182,32 @@ export default function ReturReportClient({ rows, canAdd = false }) {
       )
         .map(([id, name]) => ({ id, name }))
         .sort((a, b) => a.name.localeCompare(b.name)),
-    [filterSourceRows]
+    [filterSourceRows, matchesActiveFilters]
   )
   const modelOptions = useMemo(
-    () => Array.from(new Set(filterSourceRows.map((row) => getModelLabel(row)).filter(Boolean))).sort((a, b) => a.localeCompare(b)),
-    [filterSourceRows]
+    () =>
+      Array.from(new Set(filterSourceRows.filter((row) => matchesActiveFilters(row, 'model')).map((row) => getModelLabel(row)).filter(Boolean))).sort((a, b) =>
+        a.localeCompare(b)
+      ),
+    [filterSourceRows, matchesActiveFilters]
   )
   const gradeOptions = useMemo(
-    () => Array.from(new Set(filterSourceRows.map((row) => row.grade).filter(Boolean))).sort((a, b) => String(a).localeCompare(String(b))),
-    [filterSourceRows]
+    () =>
+      Array.from(new Set(filterSourceRows.filter((row) => matchesActiveFilters(row, 'grade')).map((row) => row.grade).filter(Boolean))).sort((a, b) =>
+        String(a).localeCompare(String(b))
+      ),
+    [filterSourceRows, matchesActiveFilters]
   )
   const filteredRows = useMemo(
-    () =>
-      arrangementRows.filter((row) => {
-        const matchesGrn = !grnFilter || row.inbound?.grn_number === grnFilter
-        const matchesSupplier = !supplierFilter || row.inbound?.suppliers?.supplier_name === supplierFilter
-        const matchesStatus = !statusFilter || String(row.status || 'waiting') === statusFilter
-        const matchesPhase = !phaseFilter || String(row.source_phase || '') === phaseFilter
-        const matchesBrand = !brandFilter || String(row.brand_id || '') === brandFilter
-        const matchesCategory = !categoryFilter || String(row.category_id || '') === categoryFilter
-        const matchesModel = !modelFilter || getModelLabel(row) === modelFilter
-        const matchesGrade = !gradeFilter || String(row.grade || '') === gradeFilter
-        return matchesGrn && matchesSupplier && matchesStatus && matchesPhase && matchesBrand && matchesCategory && matchesModel && matchesGrade
-      }),
-    [arrangementRows, brandFilter, categoryFilter, gradeFilter, grnFilter, modelFilter, phaseFilter, statusFilter, supplierFilter]
+    () => arrangementRows.filter((row) => matchesActiveFilters(row)),
+    [arrangementRows, matchesActiveFilters]
   )
   const filteredPreparationRows = useMemo(
-    () =>
-      preparationRows.filter((row) => {
-        const matchesGrn = !grnFilter || row.inbound?.grn_number === grnFilter
-        const matchesSupplier = !supplierFilter || row.inbound?.suppliers?.supplier_name === supplierFilter
-        const matchesStatus = !statusFilter || String(row.status || 'waiting') === statusFilter
-        const matchesPhase = !phaseFilter || String(row.source_phase || '') === phaseFilter
-        const matchesBrand = !brandFilter || String(row.brand_id || '') === brandFilter
-        const matchesCategory = !categoryFilter || String(row.category_id || '') === categoryFilter
-        const matchesModel = !modelFilter || getModelLabel(row) === modelFilter
-        const matchesGrade = !gradeFilter || String(row.grade || '') === gradeFilter
-        return matchesGrn && matchesSupplier && matchesStatus && matchesPhase && matchesBrand && matchesCategory && matchesModel && matchesGrade
-      }),
-    [brandFilter, categoryFilter, gradeFilter, grnFilter, modelFilter, phaseFilter, preparationRows, statusFilter, supplierFilter]
+    () => preparationRows.filter((row) => matchesActiveFilters(row)),
+    [matchesActiveFilters, preparationRows]
   )
   const selectableRows = useMemo(
-    () => filteredRows.filter((row) => String(row.status || 'waiting').toLowerCase() !== 'completed'),
+    () => filteredRows,
     [filteredRows]
   )
 
@@ -215,6 +224,7 @@ export default function ReturReportClient({ rows, canAdd = false }) {
   )
   const selectedInbound = selectedRows[0]?.inbound || null
   const paymentLabel = selectedInbound?.payment_on_site ? 'Paid by Receiver' : 'Paid by Us'
+  const selectedRowsCompleted = selectedRows.length > 0 && selectedRows.every((row) => String(row.status || 'waiting').toLowerCase() === 'completed')
 
   const selectedReturnCardGroups = useMemo(() => {
     const grouped = new Map()
@@ -447,6 +457,17 @@ export default function ReturReportClient({ rows, canAdd = false }) {
       return
     }
 
+    if (selectedRowsCompleted) {
+      handlePrintSj({
+        shippingMethodOverride:
+          selectedRows.find((row) => String(row.returns_delivery || '').trim())?.returns_delivery ||
+          selectedRows.find((row) => String(row.return_delivery || '').trim())?.return_delivery ||
+          'COMPLETED RETURN',
+        skipStatusUpdate: true,
+      })
+      return
+    }
+
     setModalError('')
     setIsModalOpen(true)
   }
@@ -464,6 +485,17 @@ export default function ReturReportClient({ rows, canAdd = false }) {
 
   function confirmMultiSupplier() {
     setIsSupplierConfirmOpen(false)
+    if (selectedRowsCompleted) {
+      handlePrintSj({
+        shippingMethodOverride:
+          selectedRows.find((row) => String(row.returns_delivery || '').trim())?.returns_delivery ||
+          selectedRows.find((row) => String(row.return_delivery || '').trim())?.return_delivery ||
+          'COMPLETED RETURN',
+        skipStatusUpdate: true,
+      })
+      return
+    }
+
     setModalError('')
     setIsModalOpen(true)
   }
@@ -629,13 +661,16 @@ export default function ReturReportClient({ rows, canAdd = false }) {
     printWindow.document.close()
   }
 
-  async function handlePrintSj() {
+  async function handlePrintSj(options = {}) {
+    const effectiveShippingMethod = String(options.shippingMethodOverride ?? shippingMethod).trim()
+    const skipStatusUpdate = Boolean(options.skipStatusUpdate)
+
     if (!selectedRows.length || selectedInboundIds.length !== 1) {
       setModalError('Pilih row retur dari satu GRN yang sama dulu.')
       return
     }
 
-    if (!shippingMethod.trim()) {
+    if (!effectiveShippingMethod) {
       setModalError('Fill in the shipping method first.')
       return
     }
@@ -704,7 +739,7 @@ export default function ReturReportClient({ rows, canAdd = false }) {
             </div>
             <div class="meta-card">
               <span class="meta-label">Shipping Method</span>
-              <span class="meta-value">${shippingMethod.trim()}</span>
+              <span class="meta-value">${effectiveShippingMethod}</span>
             </div>
           </div>
 
@@ -743,12 +778,18 @@ export default function ReturReportClient({ rows, canAdd = false }) {
     printWindow.document.close()
 
     printWindow.onafterprint = async () => {
+      if (skipStatusUpdate) {
+        setIsPrinting(false)
+        setSelectedIds([])
+        return
+      }
+
       const timestamp = new Date().toISOString()
       const { error } = await supabase
         .from('warehouse_returns')
         .update({
           status: 'completed',
-          returns_delivery: shippingMethod.trim(),
+          returns_delivery: effectiveShippingMethod,
           updated_at: timestamp,
         })
         .in('id', selectedIds)
@@ -997,7 +1038,7 @@ export default function ReturReportClient({ rows, canAdd = false }) {
           <button type="button" className={reportStyles.secondaryButton} onClick={openPrintCardModeModal} disabled={!selectedRows.length}>
             Print Return Card
           </button>
-          <button type="button" className={reportStyles.primaryButton} onClick={openReturModal} disabled={!canAdd || !selectedRows.length}>
+          <button type="button" className={reportStyles.primaryButton} onClick={openReturModal} disabled={!selectedRows.length || (!canAdd && !selectedRowsCompleted)}>
             Return
           </button>
         </div>
@@ -1169,7 +1210,7 @@ export default function ReturReportClient({ rows, canAdd = false }) {
               return (
                 <tr key={row.id}>
                   <td>
-                    <input className={reportStyles.checkbox} type="checkbox" checked={isChecked} disabled={isCompleted} onChange={() => toggleRow(row.id)} />
+                    <input className={reportStyles.checkbox} type="checkbox" checked={isChecked} onChange={() => toggleRow(row.id)} />
                   </td>
                   <td>{formatDateDisplay(row.created_at || row.inbound?.inbound_date)}</td>
                   <td>{row.inbound?.grn_number || '-'}</td>
@@ -1180,7 +1221,7 @@ export default function ReturReportClient({ rows, canAdd = false }) {
                   <td>{getModelLabel(row)}</td>
                   <td>{row.grade || '-'}</td>
                   <td>
-                    <span className={reportStyles.badge}>{getStatusLabel(row.status)}</span>
+                    <span className={`${reportStyles.badge} ${isCompleted ? reportStyles.badgeCompleted : ''}`}>{getStatusLabel(row.status)}</span>
                   </td>
                   <td className={reportStyles.centerNumberCell}>{row.qty || 0}</td>
                   <td>{row.koli_sequence ? `Koli ${row.koli_sequence}` : '-'}</td>

@@ -220,9 +220,18 @@ function isArklineLocation(location) {
 
 function getArklineRackNumber(value) {
   const compact = String(value || '').trim().toUpperCase().replace(/\s+/g, '')
-  const match = compact.match(/^ARK[._-]?0*(\d+)$/) || compact.match(/^0*(\d+)$/)
+  const match = compact.match(/^ARK[._-]?0*(\d+)(?:[-_/]?[A-Z])?$/) || compact.match(/^0*(\d+)(?:[-_/]?[A-Z])?$/)
 
   return match ? String(Number(match[1])) : ''
+}
+
+function getArklineLocationBaseNumber(location) {
+  return (
+    getArklineRackNumber(getLocationBaseCode(location?.location_code)) ||
+    getArklineRackNumber(location?.location_code) ||
+    getArklineRackNumber(getLocationBaseCode(location?.location_name)) ||
+    getArklineRackNumber(location?.location_name)
+  )
 }
 
 function isArklineZone(zone, warehouseKey) {
@@ -579,6 +588,10 @@ function getRackSlotCode(zoneCode, slot) {
   return `${baseCode}${slot.suffix}`
 }
 
+function getArklineRackSlotCode(zoneCode, slot) {
+  return `ARK.${getArklineRackNumber(zoneCode) || zoneCode}${slot.suffix}`
+}
+
 function matchesWarehouse(location, warehouseKey) {
   const warehouseValue = normalizeWarehouseValue(location.location_id || location.location_name)
   const warehouseCode = normalizeWarehouseValue(warehouseKey)
@@ -597,7 +610,7 @@ function matchesWarehouse(location, warehouseKey) {
 
 function matchesZone(location, zone, warehouseKey) {
   if (isArklineZone(zone, warehouseKey)) {
-    return isArklineLocation(location) && getArklineRackNumber(location.location_code || location.location_name) === getArklineRackNumber(zone.code)
+    return isArklineLocation(location) && getArklineLocationBaseNumber(location) === getArklineRackNumber(zone.code)
   }
 
   const targetCode = getLocationBaseCode(zone?.code || zone)
@@ -778,6 +791,34 @@ function normalizeRackLocations(rows) {
   }))
 }
 
+function normalizeArklineProduct(row) {
+  const sku = String(row?.sku_induk || '').trim().toUpperCase()
+  const productName = String(row?.nama_produk || '').trim().toUpperCase()
+
+  return {
+    sku,
+    productName,
+    label: sku && productName ? `${sku} | ${productName}` : sku || productName,
+    isActive: row?.is_active !== false,
+  }
+}
+
+async function fetchActiveArklineProducts() {
+  const { data, error } = await supabase
+    .from('arkline_dir_products')
+    .select('sku_induk, nama_produk, is_active')
+    .eq('is_active', true)
+    .order('nama_produk', { ascending: true })
+
+  if (error) {
+    throw error
+  }
+
+  return (data || [])
+    .map(normalizeArklineProduct)
+    .filter((item) => item.isActive && item.sku && item.productName)
+}
+
 function getZoneClassName(zone, zoneData, selected) {
   const classNames = [styles.mapZone]
 
@@ -833,7 +874,7 @@ function RackSlotSubLocationPreview({ slot, selectedSlotKey, selectedSubLocation
   )
 }
 
-function ArklineBoxPreview({ entries }) {
+function ArklineSlotBoxPreview({ entries }) {
   if (!entries?.length) {
     return <span className={styles.emptyPalletLine} />
   }
@@ -1084,7 +1125,7 @@ function getDisplayNameByEmail(email, userProfilesByEmail) {
   return userProfilesByEmail[normalizedEmail] || email
 }
 
-export default function WarehouseMapClient({ canEditMap = false }) {
+export default function WarehouseMapClient({ canEditMap = false, canUseRegistry = false }) {
   const canvasRef = useRef(null)
   const interactionRef = useRef(null)
   const [selectedWarehouseKey, setSelectedWarehouseKey] = useState(WAREHOUSE_ORDER[0])
@@ -1103,6 +1144,7 @@ export default function WarehouseMapClient({ canEditMap = false }) {
   const [storageEntries, setStorageEntries] = useState([])
   const [restockHistoryRows, setRestockHistoryRows] = useState([])
   const [userProfilesByEmail, setUserProfilesByEmail] = useState({})
+  const [arklineProducts, setArklineProducts] = useState([])
   const [registrySaving, setRegistrySaving] = useState(false)
   const [registryError, setRegistryError] = useState('')
   const [registrySuccess, setRegistrySuccess] = useState('')
@@ -1124,16 +1166,23 @@ export default function WarehouseMapClient({ canEditMap = false }) {
   }, [canEditMap, editMode])
 
   useEffect(() => {
+    if (!canUseRegistry && activePanel === 'registry') {
+      setActivePanel('current')
+    }
+  }, [activePanel, canUseRegistry])
+
+  useEffect(() => {
     async function loadMapData() {
       setLoading(true)
       setError('')
 
       try {
-        const [locationRows, storageRows, restockRows, profileRows] = await Promise.all([
+        const [locationRows, storageRows, restockRows, profileRows, arklineProductRows] = await Promise.all([
           fetchAllRackLocations(),
           fetchAllWarehouseStorage(),
           fetchAllRestockHistory(),
           fetchUserProfiles(),
+          fetchActiveArklineProducts(),
         ])
         const profileMap = {}
 
@@ -1151,6 +1200,7 @@ export default function WarehouseMapClient({ canEditMap = false }) {
         setStorageEntries(storageRows || [])
         setRestockHistoryRows(restockRows || [])
         setUserProfilesByEmail(profileMap)
+        setArklineProducts(arklineProductRows || [])
       } catch (loadError) {
         setError(loadError.message || 'Failed to load warehouse map data.')
       } finally {
@@ -1356,7 +1406,7 @@ export default function WarehouseMapClient({ canEditMap = false }) {
   const selectedSlotCode =
     selectedZone && selectedSlot
       ? selectedZoneIsArkline
-        ? selectedZoneDisplayCode
+        ? getArklineRackSlotCode(selectedZone.code, selectedSlot)
         : getRackSlotCode(selectedZone.code, selectedSlot)
       : ''
   const subLocationSlots = useMemo(
@@ -1388,19 +1438,28 @@ export default function WarehouseMapClient({ canEditMap = false }) {
     (option) => option.key === registryForm.subLocationKey
   )?.location || null
   const selectedArklineRegistryLocation =
-    selectedZoneIsArkline && selectedZoneData?.locations?.length
-      ? selectedZoneData.locations.find((location) => isArklineLocation(location)) || selectedZoneData.locations[0]
+    selectedZoneIsArkline && selectedSlot?.locations?.length
+      ? selectedSlot.locations.find((location) => isArklineLocation(location)) || selectedSlot.locations[0]
       : null
   const activeRegistryLocation = selectedZoneIsArkline ? selectedArklineRegistryLocation : selectedRegistryLocation
+  const selectedArklineProduct = useMemo(() => {
+    if (!selectedZoneIsArkline) {
+      return null
+    }
+
+    const selectedLabel = String(registryForm.itemName || '').trim().toUpperCase()
+
+    return arklineProducts.find((product) => product.label === selectedLabel) || null
+  }, [arklineProducts, registryForm.itemName, selectedZoneIsArkline])
   const selectedSubLocation = subLocationSlots.find((slot) => slot.key === selectedSubLocationKey) || null
   const currentGoodsGroups = useMemo(() => {
     if (selectedZoneIsArkline) {
-      const entries = selectedZoneData?.entries || []
+      const entries = selectedSlot?.entries || []
 
       return entries.length > 0
         ? [{
-            key: 'ARKLINE_BOX',
-            label: 'Box',
+            key: selectedSlotCode || 'ARKLINE_SLOT',
+            label: selectedSlotCode,
             entries,
             qty: entries.reduce((sum, entry) => sum + Number(entry.qty || 0), 0),
           }]
@@ -1425,15 +1484,15 @@ export default function WarehouseMapClient({ canEditMap = false }) {
           qty: entries.reduce((sum, entry) => sum + Number(entry.qty || 0), 0),
         }]
       : []
-  }, [selectedSlot, selectedSubLocation, selectedSubLocationKey, selectedZoneData, selectedZoneIsArkline])
+  }, [selectedSlot, selectedSlotCode, selectedSubLocation, selectedSubLocationKey, selectedZoneIsArkline])
   const selectedSlotStorageIds = useMemo(
     () =>
       new Set(
-        (selectedZoneIsArkline ? selectedZoneData?.entries || [] : selectedSlot?.entries || []).map((entry) =>
+        (selectedSlot?.entries || []).map((entry) =>
           String(entry.id)
         )
       ),
-    [selectedSlot, selectedZoneData, selectedZoneIsArkline]
+    [selectedSlot]
   )
   const historyRows = useMemo(() => {
     if (!selectedZone || !selectedSlotCode) {
@@ -1984,6 +2043,9 @@ export default function WarehouseMapClient({ canEditMap = false }) {
 
   async function handleRegistrySubmit(event) {
     event.preventDefault()
+
+    if (!canUseRegistry) return
+
     setRegistrySaving(true)
     setRegistryError('')
     setRegistrySuccess('')
@@ -1991,7 +2053,7 @@ export default function WarehouseMapClient({ canEditMap = false }) {
     if (!activeRegistryLocation) {
       setRegistryError(
         selectedZoneIsArkline
-          ? 'No mapped ARKLINE box location found for this rack.'
+          ? 'No mapped ARKLINE rack position found for this slot.'
           : 'Please choose a K position first.'
       )
       setRegistrySaving(false)
@@ -2004,9 +2066,15 @@ export default function WarehouseMapClient({ canEditMap = false }) {
       return
     }
 
+    if (selectedZoneIsArkline && !selectedArklineProduct) {
+      setRegistryError('Please choose an active ARKLINE product from the list.')
+      setRegistrySaving(false)
+      return
+    }
+
     const payload = {
       rack_location_id: activeRegistryLocation.id,
-      item_name: registryForm.itemName.trim(),
+      item_name: selectedZoneIsArkline ? selectedArklineProduct.label : registryForm.itemName.trim(),
       size: normalizeSizeValue(registryForm.size) || null,
       qty: Number(registryForm.qty || 0),
       notes: registryForm.notes.trim() || null,
@@ -2561,12 +2629,10 @@ export default function WarehouseMapClient({ canEditMap = false }) {
                       <p className={styles.eyebrow}>Rack View</p>
                       <h3>{warehouse.key} / {selectedZoneDisplayCode}</h3>
                       <p>
-                        {selectedZoneData.locations.length} registered {selectedZoneIsArkline ? 'box location' : 'slot'}(s), {formatNumber(selectedZoneData.totalQty)} item qty.
+                        {selectedZoneData.locations.length} registered slot(s), {formatNumber(selectedZoneData.totalQty)} item qty.
                       </p>
                     </div>
-                    {selectedZoneIsArkline ? (
-                      <span className={styles.rackKindBadge}>Box location</span>
-                    ) : (
+                    {!selectedZoneIsArkline ? (
                       <button
                         type="button"
                         className={`${styles.subLocationAllButton} ${selectedSubLocationKey === SUBLOCATION_ALL_KEY ? styles.subLocationAllButtonActive : ''}`.trim()}
@@ -2575,25 +2641,10 @@ export default function WarehouseMapClient({ canEditMap = false }) {
                       >
                         All K
                       </button>
-                    )}
+                    ) : null}
                   </div>
 
-                  {selectedZoneIsArkline ? (
-                    <div className={styles.arklineRackFrame} aria-label={`Rack layout for ${selectedZoneDisplayCode}`}>
-                      <div
-                        className={`${styles.arklineBoxSlot} ${selectedZoneData.entries.length > 0 ? styles.arklineBoxSlotOccupied : ''} ${styles.arklineBoxSlotSelected}`.trim()}
-                      >
-                        <span className={styles.rackSlotLabel}>{selectedZoneDisplayCode}</span>
-                        <ArklineBoxPreview entries={selectedZoneData.entries} />
-                        <strong>
-                          {selectedZoneData.entries.length > 0
-                            ? `${formatNumber(selectedZoneData.totalQty)} qty`
-                            : 'Empty'}
-                        </strong>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className={styles.rackFrame} aria-label={`Rack layout for pallet ${selectedZone.code}`}>
+                  <div className={styles.rackFrame} aria-label={`Rack layout for ${selectedZoneDisplayCode}`}>
                       <span className={styles.rackPostLeft} />
                       <span className={styles.rackPostRight} />
                       {[0, 1, 2].map((levelIndex) => (
@@ -2604,7 +2655,9 @@ export default function WarehouseMapClient({ canEditMap = false }) {
                         {rackSlots.map((slot) => {
                           const isSlotSelected = selectedSlotKey === slot.key
                           const slotIsOccupied = slot.entries.length > 0
-                          const slotCode = getRackSlotCode(selectedZone.code, slot)
+                          const slotCode = selectedZoneIsArkline
+                            ? getArklineRackSlotCode(selectedZone.code, slot)
+                            : getRackSlotCode(selectedZone.code, slot)
 
                           return (
                             <div
@@ -2622,19 +2675,22 @@ export default function WarehouseMapClient({ canEditMap = false }) {
                               aria-pressed={isSlotSelected}
                             >
                               <span className={styles.rackSlotLabel}>{slotCode}</span>
-                              <RackSlotSubLocationPreview
-                                slot={slot}
-                                selectedSlotKey={selectedSlotKey}
-                                selectedSubLocationKey={selectedSubLocationKey}
-                                onSelect={handleSlotSelect}
-                              />
+                              {selectedZoneIsArkline ? (
+                                <ArklineSlotBoxPreview entries={slot.entries} />
+                              ) : (
+                                <RackSlotSubLocationPreview
+                                  slot={slot}
+                                  selectedSlotKey={selectedSlotKey}
+                                  selectedSubLocationKey={selectedSubLocationKey}
+                                  onSelect={handleSlotSelect}
+                                />
+                              )}
                               <strong>{slotIsOccupied ? `${formatNumber(slot.qty)} qty` : 'Empty'}</strong>
                             </div>
                           )
                         })}
                       </div>
                     </div>
-                  )}
 
                   <div className={styles.segmentedControl} aria-label="Rack detail mode">
                     <button
@@ -2651,13 +2707,15 @@ export default function WarehouseMapClient({ canEditMap = false }) {
                     >
                       History
                     </button>
-                    <button
-                      type="button"
-                      className={activePanel === 'registry' ? styles.segmentActive : ''}
-                      onClick={() => setActivePanel('registry')}
-                    >
-                      Registry Storage
-                    </button>
+                    {canUseRegistry ? (
+                      <button
+                        type="button"
+                        className={activePanel === 'registry' ? styles.segmentActive : ''}
+                        onClick={() => setActivePanel('registry')}
+                      >
+                        Registry Storage
+                      </button>
+                    ) : null}
                   </div>
 
                   <div className={styles.storageList}>
@@ -2700,7 +2758,7 @@ export default function WarehouseMapClient({ canEditMap = false }) {
                           <div>
                             <h4>{row.item_name}</h4>
                             <p>
-                              {formatNumber(row.qty)} qty taken from {selectedZoneIsArkline ? 'Box' : getSubLocationLabel(getHistorySubLocationKey(row, storageEntryById))}
+                              {formatNumber(row.qty)} qty taken from {selectedZoneIsArkline ? selectedSlotCode : getSubLocationLabel(getHistorySubLocationKey(row, storageEntryById))}
                               {row.requester_name ? ` for ${row.requester_name}` : ''}
                             </p>
                             <p>Picked by {getDisplayNameByEmail(row.completed_by, userProfilesByEmail)}</p>
@@ -2708,7 +2766,7 @@ export default function WarehouseMapClient({ canEditMap = false }) {
                           <strong>{formatNumber(row.qty)}</strong>
                         </article>
                       ))
-                    ) : (
+                    ) : activePanel === 'registry' && canUseRegistry ? (
                       <form className={styles.registryForm} onSubmit={handleRegistrySubmit}>
                         <div className={styles.registryHeader}>
                           <div>
@@ -2718,8 +2776,8 @@ export default function WarehouseMapClient({ canEditMap = false }) {
                           <span>
                             {selectedZoneIsArkline
                               ? activeRegistryLocation
-                                ? 'Box location'
-                                : 'No mapped box'
+                                ? 'Rack position'
+                                : 'No mapped slot'
                               : `${registrySubLocationOptions.length} K position(s)`}
                           </span>
                         </div>
@@ -2727,8 +2785,8 @@ export default function WarehouseMapClient({ canEditMap = false }) {
                         <div className={styles.registryGrid}>
                           {selectedZoneIsArkline ? (
                             <label className={styles.registryField}>
-                              <span>Box Position</span>
-                              <input value={activeRegistryLocation ? 'Box' : 'Not mapped'} readOnly />
+                              <span>Rack Position</span>
+                              <input value={activeRegistryLocation ? selectedSlotCode : 'Not mapped'} readOnly />
                             </label>
                           ) : (
                             <label className={styles.registryField}>
@@ -2764,13 +2822,31 @@ export default function WarehouseMapClient({ canEditMap = false }) {
 
                         <label className={styles.registryField}>
                           <span>Item Name</span>
-                          <input
-                            name="itemName"
-                            value={registryForm.itemName}
-                            onChange={handleRegistryInputChange}
-                            placeholder="ITEM NAME"
-                            required
-                          />
+                          {selectedZoneIsArkline ? (
+                            <>
+                              <input
+                                name="itemName"
+                                value={registryForm.itemName}
+                                onChange={handleRegistryInputChange}
+                                placeholder="TYPE SKU OR PRODUCT"
+                                list="warehouse-map-arkline-products"
+                                required
+                              />
+                              <datalist id="warehouse-map-arkline-products">
+                                {arklineProducts.map((product) => (
+                                  <option key={product.sku} value={product.label} />
+                                ))}
+                              </datalist>
+                            </>
+                          ) : (
+                            <input
+                              name="itemName"
+                              value={registryForm.itemName}
+                              onChange={handleRegistryInputChange}
+                              placeholder="ITEM NAME"
+                              required
+                            />
+                          )}
                         </label>
 
                         <div className={styles.registryGrid}>
@@ -2789,7 +2865,7 @@ export default function WarehouseMapClient({ canEditMap = false }) {
                             <input
                               value={
                                 selectedZoneIsArkline
-                                  ? `${selectedSlotCode} / Box`
+                                  ? selectedSlotCode
                                   : activeRegistryLocation
                                     ? `${selectedSlotCode} / ${registryForm.subLocationKey}`
                                     : selectedSlotCode
@@ -2813,7 +2889,7 @@ export default function WarehouseMapClient({ canEditMap = false }) {
                           <p className={styles.registryWarning}>No mapped K position found for this rack slot.</p>
                         ) : null}
                         {selectedZoneIsArkline && !activeRegistryLocation ? (
-                          <p className={styles.registryWarning}>No mapped ARKLINE box location found for this rack.</p>
+                          <p className={styles.registryWarning}>No mapped ARKLINE rack position found for this slot.</p>
                         ) : null}
                         {registryError ? <p className={styles.registryError}>{registryError}</p> : null}
                         {registrySuccess ? <p className={styles.registrySuccess}>{registrySuccess}</p> : null}
@@ -2826,7 +2902,7 @@ export default function WarehouseMapClient({ canEditMap = false }) {
                           {registrySaving ? 'Saving...' : 'Save to Storage'}
                         </button>
                       </form>
-                    )}
+                    ) : null}
                   </div>
                 </div>
             </>

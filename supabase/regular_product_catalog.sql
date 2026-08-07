@@ -17,6 +17,11 @@ alter table public.dir_product_models
 alter table public.dir_product_model_variants
   add column if not exists variant_code text,
   add column if not exists selling_name text,
+  add column if not exists release_status text not null default 'draft',
+  add column if not exists released_at timestamptz null,
+  add column if not exists released_by text null,
+  add column if not exists release_count integer not null default 0,
+  add column if not exists release_history jsonb not null default '[]'::jsonb,
   add column if not exists merged_into_variant_id bigint null,
   add column if not exists merged_at timestamptz null,
   add column if not exists merged_by text null,
@@ -32,6 +37,23 @@ create unique index if not exists dir_product_model_variants_variant_code_uidx
 
 create index if not exists dir_product_model_variants_model_idx
   on public.dir_product_model_variants (product_model_id, is_active);
+
+alter table public.dir_product_model_variants
+  drop constraint if exists dir_product_model_variants_release_status_check;
+
+alter table public.dir_product_model_variants
+  add constraint dir_product_model_variants_release_status_check
+  check (release_status in ('draft', 'released'));
+
+alter table public.dir_product_model_variants
+  drop constraint if exists dir_product_model_variants_release_count_check;
+
+alter table public.dir_product_model_variants
+  add constraint dir_product_model_variants_release_count_check
+  check (release_count >= 0);
+
+create index if not exists dir_product_model_variants_release_status_idx
+  on public.dir_product_model_variants (release_status, product_model_id, is_active);
 
 drop function if exists public.generate_regular_model_code(bigint);
 
@@ -183,6 +205,15 @@ comment on column public.dir_product_model_variants.variant_code is
 
 comment on column public.dir_product_model_variants.selling_name is
   'Sales/display name for the variant. When filled, UI displays it before PL or internal variant names.';
+
+comment on column public.dir_product_model_variants.release_status is
+  'Master product release status. Batch-level release history remains on pl_packing_items.release_status, released_at, and released_by.';
+
+comment on column public.dir_product_model_variants.release_count is
+  'Number of release actions recorded for this product variant.';
+
+comment on column public.dir_product_model_variants.release_history is
+  'Release action history for this product variant.';
 
 comment on column public.dir_product_model_variants.merged_into_variant_id is
   'Canonical variant pointer when this variant has been merged into another SKU.';

@@ -92,6 +92,31 @@ create index if not exists qc_items_product_model_id_idx
 create index if not exists qc_items_product_model_variant_id_idx
   on public.qc_items (product_model_variant_id);
 
+-- Backfill historical QC task identity from its inbound unload source.
+-- Temporary sample rows may stay null until they are resolved into inbound_sample_model_breakdowns.
+update public.qc_items qi
+set
+  product_model_id = coalesce(qi.product_model_id, iu.product_model_id),
+  product_model_variant_id = coalesce(qi.product_model_variant_id, iu.product_model_variant_id),
+  variant_name = coalesce(nullif(trim(qi.variant_name), ''), nullif(trim(iu.variant_name), ''), nullif(trim(iu.variant_code), ''))
+from public.inbound_unload iu
+where qi.inbound_unload_id = iu.id
+  and coalesce(iu.is_product_temporary, false) = false
+  and (
+    qi.product_model_id is null
+    or qi.product_model_variant_id is null
+    or nullif(trim(coalesce(qi.variant_name, '')), '') is null
+  );
+
+select 'qc_items_missing_identity' as check_name, count(*) as row_count
+from public.qc_items qi
+left join public.inbound_unload iu on iu.id = qi.inbound_unload_id
+where coalesce(iu.is_product_temporary, false) = false
+  and (
+    qi.product_model_id is null
+    or qi.product_model_variant_id is null
+  );
+
 -- Optional cleanup after every QC page has been migrated and verified:
 -- alter table public.qc_items drop column if exists model_color;
 -- alter table public.qc_items drop column if exists original_model_color;

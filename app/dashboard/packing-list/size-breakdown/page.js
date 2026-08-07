@@ -9,6 +9,7 @@ import {
   resolveProductCatalogIdentity,
 } from '@/utils/catalog-identity'
 import { createClient } from '@/utils/supabase/browser'
+import { ADMIN_EMAIL, hasPermission, resolveRole } from '@/utils/permissions'
 import { getProfileByAuthenticatedUser } from '@/utils/user-profiles'
 
 const supabase = createClient()
@@ -1601,6 +1602,10 @@ function getModelLabel(row = {}) {
   return catalogName ? `${row.model_name || '-'} / ${catalogName}` : row.model_name || '-'
 }
 
+function getModelFilterLabel(row = {}) {
+  return String(row.model_name || '').trim() || '-'
+}
+
 function getOverviewModelVariantLabel(row = {}) {
   const modelName = String(row.model_name || '').trim()
   const catalogName = String(getCatalogName(row) || '').trim()
@@ -1661,7 +1666,7 @@ function getUniqueOptions(items = []) {
 function matchesModelFilter(card = {}, filters = {}, excludeKey = '') {
   if (excludeKey !== 'brand' && filters.brand && (card.brand_name || 'UNBRANDED') !== filters.brand) return false
   if (excludeKey !== 'categoryPath' && filters.categoryPath && getCategoryPathLabel(card) !== filters.categoryPath) return false
-  if (excludeKey !== 'model' && filters.model && getModelLabel(card) !== filters.model) return false
+  if (excludeKey !== 'model' && filters.model && getModelFilterLabel(card) !== filters.model) return false
   return true
 }
 
@@ -2894,6 +2899,8 @@ export default function PackingListSizeBreakdownPage() {
     categoryPath: '',
     model: '',
   })
+  const [canEditSizeBreakdown, setCanEditSizeBreakdown] = useState(false)
+  const [accessReady, setAccessReady] = useState(false)
   const [editCatalogFilters, setEditCatalogFilters] = useState({
     brand: '',
     categoryPath: '',
@@ -2905,12 +2912,28 @@ export default function PackingListSizeBreakdownPage() {
         data: { user },
       } = await supabase.auth.getUser()
 
-      if (!user) return
+      if (!user) {
+        setAccessReady(true)
+        return
+      }
 
       const { data: profile } = await getProfileByAuthenticatedUser(supabase, user, 'role')
-      if (String(profile?.role || '').trim() === 'packing_staff' && initialGrn) {
+      const emailAdmin = user.email?.toLowerCase() === ADMIN_EMAIL
+      const role = resolveRole(profile?.role, emailAdmin)
+      const isAdminUser = emailAdmin || role === 'admin'
+      const { data: rolePermissionRows } = isAdminUser
+        ? { data: [] }
+        : await supabase.from('dir_user_roles').select('permission_code').eq('role', role)
+      const rolePermissions = (rolePermissionRows || []).map((item) => item.permission_code).filter(Boolean)
+      const nextCanEditSizeBreakdown = hasPermission(rolePermissions, 'packing.size_breakdown.edit', isAdminUser)
+      setCanEditSizeBreakdown(nextCanEditSizeBreakdown)
+
+      if (role === 'packing_staff' && nextCanEditSizeBreakdown && initialGrn) {
         router.replace(`/mobile/packing-list/item-storing?grn=${encodeURIComponent(initialGrn)}`)
+        return
       }
+
+      setAccessReady(true)
     }
 
     enforceStaffRoute()
@@ -2965,7 +2988,7 @@ export default function PackingListSizeBreakdownPage() {
           .order('id', { ascending: true }),
         supabase
           .from('qc_confirm')
-          .select('id, inbound_id, brand_id, category_id, model_name, model_color:variant_name, photo_url')
+          .select('id, inbound_id, brand_id, category_id, product_model_id, product_model_variant_id, source_variant_code, model_name, model_color:variant_name, photo_url')
           .order('created_at', { ascending: false }),
         supabase.from('dir_product_models').select('*').order('created_at', { ascending: true }),
         supabase.from('dir_product_model_variants').select('*').order('id', { ascending: true }),
@@ -3346,7 +3369,7 @@ export default function PackingListSizeBreakdownPage() {
     return {
       brands: getUniqueOptions(filterBaseCards.filter((card) => matchesModelFilter(card, effectiveModelFilters, 'brand')).map((card) => card.brand_name || 'UNBRANDED')),
       categoryPaths: getUniqueOptions(filterBaseCards.filter((card) => matchesModelFilter(card, effectiveModelFilters, 'categoryPath')).map((card) => getCategoryPathLabel(card))),
-      models: getUniqueOptions(filterBaseCards.filter((card) => matchesModelFilter(card, effectiveModelFilters, 'model')).map((card) => getModelLabel(card))),
+      models: getUniqueOptions(filterBaseCards.filter((card) => matchesModelFilter(card, effectiveModelFilters, 'model')).map((card) => getModelFilterLabel(card))),
     }
   }, [effectiveModelFilters, filterBaseCards])
 
@@ -3439,7 +3462,16 @@ export default function PackingListSizeBreakdownPage() {
         return normalize(row.model_name) === normalize(card.model_name) && normalize(row.variant_name) === normalize(card.catalogName)
       })
       .forEach((row, index) => {
-        const groupKey = row.pl_detail_seq ? `seq:${row.pl_detail_seq}` : 'base'
+        const requestedGroupKey = row.pl_detail_seq ? `seq:${row.pl_detail_seq}` : ''
+        const firstDetailGroupKey = Array.from(grouped.entries())
+          .sort(
+            ([, firstRow], [, secondRow]) =>
+              Number(firstRow.detail_order || firstRow.display_order || 0) -
+              Number(secondRow.detail_order || secondRow.display_order || 0)
+          )[0]?.[0]
+        const groupKey = requestedGroupKey && grouped.has(requestedGroupKey)
+          ? requestedGroupKey
+          : firstDetailGroupKey || 'base'
         const current = grouped.get(groupKey) || {
           id: `saved-pl-return-${groupKey}`,
           pl_detail_seq: row.pl_detail_seq || null,
@@ -3555,6 +3587,7 @@ export default function PackingListSizeBreakdownPage() {
   }
 
   function openEditForm() {
+    if (!canEditSizeBreakdown) return
     if (viewMode !== 'table') {
       leaveEditMode()
       return
@@ -3574,6 +3607,7 @@ export default function PackingListSizeBreakdownPage() {
   }
 
   function openPackingInput() {
+    if (!canEditSizeBreakdown) return
     router.push(`/mobile/packing-list/item-storing?grn=${encodeURIComponent(initialGrn)}`)
   }
 
@@ -3603,6 +3637,7 @@ export default function PackingListSizeBreakdownPage() {
   }
 
   function openAllocationModal() {
+    if (!canEditSizeBreakdown) return
     if (!selectedCard) {
       setError('Choose a model card first.')
       setSuccess('')
@@ -4746,6 +4781,7 @@ export default function PackingListSizeBreakdownPage() {
   }
 
   async function saveBreakdown() {
+    if (!canEditSizeBreakdown) return
     if (!selectedCard) {
       setError('Choose a model card first.')
       setSuccess('')
@@ -4892,6 +4928,7 @@ export default function PackingListSizeBreakdownPage() {
       (row.returnRows || []).map((returnRow) => ({
         id: returnRow.warehouse_return_id || null,
         inbound_id: selectedCard.inbound_id,
+        pl_detail_seq: row.pl_detail_seq,
         koli_sequence: returnRow.koli_sequence || null,
         brand_id: selectedCard.brand_id || null,
         category_id: selectedCard.category_id || null,
@@ -4984,6 +5021,7 @@ export default function PackingListSizeBreakdownPage() {
       const warehouseReturnPayload = {
         inbound_id: row.inbound_id,
         source_phase: PL_RETURN_SOURCE_PHASE,
+        pl_detail_seq: row.pl_detail_seq,
         koli_sequence: row.koli_sequence || null,
         brand_id: row.brand_id,
         category_id: row.category_id,
@@ -5056,7 +5094,7 @@ export default function PackingListSizeBreakdownPage() {
     setSuccess('PL size breakdown saved.')
   }
 
-  if (loading) {
+  if (loading || !accessReady) {
     return <p style={styles.emptyText}>Loading size breakdown...</p>
   }
 
@@ -5446,7 +5484,7 @@ export default function PackingListSizeBreakdownPage() {
           </div>
 
           <div style={styles.headerActions}>
-            {viewMode === 'table' ? (
+            {viewMode === 'table' && canEditSizeBreakdown ? (
               <button
                 type="button"
                 onClick={openPackingInput}
@@ -5467,26 +5505,28 @@ export default function PackingListSizeBreakdownPage() {
                 </svg>
               </button>
             ) : null}
-            <button
-              type="button"
-              onClick={openEditForm}
-              disabled={saving}
-              style={
-                viewMode !== 'table'
-                  ? { ...styles.toolIconButton, display: 'none' }
-                  : saving
-                    ? { ...styles.toolIconButton, ...styles.disabledButton }
-                    : styles.toolIconButton
-              }
-              title={viewMode === 'table' ? 'Edit Form' : 'Back to Overview'}
-              aria-label={viewMode === 'table' ? 'Edit Form' : 'Back to Overview'}
-            >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                <path d="M4 20H8L19 9C20.1 7.9 20.1 6.1 19 5C17.9 3.9 16.1 3.9 15 5L4 16V20Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                <path d="M13.5 6.5L17.5 10.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-              </svg>
-            </button>
-            {viewMode !== 'table' ? (
+            {canEditSizeBreakdown ? (
+              <button
+                type="button"
+                onClick={openEditForm}
+                disabled={saving}
+                style={
+                  viewMode !== 'table'
+                    ? { ...styles.toolIconButton, display: 'none' }
+                    : saving
+                      ? { ...styles.toolIconButton, ...styles.disabledButton }
+                      : styles.toolIconButton
+                }
+                title={viewMode === 'table' ? 'Edit Form' : 'Back to Overview'}
+                aria-label={viewMode === 'table' ? 'Edit Form' : 'Back to Overview'}
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path d="M4 20H8L19 9C20.1 7.9 20.1 6.1 19 5C17.9 3.9 16.1 3.9 15 5L4 16V20Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                  <path d="M13.5 6.5L17.5 10.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                </svg>
+              </button>
+            ) : null}
+            {viewMode !== 'table' && canEditSizeBreakdown ? (
               <>
               <button
                 type="button"
@@ -5739,8 +5779,8 @@ export default function PackingListSizeBreakdownPage() {
                         <td style={styles.td}>
                           {row.sizes.length ? (
                             <span style={styles.sizeSummary}>
-                              {row.sizes.map((size) => (
-                                <span key={`${row.key}-${size.size}`} style={styles.sizeChip}>
+                              {row.sizes.map((size, sizeIndex) => (
+                                <span key={`${row.key}-${size.size}-${sizeIndex}`} style={styles.sizeChip}>
                                   {size.size}: {size.qty}
                                 </span>
                               ))}

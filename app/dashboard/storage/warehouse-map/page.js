@@ -19,9 +19,9 @@ export default async function WarehouseMapPage() {
   const { role, permissions, isAdmin } = await loadAccessContext(supabase, user, 'role')
   const access = getStorageFeatureAccess(role, permissions, isAdmin)
 
-  if (!access.location) {
+  if (!access.warehouseMap) {
     redirect('/dashboard/storage')
   }
 
-  return <WarehouseMapClient canEditMap={isAdmin} />
+  return <WarehouseMapClient canEditMap={isAdmin} canUseRegistry={Boolean(access.locationAdd || access.locationEdit)} />
 }

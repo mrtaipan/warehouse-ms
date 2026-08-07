@@ -99,10 +99,10 @@ const BASE_PERMISSION_GROUPS = [
     key: 'storage',
     label: 'Storage',
     items: [
-      { key: 'overview', label: 'Storage Overview', description: 'Halaman ringkasan dan pintu masuk utama workflow storage.', actions: ['view'] },
-      { key: 'search', label: 'Search Storage', description: 'Cari stok dan lokasi penyimpanan barang.', actions: ['view'] },
-      { key: 'registry', label: 'Registry Storage', description: 'Kelola pencatatan penempatan stok ke lokasi storage.', actions: ['view', 'add', 'edit', 'delete'] },
-      { key: 'location', label: 'Storage Location', description: 'Lihat ringkasan dan detail lokasi storage.', actions: ['view'] },
+      { key: 'location', label: 'Storage Location', description: 'Lihat stok per lokasi, registrasi item, edit detail, dan take out barang storage.', actions: ['view', 'add', 'edit'] },
+      { key: 'queue', label: 'Storage Queue', description: 'Lihat queue dari Packing List dan proses Store ke lokasi storage.', actions: ['view', 'edit'] },
+      { key: 'pick_history', label: 'Pick History', description: 'Lihat histori pengambilan barang dari storage.', actions: ['view'] },
+      { key: 'product_directory', label: 'Product Directory', description: 'Lihat dan kelola direktori produk, release, split, merge, dan photo workflow.', actions: ['view', 'add', 'edit'] },
     ],
   },
   {
@@ -157,6 +157,17 @@ const INBOUND_ACCESS_CODES = [
   'inbound.unload.add',
   'inbound.unload.edit',
 ]
+const STORAGE_ACCESS_CODES = [
+  'storage.location.view',
+  'storage.location.add',
+  'storage.location.edit',
+  'storage.queue.view',
+  'storage.queue.edit',
+  'storage.pick_history.view',
+  'storage.product_directory.view',
+  'storage.product_directory.add',
+  'storage.product_directory.edit',
+]
 const LEGACY_INBOUND_PERMISSION_MAP = {
   'inbound.overview.view': ['inbound.receiving.view', 'inbound.unload.view'],
   'inbound.detail.view': ['inbound.receiving.view', 'inbound.unload.view'],
@@ -165,6 +176,14 @@ const LEGACY_INBOUND_PERMISSION_MAP = {
   'inbound.edit.view': ['inbound.receiving.view'],
   'inbound.edit.edit': ['inbound.receiving.edit'],
   'inbound.qc.view': ['inbound.unload.view'],
+}
+const LEGACY_STORAGE_PERMISSION_MAP = {
+  'storage.overview.view': ['storage.location.view', 'storage.queue.view', 'storage.pick_history.view', 'storage.product_directory.view'],
+  'storage.search.view': ['storage.location.view'],
+  'storage.registry.view': ['storage.location.view', 'storage.queue.view'],
+  'storage.registry.add': ['storage.location.add', 'storage.queue.edit'],
+  'storage.registry.edit': ['storage.location.edit', 'storage.queue.edit'],
+  'storage.registry.delete': ['storage.location.edit'],
 }
 
 function labelizeAction(action) {
@@ -256,9 +275,10 @@ const DEFAULT_ROLE_BUNDLES = {
     'dashboard.home.view',
     'myarklife.view',
     'dashboard.operations_calendar.view',
-    'storage.overview.view',
-    'storage.search.view',
     'storage.location.view',
+    'storage.queue.view',
+    'storage.pick_history.view',
+    'storage.product_directory.view',
     'inbound.receiving.view',
     'inbound.unload.view',
     'packing.overview.view',
@@ -337,13 +357,15 @@ const DEFAULT_ROLE_BUNDLES = {
     'dashboard.home.view',
     'myarklife.view',
     'dashboard.operations_calendar.view',
-    'storage.overview.view',
-    'storage.search.view',
-    'storage.registry.view',
-    'storage.registry.add',
-    'storage.registry.edit',
-    'storage.registry.delete',
     'storage.location.view',
+    'storage.location.add',
+    'storage.location.edit',
+    'storage.queue.view',
+    'storage.queue.edit',
+    'storage.pick_history.view',
+    'storage.product_directory.view',
+    'storage.product_directory.add',
+    'storage.product_directory.edit',
     'storage.restock_instruction.view',
     'storage.restock_submit.view',
     'storage.restock_submit.add',
@@ -354,12 +376,15 @@ const DEFAULT_ROLE_BUNDLES = {
   storage_staff: [
     'dashboard.home.view',
     'myarklife.view',
-    'storage.overview.view',
-    'storage.search.view',
-    'storage.registry.view',
-    'storage.registry.add',
-    'storage.registry.edit',
     'storage.location.view',
+    'storage.location.add',
+    'storage.location.edit',
+    'storage.queue.view',
+    'storage.queue.edit',
+    'storage.pick_history.view',
+    'storage.product_directory.view',
+    'storage.product_directory.add',
+    'storage.product_directory.edit',
     'storage.restock_instruction.view',
     'storage.restock_submit.view',
     'storage.restock_submit.add',
@@ -516,6 +541,12 @@ export function expandImpliedPermissions(permissions = []) {
   )
 
   for (const [legacyCode, mappedCodes] of Object.entries(LEGACY_INBOUND_PERMISSION_MAP)) {
+    if (!expanded.has(legacyCode)) continue
+    expanded.delete(legacyCode)
+    mappedCodes.forEach((code) => expanded.add(code))
+  }
+
+  for (const [legacyCode, mappedCodes] of Object.entries(LEGACY_STORAGE_PERMISSION_MAP)) {
     if (!expanded.has(legacyCode)) continue
     expanded.delete(legacyCode)
     mappedCodes.forEach((code) => expanded.add(code))
@@ -741,37 +772,56 @@ export function getStorageFeatureAccess(role, permissions = [], isAdmin = false)
     return {
       menu: true,
       menuHref: '/dashboard/storage/overview',
-      overview: true,
       location: true,
-      registry: true,
-      search: true,
+      locationAdd: true,
+      locationEdit: true,
+      queue: true,
+      queueEdit: true,
+      pickHistory: true,
+      productDirectory: true,
+      productDirectoryAdd: true,
+      productDirectoryEdit: true,
+      warehouseMap: true,
+      brandLookup: true,
       restockSubmit: true,
       restockPicker: true,
     }
   }
 
-  const overview = hasPermission(permissions, 'storage.overview.view', isAdmin)
-  const registry = hasPermission(permissions, 'storage.registry.view', isAdmin)
-  const search = hasPermission(permissions, 'storage.search.view', isAdmin)
   const location = hasPermission(permissions, 'storage.location.view', isAdmin)
+  const locationAdd = hasPermission(permissions, 'storage.location.add', isAdmin)
+  const locationEdit = hasPermission(permissions, 'storage.location.edit', isAdmin)
+  const queue = hasPermission(permissions, 'storage.queue.view', isAdmin)
+  const queueEdit = hasPermission(permissions, 'storage.queue.edit', isAdmin)
+  const pickHistory = hasPermission(permissions, 'storage.pick_history.view', isAdmin)
+  const productDirectory = hasPermission(permissions, 'storage.product_directory.view', isAdmin)
+  const productDirectoryAdd = hasPermission(permissions, 'storage.product_directory.add', isAdmin)
+  const productDirectoryEdit = hasPermission(permissions, 'storage.product_directory.edit', isAdmin)
   const restockInstruction = hasPermission(permissions, 'storage.restock_instruction.view', isAdmin)
   const restockSubmit = hasPermission(permissions, 'storage.restock_submit.view', isAdmin)
   let restockPicker = hasPermission(permissions, 'storage.restock_picker.view', isAdmin)
   if (role === 'packing_staff' || role === 'packing_coordinator') {
     restockPicker = false
   }
-  const menu = overview || registry || search || location
+  const menu = location || queue || pickHistory || productDirectory
 
   let menuHref = '/dashboard'
-  if (location || search || registry || overview) menuHref = '/dashboard/storage/overview'
+  if (location || queue || pickHistory || productDirectory) menuHref = '/dashboard/storage/overview'
 
   return {
     menu,
     menuHref,
-    overview,
     location,
-    registry,
-    search,
+    locationAdd,
+    locationEdit,
+    queue,
+    queueEdit,
+    pickHistory,
+    productDirectory,
+    productDirectoryAdd,
+    productDirectoryEdit,
+    warehouseMap: menu,
+    brandLookup: menu,
     restockInstruction,
     restockSubmit,
     restockPicker,
@@ -861,12 +911,12 @@ const ROUTE_PERMISSION_MAP = [
   { matcher: (pathname) => pathname.startsWith('/dashboard/profile'), codes: ['myarklife.view'] },
   { matcher: (pathname) => pathname === '/dashboard/myarklife' || pathname.startsWith('/dashboard/myarklife/'), codes: ['myarklife.view'] },
   { matcher: (pathname) => pathname === '/dashboard/human-resources' || pathname.startsWith('/dashboard/human-resources/'), codes: ['hrga.home.view'] },
-  { matcher: (pathname) => pathname === '/dashboard/storage' || pathname.startsWith('/dashboard/storage?'), codes: ['storage.overview.view', 'storage.location.view', 'storage.search.view', 'storage.registry.view'] },
-  { matcher: (pathname) => pathname.startsWith('/dashboard/storage/search'), codes: ['storage.search.view'] },
-  { matcher: (pathname) => pathname.startsWith('/dashboard/storage/registry'), codes: ['storage.registry.view'] },
-  { matcher: (pathname) => pathname.startsWith('/dashboard/storage/overview'), codes: ['storage.location.view', 'storage.search.view', 'storage.registry.view'] },
-  { matcher: (pathname) => pathname.startsWith('/dashboard/storage/daftar-barang'), codes: ['storage.location.view', 'storage.search.view'] },
-  { matcher: (pathname) => pathname.startsWith('/dashboard/storage/warehouse-map'), codes: ['storage.location.view'] },
+  { matcher: (pathname) => pathname === '/dashboard/storage' || pathname.startsWith('/dashboard/storage?'), codes: STORAGE_ACCESS_CODES },
+  { matcher: (pathname) => pathname.startsWith('/dashboard/storage/search'), codes: ['storage.location.view'] },
+  { matcher: (pathname) => pathname.startsWith('/dashboard/storage/registry'), codes: ['storage.location.add', 'storage.location.edit'] },
+  { matcher: (pathname) => pathname.startsWith('/dashboard/storage/overview'), codes: STORAGE_ACCESS_CODES },
+  { matcher: (pathname) => pathname.startsWith('/dashboard/storage/daftar-barang'), codes: ['storage.product_directory.view'] },
+  { matcher: (pathname) => pathname.startsWith('/dashboard/storage/warehouse-map'), codes: STORAGE_ACCESS_CODES },
   { matcher: (pathname) => pathname.startsWith('/dashboard/storage/restock-instruction'), codes: ['storage.restock_instruction.view', 'storage.restock_submit.view', 'storage.restock_picker.view'] },
   { matcher: (pathname) => pathname.startsWith('/dashboard/storage/restock-request') || pathname === '/restock-request' || pathname.startsWith('/restock-request?'), codes: ['storage.restock_submit.view'] },
   { matcher: (pathname) => pathname === '/take-requests' || pathname.startsWith('/take-requests?'), codes: ['storage.restock_picker.view'] },

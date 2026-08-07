@@ -42,6 +42,21 @@ function formatDate(value) {
   }).format(date)
 }
 
+function formatDateTime(value) {
+  if (!value) return '-'
+
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return '-'
+
+  return new Intl.DateTimeFormat('en-GB', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(date)
+}
+
 function getDateValue(value) {
   if (!value) return ''
 
@@ -92,18 +107,62 @@ function getReleaseState(row = {}) {
   return 'draft'
 }
 
-function getPhotoQueueState(row = {}) {
-  const rawStatus = normalizeUpper(row.photo_queue_status || row.photo_status || '')
+function getReleaseMeta(row = {}) {
+  const history = normalizeReleaseHistory(row.release_history)
+  const latestHistory = history
+    .filter((item) => item?.released_at)
+    .sort((left, right) => new Date(right.released_at || 0) - new Date(left.released_at || 0))[0]
 
-  if (rawStatus.includes('DRAFT')) {
-    return 'draft'
+  return {
+    releasedAt: latestHistory?.released_at || row.released_at || '',
+    releasedBy: latestHistory?.released_by || row.released_by || '',
+  }
+}
+
+function normalizeReleaseHistory(value) {
+  if (!value) {
+    return []
   }
 
-  if (rawStatus.includes('QUEUE') || rawStatus.includes('SUBMIT') || rawStatus.includes('PHOTO')) {
-    return 'queued'
+  if (Array.isArray(value)) {
+    return value.filter(Boolean)
   }
 
-  return 'none'
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value)
+      return normalizeReleaseHistory(parsed)
+    } catch {
+      return []
+    }
+  }
+
+  if (typeof value === 'object') {
+    if (Array.isArray(value.events)) {
+      return value.events.filter(Boolean)
+    }
+
+    return [value]
+  }
+
+  return []
+}
+
+function getReleaseCount(row = {}) {
+  const count = Number(row.release_count || 0)
+
+  if (Number.isFinite(count) && count > 0) {
+    return count
+  }
+
+  return getReleaseState(row) === 'released' ? 1 : 0
+}
+
+function appendVariantReleaseHistory(variant = {}, releaseEvent = {}) {
+  return [
+    ...normalizeReleaseHistory(variant.release_history),
+    releaseEvent,
+  ]
 }
 
 function getReleaseStateFromSet(states) {
@@ -435,89 +494,11 @@ function buildProductKey(row, breakdown, model, variant, brand, productName) {
   return `fallback:${normalizeKey(brand)}:${normalizeKey(productName)}:${modelName}:${variantName}`
 }
 
-function buildPhotoWorkflowItems(rows, lookup, expectedState) {
-  const queue = new Map()
-
-  rows.forEach((row) => {
-    if (getPhotoQueueState(row) !== expectedState) return
-
-    const storingType = normalizeUpper(row.storing_type || 'MOB')
-    const breakdown = lookup.breakdownById.get(Number(row.pl_size_breakdown_id))
-    const modelId = Number(row.product_model_id || breakdown?.product_model_id || 0)
-    const variantId = Number(row.product_model_variant_id || breakdown?.product_model_variant_id || 0)
-    const model = lookup.modelById.get(modelId)
-    const variant = lookup.variantById.get(variantId)
-    const assignedVariant = getAssignedVariantForRow(row, breakdown, lookup, variant)
-    const selectedVariant = getCanonicalVariant(assignedVariant, lookup.variantById)
-    const brand = getBrandLabel(row, model, lookup.brandById, lookup.brandByCode)
-    const categoryParts = getCategoryParts(model?.category_id || breakdown?.category_id, lookup.categoryById)
-    const detailCategoryLabel = getDetailCategoryLabel(categoryParts)
-    const productName = getSelectedProductName(row, breakdown, model, variant, selectedVariant)
-    const inbound = lookup.inboundById.get(Number(row.inbound_id))
-    const grnNumber = normalize(inbound?.grn_number) || '-'
-    const detailGrn = getDetailGrnLabel(grnNumber)
-    const sourceSku = normalize(row.source_variant_code || breakdown?.source_variant_code || variant?.variant_code || variant?.variant_label) || '-'
-    const sku = getAssignedSkuForRow(row, breakdown, lookup, getSelectedSku(sourceSku, selectedVariant))
-    const photoUrl = getResolvedProductPhotoUrl(row, breakdown, model, variant, selectedVariant)
-    const queueKey = [detailGrn, sku, brand, productName, detailCategoryLabel, storingType].map(normalizeUpper).join('::')
-    const queueItem =
-      queue.get(queueKey) || {
-        key: queueKey,
-        grn: detailGrn,
-        baseGrn: grnNumber,
-        sku,
-        brand,
-        productName,
-        photoUrl,
-        qty: 0,
-        rowIds: [],
-        submittedAt: '',
-        submittedBy: '',
-        modelPhotoshootTotal: 0,
-        modelPhotoshootDoneCount: 0,
-        teaserPhotoshootTotal: 0,
-        teaserPhotoshootDoneCount: 0,
-      }
-
-    queueItem.qty += Number(row.qty || 0)
-    queueItem.photoUrl = queueItem.photoUrl || photoUrl
-    if (row.id) {
-      queueItem.rowIds.push(Number(row.id))
-    }
-    if (row.photo_queue_submitted_at && (!queueItem.submittedAt || new Date(row.photo_queue_submitted_at) > new Date(queueItem.submittedAt))) {
-      queueItem.submittedAt = row.photo_queue_submitted_at
-    }
-    queueItem.submittedBy = queueItem.submittedBy || normalize(row.photo_queue_submitted_by)
-    queueItem.modelPhotoshootTotal += 1
-    queueItem.teaserPhotoshootTotal += 1
-    if (row.model_photoshoot_done) {
-      queueItem.modelPhotoshootDoneCount += 1
-    }
-    if (row.teaser_photoshoot_done) {
-      queueItem.teaserPhotoshootDoneCount += 1
-    }
-    queue.set(queueKey, queueItem)
-  })
-
-  return Array.from(queue.values())
-    .map((item) => ({
-      ...item,
-      rowIds: Array.from(new Set(item.rowIds)).filter(Boolean),
-      submittedBy: item.submittedBy || '-',
-      modelPhotoshootDone: item.modelPhotoshootTotal > 0 && item.modelPhotoshootDoneCount === item.modelPhotoshootTotal,
-      teaserPhotoshootDone: item.teaserPhotoshootTotal > 0 && item.teaserPhotoshootDoneCount === item.teaserPhotoshootTotal,
-    }))
-    .sort((left, right) =>
-      naturalSort.compare(left.grn, right.grn) ||
-      naturalSort.compare(left.sku, right.sku) ||
-      naturalSort.compare(left.productName, right.productName)
-    )
-}
-
-export default function ProductDirectoryClient({ embedded = false, activeSection = 'directory' }) {
+export default function ProductDirectoryClient({ embedded = false, activeSection = 'directory', canManage = true }) {
   const [packingRows, setPackingRows] = useState([])
   const [inboundRows, setInboundRows] = useState([])
   const [breakdownRows, setBreakdownRows] = useState([])
+  const [warehouseStorageRows, setWarehouseStorageRows] = useState([])
   const [identityEvents, setIdentityEvents] = useState([])
   const [productModels, setProductModels] = useState([])
   const [productVariants, setProductVariants] = useState([])
@@ -543,9 +524,6 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
   const [bulkWorking, setBulkWorking] = useState(false)
   const [actionMessage, setActionMessage] = useState('')
   const [actionError, setActionError] = useState('')
-  const [activeProductTab, setActiveProductTab] = useState('directory')
-  const [photoListOpen, setPhotoListOpen] = useState(false)
-  const [photoListPopoverOpen, setPhotoListPopoverOpen] = useState(false)
   const [previewPhoto, setPreviewPhoto] = useState(null)
   const [openFilterMenu, setOpenFilterMenu] = useState('')
   const [filterSearches, setFilterSearches] = useState({})
@@ -566,6 +544,7 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
           nextPackingRows,
           nextInboundRows,
           nextBreakdownRows,
+          nextWarehouseStorageRows,
           nextIdentityEvents,
           nextProductModels,
           nextProductVariants,
@@ -575,6 +554,7 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
           fetchAllRows('pl_packing_items', '*', 'created_at'),
           fetchAllRows('inbound', 'id, grn_number, inbound_date, item_name, created_at', 'created_at'),
           fetchAllRows('pl_size_breakdown', '*', 'id'),
+          fetchAllRows('warehouse_storage', 'id, sku_id, item_name, size, qty, created_at', 'created_at'),
           fetchOptionalRows('product_variant_identity_events', '*', 'created_at'),
           fetchAllRows('dir_product_models', '*', 'id'),
           fetchAllRows('dir_product_model_variants', '*', 'id'),
@@ -585,6 +565,7 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
         setPackingRows(nextPackingRows)
         setInboundRows(nextInboundRows)
         setBreakdownRows(nextBreakdownRows)
+        setWarehouseStorageRows(nextWarehouseStorageRows)
         setIdentityEvents(nextIdentityEvents)
         setProductModels(nextProductModels)
         setProductVariants(nextProductVariants)
@@ -603,6 +584,14 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
   const lookup = useMemo(() => {
     const splitAssignmentByDetailKey = new Map()
     const splitSourceVariantIds = new Set()
+    const storageQtyBySku = new Map()
+
+    ;(warehouseStorageRows || []).forEach((entry) => {
+      const sku = normalizeUpper(entry.sku_id)
+      if (!sku) return
+
+      storageQtyBySku.set(sku, Number(storageQtyBySku.get(sku) || 0) + Number(entry.qty || 0))
+    })
 
     ;(identityEvents || []).forEach((event) => {
       if (normalizeUpper(event.event_type) !== 'SPLIT') return
@@ -642,8 +631,9 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
       brandById: getMapById(brands),
       brandByCode: new Map((brands || []).map((brand) => [normalizeUpper(brand.brand_code), brand])),
       categoryById: getMapById(categories),
+      storageQtyBySku,
     }
-  }, [brands, breakdownRows, categories, identityEvents, inboundRows, productModels, productVariants])
+  }, [brands, breakdownRows, categories, identityEvents, inboundRows, productModels, productVariants, warehouseStorageRows])
 
   const groupedProducts = useMemo(() => {
     const groups = new Map()
@@ -652,10 +642,6 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
       const storingType = normalizeUpper(row.storing_type || 'MOB')
 
       if (filters.type !== 'all' && storingType !== normalizeUpper(filters.type)) {
-        return
-      }
-
-      if (filters.releaseStatus !== 'all' && getReleaseState(row) !== filters.releaseStatus) {
         return
       }
 
@@ -681,8 +667,15 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
       const grnNumber = normalize(inbound?.grn_number) || '-'
       const detailGrn = getDetailGrnLabel(grnNumber)
       const photoUrl = getResolvedProductPhotoUrl(row, breakdown, model, variant, selectedVariant)
-      const releaseState = getReleaseState(row)
-      const photoQueueState = getPhotoQueueState(row)
+      const releaseSource = selectedVariant || row
+      const releaseState = getReleaseState(releaseSource)
+      const releaseCount = getReleaseCount(releaseSource)
+      const batchReleaseState = getReleaseState(row)
+      const releaseMeta = getReleaseMeta(releaseSource)
+
+      if (filters.releaseStatus !== 'all' && releaseState !== filters.releaseStatus) {
+        return
+      }
 
       if (filters.brand && brand !== filters.brand) return
       if (filters.category && categoryParts.categoryRoot !== filters.category) return
@@ -741,6 +734,12 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
           subCategories: new Set(),
           itemTypes: new Set(),
           detailItems: new Map(),
+          releaseStates: new Set(),
+          releaseCount: 0,
+          latestReleasedAt: '',
+          latestReleasedBy: '',
+          storageQty: filters.viewMode === 'model' ? Number(lookup.storageQtyBySku.get(normalizedSku) || 0) : 0,
+          unreleasedQueuedQty: 0,
           earliestDate: '',
           latestDate: '',
         }
@@ -754,6 +753,14 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
 
       const qty = Number(row.qty || 0)
       group.totalQty += qty
+      if (
+        filters.viewMode === 'model' &&
+        releaseState === 'released' &&
+        batchReleaseState !== 'released' &&
+        normalizeUpper(row.storage_status) !== 'STORED'
+      ) {
+        group.unreleasedQueuedQty += qty
+      }
 
       if (storingType === 'OI') {
         group.oiQty += qty
@@ -771,6 +778,12 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
       }
       if (categoryParts.itemType && categoryParts.itemType !== '-') {
         group.itemTypes.add(categoryParts.itemType)
+      }
+      group.releaseStates.add(releaseState)
+      group.releaseCount = Math.max(Number(group.releaseCount || 0), releaseCount)
+      if (releaseMeta.releasedAt && (!group.latestReleasedAt || new Date(releaseMeta.releasedAt) > new Date(group.latestReleasedAt))) {
+        group.latestReleasedAt = releaseMeta.releasedAt
+        group.latestReleasedBy = releaseMeta.releasedBy
       }
 
       const detailKeyProductName = productName
@@ -810,7 +823,9 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
           detailOrders: [],
           plNames: new Set(),
           releaseStates: new Set(),
-          photoQueueStates: new Set(),
+          releaseCount: 0,
+          latestReleasedAt: '',
+          latestReleasedBy: '',
           earliestDate: '',
           latestDate: '',
           plDates: new Set(),
@@ -830,7 +845,7 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
         if (splitAssignment?.id) {
           detailItem.splitAssignmentIds.push(Number(splitAssignment.id))
         }
-        if (releaseState !== 'released') {
+        if (batchReleaseState !== 'released') {
           detailItem.draftRowIds.push(Number(row.id))
         }
       }
@@ -844,7 +859,11 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
         detailItem.detailOrders.push(Number(row.detail_order || breakdown?.detail_order))
       }
       detailItem.releaseStates.add(releaseState)
-      detailItem.photoQueueStates.add(photoQueueState)
+      detailItem.releaseCount = Math.max(Number(detailItem.releaseCount || 0), releaseCount)
+      if (releaseMeta.releasedAt && (!detailItem.latestReleasedAt || new Date(releaseMeta.releasedAt) > new Date(detailItem.latestReleasedAt))) {
+        detailItem.latestReleasedAt = releaseMeta.releasedAt
+        detailItem.latestReleasedBy = releaseMeta.releasedBy
+      }
       if (!detailItem.latestDate || new Date(row.created_at || 0) > new Date(detailItem.latestDate || 0)) {
         detailItem.latestDate = row.created_at
       }
@@ -874,8 +893,20 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
     })
 
     return Array.from(groups.values())
-      .map((group) => ({
+      .map((group) => {
+        const groupReleaseState = getReleaseStateFromSet(group.releaseStates)
+        const modelCurrentQty = Number(group.storageQty || 0) + Number(group.unreleasedQueuedQty || 0)
+        const shouldUseCurrentQty = filters.viewMode === 'model' && groupReleaseState === 'released'
+        const nextTotalQty = shouldUseCurrentQty ? modelCurrentQty : group.totalQty
+        const nextMobQty = shouldUseCurrentQty && filters.type === 'MOB' ? modelCurrentQty : group.mobQty
+        const nextOiQty = shouldUseCurrentQty && filters.type === 'OI' ? modelCurrentQty : group.oiQty
+
+        return {
         ...group,
+        totalQty: nextTotalQty,
+        mobQty: nextMobQty,
+        oiQty: nextOiQty,
+        releaseState: groupReleaseState,
         productList: Array.from(group.products).filter(Boolean).sort((left, right) => naturalSort.compare(left, right)),
         brandList: Array.from(group.brands).filter(Boolean).sort((left, right) => naturalSort.compare(left, right)),
         categoryList: Array.from(group.categories).filter(Boolean).sort((left, right) => naturalSort.compare(left, right)),
@@ -892,7 +923,6 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
             plDetailSeq: getMinFinite(item.plDetailSeqs),
             detailOrder: getMinFinite(item.detailOrders),
             releaseState: filters.type === 'all' ? getCombinedReleaseState(item.releaseStates) : getReleaseStateFromSet(item.releaseStates),
-            photoQueueState: item.photoQueueStates.has('queued') ? 'queued' : 'none',
             plDateList: Array.from(item.plDates || []).sort((left, right) => naturalSort.compare(left, right)),
           }))
           .sort((left, right) =>
@@ -902,7 +932,8 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
           ),
         grnList: Array.from(group.grns).filter((grn) => grn !== '-').sort((left, right) => naturalSort.compare(left, right)),
         plDateList: Array.from(group.plDates).sort((left, right) => naturalSort.compare(left, right)),
-      }))
+        }
+      })
       .sort((left, right) => {
         const directionMultiplier = sortConfig.direction === 'asc' ? 1 : -1
         let result = 0
@@ -996,7 +1027,11 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
       const grnNumber = normalize(inbound?.grn_number) || '-'
       const detailGrn = getDetailGrnLabel(grnNumber)
       const photoUrl = getResolvedProductPhotoUrl(row, breakdown, model, variant, selectedVariant)
-      const releaseState = getReleaseState(row)
+      const releaseSource = selectedVariant || row
+      const releaseState = getReleaseState(releaseSource)
+      const releaseCount = getReleaseCount(releaseSource)
+      const batchReleaseState = getReleaseState(row)
+      const releaseMeta = getReleaseMeta(releaseSource)
       const detailKey = [detailGrn, selectedSku, brand, productName, detailCategoryLabel, storingType].map(normalizeUpper).join('::')
       const detailItem =
         items.get(detailKey) || {
@@ -1027,6 +1062,9 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
           detailOrders: [],
           plNames: new Set(),
           releaseStates: new Set(),
+          releaseCount: 0,
+          latestReleasedAt: '',
+          latestReleasedBy: '',
         }
 
       detailItem.qty += Number(row.qty || 0)
@@ -1038,7 +1076,7 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
         if (splitAssignment?.id) {
           detailItem.splitAssignmentIds.push(Number(splitAssignment.id))
         }
-        if (releaseState !== 'released') {
+        if (batchReleaseState !== 'released') {
           detailItem.draftRowIds.push(Number(row.id))
         }
       }
@@ -1052,6 +1090,11 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
         detailItem.detailOrders.push(Number(row.detail_order || breakdown?.detail_order))
       }
       detailItem.releaseStates.add(releaseState)
+      detailItem.releaseCount = Math.max(Number(detailItem.releaseCount || 0), releaseCount)
+      if (releaseMeta.releasedAt && (!detailItem.latestReleasedAt || new Date(releaseMeta.releasedAt) > new Date(detailItem.latestReleasedAt))) {
+        detailItem.latestReleasedAt = releaseMeta.releasedAt
+        detailItem.latestReleasedBy = releaseMeta.releasedBy
+      }
       items.set(detailKey, detailItem)
     })
 
@@ -1079,14 +1122,8 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
     () => Array.from(new Set(selectedDetailItems.flatMap((item) => item.rowIds || []))).filter(Boolean),
     [selectedDetailItems]
   )
-  const selectedReleaseRowIds = useMemo(
-    () => Array.from(new Set(
-      selectedDetailItems
-        .flatMap((item) => item.draftRowIds || [])
-    )).filter(Boolean),
-    [selectedDetailItems]
-  )
-  const canSelectSkuRows = filters.viewMode === 'grn' && filters.type !== 'all'
+  const selectedReleaseRowIds = selectedRowIds
+  const canSelectSkuRows = canManage && filters.viewMode === 'grn' && filters.type !== 'all'
   const selectedNameItem = selectedDetailItems.length === 1 ? selectedDetailItems[0] : null
   const editNameButtonDisabled = !canSelectSkuRows || selectedDetailItems.length !== 1 || bulkWorking || !Number(selectedNameItem?.productModelVariantId || 0)
   const splitEligibility = useMemo(() => {
@@ -1221,18 +1258,10 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
       variantIds: mergeOptions.map((item) => item.variantId),
     }
   }, [canSelectSkuRows, mergeOptions, selectedDetailItems.length])
-  const photoDraftItems = useMemo(
-    () => buildPhotoWorkflowItems(packingRows, lookup, 'draft'),
-    [lookup, packingRows]
-  )
-  const photoSubmittedItems = useMemo(
-    () => buildPhotoWorkflowItems(packingRows, lookup, 'queued'),
-    [lookup, packingRows]
-  )
-  const releaseButtonDisabled = !canSelectSkuRows || selectedReleaseRowIds.length === 0 || bulkWorking
+  const releaseButtonDisabled = !canSelectSkuRows || selectedRowIds.length === 0 || bulkWorking
   const splitButtonDisabled = !splitEligibility.canSplit || bulkWorking
   const mergeButtonDisabled = !mergeEligibility.canMerge || bulkWorking
-  const selectedProductSection = embedded ? activeSection : activeProductTab
+  const selectedProductSection = embedded ? activeSection : 'directory'
 
   function handleFilterChange(event) {
     const { name, value, type, checked } = event.target
@@ -1303,6 +1332,7 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
   }
 
   function toggleSelectedProduct(productKey) {
+    if (!canManage) return
     setSelectedProductKeys((prev) =>
       prev.includes(productKey)
         ? prev.filter((key) => key !== productKey)
@@ -1313,17 +1343,14 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
   }
 
   function openSelectedSellingNameEditor() {
+    if (!canManage) return
     if (editNameButtonDisabled || !selectedNameItem) return
 
     openSellingNameEditor(selectedNameItem)
   }
 
-  function openPhotoListDetail() {
-    setPhotoListPopoverOpen(false)
-    setPhotoListOpen(true)
-  }
-
   function openMergeEditor() {
+    if (!canManage) return
     if (mergeButtonDisabled) {
       setActionError(mergeEligibility.reason || 'Choose SKU rows to merge.')
       return
@@ -1349,6 +1376,7 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
   }
 
   async function saveMergeSku() {
+    if (!canManage) return
     if (!mergeEditor || bulkWorking) return
 
     const targetVariantId = Number(mergeTargetVariantId || 0)
@@ -1464,15 +1492,13 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
       return `${message} Run supabase/product_variant_merge_workflow.sql in Supabase first.`
     }
 
-    const needsSql =
-      normalized.includes('release_status') ||
-      normalized.includes('photo_queue_status') ||
-      normalized.includes('model_photoshoot') ||
-      normalized.includes('teaser_photoshoot')
-    return needsSql ? `${message} Run supabase/pl_packing_items_release_workflow.sql in Supabase first.` : message
+    return normalized.includes('release_status')
+      ? `${message} Run supabase/product_variant_release_workflow.sql in Supabase first.`
+      : message
   }
 
   function openSellingNameEditor(item = {}) {
+    if (!canManage) return
     const variantId = Number(item.productModelVariantId || 0)
 
     if (!variantId) {
@@ -1507,6 +1533,7 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
   }
 
   async function saveSellingName() {
+    if (!canManage) return
     if (!sellingNameEditor?.variantId || bulkWorking) return
 
     setBulkWorking(true)
@@ -1542,6 +1569,7 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
   }
 
   async function markSelectedReleased() {
+    if (!canManage) return
     if (selectedReleaseRowIds.length === 0 || bulkWorking) return
 
     setBulkWorking(true)
@@ -1551,59 +1579,95 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
     try {
       const actor = await getActorLabel()
       const releasedAt = new Date().toISOString()
-      const payload = {
+      const selectedIdSet = new Set(selectedReleaseRowIds.map(Number))
+      const rowsToRelease = packingRows.filter((row) => selectedIdSet.has(Number(row.id)))
+      const detailsByVariantId = new Map()
+      selectedDetailItems.forEach((item) => {
+        const variantId = Number(item.productModelVariantId || 0)
+        if (!variantId) return
+
+        const detail =
+          detailsByVariantId.get(variantId) || {
+            variantId,
+            sku: item.sku,
+            qty: 0,
+            rowIds: [],
+            grns: new Set(),
+          }
+
+        detail.qty += Number(item.qty || 0)
+        detail.rowIds.push(...(item.rowIds || []))
+        if (item.grn) {
+          detail.grns.add(item.grn)
+        }
+        detailsByVariantId.set(variantId, detail)
+      })
+      const releaseDetails = Array.from(detailsByVariantId.values())
+      const variantIdsToRelease = releaseDetails.map((item) => item.variantId)
+      const payloadById = new Map()
+      const variantPayloadById = new Map()
+      const batchPayload = {
         release_status: 'released',
         released_at: releasedAt,
         released_by: actor,
         updated_at: releasedAt,
       }
-      const { error: updateError } = await supabase
-        .from('pl_packing_items')
-        .update(payload)
-        .in('id', selectedReleaseRowIds)
 
-      if (updateError) throw updateError
+      await Promise.all(rowsToRelease.map(async (row) => {
+        const { error: updateError } = await supabase
+          .from('pl_packing_items')
+          .update(batchPayload)
+          .eq('id', row.id)
 
-      const selectedIdSet = new Set(selectedReleaseRowIds.map(Number))
-      setPackingRows((prev) =>
-        prev.map((row) => (selectedIdSet.has(Number(row.id)) ? { ...row, ...payload } : row))
-      )
-      setSelectedProductKeys([])
-      setActionMessage(`${selectedReleaseRowIds.length} PL row(s) marked as Released.`)
-    } catch (updateError) {
-      setActionError(getActionErrorMessage(updateError))
-    } finally {
-      setBulkWorking(false)
-    }
-  }
+        if (updateError) throw updateError
 
-  async function addSelectedToPhotoList() {
-    if (selectedRowIds.length === 0 || bulkWorking) return
+        payloadById.set(Number(row.id), batchPayload)
+      }))
 
-    setBulkWorking(true)
-    setActionError('')
-    setActionMessage('')
+      if (variantIdsToRelease.length) {
+        await Promise.all(releaseDetails.map(async (detail) => {
+          const currentVariant = lookup.variantById.get(Number(detail.variantId)) || {}
+          const nextReleaseCount = getReleaseCount(currentVariant) + 1
+          const releaseEvent = {
+            release_count: nextReleaseCount,
+            released_at: releasedAt,
+            released_by: actor,
+            sku: detail.sku || currentVariant.variant_code || '',
+            qty: Number(detail.qty || 0),
+            grns: Array.from(detail.grns).filter(Boolean),
+            pl_packing_item_ids: Array.from(new Set(detail.rowIds)).filter(Boolean),
+          }
+          const variantPayload = {
+            release_status: 'released',
+            released_at: releasedAt,
+            released_by: actor,
+            release_count: nextReleaseCount,
+            release_history: appendVariantReleaseHistory(currentVariant, releaseEvent),
+            updated_at: releasedAt,
+          }
 
-    try {
-      const draftAt = new Date().toISOString()
-      const payload = {
-        photo_queue_status: 'draft',
-        photo_queue_submitted_at: null,
-        photo_queue_submitted_by: null,
-        updated_at: draftAt,
+          const { error: variantUpdateError } = await supabase
+            .from('dir_product_model_variants')
+            .update(variantPayload)
+            .eq('id', detail.variantId)
+
+          if (variantUpdateError) throw variantUpdateError
+
+          variantPayloadById.set(Number(detail.variantId), variantPayload)
+        }))
+
+        setProductVariants((prev) =>
+          prev.map((variant) => (
+            variantPayloadById.has(Number(variant.id)) ? { ...variant, ...variantPayloadById.get(Number(variant.id)) } : variant
+          ))
+        )
       }
-      const { error: updateError } = await supabase
-        .from('pl_packing_items')
-        .update(payload)
-        .in('id', selectedRowIds)
 
-      if (updateError) throw updateError
-
-      const selectedIdSet = new Set(selectedRowIds.map(Number))
       setPackingRows((prev) =>
-        prev.map((row) => (selectedIdSet.has(Number(row.id)) ? { ...row, ...payload } : row))
+        prev.map((row) => (payloadById.has(Number(row.id)) ? { ...row, ...payloadById.get(Number(row.id)) } : row))
       )
       setSelectedProductKeys([])
+      setActionMessage(`${selectedReleaseRowIds.length} PL row(s) and ${variantIdsToRelease.length} product variant(s) marked as Released.`)
     } catch (updateError) {
       setActionError(getActionErrorMessage(updateError))
     } finally {
@@ -1612,6 +1676,7 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
   }
 
   async function splitSelectedToNewVariants() {
+    if (!canManage) return
     if (!splitEligibility.canSplit || bulkWorking) return
 
     setBulkWorking(true)
@@ -1832,121 +1897,6 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
     }
   }
 
-  async function removePhotoDraftItem(item) {
-    const rowIds = Array.from(new Set(item?.rowIds || [])).filter(Boolean)
-    if (rowIds.length === 0 || bulkWorking) return
-
-    setBulkWorking(true)
-    setActionError('')
-    setActionMessage('')
-
-    try {
-      const removedAt = new Date().toISOString()
-      const payload = {
-        photo_queue_status: 'none',
-        photo_queue_submitted_at: null,
-        photo_queue_submitted_by: null,
-        updated_at: removedAt,
-      }
-      const { error: updateError } = await supabase
-        .from('pl_packing_items')
-        .update(payload)
-        .in('id', rowIds)
-
-      if (updateError) throw updateError
-
-      const removedIdSet = new Set(rowIds.map(Number))
-      setPackingRows((prev) =>
-        prev.map((row) => (removedIdSet.has(Number(row.id)) ? { ...row, ...payload } : row))
-      )
-    } catch (updateError) {
-      setActionError(getActionErrorMessage(updateError))
-    } finally {
-      setBulkWorking(false)
-    }
-  }
-
-  async function submitPhotoListDraft() {
-    const rowIds = Array.from(new Set(photoDraftItems.flatMap((item) => item.rowIds || []))).filter(Boolean)
-    if (rowIds.length === 0 || bulkWorking) return
-
-    setBulkWorking(true)
-    setActionError('')
-    setActionMessage('')
-
-    try {
-      const actor = await getActorLabel()
-      const submittedAt = new Date().toISOString()
-      const payload = {
-        photo_queue_status: 'queued',
-        photo_queue_submitted_at: submittedAt,
-        photo_queue_submitted_by: actor,
-        updated_at: submittedAt,
-      }
-      const { error: updateError } = await supabase
-        .from('pl_packing_items')
-        .update(payload)
-        .in('id', rowIds)
-
-      if (updateError) throw updateError
-
-      const submittedIdSet = new Set(rowIds.map(Number))
-      setPackingRows((prev) =>
-        prev.map((row) => (submittedIdSet.has(Number(row.id)) ? { ...row, ...payload } : row))
-      )
-      setActionMessage(`${rowIds.length} PL row(s) submitted to the photo queue.`)
-    } catch (updateError) {
-      setActionError(getActionErrorMessage(updateError))
-    } finally {
-      setBulkWorking(false)
-    }
-  }
-
-  async function updatePhotoshootStatus(item, photoType, checked) {
-    const rowIds = Array.from(new Set(item?.rowIds || [])).filter(Boolean)
-    if (rowIds.length === 0 || bulkWorking) return
-
-    setBulkWorking(true)
-    setActionError('')
-    setActionMessage('')
-
-    try {
-      const changedAt = new Date().toISOString()
-      const actor = checked ? await getActorLabel() : null
-      const isModelPhoto = photoType === 'model'
-      const payload = isModelPhoto
-        ? {
-            model_photoshoot_done: checked,
-            model_photoshoot_done_at: checked ? changedAt : null,
-            model_photoshoot_done_by: checked ? actor : null,
-            updated_at: changedAt,
-          }
-        : {
-            teaser_photoshoot_done: checked,
-            teaser_photoshoot_done_at: checked ? changedAt : null,
-            teaser_photoshoot_done_by: checked ? actor : null,
-            updated_at: changedAt,
-          }
-
-      const { error: updateError } = await supabase
-        .from('pl_packing_items')
-        .update(payload)
-        .in('id', rowIds)
-
-      if (updateError) throw updateError
-
-      const updatedIdSet = new Set(rowIds.map(Number))
-      setPackingRows((prev) =>
-        prev.map((row) => (updatedIdSet.has(Number(row.id)) ? { ...row, ...payload } : row))
-      )
-      setActionMessage(`${item.sku} ${isModelPhoto ? 'Model Photoshoot' : 'Teaser Photoshoot'} ${checked ? 'marked as done' : 'cleared'}.`)
-    } catch (updateError) {
-      setActionError(getActionErrorMessage(updateError))
-    } finally {
-      setBulkWorking(false)
-    }
-  }
-
   function handleSort(key) {
     setSortConfig((prev) => ({
       key,
@@ -1995,18 +1945,31 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
     )
   }
 
-  function renderReleasePill(releaseState) {
+  function renderReleasePill(releaseState, releaseCount = 0, releasedAt = '', releasedBy = '') {
     if (!releaseState) {
       return <span style={styles.emptyStatusText}>-</span>
     }
+    const releaseMetaLabel = [releasedAt ? formatDateTime(releasedAt) : '', releasedBy].filter(Boolean).join(' • ')
+    const releaseCountLabel = Number(releaseCount || 0) > 1 ? ` x${formatNumber(releaseCount)}` : ''
 
     if (releaseState === 'partial') {
-      return <span style={styles.partialPill}>Partial</span>
+      return (
+        <span style={styles.releaseStatusStack}>
+          <span style={styles.partialPill}>Partial</span>
+        </span>
+      )
     }
 
     return (
-      <span style={releaseState === 'released' ? styles.releasedPill : styles.draftPill}>
-        {releaseState === 'released' ? 'Released' : 'Draft'}
+      <span style={styles.releaseStatusStack}>
+        <span style={releaseState === 'released' ? styles.releasedPill : styles.draftPill}>
+          {releaseState === 'released' ? `Released${releaseCountLabel}` : 'Draft'}
+        </span>
+        {releaseState === 'released' && releaseMetaLabel ? (
+          <span style={styles.releaseMeta}>
+            {releaseMetaLabel}
+          </span>
+        ) : null}
       </span>
     )
   }
@@ -2100,7 +2063,7 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
           <h1 style={styles.title}>Product List</h1>
           <p style={styles.subtitle}>
             Check product models, stock levels (MOB/OI), and readiness status - whether the product has been released
-            (photographed, listed, and finalized) or is still in progress.
+            and finalized or is still in progress.
           </p>
         </div>
         <div style={styles.kpiGrid}>
@@ -2109,24 +2072,6 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
             <strong style={{ ...styles.kpiValue, ...styles.totalKpiValue }}>{formatNumber(activeQtyValue)}</strong>
           </div>
         </div>
-      </div>
-      ) : null}
-
-      {!embedded ? (
-      <div style={styles.productTabRow} role="tablist" aria-label="Product List sections">
-        {[
-          ['directory', 'Product Directory'],
-          ['photo', 'Photo List'],
-        ].map(([value, label]) => (
-          <button
-            key={value}
-            type="button"
-            onClick={() => setActiveProductTab(value)}
-            style={activeProductTab === value ? { ...styles.productTabButton, ...styles.productTabButtonActive } : styles.productTabButton}
-          >
-            {label}
-          </button>
-        ))}
       </div>
       ) : null}
 
@@ -2245,6 +2190,7 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
                     <span style={{ ...styles.inlineKpiLabel, ...styles.inlineTotalKpiLabel }}>{activeQtyLabel}</span>
                     <strong style={{ ...styles.inlineKpiValue, ...styles.inlineTotalKpiValue }}>{formatNumber(activeQtyValue)}</strong>
                   </div>
+                  {canManage ? (
                   <div style={styles.bulkActionCluster}>
                     {canSelectSkuRows ? (
                       <>
@@ -2278,48 +2224,18 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
                       </>
                     ) : null}
                     {canSelectSkuRows ? (
-                      <div style={styles.photoListComboWrap}>
-                      <button
-                        type="button"
-                        onClick={addSelectedToPhotoList}
-                        disabled={selectedRowIds.length === 0 || bulkWorking}
-                        style={selectedRowIds.length === 0 || bulkWorking ? { ...styles.photoListAddButton, ...styles.bulkButtonDisabled } : styles.photoListAddButton}
-                      >
-                        Add to Photo List
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setPhotoListPopoverOpen((prev) => !prev)}
-                        style={photoListPopoverOpen ? { ...styles.photoListCountButton, ...styles.photoListCountButtonActive } : styles.photoListCountButton}
-                        aria-expanded={photoListPopoverOpen}
-                        aria-label="Open Photo List summary"
-                        title="Open Photo List summary"
-                      >
-                        {formatNumber(photoDraftItems.length)}
-                      </button>
-                      {photoListPopoverOpen ? (
-                        <div style={styles.photoListPopover}>
-                          <span style={styles.photoListPopoverEyebrow}>Draft Photo List</span>
-                          <strong style={styles.photoListPopoverCount}>{formatNumber(photoDraftItems.length)} item(s)</strong>
-                          <button type="button" onClick={openPhotoListDetail} style={styles.photoListPopoverButton}>
-                            Open Detail
-                          </button>
-                        </div>
-                      ) : null}
-                      </div>
-                    ) : null}
-                    {canSelectSkuRows ? (
                       <button
                         type="button"
                         onClick={markSelectedReleased}
                         disabled={releaseButtonDisabled}
                         style={releaseButtonDisabled ? { ...styles.finalBulkButton, ...styles.bulkButtonDisabled } : styles.finalBulkButton}
-                        title={selectedDetailItems.length > 0 && selectedReleaseRowIds.length === 0 ? 'Selected SKU rows are already released.' : 'Mark selected draft SKU rows as released.'}
+                        title="Mark selected SKU rows as released or release again."
                       >
                         Set Released
                       </button>
                     ) : null}
                   </div>
+                  ) : null}
                 </div>
               </div>
             ) : null}
@@ -2351,6 +2267,7 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
                       <th style={styles.th}>{renderSortHeader('Item Type', 'category')}</th>
                       <th style={styles.th}>{renderSortHeader('Product', 'product')}</th>
                       <th style={{ ...styles.th, ...styles.thCenter }}>{renderSortHeader('Tanggal', 'date', 'center')}</th>
+                      <th style={{ ...styles.th, ...styles.thCenter }}>Status</th>
                       <th style={styles.thNumber}>{renderSortHeader('Total Qty', 'qty', 'right')}</th>
                       <th style={{ ...styles.th, ...styles.thCenter }}>{renderSortHeader('GRN Numbers', 'grn', 'center')}</th>
                     </tr>
@@ -2413,7 +2330,7 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
                           </td>
                           <td style={{ ...styles.td, ...styles.tdCenter }}>{formatDate(item.latestDate)}</td>
                           <td style={{ ...styles.td, ...styles.tdCenter }}>
-                            {renderReleasePill(item.releaseState)}
+                            {renderReleasePill(item.releaseState, item.releaseCount, item.latestReleasedAt, item.latestReleasedBy)}
                           </td>
                           <td style={styles.tdNumber}>{formatNumber(item.qty)}</td>
                           {index === 0 ? (
@@ -2448,6 +2365,9 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
                           {renderProductName(row)}
                         </td>
                         <td style={{ ...styles.td, ...styles.tdCenter }}>{formatDate(row.latestDate)}</td>
+                        <td style={{ ...styles.td, ...styles.tdCenter }}>
+                          {renderReleasePill(row.releaseState, row.releaseCount, row.latestReleasedAt, row.latestReleasedBy)}
+                        </td>
                         <td style={styles.tdNumber}>{formatNumber(row.totalQty)}</td>
                         <td style={styles.td}>
                           <div style={styles.grnList}>
@@ -2514,93 +2434,9 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
         )}
       </div>
         </>
-      ) : (
-        <div style={styles.tableBlock}>
-          <div style={styles.photoTabHeader}>
-            <div>
-              <h2 style={styles.photoTabTitle}>Submitted Photo List</h2>
-              <p style={styles.photoTabText}>
-                Track submitted product photoshoot work and mark each SKU as model or teaser photo ready.
-              </p>
-            </div>
-            <span style={styles.photoTabCount}>{formatNumber(photoSubmittedItems.length)} item(s)</span>
-          </div>
+      ) : null}
 
-          {actionMessage ? <p style={styles.actionMessage}>{actionMessage}</p> : null}
-          {actionError ? <p style={styles.actionError}>{actionError}</p> : null}
-
-          {loading ? (
-            <p style={styles.statusText}>Loading Photo List...</p>
-          ) : error ? (
-            <p style={styles.error}>{error}</p>
-          ) : photoSubmittedItems.length === 0 ? (
-            <div style={styles.emptyState}>
-              <p style={{ margin: 0 }}>No submitted products are currently in the Photo List.</p>
-            </div>
-          ) : (
-            <div style={styles.photoListTableWrap}>
-              <table style={styles.photoListTable}>
-                <thead>
-                  <tr>
-                    <th style={{ ...styles.th, ...styles.thCenter }}>GRN</th>
-                    <th style={styles.th}>Brand</th>
-                    <th style={{ ...styles.th, ...styles.thCenter, ...styles.photoTh }}>Photo</th>
-                    <th style={{ ...styles.th, ...styles.thCenter }}>SKU</th>
-                    <th style={styles.th}>Product</th>
-                    <th style={styles.thNumber}>Qty</th>
-                    <th style={{ ...styles.th, ...styles.thCenter }}>Submitted By</th>
-                    <th style={{ ...styles.th, ...styles.thCenter }}>Submitted At</th>
-                    <th style={{ ...styles.th, ...styles.thCenter }}>Model Photoshoot</th>
-                    <th style={{ ...styles.th, ...styles.thCenter }}>Teaser Photoshoot</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {photoSubmittedItems.map((item) => (
-                    <tr key={`submitted-photo-${item.key}`}>
-                      <td style={{ ...styles.td, ...styles.tdCenter }}>
-                        <span style={styles.grnPlainText}>{item.grn}</span>
-                      </td>
-                      <td style={styles.td}>{item.brand}</td>
-                      <td style={{ ...styles.td, ...styles.tdCenter }}>
-                        {renderPhotoThumb(item.photoUrl, item.productName)}
-                      </td>
-                      <td style={{ ...styles.td, ...styles.tdCenter }}>
-                        <span style={styles.skuText}>{item.sku}</span>
-                      </td>
-                      <td style={styles.td}>{item.productName}</td>
-                      <td style={styles.tdNumber}>{formatNumber(item.qty)}</td>
-                      <td style={{ ...styles.td, ...styles.tdCenter }}>{item.submittedBy}</td>
-                      <td style={{ ...styles.td, ...styles.tdCenter }}>{formatDate(item.submittedAt)}</td>
-                      <td style={{ ...styles.td, ...styles.tdCenter }}>
-                        <input
-                          type="checkbox"
-                          checked={item.modelPhotoshootDone}
-                          onChange={(event) => updatePhotoshootStatus(item, 'model', event.target.checked)}
-                          disabled={bulkWorking}
-                          style={styles.rowCheckbox}
-                          aria-label={`Model Photoshoot for ${item.sku}`}
-                        />
-                      </td>
-                      <td style={{ ...styles.td, ...styles.tdCenter }}>
-                        <input
-                          type="checkbox"
-                          checked={item.teaserPhotoshootDone}
-                          onChange={(event) => updatePhotoshootStatus(item, 'teaser', event.target.checked)}
-                          disabled={bulkWorking}
-                          style={styles.rowCheckbox}
-                          aria-label={`Teaser Photoshoot for ${item.sku}`}
-                        />
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-      )}
-
-      {sellingNameEditor ? (
+      {sellingNameEditor && canManage ? (
         <div style={styles.modalOverlay} role="dialog" aria-modal="true" aria-label="Edit Selling Name">
           <div style={styles.nameModal}>
             <div style={styles.modalHeader}>
@@ -2653,7 +2489,7 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
         </div>
       ) : null}
 
-      {mergeEditor ? (
+      {mergeEditor && canManage ? (
         <div style={styles.modalOverlay} role="dialog" aria-modal="true" aria-label="Merge SKU">
           <div style={styles.mergeModal}>
             <div style={styles.modalHeader}>
@@ -2709,85 +2545,6 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
                 </label>
               ))}
             </div>
-          </div>
-        </div>
-      ) : null}
-
-      {photoListOpen ? (
-        <div style={styles.modalOverlay} role="dialog" aria-modal="true" aria-label="Photo List">
-          <div style={styles.photoModal}>
-            <div style={styles.modalHeader}>
-              <div>
-                <p style={styles.modalEyebrow}>Warehouse</p>
-                <h2 style={styles.modalTitle}>Photo List</h2>
-              </div>
-              <div style={styles.modalActionRow}>
-                <button
-                  type="button"
-                  onClick={submitPhotoListDraft}
-                  disabled={photoDraftItems.length === 0 || bulkWorking}
-                  style={photoDraftItems.length === 0 || bulkWorking ? { ...styles.bulkButton, ...styles.bulkButtonDisabled } : styles.bulkButton}
-                >
-                  Submit Photo List
-                </button>
-                <button type="button" onClick={() => setPhotoListOpen(false)} style={styles.modalCloseButton}>
-                  Close
-                </button>
-              </div>
-            </div>
-            {actionMessage ? <p style={styles.actionMessage}>{actionMessage}</p> : null}
-            {actionError ? <p style={styles.actionError}>{actionError}</p> : null}
-            {photoDraftItems.length === 0 ? (
-              <div style={styles.emptyState}>
-                <p style={{ margin: 0 }}>No draft products are currently in the Photo List.</p>
-              </div>
-            ) : (
-              <div style={styles.photoListTableWrap}>
-                <table style={styles.photoListTable}>
-                  <thead>
-                    <tr>
-                      <th style={{ ...styles.th, ...styles.thCenter }}>GRN</th>
-                      <th style={styles.th}>Brand</th>
-                      <th style={{ ...styles.th, ...styles.thCenter, ...styles.photoTh }}>Photo</th>
-                      <th style={{ ...styles.th, ...styles.thCenter }}>SKU</th>
-                      <th style={styles.th}>Product</th>
-                      <th style={styles.thNumber}>Qty</th>
-                      <th style={{ ...styles.th, ...styles.thCenter }}>Remove</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {photoDraftItems.slice(0, 100).map((item) => (
-                      <tr key={`photo-${item.key}`}>
-                        <td style={{ ...styles.td, ...styles.tdCenter }}>
-                          <span style={styles.grnPlainText}>{item.grn}</span>
-                        </td>
-                        <td style={styles.td}>{item.brand}</td>
-                        <td style={{ ...styles.td, ...styles.tdCenter }}>
-                          {renderPhotoThumb(item.photoUrl, item.productName)}
-                        </td>
-                        <td style={{ ...styles.td, ...styles.tdCenter }}>
-                          <span style={styles.skuText}>{item.sku}</span>
-                        </td>
-                        <td style={styles.td}>{item.productName}</td>
-                        <td style={styles.tdNumber}>{formatNumber(item.qty)}</td>
-                        <td style={{ ...styles.td, ...styles.tdCenter }}>
-                          <button
-                            type="button"
-                            onClick={() => removePhotoDraftItem(item)}
-                            disabled={bulkWorking}
-                            style={bulkWorking ? { ...styles.removeDraftButton, ...styles.bulkButtonDisabled } : styles.removeDraftButton}
-                            aria-label={`Remove ${item.sku} from Photo List`}
-                            title="Remove from Photo List"
-                          >
-                            X
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
           </div>
         </div>
       ) : null}
@@ -3780,6 +3537,21 @@ const styles = {
     color: '#92400e',
     fontSize: '10px',
     fontWeight: '800',
+  },
+  releaseStatusStack: {
+    display: 'inline-flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: '3px',
+    maxWidth: '150px',
+  },
+  releaseMeta: {
+    color: '#64748b',
+    fontSize: '9px',
+    fontWeight: '700',
+    lineHeight: 1.25,
+    overflowWrap: 'anywhere',
   },
   emptyStatusText: {
     color: '#94a3b8',

@@ -4,7 +4,7 @@ import Link from 'next/link'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { createClient } from '@/utils/supabase/browser'
-import { ADMIN_EMAIL, resolveRole } from '@/utils/permissions'
+import { ADMIN_EMAIL, getStorageFeatureAccess, resolveRole } from '@/utils/permissions'
 import { getProfileByAuthenticatedUser } from '@/utils/user-profiles'
 import { useRealtimeRefresh } from '@/utils/supabase/use-realtime-refresh'
 import ProductDirectoryClient from '../daftar-barang/product-directory-client'
@@ -132,8 +132,19 @@ function getQueueGroupKey(row = {}) {
 
 function getSkuList(rows = []) {
   return Array.from(
-    new Set(rows.map((row) => String(row.source_variant_code || '').trim()).filter(Boolean))
+    new Set(rows.map((row) => getQueueItemSku(row)).filter(Boolean))
   )
+}
+
+function getQueueItemSku(row = {}) {
+  return String(
+    row.resolved_sku ||
+    row.source_variant_code ||
+    row.breakdown_source_variant_code ||
+    row.variant_code ||
+    row.variant_label ||
+    ''
+  ).trim()
 }
 
 function getQueueGroupItemsLabel(rows = []) {
@@ -167,6 +178,34 @@ function formatStoredQueueItemName(value = '', grnNumber = '') {
   }
 
   return `${normalizedGrn} ${itemName}`
+}
+
+function normalizeArklineProduct(row) {
+  const sku = String(row?.sku_induk || '').trim().toUpperCase()
+  const productName = String(row?.nama_produk || '').trim().toUpperCase()
+
+  return {
+    sku,
+    productName,
+    label: sku && productName ? `${sku} | ${productName}` : sku || productName,
+    isActive: row?.is_active !== false,
+  }
+}
+
+async function fetchActiveArklineProducts() {
+  const { data, error } = await supabase
+    .from('arkline_dir_products')
+    .select('sku_induk, nama_produk, is_active')
+    .eq('is_active', true)
+    .order('nama_produk', { ascending: true })
+
+  if (error) {
+    throw error
+  }
+
+  return (data || [])
+    .map(normalizeArklineProduct)
+    .filter((item) => item.isActive && item.sku && item.productName)
 }
 
 async function fetchAllRackLocations() {
@@ -259,10 +298,74 @@ async function fetchAllStorageQueueRows() {
     const to = from + BATCH_SIZE - 1
     const { data, error } = await supabase
       .from('pl_packing_items')
-      .select('id, inbound_id, pl_size_breakdown_id, packing_group_key, storing_type, package_type, brand_code, source_variant_code, pl_name, model_name, variant_name, size_label, koli_sequence, qty, packed_by, storage_status, created_at')
+      .select('id, inbound_id, pl_size_breakdown_id, product_model_variant_id, packing_group_key, storing_type, package_type, brand_code, source_variant_code, pl_name, model_name, variant_name, size_label, koli_sequence, qty, packed_by, storage_status, created_at')
       .eq('storage_status', 'queued')
       .order('created_at', { ascending: false })
       .order('koli_sequence', { ascending: true })
+      .range(from, to)
+
+    if (error) {
+      throw error
+    }
+
+    if (!data || data.length === 0) {
+      break
+    }
+
+    allRows.push(...data)
+
+    if (data.length < BATCH_SIZE) {
+      break
+    }
+
+    from += BATCH_SIZE
+  }
+
+  return allRows
+}
+
+async function fetchAllPlSizeBreakdownRows() {
+  const allRows = []
+  let from = 0
+
+  while (true) {
+    const to = from + BATCH_SIZE - 1
+    const { data, error } = await supabase
+      .from('pl_size_breakdown')
+      .select('id, product_model_variant_id, source_variant_code')
+      .order('id', { ascending: true })
+      .range(from, to)
+
+    if (error) {
+      throw error
+    }
+
+    if (!data || data.length === 0) {
+      break
+    }
+
+    allRows.push(...data)
+
+    if (data.length < BATCH_SIZE) {
+      break
+    }
+
+    from += BATCH_SIZE
+  }
+
+  return allRows
+}
+
+async function fetchAllProductVariantRows() {
+  const allRows = []
+  let from = 0
+
+  while (true) {
+    const to = from + BATCH_SIZE - 1
+    const { data, error } = await supabase
+      .from('dir_product_model_variants')
+      .select('id, variant_code, variant_name, selling_name')
+      .order('id', { ascending: true })
       .range(from, to)
 
     if (error) {
@@ -317,6 +420,19 @@ async function fetchInboundSummaries() {
   return allRows
 }
 
+async function fetchBrandDirectory() {
+  const { data, error } = await supabase
+    .from('dir_brands')
+    .select('id, brand_code, brand_name, is_active')
+    .order('brand_name', { ascending: true })
+
+  if (error) {
+    throw error
+  }
+
+  return data || []
+}
+
 async function fetchUserProfilesByEmail() {
   const { data, error } = await supabase
     .from('dir_user_profiles')
@@ -337,14 +453,38 @@ async function fetchUserProfilesByEmail() {
   }, {})
 }
 
-async function fetchCurrentUserRole() {
+const EMPTY_STORAGE_ACCESS = {
+  menu: false,
+  location: false,
+  locationAdd: false,
+  locationEdit: false,
+  queue: false,
+  queueEdit: false,
+  pickHistory: false,
+  productDirectory: false,
+  productDirectoryAdd: false,
+  productDirectoryEdit: false,
+  warehouseMap: false,
+  brandLookup: false,
+}
+
+async function fetchCurrentStorageAccess() {
   const {
     data: { user },
   } = await supabase.auth.getUser()
+  if (!user) {
+    return EMPTY_STORAGE_ACCESS
+  }
+
   const emailAdmin = user?.email?.toLowerCase() === ADMIN_EMAIL
   const { data: profile } = await getProfileByAuthenticatedUser(supabase, user, 'role')
+  const role = resolveRole(profile?.role, emailAdmin)
+  const isAdmin = emailAdmin || role === 'admin'
+  const { data: rolePermissionRows } = isAdmin
+    ? { data: [] }
+    : await supabase.from('dir_user_roles').select('permission_code').eq('role', role)
 
-  return resolveRole(profile?.role, emailAdmin)
+  return getStorageFeatureAccess(role, (rolePermissionRows || []).map((item) => item.permission_code).filter(Boolean), isAdmin)
 }
 
 async function getCurrentUserEmail() {
@@ -358,7 +498,7 @@ async function getCurrentUserEmail() {
 export default function StorageOverviewPage() {
   const searchParams = useSearchParams()
   const initialMode = String(searchParams.get('mode') || '').trim().toLowerCase()
-  const initialListMode = ['history', 'queue', 'product-directory', 'photo-list'].includes(initialMode) ? initialMode : 'stock'
+  const initialListMode = ['history', 'queue', 'product-directory'].includes(initialMode) ? initialMode : 'stock'
   const initialRegisterOpen = searchParams.get('register') === '1'
   const initialProductSearch = String(searchParams.get('q') || searchParams.get('search') || '').trim().toUpperCase()
   const [rackLocations, setRackLocations] = useState([])
@@ -366,6 +506,8 @@ export default function StorageOverviewPage() {
   const [restockHistoryRows, setRestockHistoryRows] = useState([])
   const [storageQueueRows, setStorageQueueRows] = useState([])
   const [inboundRows, setInboundRows] = useState([])
+  const [arklineProducts, setArklineProducts] = useState([])
+  const [brandRows, setBrandRows] = useState([])
   const [userProfilesByEmail, setUserProfilesByEmail] = useState({})
   const [loading, setLoading] = useState(true)
   const [taking, setTaking] = useState(false)
@@ -376,13 +518,18 @@ export default function StorageOverviewPage() {
   const [success, setSuccess] = useState('')
   const [takeModalError, setTakeModalError] = useState('')
   const [queueModalError, setQueueModalError] = useState('')
-  const [currentRole, setCurrentRole] = useState('')
+  const [storageAccess, setStorageAccess] = useState(EMPTY_STORAGE_ACCESS)
   const [takeModalEntry, setTakeModalEntry] = useState(null)
   const [editModalEntry, setEditModalEntry] = useState(null)
   const [queueModalEntry, setQueueModalEntry] = useState(null)
   const [isRegisterModalOpen, setIsRegisterModalOpen] = useState(initialRegisterOpen)
+  const [isRegisterLocationCodeMenuOpen, setIsRegisterLocationCodeMenuOpen] = useState(false)
+  const [isRegisterArklineProductMenuOpen, setIsRegisterArklineProductMenuOpen] = useState(false)
+  const [isBrandLookupOpen, setIsBrandLookupOpen] = useState(false)
+  const [isCompactLayout, setIsCompactLayout] = useState(false)
   const [activeListMode, setActiveListMode] = useState(initialListMode)
   const [productSearch, setProductSearch] = useState(initialProductSearch)
+  const [brandLookupSearch, setBrandLookupSearch] = useState('')
   const [historyPickerFilter, setHistoryPickerFilter] = useState('')
   const [takeForm, setTakeForm] = useState({
     takeOutAll: false,
@@ -426,14 +573,18 @@ export default function StorageOverviewPage() {
     }
 
     try {
-      const [rackData, storageData, restockRows, queueRows, inboundData, profileRows, userRole] = await Promise.all([
+      const [rackData, storageData, restockRows, queueRows, breakdownRows, variantRows, inboundData, arklineProductRows, brandData, profileRows, access] = await Promise.all([
         fetchAllRackLocations(),
         fetchAllWarehouseStorage(),
         fetchAllRestockHistory(),
         fetchAllStorageQueueRows(),
+        fetchAllPlSizeBreakdownRows(),
+        fetchAllProductVariantRows(),
         fetchInboundSummaries(),
+        fetchActiveArklineProducts(),
+        fetchBrandDirectory(),
         fetchUserProfilesByEmail(),
-        fetchCurrentUserRole(),
+        fetchCurrentStorageAccess(),
       ])
 
       const normalizedRackLocations = (rackData || []).map((item) => ({
@@ -445,14 +596,39 @@ export default function StorageOverviewPage() {
         location_name: typeof item.location_name === 'string' ? item.location_name.trim() : item.location_name,
         group_code: typeof item.group_code === 'string' ? item.group_code.trim() : item.group_code,
       }))
+      const breakdownById = new Map((breakdownRows || []).map((item) => [Number(item.id), item]))
+      const variantById = new Map((variantRows || []).map((item) => [Number(item.id), item]))
+      const normalizedQueueRows = (queueRows || []).map((row) => {
+        const breakdown = breakdownById.get(Number(row.pl_size_breakdown_id || 0)) || {}
+        const variant = variantById.get(Number(row.product_model_variant_id || breakdown.product_model_variant_id || 0)) || {}
+        const resolvedSku = String(
+          row.source_variant_code ||
+          breakdown.source_variant_code ||
+          variant.variant_code ||
+          variant.variant_name ||
+          variant.selling_name ||
+          ''
+        ).trim()
+
+        return {
+          ...row,
+          product_model_variant_id: row.product_model_variant_id || breakdown.product_model_variant_id || null,
+          breakdown_source_variant_code: breakdown.source_variant_code || '',
+          variant_code: variant.variant_code || '',
+          variant_name: variant.variant_name || '',
+          resolved_sku: resolvedSku,
+        }
+      })
 
       setRackLocations(normalizedRackLocations)
       setStorageEntries(storageData || [])
       setRestockHistoryRows(restockRows || [])
-      setStorageQueueRows(queueRows || [])
+      setStorageQueueRows(normalizedQueueRows)
       setInboundRows(inboundData || [])
+      setArklineProducts(arklineProductRows || [])
+      setBrandRows(brandData || [])
       setUserProfilesByEmail(profileRows || {})
-      setCurrentRole(userRole || '')
+      setStorageAccess(access || EMPTY_STORAGE_ACCESS)
       setLoading(false)
     } catch (loadError) {
       if (showLoading) {
@@ -469,6 +645,17 @@ export default function StorageOverviewPage() {
 
     return () => window.clearTimeout(initialRefreshId)
   }, [refreshInventoryData])
+
+  useEffect(() => {
+    function updateLayoutMode() {
+      setIsCompactLayout(window.innerWidth < 1180)
+    }
+
+    updateLayoutMode()
+    window.addEventListener('resize', updateLayoutMode)
+
+    return () => window.removeEventListener('resize', updateLayoutMode)
+  }, [])
 
   useRealtimeRefresh({
     supabase,
@@ -491,7 +678,25 @@ export default function StorageOverviewPage() {
         .filter((entry) => entry.location),
     [locationById, storageEntries]
   )
-  const canShowTakeAction = currentRole !== 'storage_staff'
+  const canRegisterStorageItem = Boolean(storageAccess.locationAdd)
+  const canEditStorageItem = Boolean(storageAccess.locationEdit)
+  const canTakeStorageItem = Boolean(storageAccess.locationEdit)
+  const canStoreQueueItem = Boolean(storageAccess.queueEdit)
+  const canManageProductDirectory = Boolean(storageAccess.productDirectoryAdd || storageAccess.productDirectoryEdit)
+  const canShowStorageLocationActions = canEditStorageItem || canTakeStorageItem
+  const storageTabItems = useMemo(
+    () => [
+      storageAccess.location ? ['stock', 'Storage Location'] : null,
+      storageAccess.queue ? ['queue', 'Storage Queue'] : null,
+      storageAccess.pickHistory ? ['history', 'Pick History'] : null,
+      storageAccess.productDirectory ? ['product-directory', 'Product Directory'] : null,
+    ].filter(Boolean),
+    [storageAccess.location, storageAccess.pickHistory, storageAccess.productDirectory, storageAccess.queue]
+  )
+
+  const visibleListMode = storageTabItems.some(([mode]) => mode === activeListMode)
+    ? activeListMode
+    : storageTabItems[0]?.[0] || activeListMode
 
   const productScopedStorageRows = useMemo(() => {
     const normalizedProductSearch = normalizeFilterValue(productSearch)
@@ -588,6 +793,21 @@ export default function StorageOverviewPage() {
         .filter(Boolean)
     )
   ).sort(compareSizeValues)
+  const visibleBrandRows = useMemo(() => {
+    const query = normalizeFilterValue(brandLookupSearch)
+
+    return (brandRows || [])
+      .filter((brand) => {
+        if (!query) {
+          return true
+        }
+
+        return [brand.brand_code, brand.brand_name]
+          .map((value) => normalizeFilterValue(value))
+          .some((value) => value.includes(query))
+      })
+      .slice(0, 100)
+  }, [brandLookupSearch, brandRows])
 
   const registerLocationTypeOptions = Array.from(
     new Set(rackLocations.map((item) => item.location_type).filter(Boolean))
@@ -614,6 +834,9 @@ export default function StorageOverviewPage() {
         .filter(Boolean)
     )
   ).sort((left, right) => naturalSort.compare(String(left), String(right)))
+  const filteredRegisterLocationCodeOptions = registerLocationCodeOptions
+    .filter((option) => normalizeFilterValue(option).includes(normalizeFilterValue(registerForm.locationCode)))
+    .slice(0, 80)
 
   const registerSubLocationOptions = rackLocations
     .filter(
@@ -624,9 +847,27 @@ export default function StorageOverviewPage() {
     )
     .sort((left, right) => naturalSort.compare(String(left.sub_location), String(right.sub_location)))
 
-  const selectedRegisterLocation = registerSubLocationOptions.find(
-    (item) => item.sub_location === registerForm.subLocation
-  )
+  const selectedRegisterLocation =
+    registerSubLocationOptions.find((item) => item.sub_location === registerForm.subLocation) ||
+    (!registerForm.subLocation && registerSubLocationOptions.length === 1 ? registerSubLocationOptions[0] : null)
+  const registerLocationGroup = selectedRegisterLocation?.group_code || registerSubLocationOptions[0]?.group_code || ''
+  const isRegisterArklineLocation = normalizeFilterValue(registerLocationGroup) === 'ARKLINE'
+  const filteredArklineProducts = useMemo(() => {
+    const query = normalizeFilterValue(registerForm.itemName)
+
+    return arklineProducts
+      .filter((product) => !query || normalizeFilterValue(product.label).includes(query))
+      .slice(0, 80)
+  }, [arklineProducts, registerForm.itemName])
+  const selectedRegisterArklineProduct = useMemo(() => {
+    if (!isRegisterArklineLocation) {
+      return null
+    }
+
+    const selectedLabel = String(registerForm.itemName || '').trim().toUpperCase()
+
+    return arklineProducts.find((product) => product.label === selectedLabel) || null
+  }, [arklineProducts, isRegisterArklineLocation, registerForm.itemName])
 
   const queueStorageGroup = normalizeFilterValue(queueModalEntry?.storing_type)
   const queueEligibleRackLocations = rackLocations.filter((item) => {
@@ -1044,6 +1285,7 @@ export default function StorageOverviewPage() {
   }
 
   function openRegisterModal() {
+    if (!canRegisterStorageItem) return
     setIsRegisterModalOpen(true)
     setError('')
     setSuccess('')
@@ -1054,6 +1296,7 @@ export default function StorageOverviewPage() {
   }
 
   function openQueueModal(entry) {
+    if (!canStoreQueueItem) return
     setQueueModalEntry(entry)
     setQueueForm({
       locationType: 'PALLET',
@@ -1080,6 +1323,7 @@ export default function StorageOverviewPage() {
   }
 
   function openTakeModal(entry) {
+    if (!canTakeStorageItem) return
     setTakeModalEntry(entry)
     setTakeForm({
       takeOutAll: false,
@@ -1091,6 +1335,7 @@ export default function StorageOverviewPage() {
   }
 
   function openEditModal(entry) {
+    if (!canEditStorageItem) return
     setEditModalEntry(entry)
     setEditForm({
       itemName: entry.item_name || '',
@@ -1184,6 +1429,7 @@ export default function StorageOverviewPage() {
         locationCode: '',
         subLocation: '',
       }))
+      setIsRegisterLocationCodeMenuOpen(false)
       return
     }
 
@@ -1193,6 +1439,7 @@ export default function StorageOverviewPage() {
         locationCode: value,
         subLocation: '',
       }))
+      setIsRegisterLocationCodeMenuOpen(false)
       return
     }
 
@@ -1200,6 +1447,44 @@ export default function StorageOverviewPage() {
       ...prev,
       [name]: value,
     }))
+  }
+
+  function handleRegisterLocationCodeFocus() {
+    if (registerForm.locationCode) {
+      setRegisterForm((prev) => ({
+        ...prev,
+        locationCode: '',
+        subLocation: '',
+      }))
+    }
+
+    setIsRegisterLocationCodeMenuOpen(Boolean(registerForm.locationId))
+  }
+
+  function handleRegisterLocationCodeInputChange(event) {
+    const value = event.target.value.toUpperCase()
+
+    setRegisterForm((prev) => ({
+      ...prev,
+      locationCode: value,
+      subLocation: '',
+    }))
+    setIsRegisterLocationCodeMenuOpen(true)
+  }
+
+  function handleRegisterLocationCodeSelect(value) {
+    setRegisterForm((prev) => ({
+      ...prev,
+      locationCode: value,
+      subLocation: '',
+    }))
+    setIsRegisterLocationCodeMenuOpen(false)
+  }
+
+  function handleRegisterLocationCodeBlur(event) {
+    if (!event.currentTarget.contains(event.relatedTarget)) {
+      setIsRegisterLocationCodeMenuOpen(false)
+    }
   }
 
   function handleRegisterInputChange(event) {
@@ -1214,6 +1499,10 @@ export default function StorageOverviewPage() {
       return
     }
 
+    if (name === 'itemName' && isRegisterArklineLocation) {
+      setIsRegisterArklineProductMenuOpen(true)
+    }
+
     setRegisterForm((prev) => ({
       ...prev,
       [name]:
@@ -1223,6 +1512,26 @@ export default function StorageOverviewPage() {
             ? normalizeSizeValue(value)
             : value,
     }))
+  }
+
+  function handleRegisterArklineProductFocus() {
+    if (isRegisterArklineLocation) {
+      setIsRegisterArklineProductMenuOpen(true)
+    }
+  }
+
+  function handleRegisterArklineProductSelect(product) {
+    setRegisterForm((prev) => ({
+      ...prev,
+      itemName: product.label,
+    }))
+    setIsRegisterArklineProductMenuOpen(false)
+  }
+
+  function handleRegisterArklineProductBlur(event) {
+    if (!event.currentTarget.contains(event.relatedTarget)) {
+      setIsRegisterArklineProductMenuOpen(false)
+    }
   }
 
   function handleQueueSelectChange(event) {
@@ -1264,6 +1573,9 @@ export default function StorageOverviewPage() {
 
   async function handleRegisterSubmit(event) {
     event.preventDefault()
+
+    if (!canRegisterStorageItem) return
+
     setRegistering(true)
     setError('')
     setSuccess('')
@@ -1280,6 +1592,12 @@ export default function StorageOverviewPage() {
       return
     }
 
+    if (isRegisterArklineLocation && !selectedRegisterArklineProduct) {
+      setError('Please choose an active ARKLINE product from the list.')
+      setRegistering(false)
+      return
+    }
+
     const nextQty = Number(registerForm.qty || 0)
 
     if (nextQty <= 0) {
@@ -1290,7 +1608,7 @@ export default function StorageOverviewPage() {
 
     const payload = {
       rack_location_id: selectedRegisterLocation.id,
-      item_name: registerForm.itemName.trim(),
+      item_name: isRegisterArklineLocation ? selectedRegisterArklineProduct.label : registerForm.itemName.trim(),
       size: normalizeSizeValue(registerForm.size) || null,
       qty: nextQty,
       notes: registerForm.notes.trim() || null,
@@ -1322,6 +1640,8 @@ export default function StorageOverviewPage() {
   async function handleQueueStoreSubmit(event) {
     event.preventDefault()
 
+    if (!canStoreQueueItem) return
+
     if (!queueModalEntry) {
       return
     }
@@ -1350,12 +1670,13 @@ export default function StorageOverviewPage() {
     const inbound = inboundById.get(Number(queueModalEntry.inbound_id))
     const grnNumber = inbound?.grn_number || ''
     const storagePayload = queueItems.map((item) => {
-      const sourceNote = `Stored from ${getQueueKoliLabel(queueModalEntry)}${item.source_variant_code ? ` / SKU ${item.source_variant_code}` : ''}`
+      const itemSku = getQueueItemSku(item)
+      const sourceNote = `Stored from ${getQueueKoliLabel(queueModalEntry)}${itemSku ? ` / SKU ${itemSku}` : ''}`
       const userNote = queueForm.notes.trim()
 
       return {
         rack_location_id: selectedQueueLocation.id,
-        sku_id: String(item.source_variant_code || '').trim() || null,
+        sku_id: itemSku || null,
         item_name: formatStoredQueueItemName(getQueueItemName(item), grnNumber),
         size: normalizeSizeValue(item.size_label) || null,
         qty: Number(item.qty || 0),
@@ -1421,7 +1742,7 @@ export default function StorageOverviewPage() {
     const currentQty = Number(takeModalEntry.qty || 0)
     const takeQty = takeForm.takeOutAll ? currentQty : Number(takeForm.qty || 0)
 
-    if (!canShowTakeAction) {
+    if (!canTakeStorageItem) {
       setTakeModalError('Take out is not available for this role.')
       setTaking(false)
       return
@@ -1488,6 +1809,8 @@ export default function StorageOverviewPage() {
   async function handleEditSubmit(event) {
     event.preventDefault()
 
+    if (!canEditStorageItem) return
+
     if (!editModalEntry) {
       return
     }
@@ -1552,18 +1875,39 @@ export default function StorageOverviewPage() {
           <p style={styles.eyebrow}>Warehouse</p>
           <div style={styles.titleRow}>
             <h1 style={styles.title}>Inventory Storage</h1>
-            <Link
-              href="/dashboard/storage/warehouse-map"
-              style={styles.iconActionButton}
-              title="Warehouse Map"
-              aria-label="Warehouse Map"
-            >
-              <svg viewBox="0 0 24 24" style={styles.actionIcon} aria-hidden="true">
-                <path d="M9 18 3 21V6l6-3 6 3 6-3v15l-6 3-6-3Z" />
-                <path d="M9 3v15" />
-                <path d="M15 6v15" />
-              </svg>
-            </Link>
+            {storageAccess.warehouseMap ? (
+              <Link
+                href="/dashboard/storage/warehouse-map"
+                style={styles.iconActionButton}
+                title="Warehouse Map"
+                aria-label="Warehouse Map"
+              >
+                <svg viewBox="0 0 24 24" style={styles.actionIcon} aria-hidden="true">
+                  <path d="M9 18 3 21V6l6-3 6 3 6-3v15l-6 3-6-3Z" />
+                  <path d="M9 3v15" />
+                  <path d="M15 6v15" />
+                </svg>
+              </Link>
+            ) : null}
+            {storageAccess.brandLookup ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setIsBrandLookupOpen(true)
+                  setBrandLookupSearch('')
+                }}
+                style={styles.iconActionButton}
+                title="Brand Lookup"
+                aria-label="Brand Lookup"
+              >
+                <svg viewBox="0 0 24 24" style={styles.actionIcon} aria-hidden="true">
+                  <path d="M7 7h10" />
+                  <path d="M7 12h7" />
+                  <path d="M7 17h4" />
+                  <path d="M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z" />
+                </svg>
+              </button>
+            ) : null}
           </div>
           <p style={styles.subtitle}>Track stored items, inspect recent stock activity, and register new warehouse entries.</p>
         </div>
@@ -1587,37 +1931,32 @@ export default function StorageOverviewPage() {
       <div style={styles.card}>
         <div style={styles.storageTabs}>
           <div style={styles.storageTabList}>
-            {[
-              ['stock', 'Storage Location'],
-              ['queue', 'Storage Queue'],
-              ['history', 'Pick History'],
-              ['product-directory', 'Product Directory'],
-              ['photo-list', 'Photo List'],
-            ].map(([mode, label]) => (
+            {storageTabItems.map(([mode, label]) => (
               <button
                 key={mode}
                 type="button"
                 onClick={() => setActiveListMode(mode)}
                 style={{
                   ...styles.storageTabButton,
-                  ...(activeListMode === mode ? styles.storageTabButtonActive : {}),
+                  ...(visibleListMode === mode ? styles.storageTabButtonActive : {}),
                 }}
               >
                 <span style={styles.storageTabLabel}>{label}</span>
-                {activeListMode === mode ? <span style={styles.storageTabUnderline} /> : null}
+                {visibleListMode === mode ? <span style={styles.storageTabUnderline} /> : null}
               </button>
             ))}
           </div>
 
           <div style={styles.storageTabPanel}>
-        {activeListMode === 'product-directory' || activeListMode === 'photo-list' ? (
+        {visibleListMode === 'product-directory' ? (
           <ProductDirectoryClient
             embedded
-            activeSection={activeListMode === 'photo-list' ? 'photo' : 'directory'}
+            activeSection="directory"
+            canManage={canManageProductDirectory}
           />
         ) : (
           <>
-        <div style={styles.searchToolbar}>
+        <div style={{ ...styles.searchToolbar, ...(isCompactLayout ? styles.searchToolbarCompact : {}) }}>
           <div style={styles.field}>
             <label style={styles.label}>Product Search</label>
             <input
@@ -1627,7 +1966,7 @@ export default function StorageOverviewPage() {
               placeholder="Search product, GRN, or SKU"
             />
           </div>
-          {activeListMode === 'stock' ? (
+          {visibleListMode === 'stock' && canRegisterStorageItem ? (
             <div style={styles.toolbarActionField}>
               <button
                 type="button"
@@ -1638,7 +1977,7 @@ export default function StorageOverviewPage() {
               </button>
             </div>
           ) : null}
-          {activeListMode === 'stock' ? (
+          {visibleListMode === 'stock' ? (
             <div style={styles.toolbarIconField}>
               <button type="button" onClick={clearFilters} style={styles.iconResetButton} title="Clear Filters" aria-label="Clear Filters">
                 <svg viewBox="0 0 24 24" style={styles.resetIcon} aria-hidden="true">
@@ -1650,7 +1989,15 @@ export default function StorageOverviewPage() {
               </button>
             </div>
           ) : null}
-          {activeListMode === 'history' ? (
+          {visibleListMode === 'stock' ? (
+            <div style={styles.toolbarQtyField}>
+              <span style={styles.filteredQtyCard}>
+                <span style={styles.filteredQtyLabel}>Qty of filtered</span>
+                <strong style={styles.filteredQtyValue}>{filteredQty}</strong>
+              </span>
+            </div>
+          ) : null}
+          {visibleListMode === 'history' ? (
             <div style={styles.toolbarIconField}>
               <button
                 type="button"
@@ -1673,7 +2020,7 @@ export default function StorageOverviewPage() {
           ) : null}
         </div>
 
-        {activeListMode === 'stock' ? (
+        {visibleListMode === 'stock' ? (
           <>
         <div
           style={{
@@ -1683,6 +2030,7 @@ export default function StorageOverviewPage() {
               : filters.locationType === 'SHELVING'
                 ? styles.shelvingFiltersGrid
                 : styles.allStorageFiltersGrid),
+            ...(isCompactLayout ? styles.filtersGridCompact : {}),
           }}
         >
           <div style={{ ...styles.field, ...styles.typeField }}>
@@ -1806,12 +2154,6 @@ export default function StorageOverviewPage() {
             </datalist>
           </div>
 
-          <div style={styles.filteredQtyField}>
-            <span style={styles.filteredQtyCard}>
-              <span style={styles.filteredQtyLabel}>Qty of filtered</span>
-              <strong style={styles.filteredQtyValue}>{filteredQty}</strong>
-            </span>
-          </div>
         </div>
 
             <div style={styles.filterFooter}>
@@ -1820,7 +2162,7 @@ export default function StorageOverviewPage() {
               </p>
             </div>
           </>
-        ) : activeListMode === 'queue' ? (
+        ) : visibleListMode === 'queue' ? (
           <div style={styles.historyToolbar}>
             <p style={styles.summary}>
               Showing {visibleQueueRows.length} of {filteredQueueRows.length} storage queue koli
@@ -1837,7 +2179,7 @@ export default function StorageOverviewPage() {
         {error ? <p style={styles.error}>{error}</p> : null}
         {success ? <p style={styles.success}>{success}</p> : null}
 
-        {activeListMode === 'stock' ? filteredRows.length === 0 ? (
+        {visibleListMode === 'stock' ? filteredRows.length === 0 ? (
           <div style={styles.emptyState}>
             <p style={{ margin: 0 }}>No stored items found for the selected filters.</p>
           </div>
@@ -1850,7 +2192,7 @@ export default function StorageOverviewPage() {
                   <th style={styles.th}>Item</th>
                   <th style={styles.th}>Size</th>
                   <th style={styles.th}>Qty</th>
-                  <th style={{ ...styles.th, ...styles.actionTh }}>Action</th>
+                  {canShowStorageLocationActions ? <th style={{ ...styles.th, ...styles.actionTh }}>Action</th> : null}
                 </tr>
               </thead>
               <tbody>
@@ -1860,16 +2202,19 @@ export default function StorageOverviewPage() {
                     <td style={styles.td}>{entry.item_name}</td>
                     <td style={styles.td}>{entry.size || '-'}</td>
                     <td style={styles.td}>{entry.qty}</td>
-                    <td style={{ ...styles.td, ...styles.actionTd }}>
-                      <div style={styles.actionGroup}>
-                        <button
-                          type="button"
-                          onClick={() => openEditModal(entry)}
-                          style={styles.editButton}
-                        >
-                          Edit
-                        </button>
-                        {canShowTakeAction ? (
+                    {canShowStorageLocationActions ? (
+                      <td style={{ ...styles.td, ...styles.actionTd }}>
+                        <div style={styles.actionGroup}>
+                          {canEditStorageItem ? (
+                            <button
+                              type="button"
+                              onClick={() => openEditModal(entry)}
+                              style={styles.editButton}
+                            >
+                              Edit
+                            </button>
+                          ) : null}
+                          {canTakeStorageItem ? (
                           <button
                             type="button"
                             onClick={() => openTakeModal(entry)}
@@ -1878,8 +2223,9 @@ export default function StorageOverviewPage() {
                             Take
                           </button>
                         ) : null}
-                      </div>
-                    </td>
+                        </div>
+                      </td>
+                    ) : null}
                   </tr>
                 ))}
               </tbody>
@@ -1887,7 +2233,7 @@ export default function StorageOverviewPage() {
           </div>
         ) : null}
 
-        {activeListMode === 'queue' ? filteredQueueRows.length === 0 ? (
+        {visibleListMode === 'queue' ? filteredQueueRows.length === 0 ? (
           <div style={styles.emptyState}>
             <p style={{ margin: 0 }}>No storage queue koli found.</p>
           </div>
@@ -1903,7 +2249,7 @@ export default function StorageOverviewPage() {
                   <th style={styles.th}>Size</th>
                   <th style={styles.th}>Total Qty</th>
                   <th style={styles.th}>Type</th>
-                  <th style={{ ...styles.th, ...styles.actionTh }}>Action</th>
+                  {canStoreQueueItem ? <th style={{ ...styles.th, ...styles.actionTh }}>Action</th> : null}
                 </tr>
               </thead>
               <tbody>
@@ -1919,15 +2265,17 @@ export default function StorageOverviewPage() {
                       <td style={styles.td}>{getQueueGroupSizeLabel(entry.items)}</td>
                       <td style={styles.td}>{entry.totalQty}</td>
                       <td style={styles.td}>{entry.storing_type || '-'}</td>
-                      <td style={{ ...styles.td, ...styles.actionTd }}>
-                        <button
-                          type="button"
-                          onClick={() => openQueueModal(entry)}
-                          style={styles.queueStoreButton}
-                        >
-                          Store
-                        </button>
-                      </td>
+                      {canStoreQueueItem ? (
+                        <td style={{ ...styles.td, ...styles.actionTd }}>
+                          <button
+                            type="button"
+                            onClick={() => openQueueModal(entry)}
+                            style={styles.queueStoreButton}
+                          >
+                            Store
+                          </button>
+                        </td>
+                      ) : null}
                     </tr>
                   )
                 })}
@@ -1936,7 +2284,7 @@ export default function StorageOverviewPage() {
           </div>
         ) : null}
 
-        {activeListMode === 'history' ? filteredHistoryRows.length === 0 ? (
+        {visibleListMode === 'history' ? filteredHistoryRows.length === 0 ? (
           <div style={styles.emptyState}>
             <p style={{ margin: 0 }}>No pick history found for that product.</p>
           </div>
@@ -1975,14 +2323,14 @@ export default function StorageOverviewPage() {
             </table>
           </div>
         ) : null}
-        {activeListMode === 'history' ? renderHistoryRankingPanel() : null}
+        {visibleListMode === 'history' ? renderHistoryRankingPanel() : null}
           </>
         )}
           </div>
         </div>
       </div>
 
-      {isRegisterModalOpen ? (
+      {isRegisterModalOpen && canRegisterStorageItem ? (
         <div style={styles.modalOverlay}>
           <div style={styles.modalCardWide}>
             <div style={styles.modalHeader}>
@@ -2041,34 +2389,50 @@ export default function StorageOverviewPage() {
 
                 <div style={styles.field}>
                   <label style={styles.label}>Pallet/Shelving Number</label>
-                  <select
-                    name="locationCode"
-                    value={registerForm.locationCode}
-                    onChange={handleRegisterSelectChange}
-                    style={!registerForm.locationId ? { ...styles.select, ...styles.controlDisabled } : styles.select}
-                    disabled={!registerForm.locationId}
-                    required
-                  >
-                    <option value="">Select location code</option>
-                    {registerLocationCodeOptions.map((option) => (
-                      <option key={option} value={option}>
-                        {option}
-                      </option>
-                    ))}
-                  </select>
+                  <div style={styles.typeaheadWrap} onBlur={handleRegisterLocationCodeBlur}>
+                    <input
+                      name="locationCode"
+                      value={registerForm.locationCode}
+                      onChange={handleRegisterLocationCodeInputChange}
+                      onFocus={handleRegisterLocationCodeFocus}
+                      onClick={handleRegisterLocationCodeFocus}
+                      style={!registerForm.locationId ? { ...styles.input, ...styles.controlDisabled } : styles.input}
+                      disabled={!registerForm.locationId}
+                      placeholder="Type or select location"
+                      autoComplete="off"
+                      required
+                    />
+                    {isRegisterLocationCodeMenuOpen && registerForm.locationId ? (
+                      <div style={styles.typeaheadMenu}>
+                        {filteredRegisterLocationCodeOptions.length > 0 ? filteredRegisterLocationCodeOptions.map((option) => (
+                          <button
+                            key={option}
+                            type="button"
+                            style={styles.typeaheadOption}
+                            onMouseDown={(event) => event.preventDefault()}
+                            onClick={() => handleRegisterLocationCodeSelect(option)}
+                          >
+                            {option}
+                          </button>
+                        )) : (
+                          <div style={styles.typeaheadEmpty}>No location found.</div>
+                        )}
+                      </div>
+                    ) : null}
+                  </div>
                 </div>
 
                 <div style={styles.field}>
-                  <label style={styles.label}>Carton Number</label>
+                  <label style={styles.label}>{isRegisterArklineLocation ? 'ARKLINE Level' : 'Carton Number'}</label>
                   <select
                     name="subLocation"
-                    value={registerForm.subLocation}
+                    value={isRegisterArklineLocation ? '' : registerForm.subLocation}
                     onChange={handleRegisterSelectChange}
-                    style={!registerForm.locationCode ? { ...styles.select, ...styles.controlDisabled } : styles.select}
-                    disabled={!registerForm.locationCode}
-                    required
+                    style={isRegisterArklineLocation || !registerForm.locationCode ? { ...styles.select, ...styles.controlDisabled } : styles.select}
+                    disabled={isRegisterArklineLocation || !registerForm.locationCode}
+                    required={!isRegisterArklineLocation}
                   >
-                    <option value="">Select sub location</option>
+                    <option value="">{isRegisterArklineLocation ? 'Select ARKLINE level' : 'Select sub location'}</option>
                     {registerSubLocationOptions.map((option) => (
                       <option key={option.id} value={option.sub_location}>
                         {option.sub_location}
@@ -2086,15 +2450,36 @@ export default function StorageOverviewPage() {
               </div>
 
               <div style={styles.field}>
-                <label style={styles.label}>Item Name</label>
-                <input
-                  name="itemName"
-                  value={registerForm.itemName}
-                  onChange={handleRegisterInputChange}
-                  style={styles.input}
-                  placeholder="ITEM NAME"
-                  required
-                />
+                <label style={styles.label}>{isRegisterArklineLocation ? 'ARKLINE Product' : 'Item Name'}</label>
+                <div style={styles.typeaheadWrap} onBlur={handleRegisterArklineProductBlur}>
+                  <input
+                    name="itemName"
+                    value={registerForm.itemName}
+                    onChange={handleRegisterInputChange}
+                    onFocus={handleRegisterArklineProductFocus}
+                    style={styles.input}
+                    placeholder={isRegisterArklineLocation ? 'Type or select ARKLINE product' : 'ITEM NAME'}
+                    autoComplete="off"
+                    required
+                  />
+                  {isRegisterArklineLocation && isRegisterArklineProductMenuOpen ? (
+                    <div style={styles.typeaheadMenuWide}>
+                      {filteredArklineProducts.length > 0 ? filteredArklineProducts.map((product) => (
+                        <button
+                          key={product.label}
+                          type="button"
+                          style={styles.typeaheadOption}
+                          onMouseDown={(event) => event.preventDefault()}
+                          onClick={() => handleRegisterArklineProductSelect(product)}
+                        >
+                          {product.label}
+                        </button>
+                      )) : (
+                        <div style={styles.typeaheadEmpty}>No active ARKLINE product found.</div>
+                      )}
+                    </div>
+                  ) : null}
+                </div>
               </div>
 
               <div style={styles.filtersGrid}>
@@ -2138,7 +2523,67 @@ export default function StorageOverviewPage() {
         </div>
       ) : null}
 
-      {queueModalEntry ? (
+      {isBrandLookupOpen ? (
+        <div style={styles.modalOverlay}>
+          <div style={styles.modalCard}>
+            <div style={styles.modalHeader}>
+              <div style={styles.modalTitleGroup}>
+                <p style={styles.modalEyebrow}>Warehouse</p>
+                <h2 style={styles.modalTitle}>Brand Lookup</h2>
+              </div>
+              <div style={styles.modalHeaderActions}>
+                <button
+                  type="button"
+                  onClick={() => setIsBrandLookupOpen(false)}
+                  style={styles.modalCancelButton}
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+
+            <div style={styles.field}>
+              <label style={styles.label}>Search Brand</label>
+              <input
+                value={brandLookupSearch}
+                onChange={(event) => setBrandLookupSearch(event.target.value.toUpperCase())}
+                style={styles.input}
+                placeholder="Search brand name or code"
+                autoComplete="off"
+              />
+            </div>
+
+            <div style={styles.brandLookupTableWrap}>
+              <table style={styles.table}>
+                <thead>
+                  <tr>
+                    <th style={styles.th}>Brand Code</th>
+                    <th style={styles.th}>Brand Name</th>
+                    <th style={{ ...styles.th, ...styles.centerCell }}>Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {visibleBrandRows.length > 0 ? visibleBrandRows.map((brand) => (
+                    <tr key={brand.id}>
+                      <td style={styles.td}>{brand.brand_code || '-'}</td>
+                      <td style={styles.td}>{brand.brand_name || '-'}</td>
+                      <td style={{ ...styles.td, ...styles.centerCell }}>
+                        {brand.is_active === false ? 'Inactive' : 'Active'}
+                      </td>
+                    </tr>
+                  )) : (
+                    <tr>
+                      <td style={styles.td} colSpan={3}>No brand found.</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {queueModalEntry && canStoreQueueItem ? (
         <div style={styles.modalOverlay}>
           <div style={styles.modalCardWide}>
             <div style={styles.modalHeader}>
@@ -2176,7 +2621,7 @@ export default function StorageOverviewPage() {
               <div style={styles.queueConfirmList}>
                 {queueModalEntry.items.map((item) => (
                   <div key={item.id} style={styles.queueConfirmRow}>
-                    <span style={styles.queueSkuText}>{item.source_variant_code || '-'}</span>
+                    <span style={styles.queueSkuText}>{getQueueItemSku(item) || '-'}</span>
                     <strong style={styles.queueItemText}>{getQueueItemName(item)}</strong>
                     <span style={styles.queueMetaText}>Size {item.size_label || '-'} / Qty {item.qty}</span>
                   </div>
@@ -2265,7 +2710,7 @@ export default function StorageOverviewPage() {
         </div>
       ) : null}
 
-      {takeModalEntry ? (
+      {takeModalEntry && canTakeStorageItem ? (
         <div style={styles.modalOverlay}>
           <div style={styles.modalCard}>
             <div style={styles.modalHeader}>
@@ -2337,7 +2782,7 @@ export default function StorageOverviewPage() {
         </div>
       ) : null}
 
-      {editModalEntry ? (
+      {editModalEntry && canEditStorageItem ? (
         <div style={styles.modalOverlay}>
           <div style={styles.modalCard}>
             <div style={styles.modalHeader}>
@@ -2485,6 +2930,7 @@ const styles = {
     cursor: 'pointer',
     textDecoration: 'none',
     boxShadow: '0 10px 22px rgba(15, 23, 42, 0.06)',
+    padding: 0,
   },
   titleRow: {
     display: 'flex',
@@ -2676,23 +3122,26 @@ const styles = {
   },
   filtersGrid: {
     display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fit, minmax(118px, 1fr))',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 136px), 1fr))',
     gap: '10px',
     alignItems: 'end',
     minWidth: 0,
     maxWidth: '100%',
   },
   palletFiltersGrid: {
-    gridTemplateColumns: 'minmax(210px, 1.05fr) minmax(132px, 0.9fr) minmax(118px, 0.8fr) minmax(118px, 0.8fr) minmax(112px, 0.7fr) minmax(112px, 0.6fr)',
+    gridTemplateColumns: 'minmax(190px, 0.9fr) minmax(200px, 1fr) minmax(186px, 1fr) minmax(144px, 0.68fr) minmax(120px, 0.56fr)',
   },
   shelvingFiltersGrid: {
-    gridTemplateColumns: 'minmax(210px, 0.9fr) minmax(180px, 1.2fr) minmax(112px, 0.7fr) minmax(112px, 0.6fr)',
+    gridTemplateColumns: 'minmax(178px, 0.75fr) minmax(320px, 1.3fr) minmax(150px, 0.65fr)',
     justifyContent: 'flex-start',
     alignItems: 'end',
   },
   allStorageFiltersGrid: {
-    gridTemplateColumns: '210px 112px 112px',
+    gridTemplateColumns: 'minmax(178px, 210px) minmax(150px, 170px)',
     justifyContent: 'flex-start',
+  },
+  filtersGridCompact: {
+    gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 136px), 1fr))',
   },
   storageTabs: {
     display: 'flex',
@@ -2777,9 +3226,12 @@ const styles = {
   },
   searchToolbar: {
     display: 'grid',
-    gridTemplateColumns: 'minmax(240px, 1fr) minmax(160px, auto) minmax(44px, auto)',
+    gridTemplateColumns: 'minmax(320px, 520px) auto auto minmax(150px, 1fr)',
     gap: '12px',
     alignItems: 'flex-end',
+  },
+  searchToolbarCompact: {
+    gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 180px), 1fr))',
   },
   toolbarActionField: {
     display: 'flex',
@@ -2787,11 +3239,20 @@ const styles = {
     justifyContent: 'flex-start',
     minHeight: '44px',
     minWidth: 0,
+    marginRight: '-4px',
   },
   toolbarIconField: {
     display: 'flex',
     alignItems: 'flex-end',
     justifyContent: 'flex-start',
+    minHeight: '44px',
+    minWidth: 0,
+    marginLeft: '-4px',
+  },
+  toolbarQtyField: {
+    display: 'flex',
+    alignItems: 'flex-end',
+    justifyContent: 'flex-end',
     minHeight: '44px',
     minWidth: 0,
   },
@@ -2855,6 +3316,61 @@ const styles = {
     gap: '8px',
     minWidth: 0,
   },
+  typeaheadWrap: {
+    position: 'relative',
+    width: '100%',
+    minWidth: 0,
+  },
+  typeaheadMenu: {
+    position: 'absolute',
+    zIndex: 70,
+    top: 'calc(100% + 6px)',
+    left: 0,
+    right: 0,
+    maxHeight: '260px',
+    overflowY: 'auto',
+    border: '1px solid #dbe4ef',
+    borderRadius: '14px',
+    background: '#fff',
+    boxShadow: '0 18px 42px rgba(15, 23, 42, 0.14)',
+    padding: '6px',
+  },
+  typeaheadMenuWide: {
+    position: 'absolute',
+    zIndex: 70,
+    top: 'calc(100% + 6px)',
+    left: 0,
+    right: 0,
+    maxHeight: '320px',
+    overflowY: 'auto',
+    border: '1px solid #dbe4ef',
+    borderRadius: '14px',
+    background: '#fff',
+    boxShadow: '0 18px 42px rgba(15, 23, 42, 0.14)',
+    padding: '8px',
+  },
+  typeaheadOption: {
+    width: '100%',
+    minHeight: '40px',
+    padding: '9px 12px',
+    border: 'none',
+    borderRadius: '10px',
+    background: '#fff',
+    color: '#0f172a',
+    cursor: 'pointer',
+    fontSize: '13px',
+    fontWeight: '700',
+    lineHeight: 1.3,
+    textAlign: 'left',
+    whiteSpace: 'normal',
+    overflowWrap: 'anywhere',
+  },
+  typeaheadEmpty: {
+    padding: '12px',
+    color: '#64748b',
+    fontSize: '13px',
+    fontWeight: '700',
+  },
   resetField: {
     display: 'flex',
     alignItems: 'flex-end',
@@ -2872,6 +3388,7 @@ const styles = {
     minHeight: '66px',
     minWidth: 0,
     width: '100%',
+    maxWidth: '180px',
     padding: '9px 12px',
     borderRadius: '10px',
     border: '1px solid #dbe4ef',
@@ -3200,6 +3717,14 @@ const styles = {
     borderRadius: '12px',
     background: '#fff',
   },
+  brandLookupTableWrap: {
+    overflowX: 'auto',
+    overflowY: 'auto',
+    maxHeight: '420px',
+    border: '1px solid #e5e7eb',
+    borderRadius: '12px',
+    background: '#fff',
+  },
   table: {
     width: '100%',
     borderCollapse: 'collapse',
@@ -3222,6 +3747,10 @@ const styles = {
     borderBottom: '1px solid #f3f4f6',
     fontSize: '14px',
     verticalAlign: 'top',
+  },
+  centerCell: {
+    textAlign: 'center',
+    verticalAlign: 'middle',
   },
   actionTd: {
     textAlign: 'center',
@@ -3296,7 +3825,7 @@ const styles = {
   },
   modalCardWide: {
     width: '100%',
-    maxWidth: '760px',
+    maxWidth: '1080px',
     maxHeight: 'calc(100vh - 48px)',
     overflowY: 'auto',
     background: '#fff',

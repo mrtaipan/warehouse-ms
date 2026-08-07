@@ -888,6 +888,10 @@ function getModelLabel(item) {
   return variantName ? `${item.model_name} - ${variantName}` : item.model_name
 }
 
+function getModelNameLabel(item) {
+  return String(item?.model_name || '').trim() || 'UNKNOWN MODEL'
+}
+
 function getAdjustmentLabel(value) {
   const normalized = String(value || '').trim().toUpperCase()
   if (normalized === 'REJECTION_MANUAL') return 'Manual Adjustment'
@@ -914,7 +918,7 @@ function matchesResultFilterValues(row, qty, filters, ignoredFilter = '') {
     return false
   }
 
-  if (ignoredFilter !== 'modelName' && filters.modelName && normalizeFilterValue(getModelLabel(row)) !== normalizeFilterValue(filters.modelName)) {
+  if (ignoredFilter !== 'modelName' && filters.modelName && normalizeFilterValue(getModelNameLabel(row)) !== normalizeFilterValue(filters.modelName)) {
     return false
   }
 
@@ -1001,6 +1005,29 @@ function getSampleBreakdownCategoryLabel(item) {
     item.sample_breakdown?.categories?.full_name ||
     item.sample_breakdown?.categories?.category_name ||
     'UNCATEGORIZED'
+  )
+}
+
+function getSourceVariantCode(item) {
+  return (
+    item?.product_model_variant?.variant_code ||
+    item?.product_model_variant?.variant_name ||
+    item?.source_variant_code ||
+    item?.variant_code ||
+    item?.variant_name ||
+    item?.model_color ||
+    null
+  )
+}
+
+function getSampleSourceVariantCode(item) {
+  return (
+    item?.sample_breakdown?.product_model_variant?.variant_code ||
+    item?.sample_breakdown?.product_model_variant?.variant_name ||
+    item?.sample_breakdown?.source_variant_code ||
+    item?.sample_breakdown?.variant_code ||
+    item?.sample_breakdown?.variant_name ||
+    null
   )
 }
 
@@ -1099,6 +1126,13 @@ export default function QcConfirmationRejectionPage() {
                 category_name,
                 full_name
               )
+            ),
+            product_model_variant:product_model_variant_id (
+              id,
+              product_model_id,
+              variant_code,
+              variant_name,
+              selling_name
             )
           `)
         .eq('status', 'done')
@@ -1156,6 +1190,13 @@ export default function QcConfirmationRejectionPage() {
               id,
               category_name,
               full_name
+            ),
+            product_model_variant:product_model_variant_id (
+              id,
+              product_model_id,
+              variant_code,
+              variant_name,
+              selling_name
             )
           )
         `)
@@ -1284,6 +1325,9 @@ export default function QcConfirmationRejectionPage() {
         model_name: item.model_name || familyRow?.model_name || 'UNKNOWN MODEL',
         model_color: item.model_color || item.variant_name || familyRow?.model_color || '',
         photo_url: item.photo_url || familyRow?.photo_url || '',
+        product_model_id: item.product_model_id || familyRow?.product_model_id || null,
+        product_model_variant_id: item.product_model_variant_id || familyRow?.product_model_variant_id || null,
+        source_variant_code: item.source_variant_code || familyRow?.source_variant_code || null,
         grade: sourceGrade,
         source_qty: 0,
         taken_qty: 0,
@@ -1305,6 +1349,9 @@ export default function QcConfirmationRejectionPage() {
       modelName,
       modelColor,
       photoUrl,
+      productModelId,
+      productModelVariantId,
+      sourceVariantCode,
       grade,
       qty,
     }) {
@@ -1330,6 +1377,9 @@ export default function QcConfirmationRejectionPage() {
         model_name: modelName || 'UNKNOWN MODEL',
         model_color: modelColor || '',
         photo_url: photoUrl || '',
+        product_model_id: productModelId || null,
+        product_model_variant_id: productModelVariantId || null,
+        source_variant_code: sourceVariantCode || null,
         grade,
         source_qty: 0,
         taken_qty: 0,
@@ -1339,6 +1389,9 @@ export default function QcConfirmationRejectionPage() {
       if (!current.photo_url && photoUrl) {
         current.photo_url = photoUrl
       }
+      current.product_model_id = current.product_model_id || productModelId || null
+      current.product_model_variant_id = current.product_model_variant_id || productModelVariantId || null
+      current.source_variant_code = current.source_variant_code || sourceVariantCode || null
       current.source_qty += Number(qty || 0)
       grouped.set(key, current)
       rememberFamily(current)
@@ -1362,6 +1415,9 @@ export default function QcConfirmationRejectionPage() {
               modelName: item.model_name,
               modelColor: item.model_color,
               photoUrl: item.photo_url,
+              productModelId: item.product_model_id || null,
+              productModelVariantId: item.product_model_variant_id || null,
+              sourceVariantCode: getSourceVariantCode(item),
               grade: gradeRow.grade,
               qty: gradeRow.qty,
             })
@@ -1386,6 +1442,9 @@ export default function QcConfirmationRejectionPage() {
               modelName: item.sample_breakdown?.model_name,
               modelColor: item.sample_breakdown?.variant_name,
               photoUrl: item.sample_breakdown?.photo_url,
+              productModelId: item.sample_breakdown?.product_model_id || null,
+              productModelVariantId: item.sample_breakdown?.product_model_variant_id || null,
+              sourceVariantCode: getSampleSourceVariantCode(item),
               grade: gradeRow.grade,
               qty: gradeRow.qty,
             })
@@ -1472,7 +1531,7 @@ export default function QcConfirmationRejectionPage() {
         new Set(
           sourceRows
             .filter((row) => matchesResultFilterValues(row, Number(row.source_qty || 0), resultFilters, 'modelName'))
-            .map((row) => getModelLabel(row))
+            .map((row) => getModelNameLabel(row))
             .filter(Boolean)
         )
       ).sort((a, b) => a.localeCompare(b)),
@@ -1596,6 +1655,9 @@ export default function QcConfirmationRejectionPage() {
       model_name: row.model_name,
       model_color: row.model_color,
       photo_url: row.photo_url || '',
+      product_model_id: row.product_model_id || null,
+      product_model_variant_id: row.product_model_variant_id || null,
+      source_variant_code: row.source_variant_code || null,
       qty,
       grade: type === 'take' ? targetGrade : row.grade,
       source_grade: row.grade,
@@ -1735,6 +1797,9 @@ export default function QcConfirmationRejectionPage() {
       model_name: selectedAdjustmentModel.model_name,
       model_color: selectedAdjustmentModel.model_color || '',
       photo_url: selectedAdjustmentModel.photo_url || '',
+      product_model_id: selectedAdjustmentModel.product_model_id || null,
+      product_model_variant_id: selectedAdjustmentModel.product_model_variant_id || null,
+      source_variant_code: selectedAdjustmentModel.source_variant_code || null,
       qty: nextQty,
       grade: adjustmentGrade,
       is_adjustment: true,
@@ -1815,6 +1880,9 @@ export default function QcConfirmationRejectionPage() {
         inbound_id: item.inbound_id,
         brand_id: item.brand_id,
         category_id: item.category_id,
+        product_model_id: item.product_model_id || null,
+        product_model_variant_id: item.product_model_variant_id || null,
+        source_variant_code: item.source_variant_code || null,
         model_name: item.model_name,
         variant_name: item.model_color || null,
         photo_url: item.photo_url || null,
@@ -2150,8 +2218,8 @@ export default function QcConfirmationRejectionPage() {
               value={resultFilters.search}
               onChange={(event) => updateResultFilter('search', event.target.value)}
               style={styles.filterSearchInput}
-              placeholder="Search model name or variant"
-              aria-label="Search model name or variant"
+              placeholder="Search model"
+              aria-label="Search model"
             />
           </div>
         ) : null}

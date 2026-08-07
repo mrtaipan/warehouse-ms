@@ -1087,6 +1087,10 @@ function getModelDashLabel(item) {
   return item.model_color ? `${item.model_name} - ${item.model_color}` : item.model_name
 }
 
+function getModelNameLabel(item) {
+  return String(item?.model_name || '').trim() || 'UNKNOWN MODEL'
+}
+
 function getModelPlainLabel(item) {
   return [item.model_name, item.model_color].filter(Boolean).join(' ')
 }
@@ -1110,6 +1114,29 @@ function normalizeConfirmRow(item) {
     is_sample: Boolean(item.is_sample),
     model_color: item.variant_name || item.model_color || '',
   }
+}
+
+function getSourceVariantCode(item) {
+  return (
+    item?.product_model_variant?.variant_code ||
+    item?.product_model_variant?.variant_name ||
+    item?.source_variant_code ||
+    item?.variant_code ||
+    item?.variant_name ||
+    item?.model_color ||
+    null
+  )
+}
+
+function getSampleSourceVariantCode(item) {
+  return (
+    item?.sample_breakdown?.product_model_variant?.variant_code ||
+    item?.sample_breakdown?.product_model_variant?.variant_name ||
+    item?.sample_breakdown?.source_variant_code ||
+    item?.sample_breakdown?.variant_code ||
+    item?.sample_breakdown?.variant_name ||
+    null
+  )
 }
 
 function getQcItemBrandId(item) {
@@ -1262,7 +1289,7 @@ function matchesResultFilterValues(row, qty, filters, ignoredFilter = '') {
     return false
   }
 
-  if (ignoredFilter !== 'modelName' && filters.modelName && normalizeFilterValue(getModelDashLabel(row)) !== normalizeFilterValue(filters.modelName)) {
+  if (ignoredFilter !== 'modelName' && filters.modelName && normalizeFilterValue(getModelNameLabel(row)) !== normalizeFilterValue(filters.modelName)) {
     return false
   }
 
@@ -1388,6 +1415,13 @@ export default function QcConfirmationNextProcessPage() {
                 category_name,
                 full_name
               )
+            ),
+            product_model_variant:product_model_variant_id (
+              id,
+              product_model_id,
+              variant_code,
+              variant_name,
+              selling_name
             )
           `)
         .eq('status', 'done')
@@ -1441,6 +1475,13 @@ export default function QcConfirmationNextProcessPage() {
               id,
               category_name,
               full_name
+            ),
+            product_model_variant:product_model_variant_id (
+              id,
+              product_model_id,
+              variant_code,
+              variant_name,
+              selling_name
             )
           )
         `)
@@ -1452,6 +1493,9 @@ export default function QcConfirmationNextProcessPage() {
           inbound_id,
           brand_id,
           category_id,
+          product_model_id,
+          product_model_variant_id,
+          source_variant_code,
           model_name,
           variant_name,
           photo_url,
@@ -1552,6 +1596,9 @@ export default function QcConfirmationNextProcessPage() {
       modelName,
       modelColor,
       photoUrl,
+      productModelId,
+      productModelVariantId,
+      sourceVariantCode,
       qtyA,
       picName,
     }) => {
@@ -1575,6 +1622,9 @@ export default function QcConfirmationNextProcessPage() {
         model_name: modelName || 'UNKNOWN MODEL',
         model_color: modelColor || '',
         photo_url: photoUrl || '',
+        product_model_id: productModelId || null,
+        product_model_variant_id: productModelVariantId || null,
+        source_variant_code: sourceVariantCode || null,
         source_qty: 0,
         confirmed_qty: 0,
         shortage_qty: 0,
@@ -1583,6 +1633,9 @@ export default function QcConfirmationNextProcessPage() {
 
       current.source_qty += Number(qtyA || 0)
       current.photo_url = current.photo_url || photoUrl || ''
+      current.product_model_id = current.product_model_id || productModelId || null
+      current.product_model_variant_id = current.product_model_variant_id || productModelVariantId || null
+      current.source_variant_code = current.source_variant_code || sourceVariantCode || null
       if (picName) {
         current.pic_names.add(picName)
       }
@@ -1606,6 +1659,9 @@ export default function QcConfirmationNextProcessPage() {
           modelName: item.model_name,
           modelColor: item.model_color,
           photoUrl: item.photo_url,
+          productModelId: item.product_model_id || null,
+          productModelVariantId: item.product_model_variant_id || null,
+          sourceVariantCode: getSourceVariantCode(item),
           qtyA: item.qty_a,
           picName: getFirstName(displayNameByEmail[assignedEmail] || item.pic_name || item.assigned_to),
         })
@@ -1628,6 +1684,9 @@ export default function QcConfirmationNextProcessPage() {
           modelName: item.sample_breakdown?.model_name,
           modelColor: item.sample_breakdown?.variant_name,
           photoUrl: item.sample_breakdown?.photo_url,
+          productModelId: item.sample_breakdown?.product_model_id || null,
+          productModelVariantId: item.sample_breakdown?.product_model_variant_id || null,
+          sourceVariantCode: getSampleSourceVariantCode(item),
           qtyA: item.qty_a,
           picName: getFirstName(displayNameByEmail[assignedEmail] || item.qc_item?.assigned_to),
         })
@@ -1664,6 +1723,9 @@ export default function QcConfirmationNextProcessPage() {
             model_name: item.model_name || 'UNKNOWN MODEL',
             model_color: item.model_color || '',
             photo_url: item.photo_url || '',
+            product_model_id: item.product_model_id || null,
+            product_model_variant_id: item.product_model_variant_id || null,
+            source_variant_code: item.source_variant_code || null,
             source_qty: 0,
             confirmed_qty: 0,
             shortage_qty: 0,
@@ -1690,6 +1752,9 @@ export default function QcConfirmationNextProcessPage() {
           current.confirmed_qty += Number(item.qty || 0)
         }
         current.photo_url = current.photo_url || item.photo_url || ''
+        current.product_model_id = current.product_model_id || item.product_model_id || null
+        current.product_model_variant_id = current.product_model_variant_id || item.product_model_variant_id || null
+        current.source_variant_code = current.source_variant_code || item.source_variant_code || null
         grouped.set(targetKey, current)
       })
 
@@ -1762,6 +1827,9 @@ export default function QcConfirmationNextProcessPage() {
           category_id: sourceRow?.category_id || item.category_id || null,
           brand_name: sourceRow?.brand_name || 'UNBRANDED',
           category_name: sourceRow?.category_name || 'UNCATEGORIZED',
+          product_model_id: sourceRow?.product_model_id || item.product_model_id || null,
+          product_model_variant_id: sourceRow?.product_model_variant_id || item.product_model_variant_id || null,
+          source_variant_code: sourceRow?.source_variant_code || item.source_variant_code || null,
           model_name: sourceRow?.model_name || item.model_name,
           model_color: sourceRow?.model_color || item.model_color,
           pic_names: item.pic_name ? [getFirstName(item.pic_name)] : sourceRow?.pic_names || [],
@@ -1812,7 +1880,7 @@ export default function QcConfirmationNextProcessPage() {
         new Set(
           sourceRows
             .filter((row) => matchesResultFilterValues(row, Number(row.source_qty || 0), resultFilters, 'modelName'))
-            .map((row) => getModelDashLabel(row))
+            .map((row) => getModelNameLabel(row))
             .filter(Boolean)
         )
       ).sort((a, b) => a.localeCompare(b)),
@@ -1859,7 +1927,7 @@ export default function QcConfirmationNextProcessPage() {
     () =>
       new Set(
         filteredSourceRows
-          .map((row) => [row.brand_id || '', row.category_id || '', normalizeFilterValue(getModelDashLabel(row))].join('|'))
+          .map((row) => [row.brand_id || '', row.category_id || '', normalizeFilterValue(getModelNameLabel(row))].join('|'))
           .filter((key) => key.replaceAll('|', '').trim())
       ).size,
     [filteredSourceRows]
@@ -1961,6 +2029,9 @@ export default function QcConfirmationNextProcessPage() {
       model_name: selectedSourceRow.model_name,
       model_color: selectedSourceRow.model_color,
       photo_url: selectedSourceRow.photo_url,
+      product_model_id: selectedSourceRow.product_model_id || null,
+      product_model_variant_id: selectedSourceRow.product_model_variant_id || null,
+      source_variant_code: selectedSourceRow.source_variant_code || null,
       qty,
       grade: 'A',
       is_adjustment: isAdjustment,
@@ -2124,6 +2195,9 @@ export default function QcConfirmationNextProcessPage() {
       inbound_id: item.inbound_id,
       brand_id: item.brand_id,
       category_id: item.category_id,
+      product_model_id: item.product_model_id || null,
+      product_model_variant_id: item.product_model_variant_id || null,
+      source_variant_code: item.source_variant_code || null,
       model_name: item.model_name,
       variant_name: item.model_color || null,
       photo_url: item.photo_url || null,
@@ -2139,7 +2213,7 @@ export default function QcConfirmationNextProcessPage() {
     const { data, error: insertError } = await supabase
       .from('qc_confirm')
       .insert(payload)
-      .select('id, inbound_id, brand_id, category_id, model_name, variant_name, photo_url, qty, koli_sequence, is_sample, grade, is_adjustment, adjustment_type, pic_name')
+      .select('id, inbound_id, brand_id, category_id, product_model_id, product_model_variant_id, source_variant_code, model_name, variant_name, photo_url, qty, koli_sequence, is_sample, grade, is_adjustment, adjustment_type, pic_name')
 
     if (insertError) {
       setError(insertError.message)
@@ -2626,8 +2700,8 @@ export default function QcConfirmationNextProcessPage() {
             value={resultFilters.search}
             onChange={(event) => updateResultFilter('search', event.target.value)}
             style={styles.filterSearchInput}
-            placeholder="Search model name or variant"
-            aria-label="Search model name or variant"
+            placeholder="Search model"
+            aria-label="Search model"
           />
         </div>
 

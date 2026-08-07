@@ -2,6 +2,7 @@ import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { createClient } from '@/utils/supabase/server'
 import { loadAccessContext } from '@/utils/access-control'
+import { hasPermission } from '@/utils/permissions'
 import responsiveStyles from './page.module.css'
 
 function formatDateDisplay(value) {
@@ -135,8 +136,10 @@ export default async function PackingListOverviewPage() {
     redirect('/login')
   }
 
-  const { role, isAdmin } = await loadAccessContext(supabase, user, 'role')
+  const { role, permissions, isAdmin } = await loadAccessContext(supabase, user, 'role')
   const isPackingStaff = !isAdmin && role === 'packing_staff'
+  const canManageReceiving = hasPermission(permissions, 'packing.receiving.add', isAdmin) || hasPermission(permissions, 'packing.receiving.edit', isAdmin)
+  const canManageSizeBreakdown = hasPermission(permissions, 'packing.size_breakdown.edit', isAdmin)
 
   const [
     { data: confirmRows, error: confirmError },
@@ -242,7 +245,7 @@ export default async function PackingListOverviewPage() {
                         <div style={styles.rowActions}>
                           <Link
                             href={
-                              isPackingStaff
+                              isPackingStaff && canManageReceiving
                                 ? `/dashboard/packing-list/receiving/input?grn=${encodeURIComponent(row.grn_number)}`
                                 : `/dashboard/packing-list/receiving?grn=${encodeURIComponent(row.grn_number)}`
                             }
@@ -254,7 +257,7 @@ export default async function PackingListOverviewPage() {
                           </Link>
                           <Link
                             href={
-                              isPackingStaff
+                              isPackingStaff && canManageSizeBreakdown
                                 ? `/mobile/packing-list/item-storing?grn=${encodeURIComponent(row.grn_number)}`
                                 : `/dashboard/packing-list/size-breakdown?grn=${encodeURIComponent(row.grn_number)}`
                             }

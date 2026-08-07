@@ -4,6 +4,7 @@ import Image from 'next/image'
 import { Suspense, useEffect, useMemo, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { createClient } from '@/utils/supabase/browser'
+import { ADMIN_EMAIL, hasPermission, resolveRole } from '@/utils/permissions'
 import { getProfileByAuthenticatedUser } from '@/utils/user-profiles'
 
 const supabase = createClient()
@@ -257,6 +258,20 @@ function ItemStoringContent() {
       }
 
       const profileResult = await getProfileByAuthenticatedUser(supabase, authUser, 'id, email, display_name, role')
+      const emailAdmin = authUser.email?.toLowerCase() === ADMIN_EMAIL
+      const role = resolveRole(profileResult.data?.role, emailAdmin)
+      const isAdminUser = emailAdmin || role === 'admin'
+      const { data: rolePermissionRows } = isAdminUser
+        ? { data: [] }
+        : await supabase.from('dir_user_roles').select('permission_code').eq('role', role)
+      const rolePermissions = (rolePermissionRows || []).map((item) => item.permission_code).filter(Boolean)
+      const canEditSizeBreakdown = hasPermission(rolePermissions, 'packing.size_breakdown.edit', isAdminUser)
+
+      if (!canEditSizeBreakdown) {
+        router.replace(`/dashboard/packing-list/size-breakdown?grn=${encodeURIComponent(grnNumber)}`)
+        return
+      }
+
       const { data: inboundRow, error: inboundError } = await supabase
         .from('inbound')
         .select('id, grn_number, inbound_date, item_name')

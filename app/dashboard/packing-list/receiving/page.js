@@ -9,6 +9,7 @@ import {
   resolveProductCatalogIdentity,
 } from '@/utils/catalog-identity'
 import { createClient } from '@/utils/supabase/browser'
+import { ADMIN_EMAIL, hasPermission, resolveRole } from '@/utils/permissions'
 import { getProfileByAuthenticatedUser } from '@/utils/user-profiles'
 
 const supabase = createClient()
@@ -1198,6 +1199,8 @@ export default function PackingListReceivingPage() {
   const [showInputForm, setShowInputForm] = useState(isInputRoute || searchParams.get('form') === '1')
   const [detailGrn, setDetailGrn] = useState(initialGrn)
   const [isPackingStaff, setIsPackingStaff] = useState(false)
+  const [canManageReceiving, setCanManageReceiving] = useState(false)
+  const [accessReady, setAccessReady] = useState(false)
 
   useEffect(() => {
     if (!initialGrn) {
@@ -1211,15 +1214,38 @@ export default function PackingListReceivingPage() {
         data: { user },
       } = await supabase.auth.getUser()
 
-      if (!user) return
+      if (!user) {
+        setAccessReady(true)
+        return
+      }
 
       const { data: profile } = await getProfileByAuthenticatedUser(supabase, user, 'role')
-      const isStaff = String(profile?.role || '').trim() === 'packing_staff'
+      const emailAdmin = user.email?.toLowerCase() === ADMIN_EMAIL
+      const role = resolveRole(profile?.role, emailAdmin)
+      const isAdminUser = emailAdmin || role === 'admin'
+      const { data: rolePermissionRows } = isAdminUser
+        ? { data: [] }
+        : await supabase.from('dir_user_roles').select('permission_code').eq('role', role)
+      const rolePermissions = (rolePermissionRows || []).map((item) => item.permission_code).filter(Boolean)
+      const nextCanManageReceiving =
+        hasPermission(rolePermissions, 'packing.receiving.add', isAdminUser) ||
+        hasPermission(rolePermissions, 'packing.receiving.edit', isAdminUser)
+      const isStaff = role === 'packing_staff'
       setIsPackingStaff(isStaff)
+      setCanManageReceiving(nextCanManageReceiving)
 
-      if (isStaff && !isInputRoute && initialGrn) {
-        router.replace(`/dashboard/packing-list/receiving/input?grn=${encodeURIComponent(initialGrn)}`)
+      if (!nextCanManageReceiving && isInputRoute && initialGrn) {
+        setShowInputForm(false)
+        router.replace(`/dashboard/packing-list/receiving?grn=${encodeURIComponent(initialGrn)}`)
+        return
       }
+
+      if (isStaff && nextCanManageReceiving && !isInputRoute && initialGrn) {
+        router.replace(`/dashboard/packing-list/receiving/input?grn=${encodeURIComponent(initialGrn)}`)
+        return
+      }
+
+      setAccessReady(true)
     }
 
     enforceStaffRoute()
@@ -1249,6 +1275,9 @@ export default function PackingListReceivingPage() {
             inbound_id,
             brand_id,
             category_id,
+            product_model_id,
+            product_model_variant_id,
+            source_variant_code,
             model_name,
             model_color:variant_name,
             photo_url,
@@ -1787,6 +1816,7 @@ export default function PackingListReceivingPage() {
   }, [catalogLookup, grnModelMap, selectedInbound?.id, selectedSource?.koli_sequence, sourceRowMap, sourceRows])
 
   function openInputForm(nextGrn = detailGrn) {
+    if (!canManageReceiving) return
     const targetGrn = nextGrn || detailGrn
     router.push(`/dashboard/packing-list/receiving/input?grn=${encodeURIComponent(targetGrn)}`)
   }
@@ -1829,7 +1859,7 @@ export default function PackingListReceivingPage() {
   }
 
   function openModelChooser(mode, rowId = '') {
-    if (isValidated) return
+    if (!canManageReceiving || isValidated) return
     setModelChooser({ mode, rowId })
   }
 
@@ -1919,13 +1949,13 @@ export default function PackingListReceivingPage() {
   }
 
   function removeDraftRow(rowId) {
-    if (isValidated || draftRows.length <= 1) return
+    if (!canManageReceiving || isValidated || draftRows.length <= 1) return
     setDraftRows((prev) => prev.filter((row) => row.id !== rowId))
     setError('')
   }
 
   function resetDraftRows() {
-    if (isValidated || !selectedSource) return
+    if (!canManageReceiving || isValidated || !selectedSource) return
     setDraftRows(createDraftRows(sourceRows))
     setModelChooser(null)
     setError('')
@@ -2040,6 +2070,7 @@ export default function PackingListReceivingPage() {
   const isValidated = Boolean(selectedSource?.isValidated)
 
   async function handleValidate() {
+    if (!canManageReceiving) return
     setError('')
 
     const invalidRow = draftRows.find((row) => !String(row.model_name || '').trim() || !String(row.qty ?? '').trim())
@@ -2178,7 +2209,7 @@ export default function PackingListReceivingPage() {
     setSuccess(`Receiving validated. ${mismatchCount} row still differs from QC Confirm.`)
   }
 
-  if (loading) {
+  if (loading || !accessReady) {
     return <p style={styles.emptyText}>Loading packing list receiving...</p>
   }
 
@@ -2223,20 +2254,22 @@ export default function PackingListReceivingPage() {
                   Model
                 </button>
               </div>
-              <button
-                type="button"
-                onClick={() => openInputForm(selectedDetail.grn_number)}
-                style={{ ...styles.topIconButton, ...styles.inputIconButton }}
-                title="Open receiving input"
-                aria-label="Open receiving input"
-              >
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                  <path d="M9 5H7.6C6.16 5 5 6.16 5 7.6V18.4C5 19.84 6.16 21 7.6 21H16.4C17.84 21 19 19.84 19 18.4V7.6C19 6.16 17.84 5 16.4 5H15" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-                  <path d="M9 5C9 3.9 9.9 3 11 3H13C14.1 3 15 3.9 15 5V6.5H9V5Z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
-                  <path d="M9 12H15" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-                  <path d="M9 16H14" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-                </svg>
-              </button>
+              {canManageReceiving ? (
+                <button
+                  type="button"
+                  onClick={() => openInputForm(selectedDetail.grn_number)}
+                  style={{ ...styles.topIconButton, ...styles.inputIconButton }}
+                  title="Open receiving input"
+                  aria-label="Open receiving input"
+                >
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <path d="M9 5H7.6C6.16 5 5 6.16 5 7.6V18.4C5 19.84 6.16 21 7.6 21H16.4C17.84 21 19 19.84 19 18.4V7.6C19 6.16 17.84 5 16.4 5H15" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                    <path d="M9 5C9 3.9 9.9 3 11 3H13C14.1 3 15 3.9 15 5V6.5H9V5Z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
+                    <path d="M9 12H15" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                    <path d="M9 16H14" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                  </svg>
+                </button>
+              ) : null}
               <button
                 type="button"
                 onClick={backToOverview}
@@ -2523,24 +2556,28 @@ export default function PackingListReceivingPage() {
                 <div style={styles.readonlyBox}>No QC Confirm Koli yet.</div>
               )}
             </div>
-            <button
-              type="button"
-              onClick={() => openModelChooser('add')}
-              style={!selectedSource || isValidated ? { ...styles.addModelButton, ...styles.saveButtonDisabled } : styles.addModelButton}
-              disabled={!selectedSource || isValidated}
-              aria-label="Add model row"
-              title="Add model row"
-            >
-              +
-            </button>
-            <button
-              type="button"
-              onClick={resetDraftRows}
-              style={!selectedSource || isValidated ? { ...styles.resetButton, ...styles.saveButtonDisabled } : styles.resetButton}
-              disabled={!selectedSource || isValidated}
-            >
-              Reset
-            </button>
+            {canManageReceiving ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() => openModelChooser('add')}
+                  style={!selectedSource || isValidated ? { ...styles.addModelButton, ...styles.saveButtonDisabled } : styles.addModelButton}
+                  disabled={!selectedSource || isValidated}
+                  aria-label="Add model row"
+                  title="Add model row"
+                >
+                  +
+                </button>
+                <button
+                  type="button"
+                  onClick={resetDraftRows}
+                  style={!selectedSource || isValidated ? { ...styles.resetButton, ...styles.saveButtonDisabled } : styles.resetButton}
+                  disabled={!selectedSource || isValidated}
+                >
+                  Reset
+                </button>
+              </>
+            ) : null}
           </div>
 
         {error ? <p style={styles.errorText}>{error}</p> : null}
@@ -2578,28 +2615,30 @@ export default function PackingListReceivingPage() {
                                 <span style={styles.picturePlaceholder}>NO PHOTO</span>
                               )}
                               <span style={styles.modelNameText}>{row.label || '-'}</span>
-                              <span style={styles.modelControlRow}>
-                                <button
-                                  type="button"
-                                  onClick={() => openModelChooser('switch', row.id)}
-                                  style={isValidated ? { ...styles.switchButton, ...styles.saveButtonDisabled } : styles.switchButton}
-                                  disabled={isValidated}
-                                  aria-label="Switch model"
-                                  title="Switch model"
-                                >
-                                  <SwitchIcon />
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => removeDraftRow(row.id)}
-                                  style={disableRemove ? { ...styles.deleteRowButton, ...styles.saveButtonDisabled } : styles.deleteRowButton}
-                                  disabled={disableRemove}
-                                  aria-label="Remove row"
-                                  title="Remove row"
-                                >
-                                  <TrashIcon />
-                                </button>
-                              </span>
+                              {canManageReceiving ? (
+                                <span style={styles.modelControlRow}>
+                                  <button
+                                    type="button"
+                                    onClick={() => openModelChooser('switch', row.id)}
+                                    style={isValidated ? { ...styles.switchButton, ...styles.saveButtonDisabled } : styles.switchButton}
+                                    disabled={isValidated}
+                                    aria-label="Switch model"
+                                    title="Switch model"
+                                  >
+                                    <SwitchIcon />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => removeDraftRow(row.id)}
+                                    style={disableRemove ? { ...styles.deleteRowButton, ...styles.saveButtonDisabled } : styles.deleteRowButton}
+                                    disabled={disableRemove}
+                                    aria-label="Remove row"
+                                    title="Remove row"
+                                  >
+                                    <TrashIcon />
+                                  </button>
+                                </span>
+                              ) : null}
                             </div>
                           </td>
                           <td style={styles.mobileTd}>{row.source_qty}</td>
@@ -2610,10 +2649,10 @@ export default function PackingListReceivingPage() {
                               onWheel={preventNumberWheel}
                               inputMode="numeric"
                               pattern="[0-9]*"
-                              style={isValidated ? { ...styles.mobileInput, ...styles.mobileInputDisabled } : styles.mobileInput}
+                              style={!canManageReceiving || isValidated ? { ...styles.mobileInput, ...styles.mobileInputDisabled } : styles.mobileInput}
                               placeholder="0"
                               required
-                              disabled={isValidated}
+                              disabled={!canManageReceiving || isValidated}
                             />
                           </td>
                         </tr>
@@ -2639,14 +2678,16 @@ export default function PackingListReceivingPage() {
               </strong>
             </div>
 
-            <button
-              type="button"
-              onClick={handleValidate}
-              style={isValidated || saving ? { ...styles.saveButton, ...styles.saveButtonDisabled } : styles.saveButton}
-              disabled={isValidated || saving}
-            >
-              {isValidated ? 'Validated' : saving ? 'Saving...' : 'Validate Receiving'}
-            </button>
+            {canManageReceiving ? (
+              <button
+                type="button"
+                onClick={handleValidate}
+                style={isValidated || saving ? { ...styles.saveButton, ...styles.saveButtonDisabled } : styles.saveButton}
+                disabled={isValidated || saving}
+              >
+                {isValidated ? 'Validated' : saving ? 'Saving...' : 'Validate Receiving'}
+              </button>
+            ) : null}
           </>
         ) : null}
       </section>

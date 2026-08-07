@@ -1227,8 +1227,12 @@ function buildModelRowsForSource(source, unloadRows, qcItems) {
       {
         id: `saved-${planRow.id}`,
         source_id: matchingExpectedRow?.id || planRow.inbound_unload_id || source.sourceId,
-        model_id: planRow.product_model_id ? String(planRow.product_model_id) : '',
-        product_model_variant_id: planRow.product_model_variant_id || null,
+        model_id: planRow.product_model_id
+          ? String(planRow.product_model_id)
+          : matchingExpectedRow?.product_model_id
+            ? String(matchingExpectedRow.product_model_id)
+            : '',
+        product_model_variant_id: planRow.product_model_variant_id || matchingExpectedRow?.product_model_variant_id || null,
         model_name: planRow.model_name || '',
         model_color: planRow.model_color || '',
         original_model_name: planRow.original_model_name || matchingExpectedRow?.model_name || planRow.model_name || '',
@@ -1247,8 +1251,14 @@ function buildModelRowsForSource(source, unloadRows, qcItems) {
         startedAllocations: [],
       }
 
-    existingRow.model_id = existingRow.model_id || (planRow.product_model_id ? String(planRow.product_model_id) : '')
-    existingRow.product_model_variant_id = existingRow.product_model_variant_id || planRow.product_model_variant_id || null
+    existingRow.model_id =
+      existingRow.model_id ||
+      (planRow.product_model_id
+        ? String(planRow.product_model_id)
+        : matchingExpectedRow?.product_model_id
+          ? String(matchingExpectedRow.product_model_id)
+          : '')
+    existingRow.product_model_variant_id = existingRow.product_model_variant_id || planRow.product_model_variant_id || matchingExpectedRow?.product_model_variant_id || null
     existingRow.model_name = planRow.model_name || existingRow.model_name || ''
     existingRow.model_color = planRow.model_color || existingRow.model_color || ''
     existingRow.original_model_name =
