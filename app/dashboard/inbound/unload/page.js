@@ -2440,6 +2440,8 @@ export default function UnloadPage() {
   const [supportsUnloadTemporarySample, setSupportsUnloadTemporarySample] = useState(false)
   const [supportsUnloadSampleResolution, setSupportsUnloadSampleResolution] = useState(false)
   const [supportsSampleBreakdowns, setSupportsSampleBreakdowns] = useState(false)
+  const [supportsReturnProductModel, setSupportsReturnProductModel] = useState(false)
+  const [supportsReturnProductModelVariant, setSupportsReturnProductModelVariant] = useState(false)
   const [supportsReturnVariant, setSupportsReturnVariant] = useState(false)
   const [supportsReturnVariantCode, setSupportsReturnVariantCode] = useState(false)
   const [supportsReturnVariantName, setSupportsReturnVariantName] = useState(false)
@@ -2624,6 +2626,8 @@ export default function UnloadPage() {
         { error: unloadTemporarySampleError },
         { error: unloadSampleResolutionError },
         { error: sampleBreakdownSupportError },
+        { error: returnProductModelError },
+        { error: returnProductModelVariantError },
         { error: returnVariantError },
         { error: returnVariantCodeError },
         { error: returnVariantNameError },
@@ -2636,6 +2640,8 @@ export default function UnloadPage() {
         supabase.from('inbound_unload').select('is_product_temporary').limit(1),
         supabase.from('inbound_unload').select('sample_resolved_at, sample_resolved_by').limit(1),
         supabase.from('inbound_sample_model_breakdowns').select('id').limit(1),
+        supabase.from('warehouse_returns').select('product_model_id').limit(1),
+        supabase.from('warehouse_returns').select('product_model_variant_id').limit(1),
         supabase.from('warehouse_returns').select('variant_label').limit(1),
         supabase.from('warehouse_returns').select('variant_code').limit(1),
         supabase.from('warehouse_returns').select('variant_name').limit(1),
@@ -2649,6 +2655,8 @@ export default function UnloadPage() {
       setSupportsUnloadTemporarySample(!unloadTemporarySampleError)
       setSupportsUnloadSampleResolution(!unloadSampleResolutionError)
       setSupportsSampleBreakdowns(!sampleBreakdownSupportError)
+      setSupportsReturnProductModel(!returnProductModelError)
+      setSupportsReturnProductModelVariant(!returnProductModelVariantError)
       setSupportsReturnVariant(!returnVariantError)
       setSupportsReturnVariantCode(!returnVariantCodeError)
       setSupportsReturnVariantName(!returnVariantNameError)
@@ -2723,6 +2731,8 @@ export default function UnloadPage() {
             'source_phase',
             'brand_id',
             'category_id',
+            supportsReturnProductModel ? 'product_model_id' : null,
+            supportsReturnProductModelVariant ? 'product_model_variant_id' : null,
             'model_name',
             'qty',
             'pic_name',
@@ -2772,6 +2782,8 @@ export default function UnloadPage() {
     supportsReturnVariant,
     supportsReturnVariantCode,
     supportsReturnVariantName,
+    supportsReturnProductModel,
+    supportsReturnProductModelVariant,
     supportsUnloadVariant,
     supportsUnloadVariantCode,
     supportsUnloadVariantName,
@@ -5642,8 +5654,8 @@ export default function UnloadPage() {
           inbound_id: payload.inbound_id,
           brand_id: payload.brand_id,
           category_id: payload.category_id,
-          ...(supportsUnloadProductModel ? { product_model_id: payload.product_model_id } : {}),
-          ...(supportsUnloadProductModelVariant ? { product_model_variant_id: payload.product_model_variant_id } : {}),
+          ...(supportsReturnProductModel ? { product_model_id: payload.product_model_id } : {}),
+          ...(supportsReturnProductModelVariant ? { product_model_variant_id: payload.product_model_variant_id } : {}),
           model_name: payload.model_name,
           ...(supportsReturnVariant ? { variant_label: payload.variant_label } : {}),
           ...(supportsReturnVariantCode ? { variant_code: payload.variant_code } : {}),
