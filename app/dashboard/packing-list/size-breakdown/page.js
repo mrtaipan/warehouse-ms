@@ -268,9 +268,19 @@ const styles = {
   },
   filterBar: {
     display: 'flex',
-    flexWrap: 'wrap',
+    flexWrap: 'nowrap',
+    gap: '8px',
+    alignItems: 'center',
+    overflowX: 'auto',
+    paddingBottom: '2px',
+  },
+  editFilterBar: {
+    display: 'flex',
+    flexWrap: 'nowrap',
     gap: '10px',
-    alignItems: 'end',
+    alignItems: 'flex-end',
+    overflowX: 'auto',
+    paddingBottom: '2px',
   },
   multipageTableShell: {
     borderWidth: '1px',
@@ -318,7 +328,18 @@ const styles = {
     display: 'flex',
     flexDirection: 'column',
     gap: '6px',
-    flex: '0 1 160px',
+    flex: '0 0 150px',
+    minWidth: '136px',
+  },
+  categoryFilterField: {
+    flex: '0 0 260px',
+    minWidth: '220px',
+    maxWidth: '300px',
+  },
+  editCategoryFilterField: {
+    flex: '0 0 390px',
+    minWidth: '300px',
+    maxWidth: '430px',
   },
   filterLabel: {
     color: '#64748b',
@@ -675,7 +696,7 @@ const styles = {
   },
   sizeHeaderGrid: {
     display: 'grid',
-    gridTemplateColumns: 'minmax(110px, 1fr) minmax(100px, 0.8fr) minmax(190px, 1.25fr) 88px',
+    gridTemplateColumns: 'minmax(110px, 1fr) minmax(100px, 0.8fr) minmax(190px, 1.25fr) 132px',
     gap: '8px',
     alignItems: 'center',
   },
@@ -688,9 +709,44 @@ const styles = {
   },
   sizeInputRow: {
     display: 'grid',
-    gridTemplateColumns: 'minmax(110px, 1fr) minmax(100px, 0.8fr) minmax(190px, 1.25fr) 88px',
+    gridTemplateColumns: 'minmax(110px, 1fr) minmax(100px, 0.8fr) minmax(190px, 1.25fr) 132px',
     gap: '8px',
     alignItems: 'center',
+  },
+  sizeActionGroup: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '6px',
+    justifyContent: 'center',
+  },
+  sizeOrderButton: {
+    width: '36px',
+    minHeight: '36px',
+    padding: 0,
+    borderWidth: '1px',
+    borderStyle: 'solid',
+    borderColor: '#cbd5e1',
+    borderRadius: '10px',
+    background: '#fff',
+    color: '#334155',
+    fontSize: '18px',
+    fontWeight: 950,
+    lineHeight: 1,
+    cursor: 'pointer',
+  },
+  compactDangerButton: {
+    width: '36px',
+    minHeight: '36px',
+    padding: 0,
+    borderWidth: '1px',
+    borderStyle: 'solid',
+    borderColor: '#fecaca',
+    borderRadius: '10px',
+    background: '#fff',
+    color: '#dc2626',
+    fontSize: '13px',
+    fontWeight: 900,
+    cursor: 'pointer',
   },
   checkerPicker: {
     position: 'relative',
@@ -1088,6 +1144,7 @@ const styles = {
   },
   compactResetButton: {
     width: '38px',
+    flex: '0 0 38px',
     minHeight: '38px',
     padding: 0,
     borderWidth: '1px',
@@ -1674,6 +1731,7 @@ function createEmptySizeRow(index = 0) {
   return {
     id: `size-${Date.now()}-${index}`,
     breakdown_row_id: null,
+    size_order: index + 1,
     size_label: '',
     qty: '',
     mob_target_qty: null,
@@ -1806,6 +1864,32 @@ function getBreakdownIdentity(row = {}) {
   return `model:${row.product_model_id || 'legacy'}`
 }
 
+function matchesPlReturnCard(row = {}, card = {}) {
+  if (Number(row.inbound_id || 0) !== Number(card.inbound_id || 0)) return false
+
+  const rowVariantId = Number(row.product_model_variant_id || 0)
+  const cardVariantId = Number(card.product_model_variant_id || 0)
+  if (rowVariantId) return rowVariantId === cardVariantId
+
+  const rowVariantCode = normalize(row.source_variant_code || row.sku_code || row.sku)
+  const cardVariantCode = normalize(card.source_variant_code || card.variant_code)
+  if (rowVariantCode) return Boolean(cardVariantCode) && rowVariantCode === cardVariantCode
+
+  const rowModelId = Number(row.product_model_id || 0)
+  const cardModelId = Number(card.product_model_id || 0)
+  if (rowModelId && rowModelId !== cardModelId) return false
+
+  const rowBrandId = Number(row.brand_id || 0)
+  const cardBrandId = Number(card.brand_id || 0)
+  if (rowBrandId && rowBrandId !== cardBrandId) return false
+
+  const rowCategoryId = Number(row.category_id || 0)
+  const cardCategoryId = Number(card.category_id || 0)
+  if (rowCategoryId && rowCategoryId !== cardCategoryId) return false
+
+  return normalize(row.model_name) === normalize(card.model_name) && normalize(row.variant_name) === normalize(card.catalogName)
+}
+
 function getPlRowQty(plRow) {
   return (plRow?.sizeRows || []).reduce((sum, sizeRow) => sum + Number(sizeRow.qty || 0), 0)
 }
@@ -1902,6 +1986,17 @@ function getPdfGroupLabel(qtyMode = 'all') {
   if (qtyMode === 'mob') return 'MOB'
   if (qtyMode === 'oi') return 'OI'
   return 'ALL'
+}
+
+function getPdfItemNameWithCode(itemName = '', variantCode = '') {
+  const cleanItemName = formatPdfValue(itemName)
+  const cleanVariantCode = String(variantCode || '').trim()
+  if (!cleanVariantCode || cleanItemName.includes(`[${cleanVariantCode}]`)) return cleanItemName
+  return `${cleanItemName} [${cleanVariantCode}]`
+}
+
+function getOiPrintSection(targets = {}) {
+  return Number(targets.mobTargetQty || 0) > 0 ? 'split' : 'own'
 }
 
 const PDF_FONT_FAMILY = 'OpenSans'
@@ -2070,6 +2165,13 @@ function toPdfTitleCase(value) {
   return String(value || '')
     .toLowerCase()
     .replace(/(^|[\s/-])([a-z])/g, (match, prefix, letter) => `${prefix}${letter.toUpperCase()}`)
+}
+
+function toPdfTitleCasePreserveBracketCodes(value) {
+  return String(value || '')
+    .split(/(\[[^\]]+\])/g)
+    .map((part) => (part.startsWith('[') && part.endsWith(']') ? part : toPdfTitleCase(part)))
+    .join('')
 }
 
 function formatPdfPrintDate(value = new Date()) {
@@ -2358,7 +2460,7 @@ function drawPdfProductTable(doc, config) {
           const itemWidth = column.width - inset * 2
           const itemTitle = [
             toPdfTitleCase(group.identity.brand_name),
-            toPdfTitleCase(group.identity.item_name),
+            toPdfTitleCasePreserveBracketCodes(group.identity.item_name),
           ].filter(Boolean).join(' ')
           doc.setFont(PDF_FONT_FAMILY, 'bold')
           doc.setFontSize(7.8)
@@ -2834,6 +2936,7 @@ function serializePlRows(rows = []) {
         return_reason: String(returnRow.return_reason || '').trim().toUpperCase(),
       })),
       sizeRows: (row.sizeRows || []).map((sizeRow) => ({
+        size_order: Number(sizeRow.size_order || 0),
         size_label: normalizeSizeLabel(sizeRow.size_label),
         qty: String(sizeRow.qty ?? '').trim(),
         mob_target_qty: sizeRow.mob_target_qty ?? null,
@@ -3242,22 +3345,6 @@ export default function PackingListSizeBreakdownPage() {
 
   const selectedCard = cards.find((card) => card.key === selectedCardKey) || null
 
-  const summary = useMemo(() => {
-    const plReceivingQty = cards.reduce((sum, card) => sum + Number(card.receiving_qty || 0), 0)
-    const breakdownQty = cards.reduce((sum, card) => sum + Number(card.breakdown_qty || 0), 0)
-    const inboundIds = new Set(cards.map((card) => Number(card.inbound_id || 0)).filter(Boolean))
-    const plReturnQty = plReturnRows
-      .filter((row) => inboundIds.has(Number(row.inbound_id || 0)))
-      .reduce((sum, row) => sum + Number(row.qty || 0), 0)
-    return {
-      availableModels: cards.length,
-      plReceivingQty,
-      breakdownQty,
-      plReturnQty,
-      remainingQty: plReceivingQty - breakdownQty - plReturnQty,
-    }
-  }, [cards, plReturnRows])
-
   const multipageGroups = useMemo(() => {
     const grouped = new Map()
     cards.forEach((card) => {
@@ -3378,6 +3465,26 @@ export default function PackingListSizeBreakdownPage() {
     [effectiveModelFilters, filterBaseCards]
   )
 
+  const summaryCards = useMemo(
+    () => (viewMode === 'table' ? displayCards : editCatalogCards),
+    [displayCards, editCatalogCards, viewMode]
+  )
+
+  const summary = useMemo(() => {
+    const plReceivingQty = summaryCards.reduce((sum, card) => sum + Number(card.receiving_qty || 0), 0)
+    const breakdownQty = summaryCards.reduce((sum, card) => sum + Number(card.breakdown_qty || 0), 0)
+    const plReturnQty = plReturnRows
+      .filter((row) => summaryCards.some((card) => matchesPlReturnCard(row, card)))
+      .reduce((sum, row) => sum + Number(row.qty || 0), 0)
+
+    return {
+      plReceivingQty,
+      breakdownQty,
+      plReturnQty,
+      remainingQty: plReceivingQty - breakdownQty - plReturnQty,
+    }
+  }, [plReturnRows, summaryCards])
+
   const packedQtyByTargetKey = useMemo(() => {
     return packingRows.reduce((result, row) => {
       const key = getTargetKey(row.pl_size_breakdown_id, row.storing_type)
@@ -3434,6 +3541,7 @@ export default function PackingListSizeBreakdownPage() {
       current.sizeRows.push({
         id: `saved-size-${row.id || index}`,
         breakdown_row_id: row.id || null,
+        size_order: Number(row.size_order || current.sizeRows.length + 1),
         size_label: row.size_label || '',
         qty: String(row.qty ?? ''),
         mob_target_qty: row.mob_target_qty ?? null,
@@ -3453,14 +3561,7 @@ export default function PackingListSizeBreakdownPage() {
     })
 
     sourceReturnRows
-      .filter((row) => {
-        if (Number(row.inbound_id || 0) !== Number(card.inbound_id || 0)) return false
-        if (Number(row.product_model_id || 0) && Number(row.product_model_id || 0) !== Number(card.product_model_id || 0)) return false
-        if (card.product_model_variant_id && Number(row.product_model_variant_id || 0)) {
-          return Number(row.product_model_variant_id || 0) === Number(card.product_model_variant_id || 0)
-        }
-        return normalize(row.model_name) === normalize(card.model_name) && normalize(row.variant_name) === normalize(card.catalogName)
-      })
+      .filter((row) => matchesPlReturnCard(row, card))
       .forEach((row, index) => {
         const requestedGroupKey = row.pl_detail_seq ? `seq:${row.pl_detail_seq}` : ''
         const firstDetailGroupKey = Array.from(grouped.entries())
@@ -3495,7 +3596,14 @@ export default function PackingListSizeBreakdownPage() {
         grouped.set(groupKey, current)
       })
 
-    return Array.from(grouped.values()).sort((a, b) => Number(a.detail_order || a.display_order || 0) - Number(b.detail_order || b.display_order || 0))
+    return Array.from(grouped.values())
+      .map((row) => ({
+        ...row,
+        sizeRows: row.sizeRows
+          .map((sizeRow, index) => ({ ...sizeRow, size_order: Number(sizeRow.size_order || index + 1) }))
+          .sort((a, b) => Number(a.size_order || 0) - Number(b.size_order || 0)),
+      }))
+      .sort((a, b) => Number(a.detail_order || a.display_order || 0) - Number(b.detail_order || b.display_order || 0))
   }
 
   const sizeChartOptions = (() => {
@@ -3817,6 +3925,26 @@ export default function PackingListSizeBreakdownPage() {
     )
   }
 
+  function moveSizeRow(plRowId, sizeRowId, direction) {
+    setPlRows((prev) =>
+      prev.map((row) => {
+        if (row.id !== plRowId) return row
+
+        const currentIndex = row.sizeRows.findIndex((sizeRow) => sizeRow.id === sizeRowId)
+        const nextIndex = currentIndex + direction
+        if (currentIndex < 0 || nextIndex < 0 || nextIndex >= row.sizeRows.length) return row
+
+        const nextSizeRows = [...row.sizeRows]
+        const [movedRow] = nextSizeRows.splice(currentIndex, 1)
+        nextSizeRows.splice(nextIndex, 0, movedRow)
+        return {
+          ...row,
+          sizeRows: nextSizeRows.map((sizeRow, index) => ({ ...sizeRow, size_order: index + 1 })),
+        }
+      })
+    )
+  }
+
   function toggleCheckerForSizeRow(plRowId, sizeRowId, checkerName) {
     const normalizedChecker = String(checkerName || '').trim().toUpperCase()
     if (!normalizedChecker) return
@@ -3907,7 +4035,10 @@ export default function PackingListSizeBreakdownPage() {
         row.id === plRowId
           ? {
               ...row,
-              sizeRows: [...row.sizeRows, createEmptySizeRow(row.sizeRows.length)],
+              sizeRows: [...row.sizeRows, createEmptySizeRow(row.sizeRows.length)].map((sizeRow, index) => ({
+                ...sizeRow,
+                size_order: index + 1,
+              })),
             }
           : row
       )
@@ -3929,7 +4060,12 @@ export default function PackingListSizeBreakdownPage() {
         row.id === plRowId
           ? {
               ...row,
-              sizeRows: row.sizeRows.length <= 1 ? row.sizeRows : row.sizeRows.filter((sizeRow) => sizeRow.id !== sizeRowId),
+              sizeRows:
+                row.sizeRows.length <= 1
+                  ? row.sizeRows
+                  : row.sizeRows
+                      .filter((sizeRow) => sizeRow.id !== sizeRowId)
+                      .map((sizeRow, index) => ({ ...sizeRow, size_order: index + 1 })),
             }
           : row
       )
@@ -4286,6 +4422,8 @@ export default function PackingListSizeBreakdownPage() {
         const savedPlName = String(plRow.pl_name || '').trim()
         const isDefaultVariantOnlyName = normalize(savedPlName) === normalize(card.catalogName)
         const itemName = savedPlName && !isDefaultVariantOnlyName ? savedPlName : modelVariantLabel
+        const sourceVariantCode = card.source_variant_code || card.variant_code || ''
+        const printableItemName = getPdfItemNameWithCode(itemName || '-', sourceVariantCode)
         const photoUrl = plRow.pl_photo_url || card.photo_url || ''
         const detailPhotoUrls = normalizePhotoUrls(plRow.pl_photo_urls)
           .filter((detailPhotoUrl) => detailPhotoUrl !== photoUrl)
@@ -4294,7 +4432,12 @@ export default function PackingListSizeBreakdownPage() {
             const totalQty = Number(sizeRow.qty || 0)
             const targets = getSizeRowAllocationTargets(sizeRow, modelTotalQty)
             const qty = qtyMode === 'mob' ? targets.mobTargetQty : qtyMode === 'oi' ? targets.oiTargetQty : totalQty
-            return { sizeRow, qty }
+            return {
+              sizeRow,
+              qty,
+              targets,
+              oiSection: qtyMode === 'oi' ? getOiPrintSection(targets) : 'main',
+            }
           })
           .filter((row) => Number(row.qty || 0) > 0 || qtyMode === 'all')
         const plRowTotalQty = printableSizeRows.reduce((sum, row) => sum + Number(row.qty || 0), 0)
@@ -4304,17 +4447,20 @@ export default function PackingListSizeBreakdownPage() {
           detail_photo_urls: detailPhotoUrls,
           pl_notes: String(plRow.pl_notes || '').trim(),
           pl_id: plId,
+          source_variant_code: sourceVariantCode,
           brand_name: card.brand_name || 'UNBRANDED',
           category_path: getCategoryPathLabel(card) || '-',
-          item_name: itemName || '-',
+          item_name: printableItemName,
           total_qty: formatPdfQty(plRowTotalQty),
         }
         const summaryRows = new Map()
+        const summaryTotals = new Map()
 
-        printableSizeRows.forEach(({ sizeRow, qty }) => {
+        printableSizeRows.forEach(({ sizeRow, qty, oiSection }) => {
           const breakdownId = Number(sizeRow.breakdown_row_id || 0)
           const sizeLabel = normalizeSizeLabel(sizeRow.size_label)
           const summarySizeLabel = getSummarySizeLabel(sizeLabel) || '-'
+          const summaryKey = qtyMode === 'oi' ? `${oiSection}::${summarySizeLabel}` : summarySizeLabel
           const checkerNames = getPdfCheckerFirstNames(sizeRow.checker_names)
           const packingPicNames = packingRows
             .filter((packingRow) => {
@@ -4332,9 +4478,12 @@ export default function PackingListSizeBreakdownPage() {
             qty: formatPdfQty(qty),
             data_pic: dataPic,
             packing_pic: packingPic,
+            oi_section: oiSection,
           }
 
-          const currentSummary = summaryRows.get(summarySizeLabel) || {
+          const currentSummary = summaryRows.get(summaryKey) || {
+            sizeLabel: summarySizeLabel,
+            oiSection,
             qty: 0,
             checkerNames: [],
           }
@@ -4342,7 +4491,8 @@ export default function PackingListSizeBreakdownPage() {
           checkerNames.forEach((name) => {
             if (!currentSummary.checkerNames.includes(name)) currentSummary.checkerNames.push(name)
           })
-          summaryRows.set(summarySizeLabel, currentSummary)
+          summaryRows.set(summaryKey, currentSummary)
+          summaryTotals.set(oiSection, (summaryTotals.get(oiSection) || 0) + Number(qty || 0))
 
           sizeChartRows.push({
             pl_id: plId,
@@ -4366,13 +4516,15 @@ export default function PackingListSizeBreakdownPage() {
           }
         })
 
-        summaryRows.forEach((summary, sizeLabel) => {
+        summaryRows.forEach((summary) => {
           modelRows.push({
             ...commonRow,
-            size_label: sizeLabel,
+            size_label: summary.sizeLabel,
             qty: formatPdfQty(summary.qty),
+            total_qty: formatPdfQty(summaryTotals.get(summary.oiSection) || summary.qty),
             data_pic: summary.checkerNames.join(', ') || '-',
             packing_pic: '-',
+            oi_section: summary.oiSection,
           })
         })
       })
@@ -4399,6 +4551,8 @@ export default function PackingListSizeBreakdownPage() {
       })
       .forEach((row) => {
         const breakdownInfo = breakdownInfoById.get(Number(row.pl_size_breakdown_id || 0)) || {}
+        const sourceVariantCode = row.source_variant_code || breakdownInfo.source_variant_code || ''
+        const itemName = row.pl_name || breakdownInfo.raw_item_name || '-'
         const groupKey = row.packing_group_key || `${row.storing_type || 'MOB'}-${row.package_type || 'REGULAR'}-${row.brand_code || 'none'}-${row.koli_sequence || '-'}`
         const current = groups.get(groupKey) || {
           key: groupKey,
@@ -4415,7 +4569,8 @@ export default function PackingListSizeBreakdownPage() {
           pl_id: breakdownInfo.pl_id || '-',
           brand_name: breakdownInfo.brand_name || 'UNBRANDED',
           category_path: breakdownInfo.category_path || '-',
-          item_name: row.pl_name || breakdownInfo.raw_item_name || '-',
+          source_variant_code: sourceVariantCode,
+          item_name: getPdfItemNameWithCode(itemName, sourceVariantCode),
           size_label: normalizeSizeLabel(row.size_label || breakdownInfo.raw_size_label) || '-',
           qty: formatPdfQty(row.qty),
           total_qty: formatPdfQty(row.qty),
@@ -4735,15 +4890,42 @@ export default function PackingListSizeBreakdownPage() {
           drawGeneralPhotos()
           drawSizeCharts()
         } else {
-          cursorY = drawPdfProductTable(doc, {
-            title: 'Model Breakdown',
-            rows: payload.modelRows || [],
-            startY: cursorY,
-            imageCache,
-            onPageBreak: drawContinuationHeader,
-            picKey: 'data_pic',
-            picLabel: 'PIC Data',
-          })
+          if (qtyMode === 'oi' && (payload.modelRows || []).length) {
+            const splitRows = (payload.modelRows || []).filter((row) => row.oi_section === 'split')
+            const ownRows = (payload.modelRows || []).filter((row) => row.oi_section === 'own')
+            if (splitRows.length) {
+              cursorY = drawPdfProductTable(doc, {
+                title: 'Hasil Bagi',
+                rows: splitRows,
+                startY: cursorY,
+                imageCache,
+                onPageBreak: drawContinuationHeader,
+                picKey: 'data_pic',
+                picLabel: 'PIC Data',
+              })
+            }
+            if (ownRows.length) {
+              cursorY = drawPdfProductTable(doc, {
+                title: 'Hasil Sendiri',
+                rows: ownRows,
+                startY: cursorY,
+                imageCache,
+                onPageBreak: drawContinuationHeader,
+                picKey: 'data_pic',
+                picLabel: 'PIC Data',
+              })
+            }
+          } else {
+            cursorY = drawPdfProductTable(doc, {
+              title: 'Model Breakdown',
+              rows: payload.modelRows || [],
+              startY: cursorY,
+              imageCache,
+              onPageBreak: drawContinuationHeader,
+              picKey: 'data_pic',
+              picLabel: 'PIC Data',
+            })
+          }
           drawPhotoDetails()
           drawGeneralPhotos()
           drawSizeCharts()
@@ -4930,6 +5112,9 @@ export default function PackingListSizeBreakdownPage() {
         inbound_id: selectedCard.inbound_id,
         pl_detail_seq: row.pl_detail_seq,
         koli_sequence: returnRow.koli_sequence || null,
+        product_model_id: selectedCard.product_model_id || null,
+        product_model_variant_id: selectedCard.product_model_variant_id || null,
+        source_variant_code: selectedCard.source_variant_code || selectedCard.variant_code || null,
         brand_id: selectedCard.brand_id || null,
         category_id: selectedCard.category_id || null,
         model_name: selectedCard.model_name || null,
@@ -4954,14 +5139,7 @@ export default function PackingListSizeBreakdownPage() {
     })
     const incomingIds = new Set(payload.map((row) => Number(row.id || 0)).filter(Boolean))
     const staleRows = existingRows.filter((row) => !incomingIds.has(Number(row.id || 0)))
-    const existingReturnRows = plReturnRows.filter((row) => {
-      if (Number(row.inbound_id || 0) !== Number(selectedCard.inbound_id || 0)) return false
-      if (Number(row.product_model_id || 0) && Number(row.product_model_id || 0) !== Number(selectedCard.product_model_id || 0)) return false
-      if (selectedCard.product_model_variant_id && Number(row.product_model_variant_id || 0)) {
-        return Number(row.product_model_variant_id || 0) === Number(selectedCard.product_model_variant_id || 0)
-      }
-      return normalize(row.model_name) === normalize(selectedCard.model_name) && normalize(row.variant_name) === normalize(selectedCard.catalogName)
-    })
+    const existingReturnRows = plReturnRows.filter((row) => matchesPlReturnCard(row, selectedCard))
     const incomingReturnIds = new Set(returnPayload.map((row) => Number(row.id || 0)).filter(Boolean))
     const staleReturnRows = existingReturnRows.filter((row) => !incomingReturnIds.has(Number(row.id || 0)))
 
@@ -5023,6 +5201,9 @@ export default function PackingListSizeBreakdownPage() {
         source_phase: PL_RETURN_SOURCE_PHASE,
         pl_detail_seq: row.pl_detail_seq,
         koli_sequence: row.koli_sequence || null,
+        product_model_id: row.product_model_id,
+        product_model_variant_id: row.product_model_variant_id,
+        source_variant_code: row.source_variant_code,
         brand_id: row.brand_id,
         category_id: row.category_id,
         model_name: row.model_name,
@@ -5284,10 +5465,16 @@ export default function PackingListSizeBreakdownPage() {
 
   function getKoliPrintReference(item) {
     const categoryLabel = getBottomCategoryLabel(item.category_path) || item.item_name || ''
-    return [item.brand_name, categoryLabel]
+    return [
+      item.pl_id,
+      ...[item.brand_name, categoryLabel].filter(Boolean).map((part) => toPdfTitleCase(part)),
+    ]
       .filter(Boolean)
-      .map((part) => toPdfTitleCase(part))
       .join(' ')
+  }
+
+  function getPlCardItemLabel(item) {
+    return [item.pl_id, item.item_name].filter(Boolean).join(' ')
   }
 
   function getPrintGrnNumberForKoli(koliRow = {}) {
@@ -5323,7 +5510,7 @@ export default function PackingListSizeBreakdownPage() {
         <tr>
           <td class="brandCell">${escapeHtml(item.brand_name || '-')}</td>
           <td class="variantCell">${escapeHtml(item.source_variant_code || '-')}</td>
-          <td class="itemCell">${escapeHtml(item.item_name || '-')}</td>
+          <td class="itemCell">${escapeHtml(getPlCardItemLabel(item) || '-')}</td>
           <td class="sizeCell">${escapeHtml(item.size_label || '-')}</td>
           <td class="qtyCell">${escapeHtml(formatPdfQty(item.qty || 0))}</td>
         </tr>
@@ -5684,7 +5871,7 @@ export default function PackingListSizeBreakdownPage() {
                       ))}
                     </select>
                   </label>
-                  <label style={styles.filterField}>
+                  <label style={{ ...styles.filterField, ...styles.categoryFilterField }}>
                     <select value={modelFilters.categoryPath} onChange={(event) => updateModelFilter('categoryPath', event.target.value)} style={styles.filterSelect}>
                       <option value="">All Category Path</option>
                       {modelFilterOptions.categoryPaths.map((categoryName) => (
@@ -5900,7 +6087,7 @@ export default function PackingListSizeBreakdownPage() {
           <div style={styles.section}>
             {cards.length ? (
               <>
-                <div style={styles.filterBar}>
+                <div style={styles.editFilterBar}>
                   <label style={styles.filterField}>
                     <span style={styles.filterLabel}>Brand</span>
                     <select
@@ -5916,7 +6103,7 @@ export default function PackingListSizeBreakdownPage() {
                       ))}
                     </select>
                   </label>
-                  <label style={styles.filterField}>
+                  <label style={{ ...styles.filterField, ...styles.editCategoryFilterField }}>
                     <span style={styles.filterLabel}>Category</span>
                     <select
                       value={editCatalogFilters.categoryPath}
@@ -6153,9 +6340,9 @@ export default function PackingListSizeBreakdownPage() {
                               <span style={styles.sizeHeaderCell}>Size</span>
                               <span style={styles.sizeHeaderCell}>Qty</span>
                               <span style={styles.sizeHeaderCell}>Checker</span>
-                              <span style={styles.sizeHeaderCell}>Action</span>
+                              <span style={{ ...styles.sizeHeaderCell, textAlign: 'center' }}>Action</span>
                             </div>
-                            {plRow.sizeRows.map((sizeRow) => (
+                            {plRow.sizeRows.map((sizeRow, sizeRowIndex) => (
                               <div key={sizeRow.id} style={styles.sizeInputRow}>
                                 <input
                                   data-size-field="size"
@@ -6212,14 +6399,45 @@ export default function PackingListSizeBreakdownPage() {
                                     </div>
                                   ) : null}
                                 </div>
-                                <button
-                                  type="button"
-                                  onClick={() => removeSizeRow(plRow.id, sizeRow.id)}
-                                  disabled={plRow.sizeRows.length <= 1}
-                                  style={plRow.sizeRows.length <= 1 ? { ...styles.dangerButton, ...styles.disabledButton } : styles.dangerButton}
-                                >
-                                  X
-                                </button>
+                                <div style={styles.sizeActionGroup}>
+                                  <button
+                                    type="button"
+                                    onClick={() => moveSizeRow(plRow.id, sizeRow.id, -1)}
+                                    disabled={sizeRowIndex === 0}
+                                    style={sizeRowIndex === 0 ? { ...styles.sizeOrderButton, ...styles.disabledButton } : styles.sizeOrderButton}
+                                    title="Move size up"
+                                    aria-label="Move size up"
+                                  >
+                                    ↑
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => moveSizeRow(plRow.id, sizeRow.id, 1)}
+                                    disabled={sizeRowIndex === plRow.sizeRows.length - 1}
+                                    style={
+                                      sizeRowIndex === plRow.sizeRows.length - 1
+                                        ? { ...styles.sizeOrderButton, ...styles.disabledButton }
+                                        : styles.sizeOrderButton
+                                    }
+                                    title="Move size down"
+                                    aria-label="Move size down"
+                                  >
+                                    ↓
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => removeSizeRow(plRow.id, sizeRow.id)}
+                                    disabled={plRow.sizeRows.length <= 1}
+                                    style={
+                                      plRow.sizeRows.length <= 1
+                                        ? { ...styles.compactDangerButton, ...styles.disabledButton }
+                                        : styles.compactDangerButton
+                                    }
+                                    title="Remove size"
+                                  >
+                                    X
+                                  </button>
+                                </div>
                               </div>
                             ))}
                             {(plRow.returnRows || []).map((returnRow) => (

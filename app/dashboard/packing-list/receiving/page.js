@@ -849,6 +849,68 @@ const styles = {
   dropdownItemActive: {
     background: '#f3f4f6',
   },
+  dropdownButtonDisabled: {
+    background: '#f8fafc',
+    color: '#94a3b8',
+    WebkitTextFillColor: '#94a3b8',
+    cursor: 'not-allowed',
+    opacity: 0.78,
+  },
+  companionPicker: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '8px',
+  },
+  companionButtonText: {
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+    color: '#111827',
+    fontWeight: 750,
+  },
+  companionOption: {
+    width: '100%',
+    minHeight: '38px',
+    borderWidth: '1px',
+    borderStyle: 'solid',
+    borderColor: 'transparent',
+    borderRadius: '8px',
+    background: '#fff',
+    color: '#111827',
+    padding: '8px 10px',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '9px',
+    textAlign: 'left',
+    fontSize: '13px',
+    fontWeight: 800,
+    cursor: 'pointer',
+  },
+  companionOptionActive: {
+    background: '#ecfdf5',
+    borderColor: '#99f6e4',
+    color: '#047857',
+  },
+  companionCheck: {
+    width: '17px',
+    height: '17px',
+    borderRadius: '999px',
+    borderWidth: '1px',
+    borderStyle: 'solid',
+    borderColor: '#cbd5e1',
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flex: '0 0 auto',
+    color: 'transparent',
+    fontSize: '11px',
+    fontWeight: 950,
+  },
+  companionCheckActive: {
+    borderColor: '#0f766e',
+    background: '#0f766e',
+    color: '#fff',
+  },
   previewButton: {
     width: '36px',
     height: '36px',
@@ -1114,6 +1176,25 @@ function getPicLabel(value, userNameMap) {
   return userNameMap.get(key) || String(normalized.split('@')[0] || normalized).replace(/[._-]+/g, ' ').toUpperCase()
 }
 
+function normalizeNameList(value) {
+  if (Array.isArray(value)) {
+    return Array.from(new Set(value.map((item) => String(item || '').trim().toUpperCase()).filter(Boolean)))
+  }
+
+  if (typeof value === 'string') {
+    const trimmed = value.trim()
+    if (!trimmed) return []
+    try {
+      const parsed = JSON.parse(trimmed)
+      if (Array.isArray(parsed)) return normalizeNameList(parsed)
+    } catch {
+      return normalizeNameList(trimmed.split(','))
+    }
+  }
+
+  return []
+}
+
 function buildPackingRows(confirmRows, catalogLookup = null) {
   const grouped = new Map()
 
@@ -1177,6 +1258,7 @@ export default function PackingListReceivingPage() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [koliMenuOpen, setKoliMenuOpen] = useState(false)
+  const [receivedWithMenuOpen, setReceivedWithMenuOpen] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
   const [confirmRows, setConfirmRows] = useState([])
@@ -1187,6 +1269,7 @@ export default function PackingListReceivingPage() {
   const [grnFilter, setGrnFilter] = useState(initialGrn)
   const [selectedSourceKey, setSelectedSourceKey] = useState('')
   const [draftRows, setDraftRows] = useState([])
+  const [receivedWithNames, setReceivedWithNames] = useState([])
   const [modelChooser, setModelChooser] = useState(null)
   const [validationRows, setValidationRows] = useState([])
   const [previewPhoto, setPreviewPhoto] = useState(null)
@@ -1300,11 +1383,11 @@ export default function PackingListReceivingPage() {
           .order('created_at', { ascending: false }),
         supabase
           .from('pl_receiving')
-          .select('id, inbound_id, source_koli_sequence, source_qc_confirm_id, product_model_id, product_model_variant_id, source_variant_code, model_name, model_color:variant_name, source_qty, received_qty, qty_diff, validated_by, validated_at')
+          .select('id, inbound_id, source_koli_sequence, source_qc_confirm_id, product_model_id, product_model_variant_id, source_variant_code, model_name, model_color:variant_name, source_qty, received_qty, qty_diff, validated_by, received_with_names, validated_at')
           .order('validated_at', { ascending: false }),
         supabase
           .from('dir_user_profiles')
-          .select('email, display_name'),
+          .select('email, display_name, role'),
         supabase
           .from('dir_product_models')
           .select(`
@@ -1358,6 +1441,17 @@ export default function PackingListReceivingPage() {
     })
 
     return nextMap
+  }, [userProfiles])
+
+  const packingStaffOptions = useMemo(() => {
+    const names = userProfiles
+      .filter((profile) => String(profile.role || '').trim() === 'packing_staff')
+      .map((profile) => {
+        const displayName = String(profile.display_name || '').trim()
+        return displayName || getPicLabel(profile.email, new Map())
+      })
+
+    return getUniqueOptions(names.map((name) => String(name || '').trim().toUpperCase()).filter(Boolean))
   }, [userProfiles])
 
   const catalogLookup = useMemo(() => {
@@ -1735,6 +1829,8 @@ export default function PackingListReceivingPage() {
       if (!selectedInbound?.id || !selectedSource?.koli_sequence) {
         setValidationRows([])
         setDraftRows([])
+        setReceivedWithNames([])
+        setReceivedWithMenuOpen(false)
         return
       }
 
@@ -1751,6 +1847,7 @@ export default function PackingListReceivingPage() {
           source_qty,
           received_qty,
           qty_diff,
+          received_with_names,
           validated_at
         `)
         .eq('inbound_id', selectedInbound.id)
@@ -1761,12 +1858,16 @@ export default function PackingListReceivingPage() {
       if (loadError) {
         setValidationRows([])
         setDraftRows(createDraftRows(sourceRows))
+        setReceivedWithNames([])
+        setReceivedWithMenuOpen(false)
         setError(loadError.message || 'Failed to load saved packing list validation.')
         return
       }
 
       const nextRows = data || []
       setValidationRows(nextRows)
+      setReceivedWithNames(normalizeNameList(nextRows[0]?.received_with_names))
+      setReceivedWithMenuOpen(false)
 
       if (!nextRows.length) {
         setDraftRows(createDraftRows(sourceRows))
@@ -1837,6 +1938,8 @@ export default function PackingListReceivingPage() {
     setModelChooser(null)
     setKoliMenuOpen(false)
     setDraftRows([])
+    setReceivedWithNames([])
+    setReceivedWithMenuOpen(false)
     setValidationRows([])
     setError('')
     setSuccess('')
@@ -1846,9 +1949,11 @@ export default function PackingListReceivingPage() {
   function handleSourceChange(nextSourceKey) {
     setSelectedSourceKey(nextSourceKey)
     setKoliMenuOpen(false)
+    setReceivedWithMenuOpen(false)
     setModelChooser(null)
     setError('')
     setSuccess('')
+    setReceivedWithNames([])
 
     const nextSource = sourceOptions.find((item) => item.key === nextSourceKey) || null
     setDraftRows(nextSource ? createDraftRows(buildPackingRows(nextSource.rows || [], catalogLookup)) : [])
@@ -1957,9 +2062,23 @@ export default function PackingListReceivingPage() {
   function resetDraftRows() {
     if (!canManageReceiving || isValidated || !selectedSource) return
     setDraftRows(createDraftRows(sourceRows))
+    setReceivedWithNames([])
+    setReceivedWithMenuOpen(false)
     setModelChooser(null)
     setError('')
     setSuccess('')
+  }
+
+  function toggleReceivedWithName(name) {
+    if (!canManageReceiving || isValidated) return
+    const normalizedName = String(name || '').trim().toUpperCase()
+    if (!normalizedName) return
+
+    setReceivedWithNames((prev) =>
+      prev.includes(normalizedName)
+        ? prev.filter((item) => item !== normalizedName)
+        : [...prev, normalizedName]
+    )
   }
 
   const comparisonRows = useMemo(() => {
@@ -2095,6 +2214,7 @@ export default function PackingListReceivingPage() {
         `QC Confirm Qty: ${sourceTotalQty}`,
         `PL Received Qty: ${receivedTotalQty}`,
         `Variance: ${totalVariance > 0 ? '+' : ''}${totalVariance}`,
+        `Together With: ${receivedWithNames.length ? receivedWithNames.join(', ') : '-'}`,
         '',
         'Please make sure the entered qty is correct before continuing.',
       ].join('\n')
@@ -2125,6 +2245,7 @@ export default function PackingListReceivingPage() {
           received_qty: row.receivedQty,
           qty_diff: row.qtyDiff,
           validated_by: user?.email || null,
+          received_with_names: receivedWithNames,
         }
       })
 
@@ -2160,6 +2281,7 @@ export default function PackingListReceivingPage() {
         received_qty,
         qty_diff,
         validated_by,
+        received_with_names,
         validated_at
       `)
       .order('validated_at', { ascending: false })
@@ -2194,6 +2316,7 @@ export default function PackingListReceivingPage() {
           received_qty: row.received_qty,
           qty_diff: row.qty_diff,
           validated_by: row.validated_by,
+          received_with_names: row.received_with_names,
           validated_at: row.validated_at,
         }))),
         ...remaining,
@@ -2578,6 +2701,54 @@ export default function PackingListReceivingPage() {
                 </button>
               </>
             ) : null}
+          </div>
+
+          <div style={styles.companionPicker}>
+            <span style={styles.mobileLabel}>Received With</span>
+            <div style={styles.dropdownWrap}>
+              <button
+                type="button"
+                onClick={() => setReceivedWithMenuOpen((prev) => !prev)}
+                disabled={!canManageReceiving || !selectedSource || isValidated}
+                style={
+                  !canManageReceiving || !selectedSource || isValidated
+                    ? { ...styles.dropdownButton, ...styles.dropdownButtonDisabled }
+                    : styles.dropdownButton
+                }
+              >
+                <span style={styles.companionButtonText}>
+                  {receivedWithNames.length ? receivedWithNames.join(', ') : 'Choose packing staff (optional)'}
+                </span>
+                <span aria-hidden="true" style={{ color: '#111827' }}>{receivedWithMenuOpen ? '^' : 'v'}</span>
+              </button>
+              {receivedWithMenuOpen ? (
+                <div style={styles.dropdownMenu}>
+                  {packingStaffOptions.length ? (
+                    packingStaffOptions.map((staffName) => {
+                      const isActive = receivedWithNames.includes(staffName)
+                      return (
+                        <button
+                          key={`received-with-${staffName}`}
+                          type="button"
+                          onClick={() => toggleReceivedWithName(staffName)}
+                          style={{
+                            ...styles.companionOption,
+                            ...(isActive ? styles.companionOptionActive : {}),
+                          }}
+                        >
+                          <span style={{ ...styles.companionCheck, ...(isActive ? styles.companionCheckActive : {}) }}>
+                            ✓
+                          </span>
+                          {staffName}
+                        </button>
+                      )
+                    })
+                  ) : (
+                    <span style={styles.emptyText}>No packing staff profile.</span>
+                  )}
+                </div>
+              ) : null}
+            </div>
           </div>
 
         {error ? <p style={styles.errorText}>{error}</p> : null}
