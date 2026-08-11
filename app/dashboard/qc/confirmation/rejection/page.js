@@ -291,6 +291,23 @@ const styles = {
     fontWeight: '900',
     letterSpacing: 0,
   },
+  basketTitleWrap: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '10px',
+    flexWrap: 'wrap',
+  },
+  basketQtyPill: {
+    minHeight: '26px',
+    padding: '4px 10px',
+    border: '1px solid #dbeafe',
+    borderRadius: '999px',
+    background: '#eff6ff',
+    color: '#1d4ed8',
+    fontSize: '12px',
+    fontWeight: '850',
+    fontVariantNumeric: 'tabular-nums',
+  },
   sectionSubtitle: {
     margin: '4px 0 0',
     color: '#64748b',
@@ -1501,6 +1518,8 @@ export default function QcConfirmationRejectionPage() {
     [sourceRows]
   )
   const remainingTotal = Number(totals.source || 0) - Number(totals.taken || 0) - Number(totals.returned || 0)
+  const currentTakeKoliQty = currentTakeKoliItems.reduce((sum, item) => sum + Number(item.qty || 0), 0)
+  const currentReturnKoliQty = currentReturnKoliItems.reduce((sum, item) => sum + Number(item.qty || 0), 0)
   const brandFilterOptions = useMemo(() => {
     const options = new Map()
     sourceRows.filter((row) => matchesResultFilterValues(row, Number(row.source_qty || 0), resultFilters, 'brandId')).forEach((row) => {
@@ -2301,7 +2320,10 @@ export default function QcConfirmationRejectionPage() {
       {canEditConfirmation ? <div style={styles.basketGrid}>
         <div style={styles.card}>
           <div style={styles.sectionHeaderRow}>
-            <h2 style={styles.sectionTitle}>Take Koli</h2>
+            <div style={styles.basketTitleWrap}>
+              <h2 style={styles.sectionTitle}>Take Koli</h2>
+              <span style={styles.basketQtyPill}>Total Qty {formatNumber(currentTakeKoliQty)}</span>
+            </div>
             <button
               type="button"
               onClick={handlePostTakeKoli}
@@ -2321,7 +2343,10 @@ export default function QcConfirmationRejectionPage() {
 
         <div style={styles.card}>
           <div style={styles.sectionHeaderRow}>
-            <h2 style={styles.sectionTitle}>Return Koli</h2>
+            <div style={styles.basketTitleWrap}>
+              <h2 style={styles.sectionTitle}>Return Koli</h2>
+              <span style={styles.basketQtyPill}>Total Qty {formatNumber(currentReturnKoliQty)}</span>
+            </div>
             <button
               type="button"
               onClick={handlePostReturnKoli}

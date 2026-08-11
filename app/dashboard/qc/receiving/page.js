@@ -48,6 +48,10 @@ function getDateOnly(value) {
   return `${values.year}-${values.month}-${values.day}`
 }
 
+function formatQty(value) {
+  return Number(value || 0).toLocaleString('en-US')
+}
+
 function formatVariantValue(value) {
   if (Array.isArray(value)) {
     return value.map((item) => String(item || '').trim()).filter(Boolean).join(', ')
@@ -199,8 +203,24 @@ function getExpectedRowKey(row = {}) {
 
 async function loadInboundUnloadRows(inboundId) {
   const coreSelect = 'id, inbound_id, brand_id, category_id, product_model_id, product_model_variant_id, model_name, qty, pic_name, is_sample, koli_sequence, photo_url'
+  const receivingStatusSelect = `${coreSelect}, qc_receiving_status, qc_receiving_closed_at, qc_receiving_closed_by`
   const relationSelect = `${coreSelect}, brands:dir_brands!brand_id(id, brand_name), categories:dir_categories!category_id(id, category_name, full_name)`
+  const receivingStatusRelationSelect = `${receivingStatusSelect}, brands:dir_brands!brand_id(id, brand_name), categories:dir_categories!category_id(id, category_name, full_name)`
   const selectCandidates = [
+    `${receivingStatusRelationSelect}, variant_name`,
+    receivingStatusRelationSelect,
+    `${receivingStatusSelect}, variant_name`,
+    receivingStatusSelect,
+    `${receivingStatusRelationSelect}, variant_names, variant_name, variant_label, variant_code`,
+    `${receivingStatusRelationSelect}, variant_name, variant_label, variant_code`,
+    `${receivingStatusRelationSelect}, variant_names, variant_name`,
+    `${receivingStatusRelationSelect}, variant_names`,
+    `${receivingStatusRelationSelect}, variant_label, variant_code`,
+    `${receivingStatusSelect}, variant_names, variant_name, variant_label, variant_code`,
+    `${receivingStatusSelect}, variant_name, variant_label, variant_code`,
+    `${receivingStatusSelect}, variant_names, variant_name`,
+    `${receivingStatusSelect}, variant_names`,
+    `${receivingStatusSelect}, variant_label, variant_code`,
     `${relationSelect}, variant_name`,
     relationSelect,
     `${coreSelect}, variant_name`,
@@ -607,6 +627,86 @@ const styles = {
     fontSize: '13px',
     fontWeight: '700',
     flexWrap: 'wrap',
+  },
+  sourceVarianceBanner: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: '12px',
+    padding: '12px 14px',
+    borderWidth: '1px',
+    borderStyle: 'solid',
+    borderColor: '#e5e7eb',
+    borderRadius: '12px',
+    background: '#f9fafb',
+    flexWrap: 'wrap',
+  },
+  sourceVarianceStats: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '16px',
+    flexWrap: 'wrap',
+  },
+  sourceMetric: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '2px',
+  },
+  sourceMetricLabel: {
+    color: '#64748b',
+    fontSize: '11px',
+    fontWeight: '700',
+    letterSpacing: '0.04em',
+    textTransform: 'uppercase',
+  },
+  sourceMetricValue: {
+    color: '#111827',
+    fontSize: '16px',
+    fontWeight: '800',
+    fontVariantNumeric: 'tabular-nums',
+  },
+  sourceStatusPill: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: '28px',
+    padding: '0 10px',
+    borderRadius: '999px',
+    borderWidth: '1px',
+    borderStyle: 'solid',
+    borderColor: '#d1d5db',
+    background: '#fff',
+    color: '#374151',
+    fontSize: '12px',
+    fontWeight: '800',
+  },
+  sourceStatusPillGood: {
+    borderColor: '#bbf7d0',
+    background: '#f0fdf4',
+    color: '#166534',
+  },
+  sourceStatusPillWarning: {
+    borderColor: '#fed7aa',
+    background: '#fff7ed',
+    color: '#9a3412',
+  },
+  sourceStatusPillDanger: {
+    borderColor: '#fecaca',
+    background: '#fef2f2',
+    color: '#b91c1c',
+  },
+  closeShortageButton: {
+    height: '34px',
+    padding: '0 12px',
+    borderWidth: '1px',
+    borderStyle: 'solid',
+    borderColor: '#fecaca',
+    borderRadius: '9px',
+    background: '#fff',
+    color: '#b91c1c',
+    fontSize: '12px',
+    fontWeight: '800',
+    cursor: 'pointer',
   },
   modelRow: {
     position: 'relative',
@@ -1115,54 +1215,116 @@ function getSourceTasks(source, qcItems) {
   return (qcItems || []).filter((item) => sourceRowIds.has(Number(item.inbound_unload_id)))
 }
 
+function getReceivingStatus(row = {}) {
+  return String(row.qc_receiving_status || 'OPEN').trim().toUpperCase() === 'CLOSED' ? 'CLOSED' : 'OPEN'
+}
+
+function buildQtyBySourceProduct(rows, getSourceId, getProductKey, getQty) {
+  const qtyBySource = new Map()
+
+  ;(rows || []).forEach((row) => {
+    const sourceId = Number(getSourceId(row) || 0)
+    if (!sourceId) return
+
+    const productKey = getProductKey(row)
+    const productQtyMap = qtyBySource.get(sourceId) || new Map()
+    productQtyMap.set(productKey, Math.max(Number(productQtyMap.get(productKey) || 0), Number(getQty(row) || 0)))
+    qtyBySource.set(sourceId, productQtyMap)
+  })
+
+  return qtyBySource
+}
+
+function sumQtyBySourceProduct(qtyBySource) {
+  return Array.from(qtyBySource.values()).reduce(
+    (sum, productQtyMap) =>
+      sum + Array.from(productQtyMap.values()).reduce((sourceSum, qty) => sourceSum + Number(qty || 0), 0),
+    0
+  )
+}
+
+function getModelRowsQuantitySummary(rows = []) {
+  const expectedQtyByProduct = buildQtyBySourceProduct(
+    rows,
+    (row) => row.source_id || row.id,
+    (row) => getProductIdentityKey(row),
+    (row) => row.qty_in
+  )
+  const qcInQtyByProduct = buildQtyBySourceProduct(
+    rows,
+    (row) => row.source_id || row.id,
+    (row) => getProductIdentityKey(row),
+    (row) => row.qty_qc
+  )
+  const expectedQty = sumQtyBySourceProduct(expectedQtyByProduct)
+  const qcInQty = sumQtyBySourceProduct(qcInQtyByProduct)
+
+  return {
+    expectedQty,
+    qcInQty,
+    varianceQty: qcInQty - expectedQty,
+  }
+}
+
 function getSourceAllocationCoverage(source, qcItems) {
   const sourceTasks = getSourceTasks(source, qcItems)
-  const expectedQtyBySourceId = new Map()
-  const plannedQtyBySourceId = new Map()
-
-  ;(source?.rows || []).forEach((row) => {
-    const sourceId = Number(row.id || 0)
-    if (!sourceId) return
-    expectedQtyBySourceId.set(sourceId, Number(expectedQtyBySourceId.get(sourceId) || 0) + Number(row.qty || 0))
-  })
-
-  sourceTasks.forEach((item) => {
-    const sourceId = Number(item.inbound_unload_id || 0)
-    if (!sourceId) return
-
-    const productKey = getProductRowIdentityKey(item)
-    const productQtyMap = plannedQtyBySourceId.get(sourceId) || new Map()
-    productQtyMap.set(productKey, Math.max(Number(productQtyMap.get(productKey) || 0), Number(item.qty_in || 0)))
-    plannedQtyBySourceId.set(sourceId, productQtyMap)
-  })
+  const expectedQtyBySourceId = buildQtyBySourceProduct(
+    source?.rows || [],
+    (row) => row.id,
+    (row) => getExpectedRowKey(row),
+    (row) => row.qty
+  )
+  const plannedQtyBySourceId = buildQtyBySourceProduct(
+    sourceTasks,
+    (row) => row.inbound_unload_id,
+    (row) => getProductRowIdentityKey(row),
+    (row) => row.qty_in
+  )
 
   const plannedSourceIds = new Set([...expectedQtyBySourceId.keys(), ...plannedQtyBySourceId.keys()])
+  const expectedQty = sumQtyBySourceProduct(expectedQtyBySourceId)
+  const qcInQty = sumQtyBySourceProduct(plannedQtyBySourceId)
   const plannedQty = Array.from(plannedSourceIds).reduce((sum, sourceId) => {
     const productQtyMap = plannedQtyBySourceId.get(sourceId)
     if (productQtyMap) {
       return sum + Array.from(productQtyMap.values()).reduce((sourceSum, qty) => sourceSum + Number(qty || 0), 0)
     }
 
-    return sum + Number(expectedQtyBySourceId.get(sourceId) || 0)
+    const expectedProductQtyMap = expectedQtyBySourceId.get(sourceId)
+    return sum + Array.from(expectedProductQtyMap?.values() || []).reduce((sourceSum, qty) => sourceSum + Number(qty || 0), 0)
   }, 0)
+  const hasShortage = sourceTasks.length > 0 && expectedQty > 0 && qcInQty < expectedQty
+  const sourceRows = source?.rows || []
+  const sourceRowsClosed = sourceRows.length > 0 && sourceRows.every((item) => getReceivingStatus(item) === 'CLOSED')
+  const shortageClosed = !hasShortage || sourceRowsClosed
 
   return {
     sourceTasks,
     allocatedQty: sourceTasks.reduce((sum, item) => sum + Number(item.allocated_qty || 0), 0),
     plannedQty,
+    expectedQty,
+    qcInQty,
+    varianceQty: qcInQty - expectedQty,
+    hasShortage,
+    shortageClosed,
+    sourceRowsClosed,
   }
 }
 
 function getSourceStatus(source, qcItems) {
-  const { sourceTasks, allocatedQty, plannedQty } = getSourceAllocationCoverage(source, qcItems)
+  const { sourceTasks, allocatedQty, plannedQty, hasShortage, shortageClosed, sourceRowsClosed } = getSourceAllocationCoverage(source, qcItems)
 
   if (!sourceTasks.length) {
+    if (sourceRowsClosed) {
+      return 'completed'
+    }
+
     return 'idle'
   }
 
   const isFullyAllocated = plannedQty > 0 && allocatedQty >= plannedQty
 
-  if (isFullyAllocated && sourceTasks.every((item) => item.status === 'done')) {
+  if (isFullyAllocated && (!hasShortage || shortageClosed) && sourceTasks.every((item) => item.status === 'done')) {
     return 'completed'
   }
 
@@ -1310,6 +1472,7 @@ function buildModelRowsForSource(source, unloadRows, qcItems) {
 export default function QcReceivingPage() {
   const pathname = usePathname()
   const sourceListRef = useRef(null)
+  const newRowCounterRef = useRef(0)
   const [viewportWidth, setViewportWidth] = useState(1280)
   const [inbounds, setInbounds] = useState([])
   const [unloadRows, setUnloadRows] = useState([])
@@ -1937,6 +2100,22 @@ export default function QcReceivingPage() {
     : selectedSource
       ? getSourceStatus(selectedSource, qcItems)
       : 'idle'
+  const selectedSourceCoverage = !isArklineMode && selectedSource
+    ? getSourceAllocationCoverage(selectedSource, qcItems)
+    : null
+  const selectedSourceDraftSummary = !isArklineMode && selectedSource && modelRows.length
+    ? getModelRowsQuantitySummary(modelRows)
+    : null
+  const selectedSourceQuantitySummary = selectedSourceDraftSummary
+    ? {
+        ...(selectedSourceCoverage || {}),
+        ...selectedSourceDraftSummary,
+        hasShortage: selectedSourceDraftSummary.expectedQty > 0 && selectedSourceDraftSummary.qcInQty < selectedSourceDraftSummary.expectedQty,
+        shortageClosed:
+          !(selectedSourceDraftSummary.expectedQty > 0 && selectedSourceDraftSummary.qcInQty < selectedSourceDraftSummary.expectedQty) ||
+          Boolean(selectedSourceCoverage?.sourceRowsClosed),
+      }
+    : selectedSourceCoverage
   const isSelectedSourceStarted =
     isArklineMode && !isReQcMode && arklinePlannerMode === 'product'
       ? currentPlanRows.some((item) => item.status !== 'queued' && item.status !== 'done')
@@ -2210,7 +2389,8 @@ export default function QcReceivingPage() {
       return
     }
 
-    const rowId = `new-${Date.now()}-${modelRows.length}`
+    newRowCounterRef.current += 1
+    const rowId = `new-${newRowCounterRef.current}-${modelRows.length}`
     const sourceRow = selectedSource?.rows?.[0] || null
     setModelRows((prev) => [
       ...prev,
@@ -2645,6 +2825,123 @@ export default function QcReceivingPage() {
     setModelRows([])
   }
 
+  async function getCurrentUserEmail() {
+    const { data: authData } = await supabase.auth.getUser()
+    return authData?.user?.email || ''
+  }
+
+  async function handleCloseSelectedSourceShortage() {
+    if (!selectedSource || !selectedSourceCoverage?.hasShortage) {
+      return
+    }
+
+    if (selectedSourceCoverage.allocatedQty < selectedSourceCoverage.qcInQty) {
+      setError('Allocate all QC In before closing this shortage.')
+      return
+    }
+
+    const shortageQty = Math.abs(Number(selectedSourceCoverage.varianceQty || 0))
+    const confirmed = window.confirm(`QC In is ${shortageQty} pcs less than inbound qty. Close this Koli/Sample as shortage?`)
+    if (!confirmed) {
+      return
+    }
+
+    setSaving(true)
+    setError('')
+    setSuccess('')
+
+    const closedAt = new Date().toISOString()
+    const closedBy = await getCurrentUserEmail()
+    const sourceRowIds = (selectedSource.rows || []).map((row) => Number(row.id || 0)).filter(Boolean)
+
+    if (sourceRowIds.length) {
+      const { error: sourceCloseError } = await supabase
+        .from('inbound_unload')
+        .update({
+          qc_receiving_status: 'CLOSED',
+          qc_receiving_closed_at: closedAt,
+          qc_receiving_closed_by: closedBy || null,
+        })
+        .in('id', sourceRowIds)
+
+      if (sourceCloseError) {
+        setError(sourceCloseError.message)
+        setSaving(false)
+        return
+      }
+    }
+
+    setUnloadRows((prev) =>
+      prev.map((row) =>
+        sourceRowIds.includes(Number(row.id || 0))
+          ? {
+              ...row,
+              qc_receiving_status: 'CLOSED',
+              qc_receiving_closed_at: closedAt,
+              qc_receiving_closed_by: closedBy || null,
+            }
+          : row
+      )
+    )
+
+    const sourceRowsAfterClose = (selectedSource.rows || []).map((row) => ({
+      ...row,
+      qc_receiving_status: 'CLOSED',
+      qc_receiving_closed_at: closedAt,
+      qc_receiving_closed_by: closedBy || null,
+    }))
+    const selectedSourceAfterClose = {
+      ...selectedSource,
+      rows: sourceRowsAfterClose,
+    }
+
+    setModelRows(buildModelRowsForSource(selectedSourceAfterClose, unloadRows, qcItems))
+    setSourceDetailsExpanded(getSourceStatus(selectedSourceAfterClose, qcItems) !== 'completed')
+    setSuccess('Shortage closed. This Koli/Sample can be completed once QC grading is done.')
+    setSaving(false)
+  }
+
+  async function updateSelectedSourceReceivingStatus({ receivingStatus, receivingClosedAt, receivingClosedBy }) {
+    const sourceRowIds = (selectedSource?.rows || []).map((row) => Number(row.id || 0)).filter(Boolean)
+    if (!sourceRowIds.length) {
+      return null
+    }
+
+    const sourcePayload = receivingStatus === 'CLOSED'
+      ? {
+          qc_receiving_status: 'CLOSED',
+          qc_receiving_closed_at: receivingClosedAt,
+          qc_receiving_closed_by: receivingClosedBy || null,
+        }
+      : {
+          qc_receiving_status: 'OPEN',
+          qc_receiving_closed_at: null,
+          qc_receiving_closed_by: null,
+        }
+
+    const { error: sourceStatusError } = await supabase
+      .from('inbound_unload')
+      .update(sourcePayload)
+      .in('id', sourceRowIds)
+
+    if (sourceStatusError) {
+      return sourceStatusError
+    }
+
+    setUnloadRows((prev) =>
+      prev.map((row) =>
+        sourceRowIds.includes(Number(row.id || 0))
+          ? {
+              ...row,
+              ...sourcePayload,
+            }
+          : row
+      )
+    )
+
+    return null
+  }
+
   async function handleSavePlan() {
     setError('')
     setSuccess('')
@@ -2880,27 +3177,75 @@ export default function QcReceivingPage() {
       return
     }
 
+    const receivingSummary = getModelRowsQuantitySummary(modelRows)
+    const hasReceivingShortage = receivingSummary.expectedQty > 0 && receivingSummary.qcInQty < receivingSummary.expectedQty
+    const alreadyClosed = Boolean(selectedSourceCoverage?.sourceRowsClosed)
+    let receivingStatus = receivingSummary.qcInQty >= receivingSummary.expectedQty || alreadyClosed ? 'CLOSED' : 'OPEN'
+    let receivingClosedAt = receivingStatus === 'CLOSED' ? new Date().toISOString() : null
+    let receivingClosedBy = ''
+
     const invalidRow = modelRows.find((row) => {
       const splitTotal = getAllocationTotalForRow(row)
       const hasInvalidSplit = (row.allocations || []).some(
         (split) => !String(split.member_email || '').trim() || Number(split.qty || 0) <= 0
       )
 
-      return !row.model_name.trim() || Number(row.qty_qc || 0) <= 0 || hasInvalidSplit || splitTotal > Number(row.qty_qc || 0)
+      return !row.model_name.trim() || Number(row.qty_qc || 0) < 0 || hasInvalidSplit || splitTotal > Number(row.qty_qc || 0)
     })
     if (invalidRow) {
-      setError('Every model row must have a model and QC qty. Allocated qty cannot be greater than QC In.')
+      setError('Every model row must have a model. Allocated qty cannot be greater than QC In.')
       return
     }
 
     if (qcInQty <= 0) {
-      setError('QC In must be greater than 0.')
+      const confirmed = receivingSummary.expectedQty > 0
+        ? window.confirm('QC In is 0 pcs. Close this Koli/Sample as full shortage?')
+        : false
+
+      if (!confirmed) {
+        setError('QC In must be greater than 0, unless this Koli/Sample is closed as shortage.')
+        return
+      }
+
+      receivingStatus = 'CLOSED'
+      receivingClosedAt = new Date().toISOString()
+      receivingClosedBy = await getCurrentUserEmail()
+      setSaving(true)
+
+      const sourceStatusError = await updateSelectedSourceReceivingStatus({
+        receivingStatus,
+        receivingClosedAt,
+        receivingClosedBy,
+      })
+
+      if (sourceStatusError) {
+        setError(sourceStatusError.message)
+        setSaving(false)
+        return
+      }
+
+      resetRegularPlanner()
+      setSuccess('Shortage closed. This Koli/Sample is marked done.')
+      setSaving(false)
       return
     }
 
     if (!qcMembers.length) {
       setError('No active QC user found')
       return
+    }
+
+    if (hasReceivingShortage && !alreadyClosed) {
+      const shortageQty = Math.abs(Number(receivingSummary.varianceQty || 0))
+      const confirmed = window.confirm(`QC In is ${shortageQty} pcs less than inbound qty. Close this Koli/Sample as shortage?`)
+      if (confirmed) {
+        receivingStatus = 'CLOSED'
+        receivingClosedAt = new Date().toISOString()
+      }
+    }
+
+    if (receivingStatus === 'CLOSED') {
+      receivingClosedBy = await getCurrentUserEmail()
     }
 
     setSaving(true)
@@ -3029,6 +3374,18 @@ export default function QcReceivingPage() {
       }
 
       updatedRows.push(normalizeQcItemRow(updatedRow))
+    }
+
+    const sourceStatusError = await updateSelectedSourceReceivingStatus({
+      receivingStatus,
+      receivingClosedAt,
+      receivingClosedBy,
+    })
+
+    if (sourceStatusError) {
+      setError(sourceStatusError.message)
+      setSaving(false)
+      return
     }
 
     const nextQcItems = [
@@ -3533,6 +3890,62 @@ export default function QcReceivingPage() {
 
         {selectedSource ? (
           <>
+            {selectedSourceQuantitySummary ? (
+              <div style={styles.sourceVarianceBanner}>
+                <div style={styles.sourceVarianceStats}>
+                  <div style={styles.sourceMetric}>
+                    <span style={styles.sourceMetricLabel}>Expected</span>
+                    <strong style={styles.sourceMetricValue}>{formatQty(selectedSourceQuantitySummary.expectedQty)}</strong>
+                  </div>
+                  <div style={styles.sourceMetric}>
+                    <span style={styles.sourceMetricLabel}>QC In</span>
+                    <strong style={styles.sourceMetricValue}>{formatQty(selectedSourceQuantitySummary.qcInQty)}</strong>
+                  </div>
+                  <div style={styles.sourceMetric}>
+                    <span style={styles.sourceMetricLabel}>Difference</span>
+                    <strong style={styles.sourceMetricValue}>
+                      {Number(selectedSourceQuantitySummary.varianceQty || 0) > 0 ? '+' : ''}
+                      {formatQty(selectedSourceQuantitySummary.varianceQty)}
+                    </strong>
+                  </div>
+                  <span
+                    style={{
+                      ...styles.sourceStatusPill,
+                      ...(Number(selectedSourceQuantitySummary.varianceQty || 0) > 0
+                        ? styles.sourceStatusPillWarning
+                        : Number(selectedSourceQuantitySummary.varianceQty || 0) < 0
+                          ? selectedSourceQuantitySummary.shortageClosed
+                            ? styles.sourceStatusPillGood
+                            : styles.sourceStatusPillDanger
+                          : styles.sourceStatusPillGood),
+                    }}
+                  >
+                    {Number(selectedSourceQuantitySummary.varianceQty || 0) > 0
+                      ? 'Surplus'
+                      : Number(selectedSourceQuantitySummary.varianceQty || 0) < 0
+                        ? selectedSourceQuantitySummary.shortageClosed
+                          ? 'Shortage Closed'
+                          : 'Shortage Open'
+                        : 'Balanced'}
+                  </span>
+                </div>
+
+                {selectedSourceCoverage?.hasShortage && !selectedSourceCoverage.shortageClosed ? (
+                  <button
+                    type="button"
+                    onClick={handleCloseSelectedSourceShortage}
+                    style={{
+                      ...styles.closeShortageButton,
+                      ...(saving || !currentPlanRows.length ? styles.buttonDisabled : {}),
+                    }}
+                    disabled={saving || !currentPlanRows.length}
+                  >
+                    Close Shortage
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
+
             {isSelectedSourceCompleted ? (
               <div style={styles.sourceStatusBanner}>
                 <span>KOLI SUDAH SELESAI DIQC</span>

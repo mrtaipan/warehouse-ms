@@ -2629,9 +2629,21 @@ function getPdfTableRowHeight(doc, headers, row) {
   return Math.max(8, textHeight, headers.some((header) => header.type === 'image') ? 16 : 0)
 }
 
-function getPdfTableHeight(doc, headers, rows) {
+function getPdfTableTitleLines(doc, title, width) {
+  const safeWidth = Math.max(Number(width || 0), 30)
+  return doc.splitTextToSize(formatPdfValue(title), safeWidth)
+}
+
+function getPdfTableTitleHeight(titleLines = []) {
+  return Math.max(6, titleLines.length * 4.4 + 1.6)
+}
+
+function getPdfTableHeight(doc, headers, rows, options = {}) {
+  const tableWidth = headers.reduce((sum, header) => sum + Number(header.width || 0), 0)
+  const titleWidth = options.titleMaxWidth || tableWidth
+  const titleLines = getPdfTableTitleLines(doc, options.title || '', titleWidth)
   const rowHeight = rows.reduce((total, row) => total + getPdfTableRowHeight(doc, headers, row), 0)
-  return 6 + 10 + rowHeight + 8
+  return getPdfTableTitleHeight(titleLines) + 10 + rowHeight + 8
 }
 
 function drawPdfTable(doc, config) {
@@ -2645,19 +2657,28 @@ function drawPdfTable(doc, config) {
     imageCache = new Map(),
     emptyText = 'No data.',
     onPageBreak,
+    titleMaxWidth,
   } = config
   const pageHeight = doc.internal.pageSize.getHeight()
+  const pageWidth = doc.internal.pageSize.getWidth()
+  const tableWidth = headers.reduce((sum, header) => sum + Number(header.width || 0), 0)
+  const resolvedTitleMaxWidth = titleMaxWidth || Math.max(tableWidth, pageWidth - startX - margin)
   let y = startY
   if (y + 18 > pageHeight - margin - 7) {
     doc.addPage()
     y = typeof onPageBreak === 'function' ? onPageBreak() : margin
   }
 
-  doc.setFont(PDF_FONT_FAMILY, 'bold')
-  doc.setFontSize(10)
-  doc.setTextColor(15, 23, 42)
-  doc.text(title, startX, y)
-  y += 6
+  const drawTitle = (nextTitle) => {
+    doc.setFont(PDF_FONT_FAMILY, 'bold')
+    doc.setFontSize(10)
+    doc.setTextColor(15, 23, 42)
+    const titleLines = getPdfTableTitleLines(doc, nextTitle, resolvedTitleMaxWidth)
+    doc.text(titleLines, startX, y)
+    y += getPdfTableTitleHeight(titleLines)
+  }
+
+  drawTitle(title)
 
   if (!rows.length) {
     doc.setFont(PDF_FONT_FAMILY, 'normal')
@@ -2696,11 +2717,7 @@ function drawPdfTable(doc, config) {
     if (y + rowHeight > pageHeight - margin) {
       doc.addPage()
       y = typeof onPageBreak === 'function' ? onPageBreak() : margin
-      doc.setFont(PDF_FONT_FAMILY, 'bold')
-      doc.setFontSize(10)
-      doc.setTextColor(15, 23, 42)
-      doc.text(`${title} (continued)`, startX, y)
-      y += 6
+      drawTitle(`${title} (continued)`)
       drawHeader()
     }
 
@@ -4828,10 +4845,15 @@ export default function PackingListSizeBreakdownPage() {
           chartGroups.forEach((chartGroup) => {
             const chartTitle = `Size Chart for PL ID: ${chartGroup.plIds.join(', ')}`
             const chartWidth = chartGroup.headers.reduce((total, header) => total + header.width, 0)
-            const chartHeight = getPdfTableHeight(doc, chartGroup.headers, chartGroup.rows)
+            const maxChartBlockWidth = pageWidth - margin * 2
             doc.setFont(PDF_FONT_FAMILY, 'bold')
             doc.setFontSize(10)
-            const chartBlockWidth = Math.max(chartWidth, doc.getTextWidth(chartTitle))
+            const chartTitleWidth = doc.getTextWidth(chartTitle)
+            const chartBlockWidth = Math.min(Math.max(chartWidth, chartTitleWidth), maxChartBlockWidth)
+            const chartHeight = getPdfTableHeight(doc, chartGroup.headers, chartGroup.rows, {
+              title: chartTitle,
+              titleMaxWidth: chartBlockWidth,
+            })
 
             if (chartX > margin && chartX + chartBlockWidth > pageWidth - margin) {
               chartRowY += chartRowHeight + chartGap
@@ -4852,6 +4874,7 @@ export default function PackingListSizeBreakdownPage() {
               rows: chartGroup.rows,
               startY: chartRowY,
               startX: chartX,
+              titleMaxWidth: chartBlockWidth,
               emptyText: '-',
               onPageBreak: drawContinuationHeader,
             })

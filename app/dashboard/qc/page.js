@@ -2539,7 +2539,7 @@ export default function QcDashboardPage() {
           id: item.id,
           source: qcMode !== 'regular' ? getArklinePoLabel(item) : item.inbound?.grn_number || '-',
           category: qcMode !== 'regular' ? getArklineCategoryLabel(item) : getCategoryLabel(item),
-          model: getTaskModelInfo(item).model,
+          model: qcMode === 'regular' ? getRegularModelVariantLabel(item) : getTaskModelInfo(item).model,
           qtyA: Number(item.qty_a || 0),
           qtyB: Number(item.qty_b || 0),
           qtyC: Number(item.qty_c || 0),
@@ -2561,7 +2561,7 @@ export default function QcDashboardPage() {
           id: item.id,
           source: qcMode !== 'regular' ? getArklinePoLabel(item) : item.inbound?.grn_number || '-',
           category: qcMode !== 'regular' ? getArklineCategoryLabel(item) : getCategoryLabel(item),
-          model: getTaskModelInfo(item).model,
+          model: qcMode === 'regular' ? getRegularModelVariantLabel(item) : getTaskModelInfo(item).model,
           allocatedQty: Number(item.allocated_qty || 0),
           checkedQty: totalPcs,
           remainingQty: Math.max(0, Number(item.allocated_qty || 0) - Number(item.locked_qty || 0)),
@@ -2627,7 +2627,7 @@ export default function QcDashboardPage() {
           qcMode !== 'regular'
             ? getArklineCategoryLabel(item)
             : item.inbound_unload?.categories?.full_name || item.inbound_unload?.categories?.category_name || 'UNCATEGORIZED'
-        const productLabel = getTaskModelInfo(item).model || 'UNKNOWN PRODUCT'
+        const productLabel = qcMode === 'regular' ? getRegularModelVariantLabel(item) || 'UNKNOWN PRODUCT' : getTaskModelInfo(item).model || 'UNKNOWN PRODUCT'
         const key = `${categoryLabel}|||${productLabel}`
         const checkedQty = getCheckedQty(item)
         const current = grouped.get(key) || { category: categoryLabel, label: productLabel, totalSeconds: 0, totalPcs: 0 }
@@ -4520,7 +4520,7 @@ export default function QcDashboardPage() {
                           <tr>
                             <th style={{ ...styles.th, ...styles.inspectorTh }}>{qcMode !== 'regular' ? 'PO' : 'GRN'}</th>
                             <th style={{ ...styles.th, ...styles.inspectorTh }}>{qcMode !== 'regular' ? 'SKU' : 'Category'}</th>
-                            <th style={{ ...styles.th, ...styles.inspectorTh }}>Model</th>
+                            <th style={{ ...styles.th, ...styles.inspectorTh }}>{qcMode === 'regular' ? 'Model-Variant' : 'Model'}</th>
                             <th style={{ ...styles.th, ...styles.thCenter, ...styles.inspectorTh }}>A</th>
                             <th style={{ ...styles.th, ...styles.thCenter, ...styles.inspectorTh }}>B</th>
                             <th style={{ ...styles.th, ...styles.thCenter, ...styles.inspectorTh }}>C</th>
@@ -4573,7 +4573,7 @@ export default function QcDashboardPage() {
                           <tr>
                             <th style={{ ...styles.th, ...styles.inspectorTh }}>{qcMode !== 'regular' ? 'PO' : 'GRN'}</th>
                             <th style={{ ...styles.th, ...styles.inspectorTh }}>{qcMode !== 'regular' ? 'SKU' : 'Category'}</th>
-                            <th style={{ ...styles.th, ...styles.inspectorTh }}>Model</th>
+                            <th style={{ ...styles.th, ...styles.inspectorTh }}>{qcMode === 'regular' ? 'Model-Variant' : 'Model'}</th>
                             <th style={{ ...styles.th, ...styles.thCenter, ...styles.inspectorTh }}>Allocated</th>
                             <th style={{ ...styles.th, ...styles.thCenter, ...styles.inspectorTh }}>Checked</th>
                             <th style={{ ...styles.th, ...styles.thCenter, ...styles.inspectorTh }}>Remaining</th>

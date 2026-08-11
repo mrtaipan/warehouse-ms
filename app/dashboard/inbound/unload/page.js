@@ -106,6 +106,24 @@ function getRowVariantIdentifier(row) {
   return row?.variant_code || row?.variant_label || row?.variant_name || ''
 }
 
+function getQcItemProductIdentityKey(row = {}) {
+  const variantId = Number(row.product_model_variant_id || 0)
+  const modelId = Number(row.product_model_id || 0)
+
+  if (variantId) {
+    return `variant:${variantId}`
+  }
+
+  if (modelId) {
+    return `model:${modelId}`
+  }
+
+  return [
+    normalizeVariantLookupValue(row.model_name),
+    normalizeVariantLookupValue(row.variant_name || row.model_color),
+  ].join('::')
+}
+
 function getNextVariantCode(model, variants) {
   const prefix = `${model?.model_code || `MODEL${model?.id || ''}`}`
   const nextNumber =
@@ -2477,7 +2495,7 @@ export default function UnloadPage() {
 
     const { data, error: qcError } = await supabase
       .from('qc_items')
-      .select('id, inbound_unload_id, qty_in, allocated_qty, model_replaced')
+      .select('id, inbound_unload_id, product_model_id, product_model_variant_id, model_name, variant_name, qty_in, allocated_qty, model_replaced')
       .in('inbound_unload_id', unloadIds)
 
     if (qcError) {
@@ -3044,16 +3062,24 @@ export default function UnloadPage() {
         ? styles.mobileRemainingPositive
         : styles.mobileRemainingZero
   const qcQtyByUnloadId = useMemo(() => {
-    const qtyMap = new Map()
+    const productQtyByUnloadId = new Map()
 
     qcItemRows.forEach((row) => {
       const unloadId = Number(row.inbound_unload_id || 0)
       if (!unloadId) return
 
-      qtyMap.set(unloadId, Number(qtyMap.get(unloadId) || 0) + Number(row.qty_in || 0))
+      const productQtyMap = productQtyByUnloadId.get(unloadId) || new Map()
+      const productKey = getQcItemProductIdentityKey(row)
+      productQtyMap.set(productKey, Math.max(Number(productQtyMap.get(productKey) || 0), Number(row.qty_in || 0)))
+      productQtyByUnloadId.set(unloadId, productQtyMap)
     })
 
-    return qtyMap
+    return new Map(
+      Array.from(productQtyByUnloadId.entries()).map(([unloadId, productQtyMap]) => [
+        unloadId,
+        Array.from(productQtyMap.values()).reduce((sum, qty) => sum + Number(qty || 0), 0),
+      ])
+    )
   }, [qcItemRows])
   const sampleBreakdownsByUnloadId = useMemo(() => {
     const grouped = new Map()

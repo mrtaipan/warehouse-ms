@@ -369,6 +369,7 @@ async function loadAdminGrnSummary(supabase, selectedGrn = '') {
     .filter((item) => ['packing list', 'packing_list'].includes(String(item.source_phase || '').trim().toLowerCase()))
     .reduce((sum, item) => sum + Number(item.qty || 0), 0)
   const totalReturQty = returBongkarQty + returQcQty + returPlQty
+  const totalQcProcessedQty = totalQcConfirm + returQcQty
   const displayGradeAQty = plBreakdownQty
   const displayGradeBQty = qcConfirmGradeBQty
   const totalSummaryQty = displayGradeAQty + totalReturQty
@@ -391,6 +392,7 @@ async function loadAdminGrnSummary(supabase, selectedGrn = '') {
       totalAllocatedQty,
       totalQcIn,
       totalQcConfirm,
+      totalQcProcessedQty,
       plReceivingQty,
       plBreakdownQty,
       displayGradeAQty,
@@ -462,10 +464,11 @@ function AdminGrnSummaryCard({ grnOptions = [], selectedGrn = '', selectedInboun
             </div>
             <div className={styles.grnMetricCard}>
               <span>QC</span>
-              <strong>{formatNumber(summary.totalAllocatedQty)}</strong>
+              <strong>{formatNumber(summary.totalQcProcessedQty)}</strong>
               <small>
                 Total Allocated {formatNumber(summary.totalAllocatedQty)}<br />
-                Total QC Confirm {formatNumber(summary.totalQcConfirm)}
+                QC Confirm {formatNumber(summary.totalQcConfirm)}<br />
+                Reject QC {formatNumber(summary.returQcQty)}
               </small>
             </div>
             <div className={styles.grnMetricCard}>

@@ -4,6 +4,7 @@ import Image from 'next/image'
 import Link from 'next/link'
 import { useEffect, useMemo, useState } from 'react'
 import { createClient } from '@/utils/supabase/browser'
+import { getProfileByAuthenticatedUser } from '@/utils/user-profiles'
 
 const supabase = createClient()
 const BATCH_SIZE = 1000
@@ -622,7 +623,6 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
   const [mergeEditor, setMergeEditor] = useState(null)
   const [mergeTargetVariantId, setMergeTargetVariantId] = useState('')
   const [confirmDialog, setConfirmDialog] = useState(null)
-  const [activeReleaseTooltip, setActiveReleaseTooltip] = useState('')
 
   useEffect(() => {
     async function loadData() {
@@ -1747,7 +1747,18 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
 
   async function getActorLabel() {
     const { data } = await supabase.auth.getUser()
-    return data?.user?.email || 'System'
+    const user = data?.user
+    if (!user) return 'System'
+
+    const { data: profile } = await getProfileByAuthenticatedUser(supabase, user, 'display_name, email')
+    return (
+      String(profile?.display_name || '').trim() ||
+      String(user.user_metadata?.display_name || '').trim() ||
+      String(user.user_metadata?.full_name || '').trim() ||
+      String(user.user_metadata?.name || '').trim() ||
+      String(user.email || '').trim() ||
+      'System'
+    )
   }
 
   function getActionErrorMessage(actionErrorValue) {
@@ -2266,7 +2277,6 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
     const releaseMetaLabel = [releasedAt ? formatDateTime(releasedAt) : '', releasedBy].filter(Boolean).join(' • ')
     const releaseCountLabel = releaseCountValue > 1 ? ` x${formatNumber(releaseCountValue)}` : ''
     const hasReleaseTooltip = releaseState === 'released' && Boolean(tooltipKey)
-    const isReleaseTooltipOpen = hasReleaseTooltip && activeReleaseTooltip === tooltipKey
     const releaseTitle = releaseState === 'released'
       ? [
           `Latest Release: ${releasedAt ? formatDateTime(releasedAt) : '-'}`,
@@ -2294,10 +2304,6 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
     return (
       <span
         style={hasReleaseTooltip ? styles.releaseTooltipWrap : styles.releaseStatusStack}
-        onMouseEnter={hasReleaseTooltip ? () => setActiveReleaseTooltip(tooltipKey) : undefined}
-        onMouseLeave={hasReleaseTooltip ? () => setActiveReleaseTooltip('') : undefined}
-        onFocus={hasReleaseTooltip ? () => setActiveReleaseTooltip(tooltipKey) : undefined}
-        onBlur={hasReleaseTooltip ? () => setActiveReleaseTooltip('') : undefined}
         tabIndex={hasReleaseTooltip ? 0 : undefined}
         title={releaseTitle}
       >
@@ -2306,39 +2312,6 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
             {releaseState === 'released' ? `Released${releaseCountLabel}` : 'Draft'}
           </span>
         </span>
-        {isReleaseTooltipOpen ? (
-          <span style={styles.releaseTooltip} aria-hidden="true">
-            <span style={styles.releaseTooltipEyebrow}>Model Release Detail</span>
-            <span style={styles.releaseTooltipLine}>
-              <strong>Latest</strong>
-              <span>{releasedAt ? formatDateTime(releasedAt) : '-'}</span>
-            </span>
-            <span style={styles.releaseTooltipLine}>
-              <strong>Count</strong>
-              <span>{formatNumber(releaseCountValue)} release(s)</span>
-            </span>
-            <span style={styles.releaseTooltipDivider} />
-            {releaseHistoryRows.length ? releaseHistoryRows.slice(0, 6).map((event, index) => {
-              const grns = getReleaseEventGrns(event)
-              return (
-                <span key={getReleaseEventKey(event, index)} style={styles.releaseHistoryItem}>
-                  <span style={styles.releaseHistoryTopLine}>
-                    <strong>{event.release_count ? `#${formatNumber(event.release_count)}` : `#${formatNumber(releaseHistoryRows.length - index)}`}</strong>
-                    <span>{formatDateTime(event.released_at)}</span>
-                  </span>
-                  <span style={styles.releaseHistoryMeta}>
-                    {[Number(event.qty || 0) ? `Qty ${formatNumber(event.qty)}` : '', grns.length ? `GRN ${grns.join(', ')}` : '', event.released_by].filter(Boolean).join(' - ') || 'Release detail saved'}
-                  </span>
-                </span>
-              )
-            }) : (
-              <span style={styles.releaseHistoryMeta}>No detailed release history yet.</span>
-            )}
-            {releaseHistoryRows.length > 6 ? (
-              <span style={styles.releaseHistoryMeta}>+{formatNumber(releaseHistoryRows.length - 6)} older release(s)</span>
-            ) : null}
-          </span>
-        ) : null}
       </span>
     )
   }
@@ -3982,65 +3955,6 @@ const styles = {
     alignItems: 'center',
     justifyContent: 'center',
     outline: 'none',
-  },
-  releaseTooltip: {
-    position: 'absolute',
-    top: 'calc(100% + 8px)',
-    right: '50%',
-    transform: 'translateX(50%)',
-    zIndex: 40,
-    width: '270px',
-    padding: '12px',
-    borderRadius: '14px',
-    border: '1px solid rgba(15, 23, 42, 0.12)',
-    background: '#111827',
-    color: '#f8fafc',
-    boxShadow: '0 22px 48px rgba(15, 23, 42, 0.22)',
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '8px',
-    textAlign: 'left',
-    pointerEvents: 'none',
-  },
-  releaseTooltipEyebrow: {
-    color: '#94a3b8',
-    fontSize: '9px',
-    fontWeight: '900',
-    letterSpacing: '0.08em',
-    textTransform: 'uppercase',
-  },
-  releaseTooltipLine: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: '10px',
-    color: '#e5e7eb',
-    fontSize: '11px',
-    fontWeight: '700',
-  },
-  releaseTooltipDivider: {
-    height: '1px',
-    background: 'rgba(148, 163, 184, 0.22)',
-  },
-  releaseHistoryItem: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '2px',
-  },
-  releaseHistoryTopLine: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: '10px',
-    color: '#fff',
-    fontSize: '11px',
-    fontWeight: '800',
-  },
-  releaseHistoryMeta: {
-    color: '#cbd5e1',
-    fontSize: '10px',
-    fontWeight: '600',
-    lineHeight: 1.35,
   },
   emptyStatusText: {
     color: '#94a3b8',

@@ -338,6 +338,11 @@ function getTaskModelInfo(task) {
   }
 }
 
+function getTaskModelVariantLabel(task) {
+  const taskModel = getTaskModelInfo(task)
+  return [taskModel.modelName, taskModel.modelColor].map((value) => String(value || '').trim()).filter(Boolean).join(' - ')
+}
+
 function normalizeRegularTask(item) {
   return {
     ...item,
@@ -1236,12 +1241,10 @@ export default function QcInspectionTaskPage() {
 
             <div style={styles.metaGrid}>
               <div style={styles.metaCard}>
-                <span style={styles.metaLabel}>Model</span>
-                <span style={styles.metaValue}>{getTaskModelInfo(activeTask).modelName}</span>
-              </div>
-              <div style={styles.metaCard}>
-                <span style={styles.metaLabel}>Variant</span>
-                <span style={styles.metaValue}>{getTaskModelInfo(activeTask).modelColor || 'NO VARIANT'}</span>
+                <span style={styles.metaLabel}>{activeTask.source_type !== 'arkline' ? 'Model-Variant' : 'Model'}</span>
+                <span style={styles.metaValue}>
+                  {activeTask.source_type !== 'arkline' ? getTaskModelVariantLabel(activeTask) : getTaskModelInfo(activeTask).modelName}
+                </span>
               </div>
               <div style={styles.metaCard}>
                 <span style={styles.metaLabel}>Allocated</span>
@@ -1393,8 +1396,8 @@ export default function QcInspectionTaskPage() {
                 <div key={task.id} style={styles.queueCard}>
                   <div style={styles.queueHeader}>
                     <div>
-                      <h2 style={styles.queueTitle}>{taskModel.modelName}</h2>
-                      {taskModel.modelColor ? (
+                      <h2 style={styles.queueTitle}>{task.source_type !== 'arkline' ? getTaskModelVariantLabel(task) : taskModel.modelName}</h2>
+                      {task.source_type === 'arkline' && taskModel.modelColor ? (
                         <p style={styles.variantText}>{taskModel.modelColor}</p>
                       ) : null}
                       <p style={styles.subtitle}>
