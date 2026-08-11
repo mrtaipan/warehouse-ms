@@ -11,6 +11,7 @@ import ProductDirectoryClient from '../daftar-barang/product-directory-client'
 
 const supabase = createClient()
 const BATCH_SIZE = 1000
+const STOCK_PAGE_SIZE = 25
 const naturalSort = new Intl.Collator(undefined, {
   numeric: true,
   sensitivity: 'base',
@@ -528,6 +529,7 @@ export default function StorageOverviewPage() {
   const [isBrandLookupOpen, setIsBrandLookupOpen] = useState(false)
   const [isCompactLayout, setIsCompactLayout] = useState(false)
   const [activeListMode, setActiveListMode] = useState(initialListMode)
+  const [stockPage, setStockPage] = useState(1)
   const [productSearch, setProductSearch] = useState(initialProductSearch)
   const [brandLookupSearch, setBrandLookupSearch] = useState('')
   const [historyPickerFilter, setHistoryPickerFilter] = useState('')
@@ -1055,7 +1057,11 @@ export default function StorageOverviewPage() {
       .map((value) => normalizeFilterValue(value))
       .some((value) => value.includes(normalizedProductSearch))
   })
-  const visibleStockRows = filteredRows.slice(0, 25)
+  const totalStockPages = Math.max(1, Math.ceil(filteredRows.length / STOCK_PAGE_SIZE))
+  const safeStockPage = Math.min(stockPage, totalStockPages)
+  const stockPageStartIndex = (safeStockPage - 1) * STOCK_PAGE_SIZE
+  const stockPageEndIndex = Math.min(stockPageStartIndex + STOCK_PAGE_SIZE, filteredRows.length)
+  const visibleStockRows = filteredRows.slice(stockPageStartIndex, stockPageStartIndex + STOCK_PAGE_SIZE)
   const visibleHistoryRows = filteredHistoryRows.slice(0, 25)
   const visibleQueueRows = filteredQueueRows.slice(0, 25)
   const filteredQty = filteredRows.reduce((sum, entry) => sum + Number(entry.qty || 0), 0)
@@ -1111,6 +1117,7 @@ export default function StorageOverviewPage() {
 
   function handleFilterChange(event) {
     const { name, value, type, checked } = event.target
+    setStockPage(1)
 
     if (type === 'checkbox') {
       setFilters((prev) => ({
@@ -1150,6 +1157,7 @@ export default function StorageOverviewPage() {
   }
 
   function clearFilterOnFilledClick(name) {
+    setStockPage(1)
     setFilters((prev) => {
       if (!prev[name]) {
         return prev
@@ -1172,6 +1180,7 @@ export default function StorageOverviewPage() {
       size: '',
     })
     setProductSearch('')
+    setStockPage(1)
   }
 
   function getDisplayNameByEmail(email) {
@@ -1961,7 +1970,10 @@ export default function StorageOverviewPage() {
             <label style={styles.label}>Product Search</label>
             <input
               value={productSearch}
-              onChange={(event) => setProductSearch(event.target.value.toUpperCase())}
+              onChange={(event) => {
+                setProductSearch(event.target.value.toUpperCase())
+                setStockPage(1)
+              }}
               style={styles.input}
               placeholder="Search product, GRN, or SKU"
             />
@@ -2158,8 +2170,29 @@ export default function StorageOverviewPage() {
 
             <div style={styles.filterFooter}>
               <p style={styles.summary}>
-                Showing {visibleStockRows.length} most recent of {filteredRows.length} item record(s)
+                Showing {filteredRows.length ? stockPageStartIndex + 1 : 0}-{stockPageEndIndex} of {filteredRows.length} item record(s)
               </p>
+              <div style={styles.paginationControls}>
+                <button
+                  type="button"
+                  onClick={() => setStockPage((prev) => Math.max(1, Math.min(prev, totalStockPages) - 1))}
+                  style={safeStockPage <= 1 ? { ...styles.paginationButton, ...styles.paginationButtonDisabled } : styles.paginationButton}
+                  disabled={safeStockPage <= 1}
+                >
+                  Previous
+                </button>
+                <span style={styles.pageIndicator}>
+                  Page {safeStockPage} of {totalStockPages}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setStockPage((prev) => Math.min(totalStockPages, Math.min(prev, totalStockPages) + 1))}
+                  style={safeStockPage >= totalStockPages ? { ...styles.paginationButton, ...styles.paginationButtonDisabled } : styles.paginationButton}
+                  disabled={safeStockPage >= totalStockPages}
+                >
+                  Next
+                </button>
+              </div>
             </div>
           </>
         ) : visibleListMode === 'queue' ? (
@@ -3433,7 +3466,7 @@ const styles = {
   filterFooter: {
     display: 'flex',
     alignItems: 'center',
-    justifyContent: 'flex-start',
+    justifyContent: 'space-between',
     gap: '12px',
     flexWrap: 'wrap',
     paddingTop: 0,
@@ -3542,6 +3575,34 @@ const styles = {
     color: '#374151',
     fontSize: '14px',
     fontWeight: '600',
+  },
+  paginationControls: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '8px',
+    flexWrap: 'wrap',
+  },
+  paginationButton: {
+    minHeight: '36px',
+    padding: '0 12px',
+    borderRadius: '9px',
+    border: '1px solid #d1d5db',
+    background: '#fff',
+    color: '#111827',
+    fontSize: '13px',
+    fontWeight: '800',
+    cursor: 'pointer',
+    fontFamily: 'inherit',
+  },
+  paginationButtonDisabled: {
+    opacity: 0.45,
+    cursor: 'not-allowed',
+  },
+  pageIndicator: {
+    color: '#64748b',
+    fontSize: '13px',
+    fontWeight: '700',
+    whiteSpace: 'nowrap',
   },
   historyToolbar: {
     display: 'flex',

@@ -165,8 +165,94 @@ function appendVariantReleaseHistory(variant = {}, releaseEvent = {}) {
   ]
 }
 
+function normalizeStoringType(value) {
+  const storingType = normalizeUpper(value)
+  if (storingType === 'MOB' || storingType === 'OI') return storingType
+  return ''
+}
+
+function getRowStoringType(row = {}) {
+  return normalizeStoringType(row.storing_type) || 'MOB'
+}
+
+function getVariantReleaseStateKey(variantId, storingType) {
+  const normalizedVariantId = Number(variantId || 0)
+  const normalizedStoringType = normalizeStoringType(storingType)
+  return normalizedVariantId && normalizedStoringType ? `${normalizedVariantId}:${normalizedStoringType}` : ''
+}
+
+function getModelTypeReleaseSource(variant = {}, storingType = '', lookup = {}, fallbackRow = null) {
+  const variantId = Number(variant?.id || 0)
+  const releaseKey = getVariantReleaseStateKey(variantId, storingType)
+  if (!releaseKey) return null
+
+  const releaseState = lookup.variantReleaseStateByKey?.get(releaseKey)
+  if (releaseState) return releaseState
+
+  if (fallbackRow && getReleaseState(fallbackRow) === 'released') {
+    return {
+      ...fallbackRow,
+      product_model_variant_id: variantId,
+      storing_type: normalizeStoringType(storingType),
+    }
+  }
+
+  return {
+    product_model_variant_id: variantId,
+    storing_type: normalizeStoringType(storingType),
+    release_status: 'draft',
+    release_count: 0,
+    release_history: [],
+  }
+}
+
+function getSortedReleaseHistory(value) {
+  return normalizeReleaseHistory(value)
+    .filter((item) => item && typeof item === 'object')
+    .sort((left, right) => new Date(right.released_at || 0) - new Date(left.released_at || 0))
+}
+
+function getReleaseEventKey(event = {}, index = 0) {
+  const key = [
+    event.release_count,
+    event.released_at,
+    event.released_by,
+    event.qty,
+    Array.isArray(event.grns) ? event.grns.join(',') : '',
+    Array.isArray(event.pl_packing_item_ids) ? event.pl_packing_item_ids.join(',') : '',
+  ]
+    .map((part) => normalize(part))
+    .join('::')
+
+  return key.replace(/:/g, '') ? key : `release-event-${index}`
+}
+
+function mergeReleaseHistory(left = [], right = []) {
+  const merged = new Map()
+
+  getSortedReleaseHistory([...normalizeReleaseHistory(left), ...normalizeReleaseHistory(right)]).forEach((event, index) => {
+    merged.set(getReleaseEventKey(event, index), event)
+  })
+
+  return Array.from(merged.values())
+}
+
+function getReleaseEventGrns(event = {}) {
+  if (Array.isArray(event.grns)) {
+    return event.grns.filter(Boolean)
+  }
+
+  if (Array.isArray(event.grn_numbers)) {
+    return event.grn_numbers.filter(Boolean)
+  }
+
+  return []
+}
+
 function getReleaseStateFromSet(states) {
   if (!states || states.size === 0) return ''
+
+  if (states.has('partial')) return 'partial'
 
   return states.has('draft') ? 'draft' : 'released'
 }
@@ -502,6 +588,7 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
   const [identityEvents, setIdentityEvents] = useState([])
   const [productModels, setProductModels] = useState([])
   const [productVariants, setProductVariants] = useState([])
+  const [productVariantReleaseStates, setProductVariantReleaseStates] = useState([])
   const [brands, setBrands] = useState([])
   const [categories, setCategories] = useState([])
   const [loading, setLoading] = useState(true)
@@ -509,6 +596,7 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
   const [filters, setFilters] = useState({
     type: 'all',
     viewMode: 'grn',
+    grn: '',
     brand: '',
     category: '',
     subCategory: '',
@@ -533,6 +621,8 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
   const [sellingNameDraft, setSellingNameDraft] = useState('')
   const [mergeEditor, setMergeEditor] = useState(null)
   const [mergeTargetVariantId, setMergeTargetVariantId] = useState('')
+  const [confirmDialog, setConfirmDialog] = useState(null)
+  const [activeReleaseTooltip, setActiveReleaseTooltip] = useState('')
 
   useEffect(() => {
     async function loadData() {
@@ -548,6 +638,7 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
           nextIdentityEvents,
           nextProductModels,
           nextProductVariants,
+          nextProductVariantReleaseStates,
           nextBrands,
           nextCategories,
         ] = await Promise.all([
@@ -558,6 +649,7 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
           fetchOptionalRows('product_variant_identity_events', '*', 'created_at'),
           fetchAllRows('dir_product_models', '*', 'id'),
           fetchAllRows('dir_product_model_variants', '*', 'id'),
+          fetchOptionalRows('dir_product_model_variant_release_states', '*', 'id'),
           fetchAllRows('dir_brands', '*', 'id'),
           fetchAllRows('dir_categories', '*', 'id'),
         ])
@@ -569,6 +661,7 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
         setIdentityEvents(nextIdentityEvents)
         setProductModels(nextProductModels)
         setProductVariants(nextProductVariants)
+        setProductVariantReleaseStates(nextProductVariantReleaseStates)
         setBrands(nextBrands)
         setCategories(nextCategories)
       } catch (loadError) {
@@ -585,12 +678,20 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
     const splitAssignmentByDetailKey = new Map()
     const splitSourceVariantIds = new Set()
     const storageQtyBySku = new Map()
+    const variantReleaseStateByKey = new Map()
 
     ;(warehouseStorageRows || []).forEach((entry) => {
       const sku = normalizeUpper(entry.sku_id)
       if (!sku) return
 
       storageQtyBySku.set(sku, Number(storageQtyBySku.get(sku) || 0) + Number(entry.qty || 0))
+    })
+
+    ;(productVariantReleaseStates || []).forEach((state) => {
+      const releaseKey = getVariantReleaseStateKey(state.product_model_variant_id, state.storing_type)
+      if (!releaseKey) return
+
+      variantReleaseStateByKey.set(releaseKey, state)
     })
 
     ;(identityEvents || []).forEach((event) => {
@@ -632,14 +733,15 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
       brandByCode: new Map((brands || []).map((brand) => [normalizeUpper(brand.brand_code), brand])),
       categoryById: getMapById(categories),
       storageQtyBySku,
+      variantReleaseStateByKey,
     }
-  }, [brands, breakdownRows, categories, identityEvents, inboundRows, productModels, productVariants, warehouseStorageRows])
+  }, [brands, breakdownRows, categories, identityEvents, inboundRows, productModels, productVariantReleaseStates, productVariants, warehouseStorageRows])
 
   const groupedProducts = useMemo(() => {
     const groups = new Map()
 
     packingRows.forEach((row) => {
-      const storingType = normalizeUpper(row.storing_type || 'MOB')
+      const storingType = getRowStoringType(row)
 
       if (filters.type !== 'all' && storingType !== normalizeUpper(filters.type)) {
         return
@@ -653,6 +755,7 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
       const assignedVariant = getAssignedVariantForRow(row, breakdown, lookup, variant)
       const selectedVariant = getCanonicalVariant(assignedVariant, lookup.variantById)
       const selectedVariantId = Number(selectedVariant?.id || variantId || 0)
+      const releaseVariant = selectedVariant || variant || (selectedVariantId ? { id: selectedVariantId } : null)
       const brand = getBrandLabel(row, model, lookup.brandById, lookup.brandByCode)
       const categoryParts = getCategoryParts(model?.category_id || breakdown?.category_id, lookup.categoryById)
       const detailCategoryLabel = getDetailCategoryLabel(categoryParts)
@@ -667,16 +770,24 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
       const grnNumber = normalize(inbound?.grn_number) || '-'
       const detailGrn = getDetailGrnLabel(grnNumber)
       const photoUrl = getResolvedProductPhotoUrl(row, breakdown, model, variant, selectedVariant)
-      const releaseSource = selectedVariant || row
-      const releaseState = getReleaseState(releaseSource)
-      const releaseCount = getReleaseCount(releaseSource)
       const batchReleaseState = getReleaseState(row)
-      const releaseMeta = getReleaseMeta(releaseSource)
+      const modelReleaseSource = filters.viewMode === 'model'
+        ? getModelTypeReleaseSource(releaseVariant, storingType, lookup, row)
+        : null
+      const releaseSource = filters.viewMode === 'grn' ? row : modelReleaseSource
+      const releaseState = releaseSource ? getReleaseState(releaseSource) : ''
+      const releaseCount = releaseSource ? getReleaseCount(releaseSource) : 0
+      const releaseMeta = releaseSource ? getReleaseMeta(releaseSource) : { releasedAt: '', releasedBy: '' }
+      const releaseHistory = filters.viewMode === 'model' && releaseSource
+        ? getSortedReleaseHistory(releaseSource.release_history)
+        : []
 
-      if (filters.releaseStatus !== 'all' && releaseState !== filters.releaseStatus) {
+      const shouldApplyReleaseStatus = filters.viewMode === 'grn' || filters.type !== 'all'
+      if (shouldApplyReleaseStatus && filters.releaseStatus !== 'all' && releaseState !== filters.releaseStatus) {
         return
       }
 
+      if (filters.grn && grnNumber !== filters.grn) return
       if (filters.brand && brand !== filters.brand) return
       if (filters.category && categoryParts.categoryRoot !== filters.category) return
       if (filters.subCategory && categoryParts.subCategory !== filters.subCategory) return
@@ -736,6 +847,7 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
           detailItems: new Map(),
           releaseStates: new Set(),
           releaseCount: 0,
+          releaseHistory: [],
           latestReleasedAt: '',
           latestReleasedBy: '',
           storageQty: filters.viewMode === 'model' ? Number(lookup.storageQtyBySku.get(normalizedSku) || 0) : 0,
@@ -779,8 +891,13 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
       if (categoryParts.itemType && categoryParts.itemType !== '-') {
         group.itemTypes.add(categoryParts.itemType)
       }
-      group.releaseStates.add(releaseState)
+      if (releaseState) {
+        group.releaseStates.add(releaseState)
+      }
       group.releaseCount = Math.max(Number(group.releaseCount || 0), releaseCount)
+      if (releaseHistory.length) {
+        group.releaseHistory = mergeReleaseHistory(group.releaseHistory, releaseHistory)
+      }
       if (releaseMeta.releasedAt && (!group.latestReleasedAt || new Date(releaseMeta.releasedAt) > new Date(group.latestReleasedAt))) {
         group.latestReleasedAt = releaseMeta.releasedAt
         group.latestReleasedBy = releaseMeta.releasedBy
@@ -858,7 +975,9 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
       if (row.detail_order || breakdown?.detail_order) {
         detailItem.detailOrders.push(Number(row.detail_order || breakdown?.detail_order))
       }
-      detailItem.releaseStates.add(releaseState)
+      if (releaseState) {
+        detailItem.releaseStates.add(releaseState)
+      }
       detailItem.releaseCount = Math.max(Number(detailItem.releaseCount || 0), releaseCount)
       if (releaseMeta.releasedAt && (!detailItem.latestReleasedAt || new Date(releaseMeta.releasedAt) > new Date(detailItem.latestReleasedAt))) {
         detailItem.latestReleasedAt = releaseMeta.releasedAt
@@ -894,7 +1013,9 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
 
     return Array.from(groups.values())
       .map((group) => {
-        const groupReleaseState = getReleaseStateFromSet(group.releaseStates)
+        const groupReleaseState = filters.viewMode === 'model' && filters.type === 'all'
+          ? getCombinedReleaseState(group.releaseStates)
+          : getReleaseStateFromSet(group.releaseStates)
         const modelCurrentQty = Number(group.storageQty || 0) + Number(group.unreleasedQueuedQty || 0)
         const shouldUseCurrentQty = filters.viewMode === 'model' && groupReleaseState === 'released'
         const nextTotalQty = shouldUseCurrentQty ? modelCurrentQty : group.totalQty
@@ -959,39 +1080,107 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
   }, [filters, lookup, packingRows, sortConfig])
 
   const filterOptions = useMemo(() => {
-    const brandsSet = new Set()
-    const categoriesSet = new Set()
-    const subCategoriesSet = new Set()
-    const itemTypesSet = new Set()
+    function buildOptionSet(ignoreFilterName = '') {
+      const grnsSet = new Set()
+      const brandsSet = new Set()
+      const categoriesSet = new Set()
+      const subCategoriesSet = new Set()
+      const itemTypesSet = new Set()
 
-    groupedProducts.forEach((group) => {
-      ;(group.brandList || [group.brand]).forEach((brand) => {
+      packingRows.forEach((row) => {
+        const storingType = getRowStoringType(row)
+
+        if (filters.type !== 'all' && storingType !== normalizeUpper(filters.type)) {
+          return
+        }
+
+        const breakdown = lookup.breakdownById.get(Number(row.pl_size_breakdown_id))
+        const modelId = Number(row.product_model_id || breakdown?.product_model_id || 0)
+        const variantId = Number(row.product_model_variant_id || breakdown?.product_model_variant_id || 0)
+        const model = lookup.modelById.get(modelId)
+        const variant = lookup.variantById.get(variantId)
+        const assignedVariant = getAssignedVariantForRow(row, breakdown, lookup, variant)
+        const selectedVariant = getCanonicalVariant(assignedVariant, lookup.variantById)
+        const selectedVariantId = Number(selectedVariant?.id || variantId || 0)
+        const releaseVariant = selectedVariant || variant || (selectedVariantId ? { id: selectedVariantId } : null)
+        const brand = getBrandLabel(row, model, lookup.brandById, lookup.brandByCode)
+        const categoryParts = getCategoryParts(model?.category_id || breakdown?.category_id, lookup.categoryById)
+        const detailCategoryLabel = getDetailCategoryLabel(categoryParts)
+        const sourceSku = normalize(row.source_variant_code || breakdown?.source_variant_code || variant?.variant_code || variant?.variant_label) || '-'
+        const selectedSku = getAssignedSkuForRow(row, breakdown, lookup, getSelectedSku(sourceSku, selectedVariant))
+        const sourceProductName = getProductName(row, breakdown, model, variant)
+        const selectedProductName = getSelectedProductName(row, breakdown, model, variant, selectedVariant)
+        const productName = selectedProductName
+        const inbound = lookup.inboundById.get(Number(row.inbound_id))
+        const grnNumber = normalize(inbound?.grn_number) || '-'
+        const modelReleaseSource = filters.viewMode === 'model'
+          ? getModelTypeReleaseSource(releaseVariant, storingType, lookup, row)
+          : null
+        const releaseSource = filters.viewMode === 'grn' ? row : modelReleaseSource
+        const releaseState = releaseSource ? getReleaseState(releaseSource) : ''
+        const shouldApplyReleaseStatus = filters.viewMode === 'grn' || filters.type !== 'all'
+
+        if (shouldApplyReleaseStatus && filters.releaseStatus !== 'all' && releaseState !== filters.releaseStatus) {
+          return
+        }
+
+        if (ignoreFilterName !== 'grn' && filters.grn && grnNumber !== filters.grn) return
+        if (ignoreFilterName !== 'brand' && filters.brand && brand !== filters.brand) return
+        if (ignoreFilterName !== 'category' && filters.category && categoryParts.categoryRoot !== filters.category) return
+        if (ignoreFilterName !== 'subCategory' && filters.subCategory && categoryParts.subCategory !== filters.subCategory) return
+        if (ignoreFilterName !== 'itemType' && filters.itemType && categoryParts.itemType !== filters.itemType) return
+
+        if (normalizeUpper(filters.search)) {
+          const searchable = [
+            productName,
+            brand,
+            categoryParts.categoryRoot,
+            categoryParts.subCategory,
+            categoryParts.itemType,
+            detailCategoryLabel,
+            selectedProductName,
+            sourceProductName,
+            selectedSku,
+            sourceSku,
+            grnNumber,
+          ]
+            .map(normalizeUpper)
+            .join(' ')
+
+          if (!searchable.includes(normalizeUpper(filters.search))) return
+        }
+
+        if (grnNumber && grnNumber !== '-') grnsSet.add(grnNumber)
         if (brand && !brand.startsWith('Multiple')) brandsSet.add(brand)
+        if (categoryParts.categoryRoot && !categoryParts.categoryRoot.startsWith('Multiple')) categoriesSet.add(categoryParts.categoryRoot)
+        if (categoryParts.subCategory && categoryParts.subCategory !== '-') subCategoriesSet.add(categoryParts.subCategory)
+        if (categoryParts.itemType && categoryParts.itemType !== '-') itemTypesSet.add(categoryParts.itemType)
       })
-      ;(group.categoryRootList || [group.category]).forEach((category) => {
-        if (category && !category.startsWith('Multiple')) categoriesSet.add(category)
-      })
-      ;(group.subCategoryList || [group.subCategory]).forEach((subCategory) => {
-        if (subCategory && subCategory !== '-') subCategoriesSet.add(subCategory)
-      })
-      ;(group.itemTypeList || [group.itemType]).forEach((itemType) => {
-        if (itemType && itemType !== '-') itemTypesSet.add(itemType)
-      })
-    })
+
+      return {
+        grns: Array.from(grnsSet).sort((left, right) => naturalSort.compare(left, right)),
+        brands: Array.from(brandsSet).sort((left, right) => naturalSort.compare(left, right)),
+        categories: Array.from(categoriesSet).sort((left, right) => naturalSort.compare(left, right)),
+        subCategories: Array.from(subCategoriesSet).sort((left, right) => naturalSort.compare(left, right)),
+        itemTypes: Array.from(itemTypesSet).sort((left, right) => naturalSort.compare(left, right)),
+      }
+    }
 
     return {
-      brands: Array.from(brandsSet).sort((left, right) => naturalSort.compare(left, right)),
-      categories: Array.from(categoriesSet).sort((left, right) => naturalSort.compare(left, right)),
-      subCategories: Array.from(subCategoriesSet).sort((left, right) => naturalSort.compare(left, right)),
-      itemTypes: Array.from(itemTypesSet).sort((left, right) => naturalSort.compare(left, right)),
+      grns: buildOptionSet('grn').grns,
+      brands: buildOptionSet('brand').brands,
+      categories: buildOptionSet('category').categories,
+      subCategories: buildOptionSet('subCategory').subCategories,
+      itemTypes: buildOptionSet('itemType').itemTypes,
     }
-  }, [groupedProducts])
+  }, [filters, lookup, packingRows])
 
   const totalQty = groupedProducts.reduce((sum, row) => sum + row.totalQty, 0)
   const mobQty = groupedProducts.reduce((sum, row) => sum + row.mobQty, 0)
   const oiQty = groupedProducts.reduce((sum, row) => sum + row.oiQty, 0)
   const activeQtyLabel = filters.type === 'MOB' ? 'MOB Qty' : filters.type === 'OI' ? 'OI Qty' : 'Total Qty'
   const activeQtyValue = filters.type === 'MOB' ? mobQty : filters.type === 'OI' ? oiQty : totalQty
+  const showReleaseStatusControls = filters.viewMode === 'grn' || filters.type !== 'all'
   const totalPages = Math.max(1, Math.ceil(groupedProducts.length / pageSize))
   const safeCurrentPage = Math.min(currentPage, totalPages)
   const pageStartIndex = (safeCurrentPage - 1) * pageSize
@@ -1005,7 +1194,7 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
     const selectedType = normalizeUpper(filters.type)
 
     packingRows.forEach((row) => {
-      const storingType = normalizeUpper(row.storing_type || 'MOB')
+      const storingType = getRowStoringType(row)
       if (storingType !== selectedType) return
 
       const breakdown = lookup.breakdownById.get(Number(row.pl_size_breakdown_id))
@@ -1027,7 +1216,7 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
       const grnNumber = normalize(inbound?.grn_number) || '-'
       const detailGrn = getDetailGrnLabel(grnNumber)
       const photoUrl = getResolvedProductPhotoUrl(row, breakdown, model, variant, selectedVariant)
-      const releaseSource = selectedVariant || row
+      const releaseSource = row
       const releaseState = getReleaseState(releaseSource)
       const releaseCount = getReleaseCount(releaseSource)
       const batchReleaseState = getReleaseState(row)
@@ -1089,7 +1278,9 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
       if (row.detail_order || breakdown?.detail_order) {
         detailItem.detailOrders.push(Number(row.detail_order || breakdown?.detail_order))
       }
-      detailItem.releaseStates.add(releaseState)
+      if (releaseState) {
+        detailItem.releaseStates.add(releaseState)
+      }
       detailItem.releaseCount = Math.max(Number(detailItem.releaseCount || 0), releaseCount)
       if (releaseMeta.releasedAt && (!detailItem.latestReleasedAt || new Date(releaseMeta.releasedAt) > new Date(detailItem.latestReleasedAt))) {
         detailItem.latestReleasedAt = releaseMeta.releasedAt
@@ -1270,6 +1461,7 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
       ...prev,
       [name]: type === 'checkbox' ? checked : value,
     }))
+    setSelectedProductKeys([])
     setCurrentPage(1)
   }
 
@@ -1279,8 +1471,10 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
       return {
         ...prev,
         type: nextType,
+        releaseStatus: prev.viewMode === 'model' && nextType === 'all' ? 'all' : prev.releaseStatus,
       }
     })
+    setSelectedProductKeys([])
     setCurrentPage(1)
   }
 
@@ -1292,6 +1486,7 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
         releaseStatus: nextReleaseStatus,
       }
     })
+    setSelectedProductKeys([])
     setCurrentPage(1)
   }
 
@@ -1305,6 +1500,7 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
     })
     setFilterSearches((prev) => ({ ...prev, [name]: '' }))
     setOpenFilterMenu('')
+    setSelectedProductKeys([])
     setCurrentPage(1)
   }
 
@@ -1316,6 +1512,7 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
       }))
       setFilterSearches((prev) => ({ ...prev, [name]: '' }))
       setOpenFilterMenu(name)
+      setSelectedProductKeys([])
       setCurrentPage(1)
       return
     }
@@ -1327,7 +1524,9 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
     setFilters((prev) => ({
       ...prev,
       viewMode,
+      releaseStatus: viewMode === 'model' && prev.type === 'all' ? 'all' : prev.releaseStatus,
     }))
+    setSelectedProductKeys([])
     setCurrentPage(1)
   }
 
@@ -1373,6 +1572,86 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
 
     setMergeEditor(null)
     setMergeTargetVariantId('')
+  }
+
+  function closeConfirmDialog() {
+    if (bulkWorking) return
+
+    setConfirmDialog(null)
+  }
+
+  function requestSplitConfirmation() {
+    if (!canManage) return
+    if (splitButtonDisabled) {
+      setActionError(splitEligibility.reason || 'Choose SKU rows to split.')
+      return
+    }
+
+    setConfirmDialog({
+      action: 'split',
+      title: 'Confirm Split SKU',
+      message: `Split ${selectedDetailItems.length} selected SKU row(s) into new SKU variants?`,
+      confirmLabel: 'OK, Split SKU',
+      tone: 'dark',
+    })
+  }
+
+  function requestMergeConfirmation() {
+    if (!canManage) return
+    if (!mergeEditor || bulkWorking) return
+
+    const targetVariantId = Number(mergeTargetVariantId || 0)
+    const targetOption = mergeEditor.options.find((option) => Number(option.variantId) === targetVariantId)
+    const variantsToMerge = mergeEditor.sourceVariantIds.filter((variantId) => Number(variantId) !== targetVariantId)
+
+    if (!targetVariantId || !targetOption || variantsToMerge.length === 0) {
+      setActionError('Choose the target SKU for this merge.')
+      return
+    }
+
+    setConfirmDialog({
+      action: 'merge',
+      title: 'Confirm Merge SKU',
+      message: `Merge ${variantsToMerge.length} SKU variant(s) into ${targetOption.sku}?`,
+      confirmLabel: 'OK, Merge SKU',
+      tone: 'dark',
+    })
+  }
+
+  function requestReleaseConfirmation() {
+    if (!canManage) return
+    if (releaseButtonDisabled) return
+
+    const variantCount = new Set(selectedDetailItems.map((item) => Number(item.productModelVariantId || 0)).filter(Boolean)).size
+
+    setConfirmDialog({
+      action: 'release',
+      title: 'Confirm Set Released',
+      message: `Mark ${selectedReleaseRowIds.length} PL row(s) and ${variantCount} SKU variant(s) as Released?`,
+      confirmLabel: 'OK, Set Released',
+      tone: 'danger',
+    })
+  }
+
+  async function confirmPendingAction() {
+    const action = confirmDialog?.action
+    if (!action || bulkWorking) return
+
+    setConfirmDialog(null)
+
+    if (action === 'split') {
+      await splitSelectedToNewVariants()
+      return
+    }
+
+    if (action === 'merge') {
+      await saveMergeSku()
+      return
+    }
+
+    if (action === 'release') {
+      await markSelectedReleased()
+    }
   }
 
   async function saveMergeSku() {
@@ -1478,6 +1757,10 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
       return `${message} Run supabase/product_variant_selling_name.sql in Supabase first.`
     }
 
+    if (normalized.includes('dir_product_model_variant_release_states')) {
+      return `${message} Run supabase/product_variant_release_type_states.sql in Supabase first.`
+    }
+
     if (normalized.includes('row-level security') && normalized.includes('product_variant_identity_events')) {
       return `${message} Run the latest supabase/product_variant_merge_workflow.sql in Supabase so merge/split audit logs can be saved.`
     }
@@ -1581,14 +1864,19 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
       const releasedAt = new Date().toISOString()
       const selectedIdSet = new Set(selectedReleaseRowIds.map(Number))
       const rowsToRelease = packingRows.filter((row) => selectedIdSet.has(Number(row.id)))
-      const detailsByVariantId = new Map()
+      const detailsByVariantType = new Map()
       selectedDetailItems.forEach((item) => {
         const variantId = Number(item.productModelVariantId || 0)
+        const storingType = normalizeStoringType(item.type || filters.type)
         if (!variantId) return
+        if (!storingType) return
 
+        const releaseStateKey = getVariantReleaseStateKey(variantId, storingType)
         const detail =
-          detailsByVariantId.get(variantId) || {
+          detailsByVariantType.get(releaseStateKey) || {
             variantId,
+            storingType,
+            releaseStateKey,
             sku: item.sku,
             qty: 0,
             rowIds: [],
@@ -1600,17 +1888,25 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
         if (item.grn) {
           detail.grns.add(item.grn)
         }
-        detailsByVariantId.set(variantId, detail)
+        detailsByVariantType.set(releaseStateKey, detail)
       })
-      const releaseDetails = Array.from(detailsByVariantId.values())
-      const variantIdsToRelease = releaseDetails.map((item) => item.variantId)
+      const releaseDetails = Array.from(detailsByVariantType.values())
       const payloadById = new Map()
-      const variantPayloadById = new Map()
+      const releaseStatePayloadByKey = new Map()
       const batchPayload = {
         release_status: 'released',
         released_at: releasedAt,
         released_by: actor,
         updated_at: releasedAt,
+      }
+
+      if (releaseDetails.length) {
+        const { error: releaseStateCheckError } = await supabase
+          .from('dir_product_model_variant_release_states')
+          .select('id')
+          .limit(1)
+
+        if (releaseStateCheckError) throw releaseStateCheckError
       }
 
       await Promise.all(rowsToRelease.map(async (row) => {
@@ -1624,50 +1920,66 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
         payloadById.set(Number(row.id), batchPayload)
       }))
 
-      if (variantIdsToRelease.length) {
-        await Promise.all(releaseDetails.map(async (detail) => {
+      if (releaseDetails.length) {
+        const releaseStatePayloads = releaseDetails.map((detail) => {
+          const currentState = lookup.variantReleaseStateByKey.get(detail.releaseStateKey) || {}
           const currentVariant = lookup.variantById.get(Number(detail.variantId)) || {}
-          const nextReleaseCount = getReleaseCount(currentVariant) + 1
+          const nextReleaseCount = getReleaseCount(currentState) + 1
           const releaseEvent = {
             release_count: nextReleaseCount,
             released_at: releasedAt,
             released_by: actor,
+            storing_type: detail.storingType,
             sku: detail.sku || currentVariant.variant_code || '',
             qty: Number(detail.qty || 0),
             grns: Array.from(detail.grns).filter(Boolean),
             pl_packing_item_ids: Array.from(new Set(detail.rowIds)).filter(Boolean),
           }
-          const variantPayload = {
+          return {
+            product_model_variant_id: detail.variantId,
+            storing_type: detail.storingType,
             release_status: 'released',
             released_at: releasedAt,
             released_by: actor,
             release_count: nextReleaseCount,
-            release_history: appendVariantReleaseHistory(currentVariant, releaseEvent),
+            release_history: appendVariantReleaseHistory(currentState, releaseEvent),
             updated_at: releasedAt,
           }
+        })
 
-          const { error: variantUpdateError } = await supabase
-            .from('dir_product_model_variants')
-            .update(variantPayload)
-            .eq('id', detail.variantId)
+        const { data: nextReleaseStates, error: releaseStateUpsertError } = await supabase
+          .from('dir_product_model_variant_release_states')
+          .upsert(releaseStatePayloads, { onConflict: 'product_model_variant_id,storing_type' })
+          .select('*')
 
-          if (variantUpdateError) throw variantUpdateError
+        if (releaseStateUpsertError) throw releaseStateUpsertError
 
-          variantPayloadById.set(Number(detail.variantId), variantPayload)
-        }))
+        ;(nextReleaseStates || releaseStatePayloads).forEach((state) => {
+          const releaseStateKey = getVariantReleaseStateKey(state.product_model_variant_id, state.storing_type)
+          if (releaseStateKey) {
+            releaseStatePayloadByKey.set(releaseStateKey, state)
+          }
+        })
 
-        setProductVariants((prev) =>
-          prev.map((variant) => (
-            variantPayloadById.has(Number(variant.id)) ? { ...variant, ...variantPayloadById.get(Number(variant.id)) } : variant
-          ))
-        )
+        setProductVariantReleaseStates((prev) => {
+          const nextByKey = new Map((prev || []).map((state) => [
+            getVariantReleaseStateKey(state.product_model_variant_id, state.storing_type),
+            state,
+          ]))
+
+          releaseStatePayloadByKey.forEach((state, key) => {
+            nextByKey.set(key, state)
+          })
+
+          return Array.from(nextByKey.values()).filter((state) => getVariantReleaseStateKey(state.product_model_variant_id, state.storing_type))
+        })
       }
 
       setPackingRows((prev) =>
         prev.map((row) => (payloadById.has(Number(row.id)) ? { ...row, ...payloadById.get(Number(row.id)) } : row))
       )
       setSelectedProductKeys([])
-      setActionMessage(`${selectedReleaseRowIds.length} PL row(s) and ${variantIdsToRelease.length} product variant(s) marked as Released.`)
+      setActionMessage(`${selectedReleaseRowIds.length} PL row(s) and ${releaseDetails.length} ${filters.type} SKU release state(s) marked as Released.`)
     } catch (updateError) {
       setActionError(getActionErrorMessage(updateError))
     } finally {
@@ -1945,12 +2257,31 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
     )
   }
 
-  function renderReleasePill(releaseState, releaseCount = 0, releasedAt = '', releasedBy = '') {
+  function renderReleasePill(releaseState, releaseCount = 0, releasedAt = '', releasedBy = '', releaseHistory = [], tooltipKey = '') {
     if (!releaseState) {
       return <span style={styles.emptyStatusText}>-</span>
     }
+    const releaseHistoryRows = getSortedReleaseHistory(releaseHistory)
+    const releaseCountValue = Math.max(Number(releaseCount || 0), releaseHistoryRows.length)
     const releaseMetaLabel = [releasedAt ? formatDateTime(releasedAt) : '', releasedBy].filter(Boolean).join(' • ')
-    const releaseCountLabel = Number(releaseCount || 0) > 1 ? ` x${formatNumber(releaseCount)}` : ''
+    const releaseCountLabel = releaseCountValue > 1 ? ` x${formatNumber(releaseCountValue)}` : ''
+    const hasReleaseTooltip = releaseState === 'released' && Boolean(tooltipKey)
+    const isReleaseTooltipOpen = hasReleaseTooltip && activeReleaseTooltip === tooltipKey
+    const releaseTitle = releaseState === 'released'
+      ? [
+          `Latest Release: ${releasedAt ? formatDateTime(releasedAt) : '-'}`,
+          releaseMetaLabel ? `Released By: ${releasedBy || '-'}` : '',
+          `Release Count: ${formatNumber(releaseCountValue)}`,
+          ...releaseHistoryRows.map((event, index) => {
+            const releaseNumber = event.release_count ? `#${formatNumber(event.release_count)}` : `#${formatNumber(releaseHistoryRows.length - index)}`
+            const grns = getReleaseEventGrns(event)
+            const grnText = grns.length ? ` | GRN ${grns.join(', ')}` : ''
+            const qtyText = Number(event.qty || 0) ? ` | Qty ${formatNumber(event.qty)}` : ''
+            const actorText = event.released_by ? ` | ${event.released_by}` : ''
+            return `${releaseNumber} ${formatDateTime(event.released_at)}${qtyText}${grnText}${actorText}`
+          }),
+        ].join('\n')
+      : ''
 
     if (releaseState === 'partial') {
       return (
@@ -1961,13 +2292,51 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
     }
 
     return (
-      <span style={styles.releaseStatusStack}>
-        <span style={releaseState === 'released' ? styles.releasedPill : styles.draftPill}>
-          {releaseState === 'released' ? `Released${releaseCountLabel}` : 'Draft'}
+      <span
+        style={hasReleaseTooltip ? styles.releaseTooltipWrap : styles.releaseStatusStack}
+        onMouseEnter={hasReleaseTooltip ? () => setActiveReleaseTooltip(tooltipKey) : undefined}
+        onMouseLeave={hasReleaseTooltip ? () => setActiveReleaseTooltip('') : undefined}
+        onFocus={hasReleaseTooltip ? () => setActiveReleaseTooltip(tooltipKey) : undefined}
+        onBlur={hasReleaseTooltip ? () => setActiveReleaseTooltip('') : undefined}
+        tabIndex={hasReleaseTooltip ? 0 : undefined}
+        title={releaseTitle}
+      >
+        <span style={styles.releaseStatusStack}>
+          <span style={releaseState === 'released' ? styles.releasedPill : styles.draftPill}>
+            {releaseState === 'released' ? `Released${releaseCountLabel}` : 'Draft'}
+          </span>
         </span>
-        {releaseState === 'released' && releaseMetaLabel ? (
-          <span style={styles.releaseMeta}>
-            {releaseMetaLabel}
+        {isReleaseTooltipOpen ? (
+          <span style={styles.releaseTooltip} aria-hidden="true">
+            <span style={styles.releaseTooltipEyebrow}>Model Release Detail</span>
+            <span style={styles.releaseTooltipLine}>
+              <strong>Latest</strong>
+              <span>{releasedAt ? formatDateTime(releasedAt) : '-'}</span>
+            </span>
+            <span style={styles.releaseTooltipLine}>
+              <strong>Count</strong>
+              <span>{formatNumber(releaseCountValue)} release(s)</span>
+            </span>
+            <span style={styles.releaseTooltipDivider} />
+            {releaseHistoryRows.length ? releaseHistoryRows.slice(0, 6).map((event, index) => {
+              const grns = getReleaseEventGrns(event)
+              return (
+                <span key={getReleaseEventKey(event, index)} style={styles.releaseHistoryItem}>
+                  <span style={styles.releaseHistoryTopLine}>
+                    <strong>{event.release_count ? `#${formatNumber(event.release_count)}` : `#${formatNumber(releaseHistoryRows.length - index)}`}</strong>
+                    <span>{formatDateTime(event.released_at)}</span>
+                  </span>
+                  <span style={styles.releaseHistoryMeta}>
+                    {[Number(event.qty || 0) ? `Qty ${formatNumber(event.qty)}` : '', grns.length ? `GRN ${grns.join(', ')}` : '', event.released_by].filter(Boolean).join(' - ') || 'Release detail saved'}
+                  </span>
+                </span>
+              )
+            }) : (
+              <span style={styles.releaseHistoryMeta}>No detailed release history yet.</span>
+            )}
+            {releaseHistoryRows.length > 6 ? (
+              <span style={styles.releaseHistoryMeta}>+{formatNumber(releaseHistoryRows.length - 6)} older release(s)</span>
+            ) : null}
           </span>
         ) : null}
       </span>
@@ -2039,6 +2408,7 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
     setFilters({
       type: 'all',
       viewMode: 'grn',
+      grn: '',
       brand: '',
       category: '',
       subCategory: '',
@@ -2121,6 +2491,7 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
                       </button>
                     ))}
                   </div>
+                  {showReleaseStatusControls ? (
                   <div style={styles.smallSegmentedControl} role="tablist" aria-label="Readiness status filter">
                     {[
                       ['all', 'All'],
@@ -2140,6 +2511,7 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
                       </button>
                     ))}
                   </div>
+                  ) : null}
                 </div>
               </div>
               <span style={styles.searchLabelSpacer} aria-hidden="true" />
@@ -2165,6 +2537,7 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
         </div>
 
         <div style={styles.filtersGrid}>
+          {renderFilterDropdown('grn', 'GRN', 'All GRN', filterOptions.grns)}
           {renderFilterDropdown('brand', 'Brand', 'All brands', filterOptions.brands)}
           {renderFilterDropdown('category', 'Category', 'All categories', filterOptions.categories)}
           {renderFilterDropdown('subCategory', 'Sub-Category', 'All sub-categories', filterOptions.subCategories)}
@@ -2205,7 +2578,7 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
                     </button>
                     <button
                       type="button"
-                      onClick={splitSelectedToNewVariants}
+                      onClick={requestSplitConfirmation}
                       disabled={splitButtonDisabled}
                       style={splitButtonDisabled ? { ...styles.secondaryBulkButton, ...styles.bulkButtonDisabled } : styles.secondaryBulkButton}
                       title={splitEligibility.reason}
@@ -2226,7 +2599,7 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
                     {canSelectSkuRows ? (
                       <button
                         type="button"
-                        onClick={markSelectedReleased}
+                        onClick={requestReleaseConfirmation}
                         disabled={releaseButtonDisabled}
                         style={releaseButtonDisabled ? { ...styles.finalBulkButton, ...styles.bulkButtonDisabled } : styles.finalBulkButton}
                         title="Mark selected SKU rows as released or release again."
@@ -2366,7 +2739,14 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
                         </td>
                         <td style={{ ...styles.td, ...styles.tdCenter }}>{formatDate(row.latestDate)}</td>
                         <td style={{ ...styles.td, ...styles.tdCenter }}>
-                          {renderReleasePill(row.releaseState, row.releaseCount, row.latestReleasedAt, row.latestReleasedBy)}
+                          {renderReleasePill(
+                            row.releaseState,
+                            row.releaseCount,
+                            row.latestReleasedAt,
+                            row.latestReleasedBy,
+                            row.releaseHistory,
+                            `model-release-${row.key}`
+                          )}
                         </td>
                         <td style={styles.tdNumber}>{formatNumber(row.totalQty)}</td>
                         <td style={styles.td}>
@@ -2500,7 +2880,7 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
               <div style={styles.modalActionRow}>
                 <button
                   type="button"
-                  onClick={saveMergeSku}
+                  onClick={requestMergeConfirmation}
                   disabled={bulkWorking || !mergeTargetVariantId}
                   style={bulkWorking || !mergeTargetVariantId ? { ...styles.bulkButton, ...styles.bulkButtonDisabled } : styles.bulkButton}
                 >
@@ -2544,6 +2924,48 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
                   </div>
                 </label>
               ))}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {confirmDialog && canManage ? (
+        <div style={styles.modalOverlay} role="dialog" aria-modal="true" aria-label={confirmDialog.title}>
+          <div style={styles.confirmModal}>
+            <div style={styles.confirmIconWrap}>
+              <svg viewBox="0 0 24 24" style={styles.confirmIcon} aria-hidden="true">
+                <path d="M12 9v4" />
+                <path d="M12 17h.01" />
+                <path d="M10.2 4.5 2.8 17.3A2 2 0 0 0 4.5 20h15a2 2 0 0 0 1.7-2.7L13.8 4.5a2 2 0 0 0-3.6 0Z" />
+              </svg>
+            </div>
+            <div style={styles.confirmCopy}>
+              <h2 style={styles.confirmTitle}>{confirmDialog.title}</h2>
+              <p style={styles.confirmText}>{confirmDialog.message}</p>
+            </div>
+            <div style={styles.confirmButtonRow}>
+              <button
+                type="button"
+                onClick={closeConfirmDialog}
+                disabled={bulkWorking}
+                style={bulkWorking ? { ...styles.confirmCancelButton, ...styles.bulkButtonDisabled } : styles.confirmCancelButton}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={confirmPendingAction}
+                disabled={bulkWorking}
+                style={
+                  bulkWorking
+                    ? { ...styles.confirmExecuteButton, ...styles.bulkButtonDisabled }
+                    : confirmDialog.tone === 'danger'
+                      ? { ...styles.confirmExecuteButton, ...styles.confirmDangerButton }
+                      : styles.confirmExecuteButton
+                }
+              >
+                {bulkWorking ? 'Working...' : confirmDialog.confirmLabel}
+              </button>
             </div>
           </div>
         </div>
@@ -3553,6 +3975,73 @@ const styles = {
     lineHeight: 1.25,
     overflowWrap: 'anywhere',
   },
+  releaseTooltipWrap: {
+    position: 'relative',
+    display: 'inline-flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    justifyContent: 'center',
+    outline: 'none',
+  },
+  releaseTooltip: {
+    position: 'absolute',
+    top: 'calc(100% + 8px)',
+    right: '50%',
+    transform: 'translateX(50%)',
+    zIndex: 40,
+    width: '270px',
+    padding: '12px',
+    borderRadius: '14px',
+    border: '1px solid rgba(15, 23, 42, 0.12)',
+    background: '#111827',
+    color: '#f8fafc',
+    boxShadow: '0 22px 48px rgba(15, 23, 42, 0.22)',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '8px',
+    textAlign: 'left',
+    pointerEvents: 'none',
+  },
+  releaseTooltipEyebrow: {
+    color: '#94a3b8',
+    fontSize: '9px',
+    fontWeight: '900',
+    letterSpacing: '0.08em',
+    textTransform: 'uppercase',
+  },
+  releaseTooltipLine: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: '10px',
+    color: '#e5e7eb',
+    fontSize: '11px',
+    fontWeight: '700',
+  },
+  releaseTooltipDivider: {
+    height: '1px',
+    background: 'rgba(148, 163, 184, 0.22)',
+  },
+  releaseHistoryItem: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '2px',
+  },
+  releaseHistoryTopLine: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: '10px',
+    color: '#fff',
+    fontSize: '11px',
+    fontWeight: '800',
+  },
+  releaseHistoryMeta: {
+    color: '#cbd5e1',
+    fontSize: '10px',
+    fontWeight: '600',
+    lineHeight: 1.35,
+  },
   emptyStatusText: {
     color: '#94a3b8',
     fontSize: '11px',
@@ -3824,6 +4313,92 @@ const styles = {
     fontSize: '12px',
     fontWeight: '800',
     cursor: 'pointer',
+  },
+  confirmModal: {
+    width: 'min(420px, 100%)',
+    padding: '22px',
+    borderRadius: '18px',
+    border: '1px solid #e2e8f0',
+    background: '#fff',
+    boxShadow: '0 28px 70px rgba(15, 23, 42, 0.22)',
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    gap: '14px',
+    textAlign: 'center',
+  },
+  confirmIconWrap: {
+    width: '48px',
+    height: '48px',
+    borderRadius: '999px',
+    background: '#f8fafc',
+    border: '1px solid #dbe4ef',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  confirmIcon: {
+    width: '24px',
+    height: '24px',
+    fill: 'none',
+    stroke: '#0f172a',
+    strokeWidth: 2,
+    strokeLinecap: 'round',
+    strokeLinejoin: 'round',
+  },
+  confirmCopy: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '6px',
+  },
+  confirmTitle: {
+    margin: 0,
+    color: '#0f172a',
+    fontSize: '19px',
+    fontWeight: '900',
+    letterSpacing: '-0.02em',
+  },
+  confirmText: {
+    margin: 0,
+    color: '#475569',
+    fontSize: '13px',
+    fontWeight: '600',
+    lineHeight: 1.5,
+  },
+  confirmButtonRow: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: '10px',
+    flexWrap: 'wrap',
+    width: '100%',
+    marginTop: '4px',
+  },
+  confirmCancelButton: {
+    minHeight: '38px',
+    padding: '0 16px',
+    borderRadius: '10px',
+    border: '1px solid #cbd5e1',
+    background: '#fff',
+    color: '#334155',
+    fontSize: '12px',
+    fontWeight: '900',
+    cursor: 'pointer',
+  },
+  confirmExecuteButton: {
+    minHeight: '38px',
+    padding: '0 16px',
+    borderRadius: '10px',
+    border: '1px solid #111827',
+    background: '#111827',
+    color: '#fff',
+    fontSize: '12px',
+    fontWeight: '900',
+    cursor: 'pointer',
+  },
+  confirmDangerButton: {
+    border: '1px solid #9f1239',
+    background: '#9f1239',
   },
   photoListTableWrap: {
     overflow: 'auto',
