@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createClient } from '@/utils/supabase/browser'
 import { getProfileByAuthenticatedUser } from '@/utils/user-profiles'
 import { ADMIN_EMAIL, hasPermission } from '@/utils/permissions'
+import { useRealtimeRefresh } from '@/utils/supabase/use-realtime-refresh'
 
 const supabase = createClient()
 
@@ -1568,17 +1569,12 @@ export default function QcConfirmationNextProcessPage() {
     return () => window.clearTimeout(timeoutId)
   }, [loadData])
 
-  useEffect(() => {
-    const intervalId = window.setInterval(() => {
-      if (saving || modelDropdownOpen || previewPhotoUrl || currentKoliItems.length || selectedSourceKey || verificationQty) {
-        return
-      }
-
-      loadData(true)
-    }, 15000)
-
-    return () => window.clearInterval(intervalId)
-  }, [currentKoliItems.length, loadData, modelDropdownOpen, previewPhotoUrl, saving, selectedSourceKey, verificationQty])
+  useRealtimeRefresh({
+    supabase,
+    topic: 'qc:confirmation',
+    onRefresh: () => loadData(true),
+    paused: Boolean(saving || modelDropdownOpen || previewPhotoUrl || currentKoliItems.length || selectedSourceKey || verificationQty),
+  })
 
   const selectedInbound = useMemo(
     () => qcItems.find((item) => item.inbound?.grn_number === grnFilter)?.inbound || null,

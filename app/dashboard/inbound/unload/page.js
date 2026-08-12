@@ -6,6 +6,7 @@ import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import { createClient } from '@/utils/supabase/browser'
 import { getProfileByAuthenticatedUser } from '@/utils/user-profiles'
 import { ADMIN_EMAIL, hasPermission, resolveRole } from '@/utils/permissions'
+import { useRealtimeRefresh } from '@/utils/supabase/use-realtime-refresh'
 
 const supabase = createClient()
 const PRODUCT_PHOTOS_BUCKET = 'product-photos'
@@ -4476,30 +4477,13 @@ export default function UnloadPage() {
     supportsUnloadProductModelVariant,
   ])
 
-  useEffect(() => {
-    if (!selectedInboundId || isBuilderMode || saving) return undefined
-
-    let isActive = true
-
-    async function silentlyRefreshUnloadRows() {
-      if (!isActive || document.visibilityState === 'hidden') return
-
-      try {
-        await refreshUnloadData(selectedInboundId)
-      } catch {
-        // Keep the overview stable; manual actions still surface errors.
-      }
-    }
-
-    const refreshTimer = window.setInterval(silentlyRefreshUnloadRows, 15000)
-    window.addEventListener('focus', silentlyRefreshUnloadRows)
-
-    return () => {
-      isActive = false
-      window.clearInterval(refreshTimer)
-      window.removeEventListener('focus', silentlyRefreshUnloadRows)
-    }
-  }, [isBuilderMode, refreshUnloadData, saving, selectedInboundId])
+  useRealtimeRefresh({
+    supabase,
+    topic: `inbound:unload:${selectedInboundId || 'inactive'}`,
+    onRefresh: () => refreshUnloadData(selectedInboundId),
+    paused: Boolean(isBuilderMode || saving),
+    enabled: Boolean(selectedInboundId),
+  })
 
   function openImagePreview({ src, title }) {
     if (!src) return

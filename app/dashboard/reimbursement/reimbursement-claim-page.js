@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createClient } from '@/utils/supabase/browser'
 import { ADMIN_EMAIL, expandImpliedPermissions, getArklineFeatureAccess, resolveRole } from '@/utils/permissions'
 import { getProfileByAuthenticatedUser } from '@/utils/user-profiles'
+import { useRealtimeRefresh } from '@/utils/supabase/use-realtime-refresh'
 
 import styles from '../arkline/arkline.module.css'
 import tableStyles from '../arkline/financial-management/financial-management.module.css'
@@ -602,14 +603,12 @@ export default function ReimbursementClaimPage({
     setSelectedApprovedClaimIds((prev) => prev.filter((id) => claims.some((item) => item.id === id && item.status === 'APPROVED')))
   }, [claims])
 
-  useEffect(() => {
-    const intervalId = window.setInterval(() => {
-      if (showBatchModal || editingClaim || selectedClaim || selectedApprovedGroup || selectedPaidGroup || saving || actionLoading) return
-      void loadWorkspace(true)
-    }, 10000)
-
-    return () => window.clearInterval(intervalId)
-  }, [actionLoading, editingClaim, loadWorkspace, saving, selectedApprovedGroup, selectedClaim, selectedPaidGroup, showBatchModal])
+  useRealtimeRefresh({
+    supabase,
+    topic: 'finance:reimbursement',
+    onRefresh: () => loadWorkspace(true),
+    paused: Boolean(showBatchModal || editingClaim || selectedClaim || selectedApprovedGroup || selectedPaidGroup || saving || actionLoading),
+  })
 
   const isClaimOwner = useCallback((claim) => {
     const currentEmail = String(profile?.email || '').toLowerCase()

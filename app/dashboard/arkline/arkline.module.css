@@ -312,7 +312,7 @@
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 8px;
   align-items: stretch;
-  min-height: calc(100vh - 110px);
+  min-height: calc(100vh - 44px);
 }
 
 .overviewCard {
@@ -804,6 +804,353 @@
 
 .directoryActionCell {
   align-items: center;
+}
+
+.supplierToolbar {
+  grid-template-columns: minmax(0, 1.25fr) minmax(180px, 0.75fr) minmax(150px, 0.45fr) auto;
+}
+
+.supplierListHead,
+.supplierListRow {
+  grid-template-columns: minmax(180px, 1.05fr) minmax(150px, 0.75fr) minmax(260px, 1.25fr) minmax(90px, 0.42fr) auto;
+}
+
+.supplierMaterialChips {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.supplierMaterialChip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0 8px;
+  border-radius: 999px;
+  border: 1px solid #dbe4ee;
+  background: #f8fafc;
+  color: #334155;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.modalCard.supplierModalCard {
+  width: min(96vw, 1680px);
+  height: calc(100vh - 32px);
+  max-height: calc(100vh - 32px);
+  overflow: hidden;
+  gap: 18px;
+  padding: 30px;
+  border-radius: 22px;
+}
+
+.modalOverlay.supplierModalOverlay {
+  align-items: center;
+  overflow: hidden;
+  padding: 16px;
+}
+
+.supplierModalHeader {
+  flex: 0 0 auto;
+  align-items: center;
+}
+
+.supplierModalHeader .sectionTitle {
+  font-size: 32px;
+  line-height: 1.15;
+}
+
+.supplierModalActions {
+  justify-content: flex-end;
+  flex: 0 0 auto;
+  align-items: center;
+}
+
+.supplierModalCloseButton {
+  width: 44px;
+  height: 44px;
+  border-radius: 14px;
+  border: 1px solid #fecaca;
+  background: #fef2f2;
+  color: #dc2626;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 15px;
+  font-weight: 900;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.supplierModalCloseButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+.supplierModalBody {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 2px 8px 2px 0;
+}
+
+.supplierModalColumns {
+  display: grid;
+  grid-template-columns: minmax(0, 1.7fr) minmax(340px, 0.7fr);
+  gap: 28px;
+  min-height: 100%;
+  min-width: 0;
+  align-items: start;
+}
+
+.supplierFormPanel {
+  min-width: 0;
+  padding: 0 8px 0 0;
+}
+
+.supplierFormPanel .formGrid {
+  gap: 22px 24px;
+}
+
+.supplierCodeLabelRow {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+}
+
+.supplierStatusPill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 20px;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: 9px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.supplierStatusPillActive {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.supplierStatusPillInactive {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.supplierModalBody .textarea {
+  min-height: 132px;
+  max-width: 100%;
+}
+
+.supplierMaterialPanel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+  padding: 0 0 0 28px;
+  border-left: 1px solid #e2e8f0;
+  background: transparent;
+}
+
+.supplierMaterialHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.supplierCreateMaterialIconButton {
+  width: 34px;
+  height: 34px;
+  border-radius: 12px;
+  border: 1px solid #dbeafe;
+  background: #eff6ff;
+  color: #1d4ed8;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  font-weight: 800;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.supplierCreateMaterialIconButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+.inlineCreateCard {
+  padding: 14px;
+  border-radius: 16px;
+  border: 1px solid #dbeafe;
+  background: #ffffff;
+}
+
+.supplierMaterialPanel .inlineCreateCard .formRowThree {
+  grid-template-columns: minmax(0, 1fr) 126px 128px;
+  align-items: end;
+  gap: 12px;
+}
+
+.supplierMaterialPanel .inlineCreateCard .field {
+  min-width: 0;
+}
+
+.supplierMaterialPanel .inlineCreateCard .label {
+  min-height: 34px;
+  display: flex;
+  align-items: flex-end;
+}
+
+.inlineCreateActions {
+  align-items: end;
+}
+
+.supplierMaterialPanel .inlineCreateActions .primaryButton {
+  width: 100%;
+  min-height: 66px;
+  white-space: normal;
+}
+
+.supplierMaterialPicker {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: start;
+}
+
+.supplierMaterialTypeahead {
+  position: relative;
+  min-width: 0;
+}
+
+.supplierMaterialDropdown {
+  position: absolute;
+  z-index: 8;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  max-height: 240px;
+  overflow-y: auto;
+  border: 1px solid #dbe4ee;
+  border-radius: 14px;
+  background: #ffffff;
+  box-shadow: 0 18px 40px rgba(15, 23, 42, 0.14);
+  padding: 6px;
+}
+
+.supplierMaterialDropdownItem {
+  width: 100%;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  padding: 9px 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.supplierMaterialDropdownItem:hover {
+  background: #f8fafc;
+}
+
+.supplierMaterialDropdownItem strong {
+  color: #0f172a;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.supplierMaterialDropdownItem span {
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 700;
+  flex: 0 0 auto;
+}
+
+.supplierMaterialDropdownEmpty,
+.supplierSelectedMaterialEmpty {
+  padding: 12px;
+  border-radius: 12px;
+  background: #ffffff;
+  border: 1px dashed #cbd5e1;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 700;
+  text-align: center;
+}
+
+.supplierSelectedMaterialList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  max-height: calc(100vh - 330px);
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.supplierSelectedMaterialRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  border: 1px solid #e2e8f0;
+  background: #ffffff;
+}
+
+.supplierSelectedMaterialRow div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.supplierSelectedMaterialRow strong {
+  color: #0f172a;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.supplierSelectedMaterialRow span {
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.supplierSelectedMaterialRow button {
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  border: 1px solid #fecaca;
+  background: #fef2f2;
+  color: #b91c1c;
+  font-size: 14px;
+  font-weight: 800;
+  line-height: 1;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+
+.modalActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
 }
 
 .materialFulfillmentSummaryRow {
@@ -1831,6 +2178,24 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .supplierToolbar {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .supplierModalColumns {
+    grid-template-columns: 1fr;
+  }
+
+  .supplierFormPanel {
+    padding: 0;
+  }
+
+  .supplierMaterialPanel {
+    border-left: 0;
+    border-top: 1px solid #e2e8f0;
+    padding: 24px 0 0;
+  }
+
   .cardWrap {
     grid-template-columns: 1fr;
   }
@@ -1863,7 +2228,9 @@
 
   .grid,
   .toolbar,
-  .formGrid {
+  .formGrid,
+  .formRowThree,
+  .formRowFour {
     grid-template-columns: 1fr;
   }
 
@@ -1883,6 +2250,60 @@
   .listRow {
     grid-template-columns: 1fr;
     gap: 10px;
+  }
+
+  .supplierListHead {
+    display: none;
+  }
+
+  .supplierListRow,
+  .supplierToolbar,
+  .supplierMaterialPicker {
+    grid-template-columns: 1fr;
+  }
+
+  .modalOverlay.supplierModalOverlay {
+    padding: 0;
+  }
+
+  .modalCard.supplierModalCard {
+    width: 100vw;
+    height: 100vh;
+    max-height: 100vh;
+    border-radius: 0;
+    padding: 20px;
+  }
+
+  .supplierModalHeader {
+    align-items: stretch;
+  }
+
+  .supplierModalHeader .sectionTitle {
+    font-size: 26px;
+  }
+
+  .supplierModalActions {
+    width: 100%;
+  }
+
+  .supplierModalActions button {
+    flex: 1 1 0;
+  }
+
+  .supplierModalActions .supplierModalCloseButton {
+    flex: 0 0 44px;
+  }
+
+  .supplierMaterialPanel .inlineCreateCard .formRowThree {
+    grid-template-columns: 1fr;
+  }
+
+  .supplierMaterialPanel .inlineCreateCard .label {
+    min-height: 0;
+  }
+
+  .supplierMaterialPanel .inlineCreateActions .primaryButton {
+    min-height: 44px;
   }
 
   .reimbursementListHead {

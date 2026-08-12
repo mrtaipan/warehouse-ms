@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createClient } from '@/utils/supabase/browser'
 import { getProfileByAuthenticatedUser } from '@/utils/user-profiles'
 import { ADMIN_EMAIL, hasPermission } from '@/utils/permissions'
+import { useRealtimeRefresh } from '@/utils/supabase/use-realtime-refresh'
 
 const supabase = createClient()
 
@@ -1268,10 +1269,12 @@ export default function QcConfirmationRejectionPage() {
     return () => window.clearTimeout(timeoutId)
   }, [loadData])
 
-  useEffect(() => {
-    const intervalId = window.setInterval(() => {
-      if (
-        savingTake ||
+  useRealtimeRefresh({
+    supabase,
+    topic: 'qc:confirmation',
+    onRefresh: () => loadData(true),
+    paused: Boolean(
+      savingTake ||
         savingReturn ||
         previewPhotoUrl ||
         currentTakeKoliItems.length ||
@@ -1281,27 +1284,8 @@ export default function QcConfirmationRejectionPage() {
         adjustmentModelMenuOpen ||
         adjustmentQty ||
         takeGradeModalOpen
-      ) {
-        return
-      }
-
-      loadData(true)
-    }, 15000)
-
-    return () => window.clearInterval(intervalId)
-  }, [
-    adjustmentModelLabel,
-    adjustmentModelMenuOpen,
-    adjustmentModalOpen,
-    adjustmentQty,
-    currentReturnKoliItems.length,
-    currentTakeKoliItems.length,
-    loadData,
-    previewPhotoUrl,
-    savingReturn,
-    savingTake,
-    takeGradeModalOpen,
-  ])
+    ),
+  })
 
   const selectedInbound = useMemo(
     () => qcItems.find((item) => item.inbound?.grn_number === grnFilter)?.inbound || null,

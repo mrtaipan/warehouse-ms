@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createClient } from '@/utils/supabase/browser'
 import { ADMIN_EMAIL, resolveRole } from '@/utils/permissions'
 import { getProfileByAuthenticatedUser } from '@/utils/user-profiles'
+import { useRealtimeRefresh } from '@/utils/supabase/use-realtime-refresh'
 
 import shellStyles from '../arkline/arkline.module.css'
 import styles from '../arkline/financial-management/financial-management.module.css'
@@ -436,14 +437,12 @@ export default function MobGroupPaymentClient({
     void loadWorkspace()
   }, [loadWorkspace])
 
-  useEffect(() => {
-    if (loading) return undefined
-    const intervalId = window.setInterval(() => {
-      if (saving || actionLoading) return
-      void loadWorkspace(true)
-    }, 30000)
-    return () => window.clearInterval(intervalId)
-  }, [actionLoading, loadWorkspace, loading, saving])
+  useRealtimeRefresh({
+    supabase,
+    topic: 'finance:mob-payment',
+    onRefresh: () => loadWorkspace(true),
+    paused: Boolean(loading || saving || actionLoading || showCreateModal || editingRequest || selectedRequest),
+  })
 
   const filteredRequests = useMemo(() => {
     const keyword = search.trim().toUpperCase()

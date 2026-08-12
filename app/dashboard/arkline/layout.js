@@ -8,8 +8,12 @@ import useArklineAccess from './use-arkline-access'
 function ArklineSubnav() {
   const segment = useSelectedLayoutSegment()
   const { access, loading } = useArklineAccess()
+
+  if (!segment) {
+    return null
+  }
+
   const items = [
-    { href: '/dashboard/arkline', label: 'Overview', segment: null, enabled: access.overview },
     { href: '/dashboard/arkline/directory', label: 'Directory', segment: 'directory', enabled: access.directory },
     { href: '/dashboard/arkline/progress-overview', label: 'Progress Snapshot', segment: 'progress-overview', enabled: access.progressOverview },
     { href: '/dashboard/arkline/production-planning', label: 'Production Planning', segment: 'production-planning', enabled: access.productionPlanning },
@@ -24,7 +28,7 @@ function ArklineSubnav() {
   return (
     <nav className={styles.subnav}>
       {items.map((item) => {
-        const isActive = segment === item.segment || (!segment && item.segment === null)
+        const isActive = segment === item.segment
         const className = `${styles.subnavLink} ${isActive ? styles.subnavLinkActive : ''} ${!loading && !item.enabled ? styles.subnavLinkDisabled : ''}`.trim()
 
         return !loading && item.enabled ? (

@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { createClient } from '@/utils/supabase/browser'
+import { useRealtimeRefresh } from '@/utils/supabase/use-realtime-refresh'
 
 const supabase = createClient()
 const TAKE_REQUESTS_TABLE = 'restock_request'
@@ -284,13 +285,12 @@ export default function TakeRequestsMobile() {
     initializePage()
   }, [])
 
-  useEffect(() => {
-    const intervalId = window.setInterval(() => {
-      refreshRequests(false)
-    }, 10000)
-
-    return () => window.clearInterval(intervalId)
-  }, [])
+  useRealtimeRefresh({
+    supabase,
+    topic: 'warehouse:restock',
+    onRefresh: () => refreshRequests(false),
+    paused: Boolean(completingId || selectedRequest),
+  })
 
   async function openCompleteModal(row) {
     setSelectedRequest(row)

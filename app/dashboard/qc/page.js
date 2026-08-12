@@ -955,6 +955,13 @@ function getRegularModelVariantLabel(item) {
   return [taskModel.model, taskModel.variant].map((value) => String(value || '').trim()).filter(Boolean).join(' - ')
 }
 
+function matchesModelVariantSearch(label, searchValue) {
+  const normalizedSearch = String(searchValue || '').trim().toUpperCase()
+  if (!normalizedSearch) return true
+
+  return String(label || '').trim().toUpperCase().includes(normalizedSearch)
+}
+
 function getArklinePoLabel(item) {
   return String(item.po_id || 'NO PO').trim().toUpperCase() || 'NO PO'
 }
@@ -1740,14 +1747,20 @@ export default function QcDashboardPage() {
     const matchesModelVariant =
       ignoredFilter === 'modelVariant' ||
       !regularModelVariantFilter ||
-      getRegularModelVariantLabel(item).toUpperCase().includes(String(regularModelVariantFilter || '').trim().toUpperCase())
+      matchesModelVariantSearch(getRegularModelVariantLabel(item), regularModelVariantFilter) ||
+      (isTemporarySampleTask(item) &&
+        qcSampleBreakdownRows.some(
+          (split) =>
+            Number(split.qc_item_id || 0) === Number(item.id || 0) &&
+            matchesModelVariantSearch(getSampleBreakdownLabel(split.sample_breakdown || {}), regularModelVariantFilter)
+        ))
     const matchesSample =
       ignoredFilter === 'sample' ||
       !sampleFilter ||
       (sampleFilter === 'yes' ? isRegularSampleTask(item) : !isRegularSampleTask(item))
 
     return matchesDate && matchesGrn && matchesBrand && matchesCategory && matchesModelVariant && matchesSample
-  }, [brandFilter, categoryFilter, dateFrom, dateTo, grnFilter, hasInvalidDateRange, regularModelVariantFilter, sampleFilter])
+  }, [brandFilter, categoryFilter, dateFrom, dateTo, grnFilter, hasInvalidDateRange, qcSampleBreakdownRows, regularModelVariantFilter, sampleFilter])
 
   const matchesArklineFilterValues = useCallback((item, ignoredFilter = '') => {
     const matchesDate = hasInvalidDateRange ? true : isWithinDateRange(getQcWorkDateValue(item), dateFrom, dateTo)
@@ -2014,8 +2027,17 @@ export default function QcDashboardPage() {
         let splitQtyA = 0
         let splitQtyB = 0
         let splitQtyC = 0
+        const visibleSampleSplitRows = regularModelVariantFilter
+          ? sampleSplitRows.filter((split) => matchesModelVariantSearch(getSampleBreakdownLabel(split.sample_breakdown || {}), regularModelVariantFilter))
+          : sampleSplitRows
 
         sampleSplitRows.forEach((split) => {
+          splitQtyA += Number(split.qty_a || 0)
+          splitQtyB += Number(split.qty_b || 0)
+          splitQtyC += Number(split.qty_c || 0)
+        })
+
+        visibleSampleSplitRows.forEach((split) => {
           const breakdown = split.sample_breakdown || {}
           const splitModel = breakdown.model_name || 'UNKNOWN MODEL'
           const splitVariant = breakdown.variant_name || ''
@@ -2049,17 +2071,14 @@ export default function QcDashboardPage() {
           current.photoUrl = current.photoUrl || breakdown.photo_url || ''
           current.taskRows.push(item)
           grouped.set(splitKey, current)
-
-          splitQtyA += Number(split.qty_a || 0)
-          splitQtyB += Number(split.qty_b || 0)
-          splitQtyC += Number(split.qty_c || 0)
         })
 
         const residualQtyA = Math.max(0, Number(item.qty_a || 0) - splitQtyA)
         const residualQtyB = Math.max(0, Number(item.qty_b || 0) - splitQtyB)
         const residualQtyC = Math.max(0, Number(item.qty_c || 0) - splitQtyC)
+        const residualMatchesModelVariant = matchesModelVariantSearch('TEMPORARY SAMPLE - TEMPORARY', regularModelVariantFilter)
 
-        if (residualQtyA || residualQtyB || residualQtyC) {
+        if ((residualQtyA || residualQtyB || residualQtyC) && residualMatchesModelVariant) {
           const residualKey = shouldSeparateSampleSummary
             ? `${brand}|||${category}|||${sampleSourceId}|||TEMPORARY SAMPLE|||TEMPORARY`
             : `${brand}|||${category}|||TEMPORARY SAMPLE|||TEMPORARY`
@@ -2358,6 +2377,7 @@ export default function QcDashboardPage() {
     qcConfirmRows,
     qcMode,
     qcSampleSplitsByQcItemId,
+    regularModelVariantFilter,
     sampleFilter,
   ])
 
@@ -2709,6 +2729,26 @@ export default function QcDashboardPage() {
       ),
     [sampleSplitDraftRows]
   )
+  const sampleSplitSourceTotals = useMemo(
+    () =>
+      selectedSampleSplitTasks.reduce(
+        (total, item) => ({
+          qtyA: total.qtyA + Number(item.qty_a || 0),
+          qtyB: total.qtyB + Number(item.qty_b || 0),
+          qtyC: total.qtyC + Number(item.qty_c || 0),
+        }),
+        { qtyA: 0, qtyB: 0, qtyC: 0 }
+      ),
+    [selectedSampleSplitTasks]
+  )
+  const sampleSplitRemainingTotals = useMemo(
+    () => ({
+      qtyA: sampleSplitSourceTotals.qtyA - sampleSplitDraftTotals.qtyA,
+      qtyB: sampleSplitSourceTotals.qtyB - sampleSplitDraftTotals.qtyB,
+      qtyC: sampleSplitSourceTotals.qtyC - sampleSplitDraftTotals.qtyC,
+    }),
+    [sampleSplitDraftTotals, sampleSplitSourceTotals]
+  )
 
   function openSampleSplitModal(summary) {
     setSampleSplitError('')
@@ -2799,17 +2839,31 @@ export default function QcDashboardPage() {
       }
     }
 
-    const deleteIds = sampleSplitDraftRows
-      .filter((row) => row.existingId && Number(row.qtyA || 0) + Number(row.qtyB || 0) + Number(row.qtyC || 0) <= 0)
+    const normalizedDraftRows = sampleSplitDraftRows.map((row) => ({
+      ...row,
+      qtyA: Number(row.qtyA || 0),
+      qtyB: Number(row.qtyB || 0),
+      qtyC: Number(row.qtyC || 0),
+    }))
+    const deleteIds = normalizedDraftRows
+      .filter((row) => row.existingId && row.qtyA + row.qtyB + row.qtyC <= 0)
       .map((row) => row.existingId)
-    const upsertRows = sampleSplitDraftRows
-      .filter((row) => Number(row.qtyA || 0) + Number(row.qtyB || 0) + Number(row.qtyC || 0) > 0)
+    const updateRows = normalizedDraftRows
+      .filter((row) => row.existingId && row.qtyA + row.qtyB + row.qtyC > 0)
+      .map((row) => ({
+        id: row.existingId,
+        qty_a: row.qtyA,
+        qty_b: row.qtyB,
+        qty_c: row.qtyC,
+      }))
+    const insertRows = normalizedDraftRows
+      .filter((row) => !row.existingId && row.qtyA + row.qtyB + row.qtyC > 0)
       .map((row) => ({
         qc_item_id: row.qcItemId,
         sample_breakdown_id: row.sampleBreakdownId,
-        qty_a: Number(row.qtyA || 0),
-        qty_b: Number(row.qtyB || 0),
-        qty_c: Number(row.qtyC || 0),
+        qty_a: row.qtyA,
+        qty_b: row.qtyB,
+        qty_c: row.qtyC,
       }))
 
     setSavingSampleSplit(true)
@@ -2827,13 +2881,30 @@ export default function QcDashboardPage() {
       }
     }
 
-    if (upsertRows.length) {
-      const { error: upsertError } = await supabase
+    for (const row of updateRows) {
+      const { error: updateError } = await supabase
         .from('qc_sample_breakdowns')
-        .upsert(upsertRows, { onConflict: 'qc_item_id,sample_breakdown_id' })
+        .update({
+          qty_a: row.qty_a,
+          qty_b: row.qty_b,
+          qty_c: row.qty_c,
+        })
+        .eq('id', row.id)
 
-      if (upsertError) {
-        setSampleSplitError(upsertError.message)
+      if (updateError) {
+        setSampleSplitError(updateError.message)
+        setSavingSampleSplit(false)
+        return
+      }
+    }
+
+    if (insertRows.length) {
+      const { error: insertError } = await supabase
+        .from('qc_sample_breakdowns')
+        .insert(insertRows)
+
+      if (insertError) {
+        setSampleSplitError(insertError.message)
         setSavingSampleSplit(false)
         return
       }
@@ -3944,9 +4015,9 @@ export default function QcDashboardPage() {
                     <th style={styles.th}>Model - Variant</th>
                     <th style={{ ...styles.th, ...styles.thCenter }}>QC Checked</th>
                     <th style={{ ...styles.th, ...styles.thCenter }}>Sample Qty</th>
-                    <th style={{ ...styles.th, ...styles.thCenter }}>A</th>
-                    <th style={{ ...styles.th, ...styles.thCenter }}>B</th>
-                    <th style={{ ...styles.th, ...styles.thCenter }}>C</th>
+                    <th style={{ ...styles.th, ...styles.thCenter }}>A ({formatNumber(sampleSplitRemainingTotals.qtyA)})</th>
+                    <th style={{ ...styles.th, ...styles.thCenter }}>B ({formatNumber(sampleSplitRemainingTotals.qtyB)})</th>
+                    <th style={{ ...styles.th, ...styles.thCenter }}>C ({formatNumber(sampleSplitRemainingTotals.qtyC)})</th>
                   </tr>
                 </thead>
                 <tbody>

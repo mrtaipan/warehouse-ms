@@ -212,6 +212,24 @@ function getLaterIsoDate(...values) {
   return latestValue
 }
 
+function getTodayDateInputValue() {
+  const today = new Date()
+  const year = today.getFullYear()
+  const month = String(today.getMonth() + 1).padStart(2, '0')
+  const day = String(today.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+function getLatestReceiptDate(receipts = []) {
+  return getLaterIsoDate(...(receipts || []).map((row) => row?.receive_date))
+}
+
+function getProductReceivedQty(productDetail) {
+  const receiptQty = (productDetail?.receipts || []).reduce((sum, row) => sum + Number(row?.received_qty || 0), 0)
+  if (receiptQty > 0) return receiptQty
+  return Number(productDetail?.financeSummary?.actualQty ?? productDetail?.actualQty ?? 0)
+}
+
 function buildMonthDays(monthDate) {
   const year = monthDate.getFullYear()
   const month = monthDate.getMonth()
@@ -1169,6 +1187,9 @@ export default function ArklineProgressOverviewPage() {
   const [shortageBatch, setShortageBatch] = useState(null)
   const [shortageNotes, setShortageNotes] = useState('')
   const [savingShortage, setSavingShortage] = useState(false)
+  const [manualCompleteOpen, setManualCompleteOpen] = useState(false)
+  const [savingManualComplete, setSavingManualComplete] = useState(false)
+  const [manualCompleteDraft, setManualCompleteDraft] = useState({ completionDate: '', notes: '' })
   const [receiptDraft, setReceiptDraft] = useState({ receiveDate: '', supplierSj: '', notes: '', sizeQty: {}, isFinal: false, hpp: '' })
   const [statusDraft, setStatusDraft] = useState({
     editingUpdateId: '',
@@ -1516,6 +1537,7 @@ export default function ArklineProgressOverviewPage() {
     setProductActionError('')
     setExpandedReturnBatchId('')
     setQcReceiptDateFilter('all')
+    setManualCompleteOpen(false)
     setProductDetailSections({
       receivingHistory: false,
       updateStatus: false,
@@ -1764,6 +1786,7 @@ export default function ArklineProgressOverviewPage() {
         status: itemDetail?.status || entry.status || '',
         price,
         updatedDeliveryDate: itemDetail?.updated_delivery_date || entry.updatedDeliveryDate || '',
+        completionDate: itemDetail?.completion_date || entry.completionDate || '',
         receipts: receiptRows,
         updates: updateRows,
         payments: paymentRows,
@@ -2055,6 +2078,73 @@ export default function ArklineProgressOverviewPage() {
     setSavingShortage(false)
     setProductActionMessage('Outstanding return qty closed as shortage.')
     void refreshRows()
+  }
+
+  function openManualCompleteModal() {
+    if (!selectedProductDetail) return
+    setManualCompleteOpen(true)
+    setDeliveryModalOpen(false)
+    setStatusModalOpen(false)
+    setDeleteStatusConfirmRow(null)
+    setProductActionMessage('')
+    setProductActionError('')
+    setManualCompleteDraft({
+      completionDate: selectedProductDetail.completionDate || getLatestReceiptDate(selectedProductDetail.receipts || []) || getTodayDateInputValue(),
+      notes: '',
+    })
+  }
+
+  async function handleManualCompleteProduct() {
+    if (!selectedProductDetail || savingManualComplete) return
+
+    setProductActionMessage('')
+    setProductActionError('')
+    if (!manualCompleteDraft.completionDate) {
+      setProductActionError('Isi completion date dulu.')
+      return
+    }
+
+    const receivedQty = getProductReceivedQty(selectedProductDetail)
+    if (receivedQty <= 0) {
+      setProductActionError('Produk belum punya receipt, jadi belum bisa ditutup completed.')
+      return
+    }
+
+    const existingNotes = String(selectedProductDetail.notes || '').trim()
+    const manualNotes = String(manualCompleteDraft.notes || '').trim()
+    const updatePayload = {
+      status: 'Completed',
+      completion_date: manualCompleteDraft.completionDate,
+    }
+
+    if (manualNotes) {
+      updatePayload.notes = [existingNotes, `Manual completed: ${manualNotes}`].filter(Boolean).join('\n')
+    }
+
+    setSavingManualComplete(true)
+    try {
+      const { error: itemError } = await supabase.from('arkline_po_items').update(updatePayload).eq('id', selectedProductDetail.id)
+      if (itemError) {
+        setProductActionError(itemError.message || 'Failed to complete product.')
+        return
+      }
+
+      await syncPoBoardStatus(selectedProductDetail.poId)
+      setManualCompleteOpen(false)
+      setManualCompleteDraft({ completionDate: '', notes: '' })
+      await openProductDetail({
+        ...selectedProductDetail,
+        status: 'Completed',
+        completionDate: manualCompleteDraft.completionDate,
+        notes: updatePayload.notes ?? selectedProductDetail.notes,
+      })
+      await refreshRows()
+      setProductActionMessage('Produk berhasil ditutup sebagai Completed.')
+    } catch (error) {
+      setProductActionError(error?.message || 'Failed to complete product.')
+    } finally {
+      setSavingManualComplete(false)
+    }
   }
 
   async function handlePrintQcSampleReport() {
@@ -2414,6 +2504,7 @@ export default function ArklineProgressOverviewPage() {
   function openDeliveryModal() {
     setDeliveryModalOpen(true)
     setStatusModalOpen(false)
+    setManualCompleteOpen(false)
     setDeleteStatusConfirmRow(null)
     setProductActionMessage('')
     setProductActionError('')
@@ -2422,6 +2513,7 @@ export default function ArklineProgressOverviewPage() {
   function openStatusModal() {
     setStatusModalOpen(true)
     setDeliveryModalOpen(false)
+    setManualCompleteOpen(false)
     setDeleteStatusConfirmRow(null)
     setProductActionMessage('')
     setProductActionError('')
@@ -2440,6 +2532,7 @@ export default function ArklineProgressOverviewPage() {
     const hasPresetReason = availableUpdateReasons.some((item) => item.reason_name === reason)
     setStatusModalOpen(true)
     setDeliveryModalOpen(false)
+    setManualCompleteOpen(false)
     setDeleteStatusConfirmRow(null)
     setProductActionMessage('')
     setProductActionError('')
@@ -2456,6 +2549,7 @@ export default function ArklineProgressOverviewPage() {
     if (!row?.id) return
     setStatusModalOpen(false)
     setDeliveryModalOpen(false)
+    setManualCompleteOpen(false)
     setProductActionMessage('')
     setProductActionError('')
     setDeleteStatusConfirmRow(row)
@@ -2496,6 +2590,21 @@ export default function ArklineProgressOverviewPage() {
     })
     await refreshRows()
   }
+
+  const selectedProductReceivedQty = getProductReceivedQty(selectedProductDetail)
+  const selectedProductPlannedQty = Number(selectedProductDetail?.financeSummary?.plannedQty || selectedProductDetail?.qty || 0)
+  const selectedProductRemainingQty = Math.max(selectedProductPlannedQty - selectedProductReceivedQty, 0)
+  const selectedProductDerivedStatus =
+    normalizeBoardStatus(selectedProductDetail?.status) === 'Completed'
+      ? 'Completed'
+      : selectedProductReceivedQty > 0
+        ? 'On Progress'
+        : normalizeBoardStatus(selectedProductDetail?.status)
+  const canManuallyCompleteSelectedProduct =
+    Boolean(selectedProductDetail) &&
+    (role === 'admin' || access.progressKanbanEdit) &&
+    selectedProductDerivedStatus === 'On Progress' &&
+    selectedProductReceivedQty > 0
 
   return (
     <div className={`${shellStyles.page} ${styles.page}`.trim()}>
@@ -3107,6 +3216,16 @@ export default function ArklineProgressOverviewPage() {
                     <button type="button" className={styles.productSectionLaunch} onClick={openDeliveryModal} aria-label="Open incoming goods input">
                       <PlusIcon />
                     </button>
+                    {canManuallyCompleteSelectedProduct ? (
+                      <button
+                        type="button"
+                        className={styles.productSectionTextButton}
+                        onClick={openManualCompleteModal}
+                        disabled={savingManualComplete}
+                      >
+                        Mark Completed
+                      </button>
+                    ) : null}
                   </div>
                   <button type="button" className={styles.productDetailSectionToggle} onClick={() => toggleProductDetailSection('receivingHistory')}>
                     <span className={styles.productDetailToggleValue}>
@@ -3454,6 +3573,67 @@ export default function ArklineProgressOverviewPage() {
             </div>
               )
             })()}
+          </div>
+        </div>
+      ) : null}
+
+      {selectedProductDetail && manualCompleteOpen ? (
+        <div className={styles.modalOverlay} onClick={() => !savingManualComplete && setManualCompleteOpen(false)}>
+          <div className={`${styles.modalCard} ${styles.actionModalCard}`.trim()} onClick={(event) => event.stopPropagation()}>
+            <div className={styles.modalHeader}>
+              <div>
+                <p className={styles.eyebrow}>Manual Completion</p>
+                <h3 className={styles.modalTitle}>{selectedProductDetail.productName || 'NO PRODUCT'}</h3>
+              </div>
+              <button type="button" className={styles.iconButton} onClick={() => setManualCompleteOpen(false)} disabled={savingManualComplete} aria-label="Close manual completion modal">
+                <CloseIcon />
+              </button>
+            </div>
+            <div className={`${styles.modalGrid} ${styles.compactModalGrid}`.trim()}>
+              <div className={styles.modalMetric}>
+                <span>Ordered Qty</span>
+                <strong>{formatNumber(selectedProductPlannedQty)}</strong>
+              </div>
+              <div className={styles.modalMetric}>
+                <span>Received Qty</span>
+                <strong>{formatNumber(selectedProductReceivedQty)}</strong>
+              </div>
+              <div className={styles.modalMetric}>
+                <span>Closed Short</span>
+                <strong>{formatNumber(selectedProductRemainingQty)}</strong>
+              </div>
+            </div>
+            <div className={styles.manualCompleteNotice}>
+              Status produk akan menjadi Completed tanpa menambah receipt baru. Receipt history tetap mengikuti qty penerimaan asli.
+            </div>
+            <label className={styles.filterField}>
+              <span>Completion Date</span>
+              <input
+                type="date"
+                className={styles.input}
+                value={manualCompleteDraft.completionDate}
+                onChange={(event) => setManualCompleteDraft((prev) => ({ ...prev, completionDate: event.target.value }))}
+                disabled={savingManualComplete}
+              />
+            </label>
+            <label className={styles.filterField}>
+              <span>Notes</span>
+              <textarea
+                className={styles.textarea}
+                value={manualCompleteDraft.notes}
+                onChange={(event) => setManualCompleteDraft((prev) => ({ ...prev, notes: event.target.value }))}
+                placeholder="Contoh: Sisa pengiriman dibatalkan supplier."
+                rows={4}
+                disabled={savingManualComplete}
+              />
+            </label>
+            {productActionError ? <div className={styles.productActionError}>{productActionError}</div> : null}
+            <div className={styles.productHeaderActions}>
+              <button type="button" className={styles.secondaryButton} onClick={() => setManualCompleteOpen(false)} disabled={savingManualComplete}>Cancel</button>
+              <button type="button" className={styles.primaryButton} onClick={() => void handleManualCompleteProduct()} disabled={savingManualComplete || !manualCompleteDraft.completionDate}>
+                {savingManualComplete ? 'Saving...' : 'Mark Completed'}
+              </button>
+            </div>
           </div>
         </div>
       ) : null}

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createClient } from '@/utils/supabase/browser'
 import { ADMIN_EMAIL } from '@/utils/permissions'
 import { getProfileByAuthenticatedUser } from '@/utils/user-profiles'
+import { useRealtimeRefresh } from '@/utils/supabase/use-realtime-refresh'
 import styles from './myarklife.module.css'
 
 const supabase = createClient()
@@ -240,7 +241,7 @@ export default function MyArklifeReimbursementClient({ profile, headerActions = 
     const { data: profileRow } = await getProfileByAuthenticatedUser(
       supabase,
       user,
-      'id, authenticated_id, display_name, reimbursement_bank_name, reimbursement_account_name, reimbursement_account_number, "group"'
+      'id, authenticated_id, email, display_name, reimbursement_bank_name, reimbursement_account_name, reimbursement_account_number, "group"'
     )
     const currentEmail = String(profileRow?.email || profile?.email || user.email || '').toLowerCase()
 
@@ -276,6 +277,7 @@ export default function MyArklifeReimbursementClient({ profile, headerActions = 
             )
           `
         )
+        .eq('employee_email_snapshot', currentEmail)
         .order('submitted_at', { ascending: false }),
       supabase.from('dir_user_profiles').select('"group"'),
     ])
@@ -300,13 +302,12 @@ export default function MyArklifeReimbursementClient({ profile, headerActions = 
     void loadWorkspace()
   }, [loadWorkspace])
 
-  useEffect(() => {
-    const intervalId = window.setInterval(() => {
-      if (saving) return
-      void loadWorkspace(true)
-    }, 10000)
-    return () => window.clearInterval(intervalId)
-  }, [loadWorkspace, saving])
+  useRealtimeRefresh({
+    supabase,
+    topic: 'finance:reimbursement',
+    onRefresh: () => loadWorkspace(true),
+    paused: saving,
+  })
 
   function resetBatchModal() {
     const firstRow = createDraftRow(profileGroup)

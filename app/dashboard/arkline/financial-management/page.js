@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { createClient } from '@/utils/supabase/browser'
 import { getProfileByAuthenticatedUser } from '@/utils/user-profiles'
+import { useRealtimeRefresh } from '@/utils/supabase/use-realtime-refresh'
 
 import useArklineAccess from '../use-arkline-access'
 import shellStyles from '../arkline.module.css'
@@ -523,15 +524,13 @@ export default function ArklineFinancialManagementPage({
     void loadWorkspace()
   }, [loadWorkspace])
 
-  useEffect(() => {
-    if (accessLoading || !canView) return undefined
-
-    const intervalId = window.setInterval(() => {
-      void loadWorkspace({ silent: true })
-    }, 30000)
-
-    return () => window.clearInterval(intervalId)
-  }, [accessLoading, canView, loadWorkspace])
+  useRealtimeRefresh({
+    supabase,
+    topic: 'finance:arkline-payment',
+    onRefresh: () => loadWorkspace({ silent: true }),
+    paused: Boolean(accessLoading || showCreateModal || editingRequest || selectedRequest),
+    enabled: canView,
+  })
 
   const filteredRequests = useMemo(() => {
     const keyword = search.trim().toUpperCase()

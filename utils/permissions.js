@@ -114,6 +114,7 @@ const BASE_PERMISSION_GROUPS = [
       { key: 'directory.products', label: 'Products', description: 'Kelola daftar produk Arkline.', actions: ['view', 'add', 'edit', 'delete'] },
       { key: 'directory.materials', label: 'Materials', description: 'Kelola master material Arkline.', actions: ['view', 'add', 'edit', 'delete'] },
       { key: 'directory.bom', label: 'BOM', description: 'Kelola bill of materials produk Arkline.', actions: ['view', 'add', 'edit', 'delete'] },
+      { key: 'directory.suppliers', label: 'Suppliers', description: 'Kelola supplier Arkline dan asosiasi material yang dapat disupply.', actions: ['view', 'add', 'edit'] },
       { key: 'progress_snapshot', label: 'Progress Snapshot', description: 'Pintu masuk halaman progress snapshot Arkline.', actions: ['view'] },
       { key: 'progress_snapshot.kanban', label: 'Kanban', description: 'Lihat dan kelola kanban progress order Arkline.', actions: ['view', 'add', 'edit'] },
       { key: 'progress_snapshot.calendar', label: 'Calendar', description: 'Lihat progress order dalam tampilan kalender.', actions: ['view'] },
@@ -432,6 +433,9 @@ const DEFAULT_ROLE_BUNDLES = {
     'arkline.directory.materials.view',
     'arkline.directory.materials.add',
     'arkline.directory.materials.edit',
+    'arkline.directory.suppliers.view',
+    'arkline.directory.suppliers.add',
+    'arkline.directory.suppliers.edit',
     'arkline.progress_snapshot.view',
     'arkline.progress_snapshot.kanban.view',
     'arkline.progress_snapshot.kanban.add',
@@ -465,6 +469,7 @@ const DEFAULT_ROLE_BUNDLES = {
     'arkline.directory.products.view',
     'arkline.directory.bom.view',
     'arkline.directory.materials.view',
+    'arkline.directory.suppliers.view',
     'arkline.progress_snapshot.view',
     'arkline.progress_snapshot.kanban.view',
     'arkline.progress_snapshot.calendar.view',
@@ -604,6 +609,9 @@ export function getArklineFeatureAccess(role, permissions = [], isAdmin = false)
       directoryMaterialsCreate: true,
       directoryMaterialsEdit: true,
       directoryMaterialsDelete: true,
+      directorySuppliers: true,
+      directorySuppliersCreate: true,
+      directorySuppliersEdit: true,
       progressOverview: true,
       progressKanban: true,
       progressKanbanAdd: true,
@@ -641,6 +649,7 @@ export function getArklineFeatureAccess(role, permissions = [], isAdmin = false)
   const directoryProducts = buildFeatureAccess('arkline.directory.products', permissions, isAdmin)
   const directoryBom = buildFeatureAccess('arkline.directory.bom', permissions, isAdmin)
   const directoryMaterials = buildFeatureAccess('arkline.directory.materials', permissions, isAdmin)
+  const directorySuppliers = buildFeatureAccess('arkline.directory.suppliers', permissions, isAdmin)
   const progressHome = buildFeatureAccess('arkline.progress_snapshot', permissions, isAdmin)
   const progressKanban = buildFeatureAccess('arkline.progress_snapshot.kanban', permissions, isAdmin)
   const progressCalendar = buildFeatureAccess('arkline.progress_snapshot.calendar', permissions, isAdmin)
@@ -660,6 +669,7 @@ export function getArklineFeatureAccess(role, permissions = [], isAdmin = false)
     directoryProducts.view ||
     directoryBom.view ||
     directoryMaterials.view ||
+    directorySuppliers.view ||
     progressHome.view ||
     progressKanban.view ||
     progressCalendar.view ||
@@ -674,7 +684,7 @@ export function getArklineFeatureAccess(role, permissions = [], isAdmin = false)
 
   let menuHref = '/dashboard'
   if (overview) menuHref = '/dashboard/arkline'
-  else if (directoryHome.view || directoryProducts.view || directoryBom.view || directoryMaterials.view) menuHref = '/dashboard/arkline/directory'
+  else if (directoryHome.view || directoryProducts.view || directoryBom.view || directoryMaterials.view || directorySuppliers.view) menuHref = '/dashboard/arkline/directory'
   else if (progressHome.view || progressKanban.view || progressCalendar.view || progressProducts.view) menuHref = '/dashboard/arkline/progress-overview'
   else if (productionPlanning.view || productionOrders.view || materialFulfillment.view) menuHref = '/dashboard/arkline/production-planning'
 
@@ -691,7 +701,7 @@ export function getArklineFeatureAccess(role, permissions = [], isAdmin = false)
     menu,
     menuHref,
     overview,
-    directory: directoryHome.view || directoryProducts.view || directoryBom.view || directoryMaterials.view,
+    directory: directoryHome.view || directoryProducts.view || directoryBom.view || directoryMaterials.view || directorySuppliers.view,
     directoryBom: directoryBom.view,
     directoryCreate: directoryProducts.add || directoryProducts.edit,
     directoryProducts: directoryProducts.view,
@@ -702,6 +712,9 @@ export function getArklineFeatureAccess(role, permissions = [], isAdmin = false)
     directoryMaterialsCreate: directoryMaterials.add,
     directoryMaterialsEdit: directoryMaterials.edit,
     directoryMaterialsDelete: directoryMaterials.delete,
+    directorySuppliers: directorySuppliers.view,
+    directorySuppliersCreate: directorySuppliers.add,
+    directorySuppliersEdit: directorySuppliers.edit,
     progressOverview: progressHome.view || progressKanban.view || progressCalendar.view || progressProducts.view,
     progressKanban: progressKanban.view,
     progressKanbanAdd: progressKanban.add,

@@ -1,43 +1,19 @@
 'use client'
 
-import { useEffect } from 'react'
 import { useRouter } from 'next/navigation'
+import { createClient } from '@/utils/supabase/browser'
+import { useRealtimeRefresh } from '@/utils/supabase/use-realtime-refresh'
 
-export default function HumanResourcesAutoRefreshClient({ intervalMs = 45000 }) {
+const supabase = createClient()
+
+export default function HumanResourcesAutoRefreshClient() {
   const router = useRouter()
 
-  useEffect(() => {
-    let timerId = null
-
-    function scheduleRefresh() {
-      if (timerId) {
-        window.clearInterval(timerId)
-      }
-
-      timerId = window.setInterval(() => {
-        if (document.visibilityState === 'visible') {
-          router.refresh()
-        }
-      }, intervalMs)
-    }
-
-    scheduleRefresh()
-
-    function handleVisibilityChange() {
-      if (document.visibilityState === 'visible') {
-        router.refresh()
-      }
-    }
-
-    document.addEventListener('visibilitychange', handleVisibilityChange)
-
-    return () => {
-      if (timerId) {
-        window.clearInterval(timerId)
-      }
-      document.removeEventListener('visibilitychange', handleVisibilityChange)
-    }
-  }, [intervalMs, router])
+  useRealtimeRefresh({
+    supabase,
+    topic: 'hr:dashboard',
+    onRefresh: () => router.refresh(),
+  })
 
   return null
 }

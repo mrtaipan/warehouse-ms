@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { createClient } from '@/utils/supabase/browser'
 import { getProfileByAuthenticatedUser } from '@/utils/user-profiles'
+import { useRealtimeRefresh } from '@/utils/supabase/use-realtime-refresh'
 
 const supabase = createClient()
 const RACK_LOCATION_BATCH_SIZE = 1000
@@ -469,13 +470,12 @@ export default function RestockRequestSubmit({
     initializePage()
   }, [])
 
-  useEffect(() => {
-    const intervalId = window.setInterval(() => {
-      refreshRequests(false)
-    }, 10000)
-
-    return () => window.clearInterval(intervalId)
-  }, [])
+  useRealtimeRefresh({
+    supabase,
+    topic: 'warehouse:restock',
+    onRefresh: () => refreshRequests(false),
+    paused: submitting,
+  })
 
   function handleInputChange(event) {
     const { name, value } = event.target

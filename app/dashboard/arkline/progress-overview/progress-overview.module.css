@@ -1305,6 +1305,24 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  flex-wrap: wrap;
+}
+
+.productSectionTextButton {
+  min-height: 28px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid #bbf7d0;
+  background: #f0fdf4;
+  color: #166534;
+  font-size: 10px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.productSectionTextButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
 }
 
 .productDetailSectionToggle {
@@ -1376,6 +1394,17 @@
   border: 1px solid #bbf7d0;
   background: #f0fdf4;
   color: #166534;
+}
+
+.manualCompleteNotice {
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid #dbe4f0;
+  background: #f8fafc;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.5;
 }
 
 .productDetailSection {

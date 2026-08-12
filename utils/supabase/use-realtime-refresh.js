@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from 'react'
 
-export function useRealtimeRefresh({ supabase, topic, onRefresh, debounceMs = 500, paused = false }) {
+export function useRealtimeRefresh({ supabase, topic, onRefresh, debounceMs = 500, paused = false, enabled = true }) {
   const refreshRef = useRef(onRefresh)
   const pausedRef = useRef(paused)
   const resumeRefreshRef = useRef(null)
@@ -18,6 +18,8 @@ export function useRealtimeRefresh({ supabase, topic, onRefresh, debounceMs = 50
   }, [paused])
 
   useEffect(() => {
+    if (!enabled) return undefined
+
     let channel = null
     let debounceTimer = null
     let disposed = false
@@ -125,5 +127,5 @@ export function useRealtimeRefresh({ supabase, topic, onRefresh, debounceMs = 50
         void supabase.removeChannel(channel)
       }
     }
-  }, [debounceMs, supabase, topic])
+  }, [debounceMs, enabled, supabase, topic])
 }
