@@ -8,11 +8,12 @@ import { useRealtimeRefresh } from '@/utils/supabase/use-realtime-refresh'
 const supabase = createClient()
 const TAKE_REQUESTS_TABLE = 'restock_request'
 const RACK_LOCATION_BATCH_SIZE = 1000
+const DEFAULT_SOURCE_TYPE = 'MOB'
 
 async function fetchOpenRequests() {
   const { data, error } = await supabase
     .from(TAKE_REQUESTS_TABLE)
-    .select('id, requester_name, item_name, size, qty, take_from, storage_id, search_term, note, created_at')
+    .select('id, requester_name, item_name, size, qty, take_from, storage_id, search_term, source_type, note, created_at')
     .eq('request_status', 'open')
     .order('created_at', { ascending: false })
 
@@ -25,6 +26,11 @@ async function fetchOpenRequests() {
 
 function normalizeText(value) {
   return String(value || '').trim().toUpperCase()
+}
+
+function normalizeRequestSource(value) {
+  const normalizedValue = normalizeText(value)
+  return normalizedValue === 'ARKLINE' ? 'ARKLINE' : DEFAULT_SOURCE_TYPE
 }
 
 function getLocationKey(value) {
@@ -89,23 +95,53 @@ function getStorageSearchCandidates(value) {
   return Array.from(new Set(candidates))
 }
 
-async function fetchStorageMatches(searchTerm, requestedSize = '') {
+async function fetchStorageMatches(searchTerm, requestedSize = '', allowedRackLocationIds = null) {
   const rowsById = new Map()
   const candidates = getStorageSearchCandidates(searchTerm)
+  const allowedIds = allowedRackLocationIds instanceof Set ? allowedRackLocationIds : null
+
+  if (allowedIds && allowedIds.size === 0) {
+    return []
+  }
 
   for (const candidate of candidates) {
-    const { data, error } = await supabase
+    const query = supabase
       .from('warehouse_storage')
       .select('id, rack_location_id, item_name, size, qty')
-      .ilike('item_name', `%${candidate}%`)
       .order('qty', { ascending: false })
-      .limit(50)
+      .limit(200)
+
+    if (allowedIds && allowedIds.size > 0) {
+      query.in('rack_location_id', Array.from(allowedIds))
+    }
+
+    const { data: itemNameRows, error } = await query.ilike('item_name', `%${candidate}%`)
 
     if (error) {
       throw error
     }
 
-    ;(data || []).forEach((row) => {
+    ;(itemNameRows || []).forEach((row) => {
+      rowsById.set(row.id, row)
+    })
+
+    const skuQuery = supabase
+      .from('warehouse_storage')
+      .select('id, rack_location_id, item_name, size, qty')
+      .order('qty', { ascending: false })
+      .limit(200)
+
+    if (allowedIds && allowedIds.size > 0) {
+      skuQuery.in('rack_location_id', Array.from(allowedIds))
+    }
+
+    const { data: skuRows, error: skuError } = await skuQuery.ilike('sku_id', `%${candidate}%`)
+
+    if (skuError) {
+      throw skuError
+    }
+
+    ;(skuRows || []).forEach((row) => {
       rowsById.set(row.id, row)
     })
 
@@ -172,7 +208,7 @@ function selectRowsForRequestedSize(rows, requestedSize) {
   return []
 }
 
-async function fetchRackLocationMap() {
+async function fetchRackLocations() {
   const allRows = []
   let from = 0
 
@@ -180,7 +216,7 @@ async function fetchRackLocationMap() {
     const to = from + RACK_LOCATION_BATCH_SIZE - 1
     const { data, error } = await supabase
       .from('dir_rack_locations')
-      .select('id, location_type, location_id, location_code, sub_location')
+      .select('id, location_type, location_id, location_code, sub_location, group_code')
       .range(from, to)
 
     if (error) {
@@ -200,23 +236,36 @@ async function fetchRackLocationMap() {
     from += RACK_LOCATION_BATCH_SIZE
   }
 
-  return new Map(
-    allRows.map((item) => [
-      getLocationKey(item.id),
-      getLocationLabel(item),
-    ])
+  return allRows
+}
+
+function getAllowedRackLocationIds(rackLocations = [], sourceType = DEFAULT_SOURCE_TYPE) {
+  const requestedGroup = normalizeRequestSource(sourceType)
+
+  return new Set(
+    (rackLocations || [])
+      .filter((location) => normalizeText(location?.group_code) === requestedGroup)
+      .map((location) => getLocationKey(location.id))
+      .filter(Boolean)
   )
 }
 
 async function fetchSourceOptions(row) {
   const searchTerm = row.search_term || row.item_name
-  const data = await fetchStorageMatches(searchTerm, row.size)
+  const rackLocations = await fetchRackLocations()
+  const allowedRackLocationIds = getAllowedRackLocationIds(rackLocations, row.source_type)
+  const locationMap = new Map(
+    rackLocations.map((item) => [
+      getLocationKey(item.id),
+      getLocationLabel(item),
+    ])
+  )
+  const data = await fetchStorageMatches(searchTerm, row.size, allowedRackLocationIds)
 
   const matchedRows = selectRowsForRequestedSize(data || [], row.size)
-  const locationMap = await fetchRackLocationMap()
 
   const rawOptions = matchedRows
-    .filter((entry) => Number(entry.qty || 0) > 0)
+    .filter((entry) => Number(entry.qty || 0) > 0 && allowedRackLocationIds.has(getLocationKey(entry.rack_location_id)))
     .map((entry) => ({
       storageId: entry.id,
       label: locationMap.get(getLocationKey(entry.rack_location_id)) || 'Location is not found',

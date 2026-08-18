@@ -13,6 +13,7 @@ const SOURCE_OPTIONS = [
   { value: 'MOB', label: 'MOB' },
   { value: 'ARKLINE', label: 'ARKLINE' },
 ]
+const DEFAULT_SOURCE_TYPE = 'MOB'
 
 async function fetchAllRackLocations() {
   const allRows = []
@@ -22,7 +23,7 @@ async function fetchAllRackLocations() {
     const to = from + RACK_LOCATION_BATCH_SIZE - 1
     const { data, error } = await supabase
       .from('dir_rack_locations')
-      .select('id, location_type, location_id, location_code, sub_location')
+      .select('id, location_type, location_id, location_code, sub_location, group_code')
       .order('location_type', { ascending: true })
       .order('location_id', { ascending: true })
       .order('location_code', { ascending: true })
@@ -71,6 +72,26 @@ function getLocationKey(value) {
 
 function normalizeText(value) {
   return String(value || '').trim().toUpperCase()
+}
+
+function normalizeRequestSource(value) {
+  const normalizedValue = normalizeText(value)
+  return normalizedValue === 'ARKLINE' ? 'ARKLINE' : DEFAULT_SOURCE_TYPE
+}
+
+function getRackLocationGroup(location) {
+  return normalizeText(location?.group_code)
+}
+
+function getAllowedRackLocationIds(rackLocations = [], sourceType = DEFAULT_SOURCE_TYPE) {
+  const requestedGroup = normalizeRequestSource(sourceType)
+
+  return new Set(
+    (rackLocations || [])
+      .filter((location) => getRackLocationGroup(location) === requestedGroup)
+      .map((location) => getLocationKey(location.id))
+      .filter(Boolean)
+  )
 }
 
 function normalizeSearchTermInput(value) {
@@ -141,23 +162,53 @@ function getStorageSearchCandidates(value) {
   return Array.from(new Set(candidates))
 }
 
-async function fetchStorageMatches(searchTerm, requestedSize = '') {
+async function fetchStorageMatches(searchTerm, requestedSize = '', allowedRackLocationIds = null) {
   const rowsById = new Map()
   const candidates = getStorageSearchCandidates(searchTerm)
+  const allowedIds = allowedRackLocationIds instanceof Set ? allowedRackLocationIds : null
+
+  if (allowedIds && allowedIds.size === 0) {
+    return []
+  }
 
   for (const candidate of candidates) {
-    const { data, error } = await supabase
+    const query = supabase
       .from('warehouse_storage')
       .select('id, rack_location_id, item_name, size, qty')
-      .ilike('item_name', `%${candidate}%`)
       .order('qty', { ascending: false })
-      .limit(50)
+      .limit(200)
+
+    if (allowedIds && allowedIds.size > 0) {
+      query.in('rack_location_id', Array.from(allowedIds))
+    }
+
+    const { data: itemNameRows, error } = await query.ilike('item_name', `%${candidate}%`)
 
     if (error) {
       throw error
     }
 
-    ;(data || []).forEach((row) => {
+    ;(itemNameRows || []).forEach((row) => {
+      rowsById.set(row.id, row)
+    })
+
+    const skuQuery = supabase
+      .from('warehouse_storage')
+      .select('id, rack_location_id, item_name, size, qty')
+      .order('qty', { ascending: false })
+      .limit(200)
+
+    if (allowedIds && allowedIds.size > 0) {
+      skuQuery.in('rack_location_id', Array.from(allowedIds))
+    }
+
+    const { data: skuRows, error: skuError } = await skuQuery.ilike('sku_id', `%${candidate}%`)
+
+    if (skuError) {
+      throw skuError
+    }
+
+    ;(skuRows || []).forEach((row) => {
       rowsById.set(row.id, row)
     })
 
@@ -262,9 +313,12 @@ function rankMatches(rows, searchTerm, size) {
 function buildRequestRows(matches, rackLocations, form, requesterName) {
   const requestedQty = Number(form.qty || 0)
   const submittedNote = String(form.note || '').trim()
+  const allowedRackLocationIds = getAllowedRackLocationIds(rackLocations, form.sourceType)
   const locationById = new Map(rackLocations.map((item) => [getLocationKey(item.id), item]))
   const rankedMatches = rankMatches(matches, form.searchTerm, form.size)
-  const availableRows = rankedMatches.filter((entry) => Number(entry.qty || 0) > 0)
+  const availableRows = rankedMatches.filter((entry) =>
+    Number(entry.qty || 0) > 0 && allowedRackLocationIds.has(getLocationKey(entry.rack_location_id))
+  )
   const uniqueLocations = []
   const seenLocations = new Set()
 
@@ -294,26 +348,54 @@ function buildRequestRows(matches, rackLocations, form, requesterName) {
       take_from: takeFromSummary,
       storage_id: null,
       search_term: form.searchTerm.trim(),
+      source_type: normalizeRequestSource(form.sourceType),
       note: submittedNote || null,
       request_status: 'open',
     },
   ]
 }
 
-function buildArklineRequestRows(product, form, requesterName) {
+function buildArklineRequestRows(product, matches, rackLocations, form, requesterName) {
   const requestedQty = Number(form.qty || 0)
   const submittedNote = String(form.note || '').trim()
   const itemLabel = getArklineProductLabel(product) || form.searchTerm.trim()
+  const allowedRackLocationIds = getAllowedRackLocationIds(rackLocations, form.sourceType)
+  const locationById = new Map(rackLocations.map((item) => [getLocationKey(item.id), item]))
+  const rankedMatches = rankMatches(matches, product?.sku || itemLabel, form.size)
+  const availableRows = rankedMatches.filter((entry) =>
+    Number(entry.qty || 0) > 0 && allowedRackLocationIds.has(getLocationKey(entry.rack_location_id))
+  )
+  const uniqueLocations = []
+  const seenLocations = new Set()
+
+  availableRows.forEach((entry) => {
+    const location = locationById.get(getLocationKey(entry.rack_location_id)) || null
+    const label = getLocationLabel(location)
+
+    if (label !== 'Location is not found' && !seenLocations.has(label)) {
+      seenLocations.add(label)
+      uniqueLocations.push(label)
+    }
+  })
+
+  const locationCount = uniqueLocations.length
+  const takeFromSummary =
+    locationCount > 0
+      ? `${locationCount} Registered Location${locationCount === 1 ? '' : 's'}${
+          uniqueLocations.length > 0 ? ` - ${uniqueLocations.slice(0, 2).join(', ')}` : ''
+        }${uniqueLocations.length > 2 ? ' ...' : ''}`
+      : 'Location is not found'
 
   return [
     {
       requester_name: requesterName.trim(),
-      item_name: itemLabel,
-      size: normalizeSizeValue(form.size) || '-',
+      item_name: availableRows[0]?.item_name || itemLabel,
+      size: normalizeSizeValue(availableRows[0]?.size || form.size) || '-',
       qty: requestedQty,
-      take_from: 'Location is not found',
+      take_from: takeFromSummary,
       storage_id: null,
       search_term: product?.sku || itemLabel,
+      source_type: normalizeRequestSource(form.sourceType),
       note: submittedNote || null,
       request_status: 'open',
     },
@@ -344,9 +426,9 @@ function formatTakeFromLabel(value) {
 }
 
 async function fetchOpenRequests() {
-  const { data, error } = await supabase
-    .from(TAKE_REQUESTS_TABLE)
-    .select('id, requester_name, item_name, size, qty, take_from, storage_id, search_term, note, created_at')
+    const { data, error } = await supabase
+      .from(TAKE_REQUESTS_TABLE)
+    .select('id, requester_name, item_name, size, qty, take_from, storage_id, search_term, source_type, note, created_at')
     .eq('request_status', 'open')
     .order('created_at', { ascending: false })
 
@@ -377,6 +459,7 @@ export default function RestockRequestSubmit({
   const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
+  const [arklineDropdownOpen, setArklineDropdownOpen] = useState(false)
   const [form, setForm] = useState({
     sourceType: '',
     size: '',
@@ -389,6 +472,17 @@ export default function RestockRequestSubmit({
     () => arklineProducts.map((item) => getArklineProductLabel(item)).filter(Boolean),
     [arklineProducts]
   )
+  const filteredArklineProductOptions = useMemo(() => {
+    const searchValue = normalizeText(form.searchTerm)
+
+    if (!searchValue) {
+      return arklineProductOptions.slice(0, 30)
+    }
+
+    return arklineProductOptions
+      .filter((label) => normalizeText(label).includes(searchValue))
+      .slice(0, 30)
+  }, [arklineProductOptions, form.searchTerm])
 
   async function fetchRequesterName() {
     const {
@@ -451,6 +545,8 @@ export default function RestockRequestSubmit({
             typeof item.location_code === 'string' ? item.location_code.trim() : item.location_code,
           sub_location:
             typeof item.sub_location === 'string' ? item.sub_location.trim() : item.sub_location,
+          group_code:
+            typeof item.group_code === 'string' ? item.group_code.trim() : item.group_code,
         }))
 
         setRackLocations(normalizedRackLocations)
@@ -498,6 +594,10 @@ export default function RestockRequestSubmit({
             ? normalizeSearchTermInput(value)
             : value,
     }))
+
+    if (name === 'searchTerm' && form.sourceType === 'ARKLINE') {
+      setArklineDropdownOpen(true)
+    }
   }
 
   function handleSourceTypeChange(nextSourceType) {
@@ -509,8 +609,17 @@ export default function RestockRequestSubmit({
       qty: prev.qty || '1',
       note: '',
     }))
+    setArklineDropdownOpen(false)
     setError('')
     setSuccess('')
+  }
+
+  function handleArklineProductSelect(label) {
+    setForm((prev) => ({
+      ...prev,
+      searchTerm: normalizeSearchTermInput(label),
+    }))
+    setArklineDropdownOpen(false)
   }
 
   async function handleSubmit(event) {
@@ -562,12 +671,25 @@ export default function RestockRequestSubmit({
         return
       }
 
-      payload = buildArklineRequestRows(selectedProduct, form, requesterName)
-    } else {
       let data = []
+      const allowedRackLocationIds = getAllowedRackLocationIds(rackLocations, form.sourceType)
 
       try {
-        data = await fetchStorageMatches(form.searchTerm.trim(), form.size.trim())
+        data = await fetchStorageMatches(selectedProduct.sku || getArklineProductLabel(selectedProduct), form.size.trim(), allowedRackLocationIds)
+      } catch (searchError) {
+        setError(searchError.message)
+        setSubmitting(false)
+        return
+      }
+
+      const matchedRows = selectRowsForRequestedSize(data || [], form.size.trim())
+      payload = buildArklineRequestRows(selectedProduct, matchedRows, rackLocations, form, requesterName)
+    } else {
+      let data = []
+      const allowedRackLocationIds = getAllowedRackLocationIds(rackLocations, form.sourceType)
+
+      try {
+        data = await fetchStorageMatches(form.searchTerm.trim(), form.size.trim(), allowedRackLocationIds)
       } catch (searchError) {
         setError(searchError.message)
         setSubmitting(false)
@@ -664,22 +786,44 @@ export default function RestockRequestSubmit({
                   name="searchTerm"
                   value={form.searchTerm}
                   onChange={handleInputChange}
+                  onFocus={() => {
+                    if (form.sourceType === 'ARKLINE') {
+                      setArklineDropdownOpen(true)
+                    }
+                  }}
+                  onBlur={() => {
+                    window.setTimeout(() => setArklineDropdownOpen(false), 120)
+                  }}
                   style={styles.input}
+                  autoComplete="off"
                   placeholder={
                     form.sourceType === 'ARKLINE'
                       ? 'TYPE OR CHOOSE AN ARKLINE PRODUCT'
                       : 'SEARCH THE ITEM TO PICK'
                   }
-                  list={form.sourceType === 'ARKLINE' ? 'arkline-product-options' : undefined}
                   required
                 />
                 {form.sourceType === 'ARKLINE' ? (
                   <>
-                    <datalist id="arkline-product-options">
-                      {arklineProductOptions.map((label) => (
-                        <option key={label} value={label} />
-                      ))}
-                    </datalist>
+                    {arklineDropdownOpen ? (
+                      <div style={styles.typeaheadMenu}>
+                        {filteredArklineProductOptions.length ? (
+                          filteredArklineProductOptions.map((label) => (
+                            <button
+                              key={label}
+                              type="button"
+                              onMouseDown={(event) => event.preventDefault()}
+                              onClick={() => handleArklineProductSelect(label)}
+                              style={styles.typeaheadOption}
+                            >
+                              {label}
+                            </button>
+                          ))
+                        ) : (
+                          <div style={styles.typeaheadEmpty}>No matching Arkline product found.</div>
+                        )}
+                      </div>
+                    ) : null}
                     {arklineProductError ? <span style={styles.helperError}>{arklineProductError}</span> : null}
                     {!arklineProductError && !arklineProductOptions.length ? (
                       <span style={styles.helperText}>No active Arkline products are available yet.</span>
@@ -937,6 +1081,7 @@ const styles = {
     color: '#fff',
   },
   field: {
+    position: 'relative',
     display: 'flex',
     flexDirection: 'column',
     gap: '8px',
@@ -960,6 +1105,44 @@ const styles = {
     fontSize: '13px',
     color: '#111827',
     outline: 'none',
+  },
+  typeaheadMenu: {
+    position: 'absolute',
+    top: '74px',
+    left: 0,
+    zIndex: 30,
+    width: 'min(760px, calc(100vw - 48px))',
+    maxHeight: '320px',
+    overflowY: 'auto',
+    borderRadius: '16px',
+    border: '1px solid #fed7aa',
+    background: '#fff',
+    boxShadow: '0 20px 46px rgba(15, 23, 42, 0.16)',
+    padding: '8px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '4px',
+  },
+  typeaheadOption: {
+    width: '100%',
+    border: 0,
+    borderRadius: '10px',
+    background: '#fff',
+    color: '#111827',
+    padding: '12px 14px',
+    textAlign: 'left',
+    fontSize: '13px',
+    fontWeight: '800',
+    lineHeight: 1.35,
+    whiteSpace: 'normal',
+    overflowWrap: 'anywhere',
+    cursor: 'pointer',
+  },
+  typeaheadEmpty: {
+    padding: '12px 14px',
+    color: '#6b7280',
+    fontSize: '12px',
+    fontWeight: '700',
   },
   helperText: {
     color: '#6b7280',
