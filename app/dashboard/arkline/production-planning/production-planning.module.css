@@ -267,6 +267,47 @@
   gap: 8px;
 }
 
+.fieldHeaderRow {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 6px;
+  min-height: 15px;
+}
+
+.inlineAddButton {
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  border: 1px solid #d7dee7;
+  background: #ffffff;
+  color: #0f172a;
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+  transition: transform 160ms ease, border-color 160ms ease, background 160ms ease, color 160ms ease;
+}
+
+.inlineAddButton:hover {
+  transform: translateY(-1px);
+  border-color: #0f172a;
+  background: #0f172a;
+  color: #ffffff;
+}
+
+.inlineAddButton:disabled {
+  cursor: not-allowed;
+  transform: none;
+  border-color: #e2e8f0;
+  background: #f1f5f9;
+  color: #94a3b8;
+}
+
 .inlineFieldRow {
   display: grid;
   grid-template-columns: minmax(88px, 0.22fr) minmax(0, 1.78fr);
@@ -940,6 +981,45 @@
   flex-wrap: wrap;
 }
 
+.quickSupplierModal {
+  width: min(100%, 620px);
+}
+
+.quickMaterialModal {
+  width: min(100%, 520px);
+}
+
+.orderedAsModal {
+  width: min(100%, 520px);
+}
+
+.orderedAsChoices {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+}
+
+.orderedAsChoices button {
+  display: inline-flex;
+  align-items: center;
+  min-height: 48px;
+  justify-content: flex-start;
+  padding-inline: 16px;
+  text-align: left;
+}
+
+.quickSupplierGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.quickMaterialGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) minmax(120px, 0.6fr);
+  gap: 12px;
+}
+
 .materialModeRow {
   display: inline-flex;
   flex-wrap: wrap;
@@ -977,7 +1057,20 @@
 }
 
 .materialHeaderGrid {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns:
+    minmax(170px, 1fr)
+    minmax(210px, 1fr)
+    minmax(170px, 0.9fr)
+    minmax(180px, 0.9fr)
+    minmax(78px, 0.42fr);
+}
+
+.materialTaxField {
+  align-items: flex-start;
+}
+
+.materialTaxField .taxToggleCompact {
+  min-height: 42px;
 }
 
 .materialWorkflow {
@@ -1045,6 +1138,14 @@
   opacity: 0.52;
 }
 
+.materialTableActions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .materialCellTitle {
   font-size: 12px;
   font-weight: 700;
@@ -1064,6 +1165,36 @@
   grid-template-columns: minmax(0, 1.4fr) minmax(120px, 0.6fr) minmax(90px, 0.4fr) auto;
   gap: 12px;
   align-items: end;
+}
+
+.sourceDivider {
+  height: 1px;
+  margin: 18px 0;
+  background: #e2e8f0;
+}
+
+.sourceSubsectionHeader {
+  margin-bottom: 12px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.sourceSubsectionTitle {
+  margin: 0;
+  color: #0f172a;
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+.sourceSubsectionCopy {
+  margin: 4px 0 0;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 .orderDraftPriceRow {
@@ -1249,7 +1380,9 @@
   }
 
   .materialHeaderGrid,
-  .orderDraftPriceRow {
+  .orderDraftPriceRow,
+  .quickSupplierGrid,
+  .quickMaterialGrid {
     grid-template-columns: 1fr;
   }
 

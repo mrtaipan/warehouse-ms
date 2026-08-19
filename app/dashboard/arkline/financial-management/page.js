@@ -12,10 +12,6 @@ import styles from './financial-management.module.css'
 
 const supabase = createClient()
 const PAYMENT_REQUEST_BUCKET = 'arkline-payments'
-const PO_BASED_CATEGORY_BY_SOURCE = {
-  GARMENT: 'GARMENT PRODUCTION',
-  MATERIAL: 'MATERIAL PROCUREMENT',
-}
 const ARKLINE_PAYMENT_DETAIL_SELECT = `
   id,
   payment_basis,
@@ -161,14 +157,6 @@ function formatNumberInput(value) {
   const digits = normalizeDigits(value)
   if (!digits) return ''
   return new Intl.NumberFormat('id-ID', { maximumFractionDigits: 0 }).format(Number(digits))
-}
-
-function normalizeCategoryName(value) {
-  return String(value || '').trim().toUpperCase()
-}
-
-function getPoBasedCategoryName(poSourceType) {
-  return PO_BASED_CATEGORY_BY_SOURCE[poSourceType] || PO_BASED_CATEGORY_BY_SOURCE.GARMENT
 }
 
 function getPoSortNumber(value) {
@@ -338,11 +326,6 @@ export default function ArklineFinancialManagementPage({
   const canReviewAllRequests = hrgaView || role === 'admin' || role === 'hrga' || role === 'leader'
   const canPay = hrgaView ? role === 'admin' || role === 'hrga' || role === 'leader' : role === 'admin'
   const canApprove = hrgaView ? role === 'admin' || role === 'hrga' || role === 'leader' : role === 'admin'
-  const poBasedCategoryName = getPoBasedCategoryName(draft.po_source_type)
-  const poBasedCategory = useMemo(
-    () => categories.find((item) => normalizeCategoryName(item.name) === poBasedCategoryName) || null,
-    [categories, poBasedCategoryName]
-  )
 
   const hydrateRequestDisplayNames = useCallback(
     (row) => {
@@ -682,6 +665,34 @@ export default function ArklineFinancialManagementPage({
     setPaymentProofFiles((prev) => prev.filter((_, index) => index !== targetIndex))
   }
 
+  async function handleDeletePaymentProofAttachment(attachment) {
+    if (!selectedRequest || !canManagePaymentProofOnDetail || !attachment?.id) return
+
+    setActionLoading(true)
+    setDetailError('')
+    setSuccess('')
+
+    try {
+      if (attachment.storage_path) {
+        const { error: storageDeleteError } = await supabase.storage
+          .from(attachment.storage_bucket || PAYMENT_REQUEST_BUCKET)
+          .remove([attachment.storage_path])
+        if (storageDeleteError) throw new Error(storageDeleteError.message)
+      }
+
+      const { error: attachmentDeleteError } = await supabase.from('arkline_payment_attachments').delete().eq('id', attachment.id)
+      if (attachmentDeleteError) throw new Error(attachmentDeleteError.message)
+
+      setSuccess(`Payment proof removed from ${selectedRequest.invoice_number}.`)
+      await loadWorkspace({ silent: true })
+      await refreshSelectedRequestDetail(selectedRequest.id)
+    } catch (deleteError) {
+      setDetailError(deleteError.message || 'Failed to delete payment proof.')
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
   async function handleNoInvoiceNumberChange(checked) {
     if (!checked) {
       setDraft((prev) => ({ ...prev, no_invoice_number: false, invoice_number: '' }))
@@ -710,18 +721,13 @@ export default function ArklineFinancialManagementPage({
       return
     }
 
-    if (draft.payment_basis === 'PO_BASED' && !poBasedCategory?.id) {
-      setError(`Category ${poBasedCategoryName} is not registered yet. Please add it to reimbursement categories first.`)
-      return
-    }
-
     if ((!draft.no_invoice_number && !String(draft.invoice_number || '').trim()) || !String(draft.amount || '').trim()) {
-      setError(`Invoice number and payment amount are required${draft.payment_basis === 'NON_PO_BASED' ? ', plus category' : ''}.`)
+      setError('Invoice number and payment amount are required.')
       return
     }
 
-    if (draft.payment_basis === 'NON_PO_BASED' && !String(draft.category_id || '').trim()) {
-      setError('Category is required for non-PO based payment.')
+    if (!String(draft.category_id || '').trim()) {
+      setError('Category is required.')
       return
     }
 
@@ -759,7 +765,7 @@ export default function ArklineFinancialManagementPage({
               : selectedPo?.supplierName || null
             : null,
         invoice_number: resolvedInvoiceNumber,
-        category_id: draft.payment_basis === 'PO_BASED' ? Number(poBasedCategory.id) : Number(draft.category_id),
+        category_id: Number(draft.category_id),
         amount: Number(normalizeDigits(draft.amount)),
         notes: String(draft.notes || '').trim() || null,
         account_name: normalizeUppercase(draft.account_name).trim(),
@@ -1458,7 +1464,6 @@ export default function ArklineFinancialManagementPage({
                       payment_basis: event.target.value,
                       po_source_type: 'GARMENT',
                       linked_po_id: '',
-                      category_id: event.target.value === 'PO_BASED' ? '' : prev.category_id,
                     }))
                   }
                 >
@@ -1481,8 +1486,19 @@ export default function ArklineFinancialManagementPage({
                     </select>
                   </div>
                   <div className={styles.field}>
-                    <label className={styles.label}>Category</label>
-                    <input className={styles.input} value={poBasedCategoryName} readOnly />
+                    <label className={styles.label}>Category *</label>
+                    <select
+                      className={styles.select}
+                      value={draft.category_id}
+                      onChange={(event) => setDraft((prev) => ({ ...prev, category_id: event.target.value }))}
+                    >
+                      <option value="">Choose category</option>
+                      {categories.map((item) => (
+                        <option key={item.id} value={item.id}>
+                          {item.name}
+                        </option>
+                      ))}
+                    </select>
                   </div>
                 </>
               ) : null}
@@ -1737,9 +1753,21 @@ export default function ArklineFinancialManagementPage({
                         <p className={styles.attachmentName}>{attachment.file_name}</p>
                         <p className={styles.attachmentMeta}>{formatDateTime(attachment.created_at)}</p>
                       </div>
-                      <button type="button" className={styles.secondaryButton} onClick={() => void handleOpenAttachment(attachment)}>
-                        Open
-                      </button>
+                      <div className={styles.attachmentActions}>
+                        <button type="button" className={styles.secondaryButton} onClick={() => void handleOpenAttachment(attachment)}>
+                          Open
+                        </button>
+                        {canManagePaymentProofOnDetail ? (
+                          <button
+                            type="button"
+                            className={`${styles.secondaryButton} ${styles.dangerButton}`.trim()}
+                            onClick={() => void handleDeletePaymentProofAttachment(attachment)}
+                            disabled={actionLoading}
+                          >
+                            Delete
+                          </button>
+                        ) : null}
+                      </div>
                     </div>
                   ))}
                 </div>

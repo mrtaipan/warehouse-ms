@@ -957,6 +957,8 @@ const ROUTE_PERMISSION_MAP = [
   { matcher: (pathname) => pathname === '/dashboard/arkline/directory' || pathname.startsWith('/dashboard/arkline/directory?'), codes: ['arkline.directory.view', 'arkline.directory.products.view', 'arkline.directory.bom.view', 'arkline.directory.materials.view'] },
   { matcher: (pathname) => pathname.startsWith('/dashboard/arkline/directory/bom'), codes: ['arkline.directory.bom.view'] },
   { matcher: (pathname) => pathname.startsWith('/dashboard/arkline/directory/materials'), codes: ['arkline.directory.materials.view'] },
+  { matcher: (pathname) => pathname.startsWith('/dashboard/arkline/directory/suppliers'), codes: ['arkline.directory.suppliers.view', 'arkline.directory.view'] },
+  { matcher: (pathname) => pathname.startsWith('/dashboard/arkline/directory/purchase-orders'), codes: ['arkline.production_orders.view', 'arkline.material_fulfillment.view', 'arkline.production_planning.view', 'arkline.directory.view'] },
   { matcher: (pathname) => pathname.startsWith('/dashboard/arkline/progress-overview'), codes: ['arkline.progress_snapshot.view', 'arkline.progress_snapshot.kanban.view', 'arkline.progress_snapshot.calendar.view', 'arkline.progress_snapshot.products.view'] },
   { matcher: (pathname) => pathname.startsWith('/dashboard/arkline/production-planning/material-fulfillment'), codes: ['arkline.material_fulfillment.view'] },
   { matcher: (pathname) => pathname.startsWith('/dashboard/arkline/production-planning'), codes: ['arkline.production_planning.view', 'arkline.production_orders.view', 'arkline.material_fulfillment.view'] },

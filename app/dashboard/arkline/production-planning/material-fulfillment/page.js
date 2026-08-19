@@ -7,10 +7,13 @@ import styles from '../production-planning.module.css'
 
 const supabase = createClient()
 
-const MRP_MODE_OPTIONS = [
-  { id: 'existing-po', label: 'PO Material Purchase' },
-  { id: 'free-material', label: 'Free Material Purchase' },
-]
+const SIZE_OPTIONS = ['XS', 'S', 'M', 'L', 'XL', 'XXL']
+const NO_PO_VALUE = '__NO_PO__'
+const ORDERED_AS_OPTIONS = ['PT ANUGERAH RETAIL KARYA', 'CV MITRA KARSA GARMINDO']
+const SIZE_SORT_ORDER = SIZE_OPTIONS.reduce((accumulator, size, index) => {
+  accumulator[size] = index
+  return accumulator
+}, {})
 
 function createOrderHeaderDraft() {
   return {
@@ -19,6 +22,8 @@ function createOrderHeaderDraft() {
     paymentTerms: '',
     requestDeliveryDate: '',
     notes: '',
+    includePpn: true,
+    orderedAs: '',
   }
 }
 
@@ -29,15 +34,46 @@ function createFreeMaterialDraft() {
   }
 }
 
+function createEmptyMaterialDraft() {
+  return {
+    materialName: '',
+    unit: 'PCS',
+  }
+}
+
+function createEmptySupplierDraft() {
+  return {
+    supplierCode: '',
+    supplierName: '',
+    contactPerson: '',
+    phone: '',
+    address: '',
+  }
+}
+
 function toNumber(value) {
   if (typeof value === 'number') return Number.isFinite(value) ? value : 0
   const parsed = Number(String(value || '').replace(/[^\d.-]/g, '').trim())
   return Number.isFinite(parsed) ? parsed : 0
 }
 
+function isMissingColumnError(error, columnName) {
+  const normalizedColumn = String(columnName || '').trim().toLowerCase()
+  const message = `${error?.message || ''} ${error?.details || ''} ${error?.hint || ''}`.toLowerCase()
+  return Boolean(normalizedColumn && message.includes(normalizedColumn) && message.includes('column'))
+}
+
 function formatQty(value) {
   const number = toNumber(value)
   return Number.isInteger(number) ? String(number) : number.toFixed(2).replace(/\.?0+$/, '')
+}
+
+function roundQuantity(value) {
+  return Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100
+}
+
+function roundUpQuantity(value) {
+  return Math.ceil(Number(value || 0))
 }
 
 function formatCurrency(value) {
@@ -86,6 +122,27 @@ function normalizeSupplier(row) {
   }
 }
 
+function sortSuppliersByName(left, right) {
+  return String(left?.supplierName || '').localeCompare(String(right?.supplierName || ''), undefined, { numeric: true })
+}
+
+async function generateSupplierCode() {
+  const { data, error } = await supabase
+    .from('dir_suppliers')
+    .select('supplier_code')
+    .order('supplier_code', { ascending: false })
+    .limit(1)
+
+  if (error) {
+    throw new Error(error.message)
+  }
+
+  const lastCode = String(data?.[0]?.supplier_code || '').trim().toUpperCase()
+  const match = lastCode.match(/^SUPP-(\d+)$/)
+  const nextNumber = match ? Number(match[1]) + 1 : 1
+  return `SUPP-${String(nextNumber).padStart(3, '0')}`
+}
+
 function normalizeMaterialMaster(row) {
   return {
     id: String(row?.id || '').trim(),
@@ -93,6 +150,66 @@ function normalizeMaterialMaster(row) {
     unit: String(row?.unit || 'PCS').trim().toUpperCase(),
     isActive: row?.is_active !== false,
   }
+}
+
+function sortMaterialsByName(left, right) {
+  return String(left?.materialName || '').localeCompare(String(right?.materialName || ''), undefined, { numeric: true })
+}
+
+function normalizePoItem(row) {
+  return {
+    id: String(row?.id || '').trim(),
+    poId: String(row?.po_id || '').trim().toUpperCase(),
+    skuInduk: String(row?.sku_induk || '').trim().toUpperCase(),
+    productName: String(row?.nama_produk || '').trim().toUpperCase(),
+    categoryName: String(row?.kategori_produk || '').trim().toUpperCase(),
+    kategoriPengadaan: String(row?.kategori_pengadaan || row?.kategori_produk || '').trim().toUpperCase(),
+    allowancePct: toNumber(row?.allowance_pct),
+  }
+}
+
+function normalizeBomLine(row) {
+  return {
+    id: String(row?.id || '').trim(),
+    skuInduk: String(row?.sku_induk || '').trim().toUpperCase(),
+    kategoriPengadaan: String(row?.kategori_pengadaan || '').trim().toUpperCase(),
+    materialId: String(row?.material_id || row?.material?.id || '').trim(),
+    materialName: String(row?.material_name || row?.material?.material_name || '').trim().toUpperCase(),
+    unit: String(row?.unit || row?.material?.unit || 'PCS').trim().toUpperCase(),
+    sizeVariant: String(row?.size_variant || '').trim().toUpperCase(),
+    colorVariant: String(row?.color_variant || '').trim().toUpperCase(),
+    qtyPer1: toNumber(row?.qty_per_1 || row?.qty_per_unit),
+    wastePct: toNumber(row?.waste_pct),
+    isActive: row?.is_active !== false,
+  }
+}
+
+function buildMaterialLabel(line) {
+  return String(line?.materialNameSnapshot || line?.materialName || '').trim().toUpperCase()
+}
+
+function isBomLineMatchingSize(line, size) {
+  const variant = String(line?.sizeVariant || '').trim().toUpperCase()
+  const requestedSize = String(size || '').trim().toUpperCase()
+  if (!variant) return true
+  return variant === requestedSize
+}
+
+function compareMaterialRequirementRows(left, right) {
+  const leftMaterial = buildMaterialLabel(left)
+  const rightMaterial = buildMaterialLabel(right)
+
+  if (left.poId !== right.poId) return left.poId.localeCompare(right.poId, undefined, { numeric: true })
+  if ((left.productName || left.skuInduk) !== (right.productName || right.skuInduk)) {
+    return (left.productName || left.skuInduk).localeCompare(right.productName || right.skuInduk)
+  }
+  if (leftMaterial !== rightMaterial) return leftMaterial.localeCompare(rightMaterial)
+
+  const leftSizeOrder = SIZE_SORT_ORDER[left.sizeVariant] ?? 999
+  const rightSizeOrder = SIZE_SORT_ORDER[right.sizeVariant] ?? 999
+  if (leftSizeOrder !== rightSizeOrder) return leftSizeOrder - rightSizeOrder
+
+  return String(left.colorVariant || '').localeCompare(String(right.colorVariant || ''))
 }
 
 function buildOrderLineKey({ materialId, sizeVariant, colorVariant, unit }) {
@@ -118,16 +235,18 @@ function buildOrderSourceFromRequirement(requirement) {
   }
 }
 
-function buildOrderSourceFromFreeMaterial(material, qty) {
+function buildOrderSourceFromFreeMaterial(material, qty, poId = '') {
+  const normalizedPoId = String(poId || '').trim().toUpperCase()
+
   return {
-    id: `free:${material.id}:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`,
+    id: `free:${normalizedPoId || 'no-po'}:${material.id}:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`,
     sourceType: 'FREE',
     sourceRowId: '',
-    poId: '',
-    productName: 'FREE MATERIAL',
+    poId: normalizedPoId,
+    productName: normalizedPoId ? `FREE MATERIAL - ${normalizedPoId}` : 'FREE MATERIAL',
     skuInduk: '',
     qty,
-    label: 'Free Material',
+    label: normalizedPoId ? `${normalizedPoId} - Free Material` : 'Free Material',
     secondaryLabel: material.materialName,
   }
 }
@@ -179,6 +298,31 @@ function escapeHtml(value) {
     .replace(/'/g, '&#39;')
 }
 
+function buildRemarksHtml(value) {
+  const lines = String(value ?? '')
+    .replace(/\r\n/g, '\n')
+    .split('\n')
+    .flatMap((line) => {
+      const trimmed = line.trim()
+      if (!trimmed) return []
+
+      const numberedParts = trimmed.match(/\d+\.\s+.*?(?=\s+\d+\.\s+|$)/g)
+      return numberedParts?.length > 1 ? numberedParts.map((part) => part.trim()) : [trimmed]
+    })
+
+  return lines.length
+    ? lines.map((line) => `<div class="mb-1">${escapeHtml(line)}</div>`).join('')
+    : `<div>${escapeHtml(value)}</div>`
+}
+
+function buildMultilineHtml(value) {
+  return String(value ?? '')
+    .replace(/\r\n/g, '\n')
+    .split('\n')
+    .map((line) => escapeHtml(line))
+    .join('<br />')
+}
+
 const ROMAN_MONTHS = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X', 'XI', 'XII']
 
 function getMaterialDraftSourcePoIds(lines) {
@@ -186,9 +330,25 @@ function getMaterialDraftSourcePoIds(lines) {
     new Set(
       lines.flatMap((line) =>
         (line.sources || [])
-          .filter((source) => source.sourceType === 'PO' && source.poId)
+          .filter((source) => source.poId)
           .map((source) => String(source.poId || '').trim().toUpperCase())
       )
+    )
+  )
+}
+
+function hasUnlinkedFreeMaterial(lines) {
+  return lines.some((line) =>
+    (line.sources || []).some((source) => source.sourceType === 'FREE' && !String(source.poId || '').trim())
+  )
+}
+
+function getSourcePoIdsFromSources(sources) {
+  return Array.from(
+    new Set(
+      (sources || [])
+        .map((source) => String(source.poId || '').trim().toUpperCase())
+        .filter(Boolean)
     )
   )
 }
@@ -201,18 +361,25 @@ function extractGarmentPoSequence(poId) {
   return match?.[1] || ''
 }
 
-function getMaterialPoMonthCode(date = new Date()) {
+function getMaterialPoDateCode(date = new Date()) {
+  const dayCode = String(date.getDate()).padStart(2, '0')
   const monthCode = ROMAN_MONTHS[date.getMonth()] || ''
-  const yearCode = String(date.getFullYear()).slice(-2)
-  return `${monthCode}${yearCode}`
+  const yearCode = String(date.getFullYear())
+  return `${dayCode}${monthCode}${yearCode}`
 }
 
-function getNextFreeMaterialPoSequence(existingNumbers, monthCode) {
+function escapeRegExp(value) {
+  return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function getNextMaterialPoSequence(existingNumbers, prefix) {
+  const normalizedPrefix = String(prefix || '').trim().toUpperCase()
+  const prefixPattern = escapeRegExp(normalizedPrefix)
   const usedNumbers = existingNumbers.reduce((set, value) => {
     const match = String(value || '')
       .trim()
       .toUpperCase()
-      .match(new RegExp(`^MPO-F(\\d+)-${monthCode}$`))
+      .match(new RegExp(`^${prefixPattern}-(\\d+)$`))
 
     if (match?.[1]) {
       set.add(Number(match[1]))
@@ -226,7 +393,7 @@ function getNextFreeMaterialPoSequence(existingNumbers, monthCode) {
     nextNumber += 1
   }
 
-  return `F${String(nextNumber).padStart(2, '0')}`
+  return String(nextNumber).padStart(3, '0')
 }
 
 function buildMaterialPoNumber(lines, existingNumbers, date = new Date()) {
@@ -236,7 +403,8 @@ function buildMaterialPoNumber(lines, existingNumbers, date = new Date()) {
     throw new Error('Material PO draft cannot mix multiple garment POs. Please keep one garment PO per material PO draft.')
   }
 
-  const monthCode = getMaterialPoMonthCode(date)
+  const dateCode = getMaterialPoDateCode(date)
+  let sourceCode = 'FREE'
 
   if (sourcePoIds.length === 1) {
     const garmentPoSequence = extractGarmentPoSequence(sourcePoIds[0])
@@ -245,10 +413,187 @@ function buildMaterialPoNumber(lines, existingNumbers, date = new Date()) {
       throw new Error('Failed to read the garment PO number format for this material PO draft.')
     }
 
-    return `MPO-${garmentPoSequence}-${monthCode}`
+    sourceCode = garmentPoSequence
   }
 
-  return `MPO-${getNextFreeMaterialPoSequence(existingNumbers, monthCode)}-${monthCode}`
+  const prefix = `MPO-${sourceCode}-${dateCode}`
+  return `${prefix}-${getNextMaterialPoSequence(existingNumbers, prefix)}`
+}
+
+async function loadBomLinesForProduct(product) {
+  const normalizedSku = String(product?.skuInduk || '').trim().toUpperCase()
+  const normalizedKategoriPengadaan = String(product?.kategoriPengadaan || '').trim().toUpperCase()
+
+  const categoryResponse = normalizedKategoriPengadaan
+    ? await supabase
+        .from('arkline_dir_bom')
+        .select('id, kategori_pengadaan, sku_induk, material_id, size_variant, color_variant, qty_per_1, waste_pct, is_active')
+        .eq('is_active', true)
+        .is('sku_induk', null)
+        .eq('kategori_pengadaan', normalizedKategoriPengadaan)
+    : { data: [], error: null }
+
+  if (categoryResponse.error && categoryResponse.error.code !== 'PGRST116') {
+    throw new Error(categoryResponse.error.message)
+  }
+
+  const skuResponse = normalizedSku
+    ? await supabase
+        .from('arkline_dir_bom')
+        .select('id, kategori_pengadaan, sku_induk, material_id, size_variant, color_variant, qty_per_1, waste_pct, is_active')
+        .eq('is_active', true)
+        .eq('sku_induk', normalizedSku)
+    : { data: [], error: null }
+
+  if (skuResponse.error && skuResponse.error.code !== 'PGRST116') {
+    throw new Error(skuResponse.error.message)
+  }
+
+  const bomRows = [...(categoryResponse.data || []), ...(skuResponse.data || [])]
+  const materialIds = Array.from(
+    new Set(
+      bomRows
+        .map((line) => String(line?.material_id || '').trim())
+        .filter(Boolean)
+    )
+  )
+
+  let materialsById = {}
+
+  if (materialIds.length) {
+    const { data: materialRows, error: materialError } = await supabase
+      .from('arkline_dir_materials')
+      .select('id, material_name, unit, is_active')
+      .in('id', materialIds)
+
+    if (materialError) {
+      throw new Error(materialError.message)
+    }
+
+    materialsById = (materialRows || []).reduce((accumulator, item) => {
+      accumulator[String(item?.id || '').trim()] = item
+      return accumulator
+    }, {})
+  }
+
+  return bomRows
+    .map((row) =>
+      normalizeBomLine({
+        ...row,
+        material: materialsById[String(row?.material_id || '').trim()] || null,
+      })
+    )
+    .filter((line) => line.materialId && line.materialName)
+}
+
+async function buildGeneratedMaterialRequirements(poId) {
+  const normalizedPoId = String(poId || '').trim().toUpperCase()
+
+  const { data: itemRows, error: itemError } = await supabase
+    .from('arkline_po_items')
+    .select('id, po_id, sku_induk, nama_produk, kategori_produk, kategori_pengadaan, allowance_pct')
+    .eq('po_id', normalizedPoId)
+    .order('created_at', { ascending: true })
+
+  if (itemError) {
+    throw new Error(itemError.message)
+  }
+
+  const items = (itemRows || []).map(normalizePoItem).filter((item) => item.id && item.skuInduk)
+  const itemIds = items.map((item) => item.id)
+  const itemMetaById = items.reduce((accumulator, item) => {
+    accumulator[item.id] = {
+      productName: item.productName,
+      categoryName: item.categoryName,
+    }
+    return accumulator
+  }, {})
+
+  if (!items.length) {
+    return { payload: [], warnings: [`No product lines found for ${normalizedPoId}.`], itemMetaById }
+  }
+
+  const { data: sizeRows, error: sizeError } = itemIds.length
+    ? await supabase
+        .from('arkline_po_item_sizes')
+        .select('arkline_po_item_id, size, qty')
+        .in('arkline_po_item_id', itemIds)
+    : { data: [], error: null }
+
+  if (sizeError) {
+    throw new Error(sizeError.message)
+  }
+
+  const sizesByItem = (sizeRows || []).reduce((accumulator, row) => {
+    const key = String(row?.arkline_po_item_id || '').trim()
+    if (!accumulator[key]) accumulator[key] = []
+    accumulator[key].push({
+      size: String(row?.size || '').trim().toUpperCase(),
+      qty: toNumber(row?.qty),
+    })
+    return accumulator
+  }, {})
+
+  const aggregate = new Map()
+  const warnings = []
+
+  for (const item of items) {
+    const sizeQuantities = (sizesByItem[item.id] || []).filter((row) => row.size && row.qty > 0)
+    if (!sizeQuantities.length) {
+      continue
+    }
+
+    const bomLines = await loadBomLinesForProduct({
+      skuInduk: item.skuInduk,
+      kategoriPengadaan: item.kategoriPengadaan,
+    })
+
+    if (!bomLines.length) {
+      warnings.push(`BOM not found for ${item.productName || item.skuInduk}.`)
+      continue
+    }
+
+    sizeQuantities.forEach((sizeRow) => {
+      const matchingLines = bomLines.filter((line) => isBomLineMatchingSize(line, sizeRow.size))
+
+      if (!matchingLines.length) {
+        warnings.push(`No BOM line matches ${item.productName || item.skuInduk} size ${sizeRow.size}.`)
+        return
+      }
+
+      matchingLines.forEach((line) => {
+        const generatedQty = roundQuantity(sizeRow.qty * toNumber(line.qtyPer1))
+        const finalQty = roundUpQuantity(generatedQty * (1 + (item.allowancePct + toNumber(line.wastePct)) / 100))
+        const key = [item.id, item.skuInduk, line.materialId, line.materialName, line.unit, line.sizeVariant || '', line.colorVariant || ''].join('|')
+        const existing = aggregate.get(key)
+
+        if (!existing) {
+          aggregate.set(key, {
+            po_id: normalizedPoId,
+            arkline_po_item_id: item.id,
+            sku_induk: item.skuInduk,
+            material_id: line.materialId,
+            material_name_snapshot: buildMaterialLabel(line) || '-',
+            size_variant: line.sizeVariant || null,
+            color_variant: line.colorVariant || null,
+            unit: line.unit || 'PCS',
+            generated_qty: generatedQty,
+            final_qty: finalQty,
+          })
+          return
+        }
+
+        existing.generated_qty = roundQuantity(existing.generated_qty + generatedQty)
+        existing.final_qty = roundQuantity(existing.final_qty + finalQty)
+      })
+    })
+  }
+
+  return {
+    payload: Array.from(aggregate.values()),
+    warnings,
+    itemMetaById,
+  }
 }
 
 async function createMaterialPurchaseOrderPreviewHtml(bundle) {
@@ -264,8 +609,10 @@ async function createMaterialPurchaseOrderPreviewHtml(bundle) {
       maximumFractionDigits: 0,
     }).format(Number(value || 0))
 
+  const includePpn = bundle.header.includePpn !== false
+  const orderedAs = String(bundle.header.orderedAs || ORDERED_AS_OPTIONS[0]).trim().toUpperCase()
   const subtotal = bundle.items.reduce((sum, item) => sum + item.amount, 0)
-  const ppn = subtotal * 0.11
+  const ppn = includePpn ? subtotal * 0.11 : 0
   const total = subtotal + ppn
   const remarks =
     String(bundle.header.notes || '').trim() ||
@@ -277,11 +624,14 @@ async function createMaterialPurchaseOrderPreviewHtml(bundle) {
         <tr class="border-b border-gray-200">
           <td class="py-4 px-1 text-left font-medium">
             <div>${escapeHtml(item.materialName || '-')}</div>
-            ${item.notes ? `<div class="mt-1 text-[8pt] text-gray-500">${escapeHtml(item.notes)}</div>` : ''}
+            ${
+              [item.variant, item.unit].filter((value) => value && value !== '-').length
+                ? `<div class="mt-1 text-[8pt] text-gray-500">${escapeHtml([item.variant, item.unit].filter((value) => value && value !== '-').join(' - '))}</div>`
+                : ''
+            }
+            ${item.notes ? `<div class="mt-1 text-[8pt] leading-relaxed text-gray-500">${buildMultilineHtml(item.notes)}</div>` : ''}
           </td>
-          <td class="py-4 px-1 text-center text-gray-600">${escapeHtml(item.variant || '-')}</td>
           <td class="py-4 px-1 text-center text-gray-600">${escapeHtml(formatQty(item.qty))}</td>
-          <td class="py-4 px-1 text-center text-gray-600">${escapeHtml(item.unit || '-')}</td>
           <td class="py-4 px-1 text-right text-gray-600">${escapeHtml(formatIdr(item.price))}</td>
           <td class="py-4 px-1 text-right font-medium">${escapeHtml(formatIdr(item.amount))}</td>
         </tr>
@@ -339,26 +689,30 @@ async function createMaterialPurchaseOrderPreviewHtml(bundle) {
           </div>
 
           <div class="mt-6">
-            <div class="mb-1 text-[7pt] font-bold uppercase tracking-widest text-gray-500">To</div>
+            <div class="mb-1 text-[7pt] font-bold uppercase tracking-widest text-gray-500">PO To</div>
             <div class="mb-1 text-[11pt] font-semibold">${escapeHtml(bundle.header.supplierName || '-')}</div>
             <div class="text-[8.5pt] leading-relaxed text-gray-600">
-              ${escapeHtml(bundle.header.supplierAddress || 'Alamat supplier belum diisi.')}<br />
-              ${escapeHtml(bundle.header.supplierContact || 'Kontak supplier belum diisi.')}
+              <div>${buildMultilineHtml(bundle.header.supplierAddress || 'Alamat supplier belum diisi.')}</div>
+              ${
+                bundle.header.supplierContact
+                  ? `<div class="mt-1">Attn: ${escapeHtml(bundle.header.supplierContact)}</div>`
+                  : ''
+              }
             </div>
           </div>
         </div>
 
-        <div class="flex w-[55%] flex-col items-end">
+        <div class="flex w-[55%] -mt-2 flex-col items-end">
           <div class="w-full max-w-[320px] text-left">
-            <div class="mb-1 inline-flex bg-white p-1">
+            <div class="mb-2 h-[34px] w-[230px] overflow-hidden bg-white">
               <img
                 src="${escapeHtml(logoUrl)}"
                 alt="Arkline"
-                class="block h-auto max-w-[220px] object-contain"
+                class="block h-auto w-[230px] max-w-none -translate-y-[26px] object-contain"
               />
             </div>
             <div class="mb-2 mt-1 text-[11pt] font-semibold tracking-wide">
-              <span class="block pl-[18px]">PT ANUGERAH RETAIL KARYA</span>
+              <span class="block pl-[18px]">${escapeHtml(orderedAs || '-')}</span>
             </div>
             <div class="pl-[18px] text-[8.5pt] leading-relaxed text-gray-600">
               North Point Commercial blok NP 22,<br />
@@ -374,47 +728,49 @@ async function createMaterialPurchaseOrderPreviewHtml(bundle) {
         <thead>
           <tr class="border-b-[1.5px] border-black">
             <th class="px-1 py-3 text-left text-[7pt] font-bold uppercase tracking-widest text-gray-700">Material</th>
-            <th class="w-[16%] px-1 py-3 text-center text-[7pt] font-bold uppercase tracking-widest text-gray-700">Variant</th>
-            <th class="w-[10%] px-1 py-3 text-center text-[7pt] font-bold uppercase tracking-widest text-gray-700">Qty</th>
-            <th class="w-[10%] px-1 py-3 text-center text-[7pt] font-bold uppercase tracking-widest text-gray-700">Unit</th>
-            <th class="w-[18%] px-1 py-3 text-right text-[7pt] font-bold uppercase tracking-widest text-gray-700">Price</th>
-            <th class="w-[20%] px-1 py-3 text-right text-[7pt] font-bold uppercase tracking-widest text-gray-700">Amount</th>
+            <th class="w-[12%] px-1 py-3 text-center text-[7pt] font-bold uppercase tracking-widest text-gray-700">Qty</th>
+            <th class="w-[22%] px-1 py-3 text-right text-[7pt] font-bold uppercase tracking-widest text-gray-700">Price</th>
+            <th class="w-[25%] px-1 py-3 text-right text-[7pt] font-bold uppercase tracking-widest text-gray-700">Amount</th>
           </tr>
         </thead>
         <tbody class="text-[9.5pt]">
           ${itemRowsHtml || `
             <tr>
-              <td colspan="6" class="px-1 py-8 text-center text-[9pt] text-gray-500">No material lines found for this purchase order.</td>
+              <td colspan="4" class="px-1 py-8 text-center text-[9pt] text-gray-500">No material lines found for this purchase order.</td>
             </tr>
           `}
         </tbody>
       </table>
 
-      <div class="print:break-inside-avoid flex items-end justify-between">
-        <div class="flex min-h-[280px] w-[50%] flex-col justify-between">
+      <div class="print:break-inside-avoid flex min-h-[360px] items-end justify-between">
+        <div class="flex min-h-[360px] w-[50%] flex-col justify-between pb-6">
           <div class="m-0 p-0">
             <div class="mb-1 text-[7pt] font-bold uppercase tracking-widest text-gray-500">Remarks</div>
             <div class="max-w-[90%] text-[9pt] leading-relaxed text-gray-600">
-              ${escapeHtml(remarks)}
+              ${buildRemarksHtml(remarks)}
             </div>
           </div>
 
-          <div class="mt-auto text-[36pt] font-bold leading-[0.95] tracking-tighter text-black">
-            MATERIAL<br />PURCHASE ORDER
+          <div class="mt-16 text-[36pt] font-bold leading-[0.95] tracking-tighter text-black">
+            PURCHASE<br />ORDER
           </div>
         </div>
 
-        <div class="flex min-h-[280px] w-[45%] flex-col justify-between">
+        <div class="flex min-h-[360px] w-[45%] flex-col justify-between pb-6">
           <table class="w-full text-[9.5pt]">
             <tbody>
               <tr>
                 <td class="py-2 text-[7pt] font-bold uppercase tracking-widest text-gray-400">Subtotal</td>
                 <td class="py-2 text-right text-gray-700">${escapeHtml(formatIdr(subtotal))}</td>
               </tr>
-              <tr>
-                <td class="py-2 text-[7pt] font-bold uppercase tracking-widest text-gray-400">PPN 11%</td>
-                <td class="py-2 text-right text-gray-700">${escapeHtml(formatIdr(ppn))}</td>
-              </tr>
+              ${
+                includePpn
+                  ? `<tr>
+                      <td class="py-2 text-[7pt] font-bold uppercase tracking-widest text-gray-400">PPN 11%</td>
+                      <td class="py-2 text-right text-gray-700">${escapeHtml(formatIdr(ppn))}</td>
+                    </tr>`
+                  : ''
+              }
               <tr class="border-t-[1.5px] border-black text-[11.5pt] font-bold">
                 <td class="pt-3 text-[7pt] font-bold uppercase tracking-widest text-black">Total</td>
                 <td class="pt-3 text-right text-black">${escapeHtml(formatIdr(total))}</td>
@@ -422,12 +778,17 @@ async function createMaterialPurchaseOrderPreviewHtml(bundle) {
             </tbody>
           </table>
 
-          <div class="mt-auto pt-12 text-right">
+          <div class="mt-20 text-right">
             <div class="mb-2 inline-block w-[180px] border-b border-black"></div>
             <div class="text-[10.5pt] font-semibold tracking-wide text-black">Aditya C. S.</div>
             <div class="text-[8.5pt] font-medium text-gray-500">President Director</div>
           </div>
         </div>
+      </div>
+
+      <div class="mt-8 border-t border-gray-200 pt-3 text-center text-[7.5pt] leading-relaxed text-gray-500">
+        <span class="font-bold uppercase tracking-widest text-gray-600">Warehouse:</span>
+        Pergudangan Bizpoint, Point 5 LV No. 85, Tigaraksa, Cikupa, Kab. Tangerang-Banten, Kode pos 15710
       </div>
     </div>
   </body>
@@ -440,17 +801,28 @@ export default function ArklineMaterialFulfillmentPage() {
   const [success, setSuccess] = useState('')
   const [saving, setSaving] = useState(false)
   const [printing, setPrinting] = useState(false)
-  const [mode, setMode] = useState('existing-po')
-  const [poFilter, setPoFilter] = useState('')
+  const [savingSupplier, setSavingSupplier] = useState(false)
+  const [savingMaterial, setSavingMaterial] = useState(false)
+  const [supplierCodeLoading, setSupplierCodeLoading] = useState(false)
+  const [showSupplierModal, setShowSupplierModal] = useState(false)
+  const [showMaterialModal, setShowMaterialModal] = useState(false)
+  const [showOrderedAsModal, setShowOrderedAsModal] = useState(false)
+  const [generatingRequirements, setGeneratingRequirements] = useState(false)
+  const [poFilter, setPoFilter] = useState(NO_PO_VALUE)
+  const [requirementWarnings, setRequirementWarnings] = useState([])
   const [requirements, setRequirements] = useState([])
   const [poOptions, setPoOptions] = useState([])
-  const [poMeta, setPoMeta] = useState({})
   const [suppliers, setSuppliers] = useState([])
   const [materialOptions, setMaterialOptions] = useState([])
   const [materialPoNumbers, setMaterialPoNumbers] = useState([])
   const [selectedRequirementIds, setSelectedRequirementIds] = useState([])
   const [orderHeader, setOrderHeader] = useState(createOrderHeaderDraft())
   const [freeMaterialDraft, setFreeMaterialDraft] = useState(createFreeMaterialDraft())
+  const [freeMaterialError, setFreeMaterialError] = useState('')
+  const [savedMaterialPoNumber, setSavedMaterialPoNumber] = useState('')
+  const [isMaterialPoSaved, setIsMaterialPoSaved] = useState(false)
+  const [supplierDraft, setSupplierDraft] = useState(createEmptySupplierDraft())
+  const [materialDraft, setMaterialDraft] = useState(createEmptyMaterialDraft())
   const [orderLines, setOrderLines] = useState([])
 
   useEffect(() => {
@@ -527,15 +899,13 @@ export default function ArklineMaterialFulfillmentPage() {
 
         setRequirements(enrichedRequirements)
         setPoOptions(normalizedPoOptions)
-        setPoMeta(nextPoMeta)
         setSuppliers(normalizedSuppliers)
         setMaterialOptions(normalizedMaterials)
         setMaterialPoNumbers((materialPoResponse.data || []).map((item) => String(item.material_po_number || '').trim().toUpperCase()).filter(Boolean))
-        setPoFilter((current) => (current && nextPoMeta[current] ? current : normalizedPoOptions[0]?.poId || ''))
+        setPoFilter((current) => (current === NO_PO_VALUE || nextPoMeta[current] ? current : NO_PO_VALUE))
       } catch (loadError) {
         setRequirements([])
         setPoOptions([])
-        setPoMeta({})
         setSuppliers([])
         setMaterialOptions([])
         setMaterialPoNumbers([])
@@ -547,6 +917,8 @@ export default function ArklineMaterialFulfillmentPage() {
 
     loadData()
   }, [])
+
+  const selectedPoId = poFilter === NO_PO_VALUE ? '' : poFilter
 
   const assignedRequirementIds = useMemo(() => {
     const ids = new Set()
@@ -561,9 +933,9 @@ export default function ArklineMaterialFulfillmentPage() {
   }, [orderLines])
 
   const filteredRequirements = useMemo(() => {
-    if (!poFilter) return []
-    return requirements.filter((item) => item.poId === poFilter)
-  }, [poFilter, requirements])
+    if (!selectedPoId) return []
+    return requirements.filter((item) => item.poId === selectedPoId)
+  }, [requirements, selectedPoId])
 
   const orderDraftSummary = useMemo(
     () =>
@@ -580,13 +952,24 @@ export default function ArklineMaterialFulfillmentPage() {
 
   const materialDraftPoNumber = useMemo(() => {
     try {
-      return orderLines.length ? buildMaterialPoNumber(orderLines, materialPoNumbers) : ''
+      return savedMaterialPoNumber || (orderLines.length ? buildMaterialPoNumber(orderLines, materialPoNumbers) : '')
     } catch {
       return ''
     }
-  }, [materialPoNumbers, orderLines])
+  }, [materialPoNumbers, orderLines, savedMaterialPoNumber])
+
+  function markMaterialDraftUnsaved(options = {}) {
+    setIsMaterialPoSaved(false)
+    setSuccess('')
+
+    if (options.clearPoNumber) {
+      setSavedMaterialPoNumber('')
+    }
+  }
 
   function updateOrderHeader(name, value) {
+    markMaterialDraftUnsaved()
+
     if (name === 'supplierId') {
       const selectedSupplier = suppliers.find((item) => item.id === value)
       setOrderHeader((current) => ({
@@ -603,6 +986,138 @@ export default function ArklineMaterialFulfillmentPage() {
     }))
   }
 
+  async function openSupplierModal() {
+    setShowSupplierModal(true)
+    setSupplierDraft(createEmptySupplierDraft())
+    setSupplierCodeLoading(true)
+    setError('')
+
+    try {
+      const nextCode = await generateSupplierCode()
+      setSupplierDraft((current) => ({ ...current, supplierCode: nextCode }))
+    } catch (codeError) {
+      setError(codeError.message || 'Failed to generate supplier code.')
+    } finally {
+      setSupplierCodeLoading(false)
+    }
+  }
+
+  function closeSupplierModal() {
+    if (savingSupplier) return
+    setShowSupplierModal(false)
+    setSupplierDraft(createEmptySupplierDraft())
+  }
+
+  function updateSupplierDraft(name, value) {
+    const nextValue = name === 'phone' ? value.replace(/\D/g, '') : value.toUpperCase()
+    setSupplierDraft((current) => ({ ...current, [name]: nextValue }))
+  }
+
+  async function handleSaveQuickSupplier() {
+    setError('')
+
+    if (!supplierDraft.supplierCode.trim() || !supplierDraft.supplierName.trim()) {
+      setError('Supplier code and supplier name are required.')
+      return
+    }
+
+    setSavingSupplier(true)
+
+    try {
+      const { data: insertedSupplier, error: insertError } = await supabase
+        .from('dir_suppliers')
+        .insert({
+          supplier_code: supplierDraft.supplierCode.trim().toUpperCase(),
+          supplier_name: supplierDraft.supplierName.trim().toUpperCase(),
+          group: 'ARKLINE',
+          supplier_level: 'MATERIAL',
+          contact_person: supplierDraft.contactPerson.trim().toUpperCase() || null,
+          phone: supplierDraft.phone.trim() || null,
+          address: supplierDraft.address.trim().toUpperCase() || null,
+          is_active: true,
+        })
+        .select('id, supplier_name, supplier_level, contact_person, phone, address, "group", is_active')
+        .single()
+
+      if (insertError) {
+        throw new Error(insertError.message)
+      }
+
+      const normalizedSupplier = normalizeSupplier(insertedSupplier)
+      setSuppliers((current) => [...current, normalizedSupplier].sort(sortSuppliersByName))
+      markMaterialDraftUnsaved()
+      setOrderHeader((current) => ({
+        ...current,
+        supplierId: normalizedSupplier.id,
+        supplierName: normalizedSupplier.supplierName,
+      }))
+      setSuccess('Material supplier added.')
+      setShowSupplierModal(false)
+      setSupplierDraft(createEmptySupplierDraft())
+    } catch (saveError) {
+      setError(saveError.message || 'Failed to save material supplier.')
+    } finally {
+      setSavingSupplier(false)
+    }
+  }
+
+  function openMaterialModal() {
+    setShowMaterialModal(true)
+    setMaterialDraft(createEmptyMaterialDraft())
+    setError('')
+  }
+
+  function closeMaterialModal() {
+    if (savingMaterial) return
+    setShowMaterialModal(false)
+    setMaterialDraft(createEmptyMaterialDraft())
+  }
+
+  function updateMaterialDraft(name, value) {
+    setMaterialDraft((current) => ({ ...current, [name]: value.toUpperCase() }))
+  }
+
+  async function handleSaveQuickMaterial() {
+    setError('')
+
+    if (!materialDraft.materialName.trim()) {
+      setError('Material name is required.')
+      return
+    }
+
+    setSavingMaterial(true)
+
+    try {
+      const { data: insertedMaterial, error: insertError } = await supabase
+        .from('arkline_dir_materials')
+        .insert({
+          material_name: materialDraft.materialName.trim().toUpperCase(),
+          unit: materialDraft.unit.trim().toUpperCase() || 'PCS',
+          is_active: true,
+        })
+        .select('id, material_name, unit, is_active')
+        .single()
+
+      if (insertError) {
+        throw new Error(insertError.message)
+      }
+
+      const normalizedMaterial = normalizeMaterialMaster(insertedMaterial)
+      setMaterialOptions((current) => [...current, normalizedMaterial].sort(sortMaterialsByName))
+      setFreeMaterialDraft((current) => ({
+        ...current,
+        materialId: normalizedMaterial.id,
+      }))
+      setSuccess('Material added.')
+      setShowMaterialModal(false)
+      setMaterialDraft(createEmptyMaterialDraft())
+    } catch (saveError) {
+      setError(saveError.message || 'Failed to save material.')
+    } finally {
+      setSavingMaterial(false)
+    }
+  }
+
   function toggleRequirementSelection(rowId) {
     setSelectedRequirementIds((current) =>
       current.includes(rowId) ? current.filter((item) => item !== rowId) : [...current, rowId]
@@ -612,6 +1127,7 @@ export default function ArklineMaterialFulfillmentPage() {
   function handleMoveSelectedRequirements() {
     setError('')
     setSuccess('')
+    setFreeMaterialError('')
 
     const selectedRows = filteredRequirements.filter((item) => selectedRequirementIds.includes(item.id))
 
@@ -622,6 +1138,11 @@ export default function ArklineMaterialFulfillmentPage() {
 
     const existingSourcePoIds = getMaterialDraftSourcePoIds(orderLines)
     const nextSourcePoIds = Array.from(new Set(selectedRows.map((item) => item.poId).filter(Boolean)))
+
+    if (hasUnlinkedFreeMaterial(orderLines)) {
+      setError('This draft already uses No PO material. Reset the draft before adding PO-linked material.')
+      return
+    }
 
     if (existingSourcePoIds.length > 1) {
       setError('Material PO draft cannot mix multiple garment POs.')
@@ -659,6 +1180,7 @@ export default function ArklineMaterialFulfillmentPage() {
     })
 
     setOrderLines(nextLines)
+    markMaterialDraftUnsaved()
     setSelectedRequirementIds([])
     setSuccess('Selected materials moved to the order panel.')
   }
@@ -666,17 +1188,36 @@ export default function ArklineMaterialFulfillmentPage() {
   function handleAddFreeMaterial() {
     setError('')
     setSuccess('')
+    setFreeMaterialError('')
 
     const selectedMaterial = materialOptions.find((item) => item.id === freeMaterialDraft.materialId)
     const qty = toNumber(freeMaterialDraft.qty)
+    const existingSourcePoIds = getMaterialDraftSourcePoIds(orderLines)
 
     if (!selectedMaterial) {
-      setError('Choose one material first.')
+      setFreeMaterialError('Choose one material first.')
       return
     }
 
     if (qty <= 0) {
-      setError('Enter a valid quantity first.')
+      setFreeMaterialError('Enter a valid quantity first.')
+      return
+    }
+
+    if (selectedPoId) {
+      if (hasUnlinkedFreeMaterial(orderLines)) {
+        setError('This draft already uses No PO material. Reset the draft before adding PO-linked material.')
+        return
+      }
+
+      if (existingSourcePoIds.length === 1 && existingSourcePoIds[0] !== selectedPoId) {
+        setError(`This draft already uses ${existingSourcePoIds[0]}. Please use the same PO or reset the draft first.`)
+        return
+      }
+    }
+
+    if (!selectedPoId && existingSourcePoIds.length) {
+      setError('This draft is already linked to a PO. Reset the draft before adding No PO material.')
       return
     }
 
@@ -695,27 +1236,99 @@ export default function ArklineMaterialFulfillmentPage() {
       totalQty: qty,
       price: '',
       notes: '',
-      sources: [buildOrderSourceFromFreeMaterial(selectedMaterial, qty)],
+      sources: [buildOrderSourceFromFreeMaterial(selectedMaterial, qty, selectedPoId)],
     }
 
     setOrderLines((current) => mergeSourceIntoLines(current, nextLine))
+    markMaterialDraftUnsaved()
     setFreeMaterialDraft(createFreeMaterialDraft())
     setSuccess('Material added to the order panel.')
   }
 
+  async function handleGenerateRequirements() {
+    setError('')
+    setSuccess('')
+    setRequirementWarnings([])
+
+    if (!selectedPoId) {
+      setError('Choose one PO number first before generating material requirements.')
+      return
+    }
+
+    setGeneratingRequirements(true)
+
+    try {
+      const { payload, warnings, itemMetaById } = await buildGeneratedMaterialRequirements(selectedPoId)
+
+      const { error: deleteError } = await supabase
+        .from('arkline_po_materials')
+        .delete()
+        .eq('po_id', selectedPoId)
+
+      if (deleteError) {
+        throw new Error(deleteError.message)
+      }
+
+      let insertedRows = []
+
+      if (payload.length) {
+        const { data: inserted, error: insertError } = await supabase
+          .from('arkline_po_materials')
+          .insert(payload)
+          .select('*')
+
+        if (insertError) {
+          throw new Error(insertError.message)
+        }
+
+        insertedRows = inserted || []
+      }
+
+      const nextRequirements = insertedRows
+        .map(normalizeMaterialRequirement)
+        .map((item) => ({
+          ...item,
+          productName: itemMetaById[item.arklinePoItemId]?.productName || '',
+          categoryName: itemMetaById[item.arklinePoItemId]?.categoryName || '',
+        }))
+
+      setRequirements((current) =>
+        [
+          ...current.filter((item) => item.poId !== selectedPoId),
+          ...nextRequirements,
+        ].sort(compareMaterialRequirementRows)
+      )
+      setSelectedRequirementIds([])
+      setRequirementWarnings(Array.from(new Set(warnings)))
+      setSuccess(
+        payload.length
+          ? `Generated ${payload.length} material requirement line(s) for ${selectedPoId}.`
+          : `No material requirement generated for ${selectedPoId}. You can still add free material for this PO.`
+      )
+    } catch (generateError) {
+      setError(generateError.message || 'Failed to generate material requirements.')
+    } finally {
+      setGeneratingRequirements(false)
+    }
+  }
+
   function handleRemoveOrderLine(lineKey) {
+    markMaterialDraftUnsaved({ clearPoNumber: orderLines.length <= 1 })
     setOrderLines((current) => current.filter((item) => item.key !== lineKey))
   }
 
   function handleUpdateOrderLineNotes(lineKey, value) {
+    markMaterialDraftUnsaved()
     setOrderLines((current) => current.map((item) => (item.key === lineKey ? { ...item, notes: value } : item)))
   }
 
   function handleUpdateOrderLinePrice(lineKey, value) {
+    markMaterialDraftUnsaved()
     setOrderLines((current) => current.map((item) => (item.key === lineKey ? { ...item, price: value } : item)))
   }
 
   function moveOrderLine(lineKey, direction) {
+    markMaterialDraftUnsaved()
     setOrderLines((current) => {
       const index = current.findIndex((item) => item.key === lineKey)
       if (index === -1) return current
@@ -734,15 +1347,98 @@ export default function ArklineMaterialFulfillmentPage() {
     setOrderHeader(createOrderHeaderDraft())
     setFreeMaterialDraft(createFreeMaterialDraft())
     setSelectedRequirementIds([])
+    setRequirementWarnings([])
     setOrderLines([])
+    setFreeMaterialError('')
+    setSavedMaterialPoNumber('')
+    setIsMaterialPoSaved(false)
     setError('')
     setSuccess('')
   }
 
-  async function handleSaveMaterialPo() {
+  function validateMaterialPoDraft() {
+    if (!orderHeader.supplierId) {
+      setError('Choose one material supplier first.')
+      return false
+    }
+
+    if (!orderHeader.requestDeliveryDate) {
+      setError('Fill the request delivery date first.')
+      return false
+    }
+
+    if (!String(orderHeader.paymentTerms || '').trim()) {
+      setError('Fill the payment terms first.')
+      return false
+    }
+
+    if (!orderLines.length) {
+      setError('Move or add at least one material line first.')
+      return false
+    }
+
+    return true
+  }
+
+  function handleSaveMaterialPo() {
+    setError('')
+    setSuccess('')
+
+    if (!validateMaterialPoDraft()) {
+      return
+    }
+
+    setShowOrderedAsModal(true)
+  }
+
+  async function insertMaterialPoHeader(payload, createdBy) {
+    const writePayload = {
+      ...payload,
+      created_by: createdBy,
+    }
+
+    let response = await supabase
+      .from('arkline_po_material_ordered')
+      .insert(writePayload)
+      .select('id')
+      .single()
+
+    if (response.error && isMissingColumnError(response.error, 'include_ppn')) {
+      const fallbackPayload = { ...writePayload }
+      delete fallbackPayload.include_ppn
+      response = await supabase
+        .from('arkline_po_material_ordered')
+        .insert(fallbackPayload)
+        .select('id')
+        .single()
+    }
+
+    return response
+  }
+
+  async function updateMaterialPoHeader(orderedId, payload) {
+    let response = await supabase
+      .from('arkline_po_material_ordered')
+      .update(payload)
+      .eq('id', orderedId)
+
+    if (response.error && isMissingColumnError(response.error, 'include_ppn')) {
+      const fallbackPayload = { ...payload }
+      delete fallbackPayload.include_ppn
+      response = await supabase
+        .from('arkline_po_material_ordered')
+        .update(fallbackPayload)
+        .eq('id', orderedId)
+    }
+
+    return response
+  }
+
+  async function handleConfirmSaveMaterialPo(orderedAs) {
     setSaving(true)
     setError('')
     setSuccess('')
+    setShowOrderedAsModal(false)
 
     try {
       const {
@@ -750,24 +1446,8 @@ export default function ArklineMaterialFulfillmentPage() {
       } = await supabase.auth.getUser()
 
       const userEmail = user?.email?.toLowerCase() || null
-
-      if (!orderHeader.supplierId) {
-        throw new Error('Choose one material supplier first.')
-      }
-
-      if (!orderHeader.requestDeliveryDate) {
-        throw new Error('Fill the request delivery date first.')
-      }
-
-      if (!String(orderHeader.paymentTerms || '').trim()) {
-        throw new Error('Fill the payment terms first.')
-      }
-
-      if (!orderLines.length) {
-        throw new Error('Move or add at least one material line first.')
-      }
-
-      const materialPoNumber = buildMaterialPoNumber(orderLines, materialPoNumbers)
+      const normalizedOrderedAs = String(orderedAs || ORDERED_AS_OPTIONS[0]).trim().toUpperCase()
+      const materialPoNumber = savedMaterialPoNumber || buildMaterialPoNumber(orderLines, materialPoNumbers)
       const selectedSupplier = suppliers.find((item) => item.id === orderHeader.supplierId) || null
       const sourcePoIds = getMaterialDraftSourcePoIds(orderLines)
       const headerPayload = {
@@ -775,10 +1455,11 @@ export default function ArklineMaterialFulfillmentPage() {
         supplier_id: Number(orderHeader.supplierId) || null,
         supplier_name_snapshot: selectedSupplier?.supplierName || orderHeader.supplierName || null,
         garment_po_number: sourcePoIds[0] || null,
-        source_type: sourcePoIds.length ? 'PO' : 'FREE',
         request_delivery_date: orderHeader.requestDeliveryDate || null,
         payment_terms: String(orderHeader.paymentTerms || '').trim() || null,
         notes: String(orderHeader.notes || '').trim() || null,
+        include_ppn: orderHeader.includePpn !== false,
+        ordered_as: normalizedOrderedAs,
         status: 'ORDERED',
         updated_by: userEmail,
       }
@@ -796,14 +1477,7 @@ export default function ArklineMaterialFulfillmentPage() {
       let orderedId = existingHeader?.id || null
 
       if (!orderedId) {
-        const { data: insertedHeader, error: insertHeaderError } = await supabase
-          .from('arkline_po_material_ordered')
-          .insert({
-            ...headerPayload,
-            created_by: userEmail,
-          })
-          .select('id')
-          .single()
+        const { data: insertedHeader, error: insertHeaderError } = await insertMaterialPoHeader(headerPayload, userEmail)
 
         if (insertHeaderError) {
           throw new Error(insertHeaderError.message)
@@ -826,23 +1500,10 @@ export default function ArklineMaterialFulfillmentPage() {
           throw new Error('This Material PO already has received or sent logs, so the draft can no longer be replaced.')
         }
 
-        const { error: updateHeaderError } = await supabase
-          .from('arkline_po_material_ordered')
-          .update(headerPayload)
-          .eq('id', orderedId)
+        const { error: updateHeaderError } = await updateMaterialPoHeader(orderedId, headerPayload)
 
         if (updateHeaderError) {
           throw new Error(updateHeaderError.message)
-        }
-
-        const { error: deleteOrderedLogsError } = await supabase
-          .from('arkline_po_material_logs')
-          .delete()
-          .eq('material_po_ordered_id', orderedId)
-          .eq('log_type', 'ORDERED')
-
-        if (deleteOrderedLogsError) {
-          throw new Error(deleteOrderedLogsError.message)
         }
 
         const { error: deleteItemsError } = await supabase
@@ -856,13 +1517,9 @@ export default function ArklineMaterialFulfillmentPage() {
       }
 
       const itemPayload = orderLines.map((line) => {
-        const lineSourcePoIds = Array.from(
-          new Set(
-            (line.sources || [])
-              .filter((source) => source.sourceType === 'PO' && source.poId)
-              .map((source) => String(source.poId || '').trim().toUpperCase())
-          )
-        )
+        const lineSourcePoIds = getSourcePoIdsFromSources(line.sources)
+        const hasGeneratedSource = (line.sources || []).some((source) => source.sourceType === 'PO')
+        const hasFreeSource = (line.sources || []).some((source) => source.sourceType === 'FREE')
 
         return {
           material_po_ordered_id: orderedId,
@@ -876,47 +1533,25 @@ export default function ArklineMaterialFulfillmentPage() {
           price: toNumber(line.price),
           amount: toNumber(line.price) * toNumber(line.totalQty),
           notes: String(line.notes || '').trim() || null,
-          source_type: lineSourcePoIds.length ? ((line.sources || []).some((source) => source.sourceType === 'FREE') ? 'MIXED' : 'PO') : 'FREE',
+          source_type: hasGeneratedSource && hasFreeSource ? 'MIXED' : hasGeneratedSource ? 'PO' : 'FREE',
           source_po_id: lineSourcePoIds[0] || null,
         }
       })
 
-      const { data: insertedItems, error: insertItemsError } = await supabase
+      const { error: insertItemsError } = await supabase
         .from('arkline_po_material_ordered_items')
         .insert(itemPayload)
-        .select('id, material_id, material_name_snapshot, size_variant, color_variant, unit, qty, notes, source_po_id')
 
       if (insertItemsError) {
         throw new Error(insertItemsError.message)
       }
 
-      const orderedLogPayload = (insertedItems || []).map((item) => ({
-        arkline_po_material_id: null,
-        po_id: sourcePoIds[0] || materialPoNumber,
-        arkline_po_item_id: null,
-        log_type: 'ORDERED',
-        qty: Number(item.qty || 0),
-        event_date: orderHeader.requestDeliveryDate || new Date().toISOString().slice(0, 10),
-        supplier_name: selectedSupplier?.supplierName || orderHeader.supplierName || null,
-        notes: item.notes || orderHeader.notes || null,
-        created_by: userEmail,
-        material_po_number: materialPoNumber,
-        material_po_ordered_id: orderedId,
-        material_po_ordered_item_id: item.id,
-        material_id: item.material_id || null,
-        material_name_snapshot: item.material_name_snapshot || null,
-        size_variant: item.size_variant || null,
-        color_variant: item.color_variant || null,
-        unit: item.unit || null,
+      setOrderHeader((current) => ({
+        ...current,
+        orderedAs: normalizedOrderedAs,
       }))
-
-      if (orderedLogPayload.length) {
-        const { error: insertLogsError } = await supabase.from('arkline_po_material_logs').insert(orderedLogPayload)
-        if (insertLogsError) {
-          throw new Error(insertLogsError.message)
-        }
-      }
-
+      setSavedMaterialPoNumber(materialPoNumber)
+      setIsMaterialPoSaved(true)
       setMaterialPoNumbers((current) => (current.includes(materialPoNumber) ? current : [...current, materialPoNumber]))
       setSuccess(`Material PO ${materialPoNumber} saved.`)
     } catch (saveError) {
@@ -930,23 +1565,12 @@ export default function ArklineMaterialFulfillmentPage() {
     setError('')
     setSuccess('')
 
-    if (!orderHeader.supplierId) {
-      setError('Choose one material supplier first.')
+    if (!validateMaterialPoDraft()) {
       return
     }
 
-    if (!orderHeader.requestDeliveryDate) {
-      setError('Fill the request delivery date first.')
-      return
-    }
-
-    if (!String(orderHeader.paymentTerms || '').trim()) {
-      setError('Fill the payment terms first.')
-      return
-    }
-
-    if (!orderLines.length) {
-      setError('Move or add at least one material line first.')
+    if (!isMaterialPoSaved || !savedMaterialPoNumber) {
+      setError('Save Material PO first before printing.')
       return
     }
 
@@ -964,7 +1588,7 @@ export default function ArklineMaterialFulfillmentPage() {
       const selectedSupplier = suppliers.find((item) => item.id === orderHeader.supplierId) || null
       const supplierContactParts = [selectedSupplier?.contactPerson, selectedSupplier?.phone].filter(Boolean)
       const createdAt = new Date().toISOString()
-      const poNumber = buildMaterialPoNumber(orderLines, materialPoNumbers, new Date(createdAt))
+      const poNumber = savedMaterialPoNumber
       const printableItems = orderLines.map((line) => ({
         materialName: line.materialName,
         variant: [line.sizeVariant, line.colorVariant].filter(Boolean).join(' / ') || '-',
@@ -980,6 +1604,8 @@ export default function ArklineMaterialFulfillmentPage() {
         createdAt,
         header: {
           ...orderHeader,
+          includePpn: orderHeader.includePpn !== false,
+          orderedAs: orderHeader.orderedAs || ORDERED_AS_OPTIONS[0],
           supplierName: selectedSupplier?.supplierName || orderHeader.supplierName || '-',
           supplierAddress: selectedSupplier?.address || '',
           supplierContact: supplierContactParts.join(' | '),
@@ -1015,7 +1641,12 @@ export default function ArklineMaterialFulfillmentPage() {
               <button type="button" className={styles.primaryButton} onClick={handleSaveMaterialPo} disabled={saving || loading || printing}>
                 {saving ? 'Saving...' : 'Save Material PO'}
               </button>
-              <button type="button" className={styles.printButton} onClick={handlePrintMaterialOrder} disabled={printing || loading}>
+              <button
+                type="button"
+                className={styles.printButton}
+                onClick={handlePrintMaterialOrder}
+                disabled={printing || loading || saving || !isMaterialPoSaved || !savedMaterialPoNumber}
+              >
                 {printing ? 'Preparing Print...' : 'Print Purchase Order'}
               </button>
             </div>
@@ -1039,29 +1670,44 @@ export default function ArklineMaterialFulfillmentPage() {
             <div>
               <h2 className={styles.sectionTitle}>Material Order</h2>
             </div>
-
-            <div className={styles.materialModeRow}>
-              {MRP_MODE_OPTIONS.map((option) => (
-                <button
-                  key={option.id}
-                  type="button"
-                  className={`${styles.modeButton} ${mode === option.id ? styles.modeButtonActive : ''}`.trim()}
-                  onClick={() => {
-                    setMode(option.id)
-                    setError('')
-                    setSuccess('')
-                    setSelectedRequirementIds([])
-                  }}
-                >
-                  {option.label}
-                </button>
-              ))}
-            </div>
           </div>
 
           <div className={`${styles.formGrid} ${styles.materialHeaderGrid}`}>
             <div className={styles.field}>
-              <label className={styles.label}>Supplier</label>
+              <label className={styles.label}>PO Number</label>
+              <select
+                className={styles.select}
+                value={poFilter}
+                onChange={(event) => {
+                  setPoFilter(event.target.value)
+                  setSelectedRequirementIds([])
+                  setRequirementWarnings([])
+                  setError('')
+                  setSuccess('')
+                }}
+              >
+                <option value={NO_PO_VALUE}>No PO</option>
+                {poOptions.map((po) => (
+                  <option key={po.poId} value={po.poId}>
+                    {po.poId}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className={styles.field}>
+              <div className={styles.fieldHeaderRow}>
+                <label className={styles.label}>Supplier</label>
+                <button
+                  type="button"
+                  className={styles.inlineAddButton}
+                  onClick={() => void openSupplierModal()}
+                  title="Add material supplier"
+                  aria-label="Add material supplier"
+                >
+                  +
+                </button>
+              </div>
               <select className={styles.select} value={orderHeader.supplierId} onChange={(event) => updateOrderHeader('supplierId', event.target.value)}>
                 <option value="">Select material supplier</option>
                 {suppliers.map((supplier) => (
@@ -1092,60 +1738,163 @@ export default function ArklineMaterialFulfillmentPage() {
               />
             </div>
 
+            <div className={`${styles.field} ${styles.materialTaxField}`.trim()}>
+              <label className={styles.label}>{orderHeader.includePpn ? 'With PPN' : 'Without PPN'}</label>
+              <label
+                className={`${styles.taxToggleCompact} ${orderHeader.includePpn ? styles.taxToggleCompactActive : ''}`.trim()}
+                aria-label={orderHeader.includePpn ? 'With PPN' : 'Without PPN'}
+              >
+                <input
+                  type="checkbox"
+                  checked={orderHeader.includePpn}
+                  onChange={(event) => updateOrderHeader('includePpn', event.target.checked)}
+                />
+                <span className={styles.taxToggleKnob} aria-hidden="true" />
+              </label>
+            </div>
+
             <div className={`${styles.field} ${styles.fullSpan}`}>
-              <label className={styles.label}>PO Notes</label>
+              <label className={styles.label}>Remarks</label>
               <textarea
                 className={styles.textarea}
                 value={orderHeader.notes}
                 onChange={(event) => updateOrderHeader('notes', event.target.value)}
-                placeholder="General notes for this material PO."
+                placeholder="Remarks for this material PO."
               />
             </div>
           </div>
         </section>
 
-        {mode === 'existing-po' ? (
-          <section className={styles.sectionCard}>
-            <div className={styles.field}>
-              <label className={styles.label}>PO Number</label>
-              <select className={styles.select} value={poFilter} onChange={(event) => setPoFilter(event.target.value)}>
-                <option value="">Select initiated CMT PO</option>
-                {poOptions.map((po) => (
-                  <option key={po.poId} value={po.poId}>
-                    {po.poId}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </section>
-        ) : null}
-
         <section className={styles.materialWorkflow}>
           <section className={styles.sectionCard}>
             <div className={styles.sectionHeader}>
               <div>
-                <h2 className={styles.sectionTitle}>{mode === 'existing-po' ? 'Generated Materials' : 'Free Material Input'}</h2>
+                <h2 className={styles.sectionTitle}>Material Sources</h2>
               </div>
-              {mode === 'existing-po' ? (
+            </div>
+
+            <div className={styles.sourceSubsectionHeader}>
+              <div>
+                <h3 className={styles.sourceSubsectionTitle}>Free Material</h3>
+                <p className={styles.sourceSubsectionCopy}>
+                  {selectedPoId ? `Manual material will stay linked to ${selectedPoId}.` : 'Manual material will be saved as No PO purchase.'}
+                </p>
+              </div>
+            </div>
+
+            <div className={styles.freeMaterialGrid}>
+              <div className={styles.field}>
+                <div className={styles.fieldHeaderRow}>
+                  <label className={styles.label}>Material</label>
+                  <button
+                    type="button"
+                    className={styles.inlineAddButton}
+                    onClick={openMaterialModal}
+                    title="Add material"
+                    aria-label="Add material"
+                  >
+                    +
+                  </button>
+                </div>
+                <select
+                  className={styles.select}
+                  value={freeMaterialDraft.materialId}
+                  onChange={(event) => {
+                    setFreeMaterialError('')
+                    setFreeMaterialDraft((current) => ({ ...current, materialId: event.target.value }))
+                  }}
+                >
+                  <option value="">Select material</option>
+                  {materialOptions.map((material) => (
+                    <option key={material.id} value={material.id}>
+                      {material.materialName}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className={styles.field}>
+                <label className={styles.label}>Qty</label>
+                <input
+                  className={styles.input}
+                  value={freeMaterialDraft.qty}
+                  onChange={(event) => {
+                    setFreeMaterialError('')
+                    setFreeMaterialDraft((current) => ({ ...current, qty: event.target.value }))
+                  }}
+                  placeholder="0"
+                  inputMode="decimal"
+                />
+              </div>
+
+              <div className={styles.field}>
+                <label className={styles.label}>Unit</label>
+                <input
+                  className={styles.inputReadonly}
+                  value={materialOptions.find((item) => item.id === freeMaterialDraft.materialId)?.unit || '-'}
+                  readOnly
+                />
+              </div>
+
+              <div className={styles.field}>
+                <label className={styles.label}>&nbsp;</label>
                 <button
                   type="button"
-                  className={styles.secondaryButton}
-                  onClick={handleMoveSelectedRequirements}
-                  disabled={!selectedRequirementIds.length}
-                  title="Move selected materials"
-                  aria-label="Move selected materials"
+                  className={styles.primaryButton}
+                  onClick={handleAddFreeMaterial}
                 >
-                  →
+                  Add to Order
                 </button>
+                {freeMaterialError ? <p className={styles.inlineErrorText}>{freeMaterialError}</p> : null}
+              </div>
+            </div>
+
+            <div className={styles.sourceDivider} />
+
+            <div className={styles.sourceSubsectionHeader}>
+              <div>
+                <h3 className={styles.sourceSubsectionTitle}>Generated Materials</h3>
+                <p className={styles.sourceSubsectionCopy}>
+                  {selectedPoId ? 'Generated requirement is saved as a PO material snapshot.' : 'Select a PO number to generate from BOM.'}
+                </p>
+              </div>
+
+              {selectedPoId ? (
+                <div className={styles.materialTableActions}>
+                  <button
+                    type="button"
+                    className={styles.secondaryButton}
+                    onClick={handleGenerateRequirements}
+                    disabled={generatingRequirements || loading}
+                  >
+                    {generatingRequirements ? 'Generating...' : 'Generate Material'}
+                  </button>
+                  <button
+                    type="button"
+                    className={styles.secondaryButton}
+                    onClick={handleMoveSelectedRequirements}
+                    disabled={!selectedRequirementIds.length}
+                    title="Move selected materials"
+                    aria-label="Move selected materials"
+                  >
+                    →
+                  </button>
+                </div>
               ) : null}
             </div>
 
+            {requirementWarnings.length ? (
+              <div className={styles.warningBox}>
+                {requirementWarnings.map((warning) => (
+                  <p key={warning}>{warning}</p>
+                ))}
+              </div>
+            ) : null}
+
             {loading ? (
               <div className={styles.emptyState}>Loading MRP workspace...</div>
-            ) : mode === 'existing-po' ? (
-              !poFilter ? (
-                <div className={styles.emptyState}>Choose one initiated CMT PO first.</div>
-              ) : filteredRequirements.length ? (
+            ) : selectedPoId ? (
+              filteredRequirements.length ? (
                 <div className={styles.linesTableWrap}>
                   <table className={styles.linesTable}>
                     <thead>
@@ -1188,54 +1937,12 @@ export default function ArklineMaterialFulfillmentPage() {
                   </table>
                 </div>
               ) : (
-                <div className={styles.emptyState}>No generated material lines found for this PO.</div>
+                <div className={styles.emptyState}>No generated material lines found for this PO. Generate from BOM or add free material below.</div>
               )
             ) : (
-              <div className={styles.freeMaterialGrid}>
-                <div className={styles.field}>
-                  <label className={styles.label}>Material</label>
-                  <select
-                    className={styles.select}
-                    value={freeMaterialDraft.materialId}
-                    onChange={(event) => setFreeMaterialDraft((current) => ({ ...current, materialId: event.target.value }))}
-                  >
-                    <option value="">Select material</option>
-                    {materialOptions.map((material) => (
-                      <option key={material.id} value={material.id}>
-                        {material.materialName}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div className={styles.field}>
-                  <label className={styles.label}>Qty</label>
-                  <input
-                    className={styles.input}
-                    value={freeMaterialDraft.qty}
-                    onChange={(event) => setFreeMaterialDraft((current) => ({ ...current, qty: event.target.value }))}
-                    placeholder="0"
-                    inputMode="decimal"
-                  />
-                </div>
-
-                <div className={styles.field}>
-                  <label className={styles.label}>Unit</label>
-                  <input
-                    className={styles.inputReadonly}
-                    value={materialOptions.find((item) => item.id === freeMaterialDraft.materialId)?.unit || '-'}
-                    readOnly
-                  />
-                </div>
-
-                <div className={styles.field}>
-                  <label className={styles.label}>&nbsp;</label>
-                  <button type="button" className={styles.primaryButton} onClick={handleAddFreeMaterial}>
-                    Add to Order
-                  </button>
-                </div>
-              </div>
+              <div className={styles.emptyState}>No PO selected. Use free material below for non-PO purchases.</div>
             )}
+
           </section>
 
           <section className={styles.sectionCard}>
@@ -1339,6 +2046,151 @@ export default function ArklineMaterialFulfillmentPage() {
           </section>
         </section>
       </section>
+
+      {showOrderedAsModal ? (
+        <div className={styles.modalOverlay}>
+          <div className={`${styles.modalCard} ${styles.orderedAsModal}`.trim()}>
+            <h3 className={styles.modalTitle}>Ordered As</h3>
+            <p className={styles.modalCopy}>Pilih nama perusahaan yang akan tampil di bawah logo Arkline pada Purchase Order.</p>
+
+            <div className={styles.orderedAsChoices}>
+              {ORDERED_AS_OPTIONS.map((option) => (
+                <button
+                  key={option}
+                  type="button"
+                  className={styles.secondaryButton}
+                  onClick={() => void handleConfirmSaveMaterialPo(option)}
+                  disabled={saving}
+                >
+                  {option}
+                </button>
+              ))}
+            </div>
+
+            <div className={styles.modalActions}>
+              <button type="button" className={styles.secondaryButton} onClick={() => setShowOrderedAsModal(false)} disabled={saving}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {showSupplierModal ? (
+        <div className={styles.modalOverlay}>
+          <div className={`${styles.modalCard} ${styles.quickSupplierModal}`.trim()}>
+            <h3 className={styles.modalTitle}>Add Material Supplier</h3>
+            <p className={styles.modalCopy}>Supplier will be saved as ARKLINE / MATERIAL and selected for this Material PO.</p>
+
+            <div className={styles.quickSupplierGrid}>
+              <div className={styles.field}>
+                <label className={styles.label}>Supplier Code</label>
+                <input className={styles.inputReadonly} value={supplierCodeLoading ? 'GENERATING...' : supplierDraft.supplierCode} readOnly />
+              </div>
+
+              <div className={styles.field}>
+                <label className={styles.label}>Supplier Name</label>
+                <input
+                  className={styles.input}
+                  value={supplierDraft.supplierName}
+                  onChange={(event) => updateSupplierDraft('supplierName', event.target.value)}
+                  placeholder="SUPPLIER NAME"
+                />
+              </div>
+
+              <div className={styles.field}>
+                <label className={styles.label}>Contact Person</label>
+                <input
+                  className={styles.input}
+                  value={supplierDraft.contactPerson}
+                  onChange={(event) => updateSupplierDraft('contactPerson', event.target.value)}
+                  placeholder="CONTACT PERSON"
+                />
+              </div>
+
+              <div className={styles.field}>
+                <label className={styles.label}>Phone</label>
+                <input
+                  className={styles.input}
+                  value={supplierDraft.phone}
+                  onChange={(event) => updateSupplierDraft('phone', event.target.value)}
+                  inputMode="numeric"
+                  placeholder="NUMBERS ONLY"
+                />
+              </div>
+
+              <div className={`${styles.field} ${styles.fullSpan}`.trim()}>
+                <label className={styles.label}>Address</label>
+                <textarea
+                  className={styles.textarea}
+                  value={supplierDraft.address}
+                  onChange={(event) => updateSupplierDraft('address', event.target.value)}
+                  placeholder="ADDRESS"
+                />
+              </div>
+            </div>
+
+            <div className={styles.modalActions}>
+              <button type="button" className={styles.secondaryButton} onClick={closeSupplierModal} disabled={savingSupplier}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                className={styles.primaryButton}
+                onClick={() => void handleSaveQuickSupplier()}
+                disabled={savingSupplier || supplierCodeLoading}
+              >
+                {savingSupplier ? 'Saving...' : 'Save Supplier'}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {showMaterialModal ? (
+        <div className={styles.modalOverlay}>
+          <div className={`${styles.modalCard} ${styles.quickMaterialModal}`.trim()}>
+            <h3 className={styles.modalTitle}>Add Material</h3>
+            <p className={styles.modalCopy}>Material will be saved to Arkline material directory and selected in Free Material.</p>
+
+            <div className={styles.quickMaterialGrid}>
+              <div className={styles.field}>
+                <label className={styles.label}>Material Name</label>
+                <input
+                  className={styles.input}
+                  value={materialDraft.materialName}
+                  onChange={(event) => updateMaterialDraft('materialName', event.target.value)}
+                  placeholder="MATERIAL NAME"
+                />
+              </div>
+
+              <div className={styles.field}>
+                <label className={styles.label}>Unit</label>
+                <input
+                  className={styles.input}
+                  value={materialDraft.unit}
+                  onChange={(event) => updateMaterialDraft('unit', event.target.value)}
+                  placeholder="PCS"
+                />
+              </div>
+            </div>
+
+            <div className={styles.modalActions}>
+              <button type="button" className={styles.secondaryButton} onClick={closeMaterialModal} disabled={savingMaterial}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                className={styles.primaryButton}
+                onClick={() => void handleSaveQuickMaterial()}
+                disabled={savingMaterial}
+              >
+                {savingMaterial ? 'Saving...' : 'Save Material'}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   )
 }

@@ -29,9 +29,30 @@ create table if not exists public.arkline_payment (
 );
 
 alter table public.arkline_payment
+  add column if not exists payment_basis text not null default 'NON_PO_BASED',
   add column if not exists po_source_type text,
+  add column if not exists po_db_id bigint,
+  add column if not exists po_number text,
+  add column if not exists supplier_name_snapshot text,
+  add column if not exists category_id bigint references public.dir_reimbursement_categories(id),
   add column if not exists approved_by text,
   add column if not exists approved_at timestamptz;
+
+update public.arkline_payment payment_row
+set po_db_id = garment_po.id
+from public.arkline_pos garment_po
+where payment_row.payment_basis = 'PO_BASED'
+  and payment_row.po_source_type = 'GARMENT'
+  and payment_row.po_db_id is null
+  and upper(trim(payment_row.po_number)) = upper(trim(garment_po.po_id));
+
+update public.arkline_payment payment_row
+set po_db_id = material_po.id
+from public.arkline_po_material_ordered material_po
+where payment_row.payment_basis = 'PO_BASED'
+  and payment_row.po_source_type = 'MATERIAL'
+  and payment_row.po_db_id is null
+  and upper(trim(payment_row.po_number)) = upper(trim(material_po.material_po_number));
 
 do $$
 begin

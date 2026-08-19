@@ -41,6 +41,31 @@ function getStatusLabel(value) {
   return String(value || 'waiting').replaceAll('_', ' ').toUpperCase()
 }
 
+function getPhaseLabel(value) {
+  const normalized = String(value || '').trim().toLowerCase().replaceAll(' ', '_')
+
+  if (normalized === 'qc') return 'QC'
+  if (normalized === 'packing_list') return 'Packing List'
+  if (normalized === 'inbound') return 'Inbound'
+
+  return String(value || '-').replaceAll('_', ' ').toUpperCase()
+}
+
+function sortPhaseLabels(labels = []) {
+  const order = {
+    QC: 0,
+    'Packing List': 1,
+    Inbound: 2,
+  }
+
+  return labels.sort((a, b) => {
+    const orderA = order[a] ?? 99
+    const orderB = order[b] ?? 99
+    if (orderA !== orderB) return orderA - orderB
+    return a.localeCompare(b)
+  })
+}
+
 function hasKoliSequence(row) {
   return row.koli_sequence !== null && row.koli_sequence !== undefined && row.koli_sequence !== ''
 }
@@ -226,25 +251,34 @@ export default function ReturReportClient({ rows, canAdd = false }) {
   const paymentLabel = selectedInbound?.payment_on_site ? 'Paid by Receiver' : 'Paid by Us'
   const selectedRowsCompleted = selectedRows.length > 0 && selectedRows.every((row) => String(row.status || 'waiting').toLowerCase() === 'completed')
 
+  function getSavedShippingMethod() {
+    return (
+      selectedRows.find((row) => String(row.returns_delivery || '').trim())?.returns_delivery ||
+      selectedRows.find((row) => String(row.return_delivery || '').trim())?.return_delivery ||
+      'COMPLETED RETURN'
+    )
+  }
+
   const selectedReturnCardGroups = useMemo(() => {
     const grouped = new Map()
 
     selectedRows.forEach((row) => {
       const hasKoli = row.koli_sequence !== null && row.koli_sequence !== undefined && row.koli_sequence !== ''
       const key = hasKoli
-        ? `${row.inbound_id || 'no-inbound'}::${row.source_phase || 'no-phase'}::${row.koli_sequence}`
+        ? `${row.inbound_id || 'no-inbound'}::${row.koli_sequence}`
         : `row::${row.id}`
       const current = grouped.get(key) || {
         key,
         inbound: row.inbound,
         inbound_id: row.inbound_id,
-        source_phase: row.source_phase,
+        phases: new Set(),
         koli_sequence: hasKoli ? row.koli_sequence : null,
         created_at: row.created_at,
         items: [],
         total_qty: 0,
       }
 
+      if (row.source_phase) current.phases.add(getPhaseLabel(row.source_phase))
       current.items.push(row)
       current.total_qty += Number(row.qty || 0)
       if (!current.created_at || (row.created_at && new Date(row.created_at) < new Date(current.created_at))) {
@@ -257,7 +291,7 @@ export default function ReturReportClient({ rows, canAdd = false }) {
       const grnSort = String(a.inbound?.grn_number || '').localeCompare(String(b.inbound?.grn_number || ''))
       if (grnSort) return grnSort
       return Number(a.koli_sequence || 0) - Number(b.koli_sequence || 0)
-    })
+    }).map((group) => ({ ...group, phase_labels: sortPhaseLabels(Array.from(group.phases || [])) }))
   }, [selectedRows])
 
   function updateFilter(setFilter, value) {
@@ -458,13 +492,9 @@ export default function ReturReportClient({ rows, canAdd = false }) {
     }
 
     if (selectedRowsCompleted) {
-      handlePrintSj({
-        shippingMethodOverride:
-          selectedRows.find((row) => String(row.returns_delivery || '').trim())?.returns_delivery ||
-          selectedRows.find((row) => String(row.return_delivery || '').trim())?.return_delivery ||
-          'COMPLETED RETURN',
-        skipStatusUpdate: true,
-      })
+      setShippingMethod(getSavedShippingMethod())
+      setModalError('')
+      setIsModalOpen(true)
       return
     }
 
@@ -486,13 +516,9 @@ export default function ReturReportClient({ rows, canAdd = false }) {
   function confirmMultiSupplier() {
     setIsSupplierConfirmOpen(false)
     if (selectedRowsCompleted) {
-      handlePrintSj({
-        shippingMethodOverride:
-          selectedRows.find((row) => String(row.returns_delivery || '').trim())?.returns_delivery ||
-          selectedRows.find((row) => String(row.return_delivery || '').trim())?.return_delivery ||
-          'COMPLETED RETURN',
-        skipStatusUpdate: true,
-      })
+      setShippingMethod(getSavedShippingMethod())
+      setModalError('')
+      setIsModalOpen(true)
       return
     }
 
@@ -528,7 +554,9 @@ export default function ReturReportClient({ rows, canAdd = false }) {
     const supplierName = group.inbound?.suppliers?.supplier_name || '-'
     const rowLabel = group.koli_sequence ? `Koli ${group.koli_sequence}` : `Row ${group.items[0]?.id || '-'}`
     const returnDate = formatDateDisplay(group.created_at || group.inbound?.inbound_date)
-    const phaseLabel = String(group.source_phase || group.items[0]?.source_phase || '-').toUpperCase()
+    const phaseLabel = group.phase_labels?.length
+      ? group.phase_labels.join(', ')
+      : sortPhaseLabels(Array.from(new Set(group.items.map((item) => getPhaseLabel(item.source_phase)).filter(Boolean)))).join(', ') || '-'
     const isSimple = mode === 'simple'
     const rowsHtml = isSimple
       ? getSimpleReturnCardItems(group.items)
@@ -663,7 +691,9 @@ export default function ReturReportClient({ rows, canAdd = false }) {
 
   async function handlePrintSj(options = {}) {
     const effectiveShippingMethod = String(options.shippingMethodOverride ?? shippingMethod).trim()
-    const skipStatusUpdate = Boolean(options.skipStatusUpdate)
+    const skipStatusUpdate = Boolean(options.skipStatusUpdate) || selectedRowsCompleted
+    const sjMode = options.mode === 'simple' ? 'simple' : 'detail'
+    const isSimpleSj = sjMode === 'simple'
 
     if (!selectedRows.length || selectedInboundIds.length !== 1) {
       setModalError('Pilih row retur dari satu GRN yang sama dulu.')
@@ -688,26 +718,56 @@ export default function ReturReportClient({ rows, canAdd = false }) {
 
     const supplierName = selectedInbound?.suppliers?.supplier_name || '-'
     const grnNumber = selectedInbound?.grn_number || '-'
-    const detailRows = selectedRows
-      .map(
-        (row) => `
+    const totalSelectedKoli = selectedReturnCardGroups.length
+    const detailRows = isSimpleSj
+      ? getSimpleReturnCardItems(selectedRows)
+        .map(
+          (row) => `
           <tr>
-            <td>${row.brands?.brand_name || '-'}</td>
-            <td>${getModelLabel(row)}</td>
-            <td>${row.grade || '-'}</td>
-            <td>${row.qty || 0}</td>
-            <td>${row.koli_sequence ? `Koli ${row.koli_sequence}` : '-'}</td>
+            <td>${escapeHtml(row.brandName)}</td>
+            <td>${escapeHtml(row.categoryName)}</td>
+            <td class="qty">${escapeHtml(row.qty || 0)}</td>
           </tr>
         `
-      )
-      .join('')
+        )
+        .join('')
+      : selectedRows
+        .map(
+          (row) => `
+          <tr>
+            <td>${escapeHtml(row.brands?.brand_name || '-')}</td>
+            <td>${escapeHtml(getModelLabel(row))}</td>
+            <td>${escapeHtml(row.grade || '-')}</td>
+            <td class="qty">${escapeHtml(row.qty || 0)}</td>
+            <td>${escapeHtml(row.koli_sequence ? `Koli ${row.koli_sequence}` : '-')}</td>
+          </tr>
+        `
+        )
+        .join('')
+    const tableHeaderRows = isSimpleSj
+      ? `
+              <tr>
+                <th>Brand</th>
+                <th>Category / Item Type</th>
+                <th>Qty</th>
+              </tr>
+            `
+      : `
+              <tr>
+                <th>Brand</th>
+                <th>Mode-Variant</th>
+                <th>Grade</th>
+                <th>Qty</th>
+                <th>Koli</th>
+              </tr>
+            `
 
     printWindow.document.write(`
       <html>
         <head>
-          <title>Return SJ - ${grnNumber}</title>
+          <title>Return SJ - ${escapeHtml(grnNumber)}</title>
           <style>
-            @page { size: A4; margin: 14mm; }
+            @page { size: A4; margin: 20mm; }
             body { font-family: Arial, sans-serif; color: #111827; margin: 0; }
             h1 { margin: 0 0 8px; font-size: 24px; }
             .subtitle { margin: 0 0 16px; color: #4b5563; }
@@ -718,6 +778,7 @@ export default function ReturReportClient({ rows, canAdd = false }) {
             table { width: 100%; border-collapse: collapse; }
             th, td { border: 1px solid #d1d5db; padding: 10px 12px; text-align: left; vertical-align: middle; font-size: 13px; }
             th { background: #f9fafb; text-transform: uppercase; font-size: 12px; }
+            .qty { text-align: center; font-weight: 800; }
             .signature-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; margin-top: 42px; }
             .signature-box { text-align: center; font-size: 13px; color: #111827; }
             .signature-space { height: 72px; }
@@ -726,32 +787,30 @@ export default function ReturReportClient({ rows, canAdd = false }) {
         </head>
         <body>
           <h1>Return SJ</h1>
-          <p class="subtitle">${grnNumber}</p>
+          <p class="subtitle">${escapeHtml(grnNumber)} / ${isSimpleSj ? 'Simple' : 'Detail'}</p>
 
           <div class="meta">
             <div class="meta-card">
               <span class="meta-label">Supplier</span>
-              <span class="meta-value">${supplierName}</span>
+              <span class="meta-value">${escapeHtml(supplierName)}</span>
             </div>
             <div class="meta-card">
               <span class="meta-label">Total Qty</span>
-              <span class="meta-value">${totalSelectedQty}</span>
+              <span class="meta-value">${escapeHtml(totalSelectedQty)}</span>
+            </div>
+            <div class="meta-card">
+              <span class="meta-label">Total Koli</span>
+              <span class="meta-value">${escapeHtml(totalSelectedKoli)}</span>
             </div>
             <div class="meta-card">
               <span class="meta-label">Shipping Method</span>
-              <span class="meta-value">${effectiveShippingMethod}</span>
+              <span class="meta-value">${escapeHtml(effectiveShippingMethod)}</span>
             </div>
           </div>
 
           <table>
             <thead>
-              <tr>
-                <th>Brand</th>
-                <th>Mode-Variant</th>
-                <th>Grade</th>
-                <th>Qty</th>
-                <th>Koli</th>
-              </tr>
+              ${tableHeaderRows}
             </thead>
             <tbody>
               ${detailRows}
@@ -780,6 +839,7 @@ export default function ReturReportClient({ rows, canAdd = false }) {
     printWindow.onafterprint = async () => {
       if (skipStatusUpdate) {
         setIsPrinting(false)
+        setIsModalOpen(false)
         setSelectedIds([])
         return
       }
@@ -887,7 +947,7 @@ export default function ReturReportClient({ rows, canAdd = false }) {
                       <label htmlFor="qc-retur-prep-phase-filter">Phase</label>
                       <select id="qc-retur-prep-phase-filter" className={reportStyles.input} value={phaseFilter} onChange={(event) => updateFilter(setPhaseFilter, event.target.value)}>
                         <option value="">All Phase</option>
-                        {phaseOptions.map((item) => <option key={item} value={item}>{String(item).toUpperCase()}</option>)}
+                        {phaseOptions.map((item) => <option key={item} value={item}>{getPhaseLabel(item)}</option>)}
                       </select>
                     </div>
                   ) : null}
@@ -938,7 +998,7 @@ export default function ReturReportClient({ rows, canAdd = false }) {
                       <tbody>
                         {currentReturnKoliItems.map((item) => (
                           <tr key={item.tempId}>
-                            <td>{String(item.sourceRow.source_phase || '-').toUpperCase()}</td>
+                            <td>{getPhaseLabel(item.sourceRow.source_phase)}</td>
                             <td>{getBrandLabel(item.sourceRow)}</td>
                             <td>{getModelLabel(item.sourceRow)}</td>
                             <td>{item.sourceRow.grade || '-'}</td>
@@ -985,7 +1045,7 @@ export default function ReturReportClient({ rows, canAdd = false }) {
                           <tr key={row.id}>
                             <td>{formatDateDisplay(row.created_at || row.inbound?.inbound_date)}</td>
                             <td>{row.inbound?.grn_number || '-'}</td>
-                            <td>{String(row.source_phase || '-').toUpperCase()}</td>
+                            <td>{getPhaseLabel(row.source_phase)}</td>
                             <td>{getBrandLabel(row)}</td>
                             <td>{getCategoryLabel(row)}</td>
                             <td>{getModelLabel(row)}</td>
@@ -1101,7 +1161,7 @@ export default function ReturReportClient({ rows, canAdd = false }) {
           >
             <option value="">All Phase</option>
             {phaseOptions.map((item) => (
-              <option key={item} value={item}>{String(item).toUpperCase()}</option>
+              <option key={item} value={item}>{getPhaseLabel(item)}</option>
             ))}
           </select>
         </div>
@@ -1214,7 +1274,7 @@ export default function ReturReportClient({ rows, canAdd = false }) {
                   </td>
                   <td>{formatDateDisplay(row.created_at || row.inbound?.inbound_date)}</td>
                   <td>{row.inbound?.grn_number || '-'}</td>
-                  <td>{String(row.source_phase || '-').toUpperCase()}</td>
+                  <td>{getPhaseLabel(row.source_phase)}</td>
                   <td>{row.inbound?.suppliers?.supplier_name || '-'}</td>
                   <td>{getBrandLabel(row)}</td>
                   <td>{getCategoryLabel(row)}</td>
@@ -1306,6 +1366,30 @@ export default function ReturReportClient({ rows, canAdd = false }) {
             </div>
 
             {selectedRows.length && selectedInboundIds.length === 1 ? (
+              selectedRowsCompleted ? (
+              <>
+                <p style={styles.modalSubtitle}>Choose the re-print layout for the completed Return SJ.</p>
+
+                {modalError ? <p style={styles.errorText}>{modalError}</p> : null}
+
+                <div style={styles.printModeGrid}>
+                  <button type="button" style={styles.printModeCard} onClick={() => handlePrintSj({ mode: 'simple', shippingMethodOverride: getSavedShippingMethod(), skipStatusUpdate: true })} disabled={isPrinting}>
+                    <span style={styles.printModeTitle}>Simple SJ</span>
+                    <span style={styles.printModeText}>Brand, Category / Item Type, and total qty only.</span>
+                  </button>
+                  <button type="button" style={styles.printModeCard} onClick={() => handlePrintSj({ mode: 'detail', shippingMethodOverride: getSavedShippingMethod(), skipStatusUpdate: true })} disabled={isPrinting}>
+                    <span style={styles.printModeTitle}>Detail SJ</span>
+                    <span style={styles.printModeText}>Brand, Model-Variant, Grade, Qty, and Koli.</span>
+                  </button>
+                </div>
+
+                <div style={styles.modalButtonRow}>
+                  <button type="button" style={styles.secondaryButton} onClick={closeModal} disabled={isPrinting}>
+                    Cancel
+                  </button>
+                </div>
+              </>
+              ) : (
               <>
                 <div style={styles.metaGrid}>
                   <div style={styles.metaCard}>
@@ -1319,6 +1403,10 @@ export default function ReturReportClient({ rows, canAdd = false }) {
                   <div style={styles.metaCard}>
                     <span style={styles.metaLabel}>Total Qty</span>
                     <strong style={styles.metaValue}>{totalSelectedQty}</strong>
+                  </div>
+                  <div style={styles.metaCard}>
+                    <span style={styles.metaLabel}>Total Koli</span>
+                    <strong style={styles.metaValue}>{selectedReturnCardGroups.length}</strong>
                   </div>
                   <div style={styles.metaCard}>
                     <span style={styles.metaLabelRow}>
@@ -1384,12 +1472,16 @@ export default function ReturReportClient({ rows, canAdd = false }) {
                     <button type="button" style={styles.secondaryButton} onClick={closeModal} disabled={isPrinting}>
                       Cancel
                     </button>
-                    <button type="button" style={styles.primaryButton} onClick={handlePrintSj} disabled={isPrinting}>
-                      {isPrinting ? 'Printing...' : 'Print SJ'}
+                    <button type="button" style={styles.secondaryButton} onClick={() => handlePrintSj({ mode: 'simple' })} disabled={isPrinting}>
+                      {isPrinting ? 'Printing...' : 'Simple SJ'}
+                    </button>
+                    <button type="button" style={styles.primaryButton} onClick={() => handlePrintSj({ mode: 'detail' })} disabled={isPrinting}>
+                      {isPrinting ? 'Printing...' : 'Detail SJ'}
                     </button>
                   </div>
                 </div>
               </>
+              )
             ) : (
               <>
                 {modalError ? <p style={styles.errorText}>{modalError}</p> : null}
@@ -1555,7 +1647,7 @@ const styles = {
   },
   metaGrid: {
     display: 'grid',
-    gridTemplateColumns: 'repeat(4, minmax(0, 1fr))',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))',
     gap: '16px',
   },
   supplierList: {

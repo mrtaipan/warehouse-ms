@@ -1111,6 +1111,10 @@ function shouldTrackQcTiming(item, qcMode) {
   return qcMode !== 'regular' || !isRegularSampleTask(item)
 }
 
+function shouldIncludePerformanceBreakdownItem(item, qcMode) {
+  return qcMode !== 'regular' || !isRegularSampleTask(item)
+}
+
 function getArklineTaskLabel(item, memberNameMap = {}) {
   const inspector = memberNameMap[item.assigned_to] || item.assigned_to || 'Unassigned'
   return `${inspector} | B ${Number(item.qty_b || 0)} / C ${Number(item.qty_c || 0)} | ${item.status || '-'}`
@@ -2541,6 +2545,8 @@ export default function QcDashboardPage() {
     const grouped = new Map()
 
     activeItems.forEach((item) => {
+      if (!shouldIncludePerformanceBreakdownItem(item, qcMode)) return
+
       const key = item.assigned_to || '-'
       const totalPcs = getCheckedQty(item)
       const tracksTiming = shouldTrackQcTiming(item, qcMode)
@@ -2616,6 +2622,8 @@ export default function QcDashboardPage() {
     })
 
     activePauseLogs.forEach((item) => {
+      if (qcMode === 'regular' && isRegularSampleTask(item.qc_item || {})) return
+
       const key = getPauseLogAssignedTo(item)
       const current =
         grouped.get(key) || {
@@ -2663,16 +2671,27 @@ export default function QcDashboardPage() {
     const grouped = new Map()
 
     activeItems
-      .filter((item) => (item.status === 'done' || hasQcResult(item)) && shouldTrackQcTiming(item, qcMode))
+      .filter(
+        (item) =>
+          (item.status === 'done' || hasQcResult(item)) &&
+          shouldIncludePerformanceBreakdownItem(item, qcMode) &&
+          shouldTrackQcTiming(item, qcMode)
+      )
       .forEach((item) => {
         const categoryLabel =
           qcMode !== 'regular'
             ? getArklineCategoryLabel(item)
             : item.inbound_unload?.categories?.full_name || item.inbound_unload?.categories?.category_name || 'UNCATEGORIZED'
         const productLabel = qcMode === 'regular' ? getRegularModelVariantLabel(item) || 'UNKNOWN PRODUCT' : getTaskModelInfo(item).model || 'UNKNOWN PRODUCT'
-        const key = `${categoryLabel}|||${productLabel}`
+        const key = qcMode === 'regular' ? categoryLabel : `${categoryLabel}|||${productLabel}`
         const checkedQty = getCheckedQty(item)
-        const current = grouped.get(key) || { category: categoryLabel, label: productLabel, totalSeconds: 0, totalPcs: 0 }
+        const current =
+          grouped.get(key) || {
+            category: categoryLabel,
+            label: qcMode === 'regular' ? categoryLabel : productLabel,
+            totalSeconds: 0,
+            totalPcs: 0,
+          }
         current.totalSeconds += Number(item.stopwatch_seconds || 0)
         current.totalPcs += checkedQty
         grouped.set(key, current)
@@ -2681,8 +2700,21 @@ export default function QcDashboardPage() {
     const rows = Array.from(grouped.values()).map((item) => ({
       category: item.category,
       label: item.label,
+      totalSeconds: item.totalSeconds,
+      totalPcs: item.totalPcs,
       secondsPerPcs: item.totalPcs ? Math.round((item.totalSeconds / item.totalPcs) * 100) / 100 : 0,
     }))
+
+    if (qcMode === 'regular') {
+      const totalSeconds = rows.reduce((sum, item) => sum + Number(item.totalSeconds || 0), 0)
+      const totalPcs = rows.reduce((sum, item) => sum + Number(item.totalPcs || 0), 0)
+      const averageSeconds = totalPcs ? Math.round((totalSeconds / totalPcs) * 100) / 100 : 0
+
+      return rows.map((item) => ({
+        ...item,
+        categoryAverageSeconds: averageSeconds,
+      }))
+    }
 
     const categoryAverageMap = new Map()
     rows.forEach((item) => {
@@ -3940,7 +3972,10 @@ export default function QcDashboardPage() {
                 const pct = maxProductThroughputSeconds ? Math.max(6, Math.round((Number(item.secondsPerPcs || 0) / maxProductThroughputSeconds) * 100)) : 0
                 return (
                   <div key={`${item.category}-${item.label}`} style={styles.barRow}>
-                    <span style={styles.barLabel} title={`${item.category} average: ${item.categoryAverageSeconds}s`}>
+                    <span
+                      style={styles.barLabel}
+                      title={qcMode === 'regular' ? `Overall average: ${item.categoryAverageSeconds}s` : `${item.category} average: ${item.categoryAverageSeconds}s`}
+                    >
                       {item.label}
                     </span>
                     <div style={styles.barTrack}>
