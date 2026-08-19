@@ -1749,11 +1749,14 @@ export default function QcDashboardPage() {
       !regularModelVariantFilter ||
       matchesModelVariantSearch(getRegularModelVariantLabel(item), regularModelVariantFilter) ||
       (isTemporarySampleTask(item) &&
-        qcSampleBreakdownRows.some(
-          (split) =>
-            Number(split.qc_item_id || 0) === Number(item.id || 0) &&
+        qcSampleBreakdownRows.some((split) => {
+          const sourceId = Number(item.inbound_unload_id || item.inbound_unload?.id || 0)
+          return (
+            (Number(split.qc_item_id || 0) === Number(item.id || 0) ||
+              Number(split.sample_breakdown?.inbound_unload_id || 0) === sourceId) &&
             matchesModelVariantSearch(getSampleBreakdownLabel(split.sample_breakdown || {}), regularModelVariantFilter)
-        ))
+          )
+        }))
     const matchesSample =
       ignoredFilter === 'sample' ||
       !sampleFilter ||
@@ -1773,7 +1776,7 @@ export default function QcDashboardPage() {
   const grnOptions = useMemo(
     () =>
       Array.from(new Set(qcItems.filter((item) => matchesRegularFilterValues(item, 'grn')).map((item) => item.inbound?.grn_number).filter(Boolean))).sort(
-        (a, b) => a.localeCompare(b, undefined, { numeric: true })
+        (a, b) => b.localeCompare(a, undefined, { numeric: true })
       ),
     [matchesRegularFilterValues, qcItems]
   )
@@ -2011,6 +2014,8 @@ export default function QcDashboardPage() {
         })
     }
 
+    const processedTemporarySampleSourceIds = new Set()
+
     activeItems.forEach((item) => {
       const brand = qcMode !== 'regular' ? getArklinePoLabel(item) : getBrandLabel(item)
       const category = qcMode !== 'regular' ? getArklineCategoryLabel(item) : getCategoryLabel(item)
@@ -2021,9 +2026,22 @@ export default function QcDashboardPage() {
       const sampleSourceId = Number(item.inbound_unload_id || item.inbound_unload?.id || 0)
       const isSampleTask = qcMode === 'regular' && isRegularSampleTask(item)
       const isTemporarySample = qcMode === 'regular' && isTemporarySampleTask(item)
-      const sampleSplitRows = isTemporarySample ? qcSampleSplitsByQcItemId.get(Number(item.id || 0)) || [] : []
 
-      if (isTemporarySample && sampleSplitRows.length) {
+      if (isTemporarySample) {
+        const sourceTaskRows = activeItems.filter(
+          (candidate) =>
+            isTemporarySampleTask(candidate) &&
+            Number(candidate.inbound_unload_id || candidate.inbound_unload?.id || 0) === sampleSourceId
+        )
+        const sampleSplitRows = sourceTaskRows.flatMap((task) => qcSampleSplitsByQcItemId.get(Number(task.id || 0)) || [])
+
+        if (!sampleSplitRows.length) {
+          // Fall through to the normal summary row until this sample has split data.
+        } else if (processedTemporarySampleSourceIds.has(sampleSourceId)) {
+          return
+        } else {
+          processedTemporarySampleSourceIds.add(sampleSourceId)
+
         let splitQtyA = 0
         let splitQtyB = 0
         let splitQtyC = 0
@@ -2069,13 +2087,16 @@ export default function QcDashboardPage() {
           current.qtyC += Number(split.qty_c || 0)
           current.checked += Number(split.qty_a || 0) + Number(split.qty_b || 0) + Number(split.qty_c || 0)
           current.photoUrl = current.photoUrl || breakdown.photo_url || ''
-          current.taskRows.push(item)
+          current.taskRows.push(...sourceTaskRows)
           grouped.set(splitKey, current)
         })
 
-        const residualQtyA = Math.max(0, Number(item.qty_a || 0) - splitQtyA)
-        const residualQtyB = Math.max(0, Number(item.qty_b || 0) - splitQtyB)
-        const residualQtyC = Math.max(0, Number(item.qty_c || 0) - splitQtyC)
+        const sourceQtyA = sourceTaskRows.reduce((sum, task) => sum + Number(task.qty_a || 0), 0)
+        const sourceQtyB = sourceTaskRows.reduce((sum, task) => sum + Number(task.qty_b || 0), 0)
+        const sourceQtyC = sourceTaskRows.reduce((sum, task) => sum + Number(task.qty_c || 0), 0)
+        const residualQtyA = Math.max(0, sourceQtyA - splitQtyA)
+        const residualQtyB = Math.max(0, sourceQtyB - splitQtyB)
+        const residualQtyC = Math.max(0, sourceQtyC - splitQtyC)
         const residualMatchesModelVariant = matchesModelVariantSearch('TEMPORARY SAMPLE - TEMPORARY', regularModelVariantFilter)
 
         if ((residualQtyA || residualQtyB || residualQtyC) && residualMatchesModelVariant) {
@@ -2107,11 +2128,12 @@ export default function QcDashboardPage() {
           current.qtyC += residualQtyC
           current.rejectTargetQty += residualQtyB + residualQtyC
           current.checked += residualQtyA + residualQtyB + residualQtyC
-          current.taskRows.push(item)
+          current.taskRows.push(...sourceTaskRows)
           grouped.set(residualKey, current)
         }
 
         return
+        }
       }
 
       const baseKey = qcMode === 'regular'
@@ -2741,6 +2763,8 @@ export default function QcDashboardPage() {
       ),
     [selectedSampleSplitTasks]
   )
+  const sampleSplitCheckedTotal = sampleSplitSourceTotals.qtyA + sampleSplitSourceTotals.qtyB + sampleSplitSourceTotals.qtyC
+  const sampleSplitSampleQtyTotal = selectedSampleSplitBreakdowns.reduce((sum, item) => sum + Number(item.qty || 0), 0)
   const sampleSplitRemainingTotals = useMemo(
     () => ({
       qtyA: sampleSplitSourceTotals.qtyA - sampleSplitDraftTotals.qtyA,
@@ -2770,27 +2794,23 @@ export default function QcDashboardPage() {
     const taskRows = sourceTaskRows.length ? sourceTaskRows : summary.taskRows || []
 
     const uniqueTasks = [...new Map(taskRows.map((item) => [String(item.id), item])).values()]
-    const rows = uniqueTasks.flatMap((task) => {
-      const existingRows = qcSampleSplitsByQcItemId.get(Number(task.id || 0)) || []
+    const existingSplitRows = uniqueTasks.flatMap((task) => qcSampleSplitsByQcItemId.get(Number(task.id || 0)) || [])
+    const rows = breakdowns.map((breakdown) => {
+      const existingRows = existingSplitRows.filter((item) => Number(item.sample_breakdown_id || 0) === Number(breakdown.id || 0))
+      const qtyA = existingRows.reduce((sum, item) => sum + Number(item.qty_a || 0), 0)
+      const qtyB = existingRows.reduce((sum, item) => sum + Number(item.qty_b || 0), 0)
+      const qtyC = existingRows.reduce((sum, item) => sum + Number(item.qty_c || 0), 0)
 
-      return breakdowns.map((breakdown) => {
-        const existing = existingRows.find((item) => Number(item.sample_breakdown_id || 0) === Number(breakdown.id || 0))
-
-        return {
-          id: `${task.id}-${breakdown.id}`,
-          existingId: existing?.id || null,
-          qcItemId: task.id,
-          sampleBreakdownId: breakdown.id,
-          inspector: memberNameMap[String(task.assigned_to || '').trim().toLowerCase()] || task.assigned_to || '-',
-          modelVariant: getSampleBreakdownLabel(breakdown),
-          photoUrl: breakdown.photo_url || '',
-          taskCheckedQty: getCheckedQty(task),
-          breakdownQty: Number(breakdown.qty || 0),
-          qtyA: existing?.qty_a ? String(existing.qty_a) : '',
-          qtyB: existing?.qty_b ? String(existing.qty_b) : '',
-          qtyC: existing?.qty_c ? String(existing.qty_c) : '',
-        }
-      })
+      return {
+        id: `breakdown-${breakdown.id}`,
+        sampleBreakdownId: breakdown.id,
+        modelVariant: getSampleBreakdownLabel(breakdown),
+        photoUrl: breakdown.photo_url || '',
+        breakdownQty: Number(breakdown.qty || 0),
+        qtyA: qtyA ? String(qtyA) : '',
+        qtyB: qtyB ? String(qtyB) : '',
+        qtyC: qtyC ? String(qtyC) : '',
+      }
     })
 
     setSampleSplitSummary(summary)
@@ -2825,46 +2845,107 @@ export default function QcDashboardPage() {
       return
     }
 
-    const totalByTask = new Map()
-    sampleSplitDraftRows.forEach((row) => {
-      const current = totalByTask.get(row.qcItemId) || { total: 0, checked: row.taskCheckedQty, inspector: row.inspector }
-      current.total += Number(row.qtyA || 0) + Number(row.qtyB || 0) + Number(row.qtyC || 0)
-      totalByTask.set(row.qcItemId, current)
-    })
-
-    for (const row of totalByTask.values()) {
-      if (row.total > row.checked) {
-        setSampleSplitError(`Split qty for ${row.inspector} cannot exceed checked qty ${formatNumber(row.checked)}.`)
-        return
-      }
-    }
-
     const normalizedDraftRows = sampleSplitDraftRows.map((row) => ({
       ...row,
       qtyA: Number(row.qtyA || 0),
       qtyB: Number(row.qtyB || 0),
       qtyC: Number(row.qtyC || 0),
+      breakdownQty: Number(row.breakdownQty || 0),
     }))
-    const deleteIds = normalizedDraftRows
-      .filter((row) => row.existingId && row.qtyA + row.qtyB + row.qtyC <= 0)
-      .map((row) => row.existingId)
-    const updateRows = normalizedDraftRows
-      .filter((row) => row.existingId && row.qtyA + row.qtyB + row.qtyC > 0)
-      .map((row) => ({
-        id: row.existingId,
-        qty_a: row.qtyA,
-        qty_b: row.qtyB,
-        qty_c: row.qtyC,
-      }))
-    const insertRows = normalizedDraftRows
-      .filter((row) => !row.existingId && row.qtyA + row.qtyB + row.qtyC > 0)
-      .map((row) => ({
-        qc_item_id: row.qcItemId,
-        sample_breakdown_id: row.sampleBreakdownId,
-        qty_a: row.qtyA,
-        qty_b: row.qtyB,
-        qty_c: row.qtyC,
-      }))
+
+    const overBreakdownRow = normalizedDraftRows.find((row) => row.qtyA + row.qtyB + row.qtyC > row.breakdownQty)
+    if (overBreakdownRow) {
+      setSampleSplitError(`Split qty for ${overBreakdownRow.modelVariant} cannot exceed sample qty ${formatNumber(overBreakdownRow.breakdownQty)}.`)
+      return
+    }
+
+    const draftTotals = normalizedDraftRows.reduce(
+      (total, row) => ({
+        qtyA: total.qtyA + row.qtyA,
+        qtyB: total.qtyB + row.qtyB,
+        qtyC: total.qtyC + row.qtyC,
+      }),
+      { qtyA: 0, qtyB: 0, qtyC: 0 }
+    )
+    const remainingTotals = {
+      qtyA: sampleSplitSourceTotals.qtyA - draftTotals.qtyA,
+      qtyB: sampleSplitSourceTotals.qtyB - draftTotals.qtyB,
+      qtyC: sampleSplitSourceTotals.qtyC - draftTotals.qtyC,
+    }
+
+    if (remainingTotals.qtyA || remainingTotals.qtyB || remainingTotals.qtyC) {
+      setSampleSplitError(
+        `Split must match QC source. Remaining: A ${formatNumber(remainingTotals.qtyA)}, B ${formatNumber(remainingTotals.qtyB)}, C ${formatNumber(remainingTotals.qtyC)}.`
+      )
+      return
+    }
+
+    const sourceTasks = selectedSampleSplitTasks.filter((item) => Number(item.id || 0))
+    if (!sourceTasks.length) {
+      setSampleSplitError('No QC source found for this sample.')
+      return
+    }
+
+    const taskCapacityRows = sourceTasks.map((task) => ({
+      qcItemId: Number(task.id || 0),
+      qtyA: Number(task.qty_a || 0),
+      qtyB: Number(task.qty_b || 0),
+      qtyC: Number(task.qty_c || 0),
+      usedA: 0,
+      usedB: 0,
+      usedC: 0,
+    }))
+    const desiredByKey = new Map()
+    const addDesiredQty = (qcItemId, sampleBreakdownId, dbField, qty) => {
+      const key = `${qcItemId}-${sampleBreakdownId}`
+      const current =
+        desiredByKey.get(key) || {
+          qc_item_id: qcItemId,
+          sample_breakdown_id: sampleBreakdownId,
+          qty_a: 0,
+          qty_b: 0,
+          qty_c: 0,
+        }
+
+      current[dbField] += qty
+      desiredByKey.set(key, current)
+    }
+    const distributeGradeQty = (row, draftField, capacityField, usedField, dbField, gradeLabel) => {
+      let remainingQty = Number(row[draftField] || 0)
+
+      for (const task of taskCapacityRows) {
+        if (!remainingQty) break
+
+        const availableQty = Math.max(0, Number(task[capacityField] || 0) - Number(task[usedField] || 0))
+        const qtyToTake = Math.min(availableQty, remainingQty)
+        if (!qtyToTake) continue
+
+        addDesiredQty(task.qcItemId, row.sampleBreakdownId, dbField, qtyToTake)
+        task[usedField] += qtyToTake
+        remainingQty -= qtyToTake
+      }
+
+      if (remainingQty > 0) {
+        throw new Error(`Cannot distribute Grade ${gradeLabel} split for ${row.modelVariant}.`)
+      }
+    }
+
+    try {
+      normalizedDraftRows.forEach((row) => {
+        distributeGradeQty(row, 'qtyA', 'qtyA', 'usedA', 'qty_a', 'A')
+        distributeGradeQty(row, 'qtyB', 'qtyB', 'usedB', 'qty_b', 'B')
+        distributeGradeQty(row, 'qtyC', 'qtyC', 'usedC', 'qty_c', 'C')
+      })
+    } catch (error) {
+      setSampleSplitError(error.message)
+      return
+    }
+
+    const deleteIds = sourceTasks
+      .flatMap((task) => qcSampleSplitsByQcItemId.get(Number(task.id || 0)) || [])
+      .map((row) => row.id)
+      .filter(Boolean)
+    const insertRows = Array.from(desiredByKey.values()).filter((row) => Number(row.qty_a || 0) + Number(row.qty_b || 0) + Number(row.qty_c || 0) > 0)
 
     setSavingSampleSplit(true)
 
@@ -2876,23 +2957,6 @@ export default function QcDashboardPage() {
 
       if (deleteError) {
         setSampleSplitError(deleteError.message)
-        setSavingSampleSplit(false)
-        return
-      }
-    }
-
-    for (const row of updateRows) {
-      const { error: updateError } = await supabase
-        .from('qc_sample_breakdowns')
-        .update({
-          qty_a: row.qty_a,
-          qty_b: row.qty_b,
-          qty_c: row.qty_c,
-        })
-        .eq('id', row.id)
-
-      if (updateError) {
-        setSampleSplitError(updateError.message)
         setSavingSampleSplit(false)
         return
       }
@@ -3985,12 +4049,12 @@ export default function QcDashboardPage() {
 
             <div style={styles.rejectDetailGrid}>
               <div style={{ ...styles.summaryCard, ...styles.compactSummaryCard }}>
-                <span style={styles.summaryLabel}>Resolved Models</span>
-                <strong style={{ ...styles.summaryValue, ...styles.compactSummaryValue }}>{selectedSampleSplitBreakdowns.length}</strong>
+                <span style={styles.summaryLabel}>QC Checked</span>
+                <strong style={{ ...styles.summaryValue, ...styles.compactSummaryValue }}>{formatNumber(sampleSplitCheckedTotal)}</strong>
               </div>
               <div style={{ ...styles.summaryCard, ...styles.compactSummaryCard }}>
-                <span style={styles.summaryLabel}>QC Tasks</span>
-                <strong style={{ ...styles.summaryValue, ...styles.compactSummaryValue }}>{selectedSampleSplitTasks.length}</strong>
+                <span style={styles.summaryLabel}>Sample Qty</span>
+                <strong style={{ ...styles.summaryValue, ...styles.compactSummaryValue }}>{formatNumber(sampleSplitSampleQtyTotal)}</strong>
               </div>
               <div style={{ ...styles.summaryCard, ...styles.compactSummaryCard }}>
                 <span style={styles.summaryLabel}>Draft A</span>
@@ -4011,10 +4075,7 @@ export default function QcDashboardPage() {
                 <thead>
                   <tr>
                     <th style={styles.th}>Photo</th>
-                    <th style={styles.th}>Inspector</th>
                     <th style={styles.th}>Model - Variant</th>
-                    <th style={{ ...styles.th, ...styles.thCenter }}>QC Checked</th>
-                    <th style={{ ...styles.th, ...styles.thCenter }}>Sample Qty</th>
                     <th style={{ ...styles.th, ...styles.thCenter }}>A ({formatNumber(sampleSplitRemainingTotals.qtyA)})</th>
                     <th style={{ ...styles.th, ...styles.thCenter }}>B ({formatNumber(sampleSplitRemainingTotals.qtyB)})</th>
                     <th style={{ ...styles.th, ...styles.thCenter }}>C ({formatNumber(sampleSplitRemainingTotals.qtyC)})</th>
@@ -4045,10 +4106,7 @@ export default function QcDashboardPage() {
                             '-'
                           )}
                         </td>
-                        <td style={styles.td}>{row.inspector}</td>
                         <td style={styles.td}>{row.modelVariant}</td>
-                        <td style={{ ...styles.td, ...styles.tdCenter }}>{formatNumber(row.taskCheckedQty)}</td>
-                        <td style={{ ...styles.td, ...styles.tdCenter }}>{formatNumber(row.breakdownQty)}</td>
                         {['qtyA', 'qtyB', 'qtyC'].map((field) => (
                           <td key={field} style={{ ...styles.td, ...styles.tdCenter }}>
                             <input
@@ -4069,7 +4127,7 @@ export default function QcDashboardPage() {
                     ))
                   ) : (
                     <tr>
-                      <td style={styles.td} colSpan={8}>
+                      <td style={styles.td} colSpan={5}>
                         No sample split row available.
                       </td>
                     </tr>
