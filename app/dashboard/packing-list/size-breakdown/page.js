@@ -107,6 +107,7 @@ const styles = {
     cursor: 'pointer',
     fontSize: '17px',
     fontWeight: 900,
+    position: 'relative',
   },
   toolIconButtonPrimary: {
     background: '#0f766e',
@@ -114,10 +115,37 @@ const styles = {
     color: '#fff',
     boxShadow: '0 8px 18px rgba(15, 118, 110, 0.16)',
   },
+  toolIconButtonWarning: {
+    background: '#fff7ed',
+    borderColor: '#fdba74',
+    color: '#c2410c',
+  },
+  toolIconButtonDanger: {
+    background: '#fff1f2',
+    borderColor: '#fecdd3',
+    color: '#be123c',
+  },
   toolIconButtonActive: {
     background: '#0f172a',
     borderColor: '#0f172a',
     color: '#fff',
+  },
+  toolIconBadge: {
+    minWidth: '16px',
+    height: '16px',
+    padding: '0 4px',
+    borderRadius: '999px',
+    background: '#0f172a',
+    color: '#fff',
+    position: 'absolute',
+    top: '-6px',
+    right: '-6px',
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    fontSize: '9px',
+    fontWeight: 900,
+    lineHeight: 1,
   },
   eyebrow: {
     margin: 0,
@@ -2803,6 +2831,16 @@ function hasSizeChartValues(row = {}) {
   return SIZE_CHART_FIELDS.some((field) => String(row[field] || '').trim())
 }
 
+function isBlankSizeBreakdownRow(row = {}) {
+  return (
+    !row.breakdown_row_id &&
+    !String(row.size_label || '').trim() &&
+    !String(row.qty ?? '').trim() &&
+    !normalizeCheckerNames(row.checker_names).length &&
+    !hasSizeChartValues(row)
+  )
+}
+
 function getSizeChartSignature(sizeRows = []) {
   const rows = sizeRows
     .filter((row) => normalizeSizeLabel(row.size_label) && hasSizeChartValues(row))
@@ -4102,6 +4140,59 @@ export default function PackingListSizeBreakdownPage() {
     )
   }
 
+  function applyFullReturn() {
+    if (!selectedCard || saving) return
+
+    const receivingQty = Number(selectedCard.receiving_qty || 0)
+    if (receivingQty <= 0) {
+      setError('PL Receiving Qty must be greater than 0 before applying Full Return.')
+      setSuccess('')
+      return
+    }
+
+    const postedQty = plRows
+      .flatMap((row) => row.sizeRows || [])
+      .reduce((sum, sizeRow) => {
+        if (!sizeRow.breakdown_row_id) return sum
+        const mobQty = packedQtyByTargetKey.get(getTargetKey(sizeRow.breakdown_row_id, 'MOB')) || 0
+        const oiQty = packedQtyByTargetKey.get(getTargetKey(sizeRow.breakdown_row_id, 'OI')) || 0
+        return sum + mobQty + oiQty
+      }, 0)
+
+    if (postedQty > 0) {
+      setError('Full Return cannot be applied because this model already has posted Item Storing qty.')
+      setSuccess('')
+      return
+    }
+
+    const confirmed = window.confirm(
+      `Apply Full Return for ${receivingQty} pcs?\n\nThis will replace the current breakdown rows with one PL Return reason: FULL RETURN. Press Save to persist.`
+    )
+    if (!confirmed) return
+
+    const firstRow = plRows[0] || createPlRow(selectedCard)
+    setPlRows([
+      {
+        ...firstRow,
+        pl_detail_seq: null,
+        detail_order: 1,
+        sizeRows: [createEmptySizeRow()],
+        returnRows: [
+          {
+            ...createEmptyReturnRow(0),
+            qty: String(receivingQty),
+            return_reason: 'FULL RETURN',
+          },
+        ],
+      },
+    ])
+    setOpenCheckerPickerKey('')
+    closeAllocationModal(true)
+    setEditSection('breakdown')
+    setError('')
+    setSuccess('Full Return prepared. Press Save to persist it.')
+  }
+
   function removeReturnRow(plRowId, returnRowId) {
     setPlRows((prev) =>
       prev.map((row) =>
@@ -5001,21 +5092,32 @@ export default function PackingListSizeBreakdownPage() {
 
     const totalQty = plRows.reduce((sum, row) => sum + row.sizeRows.reduce((sizeSum, sizeRow) => sizeSum + Number(sizeRow.qty || 0), 0), 0)
     const totalReturnQty = getPlRowsReturnQty(plRows)
-    if (totalQty + totalReturnQty > Number(selectedCard.receiving_qty || 0)) {
+    const receivingQty = Number(selectedCard.receiving_qty || 0)
+    const remainingQty = receivingQty - totalQty - totalReturnQty
+    if (totalQty + totalReturnQty > receivingQty) {
       setError('Breakdown Qty and PL Return Qty cannot be greater than PL Receiving Qty.')
+      setSuccess('')
+      return
+    }
+
+    const hasBlankSizeRow = plRows.some((row) => (row.sizeRows || []).some((sizeRow) => isBlankSizeBreakdownRow(sizeRow)))
+    if (hasBlankSizeRow && remainingQty !== 0) {
+      setError('Complete size breakdown or PL Return until Remaining is 0 before saving.')
       setSuccess('')
       return
     }
 
     const invalidRow = plRows.find((row) => {
       if (!String(row.pl_name || '').trim()) return true
-      return row.sizeRows.some(
-        (sizeRow) =>
+      return row.sizeRows.some((sizeRow) => {
+        if (isBlankSizeBreakdownRow(sizeRow)) return false
+        return (
           !String(sizeRow.size_label || '').trim() ||
           !String(sizeRow.qty ?? '').trim() ||
           !normalizeCheckerNames(sizeRow.checker_names).length ||
           Number(sizeRow.qty || 0) < 0
-      )
+        )
+      })
     })
 
     if (invalidRow) {
@@ -5042,6 +5144,7 @@ export default function PackingListSizeBreakdownPage() {
     const invalidManualAllocation = plRows
       .flatMap((row) => row.sizeRows)
       .find((sizeRow) => {
+        if (isBlankSizeBreakdownRow(sizeRow)) return false
         if (sizeRow.allocation_source !== 'MANUAL_OVERRIDE') return false
         const rowQty = Number(sizeRow.qty || 0)
         const mobTarget = Number(sizeRow.mob_target_qty)
@@ -5081,7 +5184,7 @@ export default function PackingListSizeBreakdownPage() {
     const modelVariantQty = getPlRowsBreakdownQty(normalizedRows)
 
     const payload = normalizedRows.flatMap((row) =>
-      row.sizeRows.map((sizeRow) => {
+      row.sizeRows.filter((sizeRow) => !isBlankSizeBreakdownRow(sizeRow)).map((sizeRow) => {
         const checkerNames = normalizeCheckerNames(sizeRow.checker_names)
         const rowQty = Number(sizeRow.qty || 0)
         const defaultTargets = getDefaultAllocationTargets(rowQty, modelVariantQty)
@@ -5738,28 +5841,56 @@ export default function PackingListSizeBreakdownPage() {
             ) : null}
             {viewMode !== 'table' && canEditSizeBreakdown ? (
               <>
-              <button
-                type="button"
-                onClick={openAllocationModal}
-                disabled={saving || !selectedCard}
-                style={
-                  saving || !selectedCard
-                    ? { ...styles.secondaryButton, ...styles.compactActionButton, ...styles.disabledButton }
-                    : { ...styles.secondaryButton, ...styles.compactActionButton }
-                }
-              >
-                Manual Allocation{allocationOverrideCount ? ` (${allocationOverrideCount})` : ''}
-              </button>
-              <button
-                type="button"
-                onClick={openEditForm}
-                disabled={saving}
-                style={saving ? { ...styles.iconButton, ...styles.disabledButton } : styles.iconButton}
-                title="Cancel Edit"
-                aria-label="Cancel Edit"
-              >
-                X
-              </button>
+                <button
+                  type="button"
+                  onClick={openAllocationModal}
+                  disabled={saving || !selectedCard}
+                  style={
+                    saving || !selectedCard
+                      ? { ...styles.toolIconButton, ...styles.disabledButton }
+                      : styles.toolIconButton
+                  }
+                  title="Manual Allocation"
+                  aria-label="Manual Allocation"
+                >
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <path d="M4 7H14" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                    <path d="M18 7H20" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                    <path d="M4 17H7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                    <path d="M11 17H20" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                    <circle cx="16" cy="7" r="2" stroke="currentColor" strokeWidth="2" />
+                    <circle cx="9" cy="17" r="2" stroke="currentColor" strokeWidth="2" />
+                  </svg>
+                  {allocationOverrideCount ? <span style={styles.toolIconBadge}>{allocationOverrideCount}</span> : null}
+                </button>
+                <button
+                  type="button"
+                  onClick={applyFullReturn}
+                  disabled={saving || !selectedCard || Number(selectedCard?.receiving_qty || 0) <= 0}
+                  style={
+                    saving || !selectedCard || Number(selectedCard?.receiving_qty || 0) <= 0
+                      ? { ...styles.toolIconButton, ...styles.toolIconButtonWarning, ...styles.disabledButton }
+                      : { ...styles.toolIconButton, ...styles.toolIconButtonWarning }
+                  }
+                  title="Full Return"
+                  aria-label="Full Return"
+                >
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <path d="M9 7H5V3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                    <path d="M5 7H14C17.31 7 20 9.69 20 13C20 16.31 17.31 19 14 19H8" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                    <path d="M8 15L4 19L8 23" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                </button>
+                <button
+                  type="button"
+                  onClick={openEditForm}
+                  disabled={saving}
+                  style={saving ? { ...styles.iconButton, ...styles.disabledButton } : styles.iconButton}
+                  title="Cancel Edit"
+                  aria-label="Cancel Edit"
+                >
+                  X
+                </button>
               </>
             ) : null}
             {viewMode === 'table' ? (
