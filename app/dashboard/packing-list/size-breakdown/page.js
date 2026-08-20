@@ -364,6 +364,10 @@ const styles = {
     minWidth: '220px',
     maxWidth: '300px',
   },
+  modelVariantFilterField: {
+    flex: '0 0 230px',
+    minWidth: '190px',
+  },
   editCategoryFilterField: {
     flex: '0 0 390px',
     minWidth: '300px',
@@ -379,6 +383,20 @@ const styles = {
   filterSelect: {
     width: '100%',
     height: '38px',
+    borderWidth: '1px',
+    borderStyle: 'solid',
+    borderColor: '#cbd5e1',
+    borderRadius: '10px',
+    background: '#fff',
+    color: '#0f172a',
+    padding: '0 10px',
+    fontSize: '13px',
+    fontWeight: 700,
+  },
+  filterInput: {
+    width: '100%',
+    height: '38px',
+    boxSizing: 'border-box',
     borderWidth: '1px',
     borderStyle: 'solid',
     borderColor: '#cbd5e1',
@@ -1698,6 +1716,25 @@ function getOverviewModelVariantLabel(row = {}) {
   return `${modelName} / ${catalogName}`
 }
 
+function matchesModelVariantQuery(card = {}, query = '') {
+  const needle = normalize(query)
+  if (!needle) return true
+
+  const haystack = [
+    getModelLabel(card),
+    getOverviewModelVariantLabel(card),
+    card.model_name,
+    getCatalogName(card),
+    card.catalogName,
+    card.variant_code,
+    card.source_variant_code,
+  ]
+    .map((value) => normalize(value))
+    .join(' ')
+
+  return haystack.includes(needle)
+}
+
 function getCategoryPath(category = {}, categoryById = new Map()) {
   if (!category) return []
 
@@ -1742,6 +1779,12 @@ function getProductPhotoBasePathFromCard(card = {}) {
 
 function getCategoryPathLabel(card = {}) {
   return (card.category_path || []).filter(Boolean).join(' > ')
+}
+
+function getInboundSupplierCode(inbound = {}) {
+  const suppliers = inbound?.suppliers
+  const supplier = Array.isArray(suppliers) ? suppliers[0] : suppliers
+  return String(supplier?.supplier_code || '').trim().toUpperCase()
 }
 
 function getUniqueOptions(items = []) {
@@ -3056,12 +3099,14 @@ export default function PackingListSizeBreakdownPage() {
     brand: '',
     categoryPath: '',
     model: '',
+    modelVariantQuery: '',
   })
   const [canEditSizeBreakdown, setCanEditSizeBreakdown] = useState(false)
   const [accessReady, setAccessReady] = useState(false)
   const [editCatalogFilters, setEditCatalogFilters] = useState({
     brand: '',
     categoryPath: '',
+    modelVariantQuery: '',
   })
 
   useEffect(() => {
@@ -3132,7 +3177,10 @@ export default function PackingListSizeBreakdownPage() {
             validated_at,
             inbound:inbound_id (
               id,
-              grn_number
+              grn_number,
+              suppliers:dir_suppliers!supplier_id (
+                supplier_code
+              )
             )
           `)
           .order('validated_at', { ascending: true }),
@@ -3393,9 +3441,10 @@ export default function PackingListSizeBreakdownPage() {
       cards.filter((card) => {
         if (editCatalogFilters.brand && (card.brand_name || 'UNBRANDED') !== editCatalogFilters.brand) return false
         if (editCatalogFilters.categoryPath && getCategoryPathLabel(card) !== editCatalogFilters.categoryPath) return false
+        if (!matchesModelVariantQuery(card, editCatalogFilters.modelVariantQuery)) return false
         return true
       }),
-    [cards, editCatalogFilters.brand, editCatalogFilters.categoryPath]
+    [cards, editCatalogFilters.brand, editCatalogFilters.categoryPath, editCatalogFilters.modelVariantQuery]
   )
 
   const selectedCard = cards.find((card) => card.key === selectedCardKey) || null
@@ -3508,10 +3557,18 @@ export default function PackingListSizeBreakdownPage() {
   )
 
   const modelFilterOptions = useMemo(() => {
+    const modelOptionCards = filterBaseCards
+      .filter((card) => matchesModelFilter(card, effectiveModelFilters, 'model'))
+      .filter((card) => matchesModelVariantQuery(card, effectiveModelFilters.modelVariantQuery))
+    const modelOptions = getUniqueOptions(modelOptionCards.map((card) => getModelFilterLabel(card)))
+    const models = effectiveModelFilters.model && !modelOptions.includes(effectiveModelFilters.model)
+      ? [effectiveModelFilters.model, ...modelOptions]
+      : modelOptions
+
     return {
       brands: getUniqueOptions(filterBaseCards.filter((card) => matchesModelFilter(card, effectiveModelFilters, 'brand')).map((card) => card.brand_name || 'UNBRANDED')),
       categoryPaths: getUniqueOptions(filterBaseCards.filter((card) => matchesModelFilter(card, effectiveModelFilters, 'categoryPath')).map((card) => getCategoryPathLabel(card))),
-      models: getUniqueOptions(filterBaseCards.filter((card) => matchesModelFilter(card, effectiveModelFilters, 'model')).map((card) => getModelFilterLabel(card))),
+      models,
     }
   }, [effectiveModelFilters, filterBaseCards])
 
@@ -3559,6 +3616,7 @@ export default function PackingListSizeBreakdownPage() {
       brand: '',
       categoryPath: '',
       model: '',
+      modelVariantQuery: '',
     })
   }
 
@@ -3573,10 +3631,6 @@ export default function PackingListSizeBreakdownPage() {
       }
       return !row.product_model_variant_id
     })
-
-    if (!identityRows.length) {
-      return [createPlRow(card, null, 1)]
-    }
 
     const grouped = new Map()
     identityRows.forEach((row, index) => {
@@ -3650,6 +3704,10 @@ export default function PackingListSizeBreakdownPage() {
       })
         grouped.set(groupKey, current)
       })
+
+    if (!grouped.size) {
+      return [createPlRow(card, null, 1)]
+    }
 
     return Array.from(grouped.values())
       .map((row) => ({
@@ -4150,6 +4208,15 @@ export default function PackingListSizeBreakdownPage() {
       return
     }
 
+    const breakdownQty = getPlRowsBreakdownQty(plRows)
+    const returnQty = getPlRowsReturnQty(plRows)
+    const remainingQty = receivingQty - breakdownQty - returnQty
+    if (remainingQty <= 0) {
+      setError('Full Return cannot be applied because this model has no remaining qty.')
+      setSuccess('')
+      return
+    }
+
     const postedQty = plRows
       .flatMap((row) => row.sizeRows || [])
       .reduce((sum, sizeRow) => {
@@ -4166,31 +4233,50 @@ export default function PackingListSizeBreakdownPage() {
     }
 
     const confirmed = window.confirm(
-      `Apply Full Return for ${receivingQty} pcs?\n\nThis will replace the current breakdown rows with one PL Return reason: FULL RETURN. Press Save to persist.`
+      `Apply Full Return for the remaining ${remainingQty} pcs?\n\nThis will add the remaining qty as PL Return reason: FULL RETURN. Press Save to persist.`
     )
     if (!confirmed) return
 
-    const firstRow = plRows[0] || createPlRow(selectedCard)
-    setPlRows([
-      {
-        ...firstRow,
-        pl_detail_seq: null,
-        detail_order: 1,
-        sizeRows: [createEmptySizeRow()],
-        returnRows: [
-          {
-            ...createEmptyReturnRow(0),
-            qty: String(receivingQty),
-            return_reason: 'FULL RETURN',
-          },
-        ],
-      },
-    ])
+    setPlRows((prev) => {
+      const nextRows = prev.length ? prev : [createPlRow(selectedCard)]
+      return nextRows.map((row, index) => {
+        if (index !== 0) return row
+
+        const returnRows = row.returnRows || []
+        const fullReturnIndex = returnRows.findIndex((returnRow) => normalize(returnRow.return_reason) === 'FULL RETURN')
+        if (fullReturnIndex >= 0) {
+          return {
+            ...row,
+            returnRows: returnRows.map((returnRow, returnIndex) =>
+              returnIndex === fullReturnIndex
+                ? {
+                    ...returnRow,
+                    qty: String(Number(returnRow.qty || 0) + remainingQty),
+                    return_reason: 'FULL RETURN',
+                  }
+                : returnRow
+            ),
+          }
+        }
+
+        return {
+          ...row,
+          returnRows: [
+            ...returnRows,
+            {
+              ...createEmptyReturnRow(returnRows.length),
+              qty: String(remainingQty),
+              return_reason: 'FULL RETURN',
+            },
+          ],
+        }
+      })
+    })
     setOpenCheckerPickerKey('')
     closeAllocationModal(true)
     setEditSection('breakdown')
     setError('')
-    setSuccess('Full Return prepared. Press Save to persist it.')
+    setSuccess(`Full Return prepared for ${remainingQty} pcs. Press Save to persist it.`)
   }
 
   function removeReturnRow(plRowId, returnRowId) {
@@ -4778,6 +4864,15 @@ export default function PackingListSizeBreakdownPage() {
           .join('; ') || '-'
       }
 
+      const getSupplierCodeSummary = (section) => {
+        const inboundIds = new Set(section.cards.map((card) => Number(card.inbound_id || 0)).filter(Boolean))
+        const codes = plReceivingRows
+          .filter((row) => inboundIds.has(Number(row.inbound_id || 0)))
+          .map((row) => getInboundSupplierCode(row.inbound))
+          .filter(Boolean)
+        return [...new Set(codes)].join(', ') || '-'
+      }
+
       const drawInlineField = (label, value, x, y, fontSize = 8) => {
         doc.setFont(PDF_FONT_FAMILY, 'bold')
         doc.setFontSize(fontSize)
@@ -4850,6 +4945,8 @@ export default function PackingListSizeBreakdownPage() {
         drawInlineField('Group', getPdfGroupLabel(qtyMode), margin, y)
         y += 6
         drawInlineField('Print Date', formatPdfPrintDate(printedAt), margin, y)
+        y += 6
+        drawInlineField('Supplier Code', getSupplierCodeSummary(section), margin, y)
 
         y += 5
         doc.setDrawColor(203, 213, 225)
@@ -5748,6 +5845,7 @@ export default function PackingListSizeBreakdownPage() {
   const editorBreakdownQty = getPlRowsBreakdownQty(plRows)
   const editorReturnQty = getPlRowsReturnQty(plRows)
   const editorRemainingQty = editorReceivingQty - editorBreakdownQty - editorReturnQty
+  const canApplyFullReturn = Boolean(selectedCard) && editorReceivingQty > 0 && editorRemainingQty > 0
   const allocationOverrideCount = plRows.reduce(
     (sum, row) => sum + row.sizeRows.filter((sizeRow) => sizeRow.allocation_source === 'MANUAL_OVERRIDE').length,
     0
@@ -5866,9 +5964,9 @@ export default function PackingListSizeBreakdownPage() {
                 <button
                   type="button"
                   onClick={applyFullReturn}
-                  disabled={saving || !selectedCard || Number(selectedCard?.receiving_qty || 0) <= 0}
+                  disabled={saving || !canApplyFullReturn}
                   style={
-                    saving || !selectedCard || Number(selectedCard?.receiving_qty || 0) <= 0
+                    saving || !canApplyFullReturn
                       ? { ...styles.toolIconButton, ...styles.toolIconButtonWarning, ...styles.disabledButton }
                       : { ...styles.toolIconButton, ...styles.toolIconButtonWarning }
                   }
@@ -6046,6 +6144,15 @@ export default function PackingListSizeBreakdownPage() {
                     </option>
                   ))}
                 </select>
+              </label>
+              <label style={{ ...styles.filterField, ...styles.modelVariantFilterField }}>
+                <input
+                  type="search"
+                  value={modelFilters.modelVariantQuery}
+                  onChange={(event) => updateModelFilter('modelVariantQuery', event.target.value)}
+                  placeholder="Filter model options"
+                  style={styles.filterInput}
+                />
               </label>
               <button type="button" onClick={resetModelFilters} style={styles.compactResetButton} title="Reset filters" aria-label="Reset filters">
                 &#8634;
@@ -6272,9 +6379,19 @@ export default function PackingListSizeBreakdownPage() {
                       ))}
                     </select>
                   </label>
+                  <label style={{ ...styles.filterField, ...styles.modelVariantFilterField }}>
+                    <span style={styles.filterLabel}>Model-Variant</span>
+                    <input
+                      type="search"
+                      value={editCatalogFilters.modelVariantQuery}
+                      onChange={(event) => setEditCatalogFilters((prev) => ({ ...prev, modelVariantQuery: event.target.value }))}
+                      placeholder="Search model / variant"
+                      style={styles.filterInput}
+                    />
+                  </label>
                   <button
                     type="button"
-                    onClick={() => setEditCatalogFilters({ brand: '', categoryPath: '' })}
+                    onClick={() => setEditCatalogFilters({ brand: '', categoryPath: '', modelVariantQuery: '' })}
                     style={styles.compactResetButton}
                     title="Reset catalog filters"
                     aria-label="Reset catalog filters"
@@ -6320,7 +6437,7 @@ export default function PackingListSizeBreakdownPage() {
                     })}
                   </div>
                 ) : (
-                  <p style={styles.emptyText}>No model matches the selected Brand and Category.</p>
+                  <p style={styles.emptyText}>No model matches the selected filters.</p>
                 )}
               </>
             ) : (

@@ -1195,6 +1195,13 @@ function normalizeNameList(value) {
   return []
 }
 
+function getReceivingPicLabel(row = {}, userNameMap = new Map()) {
+  const mainPic = getPicLabel(row.validated_by, userNameMap)
+  const receivedWith = normalizeNameList(row.received_with_names)
+  const names = [mainPic, ...receivedWith].filter((name) => name && name !== '-')
+  return Array.from(new Set(names)).join(', ') || '-'
+}
+
 function buildPackingRows(confirmRows, catalogLookup = null) {
   const grouped = new Map()
 
@@ -1512,12 +1519,17 @@ export default function PackingListReceivingPage() {
         received_qty: 0,
         qty_diff: 0,
         validated_by: row.validated_by || '',
+        received_with_names: [],
         validated_at: row.validated_at || null,
       }
 
       current.source_qty += Number(row.source_qty || 0)
       current.received_qty += Number(row.received_qty || 0)
       current.qty_diff += Number(row.qty_diff || 0)
+      current.received_with_names = Array.from(new Set([
+        ...(current.received_with_names || []),
+        ...normalizeNameList(row.received_with_names),
+      ]))
       if (!current.validated_at || new Date(row.validated_at || 0) > new Date(current.validated_at || 0)) {
         current.validated_at = row.validated_at
         current.validated_by = row.validated_by || current.validated_by
@@ -1541,6 +1553,7 @@ export default function PackingListReceivingPage() {
           received_qty: 0,
           qty_diff: 0,
           validated_by: '',
+          received_with_names: [],
           validated_at: null,
           is_validated: false,
           is_sample: false,
@@ -1551,6 +1564,7 @@ export default function PackingListReceivingPage() {
         current.received_qty = validationInfo ? Number(validationInfo.received_qty || 0) : current.received_qty
         current.qty_diff = validationInfo ? Number(validationInfo.qty_diff || 0) : current.qty_diff
         current.validated_by = validationInfo?.validated_by || current.validated_by
+        current.received_with_names = validationInfo?.received_with_names || current.received_with_names
         current.validated_at = validationInfo?.validated_at || null
         current.is_validated = Boolean(validationInfo)
         grouped.set(key, current)
@@ -2520,7 +2534,7 @@ export default function PackingListReceivingPage() {
                       <td style={{ ...styles.overviewTd, color: row.is_validated ? '#15803d' : '#dc2626', fontWeight: 800 }}>
                         {row.is_validated ? 'Validated' : 'Pending'}
                       </td>
-                      <td style={styles.overviewTd}>{row.is_validated ? getPicLabel(row.validated_by, userNameMap) : '-'}</td>
+                      <td style={styles.overviewTd}>{row.is_validated ? getReceivingPicLabel(row, userNameMap) : '-'}</td>
                     </tr>
                   )
                 })}
