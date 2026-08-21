@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 
 import { createClient } from '@/utils/supabase/browser'
 import styles from '../../arkline.module.css'
@@ -273,6 +273,8 @@ function buildMaterialPrintBundle(bundle) {
 
 export default function ArklinePurchaseOrderDirectoryPage() {
   const { access } = useArklineAccess()
+  const canViewPurchaseOrder = access.directoryPurchaseOrders
+  const canPrintPurchaseOrder = access.directoryPurchaseOrdersPrint
   const [activeType, setActiveType] = useState('garment')
   const [garmentRows, setGarmentRows] = useState([])
   const [materialRows, setMaterialRows] = useState([])
@@ -293,12 +295,19 @@ export default function ArklinePurchaseOrderDirectoryPage() {
     finance: false,
   })
 
-  const canPrintGarment = access.productionOrdersPrint || access.directory
-  const canPrintMaterial = access.materialFulfillmentView || access.directory
+  const canPrintGarment = canPrintPurchaseOrder
+  const canPrintMaterial = canPrintPurchaseOrder
   const rows = activeType === 'garment' ? garmentRows : materialRows
   const itemFilterLabel = activeType === 'garment' ? 'Product' : 'Material'
 
-  async function loadPurchaseOrders() {
+  const loadPurchaseOrders = useCallback(async function loadPurchaseOrders() {
+    if (!canViewPurchaseOrder) {
+      setGarmentRows([])
+      setMaterialRows([])
+      setLoading(false)
+      return
+    }
+
     setLoading(true)
     setError('')
 
@@ -351,11 +360,11 @@ export default function ArklinePurchaseOrderDirectoryPage() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [canViewPurchaseOrder])
 
   useEffect(() => {
     void loadPurchaseOrders()
-  }, [])
+  }, [loadPurchaseOrders])
 
   useEffect(() => {
     setSupplierFilter('all')
@@ -580,6 +589,10 @@ export default function ArklinePurchaseOrderDirectoryPage() {
       payments: reportBundle.payments || [],
     }
   }, [reportBundle, reportRow])
+
+  if (!canViewPurchaseOrder) {
+    return <div className={styles.emptyState}>Your account does not have Arkline purchase order access yet.</div>
+  }
 
   return (
     <div className={styles.page}>

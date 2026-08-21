@@ -1167,6 +1167,14 @@
   gap: 10px;
 }
 
+.detailText {
+  margin: 0;
+  color: #0f172a;
+  font-size: 14px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+}
+
 .sectionTitle {
   font-size: 16px;
   font-weight: 900;

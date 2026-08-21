@@ -37,8 +37,53 @@
   gap: 8px;
 }
 
+.viewToggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 36px;
+  padding: 4px;
+  border: 1px solid #dbe4ef;
+  border-radius: 999px;
+  background: #f8fafc;
+}
+
+.viewToggle button {
+  min-height: 28px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: #64748b;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 10px;
+  font-size: 11px;
+  font-weight: 800;
+  cursor: pointer;
+  transition: background 160ms ease, color 160ms ease, box-shadow 160ms ease;
+}
+
+.viewToggle button:hover {
+  color: #0f172a;
+}
+
+.viewToggleActive {
+  background: #111827 !important;
+  color: #ffffff !important;
+  box-shadow: 0 8px 16px rgba(15, 23, 42, 0.12);
+}
+
+.viewToggle svg {
+  width: 14px;
+  height: 14px;
+  display: block;
+}
+
 .headerTargetButton,
 .headerManualButton,
+.todayButton,
 .primaryActionButton,
 .secondaryActionButton,
 .dangerActionButton {
@@ -49,6 +94,23 @@
   font-weight: 800;
   cursor: pointer;
   transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease, background 160ms ease;
+}
+
+.headerTargetButton,
+.headerManualButton {
+  width: 36px;
+  min-width: 36px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.headerTargetButton svg,
+.headerManualButton svg {
+  width: 16px;
+  height: 16px;
+  display: block;
 }
 
 .headerTargetButton,
@@ -66,6 +128,12 @@
   color: #ffffff;
 }
 
+.todayButton {
+  border: 1px solid #dbe4ef;
+  background: #ffffff;
+  color: #0f172a;
+}
+
 .secondaryActionButton {
   border: 1px solid #dbe4ef;
   background: #ffffff;
@@ -74,6 +142,7 @@
 
 .headerTargetButton:hover,
 .headerManualButton:hover,
+.todayButton:hover,
 .primaryActionButton:hover,
 .secondaryActionButton:hover,
 .dangerActionButton:hover {
@@ -136,6 +205,7 @@
   display: inline-flex;
   align-items: center;
   overflow: hidden;
+  cursor: pointer;
 }
 
 .monthPickerLabel {
@@ -147,9 +217,12 @@
 
 .monthPicker {
   position: absolute;
-  inset: 0;
+  width: 1px;
+  height: 1px;
+  right: 10px;
+  bottom: 0;
   opacity: 0;
-  cursor: pointer;
+  pointer-events: none;
 }
 
 .panelBody {
@@ -524,6 +597,32 @@
 
 .timelineItemCardManual .timelineItemEyebrow {
   color: #475569;
+}
+
+.timelineItemCardReturn {
+  background: #7f1d1d;
+  border-color: #7f1d1d;
+  box-shadow: 0 10px 24px rgba(127, 29, 29, 0.18);
+}
+
+.timelineItemCardReturnBack {
+  background: #14532d;
+  border-color: #14532d;
+  box-shadow: 0 10px 24px rgba(20, 83, 45, 0.18);
+}
+
+.timelineItemCardReturn strong,
+.timelineItemCardReturn span,
+.timelineItemCardReturn small,
+.timelineItemCardReturnBack strong,
+.timelineItemCardReturnBack span,
+.timelineItemCardReturnBack small {
+  color: #ffffff;
+}
+
+.timelineItemCardReturn small,
+.timelineItemCardReturnBack small {
+  opacity: 0.74;
 }
 
 .timelineItemCardamber {
@@ -1229,6 +1328,16 @@
     font-size: clamp(18px, 5vw, 20px);
   }
 
+  .viewToggle {
+    order: 3;
+    width: 100%;
+  }
+
+  .viewToggle button {
+    flex: 1 1 0;
+    min-height: 36px;
+  }
+
   .panelBody {
     padding: 10px;
     overflow-x: hidden;
@@ -1244,13 +1353,25 @@
   }
 
   .headerActions {
-    width: 100%;
+    width: auto;
+  }
+
+  .todayButton {
+    flex: 1 1 0;
+    min-height: 44px;
   }
 
   .headerTargetButton,
   .headerManualButton {
-    flex: 1 1 0;
+    width: 44px;
+    min-width: 44px;
     min-height: 44px;
+  }
+
+  .headerTargetButton svg,
+  .headerManualButton svg {
+    width: 18px;
+    height: 18px;
   }
 
   .entryFormGrid {

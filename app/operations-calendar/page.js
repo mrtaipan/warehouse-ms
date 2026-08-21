@@ -180,6 +180,9 @@ function pushTimelineItem(map, divisionKey, dateKey, item) {
       Target: -10,
       'GRN Received': 0,
       'Arkline Inbound': 1,
+      'Reguler Return': 2,
+      'Arkline Return': 3,
+      'Arkline Return Back': 4,
     }
     const leftPriority = left.tone === 'target' ? -10 : priority[left.label] ?? 10
     const rightPriority = right.tone === 'target' ? -10 : priority[right.label] ?? 10
@@ -357,12 +360,32 @@ async function loadInboundUnloadRowsForCalendar(supabase, start, end) {
 async function loadArklineReceiptRowsForCalendar(supabase, start, end) {
   const result = await supabase
     .from('arkline_po_item_receipts')
+    .select('id, po_id, received_qty, receive_date, receipt_type')
+    .eq('receipt_type', 'INITIAL')
+    .gte('receive_date', start)
+    .lt('receive_date', end)
+    .order('receive_date', { ascending: true })
+
+  if (!result.error) {
+    return result
+  }
+
+  if (!isNonBlockingCalendarError(result.error)) {
+    return result
+  }
+
+  if (result.error.code !== '42703' && result.error.code !== 'PGRST204') {
+    return normalizeCalendarResult(result, 'Arkline inbound')
+  }
+
+  const fallbackResult = await supabase
+    .from('arkline_po_item_receipts')
     .select('id, po_id, received_qty, receive_date')
     .gte('receive_date', start)
     .lt('receive_date', end)
     .order('receive_date', { ascending: true })
 
-  return normalizeCalendarResult(result, 'Arkline inbound')
+  return normalizeCalendarResult(fallbackResult, 'Arkline inbound')
 }
 
 async function loadQcItemRowsForCalendar(supabase, start, end) {
@@ -530,6 +553,110 @@ async function loadArklineQcRowsForCalendar(supabase, start, end) {
   return normalizeCalendarResult({ data: null, error: lastError }, 'Arkline grading')
 }
 
+async function loadRegularReturnRowsForCalendar(supabase, start, end) {
+  const selectOptions = [
+    'id, inbound_id, source_phase, qty, model_name, variant_name, return_reason, created_at',
+    'id, inbound_id, source_phase, qty, model_name, variant_name, created_at',
+    'id, inbound_id, source_phase, qty, created_at',
+    'id, qty, created_at',
+  ]
+
+  let lastError = null
+
+  for (const selectColumns of selectOptions) {
+    const result = await supabase
+      .from('warehouse_returns')
+      .select(selectColumns)
+      .gte('created_at', `${start}T00:00:00`)
+      .lt('created_at', `${end}T00:00:00`)
+      .order('created_at', { ascending: true })
+
+    if (!result.error) {
+      return result
+    }
+
+    lastError = result.error
+    if (!isNonBlockingCalendarError(result.error)) {
+      return result
+    }
+
+    if (result.error.code !== '42703' && result.error.code !== 'PGRST204') {
+      return normalizeCalendarResult(result, 'regular return')
+    }
+  }
+
+  return normalizeCalendarResult({ data: null, error: lastError }, 'regular return')
+}
+
+async function loadArklineReturnBatchRowsForCalendar(supabase, start, end) {
+  const selectOptions = [
+    'id, return_number, po_id, sku_induk, model_name_snapshot, sent_qty, returned_qty, status, return_date',
+    'id, return_number, po_id, sku_induk, model_name_snapshot, sent_qty, status, return_date',
+    'id, return_number, po_id, sent_qty, return_date',
+  ]
+
+  let lastError = null
+
+  for (const selectColumns of selectOptions) {
+    const result = await supabase
+      .from('arkline_qc_return_batches')
+      .select(selectColumns)
+      .gte('return_date', start)
+      .lt('return_date', end)
+      .order('return_date', { ascending: true })
+
+    if (!result.error) {
+      return result
+    }
+
+    lastError = result.error
+    if (!isNonBlockingCalendarError(result.error)) {
+      return result
+    }
+
+    if (result.error.code !== '42703' && result.error.code !== 'PGRST204') {
+      return normalizeCalendarResult(result, 'Arkline return')
+    }
+  }
+
+  return normalizeCalendarResult({ data: null, error: lastError }, 'Arkline return')
+}
+
+async function loadArklineReworkReceiptRowsForCalendar(supabase, start, end) {
+  const selectOptions = [
+    'id, po_id, received_qty, receive_date, receipt_type, source_return_batch_id, source_return_batch_line_id',
+    'id, po_id, received_qty, receive_date, receipt_type, source_return_batch_id',
+    'id, po_id, received_qty, receive_date, receipt_type',
+  ]
+
+  let lastError = null
+
+  for (const selectColumns of selectOptions) {
+    const result = await supabase
+      .from('arkline_po_item_receipts')
+      .select(selectColumns)
+      .eq('receipt_type', 'REWORK_RETURN')
+      .gte('receive_date', start)
+      .lt('receive_date', end)
+      .order('receive_date', { ascending: true })
+
+    if (!result.error) {
+      return result
+    }
+
+    lastError = result.error
+    if (!isNonBlockingCalendarError(result.error)) {
+      return result
+    }
+
+    if (result.error.code !== '42703' && result.error.code !== 'PGRST204') {
+      return normalizeCalendarResult(result, 'Arkline return back')
+    }
+  }
+
+  return normalizeCalendarResult({ data: null, error: lastError }, 'Arkline return back')
+}
+
 async function loadOperationsCalendarTargets(supabase, start, end) {
   const result = await supabase
     .from('operations_calendar_targets')
@@ -552,6 +679,26 @@ async function loadOperationsCalendarManualReports(supabase, start, end) {
     .order('created_at', { ascending: true })
 
   return normalizeCalendarResult(result, 'manual reports')
+}
+
+async function loadWarehouseHolidayDateSet(supabase, monthValue) {
+  const { start, end } = getMonthBounds(monthValue)
+  const { data, error } = await supabase
+    .from('hrga_public_holidays')
+    .select('holiday_date, warehouse_holiday')
+    .gte('holiday_date', start)
+    .lt('holiday_date', end)
+    .eq('warehouse_holiday', true)
+
+  if (error) {
+    if (isNonBlockingCalendarError(error)) {
+      return new Set()
+    }
+
+    throw error
+  }
+
+  return new Set((data || []).map((row) => extractDateKey(row.holiday_date)).filter(Boolean))
 }
 
 async function loadPlReceivingRowsForCalendar(supabase, start, end) {
@@ -726,6 +873,9 @@ async function loadOperationsCalendarData(supabase, monthValue) {
     { data: arklineReceiptRows, error: arklineReceiptError },
     { data: qcItemRows, error: qcItemError },
     { data: arklineQcRows, error: arklineQcError },
+    { data: regularReturnRows, error: regularReturnError },
+    { data: arklineReturnRows, error: arklineReturnError },
+    { data: arklineReworkReceiptRows, error: arklineReworkReceiptError },
     { data: plReceivingRows, error: plReceivingError },
     { data: plBreakdownRows, error: plBreakdownError },
     { data: warehouseStorageRows, error: warehouseStorageError },
@@ -738,6 +888,9 @@ async function loadOperationsCalendarData(supabase, monthValue) {
     loadArklineReceiptRowsForCalendar(supabase, start, end),
     loadQcItemRowsForCalendar(supabase, start, end),
     loadArklineQcRowsForCalendar(supabase, start, end),
+    loadRegularReturnRowsForCalendar(supabase, start, end),
+    loadArklineReturnBatchRowsForCalendar(supabase, start, end),
+    loadArklineReworkReceiptRowsForCalendar(supabase, start, end),
     loadPlReceivingRowsForCalendar(supabase, start, end),
     loadPlBreakdownRowsForCalendar(supabase, start, end),
     loadWarehouseStorageRowsForCalendar(supabase, start, end),
@@ -752,6 +905,9 @@ async function loadOperationsCalendarData(supabase, monthValue) {
     arklineReceiptError ||
     qcItemError ||
     arklineQcError ||
+    regularReturnError ||
+    arklineReturnError ||
+    arklineReworkReceiptError ||
     plReceivingError ||
     plBreakdownError ||
     warehouseStorageError ||
@@ -943,6 +1099,48 @@ async function loadOperationsCalendarData(supabase, monthValue) {
         note: `${group.poId || 'PO'} | ${group.skuInduk ? `${group.skuInduk} - ` : ''}${group.itemName}`,
         detail: `Qty ${formatNumber(group.qty)}`,
       })
+    })
+  })
+
+  groupRowsByDate(regularReturnRows || [], (row) => extractDateKey(row.created_at)).forEach((rows, dateKey) => {
+    const returnQty = sumBy(rows, 'qty')
+    const sourcePhases = new Set(rows.map((row) => String(row.source_phase || 'Return').trim()).filter(Boolean))
+
+    pushTimelineItem(timelineMap, 'qc', dateKey, {
+      label: 'Reguler Return',
+      count: rows.length,
+      qty: returnQty,
+      note: `Qty ${formatNumber(returnQty)} | ${formatNumber(rows.length)} line`,
+      detail: Array.from(sourcePhases).join(', ') || 'Warehouse return',
+      tone: 'return',
+    })
+  })
+
+  groupRowsByDate(arklineReturnRows || [], (row) => extractDateKey(row.return_date)).forEach((rows, dateKey) => {
+    const returnQty = sumBy(rows, 'sent_qty')
+    const poKeys = new Set(rows.map((row) => String(row.po_id || '').trim()).filter(Boolean))
+
+    pushTimelineItem(timelineMap, 'qc', dateKey, {
+      label: 'Arkline Return',
+      count: rows.length,
+      qty: returnQty,
+      note: `${formatNumber(poKeys.size)} PO | Sent Qty ${formatNumber(returnQty)}`,
+      detail: `${formatNumber(rows.length)} return batch`,
+      tone: 'return',
+    })
+  })
+
+  groupRowsByDate(arklineReworkReceiptRows || [], (row) => extractDateKey(row.receive_date)).forEach((rows, dateKey) => {
+    const returnedQty = sumBy(rows, 'received_qty')
+    const poKeys = new Set(rows.map((row) => String(row.po_id || '').trim()).filter(Boolean))
+
+    pushTimelineItem(timelineMap, 'qc', dateKey, {
+      label: 'Arkline Return Back',
+      count: rows.length,
+      qty: returnedQty,
+      note: `${formatNumber(poKeys.size)} PO | Returned Qty ${formatNumber(returnedQty)}`,
+      detail: `${formatNumber(rows.length)} rework receipt`,
+      tone: 'returnBack',
     })
   })
 
@@ -1195,7 +1393,11 @@ export default async function OperationsCalendarPage({ searchParams }) {
   const params = await searchParams
   const month = normalizeMonthValue(params?.month)
   const view = String(params?.view || 'timeline').toLowerCase() === 'calendar' ? 'calendar' : 'timeline'
-  const monthDays = getMonthDays(month)
+  const warehouseHolidayDateSet = await loadWarehouseHolidayDateSet(supabase, month)
+  const monthDays = getMonthDays(month).map((day) => ({
+    ...day,
+    isWarehouseHoliday: warehouseHolidayDateSet.has(day.key),
+  }))
   const currentDateKey = extractDateKey(new Date().toISOString())
   const timelineMap = await loadOperationsCalendarData(supabase, month)
   const formOptions = await loadOperationsCalendarFormOptions(supabase)

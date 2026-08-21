@@ -5,6 +5,7 @@ import { canAccessOperationsCalendar, getAllowedMenus, getStorageFeatureAccess }
 import { loadAccessContext } from '@/utils/access-control'
 import RestockShortcutButton from './restock-shortcut-client'
 import ItemSearchShortcutButton from './item-search-shortcut-client'
+import GrnSummaryCopyButton from './grn-summary-copy-button'
 import styles from './dashboard.module.css'
 
 const DAILY_QUOTES = [
@@ -171,6 +172,79 @@ function getSjComparisonLabel(value) {
   return `${Number(value) > 0 ? '+' : ''}${formatNumber(value)}pcs dari SJ`
 }
 
+function withEndingPeriod(value = '') {
+  const text = cleanSummaryText(value)
+  if (!text) return ''
+  return /[.!?]$/.test(text) ? text : `${text}.`
+}
+
+function getGradeBreakdownLabel(row = {}, fallback = '') {
+  const label = cleanSummaryText(row.pl_name) || dedupeSummaryParts([
+    row.model_name,
+    row.variant_name || row.variant_label || row.model_color,
+  ]).join(' ')
+
+  return label || cleanSummaryText(row.source_variant_code || row.variant_code) || cleanSummaryText(fallback) || 'Grade A item'
+}
+
+function buildGradeBreakdownRows(rows = [], fallback = '') {
+  const grouped = new Map()
+
+  const list = rows || []
+  list.forEach((row) => {
+    const qty = Number(row.qty || 0)
+    if (qty <= 0) return
+
+    const label = getGradeBreakdownLabel(row, fallback)
+    const key = label.toLowerCase()
+    const current = grouped.get(key) || { label, qty: 0 }
+    current.qty += qty
+    grouped.set(key, current)
+  })
+
+  return Array.from(grouped.values()).sort((left, right) => left.label.localeCompare(right.label))
+}
+
+function buildGrnSummaryCopyText(selectedInbound, summary) {
+  if (!selectedInbound || !summary) return ''
+
+  const lines = [
+    `${selectedInbound.grn_number} - ${summary.supplierName}`,
+    summary.productSummary ? withEndingPeriod(summary.productSummary) : '',
+    `*Grade A:* ${formatNumber(summary.displayGradeAQty)} pcs.`,
+  ]
+
+  if ((summary.gradeABreakdownRows || []).length > 1) {
+    summary.gradeABreakdownRows.forEach((item) => {
+      lines.push(`\t- ${item.label}: ${formatNumber(item.qty)} pcs.`)
+    })
+  }
+
+  if (summary.displayGradeBQty > 0) {
+    lines.push(`*Grade B:* ${formatNumber(summary.displayGradeBQty)} pcs.`)
+  }
+
+  if (summary.totalReturQty > 0) {
+    lines.push(`*Total Reject:* ${formatNumber(summary.totalReturQty)} pcs.`)
+
+    if (summary.returQcQty > 0) {
+      lines.push(`\t- Reject QC: ${formatNumber(summary.returQcQty)} pcs.`)
+    }
+
+    if (summary.returPlQty > 0) {
+      lines.push(`\t- Reject Packing List: ${formatNumber(summary.returPlQty)} pcs.`)
+    }
+
+    if (summary.returBongkarQty > 0) {
+      lines.push(`\t- Reject Bongkar: ${formatNumber(summary.returBongkarQty)} pcs.`)
+    }
+  }
+
+  lines.push(`Total: ${formatNumber(summary.totalSummaryQty)} pcs [${getSjComparisonLabel(summary.sjVarianceQty)}].`)
+
+  return lines.filter(Boolean).join('\n')
+}
+
 function CalendarIcon() {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -184,6 +258,18 @@ function CalendarIcon() {
       <path d="M8 17h.01" />
       <path d="M12 17h.01" />
       <path d="M16 17h.01" />
+    </svg>
+  )
+}
+
+function DeliveryReportIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M5 4.5h14v15H5z" />
+      <path d="M8 15v-3" />
+      <path d="M12 15V8" />
+      <path d="M16 15v-5" />
+      <path d="M8 18h8" />
     </svg>
   )
 }
@@ -328,7 +414,7 @@ async function loadAdminGrnSummary(supabase, selectedGrn = '') {
       .limit(5000),
     supabase
       .from('pl_size_breakdown')
-      .select('id, qty')
+      .select('*')
       .eq('inbound_id', selectedInbound.id)
       .limit(5000),
     supabase
@@ -376,11 +462,10 @@ async function loadAdminGrnSummary(supabase, selectedGrn = '') {
   const sjQty = selectedInbound.total_claimed_qty == null ? null : Number(selectedInbound.total_claimed_qty || 0)
   const sjVarianceQty = sjQty == null ? null : totalSummaryQty - sjQty
   const supplierName = selectedInbound.suppliers?.supplier_name || '-'
-  const firstUnloadRow = (unloadRows || [])[0] || {}
-  const brandName = cleanSummaryText(firstUnloadRow.brands?.brand_name)
-  const categoryName = cleanSummaryText(firstUnloadRow.categories?.full_name || firstUnloadRow.categories?.category_name)
   const itemName = cleanSummaryText(selectedInbound.item_name)
-  const productSummary = dedupeSummaryParts([brandName, itemName, categoryName]).join(' ')
+  const fallbackItemName = cleanSummaryText((unloadRows || [])[0]?.model_name)
+  const productSummary = itemName || fallbackItemName
+  const gradeABreakdownRows = buildGradeBreakdownRows(plBreakdownRows, productSummary)
 
   return {
     grnOptions,
@@ -407,12 +492,15 @@ async function loadAdminGrnSummary(supabase, selectedGrn = '') {
       sjVarianceQty,
       supplierName,
       productSummary,
+      gradeABreakdownRows,
     },
     error: '',
   }
 }
 
 function AdminGrnSummaryCard({ grnOptions = [], selectedGrn = '', selectedInbound = null, summary = null, error = '' }) {
+  const copyText = buildGrnSummaryCopyText(selectedInbound, summary)
+
   return (
     <section className={styles.sectionCard}>
       <div className={styles.grnSummaryTopRow}>
@@ -490,19 +578,33 @@ function AdminGrnSummaryCard({ grnOptions = [], selectedGrn = '', selectedInboun
             </div>
           </div>
           <div className={styles.grnSummaryDetailCard}>
-            <strong className={styles.grnSummaryDetailTitle}>
-              {selectedInbound.grn_number} - {summary.supplierName}
-            </strong>
+            <div className={styles.grnSummaryDetailHeader}>
+              <strong className={styles.grnSummaryDetailTitle}>
+                {selectedInbound.grn_number} - {summary.supplierName}
+              </strong>
+              <GrnSummaryCopyButton text={copyText} />
+            </div>
             <div className={styles.grnSummaryNarrative}>
-              {summary.productSummary ? <p>{summary.productSummary}.</p> : null}
-              <p>Grade A: {formatNumber(summary.displayGradeAQty)} pcs.</p>
-              <p>Grade B: {formatNumber(summary.displayGradeBQty)} pcs.</p>
+              {summary.productSummary ? <p>{withEndingPeriod(summary.productSummary)}</p> : null}
+              <p className={styles.grnSummaryStrongLine}>Grade A: {formatNumber(summary.displayGradeAQty)} pcs.</p>
+              {(summary.gradeABreakdownRows || []).length > 1 ? (
+                <div className={styles.grnSummarySubLines}>
+                  {summary.gradeABreakdownRows.map((item) => (
+                    <p key={item.label}>- {item.label}: {formatNumber(item.qty)} pcs.</p>
+                  ))}
+                </div>
+              ) : null}
+              {summary.displayGradeBQty > 0 ? (
+                <p className={styles.grnSummaryStrongLine}>Grade B: {formatNumber(summary.displayGradeBQty)} pcs.</p>
+              ) : null}
               {summary.totalReturQty > 0 ? (
                 <div className={styles.grnSummaryRejectBlock}>
-                  <p>Total Reject: {formatNumber(summary.totalReturQty)} pcs.</p>
-                  {summary.returQcQty > 0 ? <p>- Reject QC: {formatNumber(summary.returQcQty)} pcs.</p> : null}
-                  {summary.returPlQty > 0 ? <p>- Reject Packing List: {formatNumber(summary.returPlQty)} pcs.</p> : null}
-                  {summary.returBongkarQty > 0 ? <p>- Reject Bongkar: {formatNumber(summary.returBongkarQty)} pcs.</p> : null}
+                  <p className={styles.grnSummaryStrongLine}>Total Reject: {formatNumber(summary.totalReturQty)} pcs.</p>
+                  <div className={styles.grnSummarySubLines}>
+                    {summary.returQcQty > 0 ? <p>- Reject QC: {formatNumber(summary.returQcQty)} pcs.</p> : null}
+                    {summary.returPlQty > 0 ? <p>- Reject Packing List: {formatNumber(summary.returPlQty)} pcs.</p> : null}
+                    {summary.returBongkarQty > 0 ? <p>- Reject Bongkar: {formatNumber(summary.returBongkarQty)} pcs.</p> : null}
+                  </div>
                 </div>
               ) : null}
               <p>Total: {formatNumber(summary.totalSummaryQty)} pcs [{getSjComparisonLabel(summary.sjVarianceQty)}].</p>
@@ -587,6 +689,9 @@ export default async function DashboardPage({ searchParams }) {
               <div className={styles.heroQuickActions}>
                 <ItemSearchShortcutButton />
                 <RestockShortcutButton actions={restockActions} />
+                <Link href="/dashboard/delivery-report" className={styles.heroProfileLink} aria-label="Open Delivery Report" title="Delivery Report">
+                  <DeliveryReportIcon />
+                </Link>
                 {showOperationsCalendarButton ? (
                   <Link href="/operations-calendar" className={styles.heroProfileLink} aria-label="Open Operations Calendar">
                     <span className={styles.heroActionIcon}>
@@ -667,6 +772,9 @@ export default async function DashboardPage({ searchParams }) {
             <div className={styles.heroQuickActions}>
               <ItemSearchShortcutButton />
               <RestockShortcutButton actions={restockActions} />
+              <Link href="/dashboard/delivery-report" className={styles.heroProfileLink} aria-label="Open Delivery Report" title="Delivery Report">
+                <DeliveryReportIcon />
+              </Link>
               {showOperationsCalendarButton ? (
                 <Link href="/operations-calendar" className={styles.heroProfileLink} aria-label="Open Operations Calendar">
                   <span className={styles.heroActionIcon}>

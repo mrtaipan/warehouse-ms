@@ -3099,7 +3099,6 @@ export default function PackingListSizeBreakdownPage() {
     brand: '',
     categoryPath: '',
     model: '',
-    modelVariantQuery: '',
   })
   const [canEditSizeBreakdown, setCanEditSizeBreakdown] = useState(false)
   const [accessReady, setAccessReady] = useState(false)
@@ -3557,18 +3556,10 @@ export default function PackingListSizeBreakdownPage() {
   )
 
   const modelFilterOptions = useMemo(() => {
-    const modelOptionCards = filterBaseCards
-      .filter((card) => matchesModelFilter(card, effectiveModelFilters, 'model'))
-      .filter((card) => matchesModelVariantQuery(card, effectiveModelFilters.modelVariantQuery))
-    const modelOptions = getUniqueOptions(modelOptionCards.map((card) => getModelFilterLabel(card)))
-    const models = effectiveModelFilters.model && !modelOptions.includes(effectiveModelFilters.model)
-      ? [effectiveModelFilters.model, ...modelOptions]
-      : modelOptions
-
     return {
       brands: getUniqueOptions(filterBaseCards.filter((card) => matchesModelFilter(card, effectiveModelFilters, 'brand')).map((card) => card.brand_name || 'UNBRANDED')),
       categoryPaths: getUniqueOptions(filterBaseCards.filter((card) => matchesModelFilter(card, effectiveModelFilters, 'categoryPath')).map((card) => getCategoryPathLabel(card))),
-      models,
+      models: getUniqueOptions(filterBaseCards.filter((card) => matchesModelFilter(card, effectiveModelFilters, 'model')).map((card) => getModelFilterLabel(card))),
     }
   }, [effectiveModelFilters, filterBaseCards])
 
@@ -3616,7 +3607,6 @@ export default function PackingListSizeBreakdownPage() {
       brand: '',
       categoryPath: '',
       model: '',
-      modelVariantQuery: '',
     })
   }
 
@@ -6144,15 +6134,6 @@ export default function PackingListSizeBreakdownPage() {
                     </option>
                   ))}
                 </select>
-              </label>
-              <label style={{ ...styles.filterField, ...styles.modelVariantFilterField }}>
-                <input
-                  type="search"
-                  value={modelFilters.modelVariantQuery}
-                  onChange={(event) => updateModelFilter('modelVariantQuery', event.target.value)}
-                  placeholder="Filter model options"
-                  style={styles.filterInput}
-                />
               </label>
               <button type="button" onClick={resetModelFilters} style={styles.compactResetButton} title="Reset filters" aria-label="Reset filters">
                 &#8634;

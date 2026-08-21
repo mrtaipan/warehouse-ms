@@ -115,6 +115,7 @@ const BASE_PERMISSION_GROUPS = [
       { key: 'directory.materials', label: 'Materials', description: 'Kelola master material Arkline.', actions: ['view', 'add', 'edit', 'delete'] },
       { key: 'directory.bom', label: 'BOM', description: 'Kelola bill of materials produk Arkline.', actions: ['view', 'add', 'edit', 'delete'] },
       { key: 'directory.suppliers', label: 'Suppliers', description: 'Kelola supplier Arkline dan asosiasi material yang dapat disupply.', actions: ['view', 'add', 'edit'] },
+      { key: 'directory.purchase_orders', label: 'Purchase Order', description: 'Lihat dan cetak arsip garment serta material purchase order Arkline.', actions: ['view', 'print'] },
       { key: 'progress_snapshot', label: 'Progress Snapshot', description: 'Pintu masuk halaman progress snapshot Arkline.', actions: ['view'] },
       { key: 'progress_snapshot.kanban', label: 'Kanban', description: 'Lihat dan kelola kanban progress order Arkline.', actions: ['view', 'add', 'edit'] },
       { key: 'progress_snapshot.calendar', label: 'Calendar', description: 'Lihat progress order dalam tampilan kalender.', actions: ['view'] },
@@ -436,6 +437,8 @@ const DEFAULT_ROLE_BUNDLES = {
     'arkline.directory.suppliers.view',
     'arkline.directory.suppliers.add',
     'arkline.directory.suppliers.edit',
+    'arkline.directory.purchase_orders.view',
+    'arkline.directory.purchase_orders.print',
     'arkline.progress_snapshot.view',
     'arkline.progress_snapshot.kanban.view',
     'arkline.progress_snapshot.kanban.add',
@@ -470,6 +473,7 @@ const DEFAULT_ROLE_BUNDLES = {
     'arkline.directory.bom.view',
     'arkline.directory.materials.view',
     'arkline.directory.suppliers.view',
+    'arkline.directory.purchase_orders.view',
     'arkline.progress_snapshot.view',
     'arkline.progress_snapshot.kanban.view',
     'arkline.progress_snapshot.calendar.view',
@@ -612,6 +616,8 @@ export function getArklineFeatureAccess(role, permissions = [], isAdmin = false)
       directorySuppliers: true,
       directorySuppliersCreate: true,
       directorySuppliersEdit: true,
+      directoryPurchaseOrders: true,
+      directoryPurchaseOrdersPrint: true,
       progressOverview: true,
       progressKanban: true,
       progressKanbanAdd: true,
@@ -650,6 +656,7 @@ export function getArklineFeatureAccess(role, permissions = [], isAdmin = false)
   const directoryBom = buildFeatureAccess('arkline.directory.bom', permissions, isAdmin)
   const directoryMaterials = buildFeatureAccess('arkline.directory.materials', permissions, isAdmin)
   const directorySuppliers = buildFeatureAccess('arkline.directory.suppliers', permissions, isAdmin)
+  const directoryPurchaseOrders = buildFeatureAccess('arkline.directory.purchase_orders', permissions, isAdmin)
   const progressHome = buildFeatureAccess('arkline.progress_snapshot', permissions, isAdmin)
   const progressKanban = buildFeatureAccess('arkline.progress_snapshot.kanban', permissions, isAdmin)
   const progressCalendar = buildFeatureAccess('arkline.progress_snapshot.calendar', permissions, isAdmin)
@@ -670,6 +677,7 @@ export function getArklineFeatureAccess(role, permissions = [], isAdmin = false)
     directoryBom.view ||
     directoryMaterials.view ||
     directorySuppliers.view ||
+    directoryPurchaseOrders.view ||
     progressHome.view ||
     progressKanban.view ||
     progressCalendar.view ||
@@ -684,7 +692,11 @@ export function getArklineFeatureAccess(role, permissions = [], isAdmin = false)
 
   let menuHref = '/dashboard'
   if (overview) menuHref = '/dashboard/arkline'
-  else if (directoryHome.view || directoryProducts.view || directoryBom.view || directoryMaterials.view || directorySuppliers.view) menuHref = '/dashboard/arkline/directory'
+  else if (directoryHome.view || directoryProducts.view) menuHref = '/dashboard/arkline/directory'
+  else if (directoryMaterials.view) menuHref = '/dashboard/arkline/directory/materials'
+  else if (directoryBom.view) menuHref = '/dashboard/arkline/directory/bom'
+  else if (directorySuppliers.view) menuHref = '/dashboard/arkline/directory/suppliers'
+  else if (directoryPurchaseOrders.view) menuHref = '/dashboard/arkline/directory/purchase-orders'
   else if (progressHome.view || progressKanban.view || progressCalendar.view || progressProducts.view) menuHref = '/dashboard/arkline/progress-overview'
   else if (productionPlanning.view || productionOrders.view || materialFulfillment.view) menuHref = '/dashboard/arkline/production-planning'
 
@@ -701,7 +713,7 @@ export function getArklineFeatureAccess(role, permissions = [], isAdmin = false)
     menu,
     menuHref,
     overview,
-    directory: directoryHome.view || directoryProducts.view || directoryBom.view || directoryMaterials.view || directorySuppliers.view,
+    directory: directoryHome.view || directoryProducts.view || directoryBom.view || directoryMaterials.view || directorySuppliers.view || directoryPurchaseOrders.view,
     directoryBom: directoryBom.view,
     directoryCreate: directoryProducts.add || directoryProducts.edit,
     directoryProducts: directoryProducts.view,
@@ -715,6 +727,8 @@ export function getArklineFeatureAccess(role, permissions = [], isAdmin = false)
     directorySuppliers: directorySuppliers.view,
     directorySuppliersCreate: directorySuppliers.add,
     directorySuppliersEdit: directorySuppliers.edit,
+    directoryPurchaseOrders: directoryPurchaseOrders.view,
+    directoryPurchaseOrdersPrint: directoryPurchaseOrders.print,
     progressOverview: progressHome.view || progressKanban.view || progressCalendar.view || progressProducts.view,
     progressKanban: progressKanban.view,
     progressKanbanAdd: progressKanban.add,
@@ -954,11 +968,11 @@ const ROUTE_PERMISSION_MAP = [
   { matcher: (pathname) => pathname.startsWith('/dashboard/packing-list/size-breakdown'), codes: ['packing.size_breakdown.view'] },
   { matcher: (pathname) => pathname.startsWith('/mobile/packing-list/item-storing'), codes: ['packing.size_breakdown.view'] },
   { matcher: (pathname) => pathname === '/dashboard/arkline' || pathname.startsWith('/dashboard/arkline?'), codes: ['arkline.overview.view'] },
-  { matcher: (pathname) => pathname === '/dashboard/arkline/directory' || pathname.startsWith('/dashboard/arkline/directory?'), codes: ['arkline.directory.view', 'arkline.directory.products.view', 'arkline.directory.bom.view', 'arkline.directory.materials.view'] },
+  { matcher: (pathname) => pathname === '/dashboard/arkline/directory' || pathname.startsWith('/dashboard/arkline/directory?'), codes: ['arkline.directory.view', 'arkline.directory.products.view'] },
   { matcher: (pathname) => pathname.startsWith('/dashboard/arkline/directory/bom'), codes: ['arkline.directory.bom.view'] },
   { matcher: (pathname) => pathname.startsWith('/dashboard/arkline/directory/materials'), codes: ['arkline.directory.materials.view'] },
-  { matcher: (pathname) => pathname.startsWith('/dashboard/arkline/directory/suppliers'), codes: ['arkline.directory.suppliers.view', 'arkline.directory.view'] },
-  { matcher: (pathname) => pathname.startsWith('/dashboard/arkline/directory/purchase-orders'), codes: ['arkline.production_orders.view', 'arkline.material_fulfillment.view', 'arkline.production_planning.view', 'arkline.directory.view'] },
+  { matcher: (pathname) => pathname.startsWith('/dashboard/arkline/directory/suppliers'), codes: ['arkline.directory.suppliers.view'] },
+  { matcher: (pathname) => pathname.startsWith('/dashboard/arkline/directory/purchase-orders'), codes: ['arkline.directory.purchase_orders.view'] },
   { matcher: (pathname) => pathname.startsWith('/dashboard/arkline/progress-overview'), codes: ['arkline.progress_snapshot.view', 'arkline.progress_snapshot.kanban.view', 'arkline.progress_snapshot.calendar.view', 'arkline.progress_snapshot.products.view'] },
   { matcher: (pathname) => pathname.startsWith('/dashboard/arkline/production-planning/material-fulfillment'), codes: ['arkline.material_fulfillment.view'] },
   { matcher: (pathname) => pathname.startsWith('/dashboard/arkline/production-planning'), codes: ['arkline.production_planning.view', 'arkline.production_orders.view', 'arkline.material_fulfillment.view'] },

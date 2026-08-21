@@ -374,6 +374,10 @@
 }
 
 .zoneNumber {
+  display: inline-flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 1px;
   min-width: 20px;
   min-height: 18px;
   padding: 3px 6px;
@@ -386,6 +390,18 @@
   transition:
     opacity 160ms ease,
     transform 160ms ease;
+}
+
+.arklineCodePrefix {
+  font-size: 0.68em;
+  font-weight: 900;
+  letter-spacing: 0.02em;
+  opacity: 0.88;
+}
+
+.arklineCodeNumber {
+  font-size: 1em;
+  font-weight: inherit;
 }
 
 .mapCanvasImage .zoneNumber {
@@ -996,6 +1012,10 @@
   height: 100%;
 }
 
+.rackGridWide {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
 .rackSlot {
   position: relative;
   min-height: 112px;
@@ -1045,6 +1065,9 @@
 }
 
 .rackSlotLabel {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 1px;
   color: #0f172a;
   font-size: 12px;
   font-weight: 900;
@@ -1694,6 +1717,10 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
     grid-template-rows: repeat(3, minmax(90px, 1fr));
     gap: 10px;
+  }
+
+  .rackGridWide {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
   .rackSlot {

@@ -834,6 +834,13 @@
   gap: 14px;
 }
 
+.grnSummaryDetailHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
 .grnSummaryDetailTitle {
   color: #0f172a;
   font-size: 18px;
@@ -841,23 +848,76 @@
   font-weight: 800;
 }
 
+.grnSummaryCopyButton {
+  min-height: 38px;
+  border: 1px solid #dbe4ef;
+  border-radius: 14px;
+  background: #ffffff;
+  color: #0f172a;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 0 12px;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+  transition: transform 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
+}
+
+.grnSummaryCopyButton:hover:not(:disabled) {
+  transform: translateY(-1px);
+  border-color: #94a3b8;
+  box-shadow: 0 10px 20px rgba(15, 23, 42, 0.08);
+}
+
+.grnSummaryCopyButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.grnSummaryCopyButton svg {
+  width: 16px;
+  height: 16px;
+}
+
 .grnSummaryNarrative {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 4px;
 }
 
 .grnSummaryNarrative p {
   margin: 0;
   color: #334155;
   font-size: 14px;
-  line-height: 1.65;
+  line-height: 1.45;
+}
+
+.grnSummaryStrongLine {
+  color: #0f172a !important;
+  font-weight: 900;
 }
 
 .grnSummaryRejectBlock {
   display: flex;
   flex-direction: column;
   gap: 2px;
+}
+
+.grnSummarySubLines {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-left: 18px;
+  padding-left: 12px;
+  border-left: 1px solid #dbe4ef;
+}
+
+.grnSummarySubLines p {
+  color: #475569;
+  font-size: 13px;
+  line-height: 1.4;
 }
 
 .grnSummaryEmpty,

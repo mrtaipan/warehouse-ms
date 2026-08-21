@@ -188,9 +188,9 @@ function getProductCardTone(entry, targetDate) {
 function getFinanceQtyForItem(entry) {
   const status = normalizeBoardStatus(entry?.status)
   if (status === 'Initiated') {
-    return Number(entry?.qty || entry?.totalQty || 0)
+    return parseNumberValue(entry?.qty || entry?.totalQty || 0)
   }
-  return Number(entry?.actualQty || entry?.actual_qty || 0)
+  return parseNumberValue(entry?.actualQty || entry?.actual_qty || 0)
 }
 
 function getLaterIsoDate(...values) {
@@ -369,8 +369,8 @@ async function loadSnapshotRows() {
     const totalQty = Number(row?.total_qty || 0)
     const actualQty = Number(receiptQtyByItemId[String(row?.id || '').trim()] ?? row?.actual_qty ?? 0)
     const updatedDeliveryDate = String(row?.updated_delivery_date || '').slice(0, 10)
-    const price = Number(row?.price || 0)
-    const hpp = Number(row?.hpp || 0)
+    const price = parseNumberValue(row?.price)
+    const hpp = parseNumberValue(row?.hpp)
     const itemNotes = String(row?.notes || '').trim()
     const itemId = String(row?.id || '').trim()
     const savedItemStatus = normalizeBoardStatus(row?.status)
@@ -578,9 +578,45 @@ function comparePoItems(left, right) {
 }
 
 function formatNumber(value) {
-  const numeric = Number(value || 0)
+  const numeric = parseNumberValue(value)
   if (!Number.isFinite(numeric)) return '0'
   return new Intl.NumberFormat('en-US').format(numeric)
+}
+
+function parseNumberValue(value) {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : 0
+  const raw = String(value ?? '').trim()
+  if (!raw) return 0
+
+  const cleaned = raw.replace(/[^\d.,-]/g, '')
+  if (!cleaned || cleaned === '-' || cleaned === '.' || cleaned === ',') return 0
+
+  const hasDot = cleaned.includes('.')
+  const hasComma = cleaned.includes(',')
+
+  if (hasDot && hasComma) {
+    const lastDot = cleaned.lastIndexOf('.')
+    const lastComma = cleaned.lastIndexOf(',')
+    const decimalSeparator = lastComma > lastDot ? ',' : '.'
+    const thousandsSeparator = decimalSeparator === ',' ? '.' : ','
+    const normalized = cleaned.replaceAll(thousandsSeparator, '').replace(decimalSeparator, '.')
+    const parsed = Number(normalized)
+    return Number.isFinite(parsed) ? parsed : 0
+  }
+
+  if (hasComma) {
+    const normalized = /,\d{1,2}$/.test(cleaned) ? cleaned.replace(',', '.') : cleaned.replaceAll(',', '')
+    const parsed = Number(normalized)
+    return Number.isFinite(parsed) ? parsed : 0
+  }
+
+  if (hasDot && /^\-?\d{1,3}(\.\d{3})+$/.test(cleaned)) {
+    const parsed = Number(cleaned.replaceAll('.', ''))
+    return Number.isFinite(parsed) ? parsed : 0
+  }
+
+  const parsed = Number(cleaned)
+  return Number.isFinite(parsed) ? parsed : 0
 }
 
 function formatPercent(value, total) {
@@ -664,11 +700,17 @@ function normalizeFinancePaymentRow(row) {
   return {
     id: row?.id || '',
     paymentDate: String(row?.paid_at || row?.created_at || '').slice(0, 10),
+    paidAt: row?.paid_at || '',
+    invoiceNumber: String(row?.invoice_number || '').trim().toUpperCase(),
     paymentLabel: String(row?.invoice_number || row?.status || 'Payment').trim() || 'Payment',
-    amount: Number(row?.amount || 0),
+    amount: parseNumberValue(row?.amount),
     notes: row?.notes || '',
     status: String(row?.status || 'SUBMITTED').trim().toUpperCase() || 'SUBMITTED',
   }
+}
+
+function isPaidFinancePayment(row) {
+  return String(row?.status || '').trim().toUpperCase() === 'PAID' || Boolean(row?.paidAt)
 }
 
 const QC_GRADE_OPTIONS = ['A', 'B', 'C']
@@ -1740,10 +1782,10 @@ export default function ArklineProgressOverviewPage() {
 
       const paymentRows = (paymentRowsRaw || []).map(normalizeFinancePaymentRow)
       const itemDetail = itemRows[0] || null
-      const price = Number(itemDetail?.price || entry.price || 0)
-      const hpp = Number(itemDetail?.hpp || 0)
-      const plannedQty = Number(itemDetail?.total_qty || entry.qty || 0)
-      const actualQty = Number(itemDetail?.actual_qty || 0)
+      const price = parseNumberValue(itemDetail?.price || entry.price || 0)
+      const hpp = parseNumberValue(itemDetail?.hpp || 0)
+      const plannedQty = parseNumberValue(itemDetail?.total_qty || entry.qty || 0)
+      const actualQty = parseNumberValue(itemDetail?.actual_qty || 0)
       const totalReceived = receiptRows.reduce((sum, row) => sum + Number(row?.received_qty || 0), 0)
       const financeUnitPrice = price || hpp
       const actualFinanceQty = actualQty || totalReceived
@@ -1803,7 +1845,7 @@ export default function ArklineProgressOverviewPage() {
           allowancePct: Number(itemDetail?.allowance_pct || 0),
           plannedValue: financeUnitPrice * plannedQty,
           actualValue: financeUnitPrice * financeQty,
-          paidValue: paymentRows.filter((row) => row.status === 'PAID').reduce((sum, row) => sum + Number(row?.amount || 0), 0),
+          paidValue: paymentRows.filter(isPaidFinancePayment).reduce((sum, row) => sum + parseNumberValue(row?.amount), 0),
         },
       })
       setStatusDraft({
@@ -3045,12 +3087,12 @@ export default function ArklineProgressOverviewPage() {
                 <>
                   {(() => {
                     const dueValue = (selectedPoDetail.productEntries || []).reduce(
-                      (sum, entry) => sum + getFinanceQtyForItem(entry) * Number(entry?.price || entry?.hpp || 0),
+                      (sum, entry) => sum + getFinanceQtyForItem(entry) * parseNumberValue(entry?.price || entry?.hpp || 0),
                       0
                     )
                     const paidValue = (selectedPoDetail.payments || [])
-                      .filter((row) => row.status === 'PAID')
-                      .reduce((sum, row) => sum + Number(row?.amount || 0), 0)
+                      .filter(isPaidFinancePayment)
+                      .reduce((sum, row) => sum + parseNumberValue(row?.amount), 0)
                     const outstandingValue = Math.max(dueValue - paidValue, 0)
 
                     return (
@@ -3076,6 +3118,7 @@ export default function ArklineProgressOverviewPage() {
                                 <tr>
                                   <th>Date</th>
                                   <th>Invoice No</th>
+                                  <th>Status</th>
                                   <th>Nominal Paid</th>
                                 </tr>
                               </thead>
@@ -3084,6 +3127,7 @@ export default function ArklineProgressOverviewPage() {
                                   <tr key={row.id}>
                                     <td>{formatDateLabel(row.paymentDate)}</td>
                                     <td>{row.invoiceNumber || row.paymentLabel || '-'}</td>
+                                    <td>{row.status || '-'}</td>
                                     <td>{formatNumber(row.amount)}</td>
                                   </tr>
                                 ))}

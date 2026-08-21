@@ -1,7 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import {
   createOperationsCalendarManualReport,
@@ -61,6 +61,29 @@ function EditIcon() {
   )
 }
 
+function TargetIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="12" cy="12" r="8" />
+      <circle cx="12" cy="12" r="3" />
+      <path d="M12 2v3" />
+      <path d="M12 19v3" />
+      <path d="M2 12h3" />
+      <path d="M19 12h3" />
+    </svg>
+  )
+}
+
+function ManualIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M12 5v14" />
+      <path d="M5 12h14" />
+      <rect x="4" y="4" width="16" height="16" rx="4" />
+    </svg>
+  )
+}
+
 function buildTimelineMap(entries = []) {
   return new Map(entries.map((entry) => [entry.key, entry]))
 }
@@ -92,7 +115,11 @@ function getCompactDivisionValue(division) {
   if (division.key === 'qc') {
     const completedItems = items.filter((item) => item.label === 'Reguler Grading' || item.label === 'Arkline Grading')
     const completedQty = sumItemQty(completedItems)
-    return completedQty > 0 ? `${completedQty} qty` : ''
+    if (completedQty > 0) return `${completedQty} qty`
+
+    const returnItems = items.filter((item) => item.label === 'Reguler Return' || item.label === 'Arkline Return' || item.label === 'Arkline Return Back')
+    const returnQty = sumItemQty(returnItems)
+    return returnQty > 0 ? `${returnQty} return qty` : ''
   }
 
   if (division.key === 'packing') {
@@ -129,6 +156,8 @@ function getTimelineItemClassName(item, division) {
     item.tone === 'arkline' ? styles.timelineItemCardArkline : '',
     item.tone === 'target' ? styles.timelineItemCardTarget : '',
     item.tone === 'manual' ? styles.timelineItemCardManual : '',
+    item.tone === 'return' ? styles.timelineItemCardReturn : '',
+    item.tone === 'returnBack' ? styles.timelineItemCardReturnBack : '',
   ].filter(Boolean).join(' ')
 }
 
@@ -178,7 +207,18 @@ function getTimelineDayDivisions(day, timelineMap) {
   }).filter((division) => division.items.length > 0)
 }
 
-function MobileAgendaView({ monthDays, currentDateKey, timelineMap, daySummaryMap, canEditItem, onEditItem }) {
+function MobileAgendaView({ monthDays, currentDateKey, timelineMap, daySummaryMap, canEditItem, onEditItem, focusTodaySignal = 0 }) {
+  const todayRef = useRef(null)
+
+  useEffect(() => {
+    if (!monthDays.some((day) => day.key === currentDateKey)) return
+    if (!window.matchMedia('(max-width: 767px)').matches) return
+
+    window.requestAnimationFrame(() => {
+      todayRef.current?.scrollIntoView({ block: 'start' })
+    })
+  }, [currentDateKey, focusTodaySignal, monthDays])
+
   return (
     <div className={styles.mobileAgenda}>
       {monthDays.map((day) => {
@@ -186,10 +226,15 @@ function MobileAgendaView({ monthDays, currentDateKey, timelineMap, daySummaryMa
           ? daySummaryMap.get(day.key) || []
           : getTimelineDayDivisions(day, timelineMap)
         const isToday = day.key === currentDateKey
+        const isHoliday = day.weekday === 'Sun' || day.isWarehouseHoliday
 
         return (
-          <section key={day.key} className={`${styles.agendaDay} ${isToday ? styles.agendaToday : ''}`}>
-            <div className={`${styles.agendaDayHeader} ${day.weekday === 'Sun' ? styles.sundayBlockSoft : ''}`}>
+          <section
+            key={day.key}
+            ref={isToday ? todayRef : null}
+            className={`${styles.agendaDay} ${isToday ? styles.agendaToday : ''}`}
+          >
+            <div className={`${styles.agendaDayHeader} ${isHoliday ? styles.sundayBlockSoft : ''}`}>
               <div>
                 <span>{day.weekday}</span>
                 <strong>{day.dayNumber}</strong>
@@ -230,10 +275,26 @@ function MobileAgendaView({ monthDays, currentDateKey, timelineMap, daySummaryMa
   )
 }
 
-function TimelineView({ monthDays, timelineMap, currentDateKey, canEditItem, onEditItem }) {
+function TimelineView({ monthDays, timelineMap, currentDateKey, canEditItem, onEditItem, focusTodaySignal = 0 }) {
+  const scrollerRef = useRef(null)
+
+  useEffect(() => {
+    const todayIndex = monthDays.findIndex((day) => day.key === currentDateKey)
+    if (todayIndex < 0) return
+
+    window.requestAnimationFrame(() => {
+      const scroller = scrollerRef.current
+      const todayHeader = scroller?.querySelector(`[data-date-key="${currentDateKey}"]`)
+      if (!scroller || !todayHeader) return
+
+      const centeredLeft = todayHeader.offsetLeft - (scroller.clientWidth / 2) + (todayHeader.offsetWidth / 2)
+      scroller.scrollLeft = Math.max(0, centeredLeft)
+    })
+  }, [currentDateKey, focusTodaySignal, monthDays])
+
   return (
     <div className={styles.timelineCard}>
-      <div className={styles.timelineScroller}>
+      <div className={styles.timelineScroller} ref={scrollerRef}>
         <div
           className={styles.timelineGrid}
           style={{
@@ -246,7 +307,8 @@ function TimelineView({ monthDays, timelineMap, currentDateKey, canEditItem, onE
           {monthDays.map((day) => (
             <div
               key={day.key}
-              className={`${styles.timelineDateHeader} ${day.key === currentDateKey ? styles.timelineToday : ''} ${day.weekday === 'Sun' ? styles.sundayColumn : ''}`}
+              data-date-key={day.key}
+              className={`${styles.timelineDateHeader} ${day.key === currentDateKey ? styles.timelineToday : ''} ${day.weekday === 'Sun' || day.isWarehouseHoliday ? styles.sundayColumn : ''}`}
             >
               <span>{day.weekday}</span>
               <strong>{day.dayNumber}</strong>
@@ -266,7 +328,14 @@ function TimelineView({ monthDays, timelineMap, currentDateKey, canEditItem, onE
           ))}
         </div>
       </div>
-      <MobileAgendaView monthDays={monthDays} timelineMap={timelineMap} currentDateKey={currentDateKey} canEditItem={canEditItem} onEditItem={onEditItem} />
+      <MobileAgendaView
+        monthDays={monthDays}
+        timelineMap={timelineMap}
+        currentDateKey={currentDateKey}
+        canEditItem={canEditItem}
+        onEditItem={onEditItem}
+        focusTodaySignal={focusTodaySignal}
+      />
     </div>
   )
 }
@@ -293,7 +362,7 @@ function FragmentTimelineRow({ division, monthDays, timelineMap, currentDateKey,
         return (
           <div
             key={`${division.key}-${day.key}`}
-            className={`${styles.timelineDayCell} ${day.key === currentDateKey ? styles.timelineToday : ''} ${hasItems ? styles.timelineDayCellActive : ''} ${day.weekday === 'Sun' ? styles.sundayColumn : ''}`}
+            className={`${styles.timelineDayCell} ${day.key === currentDateKey ? styles.timelineToday : ''} ${hasItems ? styles.timelineDayCellActive : ''} ${day.weekday === 'Sun' || day.isWarehouseHoliday ? styles.sundayColumn : ''}`}
           >
             {hasItems ? (
               <div className={styles.timelineItemStack}>
@@ -318,13 +387,23 @@ function FragmentTimelineRow({ division, monthDays, timelineMap, currentDateKey,
   )
 }
 
-function CalendarView({ monthDays, daySummaryMap, currentDateKey, onOpenDetail, canEditItem, onEditItem }) {
+function CalendarView({ monthDays, daySummaryMap, currentDateKey, onOpenDetail, canEditItem, onEditItem, focusTodaySignal = 0 }) {
+  const calendarRef = useRef(null)
   const firstDayDate = new Date(`${monthDays[0].key}T00:00:00Z`)
   const leadingEmptyCells = (firstDayDate.getUTCDay() + 6) % 7
   const calendarCells = [
     ...Array.from({ length: leadingEmptyCells }, (_, index) => ({ type: 'empty', key: `empty-${index}` })),
     ...monthDays.map((day) => ({ type: 'day', key: day.key, day })),
   ]
+
+  useEffect(() => {
+    if (!monthDays.some((day) => day.key === currentDateKey)) return
+
+    window.requestAnimationFrame(() => {
+      const todayCell = calendarRef.current?.querySelector(`[data-date-key="${currentDateKey}"]`)
+      todayCell?.scrollIntoView({ block: 'center', inline: 'center' })
+    })
+  }, [currentDateKey, focusTodaySignal, monthDays])
 
   return (
     <div className={styles.calendarCard}>
@@ -334,7 +413,7 @@ function CalendarView({ monthDays, daySummaryMap, currentDateKey, onOpenDetail, 
         ))}
       </div>
 
-      <div className={styles.calendarGrid}>
+      <div className={styles.calendarGrid} ref={calendarRef}>
         {calendarCells.map((cell) => {
           if (cell.type === 'empty') {
             return <div key={cell.key} className={styles.calendarEmptyCell} />
@@ -342,11 +421,17 @@ function CalendarView({ monthDays, daySummaryMap, currentDateKey, onOpenDetail, 
 
           const divisions = daySummaryMap.get(cell.day.key) || []
 
+          const isHoliday = cell.day.weekday === 'Sun' || cell.day.isWarehouseHoliday
+
           return (
-            <section key={cell.key} className={`${styles.calendarDayCell} ${cell.day.key === currentDateKey ? styles.calendarToday : ''} ${cell.day.weekday === 'Sun' ? styles.sundayBlockSoft : ''}`}>
+            <section
+              key={cell.key}
+              data-date-key={cell.day.key}
+              className={`${styles.calendarDayCell} ${cell.day.key === currentDateKey ? styles.calendarToday : ''} ${isHoliday ? styles.sundayBlockSoft : ''}`}
+            >
               <div className={styles.calendarDayHeader}>
-                <strong className={cell.day.weekday === 'Sun' ? styles.sundayText : ''}>{cell.day.dayNumber}</strong>
-                <span className={cell.day.weekday === 'Sun' ? styles.sundayText : ''}>{cell.day.weekday}</span>
+                <strong className={isHoliday ? styles.sundayText : ''}>{cell.day.dayNumber}</strong>
+                <span className={isHoliday ? styles.sundayText : ''}>{cell.day.weekday}</span>
               </div>
 
               <div className={styles.calendarDivisionCompactList}>
@@ -374,7 +459,14 @@ function CalendarView({ monthDays, daySummaryMap, currentDateKey, onOpenDetail, 
           )
         })}
       </div>
-      <MobileAgendaView monthDays={monthDays} daySummaryMap={daySummaryMap} currentDateKey={currentDateKey} canEditItem={canEditItem} onEditItem={onEditItem} />
+      <MobileAgendaView
+        monthDays={monthDays}
+        daySummaryMap={daySummaryMap}
+        currentDateKey={currentDateKey}
+        canEditItem={canEditItem}
+        onEditItem={onEditItem}
+        focusTodaySignal={focusTodaySignal}
+      />
     </div>
   )
 }
@@ -614,9 +706,13 @@ export default function OperationsCalendarClient({
   const [detail, setDetail] = useState(null)
   const [entryModal, setEntryModal] = useState('')
   const [editingItem, setEditingItem] = useState(null)
+  const [focusTodaySignal, setFocusTodaySignal] = useState(0)
+  const monthInputRef = useRef(null)
 
   const timelineMap = useMemo(() => buildTimelineMap(timelineEntries), [timelineEntries])
   const daySummaryMap = useMemo(() => buildDaySummaryMap(daySummaries), [daySummaries])
+  const todayMonth = currentDateKey.slice(0, 7)
+  const pageTitle = initialView === 'calendar' ? 'Operations Calendar' : 'Operations Timeline'
 
   function updateQuery(nextMonth, nextView) {
     const params = new URLSearchParams(searchParams.toString())
@@ -631,6 +727,37 @@ export default function OperationsCalendarClient({
 
   function handleViewChange(nextView) {
     updateQuery(initialMonth, nextView)
+  }
+
+  function handleOpenMonthPicker() {
+    const monthInput = monthInputRef.current
+    if (!monthInput) return
+
+    try {
+      if (typeof monthInput.showPicker === 'function') {
+        monthInput.showPicker()
+        return
+      }
+    } catch {
+      // Some browsers reject showPicker unless the input itself receives the gesture.
+    }
+
+    monthInput.focus()
+    try {
+      monthInput.click()
+      return
+    } catch {
+      monthInput.focus()
+    }
+  }
+
+  function handleTodayClick() {
+    if (initialMonth !== todayMonth) {
+      updateQuery(todayMonth, initialView)
+      return
+    }
+
+    setFocusTodaySignal((value) => value + 1)
   }
 
   function handleOpenEntryModal(type) {
@@ -665,43 +792,46 @@ export default function OperationsCalendarClient({
             <Link href="/dashboard" className={styles.iconOnlyButton} aria-label="Back to dashboard" title="Back">
               <BackIcon />
             </Link>
-            <h1 className={styles.pageTitle}>Operations Calendar</h1>
+            <h1 className={styles.pageTitle}>{pageTitle}</h1>
+            <div className={styles.viewToggle} aria-label="Operations calendar view">
+              <button
+                type="button"
+                className={initialView === 'timeline' ? styles.viewToggleActive : ''}
+                onClick={() => handleViewChange('timeline')}
+              >
+                <TimelineIcon />
+                <span>Timeline</span>
+              </button>
+              <button
+                type="button"
+                className={initialView === 'calendar' ? styles.viewToggleActive : ''}
+                onClick={() => handleViewChange('calendar')}
+              >
+                <GridIcon />
+                <span>Calendar</span>
+              </button>
+            </div>
           </div>
 
           <div className={styles.panelHeaderRight}>
             <div className={styles.headerActions}>
               {canAddTarget ? (
-                <button type="button" className={styles.headerTargetButton} onClick={() => handleOpenEntryModal('target')}>
-                  Add Target
+                <button type="button" className={styles.headerTargetButton} onClick={() => handleOpenEntryModal('target')} aria-label="Add Target" title="Add Target">
+                  <TargetIcon />
                 </button>
               ) : null}
               {manualDivisionKey ? (
-                <button type="button" className={styles.headerManualButton} onClick={() => handleOpenEntryModal('manual')}>
-                  Add Manual
+                <button type="button" className={styles.headerManualButton} onClick={() => handleOpenEntryModal('manual')} aria-label="Add Manual" title="Add Manual">
+                  <ManualIcon />
                 </button>
               ) : null}
             </div>
-            <label className={styles.monthPickerWrap}>
-              <span className={styles.monthPickerLabel}>{monthLabel}</span>
-              <input type="month" value={initialMonth} onChange={handleMonthChange} className={styles.monthPicker} />
-            </label>
-            <button
-              type="button"
-              className={`${styles.iconOnlyButton} ${initialView === 'timeline' ? styles.iconOnlyButtonActive : ''}`}
-              onClick={() => handleViewChange('timeline')}
-              aria-label="Timeline view"
-              title="Timeline"
-            >
-              <TimelineIcon />
+            <button type="button" className={styles.todayButton} onClick={handleTodayClick}>
+              Today
             </button>
-            <button
-              type="button"
-              className={`${styles.iconOnlyButton} ${initialView === 'calendar' ? styles.iconOnlyButtonActive : ''}`}
-              onClick={() => handleViewChange('calendar')}
-              aria-label="Calendar view"
-              title="Calendar"
-            >
-              <GridIcon />
+            <button type="button" className={styles.monthPickerWrap} onClick={handleOpenMonthPicker}>
+              <span className={styles.monthPickerLabel}>{monthLabel}</span>
+              <input ref={monthInputRef} type="month" value={initialMonth} onChange={handleMonthChange} className={styles.monthPicker} />
             </button>
           </div>
         </div>
@@ -713,7 +843,14 @@ export default function OperationsCalendarClient({
             </div>
           ) : null}
           {initialView === 'timeline' ? (
-            <TimelineView monthDays={monthDays} timelineMap={timelineMap} currentDateKey={currentDateKey} canEditItem={canEditItem} onEditItem={handleEditItem} />
+            <TimelineView
+              monthDays={monthDays}
+              timelineMap={timelineMap}
+              currentDateKey={currentDateKey}
+              canEditItem={canEditItem}
+              onEditItem={handleEditItem}
+              focusTodaySignal={focusTodaySignal}
+            />
           ) : (
             <CalendarView
               monthDays={monthDays}
@@ -722,6 +859,7 @@ export default function OperationsCalendarClient({
               onOpenDetail={(day, division) => setDetail({ day, division })}
               canEditItem={canEditItem}
               onEditItem={handleEditItem}
+              focusTodaySignal={focusTodaySignal}
             />
           )}
         </div>

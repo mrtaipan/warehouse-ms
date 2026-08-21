@@ -59,9 +59,9 @@ async function generateSupplierCode() {
 
 export default function ArklineSupplierDirectoryPage() {
   const { access } = useArklineAccess()
-  const canViewSupplier = access.directorySuppliers || access.directory
-  const canCreateSupplier = access.directorySuppliersCreate || access.directoryCreate
-  const canEditSupplier = access.directorySuppliersEdit || access.directoryCreate
+  const canViewSupplier = access.directorySuppliers
+  const canCreateSupplier = access.directorySuppliersCreate
+  const canEditSupplier = access.directorySuppliersEdit
   const [suppliers, setSuppliers] = useState([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)

@@ -1155,6 +1155,14 @@ function normalizeQcGrade(value, fallback = '') {
   return QC_GRADE_OPTIONS.includes(grade) ? grade : fallback
 }
 
+function getRegularGradeQty(item, grade) {
+  const normalizedGrade = normalizeQcGrade(grade)
+  if (normalizedGrade === 'A') return Number(item?.qty_a || 0)
+  if (normalizedGrade === 'B') return Number(item?.qty_b || 0)
+  if (normalizedGrade === 'C') return Number(item?.qty_c || 0)
+  return 0
+}
+
 function applyArklineAdjustmentsToGradeTotals(qtyA, qtyB, qtyC, adjustmentRows = []) {
   const totals = {
     A: Number(qtyA || 0),
@@ -1390,6 +1398,7 @@ export default function QcDashboardPage() {
   const [brandFilter, setBrandFilter] = useState('')
   const [categoryFilter, setCategoryFilter] = useState('')
   const [regularModelVariantFilter, setRegularModelVariantFilter] = useState('')
+  const [regularGradeFilter, setRegularGradeFilter] = useState('')
   const [sampleFilter, setSampleFilter] = useState('')
   const [allTime, setAllTime] = useState(true)
   const [dateFrom, setDateFrom] = useState('')
@@ -1765,9 +1774,13 @@ export default function QcDashboardPage() {
       ignoredFilter === 'sample' ||
       !sampleFilter ||
       (sampleFilter === 'yes' ? isRegularSampleTask(item) : !isRegularSampleTask(item))
+    const matchesGrade =
+      ignoredFilter === 'grade' ||
+      !regularGradeFilter ||
+      getRegularGradeQty(item, regularGradeFilter) > 0
 
-    return matchesDate && matchesGrn && matchesBrand && matchesCategory && matchesModelVariant && matchesSample
-  }, [brandFilter, categoryFilter, dateFrom, dateTo, grnFilter, hasInvalidDateRange, qcSampleBreakdownRows, regularModelVariantFilter, sampleFilter])
+    return matchesDate && matchesGrn && matchesBrand && matchesCategory && matchesModelVariant && matchesSample && matchesGrade
+  }, [brandFilter, categoryFilter, dateFrom, dateTo, grnFilter, hasInvalidDateRange, qcSampleBreakdownRows, regularGradeFilter, regularModelVariantFilter, sampleFilter])
 
   const matchesArklineFilterValues = useCallback((item, ignoredFilter = '') => {
     const matchesDate = hasInvalidDateRange ? true : isWithinDateRange(getQcWorkDateValue(item), dateFrom, dateTo)
@@ -1821,6 +1834,19 @@ export default function QcDashboardPage() {
       ),
     [matchesRegularFilterValues, qcItems]
   )
+  const regularGradeOptions = useMemo(() => {
+    const grades = new Set()
+
+    qcItems
+      .filter((item) => matchesRegularFilterValues(item, 'grade'))
+      .forEach((item) => {
+        QC_GRADE_OPTIONS.forEach((grade) => {
+          if (getRegularGradeQty(item, grade) > 0) grades.add(grade)
+        })
+      })
+
+    return QC_GRADE_OPTIONS.filter((grade) => grades.has(grade))
+  }, [matchesRegularFilterValues, qcItems])
   const hasSpecificSingleDate = Boolean(dateFrom && dateTo && dateFrom === dateTo)
   const canEditArklineRejectDetail = !allTime && hasSpecificSingleDate && !hasInvalidDateRange
   const rejectDetailReadOnlyReason = allTime
@@ -1860,9 +1886,12 @@ export default function QcDashboardPage() {
         const matchesSample =
           !sampleFilter ||
           (sampleFilter === 'yes' ? Boolean(item.is_sample) : !Boolean(item.is_sample))
-        return matchesDate && matchesGrn && matchesBrand && matchesCategory && matchesModelVariant && matchesSample
+        const rowGrade = normalizeQcGrade(item.grade)
+        const sourceGrade = normalizeQcGrade(item.source_grade, rowGrade)
+        const matchesGrade = !regularGradeFilter || rowGrade === regularGradeFilter || sourceGrade === regularGradeFilter
+        return matchesDate && matchesGrn && matchesBrand && matchesCategory && matchesModelVariant && matchesSample && matchesGrade
       }),
-    [brandFilter, categoryFilter, dateFrom, dateTo, grnFilter, hasInvalidDateRange, qcConfirmRows, regularModelVariantFilter, sampleFilter]
+    [brandFilter, categoryFilter, dateFrom, dateTo, grnFilter, hasInvalidDateRange, qcConfirmRows, regularGradeFilter, regularModelVariantFilter, sampleFilter]
   )
 
   const filteredReturnAdjustmentRows = useMemo(
@@ -1882,9 +1911,12 @@ export default function QcDashboardPage() {
         const matchesSample =
           !sampleFilter ||
           (sampleFilter === 'yes' ? Boolean(item.is_sample) : !Boolean(item.is_sample))
-        return matchesDate && matchesGrn && matchesBrand && matchesCategory && matchesModelVariant && matchesSample
+        const rowGrade = normalizeQcGrade(item.grade)
+        const sourceGrade = normalizeQcGrade(item.source_grade, rowGrade)
+        const matchesGrade = !regularGradeFilter || rowGrade === regularGradeFilter || sourceGrade === regularGradeFilter
+        return matchesDate && matchesGrn && matchesBrand && matchesCategory && matchesModelVariant && matchesSample && matchesGrade
       }),
-    [brandFilter, categoryFilter, dateFrom, dateTo, grnFilter, hasInvalidDateRange, regularModelVariantFilter, returnRows, sampleFilter]
+    [brandFilter, categoryFilter, dateFrom, dateTo, grnFilter, hasInvalidDateRange, regularGradeFilter, regularModelVariantFilter, returnRows, sampleFilter]
   )
 
   const filteredRegularPauseLogs = useMemo(
@@ -1900,9 +1932,10 @@ export default function QcDashboardPage() {
         const matchesSample =
           !sampleFilter ||
           (sampleFilter === 'yes' ? isRegularSampleTask(item.qc_item || {}) : !isRegularSampleTask(item.qc_item || {}))
-        return Boolean(item.qc_item_id) && matchesDate && matchesGrn && matchesBrand && matchesCategory && matchesModelVariant && matchesSample
+        const matchesGrade = !regularGradeFilter || getRegularGradeQty(item.qc_item || {}, regularGradeFilter) > 0
+        return Boolean(item.qc_item_id) && matchesDate && matchesGrn && matchesBrand && matchesCategory && matchesModelVariant && matchesSample && matchesGrade
       }),
-    [brandFilter, categoryFilter, dateFrom, dateTo, grnFilter, hasInvalidDateRange, pauseLogs, regularModelVariantFilter, sampleFilter]
+    [brandFilter, categoryFilter, dateFrom, dateTo, grnFilter, hasInvalidDateRange, pauseLogs, regularGradeFilter, regularModelVariantFilter, sampleFilter]
   )
 
   const filteredArklinePauseLogs = useMemo(
@@ -3529,6 +3562,7 @@ export default function QcDashboardPage() {
                   setBrandFilter('')
                   setCategoryFilter('')
                   setRegularModelVariantFilter('')
+                  setRegularGradeFilter('')
                   setSampleFilter('')
                 }}
               >
@@ -3546,6 +3580,7 @@ export default function QcDashboardPage() {
                   setBrandFilter('')
                   setCategoryFilter('')
                   setRegularModelVariantFilter('')
+                  setRegularGradeFilter('')
                   setSampleFilter('')
                 }}
               >
@@ -3754,6 +3789,20 @@ export default function QcDashboardPage() {
                   <option value="">All</option>
                   <option value="yes">Yes</option>
                   <option value="no">No</option>
+                </select>
+              </div>
+
+              <div style={styles.field}>
+                <label style={styles.label}>Grade</label>
+                <select
+                  value={regularGradeFilter}
+                  onChange={(event) => setRegularGradeFilter(event.target.value)}
+                  style={styles.select}
+                >
+                  <option value="">All Grade</option>
+                  {regularGradeOptions.map((grade) => (
+                    <option key={grade} value={grade}>Grade {grade}</option>
+                  ))}
                 </select>
               </div>
             </>

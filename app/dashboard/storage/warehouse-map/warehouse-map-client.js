@@ -18,20 +18,22 @@ const RACK_SLOTS = [
   { key: 'E', suffix: 'E', level: 'Level 1' },
   { key: 'F', suffix: 'F', level: 'Level 1' },
 ]
-const RACK_SLOT_SUFFIXES = new Set(RACK_SLOTS.map((slot) => slot.suffix))
+const ARKLINE_WIDE_RACK_SLOTS = [
+  { key: 'A', suffix: 'A', level: 'Level 3' },
+  { key: 'B', suffix: 'B', level: 'Level 3' },
+  { key: 'C', suffix: 'C', level: 'Level 3' },
+  { key: 'D', suffix: 'D', level: 'Level 2' },
+  { key: 'E', suffix: 'E', level: 'Level 2' },
+  { key: 'F', suffix: 'F', level: 'Level 2' },
+  { key: 'G', suffix: 'G', level: 'Level 1' },
+  { key: 'H', suffix: 'H', level: 'Level 1' },
+  { key: 'I', suffix: 'I', level: 'Level 1' },
+]
+const RACK_SLOT_SUFFIXES = new Set([...RACK_SLOTS, ...ARKLINE_WIDE_RACK_SLOTS].map((slot) => slot.suffix))
 const SUBLOCATION_ALL_KEY = 'ALL'
 const UNASSIGNED_SUBLOCATION_KEY = 'UNASSIGNED'
-const SUBLOCATION_KEYS = Array.from({ length: 12 }, (_, index) => `K${index + 1}`)
-const SUBLOCATION_KEY_SET = new Set(SUBLOCATION_KEYS)
-const SUBLOCATION_LAYOUT_ROWS = [
-  ['K11', 'K12'],
-  ['K9', 'K10'],
-  ['K7', 'K8'],
-  ['K5', 'K6'],
-  ['K3', 'K4'],
-  ['K1', 'K2'],
-]
-const SUBLOCATION_LAYOUT_KEYS = SUBLOCATION_LAYOUT_ROWS.flat()
+const DEFAULT_SUBLOCATION_COUNT = 12
+const SUBLOCATION_KEYS = buildSubLocationKeys(DEFAULT_SUBLOCATION_COUNT)
 
 const WAREHOUSES = {
   LV87: {
@@ -107,6 +109,7 @@ const WAREHOUSES = {
     title: 'Warehouse LV83',
     mapRatio: '420 / 680',
     zones: [
+      { code: '8', x: 11.5, y: 5, w: 8, h: 12, variant: 'arkline' },
       { code: '7', x: 1.5, y: 5, w: 8, h: 12, variant: 'arkline' },
       { code: '6', x: 1.5, y: 17, w: 8, h: 12, variant: 'arkline' },
       { code: '5', x: 1.5, y: 29, w: 8, h: 12, variant: 'arkline' },
@@ -148,7 +151,7 @@ const WAREHOUSES = {
 }
 
 const WAREHOUSE_ORDER = ['LV83', 'LV85', 'LV87']
-const LV83_ARKLINE_ZONE_CODES = new Set(['1', '2', '3', '4', '5', '6', '7'])
+const LV83_ARKLINE_ZONE_CODES = new Set(['1', '2', '3', '4', '5', '6', '7', '8'])
 const MAP_BUILDER_STORAGE_KEY = 'warehouse-map-builder-layout-v2'
 const EMBEDDED_MAP_LAYOUTS = embeddedMapLayouts
 const SNAP_STEP = 1
@@ -220,7 +223,7 @@ function isArklineLocation(location) {
 
 function getArklineRackNumber(value) {
   const compact = String(value || '').trim().toUpperCase().replace(/\s+/g, '')
-  const match = compact.match(/^ARK[._-]?0*(\d+)(?:[-_/]?[A-Z])?$/) || compact.match(/^0*(\d+)(?:[-_/]?[A-Z])?$/)
+  const match = compact.match(/^ARK[._-]?0*(\d+)(?:[._/-]?[A-Z])?$/) || compact.match(/^0*(\d+)(?:[._/-]?[A-Z])?$/)
 
   return match ? String(Number(match[1])) : ''
 }
@@ -239,6 +242,14 @@ function isArklineZone(zone, warehouseKey) {
     normalizeWarehouseValue(warehouseKey) === 'LV83' &&
     (zone?.variant === 'arkline' || LV83_ARKLINE_ZONE_CODES.has(getArklineRackNumber(zone?.code)))
   )
+}
+
+function isArklineWideRackZone(zone, warehouseKey) {
+  return isArklineZone(zone, warehouseKey) && getArklineRackNumber(zone?.code) === '8'
+}
+
+function getRackSlotsForZone(zone, warehouseKey) {
+  return isArklineWideRackZone(zone, warehouseKey) ? ARKLINE_WIDE_RACK_SLOTS : RACK_SLOTS
 }
 
 function getZoneDisplayCode(zone, warehouseKey) {
@@ -477,6 +488,37 @@ function normalizeLocationCode(value) {
   return compact
 }
 
+function getSubLocationNumberFromKey(value) {
+  const match = String(value || '').trim().toUpperCase().match(/^K0*(\d+)$/)
+  return match ? Number(match[1]) : 0
+}
+
+function buildSubLocationKeys(maxCount = DEFAULT_SUBLOCATION_COUNT) {
+  const count = Math.max(DEFAULT_SUBLOCATION_COUNT, Number(maxCount || 0))
+  return Array.from({ length: count }, (_, index) => `K${index + 1}`)
+}
+
+function buildSubLocationKeysFromValues(values = []) {
+  const normalizedValues = Array.from(values || [])
+  const maxKeyNumber = normalizedValues.reduce((maxNumber, value) => {
+    const keyNumber = getSubLocationNumberFromKey(value)
+    return keyNumber > maxNumber ? keyNumber : maxNumber
+  }, DEFAULT_SUBLOCATION_COUNT)
+
+  return buildSubLocationKeys(maxKeyNumber)
+}
+
+function buildSubLocationLayoutRows(keys = SUBLOCATION_KEYS) {
+  const sortedKeys = [...keys].sort((left, right) => getSubLocationNumberFromKey(left) - getSubLocationNumberFromKey(right))
+  const rows = []
+
+  for (let index = 0; index < sortedKeys.length; index += 2) {
+    rows.push(sortedKeys.slice(index, index + 2))
+  }
+
+  return rows.reverse()
+}
+
 function splitLocationIdentifier(value) {
   const normalized = normalizeLocationCode(value)
 
@@ -484,7 +526,7 @@ function splitLocationIdentifier(value) {
     return { base: '', suffix: '' }
   }
 
-  const arkMatch = normalized.match(/^ARK[._-]?0*(\d+)[-_/]?([A-Z])?$/)
+  const arkMatch = normalized.match(/^ARK[._-]?0*(\d+)[._/-]?([A-Z])?$/)
   if (arkMatch) {
     return {
       base: `ARK-${Number(arkMatch[1])}`,
@@ -529,21 +571,21 @@ function getLocationSlotSuffix(location) {
 function getSubLocationKeyFromValue(value) {
   const rawValue = String(value || '').trim().toUpperCase()
   const compactValue = rawValue.replace(/\s+/g, '')
-  const directMatch = compactValue.match(/^K[-_]?0*(1[0-2]|[1-9])$/)
+  const directMatch = compactValue.match(/^K[-_]?0*(\d+)$/)
 
-  if (directMatch) {
+  if (directMatch && Number(directMatch[1]) > 0) {
     return `K${Number(directMatch[1])}`
   }
 
-  const compactTrailingMatch = compactValue.match(/K[-_]?0*(1[0-2]|[1-9])$/)
+  const compactTrailingMatch = compactValue.match(/K[-_]?0*(\d+)$/)
 
-  if (compactTrailingMatch) {
+  if (compactTrailingMatch && Number(compactTrailingMatch[1]) > 0) {
     return `K${Number(compactTrailingMatch[1])}`
   }
 
-  const embeddedMatch = rawValue.match(/(?:^|[^A-Z0-9])K[-_]?0*(1[0-2]|[1-9])(?:$|[^A-Z0-9])/)
+  const embeddedMatch = rawValue.match(/(?:^|[^A-Z0-9])K[-_]?0*(\d+)(?:$|[^A-Z0-9])/)
 
-  if (embeddedMatch) {
+  if (embeddedMatch && Number(embeddedMatch[1]) > 0) {
     return `K${Number(embeddedMatch[1])}`
   }
 
@@ -890,17 +932,35 @@ function ArklineSlotBoxPreview({ entries }) {
   )
 }
 
+function WarehouseCodeLabel({ value }) {
+  const label = String(value || '')
+  const match = label.match(/^ARK\.(.+)$/i)
+
+  if (!match) {
+    return label
+  }
+
+  return (
+    <>
+      <span className={styles.arklineCodePrefix}>ARK.</span>
+      <span className={styles.arklineCodeNumber}>{match[1]}</span>
+    </>
+  )
+}
+
 function buildOccupiedSubLocationRows(subLocationSlots) {
   const slotByKey = new Map(subLocationSlots.map((slot) => [slot.key, slot]))
+  const layoutRows = buildSubLocationLayoutRows(buildSubLocationKeysFromValues(subLocationSlots.map((slot) => slot.key)))
 
-  return SUBLOCATION_LAYOUT_ROWS.map((row) =>
+  return layoutRows.map((row) =>
     row
       .map((key) => slotByKey.get(key))
       .filter((slot) => slot && slot.qty > 0)
   ).filter((row) => row.length > 0)
 }
 
-function buildRackSlots(zoneData) {
+function buildRackSlots(zoneData, zone, warehouseKey) {
+  const rackSlotDefinitions = getRackSlotsForZone(zone, warehouseKey)
   const mappedSuffixes = new Set(
     zoneData.locations
       .map((location) => getLocationSlotSuffix(location))
@@ -933,7 +993,7 @@ function buildRackSlots(zoneData) {
     entriesBySuffix.set(key, existing)
   })
 
-  return RACK_SLOTS.map((slot) => {
+  return rackSlotDefinitions.map((slot) => {
     const entries = entriesBySuffix.get(slot.suffix) || []
     const locations = locationsBySuffix.get(slot.suffix) || []
 
@@ -964,7 +1024,9 @@ function buildSubLocationSlots(slot) {
     entriesByKey.set(key, existing)
   })
 
-  return SUBLOCATION_LAYOUT_KEYS.map((key) => {
+  const keys = buildSubLocationKeysFromValues([...mappedKeys, ...entriesByKey.keys()])
+
+  return keys.map((key) => {
     const keyEntries = entriesByKey.get(key) || []
 
     return {
@@ -1045,7 +1107,7 @@ function groupEntriesBySubLocation(entries) {
     groupsByKey.set(key, existing)
   })
 
-  const orderedGroups = SUBLOCATION_KEYS.map((key) => {
+  const orderedGroups = buildSubLocationKeysFromValues(groupsByKey.keys()).map((key) => {
     const groupEntries = groupsByKey.get(key) || []
 
     return {
@@ -1354,6 +1416,7 @@ export default function WarehouseMapClient({ canEditMap = false, canUseRegistry 
     [assignedPalletElements, selectedZoneCode]
   )
   const selectedZoneIsArkline = selectedZone ? isArklineZone(selectedZone, warehouse.key) : false
+  const selectedZoneUsesWideRack = selectedZone ? isArklineWideRackZone(selectedZone, warehouse.key) : false
   const selectedZoneDisplayCode = selectedZone ? getZoneDisplayCode(selectedZone, warehouse.key) : ''
   const selectedShelving = useMemo(
     () => assignedShelvingElements.find((shelving) => shelving.code === selectedZoneCode) || null,
@@ -1399,8 +1462,8 @@ export default function WarehouseMapClient({ canEditMap = false, canUseRegistry 
       : []
   }, [selectedShelvingData, selectedShelvingLevel, selectedShelvingLevelKey])
   const rackSlots = useMemo(
-    () => buildRackSlots(selectedZoneData || { locations: [], entries: [] }),
-    [selectedZoneData]
+    () => buildRackSlots(selectedZoneData || { locations: [], entries: [] }, selectedZone, warehouse.key),
+    [selectedZoneData, selectedZone, warehouse.key]
   )
   const selectedSlot = rackSlots.find((slot) => slot.key === selectedSlotKey) || rackSlots[0]
   const selectedSlotCode =
@@ -1426,7 +1489,7 @@ export default function WarehouseMapClient({ canEditMap = false, canUseRegistry 
       locationsByKey.set(key, location)
     })
 
-    return SUBLOCATION_KEYS
+    return buildSubLocationKeysFromValues(locationsByKey.keys())
       .map((key) => {
         const location = locationsByKey.get(key)
 
@@ -1592,6 +1655,52 @@ export default function WarehouseMapClient({ canEditMap = false, canUseRegistry 
         ...prev,
         LV83: {
           elements: lv83Elements.filter((element) => element.type !== 'shelving'),
+        },
+      }
+
+      window.localStorage.setItem(
+        MAP_BUILDER_STORAGE_KEY,
+        JSON.stringify({
+          ...defaultMapLayouts,
+          ...nextLayouts,
+        })
+      )
+
+      return nextLayouts
+    })
+  }, [defaultMapLayouts])
+
+  useEffect(() => {
+    const defaultArklineEight = (defaultMapLayouts.LV83?.elements || []).find(
+      (element) =>
+        element.type === 'pallet' &&
+        getArklineRackNumber(element.code) === '8' &&
+        isArklineZone(element, 'LV83')
+    )
+
+    if (!defaultArklineEight) {
+      return
+    }
+
+    setMapLayouts((prev) => {
+      const lv83Elements = prev.LV83?.elements
+
+      if (
+        !lv83Elements ||
+        lv83Elements.some(
+          (element) =>
+            element.type === 'pallet' &&
+            getArklineRackNumber(element.code) === '8' &&
+            isArklineZone(element, 'LV83')
+        )
+      ) {
+        return prev
+      }
+
+      const nextLayouts = {
+        ...prev,
+        LV83: {
+          elements: [...lv83Elements, defaultArklineEight],
         },
       }
 
@@ -1989,8 +2098,9 @@ export default function WarehouseMapClient({ canEditMap = false, canUseRegistry 
   }
 
   function handleZoneSelect(zoneCode) {
+    const zone = assignedPalletElements.find((element) => element.code === zoneCode) || null
     const zoneData = zoneDataByCode.get(zoneCode) || { locations: [], entries: [] }
-    const nextRackSlots = buildRackSlots(zoneData)
+    const nextRackSlots = buildRackSlots(zoneData, zone, warehouse.key)
     const firstOccupiedSlot = nextRackSlots.find((slot) => slot.entries.length > 0)
 
     setSelectedZoneCode(zoneCode)
@@ -2344,7 +2454,9 @@ export default function WarehouseMapClient({ canEditMap = false, canUseRegistry 
                     aria-pressed={editMode ? isElementSelected : isSelected}
                     aria-label={`${warehouse.title} rack ${zoneLabel}, ${zoneData.entries.length > 0 ? 'occupied' : 'empty'}`}
                   >
-                    <span className={styles.zoneNumber}>{zoneLabel}</span>
+                    <span className={styles.zoneNumber}>
+                      <WarehouseCodeLabel value={zoneLabel} />
+                    </span>
                     {zoneData.entries.length > 0 ? (
                       <span className={styles.zoneQty}>{formatNumber(zoneData.totalQty)}</span>
                     ) : null}
@@ -2651,7 +2763,7 @@ export default function WarehouseMapClient({ canEditMap = false, canUseRegistry 
                         <span key={levelIndex} className={styles.rackBeam} style={{ '--beam-index': levelIndex }} />
                       ))}
 
-                      <div className={styles.rackGrid}>
+                      <div className={`${styles.rackGrid} ${selectedZoneUsesWideRack ? styles.rackGridWide : ''}`.trim()}>
                         {rackSlots.map((slot) => {
                           const isSlotSelected = selectedSlotKey === slot.key
                           const slotIsOccupied = slot.entries.length > 0
@@ -2674,7 +2786,9 @@ export default function WarehouseMapClient({ canEditMap = false, canUseRegistry 
                               }}
                               aria-pressed={isSlotSelected}
                             >
-                              <span className={styles.rackSlotLabel}>{slotCode}</span>
+                              <span className={styles.rackSlotLabel}>
+                                <WarehouseCodeLabel value={slotCode} />
+                              </span>
                               {selectedZoneIsArkline ? (
                                 <ArklineSlotBoxPreview entries={slot.entries} />
                               ) : (
