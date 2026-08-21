@@ -1465,10 +1465,10 @@
         "type": "pallet",
         "code": "8",
         "variant": "arkline",
-        "x": 11.5,
-        "y": 5,
+        "x": 30.8,
+        "y": 71,
         "w": 8,
-        "h": 12,
+        "h": 18,
         "rotation": 0
       },
       {

@@ -109,7 +109,7 @@ const WAREHOUSES = {
     title: 'Warehouse LV83',
     mapRatio: '420 / 680',
     zones: [
-      { code: '8', x: 11.5, y: 5, w: 8, h: 12, variant: 'arkline' },
+      { code: '8', x: 30.8, y: 71, w: 8, h: 18, variant: 'arkline' },
       { code: '7', x: 1.5, y: 5, w: 8, h: 12, variant: 'arkline' },
       { code: '6', x: 1.5, y: 17, w: 8, h: 12, variant: 'arkline' },
       { code: '5', x: 1.5, y: 29, w: 8, h: 12, variant: 'arkline' },
