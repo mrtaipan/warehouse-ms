@@ -32,6 +32,21 @@ const ROLE_DIVISION_MAP = {
   storage_staff: 'storage',
 }
 
+const OPERATIONS_TIME_ZONE = 'Asia/Jakarta'
+const JAKARTA_UTC_OFFSET_HOURS = 7
+const WORKDAY_SHIFT_START_HOUR = 9
+const WORKDAY_SHIFT_START_MINUTE = 0
+const WORKDAY_SHIFT_HOURS = 7
+const DEFAULT_WORKDAY_PRODUCTIVE_HOURS = 7
+const INBOUND_WORKDAY_PRODUCTIVE_HOURS = 6.5
+const MIN_WORKDAY_PRODUCTIVE_HOURS = 1
+const WORKDAY_SHIFT_END_MINUTE =
+  WORKDAY_SHIFT_START_HOUR * 60 +
+  WORKDAY_SHIFT_START_MINUTE +
+  WORKDAY_SHIFT_HOURS * 60
+const WORKDAY_SHIFT_END_HOUR = Math.floor(WORKDAY_SHIFT_END_MINUTE / 60)
+const WORKDAY_SHIFT_END_MINUTE_PART = WORKDAY_SHIFT_END_MINUTE % 60
+
 function getRoleDivision(role) {
   return ROLE_DIVISION_MAP[String(role || '').trim()] || ''
 }
@@ -99,6 +114,312 @@ function extractDateKey(value) {
 
 function formatNumber(value) {
   return new Intl.NumberFormat('id-ID', { maximumFractionDigits: 0 }).format(Number(value || 0))
+}
+
+function formatDecimal(value, maximumFractionDigits = 1) {
+  return new Intl.NumberFormat('id-ID', { maximumFractionDigits }).format(Number(value || 0))
+}
+
+function safeDate(value) {
+  const date = new Date(value || '')
+  return Number.isNaN(date.getTime()) ? null : date
+}
+
+function getJakartaDateParts(date) {
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+    hourCycle: 'h23',
+    timeZone: OPERATIONS_TIME_ZONE,
+  }).formatToParts(date)
+
+  const values = parts.reduce((result, part) => {
+    if (part.type !== 'literal') result[part.type] = part.value
+    return result
+  }, {})
+
+  return {
+    year: Number(values.year),
+    month: Number(values.month),
+    day: Number(values.day),
+    hour: Number(values.hour),
+    minute: Number(values.minute),
+    second: Number(values.second),
+  }
+}
+
+function getJakartaDateKey(date) {
+  const parts = getJakartaDateParts(date)
+
+  return [
+    parts.year,
+    String(parts.month).padStart(2, '0'),
+    String(parts.day).padStart(2, '0'),
+  ].join('-')
+}
+
+function createJakartaDate(year, month, day, hour = 0, minute = 0, second = 0, millisecond = 0) {
+  return new Date(Date.UTC(
+    year,
+    month - 1,
+    day,
+    hour - JAKARTA_UTC_OFFSET_HOURS,
+    minute,
+    second,
+    millisecond
+  ))
+}
+
+function getJakartaWorkdayStart(date) {
+  const parts = getJakartaDateParts(date)
+
+  return createJakartaDate(
+    parts.year,
+    parts.month,
+    parts.day,
+    WORKDAY_SHIFT_START_HOUR,
+    WORKDAY_SHIFT_START_MINUTE
+  )
+}
+
+function getJakartaWorkdayEnd(date) {
+  const parts = getJakartaDateParts(date)
+
+  return createJakartaDate(
+    parts.year,
+    parts.month,
+    parts.day,
+    WORKDAY_SHIFT_END_HOUR,
+    WORKDAY_SHIFT_END_MINUTE_PART
+  )
+}
+
+function addJakartaCalendarDays(date, days) {
+  const parts = getJakartaDateParts(date)
+
+  return createJakartaDate(
+    parts.year,
+    parts.month,
+    parts.day + days,
+    WORKDAY_SHIFT_START_HOUR,
+    WORKDAY_SHIFT_START_MINUTE
+  )
+}
+
+function isJakartaSunday(date) {
+  const parts = getJakartaDateParts(date)
+
+  return new Date(Date.UTC(parts.year, parts.month - 1, parts.day)).getUTCDay() === 0
+}
+
+function isNonWorkingJakartaDate(date, nonWorkingDateSet = new Set()) {
+  return isJakartaSunday(date) || nonWorkingDateSet.has(getJakartaDateKey(date))
+}
+
+function getNextJakartaWorkdayStart(date, nonWorkingDateSet = new Set()) {
+  let cursor = addJakartaCalendarDays(date, 1)
+
+  for (let index = 0; index < 370; index += 1) {
+    if (!isNonWorkingJakartaDate(cursor, nonWorkingDateSet)) return getJakartaWorkdayStart(cursor)
+    cursor = addJakartaCalendarDays(cursor, 1)
+  }
+
+  return getJakartaWorkdayStart(cursor)
+}
+
+function normalizeToJakartaWorkday(date, nonWorkingDateSet = new Set()) {
+  let cursor = date
+
+  for (let index = 0; index < 370; index += 1) {
+    if (isNonWorkingJakartaDate(cursor, nonWorkingDateSet)) {
+      cursor = getNextJakartaWorkdayStart(cursor, nonWorkingDateSet)
+      continue
+    }
+
+    const workdayStart = getJakartaWorkdayStart(cursor)
+    const workdayEnd = getJakartaWorkdayEnd(cursor)
+
+    if (cursor.getTime() < workdayStart.getTime()) return workdayStart
+    if (cursor.getTime() >= workdayEnd.getTime()) {
+      cursor = getNextJakartaWorkdayStart(cursor, nonWorkingDateSet)
+      continue
+    }
+
+    return cursor
+  }
+
+  return cursor
+}
+
+function getProductiveHoursPerShiftHour(productiveHoursPerDay = DEFAULT_WORKDAY_PRODUCTIVE_HOURS) {
+  const productiveHours = Math.max(
+    MIN_WORKDAY_PRODUCTIVE_HOURS,
+    Math.min(WORKDAY_SHIFT_HOURS, Number(productiveHoursPerDay || DEFAULT_WORKDAY_PRODUCTIVE_HOURS))
+  )
+
+  return productiveHours / WORKDAY_SHIFT_HOURS
+}
+
+function addProductiveWorkHours(startDate, hours, nonWorkingDateSet = new Set(), productiveHoursPerDay = DEFAULT_WORKDAY_PRODUCTIVE_HOURS) {
+  let remainingHours = Number(hours || 0)
+  let cursor = normalizeToJakartaWorkday(startDate, nonWorkingDateSet)
+  const productiveHoursPerShiftHour = getProductiveHoursPerShiftHour(productiveHoursPerDay)
+
+  if (!Number.isFinite(remainingHours) || remainingHours <= 0) return cursor
+
+  for (let index = 0; index < 370 && remainingHours > 0; index += 1) {
+    const workdayEnd = getJakartaWorkdayEnd(cursor)
+    const availableShiftHours = Math.max(0, (workdayEnd.getTime() - cursor.getTime()) / 36e5)
+    const availableProductiveHours = availableShiftHours * productiveHoursPerShiftHour
+
+    if (availableProductiveHours <= 0) {
+      cursor = getNextJakartaWorkdayStart(cursor, nonWorkingDateSet)
+      continue
+    }
+
+    if (remainingHours <= availableProductiveHours) {
+      const calendarHours = remainingHours / productiveHoursPerShiftHour
+      return new Date(cursor.getTime() + calendarHours * 36e5)
+    }
+
+    remainingHours -= availableProductiveHours
+    cursor = getNextJakartaWorkdayStart(cursor, nonWorkingDateSet)
+  }
+
+  return cursor
+}
+
+function calculateProductiveWorkHoursBetween(startDate, endDate, nonWorkingDateSet = new Set(), productiveHoursPerDay = DEFAULT_WORKDAY_PRODUCTIVE_HOURS) {
+  if (!startDate || !endDate || endDate.getTime() <= startDate.getTime()) return 0
+
+  let cursor = normalizeToJakartaWorkday(startDate, nonWorkingDateSet)
+  const endTime = endDate.getTime()
+  let totalHours = 0
+  const productiveHoursPerShiftHour = getProductiveHoursPerShiftHour(productiveHoursPerDay)
+
+  for (let index = 0; index < 370 && cursor.getTime() < endTime; index += 1) {
+    const workdayEnd = getJakartaWorkdayEnd(cursor)
+    const segmentEndTime = Math.min(endTime, workdayEnd.getTime())
+
+    if (segmentEndTime > cursor.getTime()) {
+      const segmentShiftHours = (segmentEndTime - cursor.getTime()) / 36e5
+      totalHours += segmentShiftHours * productiveHoursPerShiftHour
+    }
+
+    if (endTime <= workdayEnd.getTime()) break
+    cursor = getNextJakartaWorkdayStart(cursor, nonWorkingDateSet)
+  }
+
+  return totalHours
+}
+
+function formatDurationHours(hours, productiveHoursPerDay = DEFAULT_WORKDAY_PRODUCTIVE_HOURS) {
+  const safeHours = Number(hours || 0)
+  if (!Number.isFinite(safeHours) || safeHours <= 0) return '-'
+  if (safeHours < 1) return `${Math.max(1, Math.round(safeHours * 60))} min`
+  if (safeHours <= productiveHoursPerDay) return `${formatDecimal(safeHours)} hr`
+  return `${formatDecimal(safeHours / productiveHoursPerDay)} work day`
+}
+
+function formatDateTimeLabel(date) {
+  if (!date || Number.isNaN(date.getTime())) return '-'
+
+  return new Intl.DateTimeFormat('en-GB', {
+    day: '2-digit',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+    timeZone: OPERATIONS_TIME_ZONE,
+  }).format(date)
+}
+
+function getRowsTimeBounds(rows = [], getDateValue) {
+  return rows.reduce((result, row) => {
+    const date = safeDate(getDateValue(row))
+    if (!date) return result
+
+    const time = date.getTime()
+    if (!result.first || time < result.first.getTime()) result.first = date
+    if (!result.last || time > result.last.getTime()) result.last = date
+    return result
+  }, { first: null, last: null })
+}
+
+function calculateProjectedFinish({
+  targetQty,
+  completedQty,
+  activityRows,
+  getDateValue,
+  now = new Date(),
+  nonWorkingDateSet = new Set(),
+  productiveHoursPerDay = DEFAULT_WORKDAY_PRODUCTIVE_HOURS,
+}) {
+  const target = Number(targetQty || 0)
+  const completed = Number(completedQty || 0)
+  const remainingQty = Math.max(0, target - completed)
+
+  if (target <= 0 || completed <= 0 || remainingQty <= 0 || !activityRows?.length) {
+    return null
+  }
+
+  const bounds = getRowsTimeBounds(activityRows, getDateValue)
+  if (!bounds.first) return null
+
+  const baseTime = Math.max(now.getTime(), bounds.last?.getTime() || 0)
+  const baseDate = new Date(baseTime)
+  const elapsedHours = Math.max(
+    0.25,
+    calculateProductiveWorkHoursBetween(bounds.first, baseDate, nonWorkingDateSet, productiveHoursPerDay)
+  )
+  const speedPerHour = completed / elapsedHours
+  if (!Number.isFinite(speedPerHour) || speedPerHour <= 0) return null
+
+  const remainingHours = remainingQty / speedPerHour
+  const projectedAt = addProductiveWorkHours(baseDate, remainingHours, nonWorkingDateSet, productiveHoursPerDay)
+
+  return {
+    projectedAt,
+    remainingQty,
+    speedPerHour,
+    remainingHours,
+    productiveHoursPerDay,
+  }
+}
+
+function getPauseDurationHours(row = {}, now = new Date()) {
+  const pausedAt = safeDate(row.paused_at)
+  const resumedAt = safeDate(row.resumed_at) || now
+  if (!pausedAt || !resumedAt || resumedAt.getTime() <= pausedAt.getTime()) return 0
+
+  return (resumedAt.getTime() - pausedAt.getTime()) / 36e5
+}
+
+function calculateProductiveHoursFromPauseRows(activityRows = [], pauseRows = [], now = new Date()) {
+  const activeDateKeys = new Set(
+    activityRows
+      .map((row) => getJakartaDateKey(safeDate(row.updated_at || row.created_at) || now))
+      .filter(Boolean)
+  )
+  const dayCount = Math.max(1, activeDateKeys.size)
+  const unproductiveHours = pauseRows.reduce((total, row) => total + getPauseDurationHours(row, now), 0)
+  const averageUnproductiveHours = Math.min(WORKDAY_SHIFT_HOURS - MIN_WORKDAY_PRODUCTIVE_HOURS, unproductiveHours / dayCount)
+  const productiveHoursPerDay = Math.max(MIN_WORKDAY_PRODUCTIVE_HOURS, WORKDAY_SHIFT_HOURS - averageUnproductiveHours)
+
+  return {
+    productiveHoursPerDay,
+    averageUnproductiveHours,
+    unproductiveHours,
+  }
+}
+
+function isDateKeyInRange(dateKey, start, end) {
+  return Boolean(dateKey && dateKey >= start && dateKey < end)
 }
 
 function normalizeStorageKoliLabel(value = '') {
@@ -183,6 +504,8 @@ function pushTimelineItem(map, divisionKey, dateKey, item) {
       'Reguler Return': 2,
       'Arkline Return': 3,
       'Arkline Return Back': 4,
+      'Inbound Estimated Finish': 5,
+      'QC Estimated Finish': 6,
     }
     const leftPriority = left.tone === 'target' ? -10 : priority[left.label] ?? 10
     const rightPriority = right.tone === 'target' ? -10 : priority[right.label] ?? 10
@@ -504,6 +827,59 @@ async function loadQcItemRowsForCalendar(supabase, start, end) {
   return normalizeCalendarResult({ data: null, error: lastError }, 'regular QC grading')
 }
 
+async function loadQcConfirmRowsForInboundIds(supabase, inboundIds = []) {
+  const ids = Array.from(new Set(inboundIds.map((id) => Number(id || 0)).filter(Boolean)))
+  if (!ids.length) return { data: [], error: null }
+
+  const selectOptions = [
+    'id, inbound_id, qty, grade, source_grade, adjustment_type, is_adjustment, created_at',
+    'id, inbound_id, qty, grade, source_grade, adjustment_type, created_at',
+    'id, inbound_id, qty, grade, created_at',
+  ]
+
+  let lastError = null
+
+  for (const selectColumns of selectOptions) {
+    const result = await supabase
+      .from('qc_confirm')
+      .select(selectColumns)
+      .in('inbound_id', ids)
+      .order('created_at', { ascending: true })
+
+    if (!result.error) {
+      return result
+    }
+
+    lastError = result.error
+    if (!isNonBlockingCalendarError(result.error)) {
+      return result
+    }
+
+    if (result.error.code !== '42703' && result.error.code !== 'PGRST204') {
+      return normalizeCalendarResult(result, 'QC confirmation')
+    }
+  }
+
+  return normalizeCalendarResult({ data: null, error: lastError }, 'QC confirmation')
+}
+
+async function loadQcPauseRowsForTaskIds(supabase, qcItemIds = []) {
+  const ids = Array.from(new Set(qcItemIds.map((id) => Number(id || 0)).filter(Boolean)))
+  if (!ids.length) return { data: [], error: null }
+
+  const result = await supabase
+    .from('qc_pause_logs')
+    .select('id, qc_item_id, paused_at, resumed_at')
+    .in('qc_item_id', ids)
+    .order('paused_at', { ascending: true })
+
+  if (!result.error) {
+    return result
+  }
+
+  return normalizeCalendarResult(result, 'QC pause logs')
+}
+
 async function loadArklineQcRowsForCalendar(supabase, start, end) {
   const selectOptions = [
     `
@@ -555,10 +931,11 @@ async function loadArklineQcRowsForCalendar(supabase, start, end) {
 
 async function loadRegularReturnRowsForCalendar(supabase, start, end) {
   const selectOptions = [
-    'id, inbound_id, source_phase, qty, model_name, variant_name, return_reason, created_at',
-    'id, inbound_id, source_phase, qty, model_name, variant_name, created_at',
-    'id, inbound_id, source_phase, qty, created_at',
-    'id, qty, created_at',
+    'id, inbound_id, source_phase, qty, model_name, variant_name, return_reason, status, returns_delivery, return_delivery, created_at, updated_at, inbound:inbound_id(id, grn_number)',
+    'id, inbound_id, source_phase, qty, model_name, variant_name, return_reason, status, returns_delivery, return_delivery, created_at, updated_at',
+    'id, inbound_id, source_phase, qty, model_name, variant_name, status, returns_delivery, return_delivery, created_at, updated_at',
+    'id, inbound_id, source_phase, qty, status, returns_delivery, return_delivery, created_at, updated_at',
+    'id, qty, status, returns_delivery, return_delivery, created_at, updated_at',
   ]
 
   let lastError = null
@@ -567,9 +944,8 @@ async function loadRegularReturnRowsForCalendar(supabase, start, end) {
     const result = await supabase
       .from('warehouse_returns')
       .select(selectColumns)
-      .gte('created_at', `${start}T00:00:00`)
-      .lt('created_at', `${end}T00:00:00`)
-      .order('created_at', { ascending: true })
+      .or(buildCalendarTimestampFilter(['updated_at', 'created_at'], start, end))
+      .order('updated_at', { ascending: true })
 
     if (!result.error) {
       return result
@@ -863,7 +1239,7 @@ async function loadOperationsCalendarFormOptions(supabase) {
   }
 }
 
-async function loadOperationsCalendarData(supabase, monthValue) {
+async function loadOperationsCalendarData(supabase, monthValue, nonWorkingDateSet = new Set()) {
   const { start, end } = getMonthBounds(monthValue)
   const timelineMap = createDivisionDayMap()
 
@@ -962,7 +1338,10 @@ async function loadOperationsCalendarData(supabase, monthValue) {
   const inboundById = new Map((inboundRows || []).map((row) => [String(row.id), row]))
   const missingInboundIds = Array.from(
     new Set(
-      (inboundUnloadRows || [])
+      [
+        ...(inboundUnloadRows || []),
+        ...(plBreakdownRows || []),
+      ]
         .map((row) => String(row.inbound_id || '').trim())
         .filter((id) => id && !inboundById.has(id))
     )
@@ -983,6 +1362,136 @@ async function loadOperationsCalendarData(supabase, monthValue) {
     })
   }
 
+  const { data: qcConfirmRows, error: qcConfirmError } = await loadQcConfirmRowsForInboundIds(
+    supabase,
+    Array.from(inboundById.keys())
+  )
+
+  if (qcConfirmError) {
+    throw qcConfirmError
+  }
+
+  const now = new Date()
+  const unloadRowsByInbound = groupRowsByValue(inboundUnloadRows || [], (row) => String(row.inbound_id || '').trim())
+  const qcRowsByInbound = groupRowsByValue(qcItemRows || [], (row) => String(row.inbound_id || '').trim())
+  const { data: qcPauseRows, error: qcPauseError } = await loadQcPauseRowsForTaskIds(
+    supabase,
+    (qcItemRows || []).map((row) => row.id)
+  )
+
+  if (qcPauseError) {
+    throw qcPauseError
+  }
+
+  const qcPauseRowsByTaskId = groupRowsByValue(qcPauseRows || [], (row) => String(row.qc_item_id || '').trim())
+  const confirmedPassingQtyByInbound = (qcConfirmRows || []).reduce((result, row) => {
+    const inboundId = String(row.inbound_id || '').trim()
+    if (!inboundId) return result
+
+    const grade = String(row.grade || '').trim().toUpperCase()
+    const sourceGrade = String(row.source_grade || grade).trim().toUpperCase()
+    const isPassingGrade = grade === 'A' || sourceGrade === 'A'
+    if (!isPassingGrade) return result
+
+    result.set(inboundId, (result.get(inboundId) || 0) + Number(row.qty || 0))
+    return result
+  }, new Map())
+
+  inboundById.forEach((inbound, inboundId) => {
+    const sortingRows = unloadRowsByInbound.get(inboundId) || []
+    const targetQty = Number(inbound.total_claimed_qty || inbound.total_received_qty || 0)
+    const sortedQty = sumBy(sortingRows, 'qty')
+    const qcRows = qcRowsByInbound.get(inboundId) || []
+    const inboundCapacity = {
+      productiveHoursPerDay: INBOUND_WORKDAY_PRODUCTIVE_HOURS,
+      averageUnproductiveHours: 0,
+    }
+    const qcPassingQty = qcRows.reduce((total, row) => total + Number(row.qty_a || 0), 0)
+    const passingPendingQty = Math.max(0, qcPassingQty - Number(confirmedPassingQtyByInbound.get(inboundId) || 0))
+    const isPassingGradeClosed = qcPassingQty > 0 && passingPendingQty <= 0
+
+    if (isPassingGradeClosed) return
+
+    const inboundEstimate = calculateProjectedFinish({
+      targetQty,
+      completedQty: sortedQty,
+      activityRows: sortingRows,
+      getDateValue: (row) => row.created_at,
+      now,
+      nonWorkingDateSet,
+      productiveHoursPerDay: inboundCapacity.productiveHoursPerDay,
+    })
+    const inboundEstimateDateKey = extractDateKey(inboundEstimate?.projectedAt?.toISOString())
+
+    if (inboundEstimate && isDateKeyInRange(inboundEstimateDateKey, start, end)) {
+      pushTimelineItem(timelineMap, 'inbound', inboundEstimateDateKey, {
+        label: 'Inbound Estimated Finish',
+        count: 1,
+        qty: inboundEstimate.remainingQty,
+        note: `${inbound.grn_number || 'GRN'} | Remaining ${formatNumber(inboundEstimate.remainingQty)}`,
+        detail: `Projected ${formatDateTimeLabel(inboundEstimate.projectedAt)}`,
+        tone: 'estimate',
+        modalRows: [
+          { label: 'GRN Number', value: inbound.grn_number || '-' },
+          { label: 'Item Name', value: inbound.item_name || '-' },
+          { label: 'Target Qty', value: formatNumber(targetQty) },
+          { label: 'Sorted Qty', value: formatNumber(sortedQty) },
+          { label: 'Remaining Qty', value: formatNumber(inboundEstimate.remainingQty) },
+          { label: 'Pending Passing Grade', value: formatNumber(passingPendingQty) },
+          { label: 'Average Sorting Speed', value: `${formatDecimal(inboundEstimate.speedPerHour)} pcs/hr` },
+          { label: 'Normal Work Hours', value: `${formatDecimal(WORKDAY_SHIFT_HOURS)} hr/day` },
+          { label: 'Avg Unproductive', value: `${formatDecimal(inboundCapacity.averageUnproductiveHours)} hr/day` },
+          { label: 'Remaining Work', value: formatDurationHours(inboundEstimate.remainingHours, inboundEstimate.productiveHoursPerDay) },
+          { label: 'Daily Work Capacity', value: `${formatDecimal(inboundEstimate.productiveHoursPerDay)} hr/day` },
+          { label: 'Estimated Finish', value: formatDateTimeLabel(inboundEstimate.projectedAt) },
+        ],
+      })
+    }
+
+    const qcDoneQty = qcRows.reduce((total, row) => (
+      total + Number(row.qty_a || 0) + Number(row.qty_b || 0) + Number(row.qty_c || 0)
+    ), 0)
+    const qcTargetQty = sortedQty || targetQty
+    const qcActivityRows = qcRows.filter((row) => Number(row.qty_a || 0) + Number(row.qty_b || 0) + Number(row.qty_c || 0) > 0)
+    const qcPauseRowsForInbound = qcRows.flatMap((row) => qcPauseRowsByTaskId.get(String(row.id || '')) || [])
+    const qcCapacity = calculateProductiveHoursFromPauseRows(qcActivityRows, qcPauseRowsForInbound, now)
+    const qcEstimate = calculateProjectedFinish({
+      targetQty: qcTargetQty,
+      completedQty: qcDoneQty,
+      activityRows: qcActivityRows,
+      getDateValue: (row) => row.updated_at || row.created_at,
+      now,
+      nonWorkingDateSet,
+      productiveHoursPerDay: qcCapacity.productiveHoursPerDay,
+    })
+    const qcEstimateDateKey = extractDateKey(qcEstimate?.projectedAt?.toISOString())
+
+    if (qcEstimate && isDateKeyInRange(qcEstimateDateKey, start, end)) {
+      pushTimelineItem(timelineMap, 'qc', qcEstimateDateKey, {
+        label: 'QC Estimated Finish',
+        count: 1,
+        qty: qcEstimate.remainingQty,
+        note: `${inbound.grn_number || 'GRN'} | Remaining ${formatNumber(qcEstimate.remainingQty)}`,
+        detail: `Projected ${formatDateTimeLabel(qcEstimate.projectedAt)}`,
+        tone: 'estimate',
+        modalRows: [
+          { label: 'GRN Number', value: inbound.grn_number || '-' },
+          { label: 'Item Name', value: inbound.item_name || '-' },
+          { label: 'Target Qty', value: formatNumber(qcTargetQty) },
+          { label: 'QC Qty', value: formatNumber(qcDoneQty) },
+          { label: 'Remaining Qty', value: formatNumber(qcEstimate.remainingQty) },
+          { label: 'Pending Passing Grade', value: formatNumber(passingPendingQty) },
+          { label: 'Average QC Speed', value: `${formatDecimal(qcEstimate.speedPerHour)} pcs/hr` },
+          { label: 'Normal Work Hours', value: `${formatDecimal(WORKDAY_SHIFT_HOURS)} hr/day` },
+          { label: 'Avg Unproductive', value: `${formatDecimal(qcCapacity.averageUnproductiveHours)} hr/day` },
+          { label: 'Remaining Work', value: formatDurationHours(qcEstimate.remainingHours, qcEstimate.productiveHoursPerDay) },
+          { label: 'Daily Work Capacity', value: `${formatDecimal(qcEstimate.productiveHoursPerDay)} hr/day` },
+          { label: 'Estimated Finish', value: formatDateTimeLabel(qcEstimate.projectedAt) },
+        ],
+      })
+    }
+  })
+
   groupRowsByDate(inboundRows || [], (row) => extractDateKey(row.inbound_date)).forEach((rows, dateKey) => {
     rows.forEach((row) => {
       pushTimelineItem(timelineMap, 'inbound', dateKey, {
@@ -991,7 +1500,14 @@ async function loadOperationsCalendarData(supabase, monthValue) {
         qty: Number(row.total_received_qty || 0),
         note: `${row.grn_number || 'GRN'} | ${formatNumber(row.total_koli)} koli | SJ ${formatNumber(row.total_claimed_qty)}`,
         detail: row.item_name || '',
-        tone: 'received',
+        tone: 'inbound',
+        modalRows: [
+          { label: 'GRN Number', value: row.grn_number || '-' },
+          { label: 'Item', value: row.item_name || '-' },
+          { label: 'Koli', value: formatNumber(row.total_koli) },
+          { label: 'SJ Qty', value: formatNumber(row.total_claimed_qty) },
+          { label: 'Inbound Qty', value: formatNumber(row.total_received_qty) },
+        ],
       })
     })
   })
@@ -1023,6 +1539,12 @@ async function loadOperationsCalendarData(supabase, monthValue) {
       qty: summary.qty,
       note: `${formatNumber(summary.grnKeys.size)} GRN | Sorted Qty ${formatNumber(summary.qty)}`,
       detail: `${formatNumber(summary.modelKeys.size)} model | ${formatNumber(summary.variantKeys.size)} variant`,
+      modalRows: [
+        { label: 'GRN', value: Array.from(summary.grnKeys).join(', ') || '-' },
+        { label: 'Sorted Qty', value: formatNumber(summary.qty) },
+        { label: 'Model', value: formatNumber(summary.modelKeys.size) },
+        { label: 'Variant', value: formatNumber(summary.variantKeys.size) },
+      ],
     })
   })
 
@@ -1036,7 +1558,12 @@ async function loadOperationsCalendarData(supabase, monthValue) {
         qty: sumBy(poRows, 'received_qty'),
         note: `${poId} | Qty ${formatNumber(sumBy(poRows, 'received_qty'))}`,
         detail: `${poRows.length} receipt line`,
-        tone: 'received',
+        tone: 'inbound',
+        modalRows: [
+          { label: 'PO Number', value: poId },
+          { label: 'Inbound Qty', value: formatNumber(sumBy(poRows, 'received_qty')) },
+          { label: 'Receipt Line', value: formatNumber(poRows.length) },
+        ],
       })
     })
   })
@@ -1064,6 +1591,11 @@ async function loadOperationsCalendarData(supabase, monthValue) {
       qty: summary.qty,
       note: `${formatNumber(summary.grnKeys.size)} GRN | Qty ${formatNumber(summary.qty)}`,
       detail: `${formatNumber(summary.categoryKeys.size)} brand/category group`,
+      modalRows: [
+        { label: 'GRN', value: Array.from(summary.grnKeys).join(', ') || '-' },
+        { label: 'QC Qty', value: formatNumber(summary.qty) },
+        { label: 'Brand / Category Group', value: formatNumber(summary.categoryKeys.size) },
+      ],
     })
   })
 
@@ -1098,21 +1630,43 @@ async function loadOperationsCalendarData(supabase, monthValue) {
         qty: group.qty,
         note: `${group.poId || 'PO'} | ${group.skuInduk ? `${group.skuInduk} - ` : ''}${group.itemName}`,
         detail: `Qty ${formatNumber(group.qty)}`,
+        modalRows: [
+          { label: 'PO Number', value: group.poId || '-' },
+          { label: 'SKU', value: group.skuInduk || '-' },
+          { label: 'Item', value: group.itemName || '-' },
+          { label: 'QC Qty', value: formatNumber(group.qty) },
+          { label: 'Task Line', value: formatNumber(group.count) },
+        ],
       })
     })
   })
 
-  groupRowsByDate(regularReturnRows || [], (row) => extractDateKey(row.created_at)).forEach((rows, dateKey) => {
+  const regularReturnDeliveryRows = (regularReturnRows || []).filter((row) => (
+    String(row.returns_delivery || row.return_delivery || '').trim() ||
+    String(row.status || '').trim().toLowerCase() === 'completed'
+  ))
+
+  groupRowsByDate(regularReturnDeliveryRows, (row) => extractDateKey(row.updated_at || row.created_at)).forEach((rows, dateKey) => {
     const returnQty = sumBy(rows, 'qty')
-    const sourcePhases = new Set(rows.map((row) => String(row.source_phase || 'Return').trim()).filter(Boolean))
+    const deliveryLabels = new Set(rows.map((row) => String(row.returns_delivery || row.return_delivery || '').trim()).filter(Boolean))
+    const grnLabels = new Set(rows.map((row) => String(row.inbound?.grn_number || row.inbound_id || '').trim()).filter(Boolean))
+    const reasonLabels = new Set(rows.map((row) => String(row.return_reason || '').trim()).filter(Boolean))
 
     pushTimelineItem(timelineMap, 'qc', dateKey, {
       label: 'Reguler Return',
       count: rows.length,
       qty: returnQty,
-      note: `Qty ${formatNumber(returnQty)} | ${formatNumber(rows.length)} line`,
-      detail: Array.from(sourcePhases).join(', ') || 'Warehouse return',
+      note: `SJ Qty ${formatNumber(returnQty)} | ${formatNumber(rows.length)} line`,
+      detail: Array.from(deliveryLabels).join(', ') || 'Return SJ completed',
       tone: 'return',
+      modalRows: [
+        { label: 'GRN', value: Array.from(grnLabels).join(', ') || '-' },
+        { label: 'Surat Jalan', value: Array.from(deliveryLabels).join(', ') || 'Completed return SJ' },
+        { label: 'Returned Qty', value: formatNumber(returnQty) },
+        { label: 'Return Line', value: formatNumber(rows.length) },
+        { label: 'Reject Reason', value: Array.from(reasonLabels).join(', ') || '-' },
+        { label: 'Date Source', value: 'updated_at from completed return' },
+      ],
     })
   })
 
@@ -1127,6 +1681,11 @@ async function loadOperationsCalendarData(supabase, monthValue) {
       note: `${formatNumber(poKeys.size)} PO | Sent Qty ${formatNumber(returnQty)}`,
       detail: `${formatNumber(rows.length)} return batch`,
       tone: 'return',
+      modalRows: [
+        { label: 'PO Number', value: Array.from(poKeys).join(', ') || '-' },
+        { label: 'Sent Qty', value: formatNumber(returnQty) },
+        { label: 'Return Batch', value: formatNumber(rows.length) },
+      ],
     })
   })
 
@@ -1141,6 +1700,11 @@ async function loadOperationsCalendarData(supabase, monthValue) {
       note: `${formatNumber(poKeys.size)} PO | Returned Qty ${formatNumber(returnedQty)}`,
       detail: `${formatNumber(rows.length)} rework receipt`,
       tone: 'returnBack',
+      modalRows: [
+        { label: 'PO Number', value: Array.from(poKeys).join(', ') || '-' },
+        { label: 'Returned Back Qty', value: formatNumber(returnedQty) },
+        { label: 'Rework Receipt', value: formatNumber(rows.length) },
+      ],
     })
   })
 
@@ -1185,7 +1749,14 @@ async function loadOperationsCalendarData(supabase, monthValue) {
   })
 
   groupRowsByDate(plBreakdownRows || [], (row) => extractDateKey(row.updated_at || row.created_at)).forEach((rows, dateKey) => {
-    const grnKeys = new Set(rows.map((row) => String(row.inbound_id || row.grn_number || '').trim()).filter(Boolean))
+    const grnKeys = new Set(rows.map((row) => {
+      const inbound = inboundById.get(String(row.inbound_id || ''))
+      return String(inbound?.grn_number || row.grn_number || row.inbound_id || '').trim()
+    }).filter(Boolean))
+    const itemNames = new Set(rows.map((row) => {
+      const inbound = inboundById.get(String(row.inbound_id || ''))
+      return String(inbound?.item_name || '').trim()
+    }).filter(Boolean))
     const breakdownQty = sumBy(rows, ['qty', 'received_qty', 'breakdown_qty'])
 
     pushTimelineItem(timelineMap, 'packing', dateKey, {
@@ -1194,6 +1765,12 @@ async function loadOperationsCalendarData(supabase, monthValue) {
       qty: breakdownQty,
       note: `${formatNumber(grnKeys.size)} GRN | Breakdown Qty ${formatNumber(breakdownQty)}`,
       detail: `${formatNumber(rows.length)} breakdown line(s)`,
+      modalRows: [
+        { label: 'GRN Number', value: Array.from(grnKeys).join(', ') || '-' },
+        { label: 'Item Name', value: Array.from(itemNames).join(', ') || '-' },
+        { label: 'Breakdown Qty', value: formatNumber(breakdownQty) },
+        { label: 'Breakdown Line', value: formatNumber(rows.length) },
+      ],
     })
   })
 
@@ -1399,7 +1976,7 @@ export default async function OperationsCalendarPage({ searchParams }) {
     isWarehouseHoliday: warehouseHolidayDateSet.has(day.key),
   }))
   const currentDateKey = extractDateKey(new Date().toISOString())
-  const timelineMap = await loadOperationsCalendarData(supabase, month)
+  const timelineMap = await loadOperationsCalendarData(supabase, month, warehouseHolidayDateSet)
   const formOptions = await loadOperationsCalendarFormOptions(supabase)
   const manualDivisionKey = getRoleDivision(isAdmin ? 'admin' : role)
   const daySummaryMap = createDaySummaryMap(monthDays, timelineMap)

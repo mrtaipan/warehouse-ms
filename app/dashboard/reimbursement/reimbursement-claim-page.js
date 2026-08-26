@@ -619,6 +619,7 @@ export default function ReimbursementClaimPage({
   const visibleClaims = useMemo(
     () =>
       claims.filter((item) => {
+        if (item.status === 'REJECTED') return false
         if (selfOnly) {
           return isClaimOwner(item)
         }
@@ -1242,6 +1243,35 @@ export default function ReimbursementClaimPage({
     }
 
     setSuccess(`Claim ${claim.claim_number} marked as need revision.`)
+    setActionLoading(false)
+    closeClaimModal()
+    await loadWorkspace()
+  }
+
+  async function handleRejectClaim(claim, comment = '') {
+    const normalizedComment = String(comment || '').trim()
+
+    setActionLoading(true)
+    setActionError('')
+    setSuccess('')
+
+    const { error: updateError } = await supabase
+      .from(tableNames.claims)
+      .update({
+        status: 'REJECTED',
+        comments: normalizedComment || null,
+        approved_at: null,
+        approved_by: profile?.email || null,
+      })
+      .eq('id', claim.id)
+
+    if (updateError) {
+      setActionError(updateError.message)
+      setActionLoading(false)
+      return
+    }
+
+    setSuccess(`Claim ${claim.claim_number} rejected.`)
     setActionLoading(false)
     closeClaimModal()
     await loadWorkspace()
@@ -2177,10 +2207,20 @@ export default function ReimbursementClaimPage({
                               ? tableStyles.statusPillApproved
                               : item.status === 'NEED_REVISION'
                                 ? styles.reimbursementStatusNEED_REVISION
-                                : tableStyles.statusPillSubmitted
+                                : item.status === 'REJECTED'
+                                  ? styles.reimbursementStatusREJECTED
+                                  : tableStyles.statusPillSubmitted
                         }`.trim()}
                       >
-                        {item.status === 'NEED_REVISION' ? 'Need Revision' : item.status === 'PAID' ? 'Paid' : item.status === 'APPROVED' ? 'Approved' : 'Submitted'}
+                        {item.status === 'NEED_REVISION'
+                          ? 'Need Revision'
+                          : item.status === 'REJECTED'
+                            ? 'Rejected'
+                            : item.status === 'PAID'
+                              ? 'Paid'
+                              : item.status === 'APPROVED'
+                                ? 'Approved'
+                                : 'Submitted'}
                       </span>
                     </td>
                     <td>
@@ -2194,6 +2234,19 @@ export default function ReimbursementClaimPage({
                           >
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                               <path d="m5 12 4.2 4.2L19 6.5" />
+                            </svg>
+                          </button>
+                        ) : null}
+                        {item.status === 'SUBMITTED' && canApprove ? (
+                          <button
+                            type="button"
+                            className={`${tableStyles.iconButton} ${tableStyles.iconButtonDanger}`.trim()}
+                            onClick={() => void handleRejectClaim(item)}
+                            title="Reject claim"
+                          >
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                              <path d="M18 6 6 18" />
+                              <path d="m6 6 12 12" />
                             </svg>
                           </button>
                         ) : null}
@@ -2401,6 +2454,21 @@ export default function ReimbursementClaimPage({
                                 >
                                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                                     <path d="m5 12 4.2 4.2L19 6.5" />
+                                  </svg>
+                                </button>
+                              ) : null}
+                              {item.status === 'SUBMITTED' && canApprove ? (
+                                <button
+                                  type="button"
+                                  className={styles.reimbursementViewButton}
+                                  onClick={() => void handleRejectClaim(item)}
+                                  aria-label={`Reject ${item.claim_number}`}
+                                  title="Reject claim"
+                                  disabled={actionLoading}
+                                >
+                                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                    <path d="M18 6 6 18" />
+                                    <path d="m6 6 12 12" />
                                   </svg>
                                 </button>
                               ) : null}
@@ -2887,6 +2955,17 @@ export default function ReimbursementClaimPage({
                   disabled={actionLoading}
                 >
                   {actionLoading ? 'Saving...' : 'Need Revision'}
+                </button>
+              ) : null}
+
+              {selectedClaim.status === 'SUBMITTED' && canApprove ? (
+                <button
+                  type="button"
+                  className={styles.dangerButton}
+                  onClick={() => void handleRejectClaim(selectedClaim, revisionComment)}
+                  disabled={actionLoading}
+                >
+                  {actionLoading ? 'Saving...' : 'Reject Claim'}
                 </button>
               ) : null}
 

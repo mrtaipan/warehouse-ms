@@ -1700,6 +1700,62 @@ function getProductPhotoStoragePath(photoUrl) {
   return decodeURIComponent(String(photoUrl).slice(index + marker.length).split('?')[0] || '')
 }
 
+function getStorageFileNameFromPath(storagePath = '') {
+  return String(storagePath || '').split('/').filter(Boolean).pop() || ''
+}
+
+function getStorageFileNameFromUrl(photoUrl = '') {
+  return getStorageFileNameFromPath(getProductPhotoStoragePath(photoUrl))
+}
+
+function getDetailPhotoNumberFromUrl(photoUrl = '', variantCode = '') {
+  const safeVariantCode = getSafeStorageSegment(variantCode, 'variant')
+  const safePattern = safeVariantCode.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const fileName = getStorageFileNameFromUrl(photoUrl)
+  const match = fileName.match(new RegExp(`^${safePattern}-det(\\d+)\\.[a-z0-9]+$`, 'i'))
+  return match ? Number(match[1] || 0) : 0
+}
+
+function getNextDetailPhotoNumber(rows = [], variantCode = '') {
+  return rows.reduce((maxNumber, row) => {
+    const photoUrls = normalizePhotoUrls(row?.pl_photo_urls, row?.pl_photo_url)
+    return Math.max(
+      maxNumber,
+      ...photoUrls.map((photoUrl) => getDetailPhotoNumberFromUrl(photoUrl, variantCode))
+    )
+  }, 0) + 1
+}
+
+function getGeneralPhotoNumberFromUrl(photoUrl = '', variantCode = '') {
+  const safeVariantCode = getSafeStorageSegment(variantCode, 'variant')
+  const safePattern = safeVariantCode.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const fileName = getStorageFileNameFromUrl(photoUrl)
+  const match = fileName.match(new RegExp(`^${safePattern}-gen(\\d+)\\.[a-z0-9]+$`, 'i'))
+  return match ? Number(match[1] || 0) : 0
+}
+
+function getNextGeneralPhotoNumber(rows = [], variantCode = '') {
+  return rows.reduce((maxNumber, row) => {
+    return Math.max(maxNumber, getGeneralPhotoNumberFromUrl(row?.photo_url, variantCode))
+  }, 0) + 1
+}
+
+function isDetailPhotoStoragePath(storagePath = '') {
+  const fileName = getStorageFileNameFromPath(storagePath)
+  return storagePath.includes('/detail/') || /-det\d+\.[a-z0-9]+$/i.test(fileName)
+}
+
+function isGeneralPhotoStoragePath(storagePath = '') {
+  const fileName = getStorageFileNameFromPath(storagePath)
+  return storagePath.includes('/general/') || /-gen\d+\.[a-z0-9]+$/i.test(fileName)
+}
+
+function isStorageAlreadyExistsError(error = {}) {
+  return /already exists|duplicate|exists/i.test(
+    [error.message, error.error, error.statusCode].filter(Boolean).join(' ')
+  )
+}
+
 function getModelLabel(row = {}) {
   const catalogName = getCatalogName(row)
   return catalogName ? `${row.model_name || '-'} / ${catalogName}` : row.model_name || '-'
@@ -1759,20 +1815,65 @@ function getCategoryPath(category = {}, categoryById = new Map()) {
   return cleanPath.length ? cleanPath : fullName ? [fullName] : []
 }
 
-function getProductPhotoBasePathFromCard(card = {}) {
+function getCategoryStorageSegmentsFromCard(card = {}, categoryById = new Map()) {
+  const category = categoryById.get(Number(card.category_id || 0)) || null
+
+  if (category) {
+    const path = []
+    const visited = new Set()
+    let current = category
+
+    while (current?.id && !visited.has(Number(current.id))) {
+      visited.add(Number(current.id))
+      path.unshift(current)
+      current = categoryById.get(Number(current.parent_id || 0))
+    }
+
+    const [rootCategory, ...subCategories] = path
+    return {
+      category:
+        rootCategory?.category_code ||
+        rootCategory?.full_code ||
+        rootCategory?.category_name ||
+        card.category_root ||
+        card.category_code ||
+        card.category_name,
+      subcategory:
+        subCategories
+          .map((item) => item.category_code || item.full_code || item.category_name)
+          .filter(Boolean)
+          .join('-') ||
+        category.category_code ||
+        category.full_code ||
+        category.category_name ||
+        card.sub_category ||
+        card.item_type ||
+        card.category_code ||
+        card.category_id,
+    }
+  }
+
   const categoryPath = Array.isArray(card.category_path) && card.category_path.length
     ? card.category_path
     : String(card.category_name || card.category_code || '')
         .split('>')
         .map((item) => item.trim())
         .filter(Boolean)
-  const [category = card.category_root || card.category_code || card.category_name, ...subCategories] = categoryPath
-  const subcategory = subCategories.join('-') || card.sub_category || card.item_type || card.category_code || card.category_id
+  const [fallbackCategory = card.category_root || card.category_code || card.category_name, ...subCategories] = categoryPath
+
+  return {
+    category: fallbackCategory,
+    subcategory: subCategories.join('-') || card.sub_category || card.item_type || card.category_code || card.category_id,
+  }
+}
+
+function getProductPhotoBasePathFromCard(card = {}, categoryById = new Map()) {
+  const categorySegments = getCategoryStorageSegmentsFromCard(card, categoryById)
 
   return [
     getSafeStorageSegment(card.brand_code || card.brand_name, 'brand'),
-    getSafeStorageSegment(category, 'category'),
-    getSafeStorageSegment(subcategory, 'subcategory'),
+    getSafeStorageSegment(categorySegments.category, 'category'),
+    getSafeStorageSegment(categorySegments.subcategory, 'subcategory'),
     getSafeStorageSegment(card.model_code || card.model_name || card.product_model_id, 'model'),
   ].join('/')
 }
@@ -1986,6 +2087,58 @@ function getSummarySizeLabel(value) {
   return inseamMatch?.[1] || normalized
 }
 
+function getBaseSizeRank(value = '') {
+  const size = normalizeSizeLabel(value)
+  const standardRanks = {
+    XXS: 5,
+    XS: 10,
+    S: 20,
+    M: 30,
+    L: 40,
+    XL: 50,
+  }
+  if (standardRanks[size]) return standardRanks[size]
+
+  const numericPlusSize = size.match(/^(\d+)(?:X|XL)$/)
+  if (numericPlusSize) {
+    const numericSize = Number(numericPlusSize[1])
+    return numericSize === 1 ? 55 : 50 + (numericSize - 1) * 10
+  }
+
+  const repeatedXlSize = size.match(/^(X{2,})L$/)
+  if (repeatedXlSize) return 50 + (repeatedXlSize[1].length - 1) * 10
+
+  return Number.MAX_SAFE_INTEGER
+}
+
+function getPdfSizeSortParts(value = '') {
+  const size = getSummarySizeLabel(value)
+  const suffix = ['PETITE', 'TALL'].find((item) => size.endsWith(item) && size.length > item.length) || ''
+  const baseSize = suffix ? size.slice(0, -suffix.length) : size
+  const groupOrders = {
+    '': 0,
+    TALL: 1,
+    PETITE: 2,
+  }
+
+  return {
+    groupRank: groupOrders[suffix],
+    rank: getBaseSizeRank(baseSize),
+    size,
+  }
+}
+
+function comparePdfSizeLabels(left = '', right = '') {
+  const leftParts = getPdfSizeSortParts(left)
+  const rightParts = getPdfSizeSortParts(right)
+
+  return (
+    leftParts.groupRank - rightParts.groupRank ||
+    leftParts.rank - rightParts.rank ||
+    leftParts.size.localeCompare(rightParts.size, undefined, { numeric: true })
+  )
+}
+
 function getSizeSummary(sizeRows = []) {
   const grouped = new Map()
   sizeRows
@@ -1996,6 +2149,43 @@ function getSizeSummary(sizeRows = []) {
     })
 
   return Array.from(grouped.entries()).map(([size, qty]) => ({ size, qty }))
+}
+
+function getPdfTotalSizeSummary(rows = []) {
+  const grouped = new Map()
+
+  rows.forEach((row) => {
+    const sizeLabel = getSummarySizeLabel(row.size_label)
+    const qty = Number(String(row.qty || 0).replace(/,/g, ''))
+    if (!sizeLabel || sizeLabel === '-' || !Number.isFinite(qty) || qty <= 0) return
+
+    const current = grouped.get(sizeLabel) || {
+      size_label: sizeLabel,
+      qty: 0,
+      firstIndex: grouped.size,
+    }
+    current.qty += qty
+    grouped.set(sizeLabel, current)
+  })
+
+  const summaryRows = Array.from(grouped.values())
+    .sort((a, b) => comparePdfSizeLabels(a.size_label, b.size_label) || a.firstIndex - b.firstIndex)
+    .map((row) => ({
+      size_label: row.size_label,
+      qty: formatPdfQty(row.qty),
+    }))
+
+  if (!summaryRows.length) return []
+
+  const totalQty = Array.from(grouped.values()).reduce((sum, row) => sum + Number(row.qty || 0), 0)
+  return [
+    ...summaryRows,
+    {
+      size_label: 'TOTAL',
+      qty: formatPdfQty(totalQty),
+      is_total: true,
+    },
+  ]
 }
 
 function getDefaultAllocationTargets(rowQty = 0, modelTotalQty = 0) {
@@ -2479,12 +2669,17 @@ function drawPdfProductTable(doc, config) {
 
   drawHeader()
   const groupedRows = groupPdfProductRows(rows)
+  const maxRowsPerGroupChunk = Math.max(1, Math.floor((pageBottom - margin - 18) / 8.5))
   const drawableGroups = groupedRows.flatMap((group) => {
+    if (group.rows.length <= maxRowsPerGroupChunk) {
+      return [{ ...group, continued: false }]
+    }
+
     const chunks = []
-    for (let index = 0; index < group.rows.length; index += 14) {
+    for (let index = 0; index < group.rows.length; index += maxRowsPerGroupChunk) {
       chunks.push({
         ...group,
-        rows: group.rows.slice(index, index + 14),
+        rows: group.rows.slice(index, index + maxRowsPerGroupChunk),
         continued: index > 0,
       })
     }
@@ -2794,8 +2989,14 @@ function drawPdfTable(doc, config) {
 
     let x = startX
     headers.forEach((header, index) => {
+      const isTotalRow = Boolean(row.is_total)
       doc.setDrawColor(226, 232, 240)
-      doc.rect(x, y, header.width, rowHeight)
+      if (isTotalRow) {
+        doc.setFillColor(248, 250, 252)
+        doc.rect(x, y, header.width, rowHeight, 'FD')
+      } else {
+        doc.rect(x, y, header.width, rowHeight)
+      }
 
       if (header.type === 'image') {
         const imageData = imageCache.get(row[header.key])
@@ -2813,7 +3014,7 @@ function drawPdfTable(doc, config) {
           doc.text('-', x + 6, y + 7, { align: 'center' })
         }
       } else {
-        doc.setFont(PDF_FONT_FAMILY, 'normal')
+        doc.setFont(PDF_FONT_FAMILY, isTotalRow ? 'bold' : 'normal')
         doc.setFontSize(7)
         doc.setTextColor(15, 23, 42)
         doc.text(cellLines[index], x + 2, y + 5)
@@ -4330,38 +4531,47 @@ export default function PackingListSizeBreakdownPage() {
     try {
       setError('')
       const uploadedUrls = []
-      const currentPlRow = plRows.find((row) => row.id === plRowId) || null
-      const currentPlRowIndex = plRows.findIndex((row) => row.id === plRowId)
-      const plDetailSegment = currentPlRow?.pl_detail_seq || currentPlRow?.detail_order || currentPlRow?.display_order || currentPlRowIndex + 1 || 'base'
       const variantSegment =
         selectedCard?.variant_code ||
         selectedCard?.source_variant_code ||
         selectedCard?.catalogName ||
         'variant'
+      const safeVariantSegment = getSafeStorageSegment(variantSegment, 'variant')
+      const basePath = getProductPhotoBasePathFromCard(selectedCard, catalogContext.categoryById)
+      let nextDetailNumber = getNextDetailPhotoNumber(plRows, variantSegment)
 
       for (const file of files) {
         const compressedFile = await compressImageFile(file)
         const fileExt = compressedFile.name.split('.').pop()?.toLowerCase() || 'jpg'
-        const fileName = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}.${fileExt}`
-        const filePath = [
-          getProductPhotoBasePathFromCard(selectedCard),
-          getSafeStorageSegment(variantSegment, 'variant'),
-          'detail',
-          getSafeStorageSegment(plDetailSegment, 'pl'),
-          fileName,
-        ].join('/')
+        let uploadedPath = ''
 
-        const { error: uploadError } = await supabase.storage
-          .from(PRODUCT_PHOTOS_BUCKET)
-          .upload(filePath, compressedFile, { upsert: false })
+        for (let attempt = 0; attempt < 30; attempt += 1) {
+          const fileName = `${safeVariantSegment}-det${nextDetailNumber}.${fileExt}`
+          const filePath = [
+            basePath,
+            fileName,
+          ].join('/')
+          nextDetailNumber += 1
 
-        if (uploadError) {
-          throw new Error(uploadError.message || 'Failed to upload PL photo detail.')
+          const { error: uploadError } = await supabase.storage
+            .from(PRODUCT_PHOTOS_BUCKET)
+            .upload(filePath, compressedFile, { upsert: false })
+
+          if (!uploadError) {
+            uploadedPath = filePath
+            break
+          }
+
+          if (!isStorageAlreadyExistsError(uploadError)) {
+            throw new Error(uploadError.message || 'Failed to upload PL photo detail.')
+          }
         }
+
+        if (!uploadedPath) throw new Error('Failed to find an available detail photo filename.')
 
         const { data: publicUrlData } = supabase.storage
           .from(PRODUCT_PHOTOS_BUCKET)
-          .getPublicUrl(filePath)
+          .getPublicUrl(uploadedPath)
 
         if (publicUrlData?.publicUrl) {
           uploadedUrls.push(publicUrlData.publicUrl)
@@ -4411,6 +4621,9 @@ export default function PackingListSizeBreakdownPage() {
         selectedCard.source_variant_code ||
         selectedCard.catalogName ||
         'variant'
+      const safeVariantSegment = getSafeStorageSegment(variantSegment, 'variant')
+      const basePath = getProductPhotoBasePathFromCard(selectedCard, catalogContext.categoryById)
+      let nextGeneralNumber = getNextGeneralPhotoNumber(selectedGeneralPhotos, variantSegment)
       const nextDisplayOrder = selectedGeneralPhotos.reduce(
         (highest, row) => Math.max(highest, Number(row.display_order || 0)),
         0
@@ -4420,25 +4633,36 @@ export default function PackingListSizeBreakdownPage() {
       for (const [fileIndex, file] of files.entries()) {
         const compressedFile = await compressImageFile(file)
         const fileExt = compressedFile.name.split('.').pop()?.toLowerCase() || 'jpg'
-        const fileName = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}.${fileExt}`
-        const filePath = [
-          getProductPhotoBasePathFromCard(selectedCard),
-          getSafeStorageSegment(variantSegment, 'variant'),
-          'general',
-          getSafeStorageSegment(selectedGeneralPhotoGroupKey, 'page'),
-          fileName,
-        ].join('/')
+        let uploadedPath = ''
 
-        const { error: uploadError } = await supabase.storage
-          .from(PRODUCT_PHOTOS_BUCKET)
-          .upload(filePath, compressedFile, { upsert: false })
+        for (let attempt = 0; attempt < 30; attempt += 1) {
+          const fileName = `${safeVariantSegment}-gen${nextGeneralNumber}.${fileExt}`
+          const filePath = [
+            basePath,
+            fileName,
+          ].join('/')
+          nextGeneralNumber += 1
 
-        if (uploadError) throw new Error(uploadError.message || 'Failed to upload General Photo.')
-        uploadedPaths.push(filePath)
+          const { error: uploadError } = await supabase.storage
+            .from(PRODUCT_PHOTOS_BUCKET)
+            .upload(filePath, compressedFile, { upsert: false })
+
+          if (!uploadError) {
+            uploadedPath = filePath
+            break
+          }
+
+          if (!isStorageAlreadyExistsError(uploadError)) {
+            throw new Error(uploadError.message || 'Failed to upload General Photo.')
+          }
+        }
+
+        if (!uploadedPath) throw new Error('Failed to find an available General Photo filename.')
+        uploadedPaths.push(uploadedPath)
 
         const { data: publicUrlData } = supabase.storage
           .from(PRODUCT_PHOTOS_BUCKET)
-          .getPublicUrl(filePath)
+          .getPublicUrl(uploadedPath)
 
         if (publicUrlData?.publicUrl) {
           uploadRows.push({
@@ -4494,7 +4718,7 @@ export default function PackingListSizeBreakdownPage() {
     setGeneralPhotoRows((current) => current.filter((row) => row.id !== photoRow.id))
 
     const storagePath = getProductPhotoStoragePath(photoRow.photo_url)
-    if (!storagePath || !storagePath.includes('/general/')) return
+    if (!storagePath || !isGeneralPhotoStoragePath(storagePath)) return
 
     const { error: removeError } = await supabase.storage
       .from(PRODUCT_PHOTOS_BUCKET)
@@ -4533,7 +4757,7 @@ export default function PackingListSizeBreakdownPage() {
     )
 
     const storagePath = getProductPhotoStoragePath(photoUrl)
-    if (!storagePath || !storagePath.includes('/detail/')) return
+    if (!storagePath || !isDetailPhotoStoragePath(storagePath)) return
 
     const { error: removeError } = await supabase.storage
       .from(PRODUCT_PHOTOS_BUCKET)
@@ -5062,6 +5286,20 @@ export default function PackingListSizeBreakdownPage() {
           })
         }
 
+        const drawTotalPerSize = () => {
+          cursorY = drawPdfTable(doc, {
+            title: 'Total per Size',
+            headers: [
+              { key: 'size_label', label: 'Size', width: 24 },
+              { key: 'qty', label: 'Total Qty', width: 28 },
+            ],
+            rows: getPdfTotalSizeSummary(getPayloadRows(payload)),
+            startY: cursorY + 2,
+            emptyText: '-',
+            onPageBreak: drawContinuationHeader,
+          })
+        }
+
         if (overviewMode === 'koli') {
           const groups = payload.koliGroups || []
           if (!groups.length) {
@@ -5090,6 +5328,7 @@ export default function PackingListSizeBreakdownPage() {
           drawPhotoDetails()
           drawGeneralPhotos()
           drawSizeCharts()
+          drawTotalPerSize()
         } else {
           if (qtyMode === 'oi' && (payload.modelRows || []).length) {
             const splitRows = (payload.modelRows || []).filter((row) => row.oi_section === 'split')
@@ -5130,6 +5369,7 @@ export default function PackingListSizeBreakdownPage() {
           drawPhotoDetails()
           drawGeneralPhotos()
           drawSizeCharts()
+          drawTotalPerSize()
         }
       })
 

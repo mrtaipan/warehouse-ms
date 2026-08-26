@@ -4,6 +4,10 @@ import { revalidatePath } from 'next/cache'
 import { createClient } from '@/utils/supabase/server'
 import { getProfileByAuthenticatedUser } from '@/utils/user-profiles'
 
+function normalizeUppercase(value) {
+  return String(value || '').trim().toUpperCase()
+}
+
 export async function updateOwnProfile(formData) {
   const supabase = await createClient()
   const {
@@ -14,9 +18,9 @@ export async function updateOwnProfile(formData) {
     throw new Error('You must be signed in to update your profile.')
   }
 
-  const displayName = String(formData.get('display_name') || '').trim()
+  const displayName = normalizeUppercase(formData.get('display_name'))
   const reimbursementBankName = String(formData.get('reimbursement_bank_name') || '').trim()
-  const reimbursementAccountName = String(formData.get('reimbursement_account_name') || '').trim()
+  const reimbursementAccountName = normalizeUppercase(formData.get('reimbursement_account_name'))
   const reimbursementAccountNumber = String(formData.get('reimbursement_account_number') || '').trim()
   const address = String(formData.get('address') || '').trim()
 

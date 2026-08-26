@@ -16,6 +16,10 @@ function toProperCase(value = '') {
     .join(' ')
 }
 
+function toUpperText(value = '') {
+  return String(value || '').trim().toUpperCase()
+}
+
 function formatDateValue(value) {
   if (!value) return '-'
   const parsed = new Date(value)
@@ -267,7 +271,7 @@ export default function MyArklifeClient({ profile, leaveRows, giftRows, publicHo
   const [leaveStartDate, setLeaveStartDate] = useState('')
   const [leaveEndDate, setLeaveEndDate] = useState('')
 
-  const displayName = toProperCase(profile?.display_name || profile?.email?.split('@')[0] || 'Team Member')
+  const displayName = toUpperText(profile?.display_name || profile?.email?.split('@')[0] || 'Team Member')
   const leaveCount = Array.isArray(leaveRows) ? leaveRows.length : 0
   const bankLabel =
     profile?.reimbursement_bank_name && profile?.reimbursement_account_number
@@ -411,7 +415,16 @@ export default function MyArklifeClient({ profile, leaveRows, giftRows, publicHo
           >
             <label className={styles.field}>
               <span className={styles.label}>Display Name</span>
-              <input className={styles.input} type="text" name="display_name" defaultValue={displayName} required />
+              <input
+                className={styles.input}
+                type="text"
+                name="display_name"
+                defaultValue={displayName}
+                required
+                onInput={(event) => {
+                  event.currentTarget.value = toUpperText(event.currentTarget.value)
+                }}
+              />
             </label>
             <div className={styles.formGridThree}>
               <label className={styles.field}>
@@ -420,7 +433,15 @@ export default function MyArklifeClient({ profile, leaveRows, giftRows, publicHo
               </label>
               <label className={styles.field}>
                 <span className={styles.label}>Account Name</span>
-                <input className={styles.input} type="text" name="reimbursement_account_name" defaultValue={profile?.reimbursement_account_name || ''} />
+                <input
+                  className={styles.input}
+                  type="text"
+                  name="reimbursement_account_name"
+                  defaultValue={toUpperText(profile?.reimbursement_account_name || '')}
+                  onInput={(event) => {
+                    event.currentTarget.value = toUpperText(event.currentTarget.value)
+                  }}
+                />
               </label>
               <label className={styles.field}>
                 <span className={styles.label}>Account Number</span>

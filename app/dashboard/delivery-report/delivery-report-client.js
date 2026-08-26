@@ -57,6 +57,11 @@ function Home() {
   return (
     <div className={styles.homeWrap}>
       <div className={styles.homeShell}>
+        <div className={styles.homeBackRow}>
+          <Link href="/dashboard" className={styles.dashboardBackButton}>
+            ← Back to Dashboard
+          </Link>
+        </div>
         <header className={styles.homeHero}>
           <span className={styles.eyebrow}>Delivery Report System</span>
           <h1>Delivery Report</h1>
@@ -92,8 +97,8 @@ export function ModuleHeader({ eyebrow, title, subtitle, actions }) {
   return (
     <header className={styles.moduleHeader}>
       <div>
-        <span className={styles.eyebrow}>{eyebrow}</span>
-        <h1>{title}</h1>
+        {eyebrow ? <span className={styles.eyebrow}>{eyebrow}</span> : null}
+        <h1 className={!eyebrow ? styles.standaloneModuleTitle : undefined}>{title}</h1>
         <p>{subtitle}</p>
       </div>
       <div className={styles.moduleHeaderActions}>
@@ -128,6 +133,11 @@ export function Modal({ open, title, description, children, actions, onClose }) 
   return (
     <div className={styles.modalBackdrop} onMouseDown={(event) => event.target === event.currentTarget && onClose?.()}>
       <section className={styles.modalCard} role="dialog" aria-modal="true" aria-label={title}>
+        {onClose ? (
+          <button type="button" className={styles.modalCloseButton} onClick={onClose} aria-label="Close modal">
+            ×
+          </button>
+        ) : null}
         <h2>{title}</h2>
         {description ? <p>{description}</p> : null}
         {children}
@@ -140,16 +150,22 @@ export function Modal({ open, title, description, children, actions, onClose }) 
 export default function DeliveryReportClient() {
   const searchParams = useSearchParams()
   const moduleId = searchParams.get('module')
+  const isKnownModule = modules.some((module) => module.id === moduleId)
+  const showHome = !moduleId || !isKnownModule
 
   return (
-    <div className={styles.deliveryApp}>
-      {!moduleId ? <Home /> : null}
+    <div
+      className={`${styles.deliveryApp} ${moduleId === 'summary' ? styles.summaryApp : ''} ${showHome ? styles.homeApp : ''}`}
+      data-delivery-report
+      data-delivery-home={showHome ? '' : undefined}
+      data-delivery-summary={moduleId === 'summary' ? '' : undefined}
+    >
+      {showHome ? <Home /> : null}
       {moduleId === 'summary' ? <DeliverySummary /> : null}
       {moduleId === 'delivery-order' ? <DeliveryOrder /> : null}
       {moduleId === 'barcode' ? <BarcodeScanner /> : null}
       {moduleId === 'resolution' ? <ResolutionCenter /> : null}
       {moduleId === 'waybill' ? <ManualWaybill /> : null}
-      {moduleId && !modules.some((module) => module.id === moduleId) ? <Home /> : null}
     </div>
   )
 }

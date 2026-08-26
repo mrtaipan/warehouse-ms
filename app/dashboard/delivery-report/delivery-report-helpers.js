@@ -1,6 +1,6 @@
 export const GROUPS = ['ARKLINE', 'MOB', 'OI']
 
-export const COURIER_COLORS = ['#2563eb', '#16a34a', '#f59e0b', '#dc2626', '#7c3aed']
+export const COURIER_COLORS = ['#2563eb', '#16a34a', '#f59e0b', '#dc2626', '#7c3aed', '#db2777', '#0891b2', '#ea580c', '#475569']
 
 export function todayIso() {
   const parts = new Intl.DateTimeFormat('en-CA', {

@@ -78,7 +78,7 @@ create table if not exists public.arkline_reimbursement_claims (
   paid_by text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
-  constraint arkline_reimbursement_claim_status_check check (status in ('SUBMITTED', 'APPROVED', 'PAID')),
+  constraint arkline_reimbursement_claim_status_check check (status in ('SUBMITTED', 'NEED_REVISION', 'APPROVED', 'PAID', 'REJECTED')),
   constraint arkline_reimbursement_claim_payee_type_check check (payee_type in ('SELF_ACCOUNT', 'OTHER_ACCOUNT')),
   constraint arkline_reimbursement_claim_total_amount_check check (total_amount >= 0),
   constraint arkline_reimbursement_claim_other_account_check check (

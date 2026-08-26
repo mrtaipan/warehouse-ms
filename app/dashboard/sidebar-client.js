@@ -114,6 +114,7 @@ export default function SidebarClient({ navItems, settingHref }) {
   const pathname = usePathname()
   const searchParams = useSearchParams()
   const shouldHideSidebar =
+    pathname === '/dashboard/delivery-report' ||
     pathname === '/dashboard/packing-list/receiving/input' ||
     pathname === '/dashboard/storage/warehouse-map' ||
     (searchParams.get('form') === '1' && pathname === '/dashboard/qc/confirmation/next-process')

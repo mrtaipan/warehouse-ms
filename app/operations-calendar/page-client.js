@@ -88,8 +88,48 @@ function buildTimelineMap(entries = []) {
   return new Map(entries.map((entry) => [entry.key, entry]))
 }
 
-function buildDaySummaryMap(daySummaries = []) {
-  return new Map(daySummaries.map((item) => [item.dateKey, item.divisions || []]))
+const MOVEMENT_ITEM_LABELS = new Set([
+  'GRN Received',
+  'Arkline Inbound',
+  'Arkline Return Back',
+  'Reguler Return',
+  'Arkline Return',
+])
+
+function getTimelineItemGroup(item) {
+  return MOVEMENT_ITEM_LABELS.has(item?.label) ? 'movement' : 'operations'
+}
+
+function shouldShowTimelineItem(item, filters) {
+  const group = getTimelineItemGroup(item)
+  return group === 'movement' ? filters.movement : filters.operations
+}
+
+function buildFilteredTimelineEntries(entries = [], filters) {
+  return entries.map((entry) => {
+    const items = (entry.items || []).filter((item) => shouldShowTimelineItem(item, filters))
+    const totals = items.reduce((result, item) => ({
+      activities: result.activities + 1,
+      qty: result.qty + Number(item.qty || 0),
+      count: result.count + Number(item.count || 0),
+    }), { activities: 0, qty: 0, count: 0 })
+
+    return { ...entry, items, totals }
+  }).filter((entry) => entry.items.length > 0)
+}
+
+function buildDaySummaryMapFromTimeline(monthDays = [], timelineMap) {
+  return new Map(monthDays.map((day) => [
+    day.key,
+    DIVISIONS.map((division) => {
+      const entry = timelineMap.get(`${division.key}::${day.key}`)
+      return {
+        ...division,
+        items: entry?.items || [],
+        totals: entry?.totals || { activities: 0, qty: 0, count: 0 },
+      }
+    }).filter((division) => division.items.length > 0),
+  ]))
 }
 
 function sumItemQty(items) {
@@ -153,15 +193,17 @@ function getTimelineItemClassName(item, division) {
     styles.timelineItemCard,
     styles[`timelineItemCard${division.accent}`],
     item.tone === 'received' ? styles.timelineItemCardReceived : '',
+    item.tone === 'inbound' ? styles.timelineItemCardInbound : '',
     item.tone === 'arkline' ? styles.timelineItemCardArkline : '',
     item.tone === 'target' ? styles.timelineItemCardTarget : '',
+    item.tone === 'estimate' ? styles.timelineItemCardEstimate : '',
     item.tone === 'manual' ? styles.timelineItemCardManual : '',
     item.tone === 'return' ? styles.timelineItemCardReturn : '',
     item.tone === 'returnBack' ? styles.timelineItemCardReturnBack : '',
   ].filter(Boolean).join(' ')
 }
 
-function TimelineItemCard({ item, division, itemKey, canEdit = false, onEdit }) {
+function TimelineItemCard({ item, division, itemKey, canEdit = false, onEdit, onOpenDetail }) {
   const content = (
     <>
       {item.eyebrow ? <em className={styles.timelineItemEyebrow}>{item.eyebrow}</em> : null}
@@ -173,10 +215,30 @@ function TimelineItemCard({ item, division, itemKey, canEdit = false, onEdit }) 
   const className = [
     getTimelineItemClassName(item, division),
     canEdit ? styles.timelineItemCardEditable : '',
+    onOpenDetail ? styles.timelineItemCardInteractive : '',
   ].filter(Boolean).join(' ')
 
+  function handleOpenDetail() {
+    onOpenDetail?.(item, division)
+  }
+
+  function handleKeyDown(event) {
+    if (!onOpenDetail) return
+    if (event.key !== 'Enter' && event.key !== ' ') return
+
+    event.preventDefault()
+    handleOpenDetail()
+  }
+
   return (
-    <article key={itemKey} className={className}>
+    <article
+      key={itemKey}
+      className={className}
+      role={onOpenDetail ? 'button' : undefined}
+      tabIndex={onOpenDetail ? 0 : undefined}
+      onClick={handleOpenDetail}
+      onKeyDown={handleKeyDown}
+    >
       {content}
       {canEdit ? (
         <button
@@ -207,7 +269,7 @@ function getTimelineDayDivisions(day, timelineMap) {
   }).filter((division) => division.items.length > 0)
 }
 
-function MobileAgendaView({ monthDays, currentDateKey, timelineMap, daySummaryMap, canEditItem, onEditItem, focusTodaySignal = 0 }) {
+function MobileAgendaView({ monthDays, currentDateKey, timelineMap, daySummaryMap, canEditItem, onEditItem, onOpenItemDetail, focusTodaySignal = 0 }) {
   const todayRef = useRef(null)
 
   useEffect(() => {
@@ -259,6 +321,7 @@ function MobileAgendaView({ monthDays, currentDateKey, timelineMap, daySummaryMa
                           division={division}
                           canEdit={Boolean(canEditItem?.(item, division))}
                           onEdit={onEditItem}
+                          onOpenDetail={(selectedItem, selectedDivision) => onOpenItemDetail?.(day, selectedDivision, selectedItem)}
                         />
                       ))}
                     </div>
@@ -275,7 +338,7 @@ function MobileAgendaView({ monthDays, currentDateKey, timelineMap, daySummaryMa
   )
 }
 
-function TimelineView({ monthDays, timelineMap, currentDateKey, canEditItem, onEditItem, focusTodaySignal = 0 }) {
+function TimelineView({ monthDays, timelineMap, currentDateKey, canEditItem, onEditItem, onOpenItemDetail, focusTodaySignal = 0 }) {
   const scrollerRef = useRef(null)
 
   useEffect(() => {
@@ -324,6 +387,7 @@ function TimelineView({ monthDays, timelineMap, currentDateKey, canEditItem, onE
               currentDateKey={currentDateKey}
               canEditItem={canEditItem}
               onEditItem={onEditItem}
+              onOpenItemDetail={onOpenItemDetail}
             />
           ))}
         </div>
@@ -334,13 +398,14 @@ function TimelineView({ monthDays, timelineMap, currentDateKey, canEditItem, onE
         currentDateKey={currentDateKey}
         canEditItem={canEditItem}
         onEditItem={onEditItem}
+        onOpenItemDetail={onOpenItemDetail}
         focusTodaySignal={focusTodaySignal}
       />
     </div>
   )
 }
 
-function FragmentTimelineRow({ division, monthDays, timelineMap, currentDateKey, canEditItem, onEditItem }) {
+function FragmentTimelineRow({ division, monthDays, timelineMap, currentDateKey, canEditItem, onEditItem, onOpenItemDetail }) {
   const activeDays = monthDays.reduce((count, day) => {
     const entry = timelineMap.get(`${division.key}::${day.key}`)
     return entry?.items?.length ? count + 1 : count
@@ -374,6 +439,7 @@ function FragmentTimelineRow({ division, monthDays, timelineMap, currentDateKey,
                     division={division}
                     canEdit={Boolean(canEditItem?.(item, division))}
                     onEdit={onEditItem}
+                    onOpenDetail={(selectedItem, selectedDivision) => onOpenItemDetail?.(day, selectedDivision, selectedItem)}
                   />
                 ))}
               </div>
@@ -387,7 +453,7 @@ function FragmentTimelineRow({ division, monthDays, timelineMap, currentDateKey,
   )
 }
 
-function CalendarView({ monthDays, daySummaryMap, currentDateKey, onOpenDetail, canEditItem, onEditItem, focusTodaySignal = 0 }) {
+function CalendarView({ monthDays, daySummaryMap, currentDateKey, onOpenDetail, canEditItem, onEditItem, onOpenItemDetail, focusTodaySignal = 0 }) {
   const calendarRef = useRef(null)
   const firstDayDate = new Date(`${monthDays[0].key}T00:00:00Z`)
   const leadingEmptyCells = (firstDayDate.getUTCDay() + 6) % 7
@@ -465,6 +531,7 @@ function CalendarView({ monthDays, daySummaryMap, currentDateKey, onOpenDetail, 
         currentDateKey={currentDateKey}
         canEditItem={canEditItem}
         onEditItem={onEditItem}
+        onOpenItemDetail={onOpenItemDetail}
         focusTodaySignal={focusTodaySignal}
       />
     </div>
@@ -474,25 +541,51 @@ function CalendarView({ monthDays, daySummaryMap, currentDateKey, onOpenDetail, 
 function DetailModal({ detail, onClose, canEditItem, onEditItem }) {
   if (!detail) return null
 
+  const isItemDetail = Boolean(detail.item)
+  const detailItems = isItemDetail ? [detail.item] : (detail.division.items || [])
+  const modalRows = Array.isArray(detail.item?.modalRows) ? detail.item.modalRows : []
+
   return (
     <div className={styles.detailModalOverlay} onClick={onClose}>
       <div className={styles.detailModalCard} onClick={(event) => event.stopPropagation()}>
         <div className={styles.detailModalHeader}>
           <div>
-            <h2>{detail.division.label}</h2>
-            <p>{detail.day.key}</p>
+            <h2>{isItemDetail ? detail.item.label : detail.division.label}</h2>
+            <p>{isItemDetail ? `${detail.day.key} · ${detail.division.label}` : detail.day.key}</p>
           </div>
           <button type="button" className={styles.detailModalClose} onClick={onClose}>Close</button>
         </div>
 
+        {isItemDetail && modalRows.length ? (
+          <div className={styles.detailMetaGrid}>
+            {modalRows.map((row, index) => (
+              <div key={`${row.label}-${index}`} className={styles.detailMetaItem}>
+                <span>{row.label}</span>
+                <strong>{row.value || '-'}</strong>
+              </div>
+            ))}
+          </div>
+        ) : null}
+
         <div className={styles.detailModalList}>
-          {(detail.division.items || []).map((item, index) => {
+          {detailItems.map((item, index) => {
             const canEdit = Boolean(canEditItem?.(item, detail.division))
 
             return (
               <article
                 key={`${item.recordId || item.label}-${index}`}
-                className={`${styles.detailModalItem} ${item.tone === 'target' ? styles.detailModalItemTarget : ''} ${item.tone === 'manual' ? styles.detailModalItemManual : ''} ${canEdit ? styles.detailModalItemEditable : ''}`.trim()}
+                className={[
+                  styles.detailModalItem,
+                  item.tone === 'received' ? styles.detailModalItemReceived : '',
+                  item.tone === 'inbound' ? styles.detailModalItemInbound : '',
+                  item.tone === 'arkline' ? styles.detailModalItemArkline : '',
+                  item.tone === 'target' ? styles.detailModalItemTarget : '',
+                  item.tone === 'estimate' ? styles.detailModalItemEstimate : '',
+                  item.tone === 'manual' ? styles.detailModalItemManual : '',
+                  item.tone === 'return' ? styles.detailModalItemReturn : '',
+                  item.tone === 'returnBack' ? styles.detailModalItemReturnBack : '',
+                  canEdit ? styles.detailModalItemEditable : '',
+                ].filter(Boolean).join(' ')}
               >
                 {item.eyebrow ? <em className={styles.timelineItemEyebrow}>{item.eyebrow}</em> : null}
                 <strong>{item.label}</strong>
@@ -694,7 +787,6 @@ export default function OperationsCalendarClient({
   monthDays,
   currentDateKey,
   timelineEntries,
-  daySummaries,
   formOptions,
   canAddTarget,
   manualDivisionKey,
@@ -707,10 +799,15 @@ export default function OperationsCalendarClient({
   const [entryModal, setEntryModal] = useState('')
   const [editingItem, setEditingItem] = useState(null)
   const [focusTodaySignal, setFocusTodaySignal] = useState(0)
+  const [timelineFilters, setTimelineFilters] = useState({ movement: true, operations: true })
   const monthInputRef = useRef(null)
 
-  const timelineMap = useMemo(() => buildTimelineMap(timelineEntries), [timelineEntries])
-  const daySummaryMap = useMemo(() => buildDaySummaryMap(daySummaries), [daySummaries])
+  const filteredTimelineEntries = useMemo(
+    () => buildFilteredTimelineEntries(timelineEntries, timelineFilters),
+    [timelineEntries, timelineFilters]
+  )
+  const timelineMap = useMemo(() => buildTimelineMap(filteredTimelineEntries), [filteredTimelineEntries])
+  const daySummaryMap = useMemo(() => buildDaySummaryMapFromTimeline(monthDays, timelineMap), [monthDays, timelineMap])
   const todayMonth = currentDateKey.slice(0, 7)
   const pageTitle = initialView === 'calendar' ? 'Operations Calendar' : 'Operations Timeline'
 
@@ -784,6 +881,13 @@ export default function OperationsCalendarClient({
     return false
   }
 
+  function handleFilterChange(filterKey) {
+    setTimelineFilters((current) => ({
+      ...current,
+      [filterKey]: !current[filterKey],
+    }))
+  }
+
   return (
     <>
       <section className={styles.singlePanel}>
@@ -826,6 +930,24 @@ export default function OperationsCalendarClient({
                 </button>
               ) : null}
             </div>
+            <div className={styles.quickFilterStack} aria-label="Timeline filters">
+              <label className={styles.quickFilterOption}>
+                <input
+                  type="checkbox"
+                  checked={timelineFilters.movement}
+                  onChange={() => handleFilterChange('movement')}
+                />
+                <span>Inbound / Outbound</span>
+              </label>
+              <label className={styles.quickFilterOption}>
+                <input
+                  type="checkbox"
+                  checked={timelineFilters.operations}
+                  onChange={() => handleFilterChange('operations')}
+                />
+                <span>Operational Work</span>
+              </label>
+            </div>
             <button type="button" className={styles.todayButton} onClick={handleTodayClick}>
               Today
             </button>
@@ -849,6 +971,7 @@ export default function OperationsCalendarClient({
               currentDateKey={currentDateKey}
               canEditItem={canEditItem}
               onEditItem={handleEditItem}
+              onOpenItemDetail={(day, division, item) => setDetail({ day, division, item })}
               focusTodaySignal={focusTodaySignal}
             />
           ) : (
@@ -859,6 +982,7 @@ export default function OperationsCalendarClient({
               onOpenDetail={(day, division) => setDetail({ day, division })}
               canEditItem={canEditItem}
               onEditItem={handleEditItem}
+              onOpenItemDetail={(day, division, item) => setDetail({ day, division, item })}
               focusTodaySignal={focusTodaySignal}
             />
           )}

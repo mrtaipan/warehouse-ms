@@ -1957,6 +1957,11 @@
   color: #b91c1c;
 }
 
+.reimbursementStatusREJECTED {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
 .reimbursementBatchModal {
   width: min(100%, 1040px);
 }

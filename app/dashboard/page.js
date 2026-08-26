@@ -689,9 +689,6 @@ export default async function DashboardPage({ searchParams }) {
               <div className={styles.heroQuickActions}>
                 <ItemSearchShortcutButton />
                 <RestockShortcutButton actions={restockActions} />
-                <Link href="/dashboard/delivery-report" className={styles.heroProfileLink} aria-label="Open Delivery Report" title="Delivery Report">
-                  <DeliveryReportIcon />
-                </Link>
                 {showOperationsCalendarButton ? (
                   <Link href="/operations-calendar" className={styles.heroProfileLink} aria-label="Open Operations Calendar">
                     <span className={styles.heroActionIcon}>

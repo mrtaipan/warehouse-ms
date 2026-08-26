@@ -34,10 +34,10 @@ export default async function DashboardLayout({ children }) {
   const settingHref = isAdmin ? '/dashboard/settings' : null
 
   return (
-    <div className={styles.shell}>
+    <div className={styles.shell} data-dashboard-shell>
       <SidebarClient navItems={navItems} settingHref={settingHref} />
 
-      <main className={styles.main}>{children}</main>
+      <main className={styles.main} data-dashboard-main>{children}</main>
     </div>
   )
 }

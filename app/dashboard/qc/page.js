@@ -1163,6 +1163,14 @@ function getRegularGradeQty(item, grade) {
   return 0
 }
 
+function getSummaryGradeQty(item, grade) {
+  const normalizedGrade = normalizeQcGrade(grade)
+  if (normalizedGrade === 'A') return Number(item?.qtyA || 0)
+  if (normalizedGrade === 'B') return Number(item?.qtyB || 0)
+  if (normalizedGrade === 'C') return Number(item?.qtyC || 0)
+  return 0
+}
+
 function applyArklineAdjustmentsToGradeTotals(qtyA, qtyB, qtyC, adjustmentRows = []) {
   const totals = {
     A: Number(qtyA || 0),
@@ -2418,12 +2426,14 @@ export default function QcDashboardPage() {
       })
     }
 
-    return Array.from(grouped.values()).sort((a, b) => {
-      if (a.brand !== b.brand) return a.brand.localeCompare(b.brand)
-      if (a.category !== b.category) return a.category.localeCompare(b.category)
-      if (a.model !== b.model) return a.model.localeCompare(b.model)
-      return String(a.variant || '').localeCompare(String(b.variant || ''))
-    })
+    return Array.from(grouped.values())
+      .filter((item) => qcMode !== 'regular' || !regularGradeFilter || getSummaryGradeQty(item, regularGradeFilter) > 0)
+      .sort((a, b) => {
+        if (a.brand !== b.brand) return a.brand.localeCompare(b.brand)
+        if (a.category !== b.category) return a.category.localeCompare(b.category)
+        if (a.model !== b.model) return a.model.localeCompare(b.model)
+        return String(a.variant || '').localeCompare(String(b.variant || ''))
+      })
   }, [
     activeItems,
     arklineRejectAdjustments,
@@ -2436,6 +2446,7 @@ export default function QcDashboardPage() {
     qcConfirmRows,
     qcMode,
     qcSampleSplitsByQcItemId,
+    regularGradeFilter,
     regularModelVariantFilter,
     sampleFilter,
   ])

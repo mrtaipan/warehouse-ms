@@ -40,11 +40,12 @@ function BreakdownIcon() {
   )
 }
 
-function buildOverviewRows(confirmRows = [], validationRows = [], breakdownRows = [], returnRows = []) {
+function buildOverviewRows(confirmRows = [], validationRows = [], breakdownRows = [], returnRows = [], packingRows = []) {
   const validationMap = new Map()
   const receivedQtyByInbound = new Map()
   const breakdownQtyByInbound = new Map()
   const returnQtyByInbound = new Map()
+  const packingQtyByInbound = new Map()
 
   validationRows.forEach((row) => {
     const key = `${row.inbound_id}::${Number(row.source_koli_sequence || 0)}`
@@ -69,6 +70,14 @@ function buildOverviewRows(confirmRows = [], validationRows = [], breakdownRows 
     returnQtyByInbound.set(
       inboundId,
       (returnQtyByInbound.get(inboundId) || 0) + Number(row.qty || 0)
+    )
+  })
+
+  packingRows.forEach((row) => {
+    const inboundId = Number(row.inbound_id || 0)
+    packingQtyByInbound.set(
+      inboundId,
+      (packingQtyByInbound.get(inboundId) || 0) + Number(row.qty || 0)
     )
   })
 
@@ -105,6 +114,7 @@ function buildOverviewRows(confirmRows = [], validationRows = [], breakdownRows 
       const plReceivedQty = receivedQtyByInbound.get(Number(row.inbound_id || 0)) || 0
       const breakdownQty = breakdownQtyByInbound.get(Number(row.inbound_id || 0)) || 0
       const plReturnQty = returnQtyByInbound.get(Number(row.inbound_id || 0)) || 0
+      const packingQty = packingQtyByInbound.get(Number(row.inbound_id || 0)) || 0
       const receivingRemainingQty = row.qc_confirm_qty - plReceivedQty
       return {
         inbound_id: row.inbound_id,
@@ -117,7 +127,9 @@ function buildOverviewRows(confirmRows = [], validationRows = [], breakdownRows 
         pl_received_qty: plReceivedQty,
         breakdown_qty: breakdownQty,
         pl_return_qty: plReturnQty,
+        packing_qty: packingQty,
         breakdown_remaining_qty: plReceivedQty - breakdownQty - plReturnQty,
+        storing_remaining_qty: Math.max(0, breakdownQty - packingQty),
         pending_qty: Math.max(0, receivingRemainingQty),
         item_name: row.item_name || '-',
       }
@@ -146,6 +158,7 @@ export default async function PackingListOverviewPage() {
     { data: validationRows, error: validationError },
     { data: breakdownRows, error: breakdownError },
     { data: returnRows, error: returnError },
+    { data: packingRows, error: packingError },
   ] = await Promise.all([
     supabase
       .from('qc_confirm')
@@ -177,9 +190,13 @@ export default async function PackingListOverviewPage() {
       .select('id, inbound_id, qty')
       .in('source_phase', ['Packing List', 'packing_list'])
       .limit(5000),
+    supabase
+      .from('pl_packing_items')
+      .select('id, inbound_id, qty')
+      .limit(5000),
   ])
 
-  const allRows = buildOverviewRows(confirmRows || [], validationRows || [], breakdownRows || [], returnRows || [])
+  const allRows = buildOverviewRows(confirmRows || [], validationRows || [], breakdownRows || [], returnRows || [], packingRows || [])
   const rows = allRows.slice(0, 25)
   const totalPending = allRows.reduce((sum, row) => sum + row.pending_koli, 0)
   const totalPendingQty = allRows.reduce((sum, row) => sum + row.pending_qty, 0)
@@ -214,9 +231,9 @@ export default async function PackingListOverviewPage() {
         </div>
       </div>
 
-      {confirmError || validationError || breakdownError || returnError ? (
+      {confirmError || validationError || breakdownError || returnError || packingError ? (
         <div style={styles.emptyBox}>
-          <p style={styles.errorText}>Error: {confirmError?.message || validationError?.message || breakdownError?.message || returnError?.message}</p>
+          <p style={styles.errorText}>Error: {confirmError?.message || validationError?.message || breakdownError?.message || returnError?.message || packingError?.message}</p>
         </div>
       ) : (
         <>
@@ -235,11 +252,18 @@ export default async function PackingListOverviewPage() {
                 </thead>
                 <tbody>
                   {rows.map((row) => {
-                    const isCompleted = row.breakdown_remaining_qty === 0 && row.pending_koli === 0
+                    const isBreakdownComplete = row.breakdown_remaining_qty === 0 && row.pending_koli === 0
+                    const isCompleted = isBreakdownComplete && row.storing_remaining_qty === 0
                     return (
                       <tr
                         key={row.inbound_id}
-                        style={isCompleted ? { ...styles.bodyRow, ...styles.completedRow } : styles.bodyRow}
+                        style={
+                          isCompleted
+                            ? { ...styles.bodyRow, ...styles.completedRow }
+                            : isBreakdownComplete
+                              ? { ...styles.bodyRow, ...styles.readyRow }
+                              : styles.bodyRow
+                        }
                       >
                       <td style={styles.actionTd}>
                         <div style={styles.rowActions}>
@@ -417,6 +441,9 @@ const styles = {
   },
   completedRow: {
     background: '#ecfdf5',
+  },
+  readyRow: {
+    background: '#fff7ed',
   },
   th: {
     padding: '12px 14px',

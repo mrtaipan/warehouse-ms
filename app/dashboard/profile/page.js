@@ -14,6 +14,10 @@ function getInitials(value) {
     .toUpperCase()
 }
 
+function toUpperText(value = '') {
+  return String(value || '').trim().toUpperCase()
+}
+
 export default async function ProfilePage() {
   const supabase = await createClient()
   const {
@@ -30,8 +34,9 @@ export default async function ProfilePage() {
     'id, display_name, role, reimbursement_bank_name, reimbursement_account_name, reimbursement_account_number'
   )
 
-  const displayName =
+  const displayName = toUpperText(
     profile?.display_name || user.user_metadata?.full_name || user.user_metadata?.name || user.email?.split('@')[0] || ''
+  )
 
   return (
     <div className={styles.page}>
@@ -62,6 +67,7 @@ export default async function ProfilePage() {
                 name="display_name"
                 defaultValue={displayName}
                 placeholder="Enter display name"
+                style={{ textTransform: 'uppercase' }}
                 required
               />
             </label>
@@ -111,8 +117,9 @@ export default async function ProfilePage() {
                   className={styles.input}
                   type="text"
                   name="reimbursement_account_name"
-                  defaultValue={profile?.reimbursement_account_name || ''}
+                  defaultValue={toUpperText(profile?.reimbursement_account_name || '')}
                   placeholder="Enter account name"
+                  style={{ textTransform: 'uppercase' }}
                 />
               </label>
             </div>

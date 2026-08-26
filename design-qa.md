@@ -1,71 +1,61 @@
-# Delivery Report Design QA
+# Delivery Summary Design QA
 
 final result: blocked
 
 ## Comparison target
 
-- Source visual truth:
-  - `tmp/delivery-report-source/home-desktop.png`
-  - `tmp/delivery-report-source/summary-desktop-top.png`
-  - `tmp/delivery-report-source/summary-order-chart.png`
-  - `tmp/delivery-report-source/delivery-order-desktop-loaded.png`
-  - `tmp/delivery-report-source/delivery-order-desktop-lower.png`
-  - `tmp/delivery-report-source/barcode-desktop-top.png`
-  - `tmp/delivery-report-source/resolution-desktop-top.png`
-  - `tmp/delivery-report-source/waybill-source.json` (DOM, CSS, scripts, controls; screenshot capture unavailable)
-- Implementation route: `http://localhost:3000/dashboard/delivery-report`
-- Implementation screenshot: unavailable because the browser was redirected to the authenticated WMS login screen.
-- Source viewport: 1280 × 675 CSS px inside the Google Apps Script frame, devicePixelRatio 1.5.
-- Intended implementation viewport: desktop browser default; mobile target 390 × 844.
-- State: landing page and the primary default state of all five modules.
+- Source visual truth: `C:/Users/USER/.codex/attachments/e34821b1-5703-421a-97ee-24c07dcaf005/pasted-text.txt`
+- Source screenshot: `C:/Users/USER/warehouse-ms/.codex-delivery-summary-reference.png`
+- Implementation route: `http://localhost:3000/dashboard/delivery-report?module=summary`
+- Implementation screenshot: unavailable; the browser redirected to the authenticated WMS login screen. Blocker evidence: `C:/Users/USER/warehouse-ms/.codex-delivery-summary-auth-blocked.png`
+- Viewport: 1280 × 720 CSS px, devicePixelRatio 1.5.
+- Source full-page pixels: 1264 × 1328. The 16 px horizontal difference is the browser scrollbar/capture crop.
+- State: Delivery Summary default DAY view with today's date range.
 
-## Evidence captured
+## Full-view comparison evidence
 
-- Full-view source captures exist for the landing page, Delivery Summary, Delivery Order, Barcode Scanner, and Resolution Center.
-- Focused state captures exist for Summary toggles and order chart, Delivery Order lower form/add/edit/delete modals, and Barcode Scanner phase/search/cancel states.
-- Manual Waybill source DOM, responsive CSS, form controls, database schema, and interaction code were captured, but the in-app browser failed to produce a screenshot for that route.
-- Source mobile screenshot capture failed after the browser viewport was set to 390 × 844. Responsive source media rules were captured from the live DOM.
-- Production build passed and the new `/dashboard/delivery-report` route was generated.
-- ESLint passed for all new Delivery Report files and the sidebar integration.
-- A read-only query through the implementation's Supabase client succeeded.
+- The supplied HTML was served locally and captured successfully in the browser.
+- The source shows the intended full hierarchy: compact Back to Home pill, title and subtitle, right-aligned filters, four metric cards, two-column matrix/pie row, and full-width order chart.
+- The WMS implementation route redirected to `/login`, so an authenticated implementation capture could not be placed beside the source.
+
+## Focused-region evidence
+
+- Source HTML and rendered capture were inspected for the header/filter bar, metric cards and progress states, matrix toolbar and issue badges, courier pie chart, and stacked order chart.
+- Focused implementation evidence is unavailable until an admin signs in. A visual pass from code or build output alone is not accepted.
 
 ## Findings
 
-- [P1] Browser-rendered implementation evidence is blocked by WMS authentication.
-  - Location: `/dashboard/delivery-report`.
-  - Evidence: the local browser redirected to `/login`, so the implementation UI could not be captured or compared beside the source.
-  - Impact: fonts, spacing, colors, icons, responsive behavior, and primary interactions cannot receive a valid visual pass yet.
-  - Fix: sign in to the visible local WMS browser session, recapture the implementation at desktop and 390 × 844, then compare each matching state against the source captures.
-
-- [P2] Manual Waybill and source-mobile visual comparisons are missing.
-  - Location: Manual Waybill; mobile responsive views.
-  - Evidence: the selected in-app browser returned `Unable to capture screenshot` for the Manual Waybill route and for the 390 × 844 viewport even though the DOM and CSS remained readable.
-  - Impact: those views cannot be declared pixel-faithful from visual evidence alone.
-  - Fix: recapture after authentication; if the same source capture failure persists, use a user-approved alternate browser capture path.
+- [P1] Authenticated implementation evidence is unavailable.
+  - Location: `/dashboard/delivery-report?module=summary`.
+  - Evidence: the controlled browser was redirected to `/login`; the available Chrome browser surface was not connected.
+  - Impact: the final typography, spacing, chart canvas sizing, responsive wrapping, modal state, and live data density cannot be certified visually.
+  - Fix: sign in as an admin, capture the Summary at the same viewport, compare it directly with the source screenshot, and fix any visible P0/P1/P2 differences.
 
 ## Required fidelity surfaces
 
-- Fonts and typography: source uses Inter with system fallbacks and heavy 800–900 display weights; implementation maps to the same stack. Visual confirmation remains blocked.
-- Spacing and layout rhythm: source measurements and responsive breakpoints were applied; browser comparison remains blocked.
-- Colors and visual tokens: source navy, blue, purple, amber, teal, rose, translucent-white surfaces, and soft shadow values were mapped into the module stylesheet; browser comparison remains blocked.
-- Image quality and asset fidelity: the source uses emoji glyphs rather than external imagery on the module cards. The implementation preserves those exact source glyphs. Manual Waybill barcodes are generated locally with CODE128 rather than hotlinked.
-- Copy and content: module names, descriptions, button labels, form labels, table columns, and helper copy match the captured source.
-- States and interactions: safe source states were captured; production writes/deletes were not triggered during QA. Implementation interaction testing remains blocked by login.
+- Fonts and typography: implementation now uses the source Arial/Helvetica stack, 30 px title, 13 px subtitle, 14 px card labels, and 32 px metric values. Visual confirmation is blocked.
+- Spacing and layout rhythm: implementation maps the source 1450 px maximum width, 20 px page padding, 16 px gaps, 18 px card padding/radius, and compact header/filter rhythm. Visual confirmation is blocked.
+- Colors and visual tokens: source `#f6f7fb` background, white cards, `#111827` ink, `#6b7280` muted text, source shadow, dark total card, and semantic progress colors are mapped. Visual confirmation is blocked.
+- Image quality and asset fidelity: this Summary source has no raster image assets. Charts are rendered with Chart.js rather than placeholder shapes.
+- Copy and content: title, subtitle, filter labels, metric labels, matrix descriptions, issue badges, chart titles, and mode labels follow the supplied HTML.
+
+## Interaction checks
+
+- Production build and ESLint passed.
+- Chart.js compiled in the client bundle.
+- Filters, packing/delivery toggle, shortage/delivery toggle, issue-detail modals, and Back to Home remain wired in code.
+- Browser interaction and console checks on the authenticated Summary are blocked by login.
 
 ## Comparison history
 
-- Pass 1: source capture completed for desktop default and focused states; source mobile and Manual Waybill screenshots blocked by the in-app browser.
-- Build pass: implemented all five modules, fixed all lint findings, passed production build, and verified a live read-only Supabase query.
-- Browser pass: implementation route redirected to `/login`; no valid side-by-side comparison could be performed.
+- Earlier implementation pass: built a WMS-native approximation; browser QA was blocked by authentication.
+- Current source-alignment pass: captured the newly supplied HTML, measured its desktop layout, replaced the approximation with source-matched structure and tokens, upgraded both charts to Chart.js, and restored source interactions.
+- Current browser pass: the implementation still redirects to `/login`; no valid post-fix screenshot comparison is available.
 
 ## Implementation checklist
 
-- Sign in to the local WMS browser.
-- Capture landing, Summary, Delivery Order, Scanner, Resolution Center, and Manual Waybill at matching desktop states.
-- Test core non-destructive interactions and check console errors.
-- Capture the implementation at 390 × 844 and validate stacking, tables, controls, and tap targets.
-- Fix any P0/P1/P2 mismatches, repeat comparison, and change `final result` to `passed` only when none remain.
-
-## Previous QA context
-
-- The earlier Warehouse Map QA result was passed before this Delivery Report work began.
+- Sign in as an admin in the local WMS browser.
+- Capture the Summary at 1280 × 720 and compare it with the source capture.
+- Test Apply, Packing/Delivery, Shortage/Delivery, issue info modals, chart tooltips, and Back to Home.
+- Check the console and mobile layout.
+- Fix any remaining P0/P1/P2 mismatch and change `final result` to `passed` only after the authenticated visual comparison succeeds.
