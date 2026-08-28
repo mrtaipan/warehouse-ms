@@ -12,6 +12,7 @@ import ProductDirectoryClient from '../daftar-barang/product-directory-client'
 const supabase = createClient()
 const BATCH_SIZE = 1000
 const STOCK_PAGE_SIZE = 25
+const STORAGE_GROUP_FILTERS = ['ARKLINE', 'MOB', 'OI']
 const naturalSort = new Intl.Collator(undefined, {
   numeric: true,
   sensitivity: 'base',
@@ -75,7 +76,18 @@ function storageEntryMatchesProductSearch(entry = {}, normalizedProductSearch = 
     return true
   }
 
-  return [entry.item_name, entry.sku_id]
+  const location = entry.location || {}
+
+  return [
+    entry.item_name,
+    entry.sku_id,
+    location.location_type,
+    location.location_id,
+    location.location_code,
+    location.sub_location,
+    location.location_name,
+    location.group_code,
+  ]
     .map((value) => normalizeFilterValue(value))
     .some((value) => value.includes(normalizedProductSearch))
 }
@@ -562,6 +574,7 @@ export default function StorageOverviewPage() {
   })
   const [filters, setFilters] = useState({
     locationType: 'PALLET',
+    groupCode: '',
     locationId: '',
     locationCode: '',
     locationName: '',
@@ -702,13 +715,16 @@ export default function StorageOverviewPage() {
 
   const productScopedStorageRows = useMemo(() => {
     const normalizedProductSearch = normalizeFilterValue(productSearch)
+    const normalizedGroupCode = normalizeFilterValue(filters.groupCode)
 
-    if (!normalizedProductSearch) {
-      return storageRows
-    }
+    return storageRows.filter((entry) => {
+      if (normalizedGroupCode && getLocationStorageGroup(entry.location) !== normalizedGroupCode) {
+        return false
+      }
 
-    return storageRows.filter((entry) => storageEntryMatchesProductSearch(entry, normalizedProductSearch))
-  }, [productSearch, storageRows])
+      return storageEntryMatchesProductSearch(entry, normalizedProductSearch)
+    })
+  }, [filters.groupCode, productSearch, storageRows])
 
   const warehouseLocationOptions = Array.from(
     new Set(
@@ -967,6 +983,7 @@ export default function StorageOverviewPage() {
     const normalizedLocationName = normalizeFilterValue(location.location_name)
     const normalizedLocationCode = normalizeFilterValue(location.location_code)
     const normalizedSubLocation = normalizeFilterValue(location.sub_location)
+    const normalizedGroupCode = getLocationStorageGroup(location)
     const normalizedSize = normalizeSizeValue(entry.size)
 
     if (!storageEntryMatchesProductSearch(entry, normalizedProductSearch)) {
@@ -976,6 +993,13 @@ export default function StorageOverviewPage() {
     if (
       filters.locationType &&
       normalizedLocationType !== normalizeFilterValue(filters.locationType)
+    ) {
+      return false
+    }
+
+    if (
+      filters.groupCode &&
+      normalizedGroupCode !== normalizeFilterValue(filters.groupCode)
     ) {
       return false
     }
@@ -1140,6 +1164,18 @@ export default function StorageOverviewPage() {
       return
     }
 
+    if (name === 'groupCode') {
+      setFilters((prev) => ({
+        ...prev,
+        groupCode: normalizeFilterValue(prev.groupCode) === normalizeFilterValue(value) ? '' : value.toUpperCase(),
+        locationId: '',
+        locationCode: '',
+        locationName: '',
+        subLocation: '',
+      }))
+      return
+    }
+
     if (name === 'locationId') {
       setFilters((prev) => ({
         ...prev,
@@ -1173,6 +1209,7 @@ export default function StorageOverviewPage() {
   function clearFilters() {
     setFilters({
       locationType: '',
+      groupCode: '',
       locationId: '',
       locationCode: '',
       locationName: '',
@@ -2002,6 +2039,35 @@ export default function StorageOverviewPage() {
             </div>
           ) : null}
           {visibleListMode === 'stock' ? (
+            <div style={styles.toolbarGroupField}>
+              <label style={styles.groupFilterLabel}>Group</label>
+              <div style={styles.storageGroupToggleGrid} aria-label="Storage group filter">
+                {STORAGE_GROUP_FILTERS.map((groupCode) => {
+                  const isActive = normalizeFilterValue(filters.groupCode) === groupCode
+
+                  return (
+                    <button
+                      key={groupCode}
+                      type="button"
+                      onClick={() =>
+                        handleFilterChange({
+                          target: { name: 'groupCode', value: groupCode, type: 'button' },
+                        })
+                      }
+                      style={{
+                        ...styles.storageGroupToggleButton,
+                        ...(isActive ? styles.storageGroupToggleButtonActive : {}),
+                      }}
+                      aria-pressed={isActive}
+                    >
+                      {groupCode}
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          ) : null}
+          {visibleListMode === 'stock' ? (
             <div style={styles.toolbarQtyField}>
               <span style={styles.filteredQtyCard}>
                 <span style={styles.filteredQtyLabel}>Qty of filtered</span>
@@ -2037,11 +2103,7 @@ export default function StorageOverviewPage() {
         <div
           style={{
             ...styles.filtersGrid,
-            ...(filters.locationType === 'PALLET'
-              ? styles.palletFiltersGrid
-              : filters.locationType === 'SHELVING'
-                ? styles.shelvingFiltersGrid
-                : styles.allStorageFiltersGrid),
+            ...styles.palletFiltersGrid,
             ...(isCompactLayout ? styles.filtersGridCompact : {}),
           }}
         >
@@ -3259,7 +3321,7 @@ const styles = {
   },
   searchToolbar: {
     display: 'grid',
-    gridTemplateColumns: 'minmax(320px, 520px) auto auto minmax(150px, 1fr)',
+    gridTemplateColumns: 'minmax(260px, 1fr) auto auto minmax(76px, 84px) minmax(150px, 180px)',
     gap: '12px',
     alignItems: 'flex-end',
   },
@@ -3281,6 +3343,15 @@ const styles = {
     minHeight: '44px',
     minWidth: 0,
     marginLeft: '-4px',
+  },
+  toolbarGroupField: {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'stretch',
+    justifyContent: 'flex-start',
+    minHeight: '66px',
+    minWidth: 0,
+    gap: '6px',
   },
   toolbarQtyField: {
     display: 'flex',
@@ -3446,6 +3517,40 @@ const styles = {
     lineHeight: 1,
     fontWeight: '900',
     fontVariantNumeric: 'tabular-nums',
+  },
+  storageGroupToggleGrid: {
+    display: 'grid',
+    gridTemplateColumns: '1fr',
+    gridTemplateRows: 'repeat(3, 1fr)',
+    gap: '3px',
+    width: '100%',
+    minWidth: 0,
+    padding: '3px',
+    border: '1px solid #dbe4ef',
+    borderRadius: '10px',
+    background: '#fff',
+  },
+  groupFilterLabel: {
+    color: '#111827',
+    fontSize: '14px',
+    fontWeight: '600',
+    lineHeight: 1,
+  },
+  storageGroupToggleButton: {
+    minHeight: '20px',
+    padding: '0 6px',
+    border: 'none',
+    borderRadius: '7px',
+    background: 'transparent',
+    color: '#64748b',
+    fontSize: '10px',
+    fontWeight: '850',
+    lineHeight: 1,
+    cursor: 'pointer',
+  },
+  storageGroupToggleButtonActive: {
+    background: '#111827',
+    color: '#fff',
   },
   typeField: {
     gap: '10px',

@@ -13,6 +13,75 @@ const naturalSort = new Intl.Collator(undefined, {
   sensitivity: 'base',
 })
 const PAGE_SIZE_OPTIONS = [25, 50, 100, 250]
+const PACKING_ITEM_SELECT_COLUMNS = [
+  'id',
+  'inbound_id',
+  'pl_size_breakdown_id',
+  'product_model_id',
+  'product_model_variant_id',
+  'storing_type',
+  'brand_code',
+  'source_variant_code',
+  'pl_name',
+  'model_name',
+  'variant_name',
+  'qty',
+  'storage_status',
+  'created_at',
+  'release_status',
+  'released_at',
+  'released_by',
+  'release_count',
+  'release_history',
+  'pl_detail_seq',
+  'detail_order',
+  'pl_photo_url',
+  'photo_url',
+  'variant_photo_url',
+].join(', ')
+const BREAKDOWN_SELECT_COLUMNS = [
+  'id',
+  'inbound_id',
+  'product_model_id',
+  'product_model_variant_id',
+  'source_variant_code',
+  'pl_name',
+  'model_name',
+  'variant_name',
+  'category_id',
+  'pl_detail_seq',
+  'detail_order',
+  'pl_photo_url',
+  'photo_url',
+  'variant_photo_url',
+  'pl_notes',
+].join(', ')
+const PRODUCT_MODEL_SELECT_COLUMNS = 'id, brand_id, category_id, model_name, model_code, photo_url'
+const PRODUCT_VARIANT_SELECT_COLUMNS = [
+  'id',
+  'product_model_id',
+  'variant_code',
+  'variant_name',
+  'selling_name',
+  'merged_into_variant_id',
+  'variant_notes',
+  'variant_photo_url',
+  'photo_url',
+].join(', ')
+const IDENTITY_EVENT_SELECT_COLUMNS = 'id, event_type, source_variant_ids, target_variant_id, detail_assignments, created_at'
+const RELEASE_STATE_SELECT_COLUMNS = [
+  'id',
+  'product_model_variant_id',
+  'storing_type',
+  'release_status',
+  'released_at',
+  'released_by',
+  'release_count',
+  'release_history',
+  'updated_at',
+].join(', ')
+const BRAND_SELECT_COLUMNS = 'id, brand_code, brand_name, is_active'
+const CATEGORY_SELECT_COLUMNS = 'id, parent_id, category_name, name, full_name, full_code'
 
 function normalize(value) {
   return String(value || '').trim()
@@ -286,6 +355,16 @@ function getMinFinite(values = []) {
   return finiteValues.length ? Math.min(...finiteValues) : 0
 }
 
+function isSchemaColumnError(error) {
+  const message = normalizeUpper(error?.message || error?.details || '')
+  return (
+    message.includes('SCHEMA CACHE') ||
+    message.includes('COULD NOT FIND') ||
+    message.includes('DOES NOT EXIST') ||
+    (message.includes('COLUMN') && message.includes('NOT'))
+  )
+}
+
 async function fetchAllRows(tableName, selectColumns = '*', orderColumn = 'id') {
   const allRows = []
   let from = 0
@@ -301,6 +380,10 @@ async function fetchAllRows(tableName, selectColumns = '*', orderColumn = 'id') 
     const { data, error } = await query
 
     if (error) {
+      if (selectColumns !== '*' && isSchemaColumnError(error)) {
+        return fetchAllRows(tableName, '*', orderColumn)
+      }
+
       throw error
     }
 
@@ -642,16 +725,16 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
           nextBrands,
           nextCategories,
         ] = await Promise.all([
-          fetchAllRows('pl_packing_items', '*', 'created_at'),
+          fetchAllRows('pl_packing_items', PACKING_ITEM_SELECT_COLUMNS, 'created_at'),
           fetchAllRows('inbound', 'id, grn_number, inbound_date, item_name, created_at', 'created_at'),
-          fetchAllRows('pl_size_breakdown', '*', 'id'),
-          fetchAllRows('warehouse_storage', 'id, sku_id, item_name, size, qty, created_at', 'created_at'),
-          fetchOptionalRows('product_variant_identity_events', '*', 'created_at'),
-          fetchAllRows('dir_product_models', '*', 'id'),
-          fetchAllRows('dir_product_model_variants', '*', 'id'),
-          fetchOptionalRows('dir_product_model_variant_release_states', '*', 'id'),
-          fetchAllRows('dir_brands', '*', 'id'),
-          fetchAllRows('dir_categories', '*', 'id'),
+          fetchAllRows('pl_size_breakdown', BREAKDOWN_SELECT_COLUMNS, 'id'),
+          fetchAllRows('warehouse_storage', 'sku_id, qty', 'created_at'),
+          fetchOptionalRows('product_variant_identity_events', IDENTITY_EVENT_SELECT_COLUMNS, 'created_at'),
+          fetchAllRows('dir_product_models', PRODUCT_MODEL_SELECT_COLUMNS, 'id'),
+          fetchAllRows('dir_product_model_variants', PRODUCT_VARIANT_SELECT_COLUMNS, 'id'),
+          fetchOptionalRows('dir_product_model_variant_release_states', RELEASE_STATE_SELECT_COLUMNS, 'id'),
+          fetchAllRows('dir_brands', BRAND_SELECT_COLUMNS, 'id'),
+          fetchAllRows('dir_categories', CATEGORY_SELECT_COLUMNS, 'id'),
         ])
 
         setPackingRows(nextPackingRows)
@@ -1080,98 +1163,123 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
   }, [filters, lookup, packingRows, sortConfig])
 
   const filterOptions = useMemo(() => {
-    function buildOptionSet(ignoreFilterName = '') {
-      const grnsSet = new Set()
-      const brandsSet = new Set()
-      const categoriesSet = new Set()
-      const subCategoriesSet = new Set()
-      const itemTypesSet = new Set()
+    const optionSetsByIgnoredFilter = {
+      grn: new Set(),
+      brand: new Set(),
+      category: new Set(),
+      subCategory: new Set(),
+      itemType: new Set(),
+    }
+    const normalizedSearch = normalizeUpper(filters.search)
 
-      packingRows.forEach((row) => {
-        const storingType = getRowStoringType(row)
+    function rowMatchesFilters(facet, ignoreFilterName = '') {
+      if (filters.type !== 'all' && facet.storingType !== normalizeUpper(filters.type)) return false
 
-        if (filters.type !== 'all' && storingType !== normalizeUpper(filters.type)) {
-          return
-        }
+      if (facet.shouldApplyReleaseStatus && filters.releaseStatus !== 'all' && facet.releaseState !== filters.releaseStatus) {
+        return false
+      }
 
-        const breakdown = lookup.breakdownById.get(Number(row.pl_size_breakdown_id))
-        const modelId = Number(row.product_model_id || breakdown?.product_model_id || 0)
-        const variantId = Number(row.product_model_variant_id || breakdown?.product_model_variant_id || 0)
-        const model = lookup.modelById.get(modelId)
-        const variant = lookup.variantById.get(variantId)
-        const assignedVariant = getAssignedVariantForRow(row, breakdown, lookup, variant)
-        const selectedVariant = getCanonicalVariant(assignedVariant, lookup.variantById)
-        const selectedVariantId = Number(selectedVariant?.id || variantId || 0)
-        const releaseVariant = selectedVariant || variant || (selectedVariantId ? { id: selectedVariantId } : null)
-        const brand = getBrandLabel(row, model, lookup.brandById, lookup.brandByCode)
-        const categoryParts = getCategoryParts(model?.category_id || breakdown?.category_id, lookup.categoryById)
-        const detailCategoryLabel = getDetailCategoryLabel(categoryParts)
-        const sourceSku = normalize(row.source_variant_code || breakdown?.source_variant_code || variant?.variant_code || variant?.variant_label) || '-'
-        const selectedSku = getAssignedSkuForRow(row, breakdown, lookup, getSelectedSku(sourceSku, selectedVariant))
-        const sourceProductName = getProductName(row, breakdown, model, variant)
-        const selectedProductName = getSelectedProductName(row, breakdown, model, variant, selectedVariant)
-        const productName = selectedProductName
-        const inbound = lookup.inboundById.get(Number(row.inbound_id))
-        const grnNumber = normalize(inbound?.grn_number) || '-'
-        const modelReleaseSource = filters.viewMode === 'model'
-          ? getModelTypeReleaseSource(releaseVariant, storingType, lookup, row)
-          : null
-        const releaseSource = filters.viewMode === 'grn' ? row : modelReleaseSource
-        const releaseState = releaseSource ? getReleaseState(releaseSource) : ''
-        const shouldApplyReleaseStatus = filters.viewMode === 'grn' || filters.type !== 'all'
+      if (ignoreFilterName !== 'grn' && filters.grn && facet.grnNumber !== filters.grn) return false
+      if (ignoreFilterName !== 'brand' && filters.brand && facet.brand !== filters.brand) return false
+      if (ignoreFilterName !== 'category' && filters.category && facet.categoryRoot !== filters.category) return false
+      if (ignoreFilterName !== 'subCategory' && filters.subCategory && facet.subCategory !== filters.subCategory) return false
+      if (ignoreFilterName !== 'itemType' && filters.itemType && facet.itemType !== filters.itemType) return false
 
-        if (shouldApplyReleaseStatus && filters.releaseStatus !== 'all' && releaseState !== filters.releaseStatus) {
-          return
-        }
+      return !normalizedSearch || facet.searchable.includes(normalizedSearch)
+    }
 
-        if (ignoreFilterName !== 'grn' && filters.grn && grnNumber !== filters.grn) return
-        if (ignoreFilterName !== 'brand' && filters.brand && brand !== filters.brand) return
-        if (ignoreFilterName !== 'category' && filters.category && categoryParts.categoryRoot !== filters.category) return
-        if (ignoreFilterName !== 'subCategory' && filters.subCategory && categoryParts.subCategory !== filters.subCategory) return
-        if (ignoreFilterName !== 'itemType' && filters.itemType && categoryParts.itemType !== filters.itemType) return
+    function addFacetOptions(facet, ignoredFilterName) {
+      if (!rowMatchesFilters(facet, ignoredFilterName)) return
 
-        if (normalizeUpper(filters.search)) {
-          const searchable = [
-            productName,
-            brand,
-            categoryParts.categoryRoot,
-            categoryParts.subCategory,
-            categoryParts.itemType,
-            detailCategoryLabel,
-            selectedProductName,
-            sourceProductName,
-            selectedSku,
-            sourceSku,
-            grnNumber,
-          ]
-            .map(normalizeUpper)
-            .join(' ')
+      if (ignoredFilterName === 'grn' && facet.grnNumber && facet.grnNumber !== '-') {
+        optionSetsByIgnoredFilter.grn.add(facet.grnNumber)
+      }
 
-          if (!searchable.includes(normalizeUpper(filters.search))) return
-        }
+      if (ignoredFilterName === 'brand' && facet.brand && !facet.brand.startsWith('Multiple')) {
+        optionSetsByIgnoredFilter.brand.add(facet.brand)
+      }
 
-        if (grnNumber && grnNumber !== '-') grnsSet.add(grnNumber)
-        if (brand && !brand.startsWith('Multiple')) brandsSet.add(brand)
-        if (categoryParts.categoryRoot && !categoryParts.categoryRoot.startsWith('Multiple')) categoriesSet.add(categoryParts.categoryRoot)
-        if (categoryParts.subCategory && categoryParts.subCategory !== '-') subCategoriesSet.add(categoryParts.subCategory)
-        if (categoryParts.itemType && categoryParts.itemType !== '-') itemTypesSet.add(categoryParts.itemType)
-      })
+      if (ignoredFilterName === 'category' && facet.categoryRoot && !facet.categoryRoot.startsWith('Multiple')) {
+        optionSetsByIgnoredFilter.category.add(facet.categoryRoot)
+      }
 
-      return {
-        grns: Array.from(grnsSet).sort((left, right) => naturalSort.compare(left, right)),
-        brands: Array.from(brandsSet).sort((left, right) => naturalSort.compare(left, right)),
-        categories: Array.from(categoriesSet).sort((left, right) => naturalSort.compare(left, right)),
-        subCategories: Array.from(subCategoriesSet).sort((left, right) => naturalSort.compare(left, right)),
-        itemTypes: Array.from(itemTypesSet).sort((left, right) => naturalSort.compare(left, right)),
+      if (ignoredFilterName === 'subCategory' && facet.subCategory && facet.subCategory !== '-') {
+        optionSetsByIgnoredFilter.subCategory.add(facet.subCategory)
+      }
+
+      if (ignoredFilterName === 'itemType' && facet.itemType && facet.itemType !== '-') {
+        optionSetsByIgnoredFilter.itemType.add(facet.itemType)
       }
     }
 
+    packingRows.forEach((row) => {
+      const storingType = getRowStoringType(row)
+      const breakdown = lookup.breakdownById.get(Number(row.pl_size_breakdown_id))
+      const modelId = Number(row.product_model_id || breakdown?.product_model_id || 0)
+      const variantId = Number(row.product_model_variant_id || breakdown?.product_model_variant_id || 0)
+      const model = lookup.modelById.get(modelId)
+      const variant = lookup.variantById.get(variantId)
+      const assignedVariant = getAssignedVariantForRow(row, breakdown, lookup, variant)
+      const selectedVariant = getCanonicalVariant(assignedVariant, lookup.variantById)
+      const selectedVariantId = Number(selectedVariant?.id || variantId || 0)
+      const releaseVariant = selectedVariant || variant || (selectedVariantId ? { id: selectedVariantId } : null)
+      const brand = getBrandLabel(row, model, lookup.brandById, lookup.brandByCode)
+      const categoryParts = getCategoryParts(model?.category_id || breakdown?.category_id, lookup.categoryById)
+      const detailCategoryLabel = getDetailCategoryLabel(categoryParts)
+      const sourceSku = normalize(row.source_variant_code || breakdown?.source_variant_code || variant?.variant_code || variant?.variant_label) || '-'
+      const selectedSku = getAssignedSkuForRow(row, breakdown, lookup, getSelectedSku(sourceSku, selectedVariant))
+      const sourceProductName = getProductName(row, breakdown, model, variant)
+      const selectedProductName = getSelectedProductName(row, breakdown, model, variant, selectedVariant)
+      const productName = selectedProductName
+      const inbound = lookup.inboundById.get(Number(row.inbound_id))
+      const grnNumber = normalize(inbound?.grn_number) || '-'
+      const modelReleaseSource = filters.viewMode === 'model'
+        ? getModelTypeReleaseSource(releaseVariant, storingType, lookup, row)
+        : null
+      const releaseSource = filters.viewMode === 'grn' ? row : modelReleaseSource
+      const releaseState = releaseSource ? getReleaseState(releaseSource) : ''
+      const shouldApplyReleaseStatus = filters.viewMode === 'grn' || filters.type !== 'all'
+      const facet = {
+        storingType,
+        releaseState,
+        shouldApplyReleaseStatus,
+        grnNumber,
+        brand,
+        categoryRoot: categoryParts.categoryRoot,
+        subCategory: categoryParts.subCategory,
+        itemType: categoryParts.itemType,
+        searchable: [
+          productName,
+          brand,
+          categoryParts.categoryRoot,
+          categoryParts.subCategory,
+          categoryParts.itemType,
+          detailCategoryLabel,
+          selectedProductName,
+          sourceProductName,
+          selectedSku,
+          sourceSku,
+          grnNumber,
+        ]
+          .map(normalizeUpper)
+          .join(' '),
+      }
+
+      addFacetOptions(facet, 'grn')
+      addFacetOptions(facet, 'brand')
+      addFacetOptions(facet, 'category')
+      addFacetOptions(facet, 'subCategory')
+      addFacetOptions(facet, 'itemType')
+    })
+
+    const sortOptions = (items) => Array.from(items).sort((left, right) => naturalSort.compare(left, right))
+
     return {
-      grns: buildOptionSet('grn').grns,
-      brands: buildOptionSet('brand').brands,
-      categories: buildOptionSet('category').categories,
-      subCategories: buildOptionSet('subCategory').subCategories,
-      itemTypes: buildOptionSet('itemType').itemTypes,
+      grns: sortOptions(optionSetsByIgnoredFilter.grn),
+      brands: sortOptions(optionSetsByIgnoredFilter.brand),
+      categories: sortOptions(optionSetsByIgnoredFilter.category),
+      subCategories: sortOptions(optionSetsByIgnoredFilter.subCategory),
+      itemTypes: sortOptions(optionSetsByIgnoredFilter.itemType),
     }
   }, [filters, lookup, packingRows])
 
