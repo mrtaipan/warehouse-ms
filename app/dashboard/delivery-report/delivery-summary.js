@@ -191,7 +191,6 @@ export default function DeliverySummary() {
       .order('delivery_date', { ascending: true })
 
     if (applied.group !== 'ALL') orderQuery = orderQuery.eq('group_order', applied.group)
-    if (applied.category !== 'ALL') orderQuery = orderQuery.eq('delivery_category', applied.category)
 
     let packingQuery = deliverySupabase
       .from('Delivery_Barcode')
@@ -218,7 +217,7 @@ export default function DeliverySummary() {
 
     const error = ordersResult.error || packingResult.error || deliveryResult.error
     if (error) {
-      setStatus({ type: 'error', message: `Gagal memuat summary: ${error.message}` })
+      setStatus({ type: 'error', message: `Failed to load summary: ${error.message}` })
     } else {
       setOrders(ordersResult.data || [])
       setPackingRows(packingResult.data || [])
@@ -251,18 +250,23 @@ export default function DeliverySummary() {
     [deliveryRows]
   )
 
+  const categoryFilteredOrders = useMemo(
+    () => orders.filter((row) => applied.category === 'ALL' || row.delivery_category === applied.category),
+    [applied.category, orders]
+  )
+
   const couriers = useMemo(() => {
-    const names = [...new Set(orders.map((row) => row.courier || 'UNDEFINED'))]
+    const names = [...new Set(categoryFilteredOrders.map((row) => row.courier || 'UNDEFINED'))].filter((name) => name !== 'UNDEFINED')
     return names
       .map((courier) => ({
         label: courier,
-        value: orders.filter((row) => (row.courier || 'UNDEFINED') === courier).reduce((sum, row) => sum + safeNumber(row.quantity), 0),
+        value: categoryFilteredOrders.filter((row) => (row.courier || 'UNDEFINED') === courier).reduce((sum, row) => sum + safeNumber(row.quantity), 0),
       }))
       .sort((a, b) => b.value - a.value)
-  }, [orders])
+  }, [categoryFilteredOrders])
 
   const matrixRows = useMemo(() => {
-    const names = [...new Set([...orders.map((row) => row.courier || 'UNDEFINED'), ...deliveryRows.map((row) => row.courier || 'UNDEFINED')])]
+    const names = [...new Set([...orders.map((row) => row.courier || 'UNDEFINED'), ...deliveryRows.map((row) => row.courier || 'UNDEFINED')])].filter((name) => name !== 'UNDEFINED')
     return names
       .map((courier) => {
         const row = { courier }
@@ -285,7 +289,7 @@ export default function DeliverySummary() {
 
   const barValues = useMemo(() => {
     const map = new Map()
-    orders.forEach((row) => {
+    categoryFilteredOrders.forEach((row) => {
       const date = new Date(`${row.delivery_date}T00:00:00+07:00`)
       const key =
         applied.mode === 'YEAR'
@@ -300,7 +304,7 @@ export default function DeliverySummary() {
       }
     })
     return [...map.values()]
-  }, [applied.mode, orders])
+  }, [applied.mode, categoryFilteredOrders])
 
   const categories = useMemo(() => {
     const values = new Set(orders.map((row) => row.delivery_category).filter(Boolean))
@@ -340,14 +344,14 @@ export default function DeliverySummary() {
           return {
             ...row,
             issue: 'PACKED_NOT_DELIVERED',
-            issueLabel: 'Packing belum delivery',
+            issueLabel: 'Packed, not delivered yet',
           }
         }
         if (delivered && !packed) {
           return {
             ...row,
             issue: 'DELIVERED_NOT_PACKED',
-            issueLabel: 'Delivery belum packing',
+            issueLabel: 'Delivered, not packed yet',
           }
         }
         return null
@@ -370,7 +374,7 @@ export default function DeliverySummary() {
           <div className={styles.summaryTitleBlock}>
             <Link href="/dashboard/delivery-report" className={styles.summaryBackButton}>← Back to Home</Link>
             <h1>DELIVERY SUMMARY</h1>
-            <p>Dashboard progress, matrix, group chart, dan courier composition.</p>
+            <p>Dashboard progress, matrix, group chart, and courier composition.</p>
           </div>
 
           <section className={styles.filterBar}>
@@ -460,15 +464,35 @@ export default function DeliverySummary() {
                 ))}
               </div>
               <span className={styles.infoPill}>Undefined Count: {formatCount(undefinedCount)}</span>
-              {undefinedCount > 0 ? <button type="button" className={styles.infoButton} onClick={() => setIssueModal('undefined')}>Detail</button> : null}
+              {undefinedCount > 0 ? (
+                <button
+                  type="button"
+                  className={styles.infoButton}
+                  aria-label="Show undefined courier details"
+                  title="Show details"
+                  onClick={() => setIssueModal('undefined')}
+                >
+                  ⓘ
+                </button>
+              ) : null}
               <span className={styles.infoPill}>Missing Barcode: {formatCount(missingBarcode)}</span>
-              {missingBarcode > 0 ? <button type="button" className={styles.infoButton} onClick={() => setIssueModal('missing')}>Detail</button> : null}
+              {missingBarcode > 0 ? (
+                <button
+                  type="button"
+                  className={styles.infoButton}
+                  aria-label="Show missing barcode details"
+                  title="Show details"
+                  onClick={() => setIssueModal('missing')}
+                >
+                  ⓘ
+                </button>
+              ) : null}
             </div>
           </div>
           <p className={styles.cardHint}>
             {matrixMode === 'SHORTAGE'
-              ? 'Shortage = Delivery Order - Delivery Scanned. Nilai minus berarti scanned lebih banyak dari target.'
-              : 'Delivery Matrix menampilkan target Delivery Order asli per courier dan per group.'}
+              ? 'Shortage = Delivery Order - Delivery Scanned. Negative values mean scans are higher than the target.'
+              : 'Delivery Matrix shows the original Delivery Order target by courier and group.'}
           </p>
           <div className={styles.tableWrap}>
             <table>
@@ -496,7 +520,7 @@ export default function DeliverySummary() {
 
         <article className={`${styles.dataCard} ${styles.fullWidth}`}>
           <div className={styles.cardTitleRow}>
-            <div><h2>ORDER CHART</h2><p className={styles.cardHint}>1 bar per periode, isi bar dibagi berdasarkan group.</p></div>
+            <div><h2>ORDER CHART</h2><p className={styles.cardHint}>One bar per period, stacked by group.</p></div>
             <span className={styles.darkPill}>Mode: {applied.mode}</span>
           </div>
           {barValues.length && chartSeries.length ? <BarChart values={barValues} series={chartSeries} /> : <EmptyState />}
@@ -508,8 +532,8 @@ export default function DeliverySummary() {
           open={Boolean(issueModal)}
           title={issueModal === 'undefined' ? 'UNDEFINED BARCODES' : 'MISSING BARCODES'}
           description={issueModal === 'undefined'
-            ? 'Barcode berikut belum dapat diidentifikasi berdasarkan courier rules.'
-            : 'Barcode berikut statusnya belum lengkap: sudah packing tapi belum delivery, atau sudah delivery tapi belum packing.'}
+            ? 'These barcodes could not be identified by the courier rules.'
+            : 'These barcodes have incomplete status: packed but not delivered yet, or delivered but not packed yet.'}
           onClose={() => setIssueModal(null)}
         >
           <div className={styles.tableWrap}>

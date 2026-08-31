@@ -15,7 +15,7 @@ const modules = [
     id: 'summary',
     icon: '📊',
     title: 'Delivery Summary',
-    description: 'Ringkasan perbandingan target delivery, barcode scan, dan packing scan.',
+    description: 'An overview comparing delivery targets, barcode scans, and packing scans.',
     tag: 'Summary',
     tone: 'blue',
   },
@@ -23,7 +23,7 @@ const modules = [
     id: 'delivery-order',
     icon: '📋',
     title: 'Delivery Order',
-    description: 'Admin input target kiriman harian yang nanti menjadi pembanding scan.',
+    description: 'Admins enter daily shipment targets used as the scan benchmark.',
     tag: 'Admin Input',
     tone: 'purple',
   },
@@ -31,7 +31,7 @@ const modules = [
     id: 'barcode',
     icon: '🔍',
     title: 'Barcode Scanner',
-    description: 'Scan barcode untuk memvalidasi packing dan delivery.',
+    description: 'Scan barcodes to validate packing and delivery.',
     tag: 'Scanner',
     tone: 'amber',
   },
@@ -39,7 +39,7 @@ const modules = [
     id: 'resolution',
     icon: '🛠️',
     title: 'Resolution Center',
-    description: 'Pemrosesan pengembalian barang dan order yang bermasalah',
+    description: 'Process returned items and resolve problematic orders.',
     tag: 'Issue Handling',
     tone: 'rose',
   },
@@ -47,7 +47,7 @@ const modules = [
     id: 'waybill',
     icon: '📄',
     title: 'Manual Waybill',
-    description: 'Pembuatan resi manual untuk mendapatkan barcode',
+    description: 'Create manual waybills to generate barcodes.',
     tag: 'Resi Manual',
     tone: 'teal',
   },
@@ -65,7 +65,7 @@ function Home() {
         <header className={styles.homeHero}>
           <span className={styles.eyebrow}>Delivery Report System</span>
           <h1>Delivery Report</h1>
-          <p>Pilih modul yang ingin digunakan.</p>
+          <p>Choose the module you want to use.</p>
         </header>
 
         <div className={styles.moduleBoard}>
@@ -155,10 +155,13 @@ export default function DeliveryReportClient() {
 
   return (
     <div
-      className={`${styles.deliveryApp} ${moduleId === 'summary' ? styles.summaryApp : ''} ${showHome ? styles.homeApp : ''}`}
+      className={`${styles.deliveryApp} ${moduleId === 'summary' ? styles.summaryApp : ''} ${moduleId === 'delivery-order' ? styles.orderApp : ''} ${moduleId === 'barcode' ? styles.scannerApp : ''} ${moduleId === 'resolution' ? styles.resolutionApp : ''} ${showHome ? styles.homeApp : ''}`}
       data-delivery-report
       data-delivery-home={showHome ? '' : undefined}
       data-delivery-summary={moduleId === 'summary' ? '' : undefined}
+      data-delivery-order={moduleId === 'delivery-order' ? '' : undefined}
+      data-delivery-scanner={moduleId === 'barcode' ? '' : undefined}
+      data-delivery-resolution={moduleId === 'resolution' ? '' : undefined}
     >
       {showHome ? <Home /> : null}
       {moduleId === 'summary' ? <DeliverySummary /> : null}

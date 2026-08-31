@@ -181,13 +181,14 @@ export default async function HumanResourcesPage() {
   const leaveRows = filterActiveLeaveRows(leaveRowsRaw)
   const sortedGiftRowsRaw = sortRowsByRecent(giftRowsRaw)
   const giftRows = filterVisibleBirthdayGiftRows(sortedGiftRowsRaw)
+  const activePeopleRows = peopleRows.filter((person) => !String(person?.resign_date || '').trim())
 
-  const maleCount = peopleRows.filter((person) => normalizeGenderValue(person.gender || person.jenis_kelamin) === 'Male').length
-  const femaleCount = peopleRows.filter((person) => normalizeGenderValue(person.gender || person.jenis_kelamin) === 'Female').length
-  const peopleCount = peopleRows.length
+  const maleCount = activePeopleRows.filter((person) => normalizeGenderValue(person.gender || person.jenis_kelamin) === 'Male').length
+  const femaleCount = activePeopleRows.filter((person) => normalizeGenderValue(person.gender || person.jenis_kelamin) === 'Female').length
+  const peopleCount = activePeopleRows.length
   const groupCounters = { Arkline: 0, MOB: 0, OI: 0, Warehouse: 0, HQ: 0 }
 
-  for (const row of peopleRows) {
+  for (const row of activePeopleRows) {
     const label = getGroupLabel(row)
     if (label && label in groupCounters) {
       groupCounters[label] += 1

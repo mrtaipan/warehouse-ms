@@ -259,7 +259,7 @@ function MetricCard({ icon, label, value }) {
   )
 }
 
-export default function MyArklifeClient({ profile, leaveRows, giftRows, publicHolidayRows, leaveMissing, giftMissing, canOpenPeopleManagement }) {
+export default function MyArklifeClient({ profile, leaveRows, giftRows, publicHolidayRows, leaveMissing, giftMissing, penaltyPoints = 0, canOpenPeopleManagement }) {
   const [openLeaveModal, setOpenLeaveModal] = useState(false)
   const [openGiftModal, setOpenGiftModal] = useState(false)
   const [openProfileModal, setOpenProfileModal] = useState(false)
@@ -395,7 +395,7 @@ export default function MyArklifeClient({ profile, leaveRows, giftRows, publicHo
       <section className={styles.metricsGrid}>
         <MetricCard icon={<CalendarIcon />} label="Join Date" value={formatLongDate(profile?.join_date)} />
         <MetricCard icon={<LeaveIcon />} label="Leave Balance" value={formatNumber(leaveBalance)} />
-        <MetricCard icon={<WarningIcon />} label="Penalty Points" value={formatNumber(profile?.penalty_points || 0)} />
+        <MetricCard icon={<WarningIcon />} label="Penalty Points" value={formatNumber(penaltyPoints)} />
         <MetricCard icon={<BriefcaseIcon />} label="Working Days" value={formatNumber(profile?.working_days || 0)} />
       </section>
 

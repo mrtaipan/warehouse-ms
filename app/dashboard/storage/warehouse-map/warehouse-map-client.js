@@ -9,6 +9,9 @@ import styles from './warehouse-map.module.css'
 
 const supabase = createClient()
 const BATCH_SIZE = 1000
+const STORAGE_DATA_CACHE_TTL_MS = 15 * 1000
+const WAREHOUSE_STORAGE_SELECT_COLUMNS = 'id, rack_location_id, item_name, size, qty, notes, created_at, updated_at'
+const warehouseStorageCache = { rows: null, expiresAt: 0 }
 
 const RACK_SLOTS = [
   { key: 'A', suffix: 'A', level: 'Level 3' },
@@ -701,6 +704,27 @@ function formatDateTime(value) {
   }).format(new Date(value))
 }
 
+function sortStorageEntries(rows = []) {
+  return [...rows].sort((left, right) => new Date(right.created_at || 0) - new Date(left.created_at || 0))
+}
+
+function setWarehouseStorageCache(rows = []) {
+  warehouseStorageCache.rows = sortStorageEntries(rows)
+  warehouseStorageCache.expiresAt = Date.now() + STORAGE_DATA_CACHE_TTL_MS
+  return warehouseStorageCache.rows
+}
+
+function mergeWarehouseStorageRows(currentRows = [], nextRows = []) {
+  const rowsById = new Map(currentRows.map((row) => [String(row.id), row]))
+
+  nextRows.forEach((row) => {
+    if (!row?.id) return
+    rowsById.set(String(row.id), row)
+  })
+
+  return setWarehouseStorageCache(Array.from(rowsById.values()))
+}
+
 async function fetchAllRackLocations() {
   const allRows = []
   let from = 0
@@ -736,7 +760,11 @@ async function fetchAllRackLocations() {
   return allRows
 }
 
-async function fetchAllWarehouseStorage() {
+async function fetchAllWarehouseStorage({ force = false } = {}) {
+  if (!force && warehouseStorageCache.rows && warehouseStorageCache.expiresAt > Date.now()) {
+    return warehouseStorageCache.rows
+  }
+
   const allRows = []
   let from = 0
 
@@ -744,7 +772,7 @@ async function fetchAllWarehouseStorage() {
     const to = from + BATCH_SIZE - 1
     const { data, error } = await supabase
       .from('warehouse_storage')
-      .select('id, rack_location_id, item_name, size, qty, notes, created_at')
+      .select(WAREHOUSE_STORAGE_SELECT_COLUMNS)
       .order('created_at', { ascending: false })
       .range(from, to)
 
@@ -765,7 +793,7 @@ async function fetchAllWarehouseStorage() {
     from += BATCH_SIZE
   }
 
-  return allRows
+  return setWarehouseStorageCache(allRows)
 }
 
 async function fetchAllRestockHistory() {
@@ -2191,7 +2219,10 @@ export default function WarehouseMapClient({ canEditMap = false, canUseRegistry 
       updated_by: await getCurrentUserEmail(),
     }
 
-    const { error: insertError } = await supabase.from('warehouse_storage').insert([payload])
+    const { data: insertedRows, error: insertError } = await supabase
+      .from('warehouse_storage')
+      .insert([payload])
+      .select(WAREHOUSE_STORAGE_SELECT_COLUMNS)
 
     if (insertError) {
       setRegistryError(insertError.message)
@@ -2199,9 +2230,7 @@ export default function WarehouseMapClient({ canEditMap = false, canUseRegistry 
       return
     }
 
-    const refreshedStorage = await fetchAllWarehouseStorage()
-
-    setStorageEntries(refreshedStorage || [])
+    setStorageEntries((currentRows) => mergeWarehouseStorageRows(currentRows, insertedRows || []))
     setRegistrySuccess('Item stored successfully.')
     setRegistryForm((prev) => ({
       ...prev,

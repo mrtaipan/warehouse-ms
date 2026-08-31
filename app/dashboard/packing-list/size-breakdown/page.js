@@ -3129,7 +3129,7 @@ function getReturnSummary(returnRows = []) {
 }
 
 function isPackingStaffProfile(profile = {}) {
-  return normalize(profile.role) === 'PACKING_STAFF'
+  return ['PACKING_STAFF', 'PACKING_COORDINATOR'].includes(normalize(profile.role))
 }
 
 function getProfileDisplayName(profile = {}) {

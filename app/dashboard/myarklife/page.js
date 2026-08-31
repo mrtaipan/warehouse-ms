@@ -44,7 +44,7 @@ export default async function MyArklifePage() {
   }
 
   const { profile, permissions, isAdmin } = await loadAccessContext(supabase, user, '*')
-  const [leaveResult, giftResult, publicHolidayResult] = await Promise.all([
+  const [leaveResult, giftResult, publicHolidayResult, penaltyResult] = await Promise.all([
     supabase
       .from('hrga_leave_requests')
       .select('*')
@@ -55,11 +55,17 @@ export default async function MyArklifePage() {
       .select('*')
       .eq('employee_authenticated_id', user.id),
     supabase.from('hrga_public_holidays').select('*').order('holiday_date', { ascending: true }),
+    supabase
+      .from('hrga_penalty_points_current')
+      .select('total_points')
+      .eq('employee_profile_id', profile?.id || '')
+      .maybeSingle(),
   ])
 
   const { rows: leaveRowsRaw, missing: leaveMissing } = getQueryData(leaveResult)
   const { rows: giftRowsRaw, missing: giftMissing } = getQueryData(giftResult)
   const { rows: publicHolidayRows } = getQueryData(publicHolidayResult)
+  const penaltyPoints = penaltyResult.error?.code === '42P01' ? 0 : Number(penaltyResult.data?.total_points || 0)
   const leaveRows = filterActiveLeaveRows(leaveRowsRaw).slice(0, 2)
   const giftRows = sortRowsByRecent(giftRowsRaw)
 
@@ -72,6 +78,7 @@ export default async function MyArklifePage() {
         publicHolidayRows={publicHolidayRows}
         leaveMissing={leaveMissing}
         giftMissing={giftMissing}
+        penaltyPoints={penaltyPoints}
         canOpenPeopleManagement={canAccessPeopleManagement(permissions, isAdmin)}
       />
     </div>

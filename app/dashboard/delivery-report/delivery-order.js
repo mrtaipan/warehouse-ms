@@ -3,9 +3,14 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
 import { deliverySupabase } from '@/lib/delivery-supabase'
+import { createClient } from '@/utils/supabase/browser'
+import { getProfileByAuthenticatedUser } from '@/utils/user-profiles'
 import { EmptyState, Modal, ModuleHeader, StatusMessage } from './delivery-report-client'
 import { GROUPS, safeNumber, todayIso } from './delivery-report-helpers'
 import styles from './delivery-report.module.css'
+
+const CREATED_BY_COLUMNS = ['created_by', 'created by']
+const UPDATED_BY_COLUMNS = ['update_by', 'updated_by', 'update by', 'updated by']
 
 const blankForm = (date) => ({
   delivery_date: date,
@@ -17,10 +22,53 @@ const blankForm = (date) => ({
   keterangan: '',
 })
 
+function isColumnLookupError(error) {
+  const text = `${error?.code || ''} ${error?.message || ''} ${error?.details || ''}`.toLowerCase()
+  return error?.code === 'PGRST204' || text.includes('schema cache') || text.includes('could not find')
+}
+
+async function insertOrderWithAudit(payload, actorName) {
+  let lastError = null
+
+  for (const createdByColumn of CREATED_BY_COLUMNS) {
+    for (const updatedByColumn of UPDATED_BY_COLUMNS) {
+      const result = await deliverySupabase.from('Delivery_Order').insert({
+        ...payload,
+        [createdByColumn]: actorName,
+        [updatedByColumn]: actorName,
+      })
+
+      if (!result.error) return result
+      if (!isColumnLookupError(result.error)) return result
+      lastError = result.error
+    }
+  }
+
+  return { error: lastError }
+}
+
+async function updateOrderWithAudit(id, payload, actorName) {
+  let lastError = null
+
+  for (const updatedByColumn of UPDATED_BY_COLUMNS) {
+    const result = await deliverySupabase
+      .from('Delivery_Order')
+      .update({ ...payload, [updatedByColumn]: actorName })
+      .eq('id', id)
+
+    if (!result.error) return result
+    if (!isColumnLookupError(result.error)) return result
+    lastError = result.error
+  }
+
+  return { error: lastError }
+}
+
 export default function DeliveryOrder() {
+  const supabase = useMemo(() => createClient(), [])
   const today = useMemo(() => todayIso(), [])
   const [form, setForm] = useState(blankForm(today))
-  const [filters, setFilters] = useState({ date: today, group: '', category: '' })
+  const [filters, setFilters] = useState({ date: today, group: '', category: '', channel: '', courier: '' })
   const [rows, setRows] = useState([])
   const [masters, setMasters] = useState({ categories: [], channels: [], couriers: [] })
   const [loading, setLoading] = useState(true)
@@ -55,9 +103,21 @@ export default function DeliveryOrder() {
       .order('id', { ascending: false })
     if (filters.group) query = query.eq('group_order', filters.group)
     if (filters.category) query = query.eq('delivery_category', filters.category)
+    if (filters.channel) query = query.eq('channel', filters.channel)
+    if (filters.courier) query = query.eq('courier', filters.courier)
     const { data, error } = await query
     if (error) setStatus({ type: 'error', message: `Gagal memuat Delivery Order: ${error.message}` })
-    else setRows(data || [])
+    else {
+      const orderedRows = [...(data || [])].sort((first, second) => {
+        const firstGroup = GROUPS.indexOf(first.group_order)
+        const secondGroup = GROUPS.indexOf(second.group_order)
+        const firstOrder = firstGroup === -1 ? GROUPS.length : firstGroup
+        const secondOrder = secondGroup === -1 ? GROUPS.length : secondGroup
+        if (firstOrder !== secondOrder) return firstOrder - secondOrder
+        return safeNumber(second.id) - safeNumber(first.id)
+      })
+      setRows(orderedRows)
+    }
     setLoading(false)
   }, [filters])
 
@@ -84,25 +144,56 @@ export default function DeliveryOrder() {
     return Math.max(0, ...matches.map((row) => safeNumber(row.part_no))) + 1
   }, [form, rows])
 
+  async function getActorDisplayName() {
+    const {
+      data: { user },
+      error,
+    } = await supabase.auth.getUser()
+
+    if (error) throw error
+    if (!user) throw new Error('User session tidak ditemukan.')
+
+    const { data: profile, error: profileError } = await getProfileByAuthenticatedUser(supabase, user, 'display_name')
+    if (profileError) throw profileError
+
+    const metadataName =
+      String(user.user_metadata?.display_name || '').trim() ||
+      String(user.user_metadata?.full_name || '').trim() ||
+      String(user.user_metadata?.name || '').trim()
+    const displayName = String(profile?.display_name || metadataName).trim()
+
+    if (!displayName) throw new Error('Display name user tidak ditemukan. Lengkapi profile terlebih dahulu.')
+    return displayName
+  }
+
   async function saveOrder() {
     if (!form.delivery_date || !form.group_order || !form.delivery_category || !form.channel || !form.courier || !safeNumber(form.quantity)) {
       setStatus({ type: 'error', message: 'Lengkapi tanggal, group, kategori, channel, ekspedisi, dan quantity.' })
       return
     }
     setSaving(true)
-    const { error } = await deliverySupabase.from('Delivery_Order').insert({
-      ...form,
-      quantity: safeNumber(form.quantity),
-      part_no: nextPart || 1,
-      updated_time: new Date().toISOString(),
-    })
-    if (error) setStatus({ type: 'error', message: `Gagal menyimpan: ${error.message}` })
-    else {
-      setStatus({ type: 'success', message: 'Delivery Order berhasil disimpan.' })
-      setForm(blankForm(form.delivery_date))
-      await loadRows()
+    try {
+      const actorName = await getActorDisplayName()
+      const { error } = await insertOrderWithAudit(
+        {
+          ...form,
+          quantity: safeNumber(form.quantity),
+          part_no: nextPart || 1,
+          updated_time: new Date().toISOString(),
+        },
+        actorName
+      )
+      if (error) setStatus({ type: 'error', message: `Gagal menyimpan: ${error.message}` })
+      else {
+        setStatus({ type: 'success', message: 'Delivery Order berhasil disimpan.' })
+        setForm(blankForm(form.delivery_date))
+        await loadRows()
+      }
+    } catch (error) {
+      setStatus({ type: 'error', message: error.message || 'Gagal membaca profile user.' })
+    } finally {
+      setSaving(false)
     }
-    setSaving(false)
   }
 
   async function saveMaster() {
@@ -125,15 +216,21 @@ export default function DeliveryOrder() {
 
   async function updateOrder() {
     if (!editRow) return
-    const { error } = await deliverySupabase
-      .from('Delivery_Order')
-      .update({ quantity: safeNumber(editRow.quantity), keterangan: editRow.keterangan || '', updated_time: new Date().toISOString() })
-      .eq('id', editRow.id)
-    if (error) setStatus({ type: 'error', message: `Gagal update: ${error.message}` })
-    else {
-      setStatus({ type: 'success', message: 'Data database berhasil diperbarui.' })
-      setEditRow(null)
-      await loadRows()
+    try {
+      const actorName = await getActorDisplayName()
+      const { error } = await updateOrderWithAudit(
+        editRow.id,
+        { quantity: safeNumber(editRow.quantity), keterangan: editRow.keterangan || '', updated_time: new Date().toISOString() },
+        actorName
+      )
+      if (error) setStatus({ type: 'error', message: `Gagal update: ${error.message}` })
+      else {
+        setStatus({ type: 'success', message: 'Data database berhasil diperbarui.' })
+        setEditRow(null)
+        await loadRows()
+      }
+    } catch (error) {
+      setStatus({ type: 'error', message: error.message || 'Gagal membaca profile user.' })
     }
   }
 
@@ -149,23 +246,29 @@ export default function DeliveryOrder() {
   }
 
   const field = (key) => (event) => setForm((current) => ({ ...current, [key]: event.target.value }))
+  const groupClass = (group) =>
+    ({
+      ARKLINE: styles.groupBadgeArkline,
+      MOB: styles.groupBadgeMob,
+      OI: styles.groupBadgeOi,
+    }[group] || '')
 
   return (
     <div className={styles.modulePage}>
       <ModuleHeader
         eyebrow="Delivery Report • Admin Input"
         title="Delivery Order"
-        subtitle="Input target delivery harian dan simpan langsung ke database."
+        subtitle="Enter daily delivery targets and save them directly to the database."
       />
       <StatusMessage status={status} />
 
       <section className={styles.splitBoard}>
         <article className={styles.formPanel}>
-          <div className={styles.panelHeader}><h2>INPUT FORM</h2><span>Admin Entry</span></div>
+          <div className={styles.panelHeader}><h2>INPUT FORM</h2></div>
           <div className={styles.panelBody}>
             <div className={styles.miniMetrics}>
               <div><span>ROWS</span><strong>{rows.length}</strong></div>
-              <div><span>TOTAL QUANTITY</span><strong>{totalQuantity}</strong></div>
+              <div><span>TOTAL QTY</span><strong>{totalQuantity}</strong></div>
             </div>
             <h3 className={styles.sectionLabel}>DELIVERY ORDER DATA</h3>
             <div className={styles.formGrid}>
@@ -195,25 +298,26 @@ export default function DeliveryOrder() {
         </article>
 
         <article className={styles.tablePanel}>
-          <div className={styles.panelHeader}><h2>DELIVERY ORDERS</h2><span>Data dari database untuk hari ini saja</span></div>
+          <div className={styles.panelHeader}><h2>DELIVERY ORDERS</h2></div>
           <div className={styles.panelBody}>
             <div className={styles.databaseFilter}>
-              <div><h3>DATABASE</h3><p>Filter dan refresh hanya berlaku untuk table database</p></div>
               <label><span>TANGGAL</span><input type="date" value={filters.date} onChange={(event) => setFilters({ ...filters, date: event.target.value })} /></label>
               <label><span>GROUP</span><select value={filters.group} onChange={(event) => setFilters({ ...filters, group: event.target.value })}><option value="">SEMUA GROUP</option>{GROUPS.map((group) => <option key={group}>{group}</option>)}</select></label>
               <label><span>KATEGORI</span><select value={filters.category} onChange={(event) => setFilters({ ...filters, category: event.target.value })}><option value="">SEMUA KATEGORI</option>{masters.categories.map((item) => <option key={item.id}>{item.nama}</option>)}</select></label>
-              <button className={styles.softButton} onClick={loadRows}>Refresh</button>
+              <label><span>CHANNEL</span><select value={filters.channel} onChange={(event) => setFilters({ ...filters, channel: event.target.value })}><option value="">SEMUA CHANNEL</option>{masters.channels.map((item) => <option key={item.id}>{item.nama}</option>)}</select></label>
+              <label><span>COURIER</span><select value={filters.courier} onChange={(event) => setFilters({ ...filters, courier: event.target.value })}><option value="">SEMUA COURIER</option>{masters.couriers.map((item) => <option key={item.id}>{item.nama}</option>)}</select></label>
+              <button className={styles.softButton} aria-label="Refresh delivery orders" title="Refresh" onClick={loadRows}>↻</button>
             </div>
             <div className={styles.tableWrap}>
               <table>
-                <thead><tr><th>Tanggal</th><th>Group</th><th>Kategori</th><th>Channel</th><th>Courier</th><th>Part</th><th>Qty</th><th>Action</th></tr></thead>
+                <thead><tr><th>Tanggal</th><th>Group</th><th>Kategori</th><th>Channel</th><th>Courier</th><th>Part</th><th>Qty</th><th>Note</th><th>Action</th></tr></thead>
                 <tbody>
-                  {loading ? <tr><td colSpan="8"><EmptyState label="Loading data..." /></td></tr> : null}
-                  {!loading && !rows.length ? <tr><td colSpan="8"><EmptyState /></td></tr> : null}
+                  {loading ? <tr><td colSpan="9"><EmptyState label="Loading data..." /></td></tr> : null}
+                  {!loading && !rows.length ? <tr><td colSpan="9"><EmptyState /></td></tr> : null}
                   {!loading ? rows.map((row) => (
                     <tr key={row.id}>
-                      <td>{row.delivery_date}</td><td><span className={styles.groupBadge}>{row.group_order}</span></td><td>{row.delivery_category}</td><td>{row.channel}</td><td>{row.courier}</td><td><strong>Part {row.part_no || 1}</strong></td><td><strong>{row.quantity}</strong></td>
-                      <td><div className={styles.rowActions}><button className={styles.editButton} onClick={() => setEditRow({ ...row })}>Edit</button><button className={styles.deleteButton} onClick={() => setDeleteRow(row)}>Delete</button></div></td>
+                      <td>{row.delivery_date}</td><td><span className={`${styles.groupBadge} ${groupClass(row.group_order)}`}>{row.group_order}</span></td><td>{row.delivery_category}</td><td>{row.channel}</td><td>{row.courier}</td><td><strong>Part {row.part_no || 1}</strong></td><td><strong>{row.quantity}</strong></td><td>{row.keterangan ? <span className={styles.noteBadge} title={row.keterangan} aria-label={`Note: ${row.keterangan}`}>ⓘ</span> : '-'}</td>
+                      <td><div className={styles.rowActions}><button className={styles.editButton} aria-label="Edit order" title="Edit" onClick={() => setEditRow({ ...row })}>✎</button><button className={styles.deleteButton} aria-label="Delete order" title="Delete" onClick={() => setDeleteRow(row)}>×</button></div></td>
                     </tr>
                   )) : null}
                 </tbody>

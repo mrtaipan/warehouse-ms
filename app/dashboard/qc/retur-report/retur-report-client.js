@@ -110,6 +110,7 @@ export default function ReturReportClient({ rows, canAdd = false }) {
   const [printCardModeOpen, setPrintCardModeOpen] = useState(false)
   const [activeReturnTab, setActiveReturnTab] = useState('preparation')
   const [grnFilter, setGrnFilter] = useState('')
+  const [koliFilter, setKoliFilter] = useState('')
   const [supplierFilter, setSupplierFilter] = useState('')
   const [statusFilter, setStatusFilter] = useState('')
   const [phaseFilter, setPhaseFilter] = useState('')
@@ -142,6 +143,7 @@ export default function ReturReportClient({ rows, canAdd = false }) {
 
   const matchesActiveFilters = useCallback((row, ignoredFilter = '') => {
     const matchesGrn = ignoredFilter === 'grn' || !grnFilter || row.inbound?.grn_number === grnFilter
+    const matchesKoli = ignoredFilter === 'koli' || !koliFilter || String(row.koli_sequence || '') === koliFilter
     const matchesSupplier = ignoredFilter === 'supplier' || !supplierFilter || row.inbound?.suppliers?.supplier_name === supplierFilter
     const matchesStatus = ignoredFilter === 'status' || !statusFilter || String(row.status || 'waiting') === statusFilter
     const matchesPhase = ignoredFilter === 'phase' || !phaseFilter || String(row.source_phase || '') === phaseFilter
@@ -150,14 +152,27 @@ export default function ReturReportClient({ rows, canAdd = false }) {
     const matchesModel = ignoredFilter === 'model' || !modelFilter || getModelLabel(row) === modelFilter
     const matchesGrade = ignoredFilter === 'grade' || !gradeFilter || String(row.grade || '') === gradeFilter
 
-    return matchesGrn && matchesSupplier && matchesStatus && matchesPhase && matchesBrand && matchesCategory && matchesModel && matchesGrade
-  }, [brandFilter, categoryFilter, gradeFilter, grnFilter, modelFilter, phaseFilter, statusFilter, supplierFilter])
+    return matchesGrn && matchesKoli && matchesSupplier && matchesStatus && matchesPhase && matchesBrand && matchesCategory && matchesModel && matchesGrade
+  }, [brandFilter, categoryFilter, gradeFilter, grnFilter, koliFilter, modelFilter, phaseFilter, statusFilter, supplierFilter])
 
   const grnOptions = useMemo(
     () =>
       Array.from(new Set(filterSourceRows.filter((row) => matchesActiveFilters(row, 'grn')).map((row) => row.inbound?.grn_number).filter(Boolean))).sort((a, b) =>
         a.localeCompare(b)
       ),
+    [filterSourceRows, matchesActiveFilters]
+  )
+  const koliOptions = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          filterSourceRows
+            .filter((row) => matchesActiveFilters(row, 'koli'))
+            .map((row) => row.koli_sequence)
+            .filter((value) => value !== null && value !== undefined && value !== '')
+            .map((value) => String(value))
+        )
+      ).sort((a, b) => Number(a) - Number(b)),
     [filterSourceRows, matchesActiveFilters]
   )
   const supplierOptions = useMemo(
@@ -301,6 +316,7 @@ export default function ReturReportClient({ rows, canAdd = false }) {
 
   function resetFilters() {
     setGrnFilter('')
+    setKoliFilter('')
     setSupplierFilter('')
     setStatusFilter('')
     setPhaseFilter('')
@@ -1104,7 +1120,7 @@ export default function ReturReportClient({ rows, canAdd = false }) {
         </div>
       </div>
 
-      {grnOptions.length || supplierOptions.length || statusOptions.length || phaseOptions.length || brandOptions.length || categoryOptions.length || modelOptions.length || gradeOptions.length ? (
+      {grnOptions.length || koliOptions.length || supplierOptions.length || statusOptions.length || phaseOptions.length || brandOptions.length || categoryOptions.length || modelOptions.length || gradeOptions.length ? (
       <div className={reportStyles.filterGrid}>
         <div className={reportStyles.field}>
           <label htmlFor="qc-retur-report-grn-filter">GRN Number</label>
@@ -1117,6 +1133,21 @@ export default function ReturReportClient({ rows, canAdd = false }) {
             <option value="">All GRN</option>
             {grnOptions.map((item) => (
               <option key={item} value={item}>{item}</option>
+            ))}
+          </select>
+        </div>
+
+        <div className={reportStyles.field}>
+          <label htmlFor="qc-retur-report-koli-filter">Koli</label>
+          <select
+            id="qc-retur-report-koli-filter"
+            className={reportStyles.input}
+            value={koliFilter}
+            onChange={(event) => updateFilter(setKoliFilter, event.target.value)}
+          >
+            <option value="">All Koli</option>
+            {koliOptions.map((item) => (
+              <option key={item} value={item}>Koli {item}</option>
             ))}
           </select>
         </div>
@@ -1249,6 +1280,7 @@ export default function ReturReportClient({ rows, canAdd = false }) {
                   aria-label="Select all regular return rows"
                 />
               </th>
+              <th>Koli</th>
               <th>Date</th>
               <th>GRN</th>
               <th>Phase</th>
@@ -1259,7 +1291,6 @@ export default function ReturReportClient({ rows, canAdd = false }) {
               <th>Grade</th>
               <th>Status</th>
               <th className={reportStyles.centerNumberCell}>Qty</th>
-              <th>Koli</th>
             </tr>
           </thead>
           <tbody>
@@ -1272,6 +1303,7 @@ export default function ReturReportClient({ rows, canAdd = false }) {
                   <td>
                     <input className={reportStyles.checkbox} type="checkbox" checked={isChecked} onChange={() => toggleRow(row.id)} />
                   </td>
+                  <td>{row.koli_sequence ? `Koli ${row.koli_sequence}` : '-'}</td>
                   <td>{formatDateDisplay(row.created_at || row.inbound?.inbound_date)}</td>
                   <td>{row.inbound?.grn_number || '-'}</td>
                   <td>{getPhaseLabel(row.source_phase)}</td>
@@ -1284,7 +1316,6 @@ export default function ReturReportClient({ rows, canAdd = false }) {
                     <span className={`${reportStyles.badge} ${isCompleted ? reportStyles.badgeCompleted : ''}`}>{getStatusLabel(row.status)}</span>
                   </td>
                   <td className={reportStyles.centerNumberCell}>{row.qty || 0}</td>
-                  <td>{row.koli_sequence ? `Koli ${row.koli_sequence}` : '-'}</td>
                 </tr>
               )
             })}

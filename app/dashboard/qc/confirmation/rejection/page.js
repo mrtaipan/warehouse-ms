@@ -1049,6 +1049,39 @@ function getSampleSourceVariantCode(item) {
   )
 }
 
+function buildExistingKoliTargetOptions(rows = [], inboundId) {
+  const grouped = new Map()
+  const targetInboundId = Number(inboundId || 0)
+
+  rows
+    .filter((item) => Number(item.inbound_id || 0) === targetInboundId)
+    .forEach((item) => {
+      const sequence = Number(item.koli_sequence || 0)
+      if (!sequence) return
+
+      const key = String(sequence)
+      const current = grouped.get(key) || {
+        value: key,
+        sequence,
+        totalQty: 0,
+        lineCount: 0,
+        grades: new Set(),
+      }
+
+      current.totalQty += Number(item.qty || 0)
+      current.lineCount += 1
+      if (item.grade) current.grades.add(String(item.grade || '').trim().toUpperCase())
+      grouped.set(key, current)
+    })
+
+  return Array.from(grouped.values())
+    .sort((a, b) => a.sequence - b.sequence)
+    .map((item) => ({
+      ...item,
+      gradeLabel: Array.from(item.grades).filter(Boolean).sort().join(', '),
+    }))
+}
+
 export default function QcConfirmationRejectionPage() {
   const searchParams = useSearchParams()
   const draftIdRef = useRef(1)
@@ -1075,6 +1108,8 @@ export default function QcConfirmationRejectionPage() {
   const [takeGradeModalOpen, setTakeGradeModalOpen] = useState(false)
   const [takeGradeSelection, setTakeGradeSelection] = useState('')
   const [pendingTakeRows, setPendingTakeRows] = useState([])
+  const [postTargetModalOpen, setPostTargetModalOpen] = useState(false)
+  const [postTargetSelection, setPostTargetSelection] = useState('new')
   const [supportsConfirmSourceGrade, setSupportsConfirmSourceGrade] = useState(false)
   const [previewPhotoUrl, setPreviewPhotoUrl] = useState('')
   const [resultFilters, setResultFilters] = useState({
@@ -1283,7 +1318,8 @@ export default function QcConfirmationRejectionPage() {
         adjustmentModelLabel ||
         adjustmentModelMenuOpen ||
         adjustmentQty ||
-        takeGradeModalOpen
+        takeGradeModalOpen ||
+        postTargetModalOpen
     ),
   })
 
@@ -1504,6 +1540,12 @@ export default function QcConfirmationRejectionPage() {
   const remainingTotal = Number(totals.source || 0) - Number(totals.taken || 0) - Number(totals.returned || 0)
   const currentTakeKoliQty = currentTakeKoliItems.reduce((sum, item) => sum + Number(item.qty || 0), 0)
   const currentReturnKoliQty = currentReturnKoliItems.reduce((sum, item) => sum + Number(item.qty || 0), 0)
+  const returnKoliTargetOptions = useMemo(
+    () => buildExistingKoliTargetOptions(returnRows, selectedInbound?.id),
+    [returnRows, selectedInbound?.id]
+  )
+  const activePostTargetOptions = returnKoliTargetOptions
+  const activePostTargetQty = currentReturnKoliQty
   const brandFilterOptions = useMemo(() => {
     const options = new Map()
     sourceRows.filter((row) => matchesResultFilterValues(row, Number(row.source_qty || 0), resultFilters, 'brandId')).forEach((row) => {
@@ -1831,7 +1873,7 @@ export default function QcConfirmationRejectionPage() {
     setCurrentReturnKoliItems((prev) => prev.filter((item) => item.id !== draftId))
   }
 
-  async function handlePostTakeKoli() {
+  function validatePostTargetRequest(type) {
     if (!canEditConfirmation) return
 
     setError('')
@@ -1839,44 +1881,91 @@ export default function QcConfirmationRejectionPage() {
 
     if (!selectedInbound) {
       setError('Choose a GRN first.')
-      return
+      return false
     }
 
-    if (!currentTakeKoliItems.length) {
-      setError('Take koli is still empty.')
-      return
+    const targetItems = type === 'return' ? currentReturnKoliItems : currentTakeKoliItems
+
+    if (!targetItems.length) {
+      setError(type === 'return' ? 'Return koli is still empty.' : 'Take koli is still empty.')
+      return false
     }
 
-    const invalidSourceGradeItem = currentTakeKoliItems.find(
+    if (type !== 'take') {
+      return true
+    }
+
+    const invalidSourceGradeItem = targetItems.find(
       (item) => !['B', 'C'].includes(String(item.source_grade || '').trim().toUpperCase())
     )
     if (invalidSourceGradeItem) {
       setError('Take items must keep their original rejection grade before posting.')
-      return
+      return false
     }
 
-    const needsSourceGrade = currentTakeKoliItems.some(
+    const needsSourceGrade = targetItems.some(
       (item) => item.source_grade && String(item.source_grade || '').toUpperCase() !== String(item.grade || '').toUpperCase()
     )
     if (needsSourceGrade && !supportsConfirmSourceGrade) {
       setError('Run `supabase/qc_confirm_source_grade.sql` first before transferring rejected goods into a different grade.')
+      return false
+    }
+
+    return true
+  }
+
+  function openPostTargetModal(type) {
+    if (!validatePostTargetRequest(type)) return
+
+    setPostTargetSelection('new')
+    setPostTargetModalOpen(true)
+  }
+
+  function closePostTargetModal() {
+    setPostTargetModalOpen(false)
+    setPostTargetSelection('new')
+  }
+
+  async function resolvePostKoliSequence(type, targetSelection) {
+    if (targetSelection && targetSelection !== 'new') {
+      const selectedSequence = Number(targetSelection || 0)
+      if (selectedSequence > 0) return selectedSequence
+      throw new Error('Choose a valid target koli.')
+    }
+
+    let sequenceQuery = supabase
+      .from(type === 'return' ? 'warehouse_returns' : 'qc_confirm')
+      .select('koli_sequence')
+      .eq('inbound_id', selectedInbound.id)
+
+    if (type === 'return') {
+      sequenceQuery = sequenceQuery.eq('source_phase', 'qc')
+    }
+
+    const { data, error: sequenceError } = await sequenceQuery
+
+    if (sequenceError) {
+      throw new Error(sequenceError.message)
+    }
+
+    return (data || []).reduce((maxValue, item) => Math.max(maxValue, Number(item.koli_sequence || 0)), 0) + 1
+  }
+
+  async function handlePostTakeKoli(targetSelection = 'new') {
+    if (!validatePostTargetRequest('take')) {
       return
     }
 
     setSavingTake(true)
-    const { data: latestConfirmRows, error: sequenceError } = await supabase
-      .from('qc_confirm')
-      .select('koli_sequence')
-      .eq('inbound_id', selectedInbound.id)
 
-    if (sequenceError) {
-      setError(sequenceError.message)
+    let nextKoliSequence = 0
+    try {
+      nextKoliSequence = await resolvePostKoliSequence('take', targetSelection)
+    } catch (sequenceError) {
+      setError(sequenceError.message || 'Failed to choose target koli.')
       setSavingTake(false)
       return
     }
-
-    const nextKoliSequence =
-      (latestConfirmRows || []).reduce((maxValue, item) => Math.max(maxValue, Number(item.koli_sequence || 0)), 0) + 1
 
     const payload = currentTakeKoliItems.map((item) => {
       const row = {
@@ -1917,31 +2006,26 @@ export default function QcConfirmationRejectionPage() {
 
     setConfirmRows((prev) => [...prev, ...(data || []).map(normalizeConfirmRow)])
     setCurrentTakeKoliItems([])
+    closePostTargetModal()
     setSuccess(`Take koli ${nextKoliSequence} posted to next process.`)
     setSavingTake(false)
   }
 
-  async function handlePostReturnKoli() {
-    if (!canEditConfirmation) return
-
-    setError('')
-    setSuccess('')
-
-    if (!selectedInbound) {
-      setError('Choose a GRN first.')
-      return
-    }
-
-    if (!currentReturnKoliItems.length) {
-      setError('Return koli is still empty.')
+  async function handlePostReturnKoli(targetSelection = 'new') {
+    if (!validatePostTargetRequest('return')) {
       return
     }
 
     setSavingReturn(true)
-    const nextKoliSequence =
-      returnRows
-        .filter((item) => Number(item.inbound_id) === Number(selectedInbound.id))
-        .reduce((maxValue, item) => Math.max(maxValue, Number(item.koli_sequence || 0)), 0) + 1
+
+    let nextKoliSequence = 0
+    try {
+      nextKoliSequence = await resolvePostKoliSequence('return', targetSelection)
+    } catch (sequenceError) {
+      setError(sequenceError.message || 'Failed to choose target koli.')
+      setSavingReturn(false)
+      return
+    }
 
     const payload = currentReturnKoliItems.map((item) => ({
       inbound_id: item.inbound_id,
@@ -1971,6 +2055,7 @@ export default function QcConfirmationRejectionPage() {
 
     setReturnRows((prev) => [...prev, ...(data || []).map(normalizeReturnRow)])
     setCurrentReturnKoliItems([])
+    closePostTargetModal()
     setSuccess(`Return koli ${nextKoliSequence} posted to returns.`)
     setSavingReturn(false)
   }
@@ -2040,6 +2125,7 @@ export default function QcConfirmationRejectionPage() {
   }
 
   const canUseSourceActions = Boolean(grnFilter && filteredSourceRows.length)
+  const isPostingTarget = savingTake || savingReturn
 
   if (loading) {
     return <p style={styles.emptyText}>Loading confirmation rejection...</p>
@@ -2310,7 +2396,7 @@ export default function QcConfirmationRejectionPage() {
             </div>
             <button
               type="button"
-              onClick={handlePostTakeKoli}
+              onClick={() => handlePostTakeKoli()}
               disabled={savingTake || !currentTakeKoliItems.length}
               style={{
                 ...styles.primaryButton,
@@ -2333,7 +2419,7 @@ export default function QcConfirmationRejectionPage() {
             </div>
             <button
               type="button"
-              onClick={handlePostReturnKoli}
+              onClick={() => openPostTargetModal('return')}
               disabled={savingReturn || !currentReturnKoliItems.length}
               style={{
                 ...styles.redButton,
@@ -2348,6 +2434,86 @@ export default function QcConfirmationRejectionPage() {
           {renderBasketTable(currentReturnKoliItems, 'return')}
         </div>
       </div> : null}
+      {postTargetModalOpen ? (
+        <div
+          style={styles.modalOverlay}
+          role="dialog"
+          aria-modal="true"
+          onClick={() => {
+            if (!isPostingTarget) closePostTargetModal()
+          }}
+        >
+          <div style={styles.modalCard} onClick={(event) => event.stopPropagation()}>
+            <div style={styles.sectionHeaderRow}>
+              <div>
+                <h2 style={styles.sectionTitle}>Post Return Koli</h2>
+                <p style={styles.sectionSubtitle}>
+                  Choose an existing koli to add these items into, or create a new koli number.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={closePostTargetModal}
+                style={{
+                  ...styles.removeIconButton,
+                  ...(isPostingTarget ? { opacity: 0.55, cursor: 'not-allowed' } : {}),
+                }}
+                aria-label="Close post target"
+                title="Close"
+                disabled={isPostingTarget}
+              >
+                <XIcon />
+              </button>
+            </div>
+
+            <div style={styles.summaryCard}>
+              <span style={styles.summaryLabel}>Basket Qty</span>
+              <strong style={styles.summaryValue}>{formatNumber(activePostTargetQty)}</strong>
+            </div>
+
+            <div style={styles.field}>
+              <label style={styles.label}>Target Koli</label>
+              <select
+                value={postTargetSelection}
+                onChange={(event) => setPostTargetSelection(event.target.value)}
+                style={styles.input}
+                disabled={isPostingTarget}
+              >
+                <option value="new">New Koli</option>
+                {activePostTargetOptions.map((item) => (
+                  <option key={item.value} value={item.value}>
+                    Koli {item.sequence} - {formatNumber(item.totalQty)} qty
+                    {item.gradeLabel ? ` - Grade ${item.gradeLabel}` : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {!activePostTargetOptions.length ? (
+              <p style={styles.emptyText}>No existing koli found yet. This basket will be posted as a new koli.</p>
+            ) : null}
+
+            <div style={styles.buttonRow}>
+              <button type="button" onClick={closePostTargetModal} style={styles.secondaryButton} disabled={isPostingTarget}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() =>
+                  handlePostReturnKoli(postTargetSelection)
+                }
+                style={{
+                  ...styles.redButton,
+                  ...(isPostingTarget ? { opacity: 0.6, cursor: 'not-allowed' } : {}),
+                }}
+                disabled={isPostingTarget}
+              >
+                {isPostingTarget ? 'Posting...' : 'Post'}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
       {canEditConfirmation && adjustmentModalOpen ? (
         <div style={styles.modalOverlay} role="dialog" aria-modal="true" onClick={() => setAdjustmentModalOpen(false)}>
           <div style={styles.modalCard} onClick={(event) => event.stopPropagation()}>

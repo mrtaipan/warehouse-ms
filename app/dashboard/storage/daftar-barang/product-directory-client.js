@@ -365,6 +365,15 @@ function isSchemaColumnError(error) {
   )
 }
 
+function isMissingSchemaObjectError(error) {
+  const message = normalizeUpper(error?.message || error?.details || '')
+  return (
+    isSchemaColumnError(error) ||
+    message.includes('RELATION') ||
+    message.includes('404')
+  )
+}
+
 async function fetchAllRows(tableName, selectColumns = '*', orderColumn = 'id') {
   const allRows = []
   let from = 0
@@ -401,6 +410,18 @@ async function fetchAllRows(tableName, selectColumns = '*', orderColumn = 'id') 
   }
 
   return allRows
+}
+
+async function fetchWarehouseStorageSkuTotals() {
+  try {
+    return await fetchAllRows('warehouse_storage_sku_totals', 'sku_id, total_qty', 'sku_id')
+  } catch (fetchError) {
+    if (!isMissingSchemaObjectError(fetchError)) {
+      throw fetchError
+    }
+
+    return fetchAllRows('warehouse_storage', 'sku_id, qty', 'created_at')
+  }
 }
 
 async function fetchOptionalRows(tableName, selectColumns = '*', orderColumn = 'id') {
@@ -728,7 +749,7 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
           fetchAllRows('pl_packing_items', PACKING_ITEM_SELECT_COLUMNS, 'created_at'),
           fetchAllRows('inbound', 'id, grn_number, inbound_date, item_name, created_at', 'created_at'),
           fetchAllRows('pl_size_breakdown', BREAKDOWN_SELECT_COLUMNS, 'id'),
-          fetchAllRows('warehouse_storage', 'sku_id, qty', 'created_at'),
+          fetchWarehouseStorageSkuTotals(),
           fetchOptionalRows('product_variant_identity_events', IDENTITY_EVENT_SELECT_COLUMNS, 'created_at'),
           fetchAllRows('dir_product_models', PRODUCT_MODEL_SELECT_COLUMNS, 'id'),
           fetchAllRows('dir_product_model_variants', PRODUCT_VARIANT_SELECT_COLUMNS, 'id'),
@@ -767,7 +788,7 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
       const sku = normalizeUpper(entry.sku_id)
       if (!sku) return
 
-      storageQtyBySku.set(sku, Number(storageQtyBySku.get(sku) || 0) + Number(entry.qty || 0))
+      storageQtyBySku.set(sku, Number(storageQtyBySku.get(sku) || 0) + Number(entry.total_qty ?? entry.qty ?? 0))
     })
 
     ;(productVariantReleaseStates || []).forEach((state) => {
@@ -2029,14 +2050,19 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
       }
 
       await Promise.all(rowsToRelease.map(async (row) => {
+        const storageStatus = normalizeUpper(row.storage_status)
+        const rowPayload = {
+          ...batchPayload,
+          ...(storageStatus === 'QUEUED' ? { storage_status: 'released_without_stored' } : {}),
+        }
         const { error: updateError } = await supabase
           .from('pl_packing_items')
-          .update(batchPayload)
+          .update(rowPayload)
           .eq('id', row.id)
 
         if (updateError) throw updateError
 
-        payloadById.set(Number(row.id), batchPayload)
+        payloadById.set(Number(row.id), rowPayload)
       }))
 
       if (releaseDetails.length) {

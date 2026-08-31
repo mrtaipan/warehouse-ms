@@ -20,6 +20,10 @@ function normalizeGenderValue(value) {
   return ''
 }
 
+function isActivePerson(person) {
+  return !String(person?.resign_date || '').trim()
+}
+
 function EyeIcon() {
   return (
     <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
@@ -91,7 +95,17 @@ function getFieldType(field) {
 
 function buildEditableFields(people) {
   const excluded = new Set(['id', 'authenticated_id', 'role', 'is_qc_active', 'qc_active_date', 'created_at', 'updated_at'])
-  const fallback = ['display_name', 'group', 'email', 'gender', 'reimbursement_bank_name', 'reimbursement_account_name', 'reimbursement_account_number']
+  const fallback = [
+    'display_name',
+    'group',
+    'email',
+    'gender',
+    'reimbursement_bank_name',
+    'reimbursement_account_name',
+    'reimbursement_account_number',
+    'resign_date',
+    'resign_reason',
+  ]
   const discovered = new Set()
 
   for (const person of people) {
@@ -119,6 +133,9 @@ function buildEditableFields(people) {
       'reimbursement_bank_name',
       'reimbursement_account_name',
       'reimbursement_account_number',
+      'join_date',
+      'resign_date',
+      'resign_reason',
     ]
     const aIndex = order.indexOf(a)
     const bIndex = order.indexOf(b)
@@ -174,9 +191,11 @@ export default function PeopleDirectoryClient({
   const [search, setSearch] = useState('')
   const editableFields = useMemo(() => buildEditableFields(people), [people])
   const groupOptions = useMemo(() => buildGroupOptions(people), [people])
+  const activePeople = useMemo(() => people.filter(isActivePerson), [people])
+  const createFields = useMemo(() => editableFields.filter((field) => field !== 'resign_date' && field !== 'resign_reason'), [editableFields])
 
-  const maleCount = people.filter((person) => normalizeGenderValue(person.gender || person.jenis_kelamin) === 'Male').length
-  const femaleCount = people.filter((person) => normalizeGenderValue(person.gender || person.jenis_kelamin) === 'Female').length
+  const maleCount = activePeople.filter((person) => normalizeGenderValue(person.gender || person.jenis_kelamin) === 'Male').length
+  const femaleCount = activePeople.filter((person) => normalizeGenderValue(person.gender || person.jenis_kelamin) === 'Female').length
   const editingPerson = people.find((person) => person.id === editingId) || null
   const filteredPeople = useMemo(() => {
     const keyword = String(search || '').trim().toLowerCase()
@@ -187,6 +206,9 @@ export default function PeopleDirectoryClient({
         person.id,
         person.display_name,
         person.email,
+        isActivePerson(person) ? 'active' : 'inactive',
+        person.resign_date,
+        person.resign_reason,
         normalizeGenderValue(person.gender || person.jenis_kelamin),
       ]
         .filter(Boolean)
@@ -242,6 +264,23 @@ export default function PeopleDirectoryClient({
               </option>
             ))}
           </select>
+        </label>
+      )
+    }
+
+    if (field === 'resign_reason') {
+      return (
+        <label key={field} className={`${styles.field} ${styles.fullSpan}`.trim()}>
+          <span className={styles.label}>{formatFieldLabel(field)}</span>
+          <textarea
+            className={`${styles.textarea} ${disabled ? styles.inputDisabled : ''}`.trim()}
+            name={field}
+            defaultValue={defaultValue}
+            disabled={disabled}
+            readOnly={disabled}
+            rows={3}
+            placeholder="Reason for resignation"
+          />
         </label>
       )
     }
@@ -349,7 +388,7 @@ export default function PeopleDirectoryClient({
                   readOnly
                 />
               </label>
-              {editableFields.map((field) => renderField(field, ''))}
+              {createFields.map((field) => renderField(field, ''))}
               {formError ? (
                 <p className={styles.errorText} style={{ margin: 0 }}>
                   {formError}
@@ -425,7 +464,7 @@ export default function PeopleDirectoryClient({
           <div className={styles.materialFulfillmentStat}>
             <span>Number of People</span>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' }}>
-              <strong>{people.length}</strong>
+              <strong>{activePeople.length}</strong>
               <button
                 type="button"
                 onClick={handleTriggerClick}
@@ -516,17 +555,18 @@ export default function PeopleDirectoryClient({
                   type="text"
                   value={search}
                   onChange={(event) => setSearch(event.target.value)}
-                  placeholder="Search people ID, name, email, or gender"
+                  placeholder="Search people ID, name, email, status, or gender"
                 />
               </div>
 
               <div
                 className={styles.listHead}
-                style={{ gridTemplateColumns: '150px minmax(0, 1.2fr) minmax(0, 1fr) 130px auto' }}
+                style={{ gridTemplateColumns: '150px minmax(0, 1.2fr) minmax(0, 1fr) 120px 130px auto' }}
               >
                 <span>ID</span>
                 <span>Name</span>
                 <span>Email</span>
+                <span>Status</span>
                 <span>Gender</span>
                 <span>Action</span>
               </div>
@@ -535,7 +575,7 @@ export default function PeopleDirectoryClient({
                 <div
                   key={person.id}
                   className={styles.listRow}
-                  style={{ gridTemplateColumns: '150px minmax(0, 1.2fr) minmax(0, 1fr) 130px auto' }}
+                  style={{ gridTemplateColumns: '150px minmax(0, 1.2fr) minmax(0, 1fr) 120px 130px auto' }}
                 >
                   <div>
                     <p className={styles.cellTitle}>{person.id || '-'}</p>
@@ -545,6 +585,11 @@ export default function PeopleDirectoryClient({
                   </div>
                   <div>
                     <p className={styles.cellTitle}>{person.email || '-'}</p>
+                  </div>
+                  <div>
+                    <span className={`${styles.reimbursementStatus} ${isActivePerson(person) ? styles.reimbursementStatusPAID : styles.reimbursementStatusNEED_REVISION}`.trim()}>
+                      {isActivePerson(person) ? 'Active' : 'Inactive'}
+                    </span>
                   </div>
                   <div>
                     <p className={styles.cellTitle}>{normalizeGenderValue(person.gender || person.jenis_kelamin) || '-'}</p>

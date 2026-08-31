@@ -1451,14 +1451,32 @@ export default function PackingListReceivingPage() {
   }, [userProfiles])
 
   const packingStaffOptions = useMemo(() => {
-    const names = userProfiles
-      .filter((profile) => String(profile.role || '').trim() === 'packing_staff')
-      .map((profile) => {
-        const displayName = String(profile.display_name || '').trim()
-        return displayName || getPicLabel(profile.email, new Map())
-      })
+    const roleRank = {
+      packing_coordinator: 0,
+      packing_staff: 1,
+    }
+    const namesByLabel = new Map()
 
-    return getUniqueOptions(names.map((name) => String(name || '').trim().toUpperCase()).filter(Boolean))
+    userProfiles.forEach((profile) => {
+      const role = String(profile.role || '').trim().toLowerCase()
+      if (!Object.prototype.hasOwnProperty.call(roleRank, role)) return
+
+      const displayName = String(profile.display_name || '').trim()
+      const label = String(displayName || getPicLabel(profile.email, new Map()) || '').trim().toUpperCase()
+      if (!label) return
+
+      const existing = namesByLabel.get(label)
+      if (!existing || roleRank[role] < existing.roleRank) {
+        namesByLabel.set(label, {
+          label,
+          roleRank: roleRank[role],
+        })
+      }
+    })
+
+    return Array.from(namesByLabel.values())
+      .sort((a, b) => a.roleRank - b.roleRank || a.label.localeCompare(b.label))
+      .map((item) => item.label)
   }, [userProfiles])
 
   const catalogLookup = useMemo(() => {
@@ -2731,7 +2749,7 @@ export default function PackingListReceivingPage() {
                 }
               >
                 <span style={styles.companionButtonText}>
-                  {receivedWithNames.length ? receivedWithNames.join(', ') : 'Choose packing staff (optional)'}
+                  {receivedWithNames.length ? receivedWithNames.join(', ') : 'Choose packing PIC (optional)'}
                 </span>
                 <span aria-hidden="true" style={{ color: '#111827' }}>{receivedWithMenuOpen ? '^' : 'v'}</span>
               </button>
@@ -2758,7 +2776,7 @@ export default function PackingListReceivingPage() {
                       )
                     })
                   ) : (
-                    <span style={styles.emptyText}>No packing staff profile.</span>
+                    <span style={styles.emptyText}>No packing PIC profile.</span>
                   )}
                 </div>
               ) : null}

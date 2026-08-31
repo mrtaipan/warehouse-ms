@@ -1036,7 +1036,7 @@ async function loadArklineReworkReceiptRowsForCalendar(supabase, start, end) {
 async function loadOperationsCalendarTargets(supabase, start, end) {
   const result = await supabase
     .from('operations_calendar_targets')
-    .select('*')
+    .select('id, target_date, division_key, grn_number, brand_name, status, created_by, updated_by, created_at, updated_at')
     .gte('target_date', start)
     .lt('target_date', end)
     .order('target_date', { ascending: true })
@@ -1048,7 +1048,7 @@ async function loadOperationsCalendarTargets(supabase, start, end) {
 async function loadOperationsCalendarManualReports(supabase, start, end) {
   const result = await supabase
     .from('operations_calendar_manual_reports')
-    .select('*')
+    .select('id, report_date, division_key, title, description, pic_name, created_by, updated_by, created_at, updated_at')
     .gte('report_date', start)
     .lt('report_date', end)
     .order('report_date', { ascending: true })
@@ -1078,9 +1078,24 @@ async function loadWarehouseHolidayDateSet(supabase, monthValue) {
 }
 
 async function loadPlReceivingRowsForCalendar(supabase, start, end) {
+  const summaryResult = await supabase
+    .from('operations_calendar_pl_receiving_daily_summary')
+    .select('event_date, received_qty, validated_qty, received_rows, validated_rows')
+    .gte('event_date', start)
+    .lt('event_date', end)
+    .order('event_date', { ascending: true })
+
+  if (!summaryResult.error) {
+    return summaryResult
+  }
+
+  if (!isNonBlockingCalendarError(summaryResult.error)) {
+    return summaryResult
+  }
+
   const withValidatedAt = await supabase
     .from('pl_receiving')
-    .select('*')
+    .select('id, received_qty, created_at, validated_at')
     .or(buildCalendarTimestampFilter(['created_at', 'validated_at'], start, end))
     .order('created_at', { ascending: true })
 
@@ -1098,7 +1113,7 @@ async function loadPlReceivingRowsForCalendar(supabase, start, end) {
 
   const byCreatedAt = await supabase
     .from('pl_receiving')
-    .select('*')
+    .select('id, received_qty, created_at')
     .gte('created_at', `${start}T00:00:00`)
     .lt('created_at', `${end}T00:00:00`)
     .order('created_at', { ascending: true })
@@ -1107,9 +1122,24 @@ async function loadPlReceivingRowsForCalendar(supabase, start, end) {
 }
 
 async function loadPlBreakdownRowsForCalendar(supabase, start, end) {
+  const summaryResult = await supabase
+    .from('operations_calendar_pl_breakdown_daily_summary')
+    .select('event_date, line_count, breakdown_qty, grn_count, grn_numbers, item_names')
+    .gte('event_date', start)
+    .lt('event_date', end)
+    .order('event_date', { ascending: true })
+
+  if (!summaryResult.error) {
+    return summaryResult
+  }
+
+  if (!isNonBlockingCalendarError(summaryResult.error)) {
+    return summaryResult
+  }
+
   const byUpdatedAt = await supabase
     .from('pl_size_breakdown')
-    .select('*')
+    .select('id, inbound_id, qty, updated_at, created_at')
     .gte('updated_at', `${start}T00:00:00`)
     .lt('updated_at', `${end}T00:00:00`)
     .order('updated_at', { ascending: true })
@@ -1128,7 +1158,7 @@ async function loadPlBreakdownRowsForCalendar(supabase, start, end) {
 
   const byCreatedAt = await supabase
     .from('pl_size_breakdown')
-    .select('*')
+    .select('id, inbound_id, qty, created_at')
     .gte('created_at', `${start}T00:00:00`)
     .lt('created_at', `${end}T00:00:00`)
     .order('created_at', { ascending: true })
@@ -1137,6 +1167,21 @@ async function loadPlBreakdownRowsForCalendar(supabase, start, end) {
 }
 
 async function loadWarehouseStorageRowsForCalendar(supabase, start, end) {
+  const summaryResult = await supabase
+    .from('operations_calendar_storage_daily_summary')
+    .select('event_date, storage_line_count, stored_qty, storage_k_count')
+    .gte('event_date', start)
+    .lt('event_date', end)
+    .order('event_date', { ascending: true })
+
+  if (!summaryResult.error) {
+    return summaryResult
+  }
+
+  if (!isNonBlockingCalendarError(summaryResult.error)) {
+    return summaryResult
+  }
+
   const selectOptions = [
     'id, item_name, qty, notes, created_at',
     'id, item_name, qty, created_at',
@@ -1171,6 +1216,21 @@ async function loadWarehouseStorageRowsForCalendar(supabase, start, end) {
 }
 
 async function loadRestockRowsForCalendar(supabase, start, end) {
+  const summaryResult = await supabase
+    .from('operations_calendar_restock_daily_summary')
+    .select('event_date, completed_request_count, picked_qty')
+    .gte('event_date', start)
+    .lt('event_date', end)
+    .order('event_date', { ascending: true })
+
+  if (!summaryResult.error) {
+    return summaryResult
+  }
+
+  if (!isNonBlockingCalendarError(summaryResult.error)) {
+    return summaryResult
+  }
+
   const byCompletedAt = await supabase
     .from('restock_request')
     .select('id, item_name, qty, request_status, completed_at, created_at')
@@ -1335,12 +1395,21 @@ async function loadOperationsCalendarData(supabase, monthValue, nonWorkingDateSe
     })
   })
 
+  const plReceivingSummaryRows = (plReceivingRows || []).filter((row) => row.event_date)
+  const plReceivingRawRows = (plReceivingRows || []).filter((row) => !row.event_date)
+  const plBreakdownSummaryRows = (plBreakdownRows || []).filter((row) => row.event_date)
+  const plBreakdownRawRows = (plBreakdownRows || []).filter((row) => !row.event_date)
+  const warehouseStorageSummaryRows = (warehouseStorageRows || []).filter((row) => row.event_date)
+  const warehouseStorageRawRows = (warehouseStorageRows || []).filter((row) => !row.event_date)
+  const restockSummaryRows = (restockRows || []).filter((row) => row.event_date)
+  const restockRawRows = (restockRows || []).filter((row) => !row.event_date)
+
   const inboundById = new Map((inboundRows || []).map((row) => [String(row.id), row]))
   const missingInboundIds = Array.from(
     new Set(
       [
         ...(inboundUnloadRows || []),
-        ...(plBreakdownRows || []),
+        ...plBreakdownRawRows,
       ]
         .map((row) => String(row.inbound_id || '').trim())
         .filter((id) => id && !inboundById.has(id))
@@ -1708,99 +1777,174 @@ async function loadOperationsCalendarData(supabase, monthValue, nonWorkingDateSe
     })
   })
 
-  const plReceivingByDate = new Map()
-  const getPlReceivingSummary = (dateKey) => {
-    const current = plReceivingByDate.get(dateKey) || {
-      receivedQty: 0,
-      validatedQty: 0,
-      receivedRows: 0,
-      validatedRows: 0,
+  if (plReceivingSummaryRows.length) {
+    plReceivingSummaryRows.forEach((row) => {
+      const dateKey = extractDateKey(row.event_date)
+      const receivedQty = Number(row.received_qty || 0)
+      const validatedQty = Number(row.validated_qty || 0)
+      const receivedRows = Number(row.received_rows || 0)
+      const validatedRows = Number(row.validated_rows || 0)
+
+      pushTimelineItem(timelineMap, 'packing', dateKey, {
+        label: 'PL Receiving',
+        count: receivedRows + validatedRows,
+        qty: receivedQty,
+        note: `Received Qty ${formatNumber(receivedQty)} | Validated Qty ${formatNumber(validatedQty)}`,
+        detail: `${formatNumber(validatedRows)} validated row(s)`,
+      })
+    })
+  } else {
+    const plReceivingByDate = new Map()
+    const getPlReceivingSummary = (dateKey) => {
+      const current = plReceivingByDate.get(dateKey) || {
+        receivedQty: 0,
+        validatedQty: 0,
+        receivedRows: 0,
+        validatedRows: 0,
+      }
+      plReceivingByDate.set(dateKey, current)
+      return current
     }
-    plReceivingByDate.set(dateKey, current)
-    return current
+
+    plReceivingRawRows.forEach((row) => {
+      const rowQty = Number(row.received_qty ?? row.qty ?? row.qc_confirm_qty ?? 0)
+      const receivedDateKey = extractDateKey(row.created_at)
+      const validatedDateKey = extractDateKey(row.validated_at)
+
+      if (receivedDateKey) {
+        const summary = getPlReceivingSummary(receivedDateKey)
+        summary.receivedQty += rowQty
+        summary.receivedRows += 1
+      }
+
+      if (validatedDateKey) {
+        const summary = getPlReceivingSummary(validatedDateKey)
+        summary.validatedQty += rowQty
+        summary.validatedRows += 1
+      }
+    })
+
+    plReceivingByDate.forEach((summary, dateKey) => {
+      pushTimelineItem(timelineMap, 'packing', dateKey, {
+        label: 'PL Receiving',
+        count: summary.receivedRows + summary.validatedRows,
+        qty: summary.receivedQty,
+        note: `Received Qty ${formatNumber(summary.receivedQty)} | Validated Qty ${formatNumber(summary.validatedQty)}`,
+        detail: `${formatNumber(summary.validatedRows)} validated row(s)`,
+      })
+    })
   }
 
-  ;(plReceivingRows || []).forEach((row) => {
-    const rowQty = Number(row.received_qty ?? row.qty ?? row.qc_confirm_qty ?? 0)
-    const receivedDateKey = extractDateKey(row.created_at)
-    const validatedDateKey = extractDateKey(row.validated_at)
+  if (plBreakdownSummaryRows.length) {
+    plBreakdownSummaryRows.forEach((row) => {
+      const dateKey = extractDateKey(row.event_date)
+      const grnNumbers = Array.isArray(row.grn_numbers) ? row.grn_numbers.filter(Boolean) : []
+      const itemNames = Array.isArray(row.item_names) ? row.item_names.filter(Boolean) : []
+      const lineCount = Number(row.line_count || 0)
+      const breakdownQty = Number(row.breakdown_qty || 0)
 
-    if (receivedDateKey) {
-      const summary = getPlReceivingSummary(receivedDateKey)
-      summary.receivedQty += rowQty
-      summary.receivedRows += 1
-    }
-
-    if (validatedDateKey) {
-      const summary = getPlReceivingSummary(validatedDateKey)
-      summary.validatedQty += rowQty
-      summary.validatedRows += 1
-    }
-  })
-
-  plReceivingByDate.forEach((summary, dateKey) => {
-    pushTimelineItem(timelineMap, 'packing', dateKey, {
-      label: 'PL Receiving',
-      count: summary.receivedRows + summary.validatedRows,
-      qty: summary.receivedQty,
-      note: `Received Qty ${formatNumber(summary.receivedQty)} | Validated Qty ${formatNumber(summary.validatedQty)}`,
-      detail: `${formatNumber(summary.validatedRows)} validated row(s)`,
+      pushTimelineItem(timelineMap, 'packing', dateKey, {
+        label: 'PL Breakdown',
+        count: lineCount,
+        qty: breakdownQty,
+        note: `${formatNumber(row.grn_count || grnNumbers.length)} GRN | Breakdown Qty ${formatNumber(breakdownQty)}`,
+        detail: `${formatNumber(lineCount)} breakdown line(s)`,
+        modalRows: [
+          { label: 'GRN Number', value: grnNumbers.join(', ') || '-' },
+          { label: 'Item Name', value: itemNames.join(', ') || '-' },
+          { label: 'Breakdown Qty', value: formatNumber(breakdownQty) },
+          { label: 'Breakdown Line', value: formatNumber(lineCount) },
+        ],
+      })
     })
-  })
+  } else {
+    groupRowsByDate(plBreakdownRawRows, (row) => extractDateKey(row.updated_at || row.created_at)).forEach((rows, dateKey) => {
+      const grnKeys = new Set(rows.map((row) => {
+        const inbound = inboundById.get(String(row.inbound_id || ''))
+        return String(inbound?.grn_number || row.grn_number || row.inbound_id || '').trim()
+      }).filter(Boolean))
+      const itemNames = new Set(rows.map((row) => {
+        const inbound = inboundById.get(String(row.inbound_id || ''))
+        return String(inbound?.item_name || '').trim()
+      }).filter(Boolean))
+      const breakdownQty = sumBy(rows, ['qty', 'received_qty', 'breakdown_qty'])
 
-  groupRowsByDate(plBreakdownRows || [], (row) => extractDateKey(row.updated_at || row.created_at)).forEach((rows, dateKey) => {
-    const grnKeys = new Set(rows.map((row) => {
-      const inbound = inboundById.get(String(row.inbound_id || ''))
-      return String(inbound?.grn_number || row.grn_number || row.inbound_id || '').trim()
-    }).filter(Boolean))
-    const itemNames = new Set(rows.map((row) => {
-      const inbound = inboundById.get(String(row.inbound_id || ''))
-      return String(inbound?.item_name || '').trim()
-    }).filter(Boolean))
-    const breakdownQty = sumBy(rows, ['qty', 'received_qty', 'breakdown_qty'])
-
-    pushTimelineItem(timelineMap, 'packing', dateKey, {
-      label: 'PL Breakdown',
-      count: rows.length,
-      qty: breakdownQty,
-      note: `${formatNumber(grnKeys.size)} GRN | Breakdown Qty ${formatNumber(breakdownQty)}`,
-      detail: `${formatNumber(rows.length)} breakdown line(s)`,
-      modalRows: [
-        { label: 'GRN Number', value: Array.from(grnKeys).join(', ') || '-' },
-        { label: 'Item Name', value: Array.from(itemNames).join(', ') || '-' },
-        { label: 'Breakdown Qty', value: formatNumber(breakdownQty) },
-        { label: 'Breakdown Line', value: formatNumber(rows.length) },
-      ],
+      pushTimelineItem(timelineMap, 'packing', dateKey, {
+        label: 'PL Breakdown',
+        count: rows.length,
+        qty: breakdownQty,
+        note: `${formatNumber(grnKeys.size)} GRN | Breakdown Qty ${formatNumber(breakdownQty)}`,
+        detail: `${formatNumber(rows.length)} breakdown line(s)`,
+        modalRows: [
+          { label: 'GRN Number', value: Array.from(grnKeys).join(', ') || '-' },
+          { label: 'Item Name', value: Array.from(itemNames).join(', ') || '-' },
+          { label: 'Breakdown Qty', value: formatNumber(breakdownQty) },
+          { label: 'Breakdown Line', value: formatNumber(rows.length) },
+        ],
+      })
     })
-  })
+  }
 
-  groupRowsByDate(warehouseStorageRows || [], (row) => extractDateKey(row.created_at)).forEach((rows, dateKey) => {
-    const storedQty = sumBy(rows, 'qty')
-    const storageKoliCount = new Set(rows.map(getStorageKoliKey).filter(Boolean)).size
+  if (warehouseStorageSummaryRows.length) {
+    warehouseStorageSummaryRows.forEach((row) => {
+      const dateKey = extractDateKey(row.event_date)
+      const storedQty = Number(row.stored_qty || 0)
+      const storageLineCount = Number(row.storage_line_count || 0)
+      const storageKoliCount = Number(row.storage_k_count || 0)
 
-    pushTimelineItem(timelineMap, 'storage', dateKey, {
-      label: 'Stored to Rack',
-      count: rows.length,
-      qty: storedQty,
-      note: `Stored Qty ${formatNumber(storedQty)} | ${formatNumber(storageKoliCount)} K`,
-      detail: `${formatNumber(rows.length)} storage line(s)`,
+      pushTimelineItem(timelineMap, 'storage', dateKey, {
+        label: 'Stored to Rack',
+        count: storageLineCount,
+        qty: storedQty,
+        note: `Stored Qty ${formatNumber(storedQty)} | ${formatNumber(storageKoliCount)} K`,
+        detail: `${formatNumber(storageLineCount)} storage line(s)`,
+      })
     })
-  })
+  } else {
+    groupRowsByDate(warehouseStorageRawRows, (row) => extractDateKey(row.created_at)).forEach((rows, dateKey) => {
+      const storedQty = sumBy(rows, 'qty')
+      const storageKoliCount = new Set(rows.map(getStorageKoliKey).filter(Boolean)).size
 
-  groupRowsByDate(
-    (restockRows || []).filter((row) => String(row.request_status || '').toLowerCase() === 'completed'),
-    (row) => extractDateKey(row.completed_at || row.created_at)
-  ).forEach((rows, dateKey) => {
-    const restockQty = sumBy(rows, 'qty')
-
-    pushTimelineItem(timelineMap, 'storage', dateKey, {
-      label: 'Restock',
-      count: rows.length,
-      qty: restockQty,
-      note: `Picked Qty ${formatNumber(restockQty)}`,
-      detail: `${formatNumber(rows.length)} completed request(s)`,
+      pushTimelineItem(timelineMap, 'storage', dateKey, {
+        label: 'Stored to Rack',
+        count: rows.length,
+        qty: storedQty,
+        note: `Stored Qty ${formatNumber(storedQty)} | ${formatNumber(storageKoliCount)} K`,
+        detail: `${formatNumber(rows.length)} storage line(s)`,
+      })
     })
-  })
+  }
+
+  if (restockSummaryRows.length) {
+    restockSummaryRows.forEach((row) => {
+      const dateKey = extractDateKey(row.event_date)
+      const restockQty = Number(row.picked_qty || 0)
+      const completedCount = Number(row.completed_request_count || 0)
+
+      pushTimelineItem(timelineMap, 'storage', dateKey, {
+        label: 'Restock',
+        count: completedCount,
+        qty: restockQty,
+        note: `Picked Qty ${formatNumber(restockQty)}`,
+        detail: `${formatNumber(completedCount)} completed request(s)`,
+      })
+    })
+  } else {
+    groupRowsByDate(
+      restockRawRows.filter((row) => String(row.request_status || '').toLowerCase() === 'completed'),
+      (row) => extractDateKey(row.completed_at || row.created_at)
+    ).forEach((rows, dateKey) => {
+      const restockQty = sumBy(rows, 'qty')
+
+      pushTimelineItem(timelineMap, 'storage', dateKey, {
+        label: 'Restock',
+        count: rows.length,
+        qty: restockQty,
+        note: `Picked Qty ${formatNumber(restockQty)}`,
+        detail: `${formatNumber(rows.length)} completed request(s)`,
+      })
+    })
+  }
 
   return timelineMap
 }

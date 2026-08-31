@@ -65,6 +65,7 @@ const BASE_PERMISSION_GROUPS = [
       { key: 'people', label: 'People Directory', description: 'Lihat dan ubah data employee directory.', actions: ['view', 'edit'] },
       { key: 'public_request_links', label: 'Public Request Links', description: 'Buat dan kelola link request publik untuk employee.', actions: ['view', 'edit'] },
       { key: 'benefits', label: 'Benefits Hub', description: 'Lihat panel leave request, birthday gift request, dan reimbursement claims untuk kebutuhan HRGA.', actions: ['view'] },
+      { key: 'penalty_points', label: 'Penalty Points', description: 'Lihat dan kelola poin penalty karyawan per periode 3 bulan.', actions: ['view', 'add', 'edit', 'delete'] },
     ],
   },
   {
@@ -271,6 +272,10 @@ const DEFAULT_ROLE_BUNDLES = {
     'hrga.public_request_links.view',
     'hrga.public_request_links.edit',
     'hrga.benefits.view',
+    'hrga.penalty_points.view',
+    'hrga.penalty_points.add',
+    'hrga.penalty_points.edit',
+    'hrga.penalty_points.delete',
   ],
   leader: ['dashboard.home.view', 'myarklife.view', 'inbound.unload.view'],
   warehouse_leader: [
@@ -285,6 +290,8 @@ const DEFAULT_ROLE_BUNDLES = {
     'inbound.unload.view',
     'packing.overview.view',
     'qc.summary.view',
+    'hrga.penalty_points.view',
+    'hrga.penalty_points.add',
   ],
   packing_coordinator: [
     'dashboard.home.view',

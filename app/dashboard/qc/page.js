@@ -542,6 +542,22 @@ const styles = {
     justifyContent: 'center',
     lineHeight: 1,
   },
+  rejectDateInfoButton: {
+    height: '30px',
+    padding: '0 10px',
+    border: '1px solid #cbd5e1',
+    borderRadius: '999px',
+    background: '#f8fafc',
+    color: '#334155',
+    fontSize: '11px',
+    fontWeight: '800',
+    cursor: 'help',
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    lineHeight: 1,
+    whiteSpace: 'nowrap',
+  },
   iconButtonRow: {
     display: 'flex',
     alignItems: 'center',
@@ -1279,6 +1295,103 @@ function buildGroupedRejectDraftRows(rows = []) {
   })
 
   return Array.from(grouped.values())
+}
+
+function getRejectReasonDisplayName(row, reasonNameById = new Map()) {
+  const reasonId = String(row?.rejectReasonId || row?.reject_reason_id || '').trim()
+  if (reasonId === '__new__') {
+    return String(row?.newReasonName || 'NEW REJECT REASON').trim().toUpperCase() || 'NEW REJECT REASON'
+  }
+
+  return (
+    String(reasonNameById.get(reasonId) || row?.reason?.reason_name || row?.reasonName || row?.reject_reason_name || 'UNASSIGNED')
+      .trim()
+      .toUpperCase() || 'UNASSIGNED'
+  )
+}
+
+function compareRejectDetailRows(a, b, reasonNameById = new Map()) {
+  const reasonCompare = getRejectReasonDisplayName(a, reasonNameById).localeCompare(getRejectReasonDisplayName(b, reasonNameById), undefined, {
+    numeric: true,
+  })
+  if (reasonCompare !== 0) return reasonCompare
+
+  const gradeCompare = String(a?.grade || '').localeCompare(String(b?.grade || ''), undefined, { numeric: true })
+  if (gradeCompare !== 0) return gradeCompare
+
+  const sizeCompare = compareApparelSize(String(a?.size || ''), String(b?.size || ''))
+  if (sizeCompare !== 0) return sizeCompare
+
+  return String(a?.id || '').localeCompare(String(b?.id || ''), undefined, { numeric: true })
+}
+
+function buildRejectReasonSummaryRows(rows = [], reasonNameById = new Map()) {
+  const grouped = new Map()
+
+  rows.forEach((row) => {
+    const qty = Number(row?.qty || 0)
+    if (qty <= 0) return
+
+    const reason = getRejectReasonDisplayName(row, reasonNameById)
+    const current = grouped.get(reason) || {
+      reason,
+      qtyB: 0,
+      qtyC: 0,
+      totalQty: 0,
+    }
+    const grade = String(row?.grade || '').trim().toUpperCase()
+    if (grade === 'B') {
+      current.qtyB += qty
+    } else if (grade === 'C') {
+      current.qtyC += qty
+    }
+    current.totalQty += qty
+    grouped.set(reason, current)
+  })
+
+  return Array.from(grouped.values()).sort((a, b) => {
+    const totalCompare = Number(b.totalQty || 0) - Number(a.totalQty || 0)
+    if (totalCompare !== 0) return totalCompare
+    return a.reason.localeCompare(b.reason, undefined, { numeric: true })
+  })
+}
+
+function getRejectDetailDateValue(row) {
+  return String(row?.created_at || row?.updated_at || '').slice(0, 10)
+}
+
+function getRejectReasonSizeKey(row) {
+  const reasonId = String(row?.rejectReasonId || row?.reject_reason_id || '').trim()
+  const size = String(row?.size || '').trim().toUpperCase()
+  return `${reasonId}|||${size}`
+}
+
+function buildRejectDetailDateMap(rows = []) {
+  const dateMap = new Map()
+
+  rows.forEach((row) => {
+    const dateValue = getRejectDetailDateValue(row)
+    if (!dateValue) return
+
+    const keys = [getRejectDraftKey(row), getRejectReasonSizeKey(row)]
+    keys.forEach((key) => {
+      const dates = dateMap.get(key) || new Set()
+      dates.add(dateValue)
+      dateMap.set(key, dates)
+    })
+  })
+
+  return dateMap
+}
+
+function getRejectDetailDateInfo(row, dateMap = new Map()) {
+  const dateValues = Array.from(dateMap.get(getRejectDraftKey(row)) || dateMap.get(getRejectReasonSizeKey(row)) || []).sort()
+
+  if (!dateValues.length) {
+    return 'No saved date found for this reject detail.'
+  }
+
+  return `Registered reject detail date${dateValues.length > 1 ? 's' : ''}:\n${dateValues.join('\n')}`
 }
 
 function getRejectDraftKey(row) {
@@ -2524,6 +2637,35 @@ export default function QcDashboardPage() {
 
     return Array.from(grouped.values()).sort((a, b) => a.reason_name.localeCompare(b.reason_name))
   }, [arklineRejectReasons, selectedRejectExistingDetails])
+  const selectedRejectReasonNameById = useMemo(
+    () =>
+      new Map(
+        selectedRejectReasonOptions.map((item) => [
+          String(item.id || ''),
+          String(item.reason_name || '').trim().toUpperCase(),
+        ])
+      ),
+    [selectedRejectReasonOptions]
+  )
+  const displayRejectDraftRows = useMemo(
+    () =>
+      canEditArklineRejectDetail
+        ? rejectDraftRows
+        : [...rejectDraftRows].sort((a, b) => compareRejectDetailRows(a, b, selectedRejectReasonNameById)),
+    [canEditArklineRejectDetail, rejectDraftRows, selectedRejectReasonNameById]
+  )
+  const selectedRejectReasonSummaryRows = useMemo(
+    () => buildRejectReasonSummaryRows(rejectDraftRows, selectedRejectReasonNameById),
+    [rejectDraftRows, selectedRejectReasonNameById]
+  )
+  const selectedRejectSortedExistingDetails = useMemo(
+    () => [...selectedRejectExistingDetails].sort((a, b) => compareRejectDetailRows(a, b, selectedRejectReasonNameById)),
+    [selectedRejectExistingDetails, selectedRejectReasonNameById]
+  )
+  const selectedRejectDetailDateMap = useMemo(
+    () => buildRejectDetailDateMap(selectedRejectExistingDetails),
+    [selectedRejectExistingDetails]
+  )
   const selectedRejectDetailQty = rejectDraftRows.reduce((sum, item) => sum + Number(item.qty || 0), 0)
   const selectedRejectAdjustedBaseSummary = useMemo(() => {
     const baseQtyA = selectedRejectTaskRows.reduce((sum, item) => sum + Number(item.qty_a || 0), 0)
@@ -4355,7 +4497,7 @@ export default function QcDashboardPage() {
                 <span style={{ ...styles.label, textAlign: 'right' }}>Action</span>
               </div>
 
-              {rejectDraftRows.map((row, index) => (
+              {displayRejectDraftRows.map((row, index) => (
                 <div key={row.id} style={styles.rejectRowGrid}>
                   <div style={styles.field}>
                     <select
@@ -4414,37 +4556,73 @@ export default function QcDashboardPage() {
                     />
                   </div>
                   <div style={styles.iconButtonRow}>
-                    <button
-                      type="button"
-                      style={{
-                        ...styles.iconSmallButton,
-                        ...(!canEditArklineRejectDetail ? { opacity: 0.55, cursor: 'not-allowed' } : {}),
-                      }}
-                      onClick={() => setRejectDraftRows((rows) => [...rows, createRejectDraftRow()])}
-                      disabled={!canEditArklineRejectDetail}
-                      title="Add row"
-                      aria-label="Add row"
-                    >
-                      +
-                    </button>
-                    {index > 0 ? (
+                    {!canEditArklineRejectDetail ? (
                       <button
                         type="button"
-                        style={{
-                          ...styles.iconSmallButton,
-                          ...(!canEditArklineRejectDetail ? { opacity: 0.55, cursor: 'not-allowed' } : {}),
-                        }}
-                        onClick={() => removeRejectDraftRow(row.id)}
-                        disabled={!canEditArklineRejectDetail}
-                        title="Remove row"
-                        aria-label="Remove row"
+                        style={styles.rejectDateInfoButton}
+                        title={getRejectDetailDateInfo(row, selectedRejectDetailDateMap)}
+                        aria-label="Show registered reject detail dates"
                       >
-                        X
+                        Dates
                       </button>
-                    ) : null}
+                    ) : (
+                      <>
+                        <button
+                          type="button"
+                          style={styles.iconSmallButton}
+                          onClick={() => setRejectDraftRows((rows) => [...rows, createRejectDraftRow()])}
+                          title="Add row"
+                          aria-label="Add row"
+                        >
+                          +
+                        </button>
+                        {index > 0 ? (
+                          <button
+                            type="button"
+                            style={styles.iconSmallButton}
+                            onClick={() => removeRejectDraftRow(row.id)}
+                            title="Remove row"
+                            aria-label="Remove row"
+                          >
+                            X
+                          </button>
+                        ) : null}
+                      </>
+                    )}
                   </div>
                 </div>
               ))}
+
+              <div style={styles.modalTableWrap}>
+                <table style={styles.table}>
+                  <thead>
+                    <tr>
+                      <th style={styles.th}>Reject Reason</th>
+                      <th style={{ ...styles.th, ...styles.thCenter }}>Grade B</th>
+                      <th style={{ ...styles.th, ...styles.thCenter }}>Grade C</th>
+                      <th style={{ ...styles.th, ...styles.thCenter }}>Total Qty</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {selectedRejectReasonSummaryRows.length ? (
+                      selectedRejectReasonSummaryRows.map((item) => (
+                        <tr key={item.reason}>
+                          <td style={styles.td}>{item.reason}</td>
+                          <td style={{ ...styles.td, ...styles.tdCenter }}>{formatNumber(item.qtyB)}</td>
+                          <td style={{ ...styles.td, ...styles.tdCenter }}>{formatNumber(item.qtyC)}</td>
+                          <td style={{ ...styles.td, ...styles.tdCenter }}>{formatNumber(item.totalQty)}</td>
+                        </tr>
+                      ))
+                    ) : (
+                      <tr>
+                        <td style={styles.td} colSpan={4}>
+                          No reject summary yet.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
             </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
@@ -4616,8 +4794,8 @@ export default function QcDashboardPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {selectedRejectExistingDetails.length ? (
-                    selectedRejectExistingDetails.map((item, index) => (
+                  {selectedRejectSortedExistingDetails.length ? (
+                    selectedRejectSortedExistingDetails.map((item, index) => (
                       <tr key={`${item.id}-${item.arkline_qc_id || 'reject'}-${index}`}>
                         <td style={styles.td}>{item.reason?.reason_name || '-'}</td>
                         <td style={styles.td}>{item.grade}</td>

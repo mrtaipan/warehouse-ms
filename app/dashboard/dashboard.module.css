@@ -154,6 +154,275 @@
   height: 18px;
 }
 
+.modalOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(15, 23, 42, 0.45);
+  backdrop-filter: blur(8px);
+}
+
+.penaltyModal {
+  width: min(96vw, 1180px);
+  max-height: min(90vh, 820px);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 22px;
+  border: 1px solid #dbe4ef;
+  border-radius: 18px;
+  background: #ffffff;
+  box-shadow: 0 24px 70px rgba(15, 23, 42, 0.22);
+}
+
+.penaltyTitle {
+  margin: 0;
+  color: #0f172a;
+  font-size: 34px;
+  line-height: 1;
+  font-weight: 900;
+}
+
+.penaltyHeader,
+.penaltyPanelHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.penaltyForm label span,
+.penaltyFilterRow label span {
+  display: block;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.penaltyContentGrid {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(300px, 0.8fr);
+  gap: 16px;
+}
+
+.penaltyPanel,
+.penaltyForm {
+  min-height: 0;
+  border: 1px solid #e5e7eb;
+  border-radius: 14px;
+  background: #ffffff;
+}
+
+.penaltyPanel {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  overflow: hidden;
+}
+
+.penaltyPanelHeader h3,
+.penaltyForm h3 {
+  margin: 0;
+  color: #0f172a;
+  font-size: 18px;
+}
+
+.penaltyPanelHeader span {
+  min-height: 30px;
+  padding: 0 12px;
+  border-radius: 999px;
+  background: #0f172a;
+  color: #ffffff;
+  display: inline-flex;
+  align-items: center;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.penaltyFilterRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(150px, 220px);
+  gap: 10px;
+}
+
+.penaltyFilterRow label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.penaltyTableWrap {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid #eef2f7;
+  border-radius: 10px;
+}
+
+.penaltyTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.penaltyTable th,
+.penaltyTable td {
+  padding: 11px 12px;
+  border-bottom: 1px solid #eef2f7;
+  text-align: left;
+  color: #334155;
+}
+
+.penaltyTable th {
+  position: sticky;
+  top: 0;
+  background: #f8fafc;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.penaltyTable td:last-child,
+.penaltyTable th:last-child {
+  text-align: right;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+.penaltyForm {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+}
+
+.penaltyForm label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.penaltyForm input,
+.penaltyForm select,
+.penaltyForm textarea,
+.penaltyFilterRow input,
+.penaltyFilterRow select {
+  width: 100%;
+  border: 1px solid #dbe4ef;
+  border-radius: 10px;
+  background: #ffffff;
+  color: #0f172a;
+  font: inherit;
+  font-size: 14px;
+  padding: 11px 12px;
+}
+
+.penaltyForm textarea {
+  resize: vertical;
+  min-height: 96px;
+}
+
+.penaltyPrimaryButton,
+.penaltySecondaryButton {
+  min-height: 40px;
+  border-radius: 999px;
+  padding: 0 16px;
+  border: 1px solid transparent;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.penaltyPrimaryButton {
+  background: #0f172a;
+  color: #ffffff;
+}
+
+.penaltyCloseButton {
+  width: 40px;
+  height: 40px;
+  border: 1px solid #fecaca;
+  border-radius: 999px;
+  background: #fef2f2;
+  color: #b91c1c;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  font-weight: 900;
+  line-height: 1;
+  cursor: pointer;
+  transition:
+    background 160ms ease,
+    border-color 160ms ease,
+    transform 160ms ease;
+}
+
+.penaltyCloseButton:hover {
+  border-color: #fca5a5;
+  background: #fee2e2;
+  transform: translateY(-1px);
+}
+
+.penaltySecondaryButton {
+  background: #ffffff;
+  border-color: #dbe4ef;
+  color: #0f172a;
+}
+
+.penaltyPrimaryButton:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.penaltyError,
+.penaltySuccess {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.penaltyError {
+  color: #b91c1c;
+}
+
+.penaltySuccess {
+  color: #15803d;
+}
+
+@media (max-width: 860px) {
+  .modalOverlay {
+    padding: 12px;
+  }
+
+  .penaltyModal {
+    max-height: 94vh;
+    padding: 16px;
+  }
+
+  .penaltyContentGrid {
+    grid-template-columns: 1fr;
+    overflow: auto;
+  }
+
+  .penaltyFilterRow {
+    grid-template-columns: 1fr;
+  }
+}
+
 .contentGrid {
   display: grid;
   grid-template-columns: 1fr;

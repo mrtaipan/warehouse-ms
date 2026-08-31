@@ -33,7 +33,7 @@ create table public.pl_packing_items (
   created_at timestamp with time zone not null default now(),
   updated_at timestamp with time zone not null default now(),
   constraint pl_packing_items_qty_check check (qty >= 0),
-  constraint pl_packing_items_storage_status_check check (storage_status in ('queued', 'stored')),
+  constraint pl_packing_items_storage_status_check check (storage_status in ('queued', 'released_without_stored', 'stored')),
   constraint pl_packing_items_release_status_check check (release_status in ('draft', 'released')),
   constraint pl_packing_items_koli_sequence_check check (koli_sequence is null or koli_sequence >= 1),
   constraint pl_packing_items_storing_type_check check (storing_type in ('MOB', 'OI')),

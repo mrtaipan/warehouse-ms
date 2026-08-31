@@ -1,11 +1,12 @@
 import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { createClient } from '@/utils/supabase/server'
-import { canAccessOperationsCalendar, getAllowedMenus, getStorageFeatureAccess } from '@/utils/permissions'
+import { canAccessOperationsCalendar, getAllowedMenus, getStorageFeatureAccess, hasPermission } from '@/utils/permissions'
 import { loadAccessContext } from '@/utils/access-control'
 import RestockShortcutButton from './restock-shortcut-client'
 import ItemSearchShortcutButton from './item-search-shortcut-client'
 import GrnSummaryCopyButton from './grn-summary-copy-button'
+import PenaltyPointsShortcutButton from './penalty-points-shortcut-client'
 import styles from './dashboard.module.css'
 
 const DAILY_QUOTES = [
@@ -639,8 +640,13 @@ export default async function DashboardPage({ searchParams }) {
   const params = await searchParams
   const selectedGrn = String(params?.grn || '').trim()
   const showOperationsCalendarButton = canAccessOperationsCalendar(role, permissions, isAdmin)
+  const showPenaltyPointsButton = hasPermission(permissions, 'hrga.penalty_points.view', isAdmin)
+  const canAddPenaltyPoints = hasPermission(permissions, 'hrga.penalty_points.add', isAdmin)
 
   const { data: announcementRows } = await supabase.from('dir_user_profiles').select('*')
+  const { data: currentPenaltyRows } = showPenaltyPointsButton
+    ? await supabase.from('hrga_penalty_points_current').select('*')
+    : { data: [] }
   const { data: broadcastRows, error: broadcastError } = await supabase
     .from('hrd_announcement')
     .select('id, title, message, start_date, end_date, is_active')
@@ -689,6 +695,9 @@ export default async function DashboardPage({ searchParams }) {
               <div className={styles.heroQuickActions}>
                 <ItemSearchShortcutButton />
                 <RestockShortcutButton actions={restockActions} />
+                {showPenaltyPointsButton ? (
+                  <PenaltyPointsShortcutButton people={announcementRows || []} currentRows={currentPenaltyRows || []} canAdd={canAddPenaltyPoints} />
+                ) : null}
                 {showOperationsCalendarButton ? (
                   <Link href="/operations-calendar" className={styles.heroProfileLink} aria-label="Open Operations Calendar">
                     <span className={styles.heroActionIcon}>
@@ -769,6 +778,9 @@ export default async function DashboardPage({ searchParams }) {
             <div className={styles.heroQuickActions}>
               <ItemSearchShortcutButton />
               <RestockShortcutButton actions={restockActions} />
+              {showPenaltyPointsButton ? (
+                <PenaltyPointsShortcutButton people={announcementRows || []} currentRows={currentPenaltyRows || []} canAdd={canAddPenaltyPoints} />
+              ) : null}
               <Link href="/dashboard/delivery-report" className={styles.heroProfileLink} aria-label="Open Delivery Report" title="Delivery Report">
                 <DeliveryReportIcon />
               </Link>

@@ -16,7 +16,14 @@ alter table public.pl_packing_items
 
 alter table public.pl_packing_items
   add constraint pl_packing_items_storage_status_check
-  check (storage_status in ('queued', 'stored'));
+  check (storage_status in ('queued', 'released_without_stored', 'stored'));
+
+update public.pl_packing_items
+set
+  storage_status = 'released_without_stored',
+  updated_at = now()
+where storage_status = 'queued'
+  and release_status = 'released';
 
 create index if not exists pl_packing_items_storage_status_idx
   on public.pl_packing_items (storage_status, inbound_id, koli_sequence);

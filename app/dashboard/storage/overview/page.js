@@ -12,7 +12,13 @@ import ProductDirectoryClient from '../daftar-barang/product-directory-client'
 const supabase = createClient()
 const BATCH_SIZE = 1000
 const STOCK_PAGE_SIZE = 25
+const QUEUE_PAGE_SIZE = 25
+const STORAGE_DATA_CACHE_TTL_MS = 15 * 1000
+const STORAGE_STATIC_CACHE_TTL_MS = 5 * 60 * 1000
 const STORAGE_GROUP_FILTERS = ['ARKLINE', 'MOB', 'OI']
+const WAREHOUSE_STORAGE_SELECT_COLUMNS = 'id, rack_location_id, sku_id, item_name, size, qty, notes, created_at, updated_at'
+const warehouseStorageCache = { rows: null, expiresAt: 0 }
+const staticStorageCache = new Map()
 const naturalSort = new Intl.Collator(undefined, {
   numeric: true,
   sensitivity: 'base',
@@ -23,6 +29,41 @@ const letterSizeRanks = new Map(
 
 function normalizeFilterValue(value) {
   return String(value || '').trim().toUpperCase()
+}
+
+function sortStorageEntries(rows = []) {
+  return [...rows].sort((left, right) => new Date(right.created_at || 0) - new Date(left.created_at || 0))
+}
+
+function setWarehouseStorageCache(rows = []) {
+  warehouseStorageCache.rows = sortStorageEntries(rows)
+  warehouseStorageCache.expiresAt = Date.now() + STORAGE_DATA_CACHE_TTL_MS
+  return warehouseStorageCache.rows
+}
+
+function mergeWarehouseStorageRows(currentRows = [], nextRows = []) {
+  const rowsById = new Map(currentRows.map((row) => [String(row.id), row]))
+
+  nextRows.forEach((row) => {
+    if (!row?.id) return
+    rowsById.set(String(row.id), row)
+  })
+
+  return setWarehouseStorageCache(Array.from(rowsById.values()))
+}
+
+async function readStaticStorageCache(key, loader) {
+  const cached = staticStorageCache.get(key)
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.value
+  }
+
+  const value = await loader()
+  staticStorageCache.set(key, {
+    value,
+    expiresAt: Date.now() + STORAGE_STATIC_CACHE_TTL_MS,
+  })
+  return value
 }
 
 function normalizeSizeValue(value) {
@@ -206,57 +247,65 @@ function normalizeArklineProduct(row) {
 }
 
 async function fetchActiveArklineProducts() {
-  const { data, error } = await supabase
-    .from('arkline_dir_products')
-    .select('sku_induk, nama_produk, is_active')
-    .eq('is_active', true)
-    .order('nama_produk', { ascending: true })
-
-  if (error) {
-    throw error
-  }
-
-  return (data || [])
-    .map(normalizeArklineProduct)
-    .filter((item) => item.isActive && item.sku && item.productName)
-}
-
-async function fetchAllRackLocations() {
-  const allRows = []
-  let from = 0
-
-  while (true) {
-    const to = from + BATCH_SIZE - 1
+  return readStaticStorageCache('arkline-products', async () => {
     const { data, error } = await supabase
-      .from('dir_rack_locations')
-      .select('id, location_type, location_id, location_code, sub_location, location_name, group_code')
-      .order('location_type', { ascending: true })
-      .order('location_id', { ascending: true })
-      .order('location_code', { ascending: true })
-      .order('sub_location', { ascending: true })
-      .range(from, to)
+      .from('arkline_dir_products')
+      .select('sku_induk, nama_produk, is_active')
+      .eq('is_active', true)
+      .order('nama_produk', { ascending: true })
 
     if (error) {
       throw error
     }
 
-    if (!data || data.length === 0) {
-      break
-    }
-
-    allRows.push(...data)
-
-    if (data.length < BATCH_SIZE) {
-      break
-    }
-
-    from += BATCH_SIZE
-  }
-
-  return allRows
+    return (data || [])
+      .map(normalizeArklineProduct)
+      .filter((item) => item.isActive && item.sku && item.productName)
+  })
 }
 
-async function fetchAllWarehouseStorage() {
+async function fetchAllRackLocations() {
+  return readStaticStorageCache('rack-locations', async () => {
+    const allRows = []
+    let from = 0
+
+    while (true) {
+      const to = from + BATCH_SIZE - 1
+      const { data, error } = await supabase
+        .from('dir_rack_locations')
+        .select('id, location_type, location_id, location_code, sub_location, location_name, group_code')
+        .order('location_type', { ascending: true })
+        .order('location_id', { ascending: true })
+        .order('location_code', { ascending: true })
+        .order('sub_location', { ascending: true })
+        .range(from, to)
+
+      if (error) {
+        throw error
+      }
+
+      if (!data || data.length === 0) {
+        break
+      }
+
+      allRows.push(...data)
+
+      if (data.length < BATCH_SIZE) {
+        break
+      }
+
+      from += BATCH_SIZE
+    }
+
+    return allRows
+  })
+}
+
+async function fetchAllWarehouseStorage({ force = false } = {}) {
+  if (!force && warehouseStorageCache.rows && warehouseStorageCache.expiresAt > Date.now()) {
+    return warehouseStorageCache.rows
+  }
+
   const allRows = []
   let from = 0
 
@@ -264,7 +313,7 @@ async function fetchAllWarehouseStorage() {
     const to = from + BATCH_SIZE - 1
     const { data, error } = await supabase
       .from('warehouse_storage')
-      .select('id, rack_location_id, sku_id, item_name, size, qty, notes, created_at')
+      .select(WAREHOUSE_STORAGE_SELECT_COLUMNS)
       .order('created_at', { ascending: false })
       .range(from, to)
 
@@ -285,7 +334,7 @@ async function fetchAllWarehouseStorage() {
     from += BATCH_SIZE
   }
 
-  return allRows
+  return setWarehouseStorageCache(allRows)
 }
 
 async function fetchAllRestockHistory() {
@@ -313,6 +362,7 @@ async function fetchAllStorageQueueRows() {
       .from('pl_packing_items')
       .select('id, inbound_id, pl_size_breakdown_id, product_model_variant_id, packing_group_key, storing_type, package_type, brand_code, source_variant_code, pl_name, model_name, variant_name, size_label, koli_sequence, qty, packed_by, storage_status, created_at')
       .eq('storage_status', 'queued')
+      .eq('package_type', 'REGULAR')
       .order('created_at', { ascending: false })
       .order('koli_sequence', { ascending: true })
       .range(from, to)
@@ -338,132 +388,142 @@ async function fetchAllStorageQueueRows() {
 }
 
 async function fetchAllPlSizeBreakdownRows() {
-  const allRows = []
-  let from = 0
+  return readStaticStorageCache('pl-size-breakdown-identities', async () => {
+    const allRows = []
+    let from = 0
 
-  while (true) {
-    const to = from + BATCH_SIZE - 1
-    const { data, error } = await supabase
-      .from('pl_size_breakdown')
-      .select('id, product_model_variant_id, source_variant_code')
-      .order('id', { ascending: true })
-      .range(from, to)
+    while (true) {
+      const to = from + BATCH_SIZE - 1
+      const { data, error } = await supabase
+        .from('pl_size_breakdown')
+        .select('id, product_model_variant_id, source_variant_code')
+        .order('id', { ascending: true })
+        .range(from, to)
 
-    if (error) {
-      throw error
+      if (error) {
+        throw error
+      }
+
+      if (!data || data.length === 0) {
+        break
+      }
+
+      allRows.push(...data)
+
+      if (data.length < BATCH_SIZE) {
+        break
+      }
+
+      from += BATCH_SIZE
     }
 
-    if (!data || data.length === 0) {
-      break
-    }
-
-    allRows.push(...data)
-
-    if (data.length < BATCH_SIZE) {
-      break
-    }
-
-    from += BATCH_SIZE
-  }
-
-  return allRows
+    return allRows
+  })
 }
 
 async function fetchAllProductVariantRows() {
-  const allRows = []
-  let from = 0
+  return readStaticStorageCache('product-variants-storage-lookup', async () => {
+    const allRows = []
+    let from = 0
 
-  while (true) {
-    const to = from + BATCH_SIZE - 1
-    const { data, error } = await supabase
-      .from('dir_product_model_variants')
-      .select('id, variant_code, variant_name, selling_name')
-      .order('id', { ascending: true })
-      .range(from, to)
+    while (true) {
+      const to = from + BATCH_SIZE - 1
+      const { data, error } = await supabase
+        .from('dir_product_model_variants')
+        .select('id, variant_code, variant_name, selling_name')
+        .order('id', { ascending: true })
+        .range(from, to)
 
-    if (error) {
-      throw error
+      if (error) {
+        throw error
+      }
+
+      if (!data || data.length === 0) {
+        break
+      }
+
+      allRows.push(...data)
+
+      if (data.length < BATCH_SIZE) {
+        break
+      }
+
+      from += BATCH_SIZE
     }
 
-    if (!data || data.length === 0) {
-      break
-    }
-
-    allRows.push(...data)
-
-    if (data.length < BATCH_SIZE) {
-      break
-    }
-
-    from += BATCH_SIZE
-  }
-
-  return allRows
+    return allRows
+  })
 }
 
 async function fetchInboundSummaries() {
-  const allRows = []
-  let from = 0
+  return readStaticStorageCache('inbound-summaries', async () => {
+    const allRows = []
+    let from = 0
 
-  while (true) {
-    const to = from + BATCH_SIZE - 1
+    while (true) {
+      const to = from + BATCH_SIZE - 1
+      const { data, error } = await supabase
+        .from('inbound')
+        .select('id, grn_number, item_name, inbound_date')
+        .order('created_at', { ascending: false })
+        .range(from, to)
+
+      if (error) {
+        throw error
+      }
+
+      if (!data || data.length === 0) {
+        break
+      }
+
+      allRows.push(...data)
+
+      if (data.length < BATCH_SIZE) {
+        break
+      }
+
+      from += BATCH_SIZE
+    }
+
+    return allRows
+  })
+}
+
+async function fetchBrandDirectory() {
+  return readStaticStorageCache('brand-directory', async () => {
     const { data, error } = await supabase
-      .from('inbound')
-      .select('id, grn_number, item_name, inbound_date')
-      .order('created_at', { ascending: false })
-      .range(from, to)
+      .from('dir_brands')
+      .select('id, brand_code, brand_name, is_active')
+      .order('brand_name', { ascending: true })
 
     if (error) {
       throw error
     }
 
-    if (!data || data.length === 0) {
-      break
-    }
-
-    allRows.push(...data)
-
-    if (data.length < BATCH_SIZE) {
-      break
-    }
-
-    from += BATCH_SIZE
-  }
-
-  return allRows
-}
-
-async function fetchBrandDirectory() {
-  const { data, error } = await supabase
-    .from('dir_brands')
-    .select('id, brand_code, brand_name, is_active')
-    .order('brand_name', { ascending: true })
-
-  if (error) {
-    throw error
-  }
-
-  return data || []
+    return data || []
+  })
 }
 
 async function fetchUserProfilesByEmail() {
-  const { data, error } = await supabase
-    .from('dir_user_profiles')
-    .select('email, display_name')
+  return readStaticStorageCache('user-profiles-by-email', async () => {
+    const { data, error } = await supabase
+      .from('dir_user_profiles')
+      .select('email, display_name')
 
-  if (error) {
-    throw error
-  }
-
-  return (data || []).reduce((result, row) => {
-    const email = String(row.email || '').trim().toLowerCase()
-
-    if (email) {
-      result[email] = String(row.display_name || '').trim()
+    if (error) {
+      throw error
     }
 
-    return result
-  }, {})
+    return (data || []).reduce((result, row) => {
+      const email = String(row.email || '').trim().toLowerCase()
+
+      if (email) {
+        result[email] = String(row.display_name || '').trim()
+      }
+
+      return result
+    }, {})
+  })
 }
 
 const EMPTY_STORAGE_ACCESS = {
@@ -542,9 +602,14 @@ export default function StorageOverviewPage() {
   const [isCompactLayout, setIsCompactLayout] = useState(false)
   const [activeListMode, setActiveListMode] = useState(initialListMode)
   const [stockPage, setStockPage] = useState(1)
+  const [queuePage, setQueuePage] = useState(1)
   const [productSearch, setProductSearch] = useState(initialProductSearch)
   const [brandLookupSearch, setBrandLookupSearch] = useState('')
   const [historyPickerFilter, setHistoryPickerFilter] = useState('')
+  const [queueFilters, setQueueFilters] = useState({
+    group: '',
+    grn: '',
+  })
   const [takeForm, setTakeForm] = useState({
     takeOutAll: false,
     qty: '',
@@ -582,15 +647,15 @@ export default function StorageOverviewPage() {
     size: '',
   })
 
-  const refreshInventoryData = useCallback(async ({ showLoading = false } = {}) => {
+  const refreshInventoryData = useCallback(async ({ showLoading = false, forceStorage = false } = {}) => {
     if (showLoading) {
       setLoading(true)
     }
 
     try {
-      const [rackData, storageData, restockRows, queueRows, breakdownRows, variantRows, inboundData, arklineProductRows, brandData, profileRows, access] = await Promise.all([
+      const [rackData, storageData, restockRows, queueRows, breakdownRows, variantRows, inboundData, arklineProductRows, brandData, profileRows] = await Promise.all([
         fetchAllRackLocations(),
-        fetchAllWarehouseStorage(),
+        fetchAllWarehouseStorage({ force: forceStorage }),
         fetchAllRestockHistory(),
         fetchAllStorageQueueRows(),
         fetchAllPlSizeBreakdownRows(),
@@ -599,7 +664,6 @@ export default function StorageOverviewPage() {
         fetchActiveArklineProducts(),
         fetchBrandDirectory(),
         fetchUserProfilesByEmail(),
-        fetchCurrentStorageAccess(),
       ])
 
       const normalizedRackLocations = (rackData || []).map((item) => ({
@@ -643,7 +707,6 @@ export default function StorageOverviewPage() {
       setArklineProducts(arklineProductRows || [])
       setBrandRows(brandData || [])
       setUserProfilesByEmail(profileRows || {})
-      setStorageAccess(access || EMPTY_STORAGE_ACCESS)
       setLoading(false)
     } catch (loadError) {
       if (showLoading) {
@@ -653,13 +716,23 @@ export default function StorageOverviewPage() {
     }
   }, [])
 
+  const refreshStorageAccess = useCallback(async () => {
+    try {
+      const access = await fetchCurrentStorageAccess()
+      setStorageAccess(access || EMPTY_STORAGE_ACCESS)
+    } catch {
+      setStorageAccess(EMPTY_STORAGE_ACCESS)
+    }
+  }, [])
+
   useEffect(() => {
     const initialRefreshId = window.setTimeout(() => {
+      refreshStorageAccess()
       refreshInventoryData({ showLoading: true })
     }, 0)
 
     return () => window.clearTimeout(initialRefreshId)
-  }, [refreshInventoryData])
+  }, [refreshInventoryData, refreshStorageAccess])
 
   useEffect(() => {
     function updateLayoutMode() {
@@ -675,7 +748,8 @@ export default function StorageOverviewPage() {
   useRealtimeRefresh({
     supabase,
     topic: 'warehouse:storage',
-    onRefresh: () => refreshInventoryData(),
+    onRefresh: () => refreshInventoryData({ forceStorage: true }),
+    debounceMs: 3000,
   })
 
   const locationById = useMemo(
@@ -953,12 +1027,15 @@ export default function StorageOverviewPage() {
           koli_sequence: row.koli_sequence,
           created_at: row.created_at,
           packed_by: row.packed_by,
+          storage_status: row.storage_status,
+          storageStatuses: new Set(),
           items: [],
           totalQty: 0,
         }
 
       current.items.push(row)
       current.totalQty += Number(row.qty || 0)
+      current.storageStatuses.add(normalizeFilterValue(row.storage_status || 'queued'))
 
       if (!current.created_at || new Date(row.created_at || 0) < new Date(current.created_at || 0)) {
         current.created_at = row.created_at
@@ -967,7 +1044,14 @@ export default function StorageOverviewPage() {
       groups.set(key, current)
     })
 
-    return Array.from(groups.values()).sort((left, right) => {
+    return Array.from(groups.values()).map((entry) => {
+      const statuses = Array.from(entry.storageStatuses || []).filter(Boolean)
+
+      return {
+        ...entry,
+        storage_status: statuses.length === 1 ? statuses[0].toLowerCase() : 'mixed',
+      }
+    }).sort((left, right) => {
       const leftDate = new Date(left.created_at || 0).getTime()
       const rightDate = new Date(right.created_at || 0).getTime()
 
@@ -1059,7 +1143,7 @@ export default function StorageOverviewPage() {
 
     return true
   })
-  const filteredQueueRows = queueGroups.filter((entry) => {
+  const searchFilteredQueueRows = queueGroups.filter((entry) => {
     const normalizedProductSearch = normalizeFilterValue(productSearch)
 
     if (!normalizedProductSearch) {
@@ -1081,13 +1165,58 @@ export default function StorageOverviewPage() {
       .map((value) => normalizeFilterValue(value))
       .some((value) => value.includes(normalizedProductSearch))
   })
+  const queueGroupFilteredRows = searchFilteredQueueRows.filter((entry) => {
+    const normalizedGroupFilter = normalizeFilterValue(queueFilters.group)
+
+    return !normalizedGroupFilter || normalizeFilterValue(entry.storing_type) === normalizedGroupFilter
+  })
+  const queueGrnFilteredRows = searchFilteredQueueRows.filter((entry) => {
+    const normalizedGrnFilter = normalizeFilterValue(queueFilters.grn)
+
+    if (!normalizedGrnFilter) {
+      return true
+    }
+
+    const inbound = inboundById.get(Number(entry.inbound_id))
+
+    return normalizeFilterValue(inbound?.grn_number) === normalizedGrnFilter
+  })
+  const filteredQueueRows = searchFilteredQueueRows.filter((entry) => {
+    const normalizedGroupFilter = normalizeFilterValue(queueFilters.group)
+    const normalizedGrnFilter = normalizeFilterValue(queueFilters.grn)
+    const inbound = inboundById.get(Number(entry.inbound_id))
+
+    if (normalizedGroupFilter && normalizeFilterValue(entry.storing_type) !== normalizedGroupFilter) {
+      return false
+    }
+
+    if (normalizedGrnFilter && normalizeFilterValue(inbound?.grn_number) !== normalizedGrnFilter) {
+      return false
+    }
+
+    return true
+  })
+  const queueGroupOptions = Array.from(
+    new Set(queueGrnFilteredRows.map((entry) => normalizeFilterValue(entry.storing_type)).filter(Boolean))
+  ).sort((left, right) => naturalSort.compare(left, right))
+  const queueGrnOptions = Array.from(
+    new Set(
+      queueGroupFilteredRows
+        .map((entry) => inboundById.get(Number(entry.inbound_id))?.grn_number)
+        .filter(Boolean)
+    )
+  ).sort((left, right) => naturalSort.compare(String(left), String(right)))
   const totalStockPages = Math.max(1, Math.ceil(filteredRows.length / STOCK_PAGE_SIZE))
   const safeStockPage = Math.min(stockPage, totalStockPages)
   const stockPageStartIndex = (safeStockPage - 1) * STOCK_PAGE_SIZE
   const stockPageEndIndex = Math.min(stockPageStartIndex + STOCK_PAGE_SIZE, filteredRows.length)
   const visibleStockRows = filteredRows.slice(stockPageStartIndex, stockPageStartIndex + STOCK_PAGE_SIZE)
+  const totalQueuePages = Math.max(1, Math.ceil(filteredQueueRows.length / QUEUE_PAGE_SIZE))
+  const safeQueuePage = Math.min(queuePage, totalQueuePages)
+  const queuePageStartIndex = (safeQueuePage - 1) * QUEUE_PAGE_SIZE
+  const queuePageEndIndex = Math.min(queuePageStartIndex + QUEUE_PAGE_SIZE, filteredQueueRows.length)
+  const visibleQueueRows = filteredQueueRows.slice(queuePageStartIndex, queuePageStartIndex + QUEUE_PAGE_SIZE)
   const visibleHistoryRows = filteredHistoryRows.slice(0, 25)
-  const visibleQueueRows = filteredQueueRows.slice(0, 25)
   const filteredQty = filteredRows.reduce((sum, entry) => sum + Number(entry.qty || 0), 0)
 
   const topTakenItems = Array.from(
@@ -1142,6 +1271,7 @@ export default function StorageOverviewPage() {
   function handleFilterChange(event) {
     const { name, value, type, checked } = event.target
     setStockPage(1)
+    setQueuePage(1)
 
     if (type === 'checkbox') {
       setFilters((prev) => ({
@@ -1194,6 +1324,7 @@ export default function StorageOverviewPage() {
 
   function clearFilterOnFilledClick(name) {
     setStockPage(1)
+    setQueuePage(1)
     setFilters((prev) => {
       if (!prev[name]) {
         return prev
@@ -1204,6 +1335,28 @@ export default function StorageOverviewPage() {
         [name]: '',
       }
     })
+  }
+
+  function handleQueueFilterChange(name, value, options = {}) {
+    setQueuePage(1)
+    setQueueFilters((prev) => {
+      const normalizedCurrent = normalizeFilterValue(prev[name])
+      const normalizedNext = normalizeFilterValue(value)
+
+      return {
+        ...prev,
+        [name]: options.toggle && normalizedCurrent === normalizedNext ? '' : normalizedNext,
+      }
+    })
+  }
+
+  function clearQueueFilters() {
+    setProductSearch('')
+    setQueueFilters({
+      group: '',
+      grn: '',
+    })
+    setQueuePage(1)
   }
 
   function clearFilters() {
@@ -1217,7 +1370,12 @@ export default function StorageOverviewPage() {
       size: '',
     })
     setProductSearch('')
+    setQueueFilters({
+      group: '',
+      grn: '',
+    })
     setStockPage(1)
+    setQueuePage(1)
   }
 
   function getDisplayNameByEmail(email) {
@@ -1661,7 +1819,10 @@ export default function StorageOverviewPage() {
       updated_by: await getCurrentUserEmail(),
     }
 
-    const { error: insertError } = await supabase.from('warehouse_storage').insert([payload])
+    const { data: insertedRows, error: insertError } = await supabase
+      .from('warehouse_storage')
+      .insert([payload])
+      .select(WAREHOUSE_STORAGE_SELECT_COLUMNS)
 
     if (insertError) {
       setError(insertError.message)
@@ -1669,8 +1830,7 @@ export default function StorageOverviewPage() {
       return
     }
 
-    const refreshedStorage = await fetchAllWarehouseStorage()
-    setStorageEntries(refreshedStorage || [])
+    setStorageEntries((currentRows) => mergeWarehouseStorageRows(currentRows, insertedRows || []))
     setRegisterForm((prev) => ({
       ...prev,
       itemName: '',
@@ -1734,7 +1894,7 @@ export default function StorageOverviewPage() {
     const { data: insertedRows, error: insertError } = await supabase
       .from('warehouse_storage')
       .insert(storagePayload)
-      .select('id')
+      .select(WAREHOUSE_STORAGE_SELECT_COLUMNS)
 
     if (insertError) {
       setQueueModalError(insertError.message)
@@ -1761,13 +1921,9 @@ export default function StorageOverviewPage() {
       return
     }
 
-    const [refreshedStorage, refreshedQueue] = await Promise.all([
-      fetchAllWarehouseStorage(),
-      fetchAllStorageQueueRows(),
-    ])
-
-    setStorageEntries(refreshedStorage || [])
-    setStorageQueueRows(refreshedQueue || [])
+    const storedQueueIds = new Set(queueItems.map((item) => String(item.id)))
+    setStorageEntries((currentRows) => mergeWarehouseStorageRows(currentRows, insertedRows || []))
+    setStorageQueueRows((currentRows) => currentRows.filter((row) => !storedQueueIds.has(String(row.id))))
     setSuccess(`${getQueueKoliLabel(queueModalEntry)} stored successfully.`)
     setStoringQueue(false)
     closeQueueModal()
@@ -1845,8 +2001,18 @@ export default function StorageOverviewPage() {
       }
     }
 
-    const refreshedStorage = await fetchAllWarehouseStorage()
-    setStorageEntries(refreshedStorage || [])
+    setStorageEntries((currentRows) => {
+      const nextRows =
+        takeQty === currentQty
+          ? currentRows.filter((row) => String(row.id) !== String(takeModalEntry.id))
+          : currentRows.map((row) => (
+              String(row.id) === String(takeModalEntry.id)
+                ? { ...row, qty: currentQty - takeQty, updated_at: new Date().toISOString() }
+                : row
+            ))
+
+      return setWarehouseStorageCache(nextRows)
+    })
     setSuccess('Storage quantity updated successfully.')
     setTaking(false)
     closeTakeModal()
@@ -1899,8 +2065,22 @@ export default function StorageOverviewPage() {
       return
     }
 
-    const refreshedStorage = await fetchAllWarehouseStorage()
-    setStorageEntries(refreshedStorage || [])
+    setStorageEntries((currentRows) => {
+      const nextRows = currentRows.map((row) => (
+        String(row.id) === String(editModalEntry.id)
+          ? {
+              ...row,
+              item_name: editForm.itemName.trim(),
+              size: editForm.size.trim() || null,
+              qty: nextQty,
+              notes: editForm.notes.trim() || null,
+              updated_at: new Date().toISOString(),
+            }
+          : row
+      ))
+
+      return setWarehouseStorageCache(nextRows)
+    })
     setSuccess('Storage item updated successfully.')
     setEditing(false)
     closeEditModal()
@@ -1981,7 +2161,11 @@ export default function StorageOverviewPage() {
               <button
                 key={mode}
                 type="button"
-                onClick={() => setActiveListMode(mode)}
+                onClick={() => {
+                  setActiveListMode(mode)
+                  setStockPage(1)
+                  setQueuePage(1)
+                }}
                 style={{
                   ...styles.storageTabButton,
                   ...(visibleListMode === mode ? styles.storageTabButtonActive : {}),
@@ -2002,7 +2186,13 @@ export default function StorageOverviewPage() {
           />
         ) : (
           <>
-        <div style={{ ...styles.searchToolbar, ...(isCompactLayout ? styles.searchToolbarCompact : {}) }}>
+        <div
+          style={{
+            ...styles.searchToolbar,
+            ...(visibleListMode === 'queue' ? styles.queueSearchToolbar : {}),
+            ...(isCompactLayout ? styles.searchToolbarCompact : {}),
+          }}
+        >
           <div style={styles.field}>
             <label style={styles.label}>Product Search</label>
             <input
@@ -2010,11 +2200,71 @@ export default function StorageOverviewPage() {
               onChange={(event) => {
                 setProductSearch(event.target.value.toUpperCase())
                 setStockPage(1)
+                setQueuePage(1)
               }}
               style={styles.input}
               placeholder="Search product, GRN, or SKU"
             />
           </div>
+          {visibleListMode === 'queue' ? (
+            <div style={styles.queueGroupField}>
+              <label style={styles.label}>Group</label>
+              <div style={styles.queueGroupToggle} aria-label="Storage queue group filter">
+                {queueGroupOptions.map((groupOption) => {
+                  const isActive = normalizeFilterValue(queueFilters.group) === normalizeFilterValue(groupOption)
+
+                  return (
+                    <button
+                      key={groupOption}
+                      type="button"
+                      onClick={() => handleQueueFilterChange('group', groupOption, { toggle: true })}
+                      style={{
+                        ...styles.queueGroupButton,
+                        ...(isActive ? styles.queueGroupButtonActive : {}),
+                      }}
+                      aria-pressed={isActive}
+                    >
+                      {groupOption}
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          ) : null}
+          {visibleListMode === 'queue' ? (
+            <div style={styles.field}>
+              <label style={styles.label}>GRN</label>
+              <input
+                value={queueFilters.grn}
+                onChange={(event) => handleQueueFilterChange('grn', event.target.value)}
+                onClick={() => {
+                  if (queueFilters.grn) {
+                    handleQueueFilterChange('grn', '')
+                  }
+                }}
+                style={styles.input}
+                list="queue-grn-options"
+                placeholder="Type or select a GRN"
+              />
+              <datalist id="queue-grn-options">
+                {queueGrnOptions.map((option) => (
+                  <option key={option} value={option} />
+                ))}
+              </datalist>
+            </div>
+          ) : null}
+          {visibleListMode === 'queue' ? (
+            <div style={styles.toolbarIconField}>
+              <button type="button" onClick={clearQueueFilters} style={styles.iconResetButton} title="Clear Queue Filters" aria-label="Clear Queue Filters">
+                <svg viewBox="0 0 24 24" style={styles.resetIcon} aria-hidden="true">
+                  <path d="M3 12a9 9 0 0 1 15.4-6.4L21 8" />
+                  <path d="M21 3v5h-5" />
+                  <path d="M21 12a9 9 0 0 1-15.4 6.4L3 16" />
+                  <path d="M3 21v-5h5" />
+                </svg>
+              </button>
+            </div>
+          ) : null}
           {visibleListMode === 'stock' && canRegisterStorageItem ? (
             <div style={styles.toolbarActionField}>
               <button
@@ -2260,8 +2510,29 @@ export default function StorageOverviewPage() {
         ) : visibleListMode === 'queue' ? (
           <div style={styles.historyToolbar}>
             <p style={styles.summary}>
-              Showing {visibleQueueRows.length} of {filteredQueueRows.length} storage queue koli
+              Showing {filteredQueueRows.length ? queuePageStartIndex + 1 : 0}-{queuePageEndIndex} of {filteredQueueRows.length} storage queue koli
             </p>
+            <div style={styles.paginationControls}>
+              <button
+                type="button"
+                onClick={() => setQueuePage((prev) => Math.max(1, Math.min(prev, totalQueuePages) - 1))}
+                style={safeQueuePage <= 1 ? { ...styles.paginationButton, ...styles.paginationButtonDisabled } : styles.paginationButton}
+                disabled={safeQueuePage <= 1}
+              >
+                Previous
+              </button>
+              <span style={styles.pageIndicator}>
+                Page {safeQueuePage} of {totalQueuePages}
+              </span>
+              <button
+                type="button"
+                onClick={() => setQueuePage((prev) => Math.min(totalQueuePages, Math.min(prev, totalQueuePages) + 1))}
+                style={safeQueuePage >= totalQueuePages ? { ...styles.paginationButton, ...styles.paginationButtonDisabled } : styles.paginationButton}
+                disabled={safeQueuePage >= totalQueuePages}
+              >
+                Next
+              </button>
+            </div>
           </div>
         ) : (
           <div style={styles.historyToolbar}>
@@ -3327,6 +3598,51 @@ const styles = {
   },
   searchToolbarCompact: {
     gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 180px), 1fr))',
+  },
+  queueSearchToolbar: {
+    gridTemplateColumns: 'minmax(280px, 1fr) minmax(180px, 240px) minmax(200px, 280px) auto',
+  },
+  queueGroupField: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '8px',
+    minWidth: 0,
+  },
+  queueGroupToggle: {
+    display: 'inline-grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(64px, 1fr))',
+    gap: '4px',
+    padding: '4px',
+    border: '1px solid #dbe4ef',
+    borderRadius: '12px',
+    background: '#fff',
+  },
+  queueGroupButton: {
+    minHeight: '36px',
+    padding: '0 10px',
+    borderTopWidth: 0,
+    borderRightWidth: 0,
+    borderBottomWidth: 0,
+    borderLeftWidth: 0,
+    borderTopStyle: 'solid',
+    borderRightStyle: 'solid',
+    borderBottomStyle: 'solid',
+    borderLeftStyle: 'solid',
+    borderTopColor: 'transparent',
+    borderRightColor: 'transparent',
+    borderBottomColor: 'transparent',
+    borderLeftColor: 'transparent',
+    borderRadius: '9px',
+    background: 'transparent',
+    color: '#64748b',
+    fontSize: '13px',
+    fontWeight: '800',
+    cursor: 'pointer',
+    whiteSpace: 'nowrap',
+  },
+  queueGroupButtonActive: {
+    background: '#111827',
+    color: '#fff',
   },
   toolbarActionField: {
     display: 'flex',
