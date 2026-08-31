@@ -1,7 +1,7 @@
 'use client'
 
 import Image from 'next/image'
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { createClient } from '@/utils/supabase/browser'
 import { ADMIN_EMAIL, expandImpliedPermissions, resolveRole } from '@/utils/permissions'
 import { getProfileByAuthenticatedUser } from '@/utils/user-profiles'
@@ -69,6 +69,12 @@ const styles = {
     display: 'flex',
     flexDirection: 'column',
     gap: '16px',
+  },
+  titleRow: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: '12px',
   },
   title: {
     margin: 0,
@@ -289,6 +295,21 @@ const styles = {
     fontWeight: '700',
     cursor: 'pointer',
   },
+  iconButton: {
+    width: '44px',
+    height: '44px',
+    border: '1px solid #d1d5db',
+    borderRadius: '10px',
+    background: '#fff',
+    color: '#111827',
+    fontSize: '22px',
+    fontWeight: '800',
+    cursor: 'pointer',
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    lineHeight: 1,
+  },
   emptyState: {
     background: '#fff',
     border: '1px dashed #d1d5db',
@@ -327,6 +348,79 @@ const styles = {
     display: 'flex',
     flexDirection: 'column',
     gap: '16px',
+  },
+  wideModal: {
+    maxWidth: '940px',
+  },
+  modalHeader: {
+    display: 'flex',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: '16px',
+  },
+  modalToolbar: {
+    display: 'flex',
+    alignItems: 'flex-end',
+    justifyContent: 'space-between',
+    gap: '12px',
+    flexWrap: 'wrap',
+  },
+  historyDateField: {
+    width: '220px',
+  },
+  tableWrap: {
+    width: '100%',
+    overflow: 'auto',
+    border: '1px solid #e5e7eb',
+    borderRadius: '12px',
+  },
+  table: {
+    width: '100%',
+    borderCollapse: 'collapse',
+    minWidth: '820px',
+  },
+  th: {
+    padding: '12px 14px',
+    background: '#f9fafb',
+    borderBottom: '1px solid #d1d5db',
+    color: '#64748b',
+    fontSize: '12px',
+    fontWeight: '800',
+    letterSpacing: '0.04em',
+    textTransform: 'uppercase',
+    textAlign: 'left',
+    whiteSpace: 'nowrap',
+  },
+  td: {
+    padding: '12px 14px',
+    borderBottom: '1px solid #eef2f7',
+    color: '#111827',
+    fontSize: '14px',
+    verticalAlign: 'middle',
+  },
+  numberCell: {
+    textAlign: 'center',
+    fontVariantNumeric: 'tabular-nums',
+  },
+  historyPhoto: {
+    width: '42px',
+    height: '42px',
+    borderRadius: '8px',
+    objectFit: 'cover',
+    border: '1px solid #e5e7eb',
+    background: '#f9fafb',
+  },
+  sourceBadge: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    height: '28px',
+    padding: '0 10px',
+    borderRadius: '999px',
+    background: '#eef2ff',
+    color: '#3730a3',
+    fontSize: '12px',
+    fontWeight: '800',
+    whiteSpace: 'nowrap',
   },
 }
 
@@ -390,6 +484,32 @@ function getRemainingQty(task) {
 
 function getSubmittedQty(values) {
   return Number(values?.qty_a || 0) + Number(values?.qty_b || 0) + Number(values?.qty_c || 0)
+}
+
+function getTaskHistoryDate(task) {
+  return getDateOnly(task?.finished_at || task?.updated_at || task?.created_at)
+}
+
+function normalizeHistoryTask(task, sourceType) {
+  const normalizedTask = sourceType === 'regular' ? normalizeRegularTask(task) : { ...task, source_type: sourceType }
+  const taskModel = getTaskModelInfo(normalizedTask)
+  const qtyA = Number(normalizedTask.qty_a || 0)
+  const qtyB = Number(normalizedTask.qty_b || 0)
+  const qtyC = Number(normalizedTask.qty_c || 0)
+
+  return {
+    ...normalizedTask,
+    source_type: sourceType,
+    historyDate: getTaskHistoryDate(normalizedTask),
+    sourceLabel: getTaskSourceLabel(normalizedTask),
+    modelName: taskModel.modelName,
+    modelColor: taskModel.modelColor,
+    photoUrl: taskModel.photoUrl,
+    qtyA,
+    qtyB,
+    qtyC,
+    checkedTotal: qtyA + qtyB + qtyC,
+  }
 }
 
 function normalizeEmail(value) {
@@ -539,6 +659,11 @@ export default function QcInspectionTaskPage() {
   const [showEmptySubmitModal, setShowEmptySubmitModal] = useState(false)
   const [showInterruptModal, setShowInterruptModal] = useState(false)
   const [completeChecks, setCompleteChecks] = useState({})
+  const [showHistoryModal, setShowHistoryModal] = useState(false)
+  const [historyDate, setHistoryDate] = useState(() => getTodayLocalDate())
+  const [historyRows, setHistoryRows] = useState([])
+  const [historyLoading, setHistoryLoading] = useState(false)
+  const [historyError, setHistoryError] = useState('')
 
   useEffect(() => {
     let isMounted = true
@@ -695,6 +820,127 @@ export default function QcInspectionTaskPage() {
       isMounted = false
     }
   }, [refreshKey])
+
+  const loadHistory = useCallback(async () => {
+    const normalizedEmail = normalizeEmail(userEmail)
+    if (!normalizedEmail || !historyDate) {
+      setHistoryRows([])
+      return
+    }
+
+    setHistoryLoading(true)
+    setHistoryError('')
+
+    const selectedStart = `${historyDate}T00:00:00.000+07:00`
+    const selectedEnd = `${historyDate}T23:59:59.999+07:00`
+
+    const regularSelect = `
+      *,
+      inbound:inbound_id (
+        id,
+        grn_number
+      ),
+      inbound_unload:inbound_unload_id (
+        id,
+        brand_id,
+        category_id,
+        model_name,
+        variant_name,
+        photo_url,
+        is_sample,
+        koli_sequence,
+        brands:dir_brands!brand_id (
+          id,
+          brand_name
+        ),
+        categories:dir_categories!category_id (
+          id,
+          category_name,
+          full_name
+        )
+      )
+    `
+
+    const [
+      regularFinishedResult,
+      regularCheckpointResult,
+      arklineFinishedResult,
+      arklineCheckpointResult,
+    ] = await Promise.all([
+      supabase
+        .from('qc_items')
+        .select(regularSelect)
+        .eq('assigned_to', normalizedEmail)
+        .gte('finished_at', selectedStart)
+        .lte('finished_at', selectedEnd),
+      supabase
+        .from('qc_items')
+        .select(regularSelect)
+        .eq('assigned_to', normalizedEmail)
+        .is('finished_at', null)
+        .gte('updated_at', selectedStart)
+        .lte('updated_at', selectedEnd),
+      supabase
+        .from('arkline_qc')
+        .select('*')
+        .eq('assigned_to', normalizedEmail)
+        .gte('finished_at', selectedStart)
+        .lte('finished_at', selectedEnd),
+      supabase
+        .from('arkline_qc')
+        .select('*')
+        .eq('assigned_to', normalizedEmail)
+        .is('finished_at', null)
+        .gte('updated_at', selectedStart)
+        .lte('updated_at', selectedEnd),
+    ])
+
+    const firstError =
+      regularFinishedResult.error ||
+      regularCheckpointResult.error ||
+      arklineFinishedResult.error ||
+      arklineCheckpointResult.error
+
+    if (firstError) {
+      setHistoryRows([])
+      setHistoryError(firstError.message || 'Failed to load QC history.')
+      setHistoryLoading(false)
+      return
+    }
+
+    const rowByKey = new Map()
+    ;[
+      ...(regularFinishedResult.data || []).map((item) => normalizeHistoryTask(item, 'regular')),
+      ...(regularCheckpointResult.data || []).map((item) => normalizeHistoryTask(item, 'regular')),
+      ...(arklineFinishedResult.data || []).map((item) => normalizeHistoryTask(item, 'arkline')),
+      ...(arklineCheckpointResult.data || []).map((item) => normalizeHistoryTask(item, 'arkline')),
+    ]
+      .filter((item) => item.historyDate === historyDate && item.checkedTotal > 0)
+      .forEach((item) => {
+        rowByKey.set(`${item.source_type}:${item.id}`, item)
+      })
+
+    setHistoryRows(
+      Array.from(rowByKey.values()).sort((a, b) => {
+        const dateCompare = new Date(b.finished_at || b.updated_at || b.created_at || 0).getTime() - new Date(a.finished_at || a.updated_at || a.created_at || 0).getTime()
+        if (dateCompare !== 0) return dateCompare
+        return a.modelName.localeCompare(b.modelName, undefined, { numeric: true })
+      })
+    )
+    setHistoryLoading(false)
+  }, [historyDate, userEmail])
+
+  useEffect(() => {
+    if (!showHistoryModal) {
+      return
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      loadHistory()
+    }, 0)
+
+    return () => window.clearTimeout(timeoutId)
+  }, [loadHistory, showHistoryModal])
 
   useEffect(() => {
     function requestRefresh() {
@@ -1198,8 +1444,17 @@ export default function QcInspectionTaskPage() {
   return (
     <div style={styles.wrapper}>
       <div style={styles.card}>
-        <div>
+        <div style={styles.titleRow}>
           <h1 style={styles.title}>Grading Task</h1>
+          <button
+            type="button"
+            style={styles.iconButton}
+            onClick={() => setShowHistoryModal(true)}
+            aria-label="Open QC history"
+            title="QC history"
+          >
+            ◷
+          </button>
         </div>
       </div>
 
@@ -1493,6 +1748,103 @@ export default function QcInspectionTaskPage() {
               <button type="button" onClick={() => handleInterrupt(activeTask)} style={styles.primaryButton}>
                 OK
               </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {showHistoryModal ? (
+        <div style={styles.overlay}>
+          <div style={{ ...styles.modal, ...styles.wideModal }}>
+            <div style={styles.modalHeader}>
+              <div>
+                <h2 style={styles.queueTitle}>QC History</h2>
+                <p style={styles.subtitle}>Riwayat grading untuk {userLabel || userEmail}.</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowHistoryModal(false)}
+                style={styles.iconButton}
+                aria-label="Close QC history"
+                title="Close"
+              >
+                ×
+              </button>
+            </div>
+
+            <div style={styles.modalToolbar}>
+              <div style={{ ...styles.field, ...styles.historyDateField }}>
+                <label style={styles.label}>Date</label>
+                <input
+                  type="date"
+                  value={historyDate}
+                  onChange={(event) => setHistoryDate(event.target.value)}
+                  style={styles.input}
+                />
+              </div>
+              <button type="button" onClick={loadHistory} style={styles.secondaryButton} disabled={historyLoading}>
+                Refresh
+              </button>
+            </div>
+
+            {historyError ? <p style={styles.errorText}>{historyError}</p> : null}
+
+            <div style={styles.tableWrap}>
+              <table style={styles.table}>
+                <thead>
+                  <tr>
+                    <th style={styles.th}>Source</th>
+                    <th style={styles.th}>Photo</th>
+                    <th style={styles.th}>GRN / PO</th>
+                    <th style={styles.th}>Model</th>
+                    <th style={styles.th}>Model Variant</th>
+                    <th style={{ ...styles.th, textAlign: 'center' }}>A</th>
+                    <th style={{ ...styles.th, textAlign: 'center' }}>B</th>
+                    <th style={{ ...styles.th, textAlign: 'center' }}>C</th>
+                    <th style={{ ...styles.th, textAlign: 'center' }}>Checked Total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {historyLoading ? (
+                    <tr>
+                      <td style={styles.td} colSpan={9}>Loading QC history...</td>
+                    </tr>
+                  ) : historyRows.length ? (
+                    historyRows.map((row) => (
+                      <tr key={`${row.source_type}-${row.id}`}>
+                        <td style={styles.td}>
+                          <span style={styles.sourceBadge}>{row.source_type === 'arkline' ? 'Arkline' : 'Regular'}</span>
+                        </td>
+                        <td style={styles.td}>
+                          {row.photoUrl ? (
+                            <Image
+                              src={row.photoUrl}
+                              alt={row.modelName}
+                              width={42}
+                              height={42}
+                              unoptimized
+                              style={styles.historyPhoto}
+                            />
+                          ) : (
+                            '-'
+                          )}
+                        </td>
+                        <td style={styles.td}>{row.sourceLabel}</td>
+                        <td style={styles.td}>{row.modelName}</td>
+                        <td style={styles.td}>{row.modelColor || '-'}</td>
+                        <td style={{ ...styles.td, ...styles.numberCell }}>{row.qtyA}</td>
+                        <td style={{ ...styles.td, ...styles.numberCell }}>{row.qtyB}</td>
+                        <td style={{ ...styles.td, ...styles.numberCell }}>{row.qtyC}</td>
+                        <td style={{ ...styles.td, ...styles.numberCell, fontWeight: '800' }}>{row.checkedTotal}</td>
+                      </tr>
+                    ))
+                  ) : (
+                    <tr>
+                      <td style={styles.td} colSpan={9}>No QC history found for this date.</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
             </div>
           </div>
         </div>
