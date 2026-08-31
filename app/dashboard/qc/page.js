@@ -1356,8 +1356,10 @@ function buildRejectReasonSummaryRows(rows = [], reasonNameById = new Map()) {
   })
 }
 
-function getRejectDetailDateValue(row) {
-  return String(row?.created_at || row?.updated_at || '').slice(0, 10)
+function getRejectDetailDateValue(row, taskById = new Map()) {
+  const sourceTask = taskById.get(String(row?.arkline_qc_id || ''))
+  const sourceDate = sourceTask ? getQcWorkDateValue(sourceTask) : ''
+  return String(sourceDate || row?.created_at || row?.updated_at || '').slice(0, 10)
 }
 
 function getRejectReasonSizeKey(row) {
@@ -1366,11 +1368,11 @@ function getRejectReasonSizeKey(row) {
   return `${reasonId}|||${size}`
 }
 
-function buildRejectDetailDateMap(rows = []) {
+function buildRejectDetailDateMap(rows = [], taskById = new Map()) {
   const dateMap = new Map()
 
   rows.forEach((row) => {
-    const dateValue = getRejectDetailDateValue(row)
+    const dateValue = getRejectDetailDateValue(row, taskById)
     if (!dateValue) return
 
     const keys = [getRejectDraftKey(row), getRejectReasonSizeKey(row)]
@@ -1388,10 +1390,10 @@ function getRejectDetailDateInfo(row, dateMap = new Map()) {
   const dateValues = Array.from(dateMap.get(getRejectDraftKey(row)) || dateMap.get(getRejectReasonSizeKey(row)) || []).sort()
 
   if (!dateValues.length) {
-    return 'No saved date found for this reject detail.'
+    return 'No QC source date found for this reject detail.'
   }
 
-  return `Registered reject detail date${dateValues.length > 1 ? 's' : ''}:\n${dateValues.join('\n')}`
+  return `QC source date${dateValues.length > 1 ? 's' : ''}:\n${dateValues.join('\n')}`
 }
 
 function getRejectDraftKey(row) {
@@ -2575,6 +2577,10 @@ export default function QcDashboardPage() {
     () => new Set(selectedRejectTaskRows.map((item) => String(item.id))),
     [selectedRejectTaskRows]
   )
+  const selectedRejectTaskById = useMemo(
+    () => new Map(selectedRejectTaskRows.map((item) => [String(item.id), item])),
+    [selectedRejectTaskRows]
+  )
   const selectedRejectSummaryKey = useMemo(
     () => (rejectDetailSummary ? getSummaryRejectKey(rejectDetailSummary) : ''),
     [rejectDetailSummary]
@@ -2663,8 +2669,8 @@ export default function QcDashboardPage() {
     [selectedRejectExistingDetails, selectedRejectReasonNameById]
   )
   const selectedRejectDetailDateMap = useMemo(
-    () => buildRejectDetailDateMap(selectedRejectExistingDetails),
-    [selectedRejectExistingDetails]
+    () => buildRejectDetailDateMap(selectedRejectExistingDetails, selectedRejectTaskById),
+    [selectedRejectExistingDetails, selectedRejectTaskById]
   )
   const selectedRejectDetailQty = rejectDraftRows.reduce((sum, item) => sum + Number(item.qty || 0), 0)
   const selectedRejectAdjustedBaseSummary = useMemo(() => {
