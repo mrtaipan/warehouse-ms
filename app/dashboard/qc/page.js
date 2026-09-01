@@ -1264,7 +1264,14 @@ function applyArklineAdjustmentsToGradeTotals(qtyA, qtyB, qtyC, adjustmentRows =
     return appliedQty
   }
 
-  adjustmentRows.forEach((item) => {
+  const chronologicalRows = [...adjustmentRows].sort((a, b) => {
+    const dateA = new Date(a?.created_at || a?.updated_at || a?.effective_date || 0).getTime()
+    const dateB = new Date(b?.created_at || b?.updated_at || b?.effective_date || 0).getTime()
+    if (dateA !== dateB) return dateA - dateB
+    return String(a?.id || '').localeCompare(String(b?.id || ''), undefined, { numeric: true })
+  })
+
+  chronologicalRows.forEach((item) => {
     const type = String(item?.adjustment_type || '').trim().toLowerCase()
     const qty = Number(item?.qty || 0)
     if (!qty) return
