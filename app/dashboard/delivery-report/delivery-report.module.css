@@ -429,7 +429,12 @@
 .resolutionApp .moduleHeader p { font-size: 16px; }
 .resolutionApp .resolutionTabs { gap: 10px; margin-bottom: 18px; }
 .resolutionApp .resolutionTabs button { min-height: 48px; padding: 0 18px; font-size: 14px; }
+.resolutionApp .panelHeader h2,
+.resolutionApp .dataCard h2,
+.resolutionApp .resolutionInsightCard h2 { font-size: 20px; font-weight: 900; letter-spacing: -.02em; }
+.resolutionApp .panelHeader span { font-size: 13px; }
 .resolutionApp .resolutionSummaryPanel { margin-bottom: 18px; padding: 20px; }
+.resolutionApp .resolutionSummaryPanel .resolutionSummaryControls { margin: 0 0 16px; }
 .resolutionSummaryControls { display: flex; align-items: flex-end; gap: 12px; flex-wrap: wrap; margin: 16px 0; padding: 14px; border-radius: 20px; background: #f8fafc; border: 1px solid #edf1f5; }
 .resolutionSummaryControls label { display: flex; flex-direction: column; gap: 6px; min-width: 170px; }
 .resolutionSummaryControls label span { color: #475569; font-size: 12px; font-weight: 900; letter-spacing: .05em; text-transform: uppercase; }
@@ -459,12 +464,20 @@
 .resolutionQuickItem span, .resolutionEmptyBox span { display: block; margin-top: 6px; color: #64748b; font-size: 13px; line-height: 1.45; }
 .resolutionApp .resolutionGrid { gap: 18px; }
 .resolutionRegistrationGrid { display: grid; grid-template-columns: minmax(520px, .9fr) minmax(360px, 1.1fr); gap: 18px; align-items: start; margin-bottom: 18px; }
+.resolutionRegistrationGrid input, .resolutionRegistrationGrid select, .resolutionRegistrationGrid textarea { font-size: 17px; }
+.resolutionRegistrationGrid .formGrid label span, .resolutionRegistrationGrid .fieldTitle { font-size: 13px; }
+.resolutionRegistrationGrid .choicePills button { min-height: 44px; padding: 0 18px; font-size: 13px; }
+.resolutionRegistrationGrid .formActions button { min-height: 48px; font-size: 15px; }
+.resolutionRegistrationGrid .formActions .primaryButton { background: linear-gradient(135deg, #34d399, #059669); color: #ffffff; box-shadow: 0 14px 26px rgba(5,150,105,.18); }
 .resolutionSideStack { display: grid; gap: 18px; align-content: start; }
 .resolutionCaseListPanel { margin-top: 0; }
 .resolutionCaseListPanel .tableWrap { max-height: 720px; overflow: auto; }
 .resolutionCaseHeaderCompact { padding: 14px; border: 1px solid #edf1f5; border-radius: 18px; background: #fbfdff; }
 .resolutionDateRow { display: grid; grid-template-columns: 168px minmax(0,1fr) minmax(0,1fr); gap: 10px; align-items: end; }
 .resolutionChoiceRow { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px; align-items: end; }
+.resolutionIdentityGrid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.resolutionIdentityGrid .fullField { grid-column: 1 / -1; }
+.resolutionIdentityGrid label:nth-last-child(2) { grid-column: span 2; }
 .resolutionFormSection { padding: 0; border: 1px solid #edf1f5; border-radius: 18px; background: #fbfdff; overflow: hidden; }
 .resolutionFormSection + .resolutionFormSection, .resolutionCaseHeaderCompact + .resolutionFormSection { margin-top: 12px; }
 .resolutionFormSection .formGrid, .resolutionFormSection .resolutionStatusGrid { padding: 14px; border-top: 1px solid #edf1f5; }
@@ -472,27 +485,53 @@
 .resolutionFormSectionHeader::-webkit-details-marker { display: none; }
 .resolutionFormSectionHeader h3 { margin: 0; color: #0f172a; font-size: 16px; font-weight: 900; letter-spacing: -.01em; }
 .resolutionFormSectionHeader p { margin: 5px 0 0; color: #64748b; font-size: 12px; line-height: 1.45; }
-.resolutionFormSectionHeader > span { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; border-radius: 999px; background: #eef2ff; color: #475569; font-size: 16px; font-weight: 900; transition: transform .18s ease; }
-.resolutionFormSection[open] .resolutionFormSectionHeader > span { transform: rotate(180deg); }
+.resolutionFormSectionHeader > span { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; border-radius: 999px; background: #eef2ff; color: #475569; font-size: 20px; font-weight: 950; line-height: 1; }
 .resolutionCaseHeaderCompact .caseCode { margin-bottom: 0; min-height: 46px; padding: 10px 12px; }
 .resolutionCaseHeaderCompact .caseCode strong { margin-top: 4px; font-size: 17px; white-space: nowrap; }
-.resolutionStatusGrid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, .86fr); gap: 14px; align-items: center; }
 .resolutionApp .resolutionRegistrationGrid > .formPanel { box-shadow: 0 10px 24px rgba(15,23,42,.05); }
 .resolutionApp .resolutionRegistrationGrid input[readonly] { background: #f8fafc; color: #475569; cursor: default; }
-.resolutionApp .choicePills button.groupChoiceArkline { border-color: #bfdbfe; background: #eff6ff; color: #1d4ed8; }
-.resolutionApp .choicePills button.groupChoiceMob { border-color: #bbf7d0; background: #f0fdf4; color: #15803d; }
-.resolutionApp .choicePills button.groupChoiceOi { border-color: #fde68a; background: #fffbeb; color: #b45309; }
+.resolutionApp .choicePills button.groupChoiceArkline,
+.resolutionApp .choicePills button.groupChoiceMob,
+.resolutionApp .choicePills button.groupChoiceOi,
+.resolutionApp .choicePills button.typeChoiceInternal,
+.resolutionApp .choicePills button.typeChoiceExternal { border-color: var(--line); background: #ffffff; color: #0f172a; box-shadow: none; }
 .resolutionApp .choicePills button.active.groupChoiceArkline { border-color: #93c5fd; background: #dbeafe; color: #1d4ed8; box-shadow: 0 10px 18px rgba(37,99,235,.12); }
 .resolutionApp .choicePills button.active.groupChoiceMob { border-color: #86efac; background: #dcfce7; color: #15803d; box-shadow: 0 10px 18px rgba(22,163,74,.12); }
 .resolutionApp .choicePills button.active.groupChoiceOi { border-color: #fcd34d; background: #fef3c7; color: #b45309; box-shadow: 0 10px 18px rgba(217,119,6,.12); }
-.resolutionApp .choicePills button.typeChoiceInternal { border-color: #fecaca; background: #fff1f2; color: #b91c1c; }
-.resolutionApp .choicePills button.typeChoiceExternal { border-color: #fed7aa; background: #fff7ed; color: #c2410c; }
 .resolutionApp .choicePills button.active.typeChoiceInternal { border-color: #fca5a5; background: #fee2e2; color: #991b1b; box-shadow: 0 10px 18px rgba(220,38,38,.12); }
 .resolutionApp .choicePills button.active.typeChoiceExternal { border-color: #fdba74; background: #ffedd5; color: #9a3412; box-shadow: 0 10px 18px rgba(234,88,12,.12); }
 .requiredStar { margin-left: 4px; color: #dc2626; font-weight: 950; }
+.infoWrap { position: relative; display: inline-flex; align-items: center; margin-left: 6px; vertical-align: middle; }
+.infoDot { display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; border-radius: 50%; background: #e0f2fe; color: #0369a1; font-size: 10px; font-weight: 950; line-height: 1; text-transform: none; cursor: help; }
+.infoTooltip { position: absolute; z-index: 20; left: 50%; bottom: calc(100% + 8px); width: 220px; padding: 10px 12px; border-radius: 12px; background: #0f172a; color: #ffffff!important; font-size: 12px!important; font-weight: 700!important; letter-spacing: 0!important; line-height: 1.4; text-transform: none!important; opacity: 0; pointer-events: none; transform: translateX(-50%) translateY(4px); transition: opacity .16s ease, transform .16s ease; box-shadow: 0 14px 30px rgba(15,23,42,.2); }
+.infoWrap:hover .infoTooltip { opacity: 1; transform: translateX(-50%) translateY(0); }
+.resolutionStaticSectionTitle { display: inline-block; margin: 0 0 12px; padding-bottom: 8px; border-bottom: 2px solid #cbd5e1; color: #475569; font-size: 14px; font-weight: 950; letter-spacing: .08em; text-transform: uppercase; }
+.resolutionStatusSection { padding: 16px; border-color: #c4b5fd; background: linear-gradient(135deg, rgba(255,255,255,.94), rgba(248,250,252,.88)); }
+.resolutionStatusPanel { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(240px, .85fr); gap: 14px; align-items: center; }
+.resolutionStatusPreview { min-height: 176px; padding: 26px; border-radius: 22px; background: #3477f4; color: #ffffff; box-shadow: none; }
+.resolutionStatusPreview span { display: inline-block; padding-bottom: 8px; border-bottom: 2px solid rgba(255,255,255,.22); color: rgba(255,255,255,.78); font-size: 14px; font-weight: 950; letter-spacing: .05em; text-transform: uppercase; }
+.resolutionStatusPreview strong { display: block; margin-top: 16px; font-size: 28px; line-height: 1; font-weight: 950; }
+.resolutionStatusPreview p { margin: 16px 0 0; max-width: 360px; color: rgba(255,255,255,.9); font-size: 14px; line-height: 1.45; }
+.resolutionStatusPreview.resolutionStatusSending { background: #64748b; }
+.resolutionStatusPreview.resolutionStatusCancel { background: #8f1d25; }
+.resolutionStatusControls { display: grid; gap: 18px; }
+.resolutionStatusButtons { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.resolutionStatusButtons button { min-height: 50px; border: 1px solid var(--line); border-radius: 17px; background: #ffffff; color: #0f172a; font-size: 16px; font-weight: 900; box-shadow: 0 10px 20px rgba(15,23,42,.04); }
+.resolutionStatusButtons button.active.resolutionStatusPending { background: #3477f4; border-color: #3477f4; color: #ffffff; }
+.resolutionStatusButtons button.active.resolutionStatusSending { background: #64748b; border-color: #64748b; color: #ffffff; }
+.resolutionStatusButtons button.active.resolutionStatusCancel { background: #8f1d25; border-color: #8f1d25; color: #ffffff; }
+.resolutionPriorityToggle { display: inline-flex; align-items: center; width: fit-content; gap: 9px; min-height: 40px; padding: 0 13px; border: 1px solid #e2e8f0; border-radius: 12px; background: #ffffff; color: #0f172a; font-size: 12px; font-weight: 900; box-shadow: 0 8px 18px rgba(15,23,42,.05); }
+.resolutionPriorityToggle input { width: 17px; min-height: 17px; accent-color: #8b5cf6; }
 .resolutionApp .tableWrap table { min-width: 980px; }
-.resolutionApp .tableWrap th { font-size: 12px; }
-.resolutionApp .tableWrap td { font-size: 13px; }
+.resolutionApp .tableWrap th { font-size: 14px; }
+.resolutionApp .tableWrap td { font-size: 15px; }
+.resolutionApp .resolutionWarningCard strong { font-size: 18px; }
+.resolutionApp .resolutionWarningCard small,
+.resolutionApp .resolutionQuickItem span,
+.resolutionApp .resolutionEmptyBox span,
+.resolutionApp .cardHint { font-size: 14px; }
+.resolutionApp .resolutionQuickItem strong,
+.resolutionApp .resolutionEmptyBox strong { font-size: 16px; }
 .resolutionApp .statusBadge.resolutionWarningDue { background: #fef3c7; color: #b45309; }
 .resolutionApp .statusBadge.resolutionWarningOverdue { background: #fee2e2; color: #b91c1c; }
 .resolutionApp .statusBadge.resolutionWarningPriority { background: #ede9fe; color: #6d28d9; }
@@ -509,7 +548,7 @@
 }
 
 @media (max-width: 760px){
-  .deliveryApp{border-radius:22px}.modulePage{padding:16px}.homeWrap{padding:20px 12px}.homeHero h1{font-size:32px}.moduleBoard{padding:14px;border-radius:24px}.moduleGrid{grid-template-columns:1fr}.moduleCard{min-height:180px}.moduleHeader{align-items:flex-start;flex-direction:column}.moduleHeader h1{font-size:30px}.moduleHeaderActions{width:100%;justify-content:space-between}.backButton{min-height:42px;padding:0 14px}.filterBar{display:grid;grid-template-columns:1fr 1fr}.filterBar label,.filterBar input,.filterBar select{min-width:0}.filterBar .darkButton{grid-column:1/-1}.metricGrid,.summaryGrid{grid-template-columns:1fr}.metricCard{min-height:180px}.fullWidth{grid-column:auto}.summaryGrid .dataCard{padding:16px}.pieCanvas{height:280px}.barChart{height:260px;overflow:auto}.splitBoard,.scannerBoard,.waybillGrid,.resolutionGrid{padding:10px;border-radius:22px}.formGrid,.resolutionStatusGrid{grid-template-columns:1fr}.fullField{grid-column:auto}.databaseFilter{align-items:stretch;flex-direction:column}.databaseFilter label{width:100%}.scannerStats{grid-template-columns:1fr 1fr}.scannerActions{grid-template-columns:1fr 1fr}.scannerActions .uploadButton{grid-row:auto;grid-column:1/-1;min-height:58px}.resolutionTabs{display:grid;grid-template-columns:1fr 1fr}.resolutionSummary{grid-template-columns:1fr 1fr}.resolutionSummary>label,.resolutionSummary>.primaryButton{grid-row:auto}.resolutionSummary>.primaryButton{grid-column:1/-1}.searchResults{grid-template-columns:1fr}.detailGrid{grid-template-columns:1fr}.cardTitleRow{align-items:flex-start}.moduleHeaderActions .picChip{display:none}
+  .deliveryApp{border-radius:22px}.modulePage{padding:16px}.homeWrap{padding:20px 12px}.homeHero h1{font-size:32px}.moduleBoard{padding:14px;border-radius:24px}.moduleGrid{grid-template-columns:1fr}.moduleCard{min-height:180px}.moduleHeader{align-items:flex-start;flex-direction:column}.moduleHeader h1{font-size:30px}.moduleHeaderActions{width:100%;justify-content:space-between}.backButton{min-height:42px;padding:0 14px}.filterBar{display:grid;grid-template-columns:1fr 1fr}.filterBar label,.filterBar input,.filterBar select{min-width:0}.filterBar .darkButton{grid-column:1/-1}.metricGrid,.summaryGrid{grid-template-columns:1fr}.metricCard{min-height:180px}.fullWidth{grid-column:auto}.summaryGrid .dataCard{padding:16px}.pieCanvas{height:280px}.barChart{height:260px;overflow:auto}.splitBoard,.scannerBoard,.waybillGrid,.resolutionGrid{padding:10px;border-radius:22px}.formGrid,.resolutionIdentityGrid,.resolutionDateRow,.resolutionChoiceRow,.resolutionStatusPanel,.resolutionStatusButtons{grid-template-columns:1fr}.resolutionIdentityGrid label:nth-last-child(2){grid-column:auto}.fullField{grid-column:auto}.databaseFilter{align-items:stretch;flex-direction:column}.databaseFilter label{width:100%}.scannerStats{grid-template-columns:1fr 1fr}.scannerActions{grid-template-columns:1fr 1fr}.scannerActions .uploadButton{grid-row:auto;grid-column:1/-1;min-height:58px}.resolutionTabs{display:grid;grid-template-columns:1fr 1fr}.resolutionSummary{grid-template-columns:1fr 1fr}.resolutionSummary>label,.resolutionSummary>.primaryButton{grid-row:auto}.resolutionSummary>.primaryButton{grid-column:1/-1}.searchResults{grid-template-columns:1fr}.detailGrid{grid-template-columns:1fr}.cardTitleRow{align-items:flex-start}.moduleHeaderActions .picChip{display:none}
   .deliveryApp.summaryApp{border-radius:0}.summaryPage{padding:0}.summaryWrap{padding:16px 12px 20px}.summaryTitleBlock h1{font-size:24px}.summaryPage .filterBar{display:grid;grid-template-columns:1fr 1fr}.summaryPage .filterBar label{min-width:0}.summaryPage .filterBar .darkButton{grid-column:1/-1}.summaryPage .metricGrid,.summaryPage .summaryGrid{grid-template-columns:1fr}.summaryPage .metricCard{min-height:0}.summaryPage .pieCanvas{height:220px}.summaryPage .totalMetricMain{flex-wrap:wrap}.summaryPage .cardTitleRow{align-items:flex-start}.summaryPage .cardToolbar{justify-content:flex-start}.summaryPage .barChart{height:280px}
   :global(html:has([data-delivery-home])),
   :global(body:has([data-delivery-home])){height:auto;overflow:auto}

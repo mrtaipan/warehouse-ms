@@ -501,8 +501,8 @@ function pushTimelineItem(map, divisionKey, dateKey, item) {
       Target: -10,
       'GRN Received': 0,
       'Arkline Inbound': 1,
-      'Reguler Return': 2,
-      'Arkline Return': 3,
+      'Arkline Return': 2,
+      'Reguler Return': 3,
       'Arkline Return Back': 4,
       'Inbound Estimated Finish': 5,
       'QC Estimated Finish': 6,
@@ -931,11 +931,9 @@ async function loadArklineQcRowsForCalendar(supabase, start, end) {
 
 async function loadRegularReturnRowsForCalendar(supabase, start, end) {
   const selectOptions = [
-    'id, inbound_id, source_phase, qty, model_name, variant_name, return_reason, status, returns_delivery, return_delivery, created_at, updated_at, inbound:inbound_id(id, grn_number)',
-    'id, inbound_id, source_phase, qty, model_name, variant_name, return_reason, status, returns_delivery, return_delivery, created_at, updated_at',
-    'id, inbound_id, source_phase, qty, model_name, variant_name, status, returns_delivery, return_delivery, created_at, updated_at',
-    'id, inbound_id, source_phase, qty, status, returns_delivery, return_delivery, created_at, updated_at',
-    'id, qty, status, returns_delivery, return_delivery, created_at, updated_at',
+    'id, inbound_id, qty, status, updated_at, inbound:inbound_id(id, grn_number)',
+    'id, inbound_id, qty, status, updated_at',
+    'id, qty, status, updated_at',
   ]
 
   let lastError = null
@@ -944,7 +942,9 @@ async function loadRegularReturnRowsForCalendar(supabase, start, end) {
     const result = await supabase
       .from('warehouse_returns')
       .select(selectColumns)
-      .or(buildCalendarTimestampFilter(['updated_at', 'created_at'], start, end))
+      .gte('updated_at', start)
+      .lt('updated_at', end)
+      .ilike('status', 'completed')
       .order('updated_at', { ascending: true })
 
     if (!result.error) {
@@ -1710,31 +1710,22 @@ async function loadOperationsCalendarData(supabase, monthValue, nonWorkingDateSe
     })
   })
 
-  const regularReturnDeliveryRows = (regularReturnRows || []).filter((row) => (
-    String(row.returns_delivery || row.return_delivery || '').trim() ||
-    String(row.status || '').trim().toLowerCase() === 'completed'
-  ))
+  const completedRegularReturnRows = (regularReturnRows || []).filter((row) => String(row.status || '').trim().toLowerCase() === 'completed')
 
-  groupRowsByDate(regularReturnDeliveryRows, (row) => extractDateKey(row.updated_at || row.created_at)).forEach((rows, dateKey) => {
+  groupRowsByDate(completedRegularReturnRows, (row) => extractDateKey(row.updated_at)).forEach((rows, dateKey) => {
     const returnQty = sumBy(rows, 'qty')
-    const deliveryLabels = new Set(rows.map((row) => String(row.returns_delivery || row.return_delivery || '').trim()).filter(Boolean))
-    const grnLabels = new Set(rows.map((row) => String(row.inbound?.grn_number || row.inbound_id || '').trim()).filter(Boolean))
-    const reasonLabels = new Set(rows.map((row) => String(row.return_reason || '').trim()).filter(Boolean))
+    const inboundLabels = new Set(rows.map((row) => String(row.inbound?.grn_number || row.inbound_id || '').trim()).filter(Boolean))
 
     pushTimelineItem(timelineMap, 'qc', dateKey, {
       label: 'Reguler Return',
       count: rows.length,
       qty: returnQty,
-      note: `SJ Qty ${formatNumber(returnQty)} | ${formatNumber(rows.length)} line`,
-      detail: Array.from(deliveryLabels).join(', ') || 'Return SJ completed',
+      note: `${Array.from(inboundLabels).join(', ') || 'Inbound -'} | Total Qty ${formatNumber(returnQty)}`,
+      detail: `Total Qty ${formatNumber(returnQty)}`,
       tone: 'return',
       modalRows: [
-        { label: 'GRN', value: Array.from(grnLabels).join(', ') || '-' },
-        { label: 'Surat Jalan', value: Array.from(deliveryLabels).join(', ') || 'Completed return SJ' },
-        { label: 'Returned Qty', value: formatNumber(returnQty) },
-        { label: 'Return Line', value: formatNumber(rows.length) },
-        { label: 'Reject Reason', value: Array.from(reasonLabels).join(', ') || '-' },
-        { label: 'Date Source', value: 'updated_at from completed return' },
+        { label: 'Nomor Inbound', value: Array.from(inboundLabels).join(', ') || '-' },
+        { label: 'Total Qty', value: formatNumber(returnQty) },
       ],
     })
   })

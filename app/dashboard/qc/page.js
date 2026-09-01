@@ -1,7 +1,7 @@
 'use client'
 
 import Image from 'next/image'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
 import { createClient } from '@/utils/supabase/browser'
 import { ADMIN_EMAIL } from '@/utils/permissions'
 import { useRealtimeRefresh } from '@/utils/supabase/use-realtime-refresh'
@@ -542,21 +542,69 @@ const styles = {
     justifyContent: 'center',
     lineHeight: 1,
   },
-  rejectDateInfoButton: {
-    height: '30px',
-    padding: '0 10px',
-    border: '1px solid #cbd5e1',
-    borderRadius: '999px',
-    background: '#f8fafc',
-    color: '#334155',
-    fontSize: '11px',
+  rejectSummarySection: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '10px',
+  },
+  rejectRepairabilityCards: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+    gap: '10px',
+  },
+  rejectRepairabilityCard: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: '12px',
+    padding: '10px 12px',
+    borderWidth: '1px',
+    borderStyle: 'solid',
+    borderColor: '#e2e8f0',
+    borderRadius: '8px',
+    fontSize: '12px',
     fontWeight: '800',
-    cursor: 'help',
+    letterSpacing: '0.04em',
+    textTransform: 'uppercase',
+  },
+  rejectRepairabilityCardRepairable: {
+    background: '#ecfdf5',
+    color: '#065f46',
+    borderColor: '#a7f3d0',
+  },
+  rejectRepairabilityCardUnrepairable: {
+    background: '#fff7ed',
+    color: '#9a3412',
+    borderColor: '#fed7aa',
+  },
+  rejectSummarySectionRow: {
+    padding: '10px 14px',
+    background: '#f1f5f9',
+    color: '#334155',
+    fontSize: '12px',
+    fontWeight: '900',
+    letterSpacing: '0.08em',
+    textTransform: 'uppercase',
+  },
+  rejectSummaryToggle: {
+    width: '34px',
+    height: '34px',
+    border: '1px solid #cbd5e1',
+    borderRadius: '8px',
+    background: '#fff',
+    color: '#111827',
+    fontSize: '17px',
+    fontWeight: '800',
+    cursor: 'pointer',
     display: 'inline-flex',
     alignItems: 'center',
     justifyContent: 'center',
     lineHeight: 1,
-    whiteSpace: 'nowrap',
+  },
+  rejectSummaryDetailPanel: {
+    padding: '10px 12px',
+    background: '#f8fafc',
+    borderTop: '1px solid #e2e8f0',
   },
   iconButtonRow: {
     display: 'flex',
@@ -1325,35 +1373,13 @@ function compareRejectDetailRows(a, b, reasonNameById = new Map()) {
   return String(a?.id || '').localeCompare(String(b?.id || ''), undefined, { numeric: true })
 }
 
-function buildRejectReasonSummaryRows(rows = [], reasonNameById = new Map()) {
-  const grouped = new Map()
+function getRejectReasonRepairability(row, repairableById = new Map()) {
+  const reasonId = String(row?.rejectReasonId || row?.reject_reason_id || '').trim()
+  if (reasonId && repairableById.has(reasonId)) {
+    return repairableById.get(reasonId) === true
+  }
 
-  rows.forEach((row) => {
-    const qty = Number(row?.qty || 0)
-    if (qty <= 0) return
-
-    const reason = getRejectReasonDisplayName(row, reasonNameById)
-    const current = grouped.get(reason) || {
-      reason,
-      qtyB: 0,
-      qtyC: 0,
-      totalQty: 0,
-    }
-    const grade = String(row?.grade || '').trim().toUpperCase()
-    if (grade === 'B') {
-      current.qtyB += qty
-    } else if (grade === 'C') {
-      current.qtyC += qty
-    }
-    current.totalQty += qty
-    grouped.set(reason, current)
-  })
-
-  return Array.from(grouped.values()).sort((a, b) => {
-    const totalCompare = Number(b.totalQty || 0) - Number(a.totalQty || 0)
-    if (totalCompare !== 0) return totalCompare
-    return a.reason.localeCompare(b.reason, undefined, { numeric: true })
-  })
+  return row?.reason?.is_repairable === true
 }
 
 function getRejectDetailDateValue(row, taskById = new Map()) {
@@ -1368,32 +1394,58 @@ function getRejectReasonSizeKey(row) {
   return `${reasonId}|||${size}`
 }
 
-function buildRejectDetailDateMap(rows = [], taskById = new Map()) {
-  const dateMap = new Map()
+function buildReadOnlyRejectReasonSummaryRows(rows = [], reasonNameById = new Map(), repairableById = new Map(), taskById = new Map()) {
+  const grouped = new Map()
 
   rows.forEach((row) => {
-    const dateValue = getRejectDetailDateValue(row, taskById)
-    if (!dateValue) return
+    const qty = Number(row?.qty || 0)
+    if (qty <= 0) return
 
-    const keys = [getRejectDraftKey(row), getRejectReasonSizeKey(row)]
-    keys.forEach((key) => {
-      const dates = dateMap.get(key) || new Set()
-      dates.add(dateValue)
-      dateMap.set(key, dates)
-    })
+    const reasonId = String(row?.rejectReasonId || row?.reject_reason_id || '').trim()
+    const reason = getRejectReasonDisplayName(row, reasonNameById)
+    const isRepairable = getRejectReasonRepairability(row, repairableById)
+    const groupKey = `${isRepairable ? 'repairable' : 'unrepairable'}|||${reasonId || reason}`
+    const current = grouped.get(groupKey) || {
+      key: groupKey,
+      reason,
+      isRepairable,
+      qtyB: 0,
+      qtyC: 0,
+      totalQty: 0,
+      sizes: new Map(),
+    }
+    const grade = String(row?.grade || '').trim().toUpperCase()
+    if (grade === 'B') current.qtyB += qty
+    if (grade === 'C') current.qtyC += qty
+    current.totalQty += qty
+
+    const size = String(row?.size || '-').trim().toUpperCase() || '-'
+    const sizeRow = current.sizes.get(size) || {
+      size,
+      qtyB: 0,
+      qtyC: 0,
+      totalQty: 0,
+      dates: new Set(),
+    }
+    if (grade === 'B') sizeRow.qtyB += qty
+    if (grade === 'C') sizeRow.qtyC += qty
+    sizeRow.totalQty += qty
+    const dateValue = getRejectDetailDateValue(row, taskById)
+    if (dateValue) sizeRow.dates.add(dateValue)
+    current.sizes.set(size, sizeRow)
+    grouped.set(groupKey, current)
   })
 
-  return dateMap
-}
-
-function getRejectDetailDateInfo(row, dateMap = new Map()) {
-  const dateValues = Array.from(dateMap.get(getRejectDraftKey(row)) || dateMap.get(getRejectReasonSizeKey(row)) || []).sort()
-
-  if (!dateValues.length) {
-    return 'No QC source date found for this reject detail.'
-  }
-
-  return `QC source date${dateValues.length > 1 ? 's' : ''}:\n${dateValues.join('\n')}`
+  return Array.from(grouped.values())
+    .map((row) => ({
+      ...row,
+      sizes: Array.from(row.sizes.values()).sort((a, b) => compareApparelSize(a.size, b.size)),
+    }))
+    .sort((a, b) => {
+      const totalCompare = Number(b.totalQty || 0) - Number(a.totalQty || 0)
+      if (totalCompare !== 0) return totalCompare
+      return a.reason.localeCompare(b.reason, undefined, { numeric: true })
+    })
 }
 
 function getRejectDraftKey(row) {
@@ -1542,6 +1594,7 @@ export default function QcDashboardPage() {
     qty: '',
     notes: '',
   })
+  const [expandedRejectReasonRows, setExpandedRejectReasonRows] = useState({})
   const [savingRejectDetail, setSavingRejectDetail] = useState(false)
 
   const loadDashboard = useCallback(async (silent = false) => {
@@ -1724,7 +1777,7 @@ export default function QcDashboardPage() {
         .order('paused_at', { ascending: false }),
       supabase
         .from('arkline_qc_reject_reasons')
-        .select('id, reason_name, is_active')
+        .select('id, reason_name, is_active, is_repairable')
         .eq('is_active', true)
         .order('reason_name', { ascending: true }),
       supabase
@@ -1744,7 +1797,8 @@ export default function QcDashboardPage() {
           updated_at,
           reason:reject_reason_id (
             id,
-            reason_name
+            reason_name,
+            is_repairable
           )
         `)
         .order('created_at', { ascending: false }),
@@ -2636,6 +2690,7 @@ export default function QcDashboardPage() {
         grouped.set(item.reject_reason_id, {
           id: item.reject_reason_id,
           reason_name: item.reason.reason_name,
+          is_repairable: item.reason.is_repairable === true,
           is_active: true,
         })
       }
@@ -2653,6 +2708,16 @@ export default function QcDashboardPage() {
       ),
     [selectedRejectReasonOptions]
   )
+  const selectedRejectReasonRepairableById = useMemo(
+    () =>
+      new Map(
+        selectedRejectReasonOptions.map((item) => [
+          String(item.id || ''),
+          item.is_repairable === true,
+        ])
+      ),
+    [selectedRejectReasonOptions]
+  )
   const displayRejectDraftRows = useMemo(
     () =>
       canEditArklineRejectDetail
@@ -2660,17 +2725,27 @@ export default function QcDashboardPage() {
         : [...rejectDraftRows].sort((a, b) => compareRejectDetailRows(a, b, selectedRejectReasonNameById)),
     [canEditArklineRejectDetail, rejectDraftRows, selectedRejectReasonNameById]
   )
-  const selectedRejectReasonSummaryRows = useMemo(
-    () => buildRejectReasonSummaryRows(rejectDraftRows, selectedRejectReasonNameById),
-    [rejectDraftRows, selectedRejectReasonNameById]
-  )
   const selectedRejectSortedExistingDetails = useMemo(
     () => [...selectedRejectExistingDetails].sort((a, b) => compareRejectDetailRows(a, b, selectedRejectReasonNameById)),
     [selectedRejectExistingDetails, selectedRejectReasonNameById]
   )
-  const selectedRejectDetailDateMap = useMemo(
-    () => buildRejectDetailDateMap(selectedRejectExistingDetails, selectedRejectTaskById),
-    [selectedRejectExistingDetails, selectedRejectTaskById]
+  const readOnlyRejectReasonSummaryRows = useMemo(
+    () =>
+      buildReadOnlyRejectReasonSummaryRows(
+        selectedRejectSortedExistingDetails,
+        selectedRejectReasonNameById,
+        selectedRejectReasonRepairableById,
+        selectedRejectTaskById
+      ),
+    [selectedRejectReasonNameById, selectedRejectReasonRepairableById, selectedRejectSortedExistingDetails, selectedRejectTaskById]
+  )
+  const repairableRejectReasonSummaryRows = useMemo(
+    () => readOnlyRejectReasonSummaryRows.filter((item) => item.isRepairable),
+    [readOnlyRejectReasonSummaryRows]
+  )
+  const unrepairableRejectReasonSummaryRows = useMemo(
+    () => readOnlyRejectReasonSummaryRows.filter((item) => !item.isRepairable),
+    [readOnlyRejectReasonSummaryRows]
   )
   const selectedRejectDetailQty = rejectDraftRows.reduce((sum, item) => sum + Number(item.qty || 0), 0)
   const selectedRejectAdjustedBaseSummary = useMemo(() => {
@@ -3231,6 +3306,7 @@ export default function QcDashboardPage() {
     setRejectDetailSummary(summary)
     setRejectDetailError('')
     setRejectDraftRows(initialRows.length ? initialRows : [createRejectDraftRow()])
+    setExpandedRejectReasonRows({})
     setRejectAdjustmentDraft({
       adjustmentType: 'transfer',
       fromGrade: '',
@@ -3245,6 +3321,13 @@ export default function QcDashboardPage() {
     setInspectorDetailSections((prev) => ({
       ...prev,
       [sectionKey]: !prev[sectionKey],
+    }))
+  }
+
+  function toggleRejectReasonSummaryRow(rowKey) {
+    setExpandedRejectReasonRows((prev) => ({
+      ...prev,
+      [rowKey]: !prev[rowKey],
     }))
   }
 
@@ -3284,13 +3367,13 @@ export default function QcDashboardPage() {
     const { data, error: insertError } = await supabase
       .from('arkline_qc_reject_reasons')
       .insert({ reason_name: reasonName })
-      .select('id, reason_name, is_active')
+      .select('id, reason_name, is_active, is_repairable')
       .single()
 
     if (insertError) {
       const { data: fallbackReason, error: fallbackError } = await supabase
         .from('arkline_qc_reject_reasons')
-        .select('id, reason_name, is_active')
+        .select('id, reason_name, is_active, is_repairable')
         .eq('reason_name', reasonName)
         .single()
 
@@ -3567,7 +3650,8 @@ export default function QcDashboardPage() {
             updated_at,
             reason:reject_reason_id (
               id,
-              reason_name
+              reason_name,
+              is_repairable
             )
           `)
           .order('created_at', { ascending: false }),
@@ -3589,6 +3673,114 @@ export default function QcDashboardPage() {
     } finally {
       setSavingRejectDetail(false)
     }
+  }
+
+  function renderReadOnlyRejectSummarySectionRows(title, rows) {
+    return (
+      <>
+        <tr>
+          <td style={styles.rejectSummarySectionRow} colSpan={5}>{title}</td>
+        </tr>
+        {rows.length ? (
+          rows.map((item) => {
+            const expanded = Boolean(expandedRejectReasonRows[item.key])
+            return (
+              <Fragment key={item.key}>
+                <tr>
+                  <td style={styles.td}>{item.reason}</td>
+                  <td style={{ ...styles.td, ...styles.tdCenter }}>{formatNumber(item.qtyB)}</td>
+                  <td style={{ ...styles.td, ...styles.tdCenter }}>{formatNumber(item.qtyC)}</td>
+                  <td style={{ ...styles.td, ...styles.tdCenter }}>{formatNumber(item.totalQty)}</td>
+                  <td style={{ ...styles.td, ...styles.tdCenter }}>
+                    <button
+                      type="button"
+                      style={styles.rejectSummaryToggle}
+                      onClick={() => toggleRejectReasonSummaryRow(item.key)}
+                      aria-label={`${expanded ? 'Hide' : 'Show'} reject reason detail`}
+                      title={`${expanded ? 'Hide' : 'Show'} size and QC source date detail`}
+                    >
+                      {expanded ? '-' : '+'}
+                    </button>
+                  </td>
+                </tr>
+                {expanded ? (
+                  <tr>
+                    <td style={styles.rejectSummaryDetailPanel} colSpan={5}>
+                      <table style={styles.table}>
+                        <thead>
+                          <tr>
+                            <th style={styles.th}>Size</th>
+                            <th style={{ ...styles.th, ...styles.thCenter }}>Grade B</th>
+                            <th style={{ ...styles.th, ...styles.thCenter }}>Grade C</th>
+                            <th style={{ ...styles.th, ...styles.thCenter }}>Total Qty</th>
+                            <th style={styles.th}>QC Source Date</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {item.sizes.map((sizeRow) => (
+                            <tr key={`${item.key}-${sizeRow.size}`}>
+                              <td style={styles.td}>{sizeRow.size}</td>
+                              <td style={{ ...styles.td, ...styles.tdCenter }}>{formatNumber(sizeRow.qtyB)}</td>
+                              <td style={{ ...styles.td, ...styles.tdCenter }}>{formatNumber(sizeRow.qtyC)}</td>
+                              <td style={{ ...styles.td, ...styles.tdCenter }}>{formatNumber(sizeRow.totalQty)}</td>
+                              <td style={styles.td}>{Array.from(sizeRow.dates || []).sort().join(', ') || '-'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </td>
+                  </tr>
+                ) : null}
+              </Fragment>
+            )
+          })
+        ) : (
+          <tr>
+            <td style={styles.td} colSpan={5}>
+              No {title.toLowerCase()} reject summary.
+            </td>
+          </tr>
+        )}
+      </>
+    )
+  }
+
+  function renderReadOnlyRejectSummaryTable() {
+    const repairableTotalQty = repairableRejectReasonSummaryRows.reduce((sum, item) => sum + Number(item.totalQty || 0), 0)
+    const unrepairableTotalQty = unrepairableRejectReasonSummaryRows.reduce((sum, item) => sum + Number(item.totalQty || 0), 0)
+
+    return (
+      <div style={styles.rejectSummarySection}>
+        <div style={styles.rejectRepairabilityCards}>
+          <div style={{ ...styles.rejectRepairabilityCard, ...styles.rejectRepairabilityCardRepairable }}>
+            <span>Repairable</span>
+            <strong>{formatNumber(repairableTotalQty)}</strong>
+          </div>
+          <div style={{ ...styles.rejectRepairabilityCard, ...styles.rejectRepairabilityCardUnrepairable }}>
+            <span>Unrepairable</span>
+            <strong>{formatNumber(unrepairableTotalQty)}</strong>
+          </div>
+        </div>
+
+        <div style={styles.modalTableWrap}>
+          <table style={styles.table}>
+            <thead>
+              <tr>
+                <th style={styles.th}>Reject Reason</th>
+                <th style={{ ...styles.th, ...styles.thCenter }}>Grade B</th>
+                <th style={{ ...styles.th, ...styles.thCenter }}>Grade C</th>
+                <th style={{ ...styles.th, ...styles.thCenter }}>Total Qty</th>
+                <th style={{ ...styles.th, ...styles.thCenter }}>Detail</th>
+              </tr>
+            </thead>
+            <tbody>
+              {renderReadOnlyRejectSummarySectionRows('Repairable', repairableRejectReasonSummaryRows)}
+              {renderReadOnlyRejectSummarySectionRows('Unrepairable', unrepairableRejectReasonSummaryRows)}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    )
   }
 
   async function handlePauseAllQc() {
@@ -4489,6 +4681,10 @@ export default function QcDashboardPage() {
                 </div>
               </div>
 
+              {!canEditArklineRejectDetail ? (
+                renderReadOnlyRejectSummaryTable()
+              ) : (
+              <>
               <datalist id="arkline-reject-size-options">
                 {selectedRejectSizeOptions.map((size) => (
                   <option key={size} value={size} />
@@ -4562,73 +4758,31 @@ export default function QcDashboardPage() {
                     />
                   </div>
                   <div style={styles.iconButtonRow}>
-                    {!canEditArklineRejectDetail ? (
+                    <button
+                      type="button"
+                      style={styles.iconSmallButton}
+                      onClick={() => setRejectDraftRows((rows) => [...rows, createRejectDraftRow()])}
+                      title="Add row"
+                      aria-label="Add row"
+                    >
+                      +
+                    </button>
+                    {index > 0 ? (
                       <button
                         type="button"
-                        style={styles.rejectDateInfoButton}
-                        title={getRejectDetailDateInfo(row, selectedRejectDetailDateMap)}
-                        aria-label="Show registered reject detail dates"
+                        style={styles.iconSmallButton}
+                        onClick={() => removeRejectDraftRow(row.id)}
+                        title="Remove row"
+                        aria-label="Remove row"
                       >
-                        Dates
+                        X
                       </button>
-                    ) : (
-                      <>
-                        <button
-                          type="button"
-                          style={styles.iconSmallButton}
-                          onClick={() => setRejectDraftRows((rows) => [...rows, createRejectDraftRow()])}
-                          title="Add row"
-                          aria-label="Add row"
-                        >
-                          +
-                        </button>
-                        {index > 0 ? (
-                          <button
-                            type="button"
-                            style={styles.iconSmallButton}
-                            onClick={() => removeRejectDraftRow(row.id)}
-                            title="Remove row"
-                            aria-label="Remove row"
-                          >
-                            X
-                          </button>
-                        ) : null}
-                      </>
-                    )}
+                    ) : null}
                   </div>
                 </div>
               ))}
-
-              <div style={styles.modalTableWrap}>
-                <table style={styles.table}>
-                  <thead>
-                    <tr>
-                      <th style={styles.th}>Reject Reason</th>
-                      <th style={{ ...styles.th, ...styles.thCenter }}>Grade B</th>
-                      <th style={{ ...styles.th, ...styles.thCenter }}>Grade C</th>
-                      <th style={{ ...styles.th, ...styles.thCenter }}>Total Qty</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {selectedRejectReasonSummaryRows.length ? (
-                      selectedRejectReasonSummaryRows.map((item) => (
-                        <tr key={item.reason}>
-                          <td style={styles.td}>{item.reason}</td>
-                          <td style={{ ...styles.td, ...styles.tdCenter }}>{formatNumber(item.qtyB)}</td>
-                          <td style={{ ...styles.td, ...styles.tdCenter }}>{formatNumber(item.qtyC)}</td>
-                          <td style={{ ...styles.td, ...styles.tdCenter }}>{formatNumber(item.totalQty)}</td>
-                        </tr>
-                      ))
-                    ) : (
-                      <tr>
-                        <td style={styles.td} colSpan={4}>
-                          No reject summary yet.
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
+              </>
+              )}
             </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>

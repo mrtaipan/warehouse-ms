@@ -261,6 +261,10 @@
   font-variant-numeric: tabular-nums;
 }
 
+.strongQtyCell {
+  font-weight: 900;
+}
+
 .card {
   padding: 24px;
   border: 1px solid #e2e8f0;

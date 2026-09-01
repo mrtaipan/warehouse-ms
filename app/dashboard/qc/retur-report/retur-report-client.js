@@ -119,10 +119,13 @@ export default function ReturReportClient({ rows, canAdd = false }) {
   const [modelFilter, setModelFilter] = useState('')
   const [gradeFilter, setGradeFilter] = useState('')
   const [prepQtyById, setPrepQtyById] = useState({})
+  const [selectedPreparationIds, setSelectedPreparationIds] = useState([])
   const [currentReturnKoliItems, setCurrentReturnKoliItems] = useState([])
   const [preparationError, setPreparationError] = useState('')
   const [preparationSuccess, setPreparationSuccess] = useState('')
   const [isPostingPreparation, setIsPostingPreparation] = useState(false)
+  const [preparationPostTargetOpen, setPreparationPostTargetOpen] = useState(false)
+  const [preparationPostTarget, setPreparationPostTarget] = useState({ mode: 'new', koliSequence: '' })
 
   const arrangementRows = useMemo(
     () => rows.filter((row) => hasKoliSequence(row)),
@@ -246,6 +249,21 @@ export default function ReturReportClient({ rows, canAdd = false }) {
     () => preparationRows.filter((row) => matchesActiveFilters(row)),
     [matchesActiveFilters, preparationRows]
   )
+  const selectedPreparationRows = useMemo(
+    () => filteredPreparationRows.filter((row) => selectedPreparationIds.includes(row.id)),
+    [filteredPreparationRows, selectedPreparationIds]
+  )
+  const selectablePreparationRows = useMemo(
+    () =>
+      filteredPreparationRows.filter((row) => {
+        const addedQty = currentReturnKoliItems
+          .filter((item) => Number(item.sourceRow.id) === Number(row.id))
+          .reduce((sum, item) => sum + Number(item.qty || 0), 0)
+        return Math.max(0, Number(row.qty || 0) - addedQty) > 0
+      }),
+    [currentReturnKoliItems, filteredPreparationRows]
+  )
+  const allPreparationChecked = selectablePreparationRows.length > 0 && selectablePreparationRows.every((row) => selectedPreparationIds.includes(row.id))
   const selectableRows = useMemo(
     () => filteredRows,
     [filteredRows]
@@ -265,6 +283,20 @@ export default function ReturReportClient({ rows, canAdd = false }) {
   const selectedInbound = selectedRows[0]?.inbound || null
   const paymentLabel = selectedInbound?.payment_on_site ? 'Paid by Receiver' : 'Paid by Us'
   const selectedRowsCompleted = selectedRows.length > 0 && selectedRows.every((row) => String(row.status || 'waiting').toLowerCase() === 'completed')
+  const currentPreparationInboundId = currentReturnKoliItems[0]?.sourceRow?.inbound_id || null
+  const preparationExistingKoliOptions = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          arrangementRows
+            .filter((row) => currentPreparationInboundId && Number(row.inbound_id || 0) === Number(currentPreparationInboundId || 0))
+            .map((row) => row.koli_sequence)
+            .filter((value) => value !== null && value !== undefined && value !== '')
+            .map((value) => String(value))
+        )
+      ).sort((a, b) => Number(a) - Number(b)),
+    [arrangementRows, currentPreparationInboundId]
+  )
 
   function getSavedShippingMethod() {
     return (
@@ -325,6 +357,7 @@ export default function ReturReportClient({ rows, canAdd = false }) {
     setModelFilter('')
     setGradeFilter('')
     setSelectedIds([])
+    setSelectedPreparationIds([])
   }
 
   function toggleRow(id) {
@@ -340,59 +373,151 @@ export default function ReturReportClient({ rows, canAdd = false }) {
     setSelectedIds(selectableRows.map((row) => row.id))
   }
 
+  function togglePreparationRow(id) {
+    setSelectedPreparationIds((current) => (current.includes(id) ? current.filter((item) => item !== id) : [...current, id]))
+  }
+
+  function toggleAllPreparationRows() {
+    if (allPreparationChecked) {
+      setSelectedPreparationIds([])
+      return
+    }
+
+    setSelectedPreparationIds(selectablePreparationRows.map((row) => row.id))
+  }
+
+  function updatePreparationQty(row, value) {
+    const alreadyAddedQty = getCurrentAddedQty(row.id)
+    const remainingQty = Math.max(0, Number(row.qty || 0) - alreadyAddedQty)
+    const numericValue = value === '' ? '' : Math.max(0, Math.min(Number(value || 0), remainingQty))
+
+    setPrepQtyById((current) => ({ ...current, [row.id]: numericValue === '' ? '' : String(numericValue) }))
+    setSelectedPreparationIds((current) => {
+      const hasRow = current.includes(row.id)
+      if (Number(numericValue || 0) > 0) {
+        return hasRow ? current : [...current, row.id]
+      }
+      return hasRow ? current.filter((item) => item !== row.id) : current
+    })
+  }
+
+  function fillSelectedPreparationAvailableQty() {
+    setPreparationError('')
+    setPreparationSuccess('')
+
+    if (!selectedPreparationRows.length) {
+      setPreparationError('Choose at least one row before auto filling return qty.')
+      return
+    }
+
+    const targetRows = selectedPreparationRows
+    const nextQty = { ...prepQtyById }
+    const nextSelectedIds = []
+
+    targetRows.forEach((row) => {
+      const remainingQty = Math.max(0, Number(row.qty || 0) - getCurrentAddedQty(row.id))
+      if (remainingQty > 0) {
+        nextQty[row.id] = String(remainingQty)
+        nextSelectedIds.push(row.id)
+      }
+    })
+
+    setPrepQtyById(nextQty)
+    setSelectedPreparationIds(Array.from(new Set(nextSelectedIds)))
+    setPreparationSuccess('Return qty filled for selected rows.')
+  }
+
   function getCurrentAddedQty(rowId) {
     return currentReturnKoliItems
       .filter((item) => Number(item.sourceRow.id) === Number(rowId))
       .reduce((sum, item) => sum + Number(item.qty || 0), 0)
   }
 
-  function addPreparationRowToKoli(row) {
+  function addSelectedPreparationRowsToKoli() {
     setPreparationError('')
     setPreparationSuccess('')
 
-    const qty = Number(prepQtyById[row.id] || 0)
-    const availableQty = Number(row.qty || 0)
-    const alreadyAddedQty = getCurrentAddedQty(row.id)
-
-    if (!qty || qty <= 0) {
-      setPreparationError('Return qty must be filled before adding to Koli.')
+    if (!selectedPreparationRows.length) {
+      setPreparationError('Choose at least one row before adding to Koli.')
       return
     }
 
-    if (qty + alreadyAddedQty > availableQty) {
-      setPreparationError('Return qty cannot exceed the available return qty.')
+    const selectedInboundIdsForPreparation = Array.from(new Set(selectedPreparationRows.map((row) => row.inbound_id).filter(Boolean)))
+    if (selectedInboundIdsForPreparation.length !== 1) {
+      setPreparationError('One return Koli can only contain rows from the same GRN.')
       return
     }
 
     if (
       currentReturnKoliItems.length &&
-      currentReturnKoliItems.some((item) => Number(item.sourceRow.inbound_id || 0) !== Number(row.inbound_id || 0))
+      currentReturnKoliItems.some((item) => Number(item.sourceRow.inbound_id || 0) !== Number(selectedInboundIdsForPreparation[0] || 0))
     ) {
       setPreparationError('One return Koli can only contain rows from the same GRN.')
       return
     }
 
-    setCurrentReturnKoliItems((current) => {
-      const existing = current.find((item) => Number(item.sourceRow.id) === Number(row.id))
-      if (existing) {
-        return current.map((item) =>
-          Number(item.sourceRow.id) === Number(row.id)
-            ? { ...item, qty: Number(item.qty || 0) + qty }
-            : item
-        )
+    const rowsToAdd = []
+    let hasInvalidQty = false
+
+    selectedPreparationRows.forEach((row) => {
+      const qty = Number(prepQtyById[row.id] || 0)
+      const availableQty = Number(row.qty || 0)
+      const alreadyAddedQty = getCurrentAddedQty(row.id)
+
+      if (!qty || qty <= 0) {
+        return
       }
 
-      return [
-        ...current,
-        {
-          tempId: `${row.id}-${Date.now()}`,
+      if (qty + alreadyAddedQty > availableQty) {
+        hasInvalidQty = true
+        return
+      }
+
+      rowsToAdd.push({ row, qty })
+    })
+
+    if (hasInvalidQty) {
+      setPreparationError('Return qty cannot exceed the available return qty.')
+      return
+    }
+
+    if (!rowsToAdd.length) {
+      setPreparationError('Return qty must be filled before adding to Koli.')
+      return
+    }
+
+    setCurrentReturnKoliItems((current) => {
+      let nextItems = [...current]
+
+      rowsToAdd.forEach(({ row, qty }) => {
+        const existing = nextItems.find((item) => Number(item.sourceRow.id) === Number(row.id))
+        if (existing) {
+          nextItems = nextItems.map((item) =>
+            Number(item.sourceRow.id) === Number(row.id)
+              ? { ...item, qty: Number(item.qty || 0) + qty }
+              : item
+          )
+          return
+        }
+
+        nextItems.push({
+          tempId: `${row.id}-${Date.now()}-${Math.random().toString(16).slice(2)}`,
           sourceRow: row,
           qty,
-        },
-      ]
+        })
+      })
+
+      return nextItems
     })
-    setPrepQtyById((current) => ({ ...current, [row.id]: '' }))
-    setPreparationSuccess('Return row added to current Koli.')
+    setPrepQtyById((current) => {
+      const nextQty = { ...current }
+      rowsToAdd.forEach(({ row }) => {
+        nextQty[row.id] = ''
+      })
+      return nextQty
+    })
+    setSelectedPreparationIds([])
+    setPreparationSuccess(`${rowsToAdd.length} row${rowsToAdd.length > 1 ? 's' : ''} added to current Koli.`)
   }
 
   function removePreparationItem(tempId) {
@@ -400,12 +525,32 @@ export default function ReturReportClient({ rows, canAdd = false }) {
   }
 
   function clearPreparationKoli() {
-    if (!currentReturnKoliItems.length) return
-    const shouldClear = window.confirm('Clear all rows from the current return Koli?')
+    if (!currentReturnKoliItems.length && !Object.keys(prepQtyById).length && !selectedPreparationIds.length) return
+    const shouldClear = window.confirm('Clear current return Koli, selected rows, and return qty?')
     if (!shouldClear) return
     setCurrentReturnKoliItems([])
+    setPreparationPostTargetOpen(false)
+    setPreparationPostTarget({ mode: 'new', koliSequence: '' })
+    setPrepQtyById({})
+    setSelectedPreparationIds([])
     setPreparationError('')
     setPreparationSuccess('')
+  }
+
+  function openPreparationPostTargetModal() {
+    if (!currentReturnKoliItems.length) {
+      setPreparationError('Add at least one return row to Koli first.')
+      return
+    }
+
+    setPreparationError('')
+    setPreparationPostTarget({ mode: 'new', koliSequence: '' })
+    setPreparationPostTargetOpen(true)
+  }
+
+  function closePreparationPostTargetModal() {
+    if (isPostingPreparation) return
+    setPreparationPostTargetOpen(false)
   }
 
   async function postPreparationKoli() {
@@ -430,28 +575,32 @@ export default function ReturReportClient({ rows, canAdd = false }) {
       return
     }
 
-    const shouldPost = window.confirm(
-      `Post this return Koli with ${currentReturnKoliItems.length} row${currentReturnKoliItems.length > 1 ? 's' : ''}?`
-    )
-    if (!shouldPost) return
+    if (preparationPostTarget.mode === 'existing' && !preparationPostTarget.koliSequence) {
+      setPreparationError('Choose the existing Koli first.')
+      return
+    }
 
     setIsPostingPreparation(true)
     setPreparationError('')
     setPreparationSuccess('')
 
-    const { data: latestRows, error: sequenceError } = await supabase
-      .from('warehouse_returns')
-      .select('koli_sequence')
-      .eq('inbound_id', inboundId)
+    let assignedKoliSequence = Number(preparationPostTarget.koliSequence || 0)
 
-    if (sequenceError) {
-      setPreparationError(sequenceError.message)
-      setIsPostingPreparation(false)
-      return
+    if (preparationPostTarget.mode !== 'existing') {
+      const { data: latestRows, error: sequenceError } = await supabase
+        .from('warehouse_returns')
+        .select('koli_sequence')
+        .eq('inbound_id', inboundId)
+
+      if (sequenceError) {
+        setPreparationError(sequenceError.message)
+        setIsPostingPreparation(false)
+        return
+      }
+
+      assignedKoliSequence =
+        (latestRows || []).reduce((max, row) => Math.max(max, Number(row.koli_sequence || 0)), 0) + 1
     }
-
-    const assignedKoliSequence =
-      (latestRows || []).reduce((max, row) => Math.max(max, Number(row.koli_sequence || 0)), 0) + 1
 
     for (const item of currentReturnKoliItems) {
       const sourceRow = item.sourceRow
@@ -483,6 +632,10 @@ export default function ReturReportClient({ rows, canAdd = false }) {
     }
 
     setCurrentReturnKoliItems([])
+    setPrepQtyById({})
+    setSelectedPreparationIds([])
+    setPreparationPostTargetOpen(false)
+    setPreparationPostTarget({ mode: 'new', koliSequence: '' })
     setPreparationSuccess(`Return Koli ${assignedKoliSequence} posted to Return Arrangement.`)
     setIsPostingPreparation(false)
     setActiveReturnTab('arrangement')
@@ -938,10 +1091,16 @@ export default function ReturReportClient({ rows, canAdd = false }) {
                     <span>Current Koli</span>
                     <strong>{currentPreparationQty}</strong>
                   </div>
-                  <button type="button" className={reportStyles.secondaryButton} onClick={clearPreparationKoli} disabled={!currentReturnKoliItems.length || isPostingPreparation}>
+                  <button type="button" className={reportStyles.secondaryButton} onClick={fillSelectedPreparationAvailableQty} disabled={!filteredPreparationRows.length || isPostingPreparation}>
+                    Auto Fill Return Qty
+                  </button>
+                  <button type="button" className={reportStyles.primaryButton} onClick={addSelectedPreparationRowsToKoli} disabled={!selectedPreparationRows.length || isPostingPreparation}>
+                    Add Selected to Koli
+                  </button>
+                  <button type="button" className={reportStyles.secondaryButton} onClick={clearPreparationKoli} disabled={(!currentReturnKoliItems.length && !Object.keys(prepQtyById).length && !selectedPreparationIds.length) || isPostingPreparation}>
                     Clear
                   </button>
-                  <button type="button" className={reportStyles.primaryButton} onClick={postPreparationKoli} disabled={!canAdd || !currentReturnKoliItems.length || isPostingPreparation}>
+                  <button type="button" className={reportStyles.primaryButton} onClick={openPreparationPostTargetModal} disabled={!canAdd || !currentReturnKoliItems.length || isPostingPreparation}>
                     {isPostingPreparation ? 'Posting...' : 'Post'}
                   </button>
                 </div>
@@ -1021,7 +1180,7 @@ export default function ReturReportClient({ rows, canAdd = false }) {
                             <td className={reportStyles.centerNumberCell}>{item.qty}</td>
                             <td>
                               <button type="button" className={reportStyles.secondaryButton} onClick={() => removePreparationItem(item.tempId)} disabled={isPostingPreparation}>
-                                Remove
+                                X
                               </button>
                             </td>
                           </tr>
@@ -1041,6 +1200,16 @@ export default function ReturReportClient({ rows, canAdd = false }) {
                   <table className={reportStyles.table}>
                     <thead>
                       <tr>
+                        <th aria-label="Select">
+                          <input
+                            className={reportStyles.checkbox}
+                            type="checkbox"
+                            checked={allPreparationChecked}
+                            onChange={toggleAllPreparationRows}
+                            disabled={!filteredPreparationRows.length || isPostingPreparation}
+                            aria-label="Select all preparation rows"
+                          />
+                        </th>
                         <th>Date</th>
                         <th>GRN</th>
                         <th>Phase</th>
@@ -1050,15 +1219,25 @@ export default function ReturReportClient({ rows, canAdd = false }) {
                         <th>Grade</th>
                         <th className={reportStyles.centerNumberCell}>Available Qty</th>
                         <th className={reportStyles.centerNumberCell}>Return Qty</th>
-                        <th>Action</th>
                       </tr>
                     </thead>
                     <tbody>
                       {filteredPreparationRows.map((row) => {
                         const alreadyAddedQty = getCurrentAddedQty(row.id)
                         const remainingQty = Math.max(0, Number(row.qty || 0) - alreadyAddedQty)
+                        const isChecked = selectedPreparationIds.includes(row.id)
                         return (
                           <tr key={row.id}>
+                            <td>
+                              <input
+                                className={reportStyles.checkbox}
+                                type="checkbox"
+                                checked={isChecked}
+                                onChange={() => togglePreparationRow(row.id)}
+                                disabled={remainingQty <= 0 || isPostingPreparation}
+                                aria-label={`Select ${getModelLabel(row)}`}
+                              />
+                            </td>
                             <td>{formatDateDisplay(row.created_at || row.inbound?.inbound_date)}</td>
                             <td>{row.inbound?.grn_number || '-'}</td>
                             <td>{getPhaseLabel(row.source_phase)}</td>
@@ -1074,15 +1253,10 @@ export default function ReturReportClient({ rows, canAdd = false }) {
                                 min="1"
                                 max={remainingQty}
                                 value={prepQtyById[row.id] || ''}
-                                onChange={(event) => setPrepQtyById((current) => ({ ...current, [row.id]: event.target.value }))}
+                                onChange={(event) => updatePreparationQty(row, event.target.value)}
                                 disabled={remainingQty <= 0 || isPostingPreparation}
                                 aria-label={`Return qty for ${getModelLabel(row)}`}
                               />
-                            </td>
-                            <td>
-                              <button type="button" className={reportStyles.secondaryButton} onClick={() => addPreparationRowToKoli(row)} disabled={remainingQty <= 0 || isPostingPreparation}>
-                                Add to Koli
-                              </button>
                             </td>
                           </tr>
                         )
@@ -1286,11 +1460,10 @@ export default function ReturReportClient({ rows, canAdd = false }) {
               <th>Phase</th>
               <th>Supplier</th>
               <th>Brand</th>
-              <th>Category</th>
               <th>Mode-Variant</th>
               <th>Grade</th>
-              <th>Status</th>
               <th className={reportStyles.centerNumberCell}>Qty</th>
+              <th>Status</th>
             </tr>
           </thead>
           <tbody>
@@ -1309,13 +1482,12 @@ export default function ReturReportClient({ rows, canAdd = false }) {
                   <td>{getPhaseLabel(row.source_phase)}</td>
                   <td>{row.inbound?.suppliers?.supplier_name || '-'}</td>
                   <td>{getBrandLabel(row)}</td>
-                  <td>{getCategoryLabel(row)}</td>
                   <td>{getModelLabel(row)}</td>
                   <td>{row.grade || '-'}</td>
+                  <td className={`${reportStyles.centerNumberCell} ${reportStyles.strongQtyCell}`.trim()}>{row.qty || 0}</td>
                   <td>
                     <span className={`${reportStyles.badge} ${isCompleted ? reportStyles.badgeCompleted : ''}`}>{getStatusLabel(row.status)}</span>
                   </td>
-                  <td className={reportStyles.centerNumberCell}>{row.qty || 0}</td>
                 </tr>
               )
             })}
@@ -1530,6 +1702,77 @@ export default function ReturReportClient({ rows, canAdd = false }) {
           ) : null}
         </div>
       </div>
+
+      {preparationPostTargetOpen ? (
+        <div style={styles.overlay}>
+          <div style={styles.confirmModal}>
+            <div style={styles.modalHeader}>
+              <div>
+                <h2 style={styles.modalTitle}>Post Return Koli</h2>
+                <p style={styles.modalSubtitle}>Choose whether this basket becomes a new Koli or joins an existing Koli.</p>
+              </div>
+              <button type="button" style={styles.closeButton} onClick={closePreparationPostTargetModal} disabled={isPostingPreparation}>
+                X
+              </button>
+            </div>
+
+            <div style={styles.printModeGrid}>
+              <button
+                type="button"
+                style={{
+                  ...styles.printModeCard,
+                  ...(preparationPostTarget.mode === 'new' ? styles.printModeCardActive : {}),
+                }}
+                onClick={() => setPreparationPostTarget({ mode: 'new', koliSequence: '' })}
+                disabled={isPostingPreparation}
+              >
+                <span style={styles.printModeTitle}>New Koli</span>
+                <span style={styles.printModeText}>Create the next Koli number for this GRN.</span>
+              </button>
+              <button
+                type="button"
+                style={{
+                  ...styles.printModeCard,
+                  ...(preparationPostTarget.mode === 'existing' ? styles.printModeCardActive : {}),
+                }}
+                onClick={() => setPreparationPostTarget((current) => ({ ...current, mode: 'existing' }))}
+                disabled={!preparationExistingKoliOptions.length || isPostingPreparation}
+              >
+                <span style={styles.printModeTitle}>Existing Koli</span>
+                <span style={styles.printModeText}>Add this basket into an existing Koli number.</span>
+              </button>
+            </div>
+
+            {preparationPostTarget.mode === 'existing' ? (
+              <div style={styles.field}>
+                <label style={styles.label}>Koli Number</label>
+                <select
+                  style={styles.input}
+                  value={preparationPostTarget.koliSequence}
+                  onChange={(event) => setPreparationPostTarget((current) => ({ ...current, koliSequence: event.target.value }))}
+                  disabled={isPostingPreparation}
+                >
+                  <option value="">Choose Koli</option>
+                  {preparationExistingKoliOptions.map((item) => (
+                    <option key={item} value={item}>Koli {item}</option>
+                  ))}
+                </select>
+              </div>
+            ) : null}
+
+            {preparationError ? <p style={styles.errorText}>{preparationError}</p> : null}
+
+            <div style={styles.modalButtonRow}>
+              <button type="button" style={styles.secondaryButton} onClick={closePreparationPostTargetModal} disabled={isPostingPreparation}>
+                Cancel
+              </button>
+              <button type="button" style={styles.primaryButton} onClick={postPreparationKoli} disabled={isPostingPreparation}>
+                {isPostingPreparation ? 'Posting...' : 'Post'}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </>
   )
 }
@@ -1714,6 +1957,10 @@ const styles = {
     flexDirection: 'column',
     justifyContent: 'center',
     gap: '8px',
+  },
+  printModeCardActive: {
+    border: '1px solid #111827',
+    background: '#eef2ff',
   },
   printModeTitle: {
     fontSize: '18px',

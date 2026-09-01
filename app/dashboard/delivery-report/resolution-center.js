@@ -23,6 +23,31 @@ const RETURN_FINANCIAL_FIELDS = [
   ['total_retur', 'Returned Item Value'],
 ]
 
+const RETURN_FINANCIAL_HELP = {
+  nilai_refund_kompensasi: 'Refund or compensation value given to the customer.',
+  ongkir_keluar: 'Shipping cost paid by us.',
+  ongkir_masuk: 'Shipping cost received by us.',
+  total_retur: 'Returned item value used as the shipping insurance reference.',
+}
+
+const RETURN_STATUS_OPTIONS = {
+  Pending: {
+    className: styles.resolutionStatusPending,
+    description: 'The customer has submitted a return, but the item has not been shipped yet.',
+    label: 'Pending',
+  },
+  Sending: {
+    className: styles.resolutionStatusSending,
+    description: 'The customer has shipped the item to the warehouse.',
+    label: 'Sending',
+  },
+  Cancel: {
+    className: styles.resolutionStatusCancel,
+    description: 'The return case will not proceed.',
+    label: 'Cancel',
+  },
+}
+
 const ACTIVE_RETURN_STATUSES = new Set(['Pending', 'Sending'])
 
 function addDays(date, days) {
@@ -125,6 +150,18 @@ function labelText(label, isRequired = false) {
     <>
       {label}
       {isRequired ? <span className={styles.requiredStar}>*</span> : null}
+    </>
+  )
+}
+
+function labelWithInfo(label, helper, isRequired = false) {
+  return (
+    <>
+      {labelText(label, isRequired)}
+      <span className={styles.infoWrap}>
+        <span className={styles.infoDot}>i</span>
+        <span className={styles.infoTooltip}>{helper}</span>
+      </span>
     </>
   )
 }
@@ -656,12 +693,6 @@ export default function ResolutionCenter() {
       {activeTab === 'registration' ? (
         <>
           <section className={`${styles.dataCard} ${styles.resolutionSummaryPanel}`}>
-            <div className={styles.cardTitleRow}>
-              <div>
-                <h2>SUMMARY OVERVIEW</h2>
-                <p className={styles.cardHint}>Monitor return cases, deadline warnings, and quick operational insights for the selected period.</p>
-              </div>
-            </div>
             <div className={styles.resolutionSummaryControls}>
               <label><span>DATE FROM</span><input type="date" value={filters.from} onChange={(event) => setFilters({ ...filters, from: event.target.value })} /></label>
               <label><span>DATE TO</span><input type="date" value={filters.to} onChange={(event) => setFilters({ ...filters, to: event.target.value })} /></label>
@@ -697,15 +728,15 @@ export default function ResolutionCenter() {
                       <h3>Subject Identity</h3>
                       <p>Customer, shipment, and team information tied to the case.</p>
                     </div>
-                    <span>⌄</span>
+                    <span aria-hidden="true">−</span>
                   </summary>
-                  <div className={styles.formGrid}>
+                  <div className={`${styles.formGrid} ${styles.resolutionIdentityGrid}`}>
                     <label><span>{labelText('ORDER ID', true)}</span><input value={returnForm.order_id} onChange={returnField('order_id')} /></label>
                     <label><span>{labelText('CUSTOMER NAME', true)}</span><input value={returnForm.nama_customer} onChange={returnField('nama_customer')} /></label>
                     <label><span>{labelText('PHONE NUMBER', true)}</span><input value={returnForm.no_handphone} onChange={returnField('no_handphone')} /></label>
-                    <label><span>{labelText('SHIPMENT AWB', true)}</span><input value={returnForm.no_resi_pengiriman} onChange={returnField('no_resi_pengiriman')} /></label>
-                    <label><span>INTERNAL TEAM</span><input readOnly placeholder="Auto-filled from shipment AWB" value={returnForm.nomor_tim} /></label>
                     <label className={styles.fullField}><span>{labelText('ADDRESS', true)}</span><textarea value={returnForm.alamat} onChange={returnField('alamat')} /></label>
+                    <label><span>{labelText('SHIPMENT AWB', true)}</span><input value={returnForm.no_resi_pengiriman} onChange={returnField('no_resi_pengiriman')} /></label>
+                    <label><span>PACKING TEAM</span><input readOnly placeholder="Auto-filled from shipment AWB" value={returnForm.nomor_tim} /></label>
                   </div>
                 </details>
 
@@ -715,7 +746,7 @@ export default function ResolutionCenter() {
                       <h3>Returns Detail</h3>
                       <p>Reason, action, products, courier, cost, and notes.</p>
                     </div>
-                    <span>⌄</span>
+                    <span aria-hidden="true">−</span>
                   </summary>
                   <div className={styles.formGrid}>
                     <label><span>{labelText('RETURN REASON', true)}</span><select value={returnForm.retur_reason} onChange={returnField('retur_reason')}><option value="">SELECT REASON</option>{masters.reasons.filter((item) => !item.reasoning_type || item.reasoning_type.toLowerCase() === returnForm.internal_external.toLowerCase()).map((item) => <option key={item.id}>{item.name}</option>)}</select></label>
@@ -726,26 +757,40 @@ export default function ResolutionCenter() {
                     <label><span>SHIPPING SERVICE</span><select value={returnForm.courier_service} onChange={returnField('courier_service')}><option value="">SELECT SERVICE</option>{serviceOptions.map((item) => <option key={item.id}>{item.courier_service}</option>)}</select></label>
                     {RETURN_FINANCIAL_FIELDS.map(([key, label]) => {
                       const required = (key === 'nilai_refund_kompensasi' && returnActionRules.requireRefundValue === true) || (key === 'total_retur' && returnActionRules.replacementRequired === true)
-                      return <label key={key}><span>{labelText(label.toUpperCase(), required)}</span><input inputMode="numeric" value={returnForm[key]} onChange={returnField(key)} /></label>
+                      return <label key={key}><span>{labelWithInfo(label.toUpperCase(), RETURN_FINANCIAL_HELP[key], required)}</span><input inputMode="numeric" value={returnForm[key]} onChange={returnField(key)} /></label>
                     })}
-                    <label className={styles.fullField}><span>INTERNAL ADDITIONAL NOTES</span><textarea value={returnForm.keterangan_tambahan} onChange={returnField('keterangan_tambahan')} /></label>
-                    <label className={styles.fullField}><span>CUSTOMER NOTES</span><textarea value={returnForm.note_konsumen} onChange={returnField('note_konsumen')} /></label>
+                    <label><span>INTERNAL ADDITIONAL NOTES</span><textarea value={returnForm.keterangan_tambahan} onChange={returnField('keterangan_tambahan')} /></label>
+                    <label><span>CUSTOMER NOTES</span><textarea value={returnForm.note_konsumen} onChange={returnField('note_konsumen')} /></label>
                   </div>
                 </details>
 
-                <details className={styles.resolutionFormSection} open>
-                  <summary className={styles.resolutionFormSectionHeader}>
-                    <div>
-                      <h3>Status</h3>
-                      <p>Current case stage and priority marker.</p>
+                <section className={`${styles.resolutionFormSection} ${styles.resolutionStatusSection}`}>
+                  <div className={styles.resolutionStaticSectionTitle}>Status</div>
+                  <div className={styles.resolutionStatusPanel}>
+                    <div className={`${styles.resolutionStatusPreview} ${RETURN_STATUS_OPTIONS[returnForm.status_barang]?.className || ''}`}>
+                      <span>ACTIVE STATUS</span>
+                      <strong>{RETURN_STATUS_OPTIONS[returnForm.status_barang]?.label || returnForm.status_barang}</strong>
+                      <p>{RETURN_STATUS_OPTIONS[returnForm.status_barang]?.description || 'Select the current case status.'}</p>
                     </div>
-                    <span>⌄</span>
-                  </summary>
-                  <div className={styles.resolutionStatusGrid}>
-                    <div><span className={styles.fieldTitle}>ACTIVE STATUS</span><div className={styles.choicePills}>{['Pending', 'Sending', 'Cancel'].map((item) => <button key={item} className={returnForm.status_barang === item ? styles.active : ''} onClick={() => setReturnForm({ ...returnForm, status_barang: item })}>{item}</button>)}</div></div>
-                    <label className={styles.checkboxField}><input type="checkbox" checked={returnForm.need_prioritized} onChange={returnField('need_prioritized')} /><span>Priority case / needs special attention</span></label>
+                    <div className={styles.resolutionStatusControls}>
+                      <div className={styles.resolutionStatusButtons}>
+                        {Object.entries(RETURN_STATUS_OPTIONS).map(([value, option]) => (
+                          <button
+                            key={value}
+                            className={`${returnForm.status_barang === value ? styles.active : ''} ${option.className}`}
+                            onClick={() => setReturnForm({ ...returnForm, status_barang: value })}
+                          >
+                            {option.label}
+                          </button>
+                        ))}
+                      </div>
+                      <label className={styles.resolutionPriorityToggle}>
+                        <input type="checkbox" checked={returnForm.need_prioritized} onChange={returnField('need_prioritized')} />
+                        <span>Priority case / needs special attention</span>
+                      </label>
+                    </div>
                   </div>
-                </details>
+                </section>
 
                 <div className={styles.formActions}><button className={styles.primaryButton} disabled={busy} onClick={saveReturn}>{busy ? 'Saving...' : 'Save'}</button><button className={styles.softButton} onClick={() => setReturnForm(blankReturn(today))}>Reset Form</button></div>
               </div>
@@ -791,7 +836,7 @@ export default function ResolutionCenter() {
           </section>
 
           <section className={`${styles.tablePanel} ${styles.resolutionCaseListPanel}`}>
-            <div className={styles.panelHeader}><h2>CASE LISTS</h2><span>{visibleCases.length} Rows</span></div>
+            <div className={styles.panelHeader}><h2>CASE LIST</h2><span>{visibleCases.length} Rows</span></div>
             <div className={styles.panelBody}>
               <div className={styles.databaseFilter}>
                 <label><span>GROUP</span><select value={filters.group} onChange={(event) => setFilters({ ...filters, group: event.target.value })}><option value="">ALL GROUPS</option>{GROUPS.map((group) => <option key={group}>{group}</option>)}</select></label>
