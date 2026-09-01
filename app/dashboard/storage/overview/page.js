@@ -585,18 +585,22 @@ export default function StorageOverviewPage() {
   const [loading, setLoading] = useState(true)
   const [taking, setTaking] = useState(false)
   const [editing, setEditing] = useState(false)
+  const [moving, setMoving] = useState(false)
   const [registering, setRegistering] = useState(false)
   const [storingQueue, setStoringQueue] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
   const [takeModalError, setTakeModalError] = useState('')
+  const [moveModalError, setMoveModalError] = useState('')
   const [queueModalError, setQueueModalError] = useState('')
   const [storageAccess, setStorageAccess] = useState(EMPTY_STORAGE_ACCESS)
   const [takeModalEntry, setTakeModalEntry] = useState(null)
   const [editModalEntry, setEditModalEntry] = useState(null)
+  const [moveModalEntry, setMoveModalEntry] = useState(null)
   const [queueModalEntry, setQueueModalEntry] = useState(null)
   const [isRegisterModalOpen, setIsRegisterModalOpen] = useState(initialRegisterOpen)
   const [isRegisterLocationCodeMenuOpen, setIsRegisterLocationCodeMenuOpen] = useState(false)
+  const [isMoveLocationCodeMenuOpen, setIsMoveLocationCodeMenuOpen] = useState(false)
   const [isRegisterArklineProductMenuOpen, setIsRegisterArklineProductMenuOpen] = useState(false)
   const [isBrandLookupOpen, setIsBrandLookupOpen] = useState(false)
   const [isCompactLayout, setIsCompactLayout] = useState(false)
@@ -619,6 +623,12 @@ export default function StorageOverviewPage() {
     size: '',
     qty: '',
     notes: '',
+  })
+  const [moveForm, setMoveForm] = useState({
+    locationType: '',
+    locationId: '',
+    locationCode: '',
+    subLocation: '',
   })
   const [registerForm, setRegisterForm] = useState({
     locationType: '',
@@ -770,9 +780,10 @@ export default function StorageOverviewPage() {
   const canRegisterStorageItem = Boolean(storageAccess.locationAdd)
   const canEditStorageItem = Boolean(storageAccess.locationEdit)
   const canTakeStorageItem = Boolean(storageAccess.locationEdit)
+  const canMoveStorageItem = Boolean(storageAccess.locationEdit)
   const canStoreQueueItem = Boolean(storageAccess.queueEdit)
   const canManageProductDirectory = Boolean(storageAccess.productDirectoryAdd || storageAccess.productDirectoryEdit)
-  const canShowStorageLocationActions = canEditStorageItem || canTakeStorageItem
+  const canShowStorageLocationActions = canEditStorageItem || canTakeStorageItem || canMoveStorageItem
   const storageTabItems = useMemo(
     () => [
       storageAccess.location ? ['stock', 'Storage Location'] : null,
@@ -960,6 +971,49 @@ export default function StorageOverviewPage() {
 
     return arklineProducts.find((product) => product.label === selectedLabel) || null
   }, [arklineProducts, isRegisterArklineLocation, registerForm.itemName])
+
+  const moveLocationTypeOptions = Array.from(
+    new Set(rackLocations.map((item) => item.location_type).filter(Boolean))
+  ).sort((left, right) => naturalSort.compare(String(left), String(right)))
+
+  const moveLocationIdOptions = Array.from(
+    new Set(
+      rackLocations
+        .filter((item) => item.location_type === moveForm.locationType)
+        .map((item) => item.location_id)
+        .filter(Boolean)
+    )
+  ).sort((left, right) => naturalSort.compare(String(left), String(right)))
+
+  const moveLocationCodeOptions = Array.from(
+    new Set(
+      rackLocations
+        .filter(
+          (item) =>
+            item.location_type === moveForm.locationType &&
+            String(item.location_id) === moveForm.locationId
+        )
+        .map((item) => item.location_code)
+        .filter(Boolean)
+    )
+  ).sort((left, right) => naturalSort.compare(String(left), String(right)))
+
+  const filteredMoveLocationCodeOptions = moveLocationCodeOptions
+    .filter((option) => normalizeFilterValue(option).includes(normalizeFilterValue(moveForm.locationCode)))
+    .slice(0, 80)
+
+  const moveSubLocationOptions = rackLocations
+    .filter(
+      (item) =>
+        item.location_type === moveForm.locationType &&
+        String(item.location_id) === moveForm.locationId &&
+        item.location_code === moveForm.locationCode
+    )
+    .sort((left, right) => naturalSort.compare(String(left.sub_location), String(right.sub_location)))
+
+  const selectedMoveLocation = moveSubLocationOptions.find(
+    (item) => item.sub_location === moveForm.subLocation
+  )
 
   const queueStorageGroup = normalizeFilterValue(queueModalEntry?.storing_type)
   const queueEligibleRackLocations = rackLocations.filter((item) => {
@@ -1551,6 +1605,22 @@ export default function StorageOverviewPage() {
     setSuccess('')
   }
 
+  function openMoveModal(entry) {
+    if (!canMoveStorageItem) return
+    const location = entry.location || {}
+    setMoveModalEntry(entry)
+    setMoveForm({
+      locationType: location.location_type || '',
+      locationId: location.location_id ? String(location.location_id) : '',
+      locationCode: location.location_code || '',
+      subLocation: location.sub_location || '',
+    })
+    setMoveModalError('')
+    setIsMoveLocationCodeMenuOpen(false)
+    setError('')
+    setSuccess('')
+  }
+
   function closeTakeModal() {
     setTakeModalEntry(null)
     setTakeModalError('')
@@ -1568,6 +1638,18 @@ export default function StorageOverviewPage() {
       qty: '',
       notes: '',
     })
+  }
+
+  function closeMoveModal() {
+    setMoveModalEntry(null)
+    setMoveModalError('')
+    setMoveForm({
+      locationType: '',
+      locationId: '',
+      locationCode: '',
+      subLocation: '',
+    })
+    setIsMoveLocationCodeMenuOpen(false)
   }
 
   function handleTakeFormChange(event) {
@@ -1610,6 +1692,82 @@ export default function StorageOverviewPage() {
       ...prev,
       [name]: name === 'itemName' ? value.toUpperCase() : value,
     }))
+  }
+
+  function handleMoveSelectChange(event) {
+    const { name, value } = event.target
+    setMoveModalError('')
+
+    if (name === 'locationType') {
+      setMoveForm((prev) => ({
+        ...prev,
+        locationType: value,
+        locationId: '',
+        locationCode: '',
+        subLocation: '',
+      }))
+      setIsMoveLocationCodeMenuOpen(false)
+      return
+    }
+
+    if (name === 'locationId') {
+      setMoveForm((prev) => ({
+        ...prev,
+        locationId: value,
+        locationCode: '',
+        subLocation: '',
+      }))
+      setIsMoveLocationCodeMenuOpen(false)
+      return
+    }
+
+    if (name === 'subLocation') {
+      setMoveForm((prev) => ({
+        ...prev,
+        subLocation: value,
+      }))
+    }
+  }
+
+  function handleMoveLocationCodeFocus() {
+    if (moveForm.locationCode) {
+      setMoveForm((prev) => ({
+        ...prev,
+        locationCode: '',
+        subLocation: '',
+      }))
+    }
+
+    setMoveModalError('')
+    setIsMoveLocationCodeMenuOpen(Boolean(moveForm.locationId))
+  }
+
+  function handleMoveLocationCodeInputChange(event) {
+    const value = event.target.value.toUpperCase()
+
+    setMoveForm((prev) => ({
+      ...prev,
+      locationCode: value,
+      subLocation: '',
+    }))
+    setMoveModalError('')
+    setIsMoveLocationCodeMenuOpen(true)
+  }
+
+  function handleMoveLocationCodeSelect(value) {
+    setMoveForm((prev) => ({
+      ...prev,
+      locationCode: value,
+      subLocation: '',
+    }))
+    setMoveModalError('')
+    setIsMoveLocationCodeMenuOpen(false)
+  }
+
+  function handleMoveLocationCodeBlur(event) {
+    if (!event.currentTarget.contains(event.relatedTarget)) {
+      setIsMoveLocationCodeMenuOpen(false)
+    }
   }
 
   function handleRegisterSelectChange(event) {
@@ -2084,6 +2242,69 @@ export default function StorageOverviewPage() {
     setSuccess('Storage item updated successfully.')
     setEditing(false)
     closeEditModal()
+  }
+
+  async function handleMoveSubmit(event) {
+    event.preventDefault()
+
+    if (!canMoveStorageItem) return
+
+    if (!moveModalEntry) {
+      return
+    }
+
+    setMoving(true)
+    setMoveModalError('')
+    setError('')
+    setSuccess('')
+
+    if (!selectedMoveLocation) {
+      setMoveModalError('Please complete the destination location first.')
+      setMoving(false)
+      return
+    }
+
+    if (String(selectedMoveLocation.id) === String(moveModalEntry.rack_location_id)) {
+      setMoveModalError('Destination location is the same as the current location.')
+      setMoving(false)
+      return
+    }
+
+    const updatedAt = new Date().toISOString()
+    const updatedBy = await getCurrentUserEmail()
+    const payload = {
+      rack_location_id: selectedMoveLocation.id,
+      updated_by: updatedBy,
+      updated_at: updatedAt,
+    }
+
+    const { error: updateError } = await supabase
+      .from('warehouse_storage')
+      .update(payload)
+      .eq('id', moveModalEntry.id)
+
+    if (updateError) {
+      setMoveModalError(updateError.message)
+      setMoving(false)
+      return
+    }
+
+    setStorageEntries((currentRows) => {
+      const nextRows = currentRows.map((row) => (
+        String(row.id) === String(moveModalEntry.id)
+          ? {
+              ...row,
+              rack_location_id: selectedMoveLocation.id,
+              updated_at: updatedAt,
+            }
+          : row
+      ))
+
+      return setWarehouseStorageCache(nextRows)
+    })
+    setSuccess('Storage item moved successfully.')
+    setMoving(false)
+    closeMoveModal()
   }
 
   function getLocationLabel(location) {
@@ -2575,18 +2796,47 @@ export default function StorageOverviewPage() {
                             <button
                               type="button"
                               onClick={() => openEditModal(entry)}
-                              style={styles.editButton}
+                              style={styles.tableIconButton}
+                              title="Edit item detail"
+                              aria-label="Edit item detail"
                             >
-                              Edit
+                              <svg viewBox="0 0 24 24" style={styles.tableActionIcon} aria-hidden="true">
+                                <path d="M12 20h9" />
+                                <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5Z" />
+                              </svg>
+                            </button>
+                          ) : null}
+                          {canMoveStorageItem ? (
+                            <button
+                              type="button"
+                              onClick={() => openMoveModal(entry)}
+                              style={styles.tableIconButton}
+                              title="Move to another location"
+                              aria-label="Move to another location"
+                            >
+                              <svg viewBox="0 0 24 24" style={styles.tableActionIcon} aria-hidden="true">
+                                <path d="M5 9V5h4" />
+                                <path d="M19 15v4h-4" />
+                                <path d="M5 5l14 14" />
+                                <path d="M19 5v4h-4" />
+                                <path d="M5 19v-4h4" />
+                                <path d="M19 5 5 19" />
+                              </svg>
                             </button>
                           ) : null}
                           {canTakeStorageItem ? (
                           <button
                             type="button"
                             onClick={() => openTakeModal(entry)}
-                            style={styles.takeButton}
+                            style={{ ...styles.tableIconButton, ...styles.tableIconButtonDark }}
+                            title="Take out item"
+                            aria-label="Take out item"
                           >
-                            Take
+                            <svg viewBox="0 0 24 24" style={styles.tableActionIcon} aria-hidden="true">
+                              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+                              <path d="M16 17l5-5-5-5" />
+                              <path d="M21 12H9" />
+                            </svg>
                           </button>
                         ) : null}
                         </div>
@@ -3143,6 +3393,146 @@ export default function StorageOverviewPage() {
 
                 {takeModalError ? <p style={styles.modalInlineError}>{takeModalError}</p> : null}
               </div>
+            </form>
+          </div>
+        </div>
+      ) : null}
+
+      {moveModalEntry && canMoveStorageItem ? (
+        <div style={styles.modalOverlay}>
+          <div style={styles.modalCardWide}>
+            <div style={styles.modalHeader}>
+              <div style={styles.modalTitleGroup}>
+                <p style={styles.modalEyebrow}>Warehouse</p>
+                <h2 style={styles.modalTitle}>Move Item Location</h2>
+              </div>
+              <div style={styles.modalHeaderActions}>
+                <button type="button" onClick={closeMoveModal} style={styles.modalCancelButton}>
+                  Cancel
+                </button>
+                <button type="submit" form="move-item-location-form" style={styles.takeButton} disabled={moving}>
+                  {moving ? 'Moving...' : 'Move To'}
+                </button>
+              </div>
+            </div>
+
+            <div style={styles.moveSummaryGrid}>
+              <div style={styles.takeModalItemCard}>
+                <span style={styles.selectedLocationLabel}>Item</span>
+                <strong style={styles.takeModalItemName}>{moveModalEntry.item_name}</strong>
+                <div style={styles.moveMetaRow}>
+                  <span style={styles.moveMetaPill}>Size {moveModalEntry.size || '-'}</span>
+                  <span style={styles.moveMetaPill}>Qty {moveModalEntry.qty || 0}</span>
+                </div>
+              </div>
+              <div style={styles.takeModalInfoCard}>
+                <span style={styles.selectedLocationLabel}>Current Location</span>
+                <strong style={styles.takeModalLocation}>{getLocationLabel(moveModalEntry.location)}</strong>
+              </div>
+            </div>
+
+            <form id="move-item-location-form" onSubmit={handleMoveSubmit} style={styles.modalForm}>
+              <div style={styles.filtersGrid}>
+                <div style={styles.field}>
+                  <label style={styles.label}>Storage Type</label>
+                  <select
+                    name="locationType"
+                    value={moveForm.locationType}
+                    onChange={handleMoveSelectChange}
+                    style={styles.select}
+                    required
+                  >
+                    <option value="">Select location type</option>
+                    {moveLocationTypeOptions.map((option) => (
+                      <option key={option} value={option}>
+                        {option}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div style={styles.field}>
+                  <label style={styles.label}>Warehouse Location</label>
+                  <select
+                    name="locationId"
+                    value={moveForm.locationId}
+                    onChange={handleMoveSelectChange}
+                    style={!moveForm.locationType ? { ...styles.select, ...styles.controlDisabled } : styles.select}
+                    disabled={!moveForm.locationType}
+                    required
+                  >
+                    <option value="">Select location id</option>
+                    {moveLocationIdOptions.map((option) => (
+                      <option key={option} value={String(option)}>
+                        {option}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div style={styles.field}>
+                  <label style={styles.label}>Pallet/Shelving Number</label>
+                  <div style={styles.typeaheadWrap} onBlur={handleMoveLocationCodeBlur}>
+                    <input
+                      name="locationCode"
+                      value={moveForm.locationCode}
+                      onChange={handleMoveLocationCodeInputChange}
+                      onFocus={handleMoveLocationCodeFocus}
+                      onClick={handleMoveLocationCodeFocus}
+                      style={!moveForm.locationId ? { ...styles.input, ...styles.controlDisabled } : styles.input}
+                      disabled={!moveForm.locationId}
+                      placeholder="Type or select location"
+                      autoComplete="off"
+                      required
+                    />
+                    {isMoveLocationCodeMenuOpen && moveForm.locationId ? (
+                      <div style={styles.typeaheadMenu}>
+                        {filteredMoveLocationCodeOptions.length > 0 ? filteredMoveLocationCodeOptions.map((option) => (
+                          <button
+                            key={option}
+                            type="button"
+                            style={styles.typeaheadOption}
+                            onMouseDown={(event) => event.preventDefault()}
+                            onClick={() => handleMoveLocationCodeSelect(option)}
+                          >
+                            {option}
+                          </button>
+                        )) : (
+                          <div style={styles.typeaheadEmpty}>No location found.</div>
+                        )}
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+
+                <div style={styles.field}>
+                  <label style={styles.label}>Carton / Level</label>
+                  <select
+                    name="subLocation"
+                    value={moveForm.subLocation}
+                    onChange={handleMoveSelectChange}
+                    style={!moveForm.locationCode ? { ...styles.select, ...styles.controlDisabled } : styles.select}
+                    disabled={!moveForm.locationCode}
+                    required
+                  >
+                    <option value="">Select sub location</option>
+                    {moveSubLocationOptions.map((option) => (
+                      <option key={option.id} value={option.sub_location}>
+                        {option.sub_location}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div style={styles.selectedLocationBox}>
+                <span style={styles.selectedLocationLabel}>Destination Slot</span>
+                <strong style={styles.selectedLocationValue}>
+                  {selectedMoveLocation ? getLocationLabel(selectedMoveLocation) : 'Choose a destination location first'}
+                </strong>
+              </div>
+
+              {moveModalError ? <p style={styles.modalInlineError}>{moveModalError}</p> : null}
             </form>
           </div>
         </div>
@@ -4223,6 +4613,7 @@ const styles = {
   },
   actionTh: {
     textAlign: 'center',
+    width: '148px',
   },
   td: {
     padding: '12px 14px',
@@ -4236,6 +4627,7 @@ const styles = {
   },
   actionTd: {
     textAlign: 'center',
+    width: '148px',
   },
   cellStack: {
     display: 'flex',
@@ -4252,7 +4644,34 @@ const styles = {
     alignItems: 'center',
     gap: '8px',
     flexWrap: 'nowrap',
-    minWidth: '116px',
+    minWidth: '128px',
+  },
+  tableIconButton: {
+    width: '34px',
+    height: '34px',
+    borderRadius: '9px',
+    border: '1px solid #dbe4ef',
+    background: '#fff',
+    color: '#0f172a',
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    cursor: 'pointer',
+    padding: 0,
+  },
+  tableIconButtonDark: {
+    border: '1px solid #111827',
+    background: '#111827',
+    color: '#fff',
+  },
+  tableActionIcon: {
+    width: '17px',
+    height: '17px',
+    fill: 'none',
+    stroke: 'currentColor',
+    strokeWidth: 1.9,
+    strokeLinecap: 'round',
+    strokeLinejoin: 'round',
   },
   editButton: {
     display: 'inline-flex',
@@ -4456,6 +4875,11 @@ const styles = {
     gridTemplateColumns: 'minmax(0, 1.3fr) minmax(110px, 0.7fr)',
     gap: '10px',
   },
+  moveSummaryGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'minmax(0, 1.2fr) minmax(180px, 0.8fr)',
+    gap: '10px',
+  },
   takeModalItemCard: {
     gridRow: 'span 2',
     minWidth: 0,
@@ -4505,6 +4929,24 @@ const styles = {
     fontSize: '22px',
     lineHeight: 1,
     fontWeight: '900',
+  },
+  moveMetaRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    flexWrap: 'wrap',
+  },
+  moveMetaPill: {
+    minHeight: '28px',
+    padding: '0 10px',
+    borderRadius: '999px',
+    border: '1px solid #bfdbfe',
+    background: '#fff',
+    color: '#0f172a',
+    display: 'inline-flex',
+    alignItems: 'center',
+    fontSize: '12px',
+    fontWeight: '850',
   },
   takeModalQty: {
     color: '#0f172a',

@@ -4,6 +4,7 @@ import Image from 'next/image'
 import Link from 'next/link'
 import { useEffect, useMemo, useState } from 'react'
 import { createClient } from '@/utils/supabase/browser'
+import { ADMIN_EMAIL } from '@/utils/permissions'
 import { getProfileByAuthenticatedUser } from '@/utils/user-profiles'
 
 const supabase = createClient()
@@ -233,6 +234,39 @@ function appendVariantReleaseHistory(variant = {}, releaseEvent = {}) {
     ...normalizeReleaseHistory(variant.release_history),
     releaseEvent,
   ]
+}
+
+function removeLatestReleaseHistoryEvent(value) {
+  const history = normalizeReleaseHistory(value)
+  if (!history.length) {
+    return { latestEvent: null, remainingHistory: [] }
+  }
+
+  const latest = history
+    .map((event, index) => ({
+      event,
+      index,
+      releasedAt: new Date(event?.released_at || 0).getTime(),
+    }))
+    .sort((left, right) => {
+      if (right.releasedAt !== left.releasedAt) return right.releasedAt - left.releasedAt
+      return right.index - left.index
+    })[0]
+
+  return {
+    latestEvent: latest?.event || null,
+    remainingHistory: history.filter((_, index) => index !== latest?.index),
+  }
+}
+
+function findLatestReleaseEventForRow(history = [], rowId = 0) {
+  const normalizedRowId = Number(rowId || 0)
+  if (!normalizedRowId) return null
+
+  return getSortedReleaseHistory(history).find((event) =>
+    Array.isArray(event.pl_packing_item_ids) &&
+    event.pl_packing_item_ids.some((itemId) => Number(itemId || 0) === normalizedRowId)
+  ) || null
 }
 
 function normalizeStoringType(value) {
@@ -698,6 +732,7 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
   const [categories, setCategories] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [isAdminUser, setIsAdminUser] = useState(false)
   const [filters, setFilters] = useState({
     type: 'all',
     viewMode: 'grn',
@@ -734,6 +769,15 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
       setError('')
 
       try {
+        const { data: authData } = await supabase.auth.getUser()
+        const authUser = authData?.user
+        const { data: profile } = authUser
+          ? await getProfileByAuthenticatedUser(supabase, authUser, 'role, email')
+          : { data: null }
+        const normalizedEmail = normalizeUpper(profile?.email || authUser?.email)
+        const normalizedRole = normalizeUpper(profile?.role)
+        setIsAdminUser(normalizedEmail === normalizeUpper(ADMIN_EMAIL) || normalizedRole === 'ADMIN')
+
         const [
           nextPackingRows,
           nextInboundRows,
@@ -1579,6 +1623,9 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
     }
   }, [canSelectSkuRows, mergeOptions, selectedDetailItems.length])
   const releaseButtonDisabled = !canSelectSkuRows || selectedRowIds.length === 0 || bulkWorking
+  const selectedReleasedDetailItems = selectedDetailItems.filter((item) => item.releaseState === 'released')
+  const canSetUnreleased = isAdminUser && canSelectSkuRows
+  const unreleaseButtonDisabled = !canSetUnreleased || selectedReleasedDetailItems.length === 0 || bulkWorking
   const splitButtonDisabled = !splitEligibility.canSplit || bulkWorking
   const mergeButtonDisabled = !mergeEligibility.canMerge || bulkWorking
   const selectedProductSection = embedded ? activeSection : 'directory'
@@ -1762,6 +1809,25 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
     })
   }
 
+  function requestUnreleaseConfirmation() {
+    if (!canSetUnreleased) return
+    if (unreleaseButtonDisabled) return
+
+    const releaseStateCount = new Set(
+      selectedReleasedDetailItems
+        .map((item) => getVariantReleaseStateKey(item.productModelVariantId, item.type || filters.type))
+        .filter(Boolean)
+    ).size
+
+    setConfirmDialog({
+      action: 'unrelease',
+      title: 'Confirm Set Unreleased',
+      message: `Undo the latest release for ${releaseStateCount} selected SKU release state(s)? If a SKU was released more than once, only the newest release will be removed.`,
+      confirmLabel: 'OK, Set Unreleased',
+      tone: 'dark',
+    })
+  }
+
   async function confirmPendingAction() {
     const action = confirmDialog?.action
     if (!action || bulkWorking) return
@@ -1780,6 +1846,11 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
 
     if (action === 'release') {
       await markSelectedReleased()
+      return
+    }
+
+    if (action === 'unrelease') {
+      await markSelectedUnreleased()
     }
   }
 
@@ -2125,6 +2196,143 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
       )
       setSelectedProductKeys([])
       setActionMessage(`${selectedReleaseRowIds.length} PL row(s) and ${releaseDetails.length} ${filters.type} SKU release state(s) marked as Released.`)
+    } catch (updateError) {
+      setActionError(getActionErrorMessage(updateError))
+    } finally {
+      setBulkWorking(false)
+    }
+  }
+
+  async function markSelectedUnreleased() {
+    if (!canSetUnreleased) return
+    if (selectedReleasedDetailItems.length === 0 || bulkWorking) return
+
+    setBulkWorking(true)
+    setActionError('')
+    setActionMessage('')
+
+    try {
+      const updatedAt = new Date().toISOString()
+      const detailsByVariantType = new Map()
+      selectedReleasedDetailItems.forEach((item) => {
+        const variantId = Number(item.productModelVariantId || 0)
+        const storingType = normalizeStoringType(item.type || filters.type)
+        if (!variantId || !storingType) return
+
+        const releaseStateKey = getVariantReleaseStateKey(variantId, storingType)
+        const detail =
+          detailsByVariantType.get(releaseStateKey) || {
+            variantId,
+            storingType,
+            releaseStateKey,
+            rowIds: [],
+          }
+
+        detail.rowIds.push(...(item.rowIds || []))
+        detailsByVariantType.set(releaseStateKey, detail)
+      })
+
+      const releaseDetails = Array.from(detailsByVariantType.values())
+      if (!releaseDetails.length) return
+
+      const { error: releaseStateCheckError } = await supabase
+        .from('dir_product_model_variant_release_states')
+        .select('id')
+        .limit(1)
+
+      if (releaseStateCheckError) throw releaseStateCheckError
+
+      const rowPayloadById = new Map()
+      const releaseStatePayloads = releaseDetails.map((detail) => {
+        const currentState = lookup.variantReleaseStateByKey.get(detail.releaseStateKey) || {}
+        const { latestEvent, remainingHistory } = removeLatestReleaseHistoryEvent(currentState.release_history)
+        const remainingLatestEvent = getSortedReleaseHistory(remainingHistory)[0] || null
+        const currentCount = getReleaseCount(currentState)
+        const fallbackCount = latestEvent ? remainingHistory.length + 1 : remainingHistory.length
+        const nextReleaseCount = Math.max(0, (currentCount || fallbackCount) - 1)
+        const latestEventRowIds = Array.isArray(latestEvent?.pl_packing_item_ids)
+          ? latestEvent.pl_packing_item_ids.map(Number).filter(Boolean)
+          : []
+        const affectedRowIds = latestEventRowIds.length
+          ? latestEventRowIds
+          : Array.from(new Set(detail.rowIds)).filter(Boolean)
+
+        affectedRowIds.forEach((rowId) => {
+          const currentRow = packingRows.find((row) => Number(row.id || 0) === Number(rowId || 0)) || {}
+          const remainingRowEvent = findLatestReleaseEventForRow(remainingHistory, rowId)
+          const currentStorageStatus = normalizeUpper(currentRow.storage_status)
+          const nextRowPayload = remainingRowEvent
+            ? {
+                release_status: 'released',
+                released_at: remainingRowEvent.released_at || null,
+                released_by: remainingRowEvent.released_by || null,
+                updated_at: updatedAt,
+              }
+            : {
+                release_status: 'draft',
+                released_at: null,
+                released_by: null,
+                updated_at: updatedAt,
+                ...(currentStorageStatus === 'RELEASED_WITHOUT_STORED' ? { storage_status: 'queued' } : {}),
+              }
+
+          rowPayloadById.set(Number(rowId), nextRowPayload)
+        })
+
+        return {
+          product_model_variant_id: detail.variantId,
+          storing_type: detail.storingType,
+          release_status: nextReleaseCount > 0 ? 'released' : 'draft',
+          released_at: nextReleaseCount > 0 ? remainingLatestEvent?.released_at || null : null,
+          released_by: nextReleaseCount > 0 ? remainingLatestEvent?.released_by || null : null,
+          release_count: nextReleaseCount,
+          release_history: nextReleaseCount > 0 ? remainingHistory : [],
+          updated_at: updatedAt,
+        }
+      })
+
+      await Promise.all(Array.from(rowPayloadById.entries()).map(async ([rowId, payload]) => {
+        const { error: updateError } = await supabase
+          .from('pl_packing_items')
+          .update(payload)
+          .eq('id', rowId)
+
+        if (updateError) throw updateError
+      }))
+
+      const { data: nextReleaseStates, error: releaseStateUpsertError } = await supabase
+        .from('dir_product_model_variant_release_states')
+        .upsert(releaseStatePayloads, { onConflict: 'product_model_variant_id,storing_type' })
+        .select('*')
+
+      if (releaseStateUpsertError) throw releaseStateUpsertError
+
+      const releaseStatePayloadByKey = new Map()
+      ;(nextReleaseStates || releaseStatePayloads).forEach((state) => {
+        const releaseStateKey = getVariantReleaseStateKey(state.product_model_variant_id, state.storing_type)
+        if (releaseStateKey) {
+          releaseStatePayloadByKey.set(releaseStateKey, state)
+        }
+      })
+
+      setProductVariantReleaseStates((prev) => {
+        const nextByKey = new Map((prev || []).map((state) => [
+          getVariantReleaseStateKey(state.product_model_variant_id, state.storing_type),
+          state,
+        ]))
+
+        releaseStatePayloadByKey.forEach((state, key) => {
+          nextByKey.set(key, state)
+        })
+
+        return Array.from(nextByKey.values()).filter((state) => getVariantReleaseStateKey(state.product_model_variant_id, state.storing_type))
+      })
+
+      setPackingRows((prev) =>
+        prev.map((row) => (rowPayloadById.has(Number(row.id)) ? { ...row, ...rowPayloadById.get(Number(row.id)) } : row))
+      )
+      setSelectedProductKeys([])
+      setActionMessage(`${releaseStatePayloads.length} SKU release state(s) moved back one release step.`)
     } catch (updateError) {
       setActionError(getActionErrorMessage(updateError))
     } finally {
@@ -2702,6 +2910,17 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
                       Merge SKU
                     </button>
                       </>
+                    ) : null}
+                    {canSetUnreleased ? (
+                      <button
+                        type="button"
+                        onClick={requestUnreleaseConfirmation}
+                        disabled={unreleaseButtonDisabled}
+                        style={unreleaseButtonDisabled ? { ...styles.secondaryBulkButton, ...styles.bulkButtonDisabled } : styles.secondaryBulkButton}
+                        title="Undo the latest release for selected released SKU rows."
+                      >
+                        Set Unreleased
+                      </button>
                     ) : null}
                     {canSelectSkuRows ? (
                       <button
