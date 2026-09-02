@@ -2376,7 +2376,7 @@ export default function QcReceivingPage() {
         model_name: selectedArklinePoItem.model_name,
         model_color: `RE-QC ROUND ${source.roundNumber}`,
         qty_in: source.totalQty,
-        qty_qc: String(source.editableQty),
+        qty_qc: String(source.totalQty),
         photo_url: selectedArklinePoItem.photo_url || '',
         allocations: [],
       },
