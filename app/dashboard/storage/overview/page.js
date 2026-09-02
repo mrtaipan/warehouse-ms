@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { createClient } from '@/utils/supabase/browser'
 import { ADMIN_EMAIL, getStorageFeatureAccess, resolveRole } from '@/utils/permissions'
+import { getRolePermissionCodes } from '@/utils/role-permissions'
 import { getProfileByAuthenticatedUser } from '@/utils/user-profiles'
 import { useRealtimeRefresh } from '@/utils/supabase/use-realtime-refresh'
 import ProductDirectoryClient from '../daftar-barang/product-directory-client'
@@ -553,11 +554,11 @@ async function fetchCurrentStorageAccess() {
   const { data: profile } = await getProfileByAuthenticatedUser(supabase, user, 'role')
   const role = resolveRole(profile?.role, emailAdmin)
   const isAdmin = emailAdmin || role === 'admin'
-  const { data: rolePermissionRows } = isAdmin
+  const { data: rolePermissions } = isAdmin
     ? { data: [] }
-    : await supabase.from('dir_user_roles').select('permission_code').eq('role', role)
+    : await getRolePermissionCodes(supabase, role)
 
-  return getStorageFeatureAccess(role, (rolePermissionRows || []).map((item) => item.permission_code).filter(Boolean), isAdmin)
+  return getStorageFeatureAccess(role, rolePermissions || [], isAdmin)
 }
 
 async function getCurrentUserEmail() {

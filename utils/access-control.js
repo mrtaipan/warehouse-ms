@@ -1,5 +1,6 @@
 import { ADMIN_EMAIL, expandImpliedPermissions, resolveRole } from '@/utils/permissions'
-import { getProfileByAuthenticatedUser } from '@/utils/user-profiles'
+import { clearRolePermissionCache, getRolePermissionCodes } from '@/utils/role-permissions'
+import { clearUserProfileCache, getProfileByAuthenticatedUser } from '@/utils/user-profiles'
 
 const ACCESS_CONTEXT_CACHE_TTL_MS = 60 * 1000
 const accessContextCache = new Map()
@@ -18,6 +19,12 @@ function cloneAccessContext(context) {
     permissions: [...(context.permissions || [])],
     permissionSet: new Set(context.permissionSet || []),
   }
+}
+
+export function clearAccessContextCache() {
+  accessContextCache.clear()
+  clearRolePermissionCache()
+  clearUserProfileCache()
 }
 
 export async function loadAccessContext(supabase, user, profileSelect = 'role') {
@@ -49,12 +56,9 @@ export async function loadAccessContext(supabase, user, profileSelect = 'role') 
   const isAdmin = emailAdmin || role === 'admin'
   const { data: rolePermissions, error: permissionsError } = isAdmin
     ? { data: [], error: null }
-    : await supabase
-        .from('dir_user_roles')
-        .select('permission_code')
-        .eq('role', role)
+    : await getRolePermissionCodes(supabase, role)
 
-  const permissions = (rolePermissions || []).map((item) => item.permission_code)
+  const permissions = rolePermissions || []
   const permissionSet = expandImpliedPermissions(permissions)
 
   const context = {

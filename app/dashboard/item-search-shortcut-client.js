@@ -6,6 +6,8 @@ import { createClient } from '@/utils/supabase/browser'
 import styles from './dashboard.module.css'
 
 const supabase = createClient()
+const LOCATION_CACHE_TTL_MS = 5 * 60 * 1000
+const locationCache = new Map()
 
 function SearchIcon() {
   return (
@@ -26,6 +28,47 @@ function getLocationLabel(location = {}) {
     .map((item) => String(item || '').trim())
     .filter(Boolean)
     .join(' / ') || 'Location is not found'
+}
+
+async function fetchLocationMapByIds(rackIds = []) {
+  const uniqueIds = [...new Set(rackIds.filter(Boolean))]
+  const locationMap = new Map()
+  const missingIds = []
+  const now = Date.now()
+
+  uniqueIds.forEach((rackId) => {
+    const cached = locationCache.get(rackId)
+
+    if (cached && cached.expiresAt > now) {
+      locationMap.set(rackId, cached.value)
+      return
+    }
+
+    missingIds.push(rackId)
+  })
+
+  if (!missingIds.length) {
+    return { data: locationMap, error: null }
+  }
+
+  const { data, error } = await supabase
+    .from('dir_rack_locations')
+    .select('id, location_type, location_id, location_code, sub_location, location_name')
+    .in('id', missingIds)
+
+  if (error) {
+    return { data: locationMap, error }
+  }
+
+  ;(data || []).forEach((row) => {
+    locationCache.set(row.id, {
+      value: row,
+      expiresAt: now + LOCATION_CACHE_TTL_MS,
+    })
+    locationMap.set(row.id, row)
+  })
+
+  return { data: locationMap, error: null }
 }
 
 export default function ItemSearchShortcutButton() {
@@ -85,10 +128,7 @@ export default function ItemSearchShortcutButton() {
     let locationMap = new Map()
 
     if (rackIds.length) {
-      const { data: locationRows, error: locationError } = await supabase
-        .from('dir_rack_locations')
-        .select('id, location_type, location_id, location_code, sub_location, location_name')
-        .in('id', rackIds)
+      const { data: nextLocationMap, error: locationError } = await fetchLocationMapByIds(rackIds)
 
       if (locationError) {
         setError(locationError.message || 'Failed to load item locations.')
@@ -96,7 +136,7 @@ export default function ItemSearchShortcutButton() {
         return
       }
 
-      locationMap = new Map((locationRows || []).map((row) => [row.id, row]))
+      locationMap = nextLocationMap
     }
 
     setResults(

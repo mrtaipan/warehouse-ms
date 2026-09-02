@@ -2,7 +2,7 @@
 
 import { revalidatePath } from 'next/cache'
 import { createClient } from '@/utils/supabase/server'
-import { getProfileByAuthenticatedUser } from '@/utils/user-profiles'
+import { clearUserProfileCache, getProfileByAuthenticatedUser } from '@/utils/user-profiles'
 
 function normalizeUppercase(value) {
   return String(value || '').trim().toUpperCase()
@@ -53,6 +53,7 @@ export async function updateOwnProfile(formData) {
     throw new Error(error.message)
   }
 
+  clearUserProfileCache()
   revalidatePath('/dashboard')
   revalidatePath('/dashboard/profile')
   revalidatePath('/dashboard/myarklife')

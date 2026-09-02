@@ -10,8 +10,10 @@ import styles from './warehouse-map.module.css'
 const supabase = createClient()
 const BATCH_SIZE = 1000
 const STORAGE_DATA_CACHE_TTL_MS = 15 * 1000
+const WAREHOUSE_MAP_STATIC_CACHE_TTL_MS = 5 * 60 * 1000
 const WAREHOUSE_STORAGE_SELECT_COLUMNS = 'id, rack_location_id, item_name, size, qty, notes, created_at, updated_at'
 const warehouseStorageCache = { rows: null, expiresAt: 0 }
+const staticWarehouseMapCache = new Map()
 
 const RACK_SLOTS = [
   { key: 'A', suffix: 'A', level: 'Level 3' },
@@ -725,39 +727,56 @@ function mergeWarehouseStorageRows(currentRows = [], nextRows = []) {
   return setWarehouseStorageCache(Array.from(rowsById.values()))
 }
 
-async function fetchAllRackLocations() {
-  const allRows = []
-  let from = 0
+async function readWarehouseMapStaticCache(key, loader) {
+  const cached = staticWarehouseMapCache.get(key)
 
-  while (true) {
-    const to = from + BATCH_SIZE - 1
-    const { data, error } = await supabase
-      .from('dir_rack_locations')
-      .select('id, location_type, location_id, location_code, sub_location, location_name, group_code')
-      .order('location_type', { ascending: true })
-      .order('location_id', { ascending: true })
-      .order('location_code', { ascending: true })
-      .order('sub_location', { ascending: true })
-      .range(from, to)
-
-    if (error) {
-      throw error
-    }
-
-    if (!data || data.length === 0) {
-      break
-    }
-
-    allRows.push(...data)
-
-    if (data.length < BATCH_SIZE) {
-      break
-    }
-
-    from += BATCH_SIZE
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.value
   }
 
-  return allRows
+  const value = await loader()
+  staticWarehouseMapCache.set(key, {
+    value,
+    expiresAt: Date.now() + WAREHOUSE_MAP_STATIC_CACHE_TTL_MS,
+  })
+  return value
+}
+
+async function fetchAllRackLocations() {
+  return readWarehouseMapStaticCache('rack-locations', async () => {
+    const allRows = []
+    let from = 0
+
+    while (true) {
+      const to = from + BATCH_SIZE - 1
+      const { data, error } = await supabase
+        .from('dir_rack_locations')
+        .select('id, location_type, location_id, location_code, sub_location, location_name, group_code')
+        .order('location_type', { ascending: true })
+        .order('location_id', { ascending: true })
+        .order('location_code', { ascending: true })
+        .order('sub_location', { ascending: true })
+        .range(from, to)
+
+      if (error) {
+        throw error
+      }
+
+      if (!data || data.length === 0) {
+        break
+      }
+
+      allRows.push(...data)
+
+      if (data.length < BATCH_SIZE) {
+        break
+      }
+
+      from += BATCH_SIZE
+    }
+
+    return allRows
+  })
 }
 
 async function fetchAllWarehouseStorage({ force = false } = {}) {
@@ -830,15 +849,17 @@ async function fetchAllRestockHistory() {
 }
 
 async function fetchUserProfiles() {
-  const { data, error } = await supabase
-    .from('dir_user_profiles')
-    .select('email, display_name')
+  return readWarehouseMapStaticCache('user-profiles', async () => {
+    const { data, error } = await supabase
+      .from('dir_user_profiles')
+      .select('email, display_name')
 
-  if (error) {
-    throw error
-  }
+    if (error) {
+      throw error
+    }
 
-  return data || []
+    return data || []
+  })
 }
 
 async function getCurrentUserEmail() {
@@ -874,19 +895,21 @@ function normalizeArklineProduct(row) {
 }
 
 async function fetchActiveArklineProducts() {
-  const { data, error } = await supabase
-    .from('arkline_dir_products')
-    .select('sku_induk, nama_produk, is_active')
-    .eq('is_active', true)
-    .order('nama_produk', { ascending: true })
+  return readWarehouseMapStaticCache('arkline-products', async () => {
+    const { data, error } = await supabase
+      .from('arkline_dir_products')
+      .select('sku_induk, nama_produk, is_active')
+      .eq('is_active', true)
+      .order('nama_produk', { ascending: true })
 
-  if (error) {
-    throw error
-  }
+    if (error) {
+      throw error
+    }
 
-  return (data || [])
-    .map(normalizeArklineProduct)
-    .filter((item) => item.isActive && item.sku && item.productName)
+    return (data || [])
+      .map(normalizeArklineProduct)
+      .filter((item) => item.isActive && item.sku && item.productName)
+  })
 }
 
 function getZoneClassName(zone, zoneData, selected) {

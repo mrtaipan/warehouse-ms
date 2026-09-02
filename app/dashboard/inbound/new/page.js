@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { createClient } from '@/utils/supabase/browser'
 import { getProfileByAuthenticatedUser } from '@/utils/user-profiles'
 import { ADMIN_EMAIL, hasPermission, resolveRole } from '@/utils/permissions'
+import { getRolePermissionCodes } from '@/utils/role-permissions'
 
 const supabase = createClient()
 const ROMAN_MONTHS = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X', 'XI', 'XII']
@@ -481,10 +482,9 @@ export default function NewInboundPage() {
 
       const profileResult = await getProfileByAuthenticatedUser(supabase, authUser, 'role')
       const role = resolveRole(profileResult.data?.role, authUser.email?.toLowerCase() === ADMIN_EMAIL)
-      const { data: rolePermissionRows } = role === 'admin'
+      const { data: permissionCodes } = role === 'admin'
         ? { data: [] }
-        : await supabase.from('dir_user_roles').select('permission_code').eq('role', role)
-      const permissionCodes = (rolePermissionRows || []).map((item) => item.permission_code).filter(Boolean)
+        : await getRolePermissionCodes(supabase, role)
       const isCoordinatorOrAdmin = authUser.email?.toLowerCase() === ADMIN_EMAIL || role === 'admin' || role === 'inbound_coordinator'
       const hasCreateAccess = isCoordinatorOrAdmin && hasPermission(permissionCodes, 'inbound.receiving.add', authUser.email?.toLowerCase() === ADMIN_EMAIL || role === 'admin')
 

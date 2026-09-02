@@ -5,6 +5,7 @@ import { useParams, useRouter } from 'next/navigation'
 import { createClient } from '@/utils/supabase/browser'
 import { getProfileByAuthenticatedUser } from '@/utils/user-profiles'
 import { ADMIN_EMAIL, hasPermission, resolveRole } from '@/utils/permissions'
+import { getRolePermissionCodes } from '@/utils/role-permissions'
 
 const supabase = createClient()
 const QUANTITY_FIELDS = new Set(['qty_surat_jalan', 'total_koli', 'supplier_qty', 'sample_qty', 'bongkar_qty'])
@@ -670,10 +671,9 @@ export default function EditReceivingPage() {
       unload_pic: row.unload_pic || '',
     }))
     const role = resolveRole(profileResult.data?.role, emailAdmin)
-    const { data: rolePermissionRows } = role === 'admin'
+    const { data: nextPermissionCodes } = role === 'admin'
       ? { data: [] }
-      : await supabase.from('dir_user_roles').select('permission_code').eq('role', role)
-    const nextPermissionCodes = (rolePermissionRows || []).map((item) => item.permission_code).filter(Boolean)
+      : await getRolePermissionCodes(supabase, role)
     const canOpenEditPage = hasPermission(nextPermissionCodes, 'inbound.receiving.edit', emailAdmin || role === 'admin')
 
     if (role === 'inbound_staff' && canOpenEditPage) {

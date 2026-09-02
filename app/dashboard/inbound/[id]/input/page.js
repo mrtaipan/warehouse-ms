@@ -5,6 +5,7 @@ import { useParams, useRouter } from 'next/navigation'
 import { createClient } from '@/utils/supabase/browser'
 import { getProfileByAuthenticatedUser } from '@/utils/user-profiles'
 import { ADMIN_EMAIL, hasPermission, resolveRole } from '@/utils/permissions'
+import { getRolePermissionCodes } from '@/utils/role-permissions'
 
 const supabase = createClient()
 
@@ -168,10 +169,9 @@ export default function ReceivingInputPage() {
       const nextRows = buildRows(inboundRow.total_koli, detailRows || [])
 
       const role = resolveRole(profileResult.data?.role, authUser.email?.toLowerCase() === ADMIN_EMAIL)
-      const { data: rolePermissionRows } = role === 'admin'
+      const { data: nextPermissionCodes } = role === 'admin'
         ? { data: [] }
-        : await supabase.from('dir_user_roles').select('permission_code').eq('role', role)
-      const nextPermissionCodes = (rolePermissionRows || []).map((item) => item.permission_code).filter(Boolean)
+        : await getRolePermissionCodes(supabase, role)
       const canOpenInputPage = hasPermission(nextPermissionCodes, 'inbound.receiving.edit', authUser.email?.toLowerCase() === ADMIN_EMAIL || role === 'admin')
 
       if (!canOpenInputPage) {

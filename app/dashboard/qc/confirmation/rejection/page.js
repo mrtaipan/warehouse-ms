@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createClient } from '@/utils/supabase/browser'
 import { getProfileByAuthenticatedUser } from '@/utils/user-profiles'
 import { ADMIN_EMAIL, hasPermission } from '@/utils/permissions'
+import { getRolePermissionCodes } from '@/utils/role-permissions'
 import { useRealtimeRefresh } from '@/utils/supabase/use-realtime-refresh'
 
 const supabase = createClient()
@@ -1277,10 +1278,9 @@ export default function QcConfirmationRejectionPage() {
     if (authData?.user) {
       const { data: profileRow } = await getProfileByAuthenticatedUser(supabase, authData.user, 'display_name, role')
       const isAdminUser = authData.user.email?.toLowerCase() === ADMIN_EMAIL || profileRow?.role === 'admin'
-      const { data: rolePermissionRows } = isAdminUser
+      const { data: rolePermissions } = isAdminUser
         ? { data: [] }
-        : await supabase.from('dir_user_roles').select('permission_code').eq('role', profileRow?.role || '')
-      const rolePermissions = (rolePermissionRows || []).map((item) => item.permission_code).filter(Boolean)
+        : await getRolePermissionCodes(supabase, profileRow?.role || '')
       setCanEditConfirmation(hasPermission(rolePermissions, 'qc.confirmation.edit', isAdminUser))
       nextPicName = getDisplayName(authData.user, profileRow)
     }

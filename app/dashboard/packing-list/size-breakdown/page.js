@@ -2572,6 +2572,32 @@ function drawPdfCellText(doc, value, x, y, width, height, options = {}) {
   doc.text(lines, textX, textY, { align })
 }
 
+function getPdfPicCellLines(doc, value, width, fontSize = 5.4) {
+  const normalizedValue = String(value || '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .join(', ')
+  const sourceText = normalizedValue || formatPdfValue(value)
+
+  doc.setFont(PDF_FONT_FAMILY, 'normal')
+  doc.setFontSize(fontSize)
+  return doc.splitTextToSize(sourceText, Math.max(width - 4, 8))
+}
+
+function drawPdfPicCellText(doc, value, x, y, width, height, options = {}) {
+  const { fontSize = 5.4, color = [15, 23, 42] } = options
+  const lineHeight = fontSize * 0.5
+  const lines = getPdfPicCellLines(doc, value, width, fontSize)
+  const textHeight = lines.length * lineHeight
+  const textY = y + Math.max(3.2, (height - textHeight) / 2 + lineHeight * 0.78)
+
+  doc.setFont(PDF_FONT_FAMILY, 'normal')
+  doc.setFontSize(fontSize)
+  doc.setTextColor(...color)
+  doc.text(lines, x + width / 2, textY, { align: 'center' })
+}
+
 function groupPdfProductRows(rows = []) {
   const groups = new Map()
 
@@ -2605,13 +2631,13 @@ function drawPdfProductTable(doc, config) {
   const pageHeight = doc.internal.pageSize.getHeight()
   const pageBottom = pageHeight - margin - 7
   const columns = [
-    { key: 'pl_id', label: 'PL ID', width: 14, merged: true, align: 'center' },
-    { key: 'item_name', label: 'Brand / Model / Variant / Detail', width: 66, merged: true },
-    { key: 'size_label', label: 'Size', width: 16, align: 'center' },
-    { key: 'qty', label: 'Qty', width: 13, align: 'center' },
-    { key: 'total_qty', label: 'Total', width: 15, merged: true, align: 'center', accent: true },
-    { key: picKey, label: picLabel, width: 30, align: 'center' },
-    { key: 'photo_url', label: 'Photo', width: 36, merged: true, image: true },
+    { key: 'pl_id', label: 'PL ID', width: 15, merged: true, align: 'center' },
+    { key: 'item_name', label: 'Brand / Model / Variant / Detail', width: 68, merged: true },
+    { key: 'size_label', label: 'Size', width: 15, align: 'center' },
+    { key: 'qty', label: 'Qty', width: 12, align: 'center' },
+    { key: 'total_qty', label: 'Total', width: 14, merged: true, align: 'center', accent: true },
+    { key: picKey, label: picLabel, width: 34, align: 'center', fontSize: 5.4, picCell: true },
+    { key: 'photo_url', label: 'Photo', width: 32, merged: true, image: true },
   ]
   const tableWidth = columns.reduce((sum, column) => sum + column.width, 0)
   const headerHeight = 9
@@ -2670,6 +2696,39 @@ function drawPdfProductTable(doc, config) {
   drawHeader()
   const groupedRows = groupPdfProductRows(rows)
   const maxRowsPerGroupChunk = Math.max(1, Math.floor((pageBottom - margin - 18) / 8.5))
+  const itemColumn = columns.find((column) => column.key === 'item_name')
+  const picColumn = columns.find((column) => column.key === picKey)
+  const getLineBlockHeight = (lines = [], lineHeight = 3) => lines.length * lineHeight
+  const getItemBlockHeight = (group) => {
+    const inset = 3
+    const itemWidth = Number(itemColumn?.width || 68) - inset * 2
+    const itemTitle = [
+      toPdfTitleCase(group.identity.brand_name),
+      toPdfTitleCasePreserveBracketCodes(group.identity.item_name),
+    ].filter(Boolean).join(' ')
+    doc.setFont(PDF_FONT_FAMILY, 'bold')
+    doc.setFontSize(7.8)
+    const titleLines = doc.splitTextToSize(itemTitle || '-', itemWidth).slice(0, 3)
+    const notes = String(group.identity.pl_notes || '').trim()
+    const storedKoli = String(group.identity.stored_koli || '').trim()
+    const noteLines = notes ? doc.splitTextToSize(notes, itemWidth).slice(0, 3) : []
+    const storedKoliLines = storedKoli && storedKoli !== '-'
+      ? doc.splitTextToSize(`Stored: ${storedKoli}`, itemWidth)
+      : []
+
+    return (
+      inset * 2 +
+      getLineBlockHeight(titleLines, 3.5) +
+      (noteLines.length ? 1 + getLineBlockHeight(noteLines, 2.7) : 0) +
+      (storedKoliLines.length ? 1 + getLineBlockHeight(storedKoliLines, 2.7) : 0)
+    )
+  }
+  const getDetailRowHeight = (row) => {
+    const picWidth = Number(picColumn?.width || 34) - 4
+    const picFontSize = Number(picColumn?.fontSize || 5.4)
+    const picLines = getPdfPicCellLines(doc, row[picKey], picWidth, picFontSize)
+    return Math.max(8.5, 4 + getLineBlockHeight(picLines, picFontSize * 0.5))
+  }
   const drawableGroups = groupedRows.flatMap((group) => {
     if (group.rows.length <= maxRowsPerGroupChunk) {
       return [{ ...group, continued: false }]
@@ -2688,7 +2747,8 @@ function drawPdfProductTable(doc, config) {
 
   drawableGroups.forEach((group, groupIndex) => {
     const minimumHeight = group.rows.length > 1 ? 41 : 25
-    const groupHeight = Math.max(minimumHeight, group.rows.length * 8.5)
+    const preferredDetailRowHeight = Math.max(...group.rows.map((row) => getDetailRowHeight(row)), 8.5)
+    const groupHeight = Math.max(minimumHeight, group.rows.length * preferredDetailRowHeight, getItemBlockHeight(group))
     const detailRowHeight = groupHeight / group.rows.length
 
     if (y + groupHeight > pageBottom) startContinuationPage()
@@ -2734,20 +2794,26 @@ function drawPdfProductTable(doc, config) {
           const titleLines = doc.splitTextToSize(itemTitle || '-', itemWidth).slice(0, 3)
           const titleLineHeight = 3.5
           const notes = String(group.identity.pl_notes || '').trim()
+          const storedKoli = String(group.identity.stored_koli || '').trim()
           let noteLines = []
           let noteLineHeight = 0
           if (notes) {
             doc.setFont(PDF_FONT_FAMILY, 'normal')
             doc.setFontSize(5.8)
-            const notesHeight = Math.max(4, groupHeight - inset * 2 - titleLines.length * titleLineHeight - 1)
-            const noteText = getPdfCellLines(doc, notes, itemWidth, notesHeight, 5.8)
-            noteLines = noteText.lines
-            noteLineHeight = noteText.lineHeight
+            noteLines = doc.splitTextToSize(notes, itemWidth).slice(0, 3)
+            noteLineHeight = 2.7
+          }
+          let storedKoliLines = []
+          if (storedKoli && storedKoli !== '-') {
+            doc.setFont(PDF_FONT_FAMILY, 'normal')
+            doc.setFontSize(5.8)
+            storedKoliLines = doc.splitTextToSize(`Stored: ${storedKoli}`, itemWidth)
           }
 
           const titleBlockHeight = titleLines.length * titleLineHeight
           const notesBlockHeight = noteLines.length ? 1 + noteLines.length * noteLineHeight : 0
-          const blockHeight = titleBlockHeight + notesBlockHeight
+          const storedKoliBlockHeight = storedKoliLines.length ? 1 + storedKoliLines.length * 2.7 : 0
+          const blockHeight = titleBlockHeight + notesBlockHeight + storedKoliBlockHeight
           const blockTop = y + Math.max(inset, (groupHeight - blockHeight) / 2)
 
           doc.setFont(PDF_FONT_FAMILY, 'bold')
@@ -2761,6 +2827,14 @@ function drawPdfProductTable(doc, config) {
             doc.setFontSize(5.8)
             doc.setTextColor(100, 116, 139)
             doc.text(noteLines, x + inset, notesY + noteLineHeight * 0.72)
+          }
+
+          if (storedKoliLines.length) {
+            const storedY = blockTop + titleBlockHeight + notesBlockHeight + 1
+            doc.setFont(PDF_FONT_FAMILY, 'normal')
+            doc.setFontSize(5.8)
+            doc.setTextColor(71, 85, 105)
+            doc.text(storedKoliLines, x + inset, storedY + 2.2)
           }
         } else {
           const displayValue = column.key === 'pl_id' && group.continued
@@ -2778,10 +2852,16 @@ function drawPdfProductTable(doc, config) {
           doc.setFillColor(...groupFill)
           doc.setDrawColor(203, 213, 225)
           doc.rect(x, rowY, column.width, detailRowHeight, 'FD')
-          drawPdfCellText(doc, row[column.key], x, rowY, column.width, detailRowHeight, {
-            align: column.align || 'left',
-            fontSize: 6.8,
-          })
+          if (column.picCell) {
+            drawPdfPicCellText(doc, row[column.key], x, rowY, column.width, detailRowHeight, {
+              fontSize: column.fontSize || 5.4,
+            })
+          } else {
+            drawPdfCellText(doc, row[column.key], x, rowY, column.width, detailRowHeight, {
+              align: column.align || 'left',
+              fontSize: column.fontSize || 6.8,
+            })
+          }
         })
       }
       x += column.width
@@ -3196,6 +3276,46 @@ function getPackingKoliTitle(row = {}) {
   return row.package_type === 'PHOTO' ? 'Foto' : `Koli ${row.koli_sequence || '-'}`
 }
 
+function getPdfPackingLocationLabel(row = {}) {
+  return row.package_type === 'PHOTO' ? 'Foto' : `Koli ${row.koli_sequence || '-'}`
+}
+
+function getPdfStoredKoliSummary(packingRows = [], breakdownIds = [], qtyMode = 'all') {
+  const breakdownIdSet = new Set(breakdownIds.map((id) => Number(id || 0)).filter(Boolean))
+  if (!breakdownIdSet.size) return '-'
+
+  const groupedByMode = new Map()
+  packingRows.forEach((row) => {
+    if (!breakdownIdSet.has(Number(row.pl_size_breakdown_id || 0))) return
+    if (qtyMode !== 'all' && normalize(row.storing_type) !== normalize(qtyMode)) return
+
+    const mode = normalize(row.storing_type || 'MOB') || 'MOB'
+    const label = getPdfPackingLocationLabel(row)
+    const modeRows = groupedByMode.get(mode) || new Map()
+    modeRows.set(label, (modeRows.get(label) || 0) + Number(row.qty || 0))
+    groupedByMode.set(mode, modeRows)
+  })
+
+  const modeOrder = ['MOB', 'OI']
+  const summaries = Array.from(groupedByMode.entries())
+    .sort(([firstMode], [secondMode]) => {
+      const firstRank = modeOrder.includes(firstMode) ? modeOrder.indexOf(firstMode) : modeOrder.length
+      const secondRank = modeOrder.includes(secondMode) ? modeOrder.indexOf(secondMode) : modeOrder.length
+      return firstRank - secondRank || firstMode.localeCompare(secondMode)
+    })
+    .map(([mode, modeRows]) => {
+      const locations = Array.from(modeRows.entries())
+        .filter(([, qty]) => Number(qty || 0) > 0)
+        .sort(([firstLabel], [secondLabel]) => firstLabel.localeCompare(secondLabel, undefined, { numeric: true }))
+        .map(([label, qty]) => `${label} (${formatPdfQty(qty)} pcs)`)
+
+      return locations.length ? `${mode}: ${locations.join(', ')}` : ''
+    })
+    .filter(Boolean)
+
+  return summaries.length ? summaries.join(', ') : '-'
+}
+
 function getCheckerSummary(checkerNames = []) {
   const names = normalizeCheckerNames(checkerNames)
   if (!names.length) return 'Choose checker'
@@ -3291,6 +3411,7 @@ export default function PackingListSizeBreakdownPage() {
   const [allocationError, setAllocationError] = useState('')
   const [allocationActivePreset, setAllocationActivePreset] = useState('default')
   const [allocationHoveredPreset, setAllocationHoveredPreset] = useState('')
+  const [fullReturnModalOpen, setFullReturnModalOpen] = useState(false)
   const [printModalOpen, setPrintModalOpen] = useState(false)
   const [printType, setPrintType] = useState('packing_list')
   const [printRange, setPrintRange] = useState('all')
@@ -4389,7 +4510,17 @@ export default function PackingListSizeBreakdownPage() {
     )
   }
 
-  function applyFullReturn() {
+  function openFullReturnModal() {
+    if (!selectedCard || saving) return
+    setFullReturnModalOpen(true)
+  }
+
+  function closeFullReturnModal() {
+    if (saving) return
+    setFullReturnModalOpen(false)
+  }
+
+  function applyActiveModelFullReturn() {
     if (!selectedCard || saving) return
 
     const receivingQty = Number(selectedCard.receiving_qty || 0)
@@ -4422,11 +4553,6 @@ export default function PackingListSizeBreakdownPage() {
       setSuccess('')
       return
     }
-
-    const confirmed = window.confirm(
-      `Apply Full Return for the remaining ${remainingQty} pcs?\n\nThis will add the remaining qty as PL Return reason: FULL RETURN. Press Save to persist.`
-    )
-    if (!confirmed) return
 
     setPlRows((prev) => {
       const nextRows = prev.length ? prev : [createPlRow(selectedCard)]
@@ -4465,9 +4591,178 @@ export default function PackingListSizeBreakdownPage() {
     })
     setOpenCheckerPickerKey('')
     closeAllocationModal(true)
+    setFullReturnModalOpen(false)
     setEditSection('breakdown')
     setError('')
     setSuccess(`Full Return prepared for ${remainingQty} pcs. Press Save to persist it.`)
+  }
+
+  async function applyAllModelsFullReturn() {
+    if (!canEditSizeBreakdown || saving) return
+
+    const inboundIds = Array.from(new Set(cards.map((card) => Number(card.inbound_id || 0)).filter(Boolean)))
+    const returnCards = cards.filter((card) => Number(card.receiving_qty || 0) > 0)
+    const totalReturnQty = returnCards.reduce((sum, card) => sum + Number(card.receiving_qty || 0), 0)
+    if (!inboundIds.length || !returnCards.length || totalReturnQty <= 0) {
+      setError('No PL Receiving qty is available for Full Return.')
+      setSuccess('')
+      setFullReturnModalOpen(false)
+      return
+    }
+
+    const confirmed = window.confirm(
+      `Are you sure you want to Full Return ALL models in this GRN?\n\nThis will remove posted Item Storing rows and replace the PL returns with FULL RETURN for ${totalReturnQty} pcs. This action is saved immediately.`
+    )
+    if (!confirmed) return
+
+    setSaving(true)
+    setError('')
+    setSuccess('')
+
+    const {
+      data: { user },
+    } = await supabase.auth.getUser()
+    const createdByName = getUserDisplayName(user, packingStaffProfiles)
+    const returnEntries = returnCards.map((card) => ({
+      card,
+      payload: {
+        inbound_id: card.inbound_id,
+        source_phase: PL_RETURN_SOURCE_PHASE,
+        pl_detail_seq: null,
+        koli_sequence: null,
+        product_model_id: card.product_model_id || null,
+        product_model_variant_id: card.product_model_variant_id || null,
+        source_variant_code: card.source_variant_code || card.variant_code || null,
+        brand_id: card.brand_id || null,
+        category_id: card.category_id || null,
+        model_name: card.model_name || null,
+        variant_name: card.catalogName || null,
+        qty: Number(card.receiving_qty || 0),
+        return_reason: 'FULL RETURN',
+        pic_name: createdByName || null,
+      },
+    }))
+    const existingFullReturnRows = plReturnRows.filter((row) => inboundIds.includes(Number(row.inbound_id || 0)))
+    const usedReturnIds = new Set()
+
+    for (const entry of returnEntries) {
+      const matchedReturn = existingFullReturnRows.find((row) => {
+        const rowId = Number(row.id || 0)
+        if (!rowId || usedReturnIds.has(rowId)) return false
+        return matchesPlReturnCard(row, entry.card)
+      })
+
+      const query = matchedReturn?.id
+        ? supabase.from('warehouse_returns').update(entry.payload).eq('id', matchedReturn.id)
+        : supabase.from('warehouse_returns').insert([entry.payload])
+      const { error: returnSaveError } = await query
+      if (returnSaveError) {
+        setSaving(false)
+        setError(returnSaveError.message || 'Failed to create Full Return rows.')
+        return
+      }
+      if (matchedReturn?.id) usedReturnIds.add(Number(matchedReturn.id))
+    }
+
+    const staleReturnIds = existingFullReturnRows
+      .map((row) => Number(row.id || 0))
+      .filter((id) => id && !usedReturnIds.has(id))
+    if (staleReturnIds.length) {
+      const { error: returnDeleteError } = await supabase
+        .from('warehouse_returns')
+        .delete()
+        .in('id', staleReturnIds)
+      if (returnDeleteError) {
+        setSaving(false)
+        setError(returnDeleteError.message || 'Failed to reset stale PL returns.')
+        return
+      }
+    }
+
+    const { error: packingDeleteError } = await supabase
+      .from('pl_packing_items')
+      .delete()
+      .in('inbound_id', inboundIds)
+    if (packingDeleteError) {
+      setSaving(false)
+      setError(packingDeleteError.message || 'Failed to remove posted Item Storing rows.')
+      return
+    }
+
+    const { error: breakdownDeleteError } = await supabase
+      .from('pl_size_breakdown')
+      .delete()
+      .in('inbound_id', inboundIds)
+    if (breakdownDeleteError) {
+      setSaving(false)
+      setError(breakdownDeleteError.message || 'Failed to remove PL size breakdown rows.')
+      return
+    }
+
+    const [
+      { data: refreshedBreakdownRows, error: refreshBreakdownError },
+      { data: refreshedReturnRows, error: refreshReturnError },
+      { data: refreshedPackingRows, error: refreshPackingError },
+    ] = await Promise.all([
+      supabase
+        .from('pl_size_breakdown')
+        .select('*')
+        .in('inbound_id', inboundIds)
+        .order('detail_order', { ascending: true })
+        .order('id', { ascending: true }),
+      supabase
+        .from('warehouse_returns')
+        .select('*')
+        .in('inbound_id', inboundIds)
+        .in('source_phase', PL_RETURN_SOURCE_PHASES)
+        .order('id', { ascending: true }),
+      supabase
+        .from('pl_packing_items')
+        .select('*')
+        .in('inbound_id', inboundIds)
+        .order('koli_sequence', { ascending: true })
+        .order('id', { ascending: true }),
+    ])
+
+    setSaving(false)
+    if (refreshBreakdownError || refreshReturnError || refreshPackingError) {
+      setError(
+        refreshBreakdownError?.message ||
+          refreshReturnError?.message ||
+          refreshPackingError?.message ||
+          'Full Return saved, but failed to refresh Packing List data.'
+      )
+      return
+    }
+
+    setBreakdownRows([
+      ...breakdownRows.filter((row) => !inboundIds.includes(Number(row.inbound_id || 0))),
+      ...((refreshedBreakdownRows || []).filter(Boolean)),
+    ])
+    setPlReturnRows([
+      ...plReturnRows.filter((row) => !inboundIds.includes(Number(row.inbound_id || 0))),
+      ...((refreshedReturnRows || []).filter(Boolean)),
+    ])
+    setPackingRows([
+      ...packingRows.filter((row) => !inboundIds.includes(Number(row.inbound_id || 0))),
+      ...((refreshedPackingRows || []).filter(Boolean)),
+    ])
+
+    if (selectedCard) {
+      const savedRows = buildRowsForCard(
+        selectedCard,
+        refreshedBreakdownRows || [],
+        refreshedReturnRows || []
+      )
+      setPlRows(savedRows)
+      setBaselineSignature(serializePlRows(savedRows))
+    }
+
+    setOpenCheckerPickerKey('')
+    closeAllocationModal(true)
+    setFullReturnModalOpen(false)
+    setEditSection('breakdown')
+    setSuccess(`Full Return applied to all models for ${totalReturnQty} pcs.`)
   }
 
   function removeReturnRow(plRowId, returnRowId) {
@@ -4849,11 +5144,17 @@ export default function PackingListSizeBreakdownPage() {
           })
           .filter((row) => Number(row.qty || 0) > 0 || qtyMode === 'all')
         const plRowTotalQty = printableSizeRows.reduce((sum, row) => sum + Number(row.qty || 0), 0)
+        const storedKoli = getPdfStoredKoliSummary(
+          packingRows,
+          printableSizeRows.map(({ sizeRow }) => sizeRow.breakdown_row_id),
+          qtyMode
+        )
         const commonRow = {
           product_key: `${card.key}::${plRow.id}`,
           photo_url: photoUrl,
           detail_photo_urls: detailPhotoUrls,
           pl_notes: String(plRow.pl_notes || '').trim(),
+          stored_koli: storedKoli,
           pl_id: plId,
           source_variant_code: sourceVariantCode,
           brand_name: card.brand_name || 'UNBRANDED',
@@ -6076,6 +6377,8 @@ export default function PackingListSizeBreakdownPage() {
   const editorReturnQty = getPlRowsReturnQty(plRows)
   const editorRemainingQty = editorReceivingQty - editorBreakdownQty - editorReturnQty
   const canApplyFullReturn = Boolean(selectedCard) && editorReceivingQty > 0 && editorRemainingQty > 0
+  const allModelsFullReturnQty = cards.reduce((sum, card) => sum + Number(card.receiving_qty || 0), 0)
+  const canOpenFullReturnModal = Boolean(selectedCard) && allModelsFullReturnQty > 0
   const allocationOverrideCount = plRows.reduce(
     (sum, row) => sum + row.sizeRows.filter((sizeRow) => sizeRow.allocation_source === 'MANUAL_OVERRIDE').length,
     0
@@ -6193,10 +6496,10 @@ export default function PackingListSizeBreakdownPage() {
                 </button>
                 <button
                   type="button"
-                  onClick={applyFullReturn}
-                  disabled={saving || !canApplyFullReturn}
+                  onClick={openFullReturnModal}
+                  disabled={saving || !canOpenFullReturnModal}
                   style={
-                    saving || !canApplyFullReturn
+                    saving || !canOpenFullReturnModal
                       ? { ...styles.toolIconButton, ...styles.toolIconButtonWarning, ...styles.disabledButton }
                       : { ...styles.toolIconButton, ...styles.toolIconButtonWarning }
                   }
@@ -7224,6 +7527,57 @@ export default function PackingListSizeBreakdownPage() {
                   {!packingKoliRows.length ? <p style={styles.errorText}>No Koli data matches the current filters.</p> : null}
                 </>
               )}
+            </div>
+          </div>
+        </div>
+      ) : null}
+      {fullReturnModalOpen ? (
+        <div style={styles.previewOverlay} onClick={closeFullReturnModal}>
+          <div style={styles.printModal} onClick={(event) => event.stopPropagation()}>
+            <div style={styles.modalHeader}>
+              <div>
+                <p style={styles.eyebrow}>Full Return</p>
+                <h2 style={styles.modalTitle}>Choose return scope</h2>
+              </div>
+              <div style={styles.modalActionGroup}>
+                <button type="button" onClick={closeFullReturnModal} style={styles.secondaryButton} disabled={saving}>
+                  Cancel
+                </button>
+              </div>
+            </div>
+
+            <div style={styles.printModalBody}>
+              <div style={styles.printChoiceGrid}>
+                <button
+                  type="button"
+                  onClick={applyActiveModelFullReturn}
+                  disabled={saving || !canApplyFullReturn}
+                  style={{
+                    ...styles.printChoiceButton,
+                    ...(!canApplyFullReturn || saving ? styles.disabledButton : {}),
+                  }}
+                >
+                  Active Model Only
+                </button>
+                <button
+                  type="button"
+                  onClick={applyAllModelsFullReturn}
+                  disabled={saving || allModelsFullReturnQty <= 0}
+                  style={{
+                    ...styles.printChoiceButton,
+                    ...(saving || allModelsFullReturnQty <= 0 ? styles.disabledButton : {}),
+                  }}
+                >
+                  All Models in GRN
+                </button>
+              </div>
+              <p style={styles.emptyText}>
+                Active Model Only prepares Full Return for the selected model and still requires Save. It cannot be used if the selected model already has posted Item Storing.
+              </p>
+              <p style={styles.errorText}>
+                All Models in GRN is saved immediately. It removes posted Item Storing rows, clears the size breakdown, and creates FULL RETURN for all PL Receiving qty.
+              </p>
+              {saving ? <p style={styles.emptyText}>Applying Full Return...</p> : null}
             </div>
           </div>
         </div>

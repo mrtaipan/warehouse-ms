@@ -5,6 +5,7 @@ import { headers } from 'next/headers'
 import { redirect } from 'next/navigation'
 import { createClient } from '@/utils/supabase/server'
 import { createAdminClient } from '@/utils/supabase/admin'
+import { clearAccessContextCache } from '@/utils/access-control'
 import {
   ADMIN_EMAIL,
   OFFICIAL_ROLE_VALUES,
@@ -74,6 +75,7 @@ export async function updateUserRole(formData) {
       redirectUserAccessWithStatus('error', 'User profile was not updated. Please check the dir_user_profiles update policy or profile id.')
     }
 
+    clearAccessContextCache()
     revalidatePath('/dashboard/user-access')
     revalidatePath('/dashboard')
     redirectUserAccessWithStatus('saved', 'User access updated.')
@@ -161,6 +163,7 @@ export async function updateRolePermissions(formData) {
       }
     }
 
+    clearAccessContextCache()
     revalidatePath('/dashboard/user-access')
     revalidatePath('/dashboard')
     redirectUserAccessWithStatus('saved', `Role permission updated for ${role}.`)

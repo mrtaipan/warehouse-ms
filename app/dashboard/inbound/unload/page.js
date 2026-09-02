@@ -6,6 +6,7 @@ import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import { createClient } from '@/utils/supabase/browser'
 import { getProfileByAuthenticatedUser } from '@/utils/user-profiles'
 import { ADMIN_EMAIL, hasPermission, resolveRole } from '@/utils/permissions'
+import { getRolePermissionCodes } from '@/utils/role-permissions'
 import { useRealtimeRefresh } from '@/utils/supabase/use-realtime-refresh'
 
 const supabase = createClient()
@@ -2558,13 +2559,13 @@ export default function UnloadPage() {
       const role = resolveRole(profileResult.data?.role, authUser.email?.toLowerCase() === ADMIN_EMAIL)
       const { data: rolePermissionRows } = role === 'admin'
         ? { data: [] }
-        : await supabase.from('dir_user_roles').select('permission_code').eq('role', role)
+        : await getRolePermissionCodes(supabase, role)
 
       if (!isMounted) return
 
       setUser(authUser)
       setProfile(profileResult.data || null)
-      setPermissionCodes((rolePermissionRows || []).map((item) => item.permission_code).filter(Boolean))
+      setPermissionCodes(rolePermissionRows || [])
     }
 
     loadAuthenticatedUser()

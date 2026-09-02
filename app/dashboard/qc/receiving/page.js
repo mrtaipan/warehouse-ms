@@ -5,6 +5,7 @@ import { usePathname } from 'next/navigation'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createClient } from '@/utils/supabase/browser'
 import { ADMIN_EMAIL } from '@/utils/permissions'
+import { getRolesForPermissionCode } from '@/utils/role-permissions'
 import { readFileAsDataUrl } from '../shared'
 
 const supabase = createClient()
@@ -1606,7 +1607,7 @@ export default function QcReceivingPage() {
           .select('id, email, display_name, role, is_qc_active, qc_active_date')
           .eq('is_qc_active', true)
           .order('display_name', { ascending: true }),
-        supabase.from('dir_user_roles').select('role, permission_code').eq('permission_code', 'qc.grading_task.view'),
+        getRolesForPermissionCode(supabase, 'qc.grading_task.view'),
       ])
 
       if (

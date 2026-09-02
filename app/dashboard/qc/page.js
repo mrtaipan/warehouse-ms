@@ -3353,7 +3353,7 @@ export default function QcDashboardPage() {
   }
 
   function removeRejectDraftRow(rowId) {
-    setRejectDraftRows((rows) => (rows.length > 1 ? rows.filter((row) => row.id !== rowId) : rows))
+    setRejectDraftRows((rows) => (rows.length > 1 ? rows.filter((row) => row.id !== rowId) : [createRejectDraftRow()]))
   }
 
   async function resolveRejectReasonId(row) {
@@ -4774,17 +4774,15 @@ export default function QcDashboardPage() {
                     >
                       +
                     </button>
-                    {index > 0 ? (
-                      <button
-                        type="button"
-                        style={styles.iconSmallButton}
-                        onClick={() => removeRejectDraftRow(row.id)}
-                        title="Remove row"
-                        aria-label="Remove row"
-                      >
-                        X
-                      </button>
-                    ) : null}
+                    <button
+                      type="button"
+                      style={styles.iconSmallButton}
+                      onClick={() => removeRejectDraftRow(row.id)}
+                      title={displayRejectDraftRows.length > 1 ? 'Remove row' : 'Clear row'}
+                      aria-label={displayRejectDraftRows.length > 1 ? 'Remove row' : 'Clear row'}
+                    >
+                      X
+                    </button>
                   </div>
                 </div>
               ))}

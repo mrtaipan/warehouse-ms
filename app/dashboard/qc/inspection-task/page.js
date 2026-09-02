@@ -4,6 +4,7 @@ import Image from 'next/image'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { createClient } from '@/utils/supabase/browser'
 import { ADMIN_EMAIL, expandImpliedPermissions, resolveRole } from '@/utils/permissions'
+import { getRolePermissionCodes } from '@/utils/role-permissions'
 import { getProfileByAuthenticatedUser } from '@/utils/user-profiles'
 import { formatSeconds } from '../shared'
 
@@ -717,10 +718,7 @@ export default function QcInspectionTaskPage() {
 
       const resolvedRole = resolveRole(profileRow?.role, isAdmin)
       const { data: rolePermissionRows, error: rolePermissionError } = resolvedRole
-        ? await supabase
-            .from('dir_user_roles')
-            .select('permission_code')
-            .eq('role', resolvedRole)
+        ? await getRolePermissionCodes(supabase, resolvedRole)
         : { data: [], error: null }
 
       if (rolePermissionError) {
@@ -729,7 +727,7 @@ export default function QcInspectionTaskPage() {
         return
       }
 
-      const permissionSet = expandImpliedPermissions((rolePermissionRows || []).map((item) => item.permission_code))
+      const permissionSet = expandImpliedPermissions(rolePermissionRows || [])
       const canDoQcInspection = isAdmin || resolvedRole === 'admin' || permissionSet.has('qc.grading_task.view')
       const isActiveInspector =
         canDoQcInspection &&
@@ -992,10 +990,7 @@ export default function QcInspectionTaskPage() {
 
     const resolvedRole = resolveRole(profileRow?.role, isAdmin)
     const { data: rolePermissionRows, error: rolePermissionError } = resolvedRole
-      ? await supabase
-          .from('dir_user_roles')
-          .select('permission_code')
-          .eq('role', resolvedRole)
+      ? await getRolePermissionCodes(supabase, resolvedRole)
       : { data: [], error: null }
 
     if (rolePermissionError) {
@@ -1003,7 +998,7 @@ export default function QcInspectionTaskPage() {
       return
     }
 
-    const permissionSet = expandImpliedPermissions((rolePermissionRows || []).map((item) => item.permission_code))
+    const permissionSet = expandImpliedPermissions(rolePermissionRows || [])
 
     if (!isAdmin && resolvedRole !== 'admin' && !permissionSet.has('qc.grading_task.view')) {
       setError('This role does not have permission `qc.grading_task.view`, so it cannot activate grading task.')

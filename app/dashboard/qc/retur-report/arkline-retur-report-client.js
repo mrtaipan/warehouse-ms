@@ -24,8 +24,139 @@ function formatStatus(value) {
   return String(value || 'SENT').replaceAll('_', ' ')
 }
 
+function getStatusBadgeClass(status) {
+  const normalized = String(status || 'SENT').toUpperCase()
+  if (normalized === 'FULLY_RETURNED') return styles.badgeCompleted
+  if (normalized === 'PARTIALLY_RETURNED') return styles.badgeWarning
+  if (normalized === 'CLOSED_SHORT') return styles.badgeDanger
+  return ''
+}
+
+function normalizeSize(value) {
+  const size = String(value || '').trim().toUpperCase()
+  return size || 'NO SIZE'
+}
+
 function getReceiptSizeKey(size) {
-  return `size:${String(size || 'No size')}`
+  return `size:${normalizeSize(size)}`
+}
+
+function normalizeSizeCorrection(row) {
+  return {
+    id: row.id,
+    returnBatchId: row.return_batch_id || row.returnBatchId,
+    fromLineId: row.from_return_batch_line_id || row.fromLineId,
+    fromSize: normalizeSize(row.from_size || row.fromSize),
+    toSize: normalizeSize(row.to_size || row.toSize),
+    qty: Number(row.qty || 0),
+    notes: row.notes || '',
+    createdBy: row.created_by || row.createdBy || '',
+    createdAt: row.created_at || row.createdAt,
+    updatedAt: row.updated_at || row.updatedAt,
+  }
+}
+
+function buildCorrectedReceiptSegments(batch) {
+  if (!batch) return []
+
+  return (batch.lines || []).flatMap((line) => {
+    const originalSize = normalizeSize(line.size)
+    const corrections = (line.corrections || []).map(normalizeSizeCorrection)
+    const correctionOutQty = corrections.reduce((sum, correction) => sum + Number(correction.qty || 0), 0)
+    const originalQty = Math.max(0, Number(line.qty || 0) - correctionOutQty)
+    const segments = []
+
+    if (originalQty > 0 || Number(line.receivedQtyBySize?.[originalSize] || 0) > 0) {
+      segments.push({
+        ...line,
+        size: originalSize,
+        qty: originalQty,
+        receivedQty: Number(line.receivedQtyBySize?.[originalSize] || 0),
+        correctionInQty: 0,
+        correctionOutQty,
+        isCorrected: false,
+      })
+    }
+
+    const correctionsBySize = corrections.reduce((groups, correction) => {
+      const correctedSize = normalizeSize(correction.toSize)
+      const current = groups.get(correctedSize) || { size: correctedSize, qty: 0, corrections: [] }
+      current.qty += Number(correction.qty || 0)
+      current.corrections.push(correction)
+      groups.set(correctedSize, current)
+      return groups
+    }, new Map())
+
+    correctionsBySize.forEach((correctionGroup) => {
+      const correctedSize = normalizeSize(correctionGroup.size)
+      segments.push({
+        ...line,
+        size: correctedSize,
+        qty: Number(correctionGroup.qty || 0),
+        receivedQty: Number(line.receivedQtyBySize?.[correctedSize] || 0),
+        correctionInQty: Number(correctionGroup.qty || 0),
+        correctionOutQty: 0,
+        corrections: correctionGroup.corrections,
+        isCorrected: true,
+      })
+    })
+
+    return segments
+  })
+}
+
+function buildReceiptSummary(batch) {
+  if (!batch) return { total: 0, sizes: [], sizeRows: [] }
+
+  const sizeMap = new Map()
+  buildCorrectedReceiptSegments(batch).forEach((line) => {
+    const size = normalizeSize(line.size)
+    const current = sizeMap.get(size) || {
+      size,
+      sentQty: 0,
+      receivedQty: 0,
+      remainingQty: 0,
+      correctionInQty: 0,
+      correctionOutQty: 0,
+      lines: [],
+    }
+    const sentQty = Number(line.qty || 0)
+    const receivedQty = Number(line.receivedQty || 0)
+    const remainingQty = Math.max(0, sentQty - receivedQty)
+    current.sentQty += sentQty
+    current.receivedQty += receivedQty
+    current.remainingQty += remainingQty
+    current.correctionInQty += Number(line.correctionInQty || 0)
+    current.correctionOutQty += Number(line.correctionOutQty || 0)
+    current.lines.push({ ...line, remainingQty })
+    sizeMap.set(size, current)
+  })
+
+  const sizeRows = Array.from(sizeMap.values()).sort((a, b) => String(a.size).localeCompare(String(b.size), undefined, { numeric: true }))
+  const total = sizeRows.reduce((sum, row) => sum + Number(row.remainingQty || 0), 0)
+  const sizes = sizeRows.map((row) => ({ size: row.size, qty: row.remainingQty }))
+
+  return { total, sizes, sizeRows }
+}
+
+function getCorrectableSizeLines(batch) {
+  if (!batch) return []
+
+  const sizeMap = new Map()
+  ;(batch.lines || []).forEach((line) => {
+    const originalSize = normalizeSize(line.size)
+    const correctionOutQty = (line.corrections || []).reduce((sum, correction) => sum + Number(correction.qty || 0), 0)
+    const receivedOriginalQty = Number(line.receivedQtyBySize?.[originalSize] || 0)
+    const correctableQty = Math.max(0, Number(line.qty || 0) - correctionOutQty - receivedOriginalQty)
+    if (correctableQty <= 0) return
+
+    const current = sizeMap.get(originalSize) || { id: originalSize, size: originalSize, correctableQty: 0, lines: [] }
+    current.correctableQty += correctableQty
+    current.lines.push({ ...line, size: originalSize, correctableQty })
+    sizeMap.set(originalSize, current)
+  })
+
+  return Array.from(sizeMap.values()).sort((a, b) => String(a.size).localeCompare(String(b.size), undefined, { numeric: true }))
 }
 
 export default function ArklineReturReportClient({ eligibleRows, batches, userEmail, canAdd = false, canEdit = false }) {
@@ -42,6 +173,7 @@ export default function ArklineReturReportClient({ eligibleRows, batches, userEm
   const [progressPoFilter, setProgressPoFilter] = useState('')
   const [progressProductFilter, setProgressProductFilter] = useState('')
   const [progressRejectReasonFilter, setProgressRejectReasonFilter] = useState('')
+  const [progressStatusFilter, setProgressStatusFilter] = useState('')
   const [returnModalOpen, setReturnModalOpen] = useState(false)
   const [receiptBatch, setReceiptBatch] = useState(null)
   const [returnDate, setReturnDate] = useState(todayValue())
@@ -51,6 +183,8 @@ export default function ArklineReturReportClient({ eligibleRows, batches, userEm
   const [receiptDate, setReceiptDate] = useState(todayValue())
   const [receiptNotes, setReceiptNotes] = useState('')
   const [receiptQtyById, setReceiptQtyById] = useState({})
+  const [sizeCorrectionOpen, setSizeCorrectionOpen] = useState(false)
+  const [sizeCorrectionDraft, setSizeCorrectionDraft] = useState({ fromLineId: '', toSize: '', qty: '', notes: '' })
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
 
@@ -114,18 +248,39 @@ export default function ArklineReturReportClient({ eligibleRows, batches, userEm
       .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }))
   }, [eligibleRows, matchesArrangementFilters])
   const progressPoOptions = useMemo(
-    () => Array.from(new Set(batches.map((batch) => batch.poId).filter(Boolean))).sort((a, b) => a.localeCompare(b, undefined, { numeric: true })),
-    [batches]
+    () =>
+      Array.from(new Set(
+        batches
+          .filter((batch) => {
+            const matchesProduct = !progressProductFilter || batch.modelName === progressProductFilter
+            const matchesRejectReason =
+              !progressRejectReasonFilter ||
+              batch.lines.some((line) => String(line.reasonId || line.reasonName || '').trim() === progressRejectReasonFilter)
+            const matchesStatus = !progressStatusFilter || String(batch.status || 'SENT') === progressStatusFilter
+            return matchesProduct && matchesRejectReason && matchesStatus
+          })
+          .map((batch) => batch.poId)
+          .filter(Boolean)
+      )).sort((a, b) => a.localeCompare(b, undefined, { numeric: true })),
+    [batches, progressProductFilter, progressRejectReasonFilter, progressStatusFilter]
   )
   const progressProductOptions = useMemo(() => {
-    const source = progressPoFilter ? batches.filter((batch) => batch.poId === progressPoFilter) : batches
+    const source = batches.filter((batch) => {
+      const matchesPo = !progressPoFilter || batch.poId === progressPoFilter
+      const matchesRejectReason =
+        !progressRejectReasonFilter ||
+        batch.lines.some((line) => String(line.reasonId || line.reasonName || '').trim() === progressRejectReasonFilter)
+      const matchesStatus = !progressStatusFilter || String(batch.status || 'SENT') === progressStatusFilter
+      return matchesPo && matchesRejectReason && matchesStatus
+    })
     return Array.from(new Set(source.map((batch) => batch.modelName).filter(Boolean))).sort((a, b) => a.localeCompare(b))
-  }, [batches, progressPoFilter])
+  }, [batches, progressPoFilter, progressRejectReasonFilter, progressStatusFilter])
   const progressRejectReasonOptions = useMemo(() => {
     const source = batches.filter((batch) => {
       const matchesPo = !progressPoFilter || batch.poId === progressPoFilter
       const matchesProduct = !progressProductFilter || batch.modelName === progressProductFilter
-      return matchesPo && matchesProduct
+      const matchesStatus = !progressStatusFilter || String(batch.status || 'SENT') === progressStatusFilter
+      return matchesPo && matchesProduct && matchesStatus
     })
     const grouped = new Map()
 
@@ -140,7 +295,20 @@ export default function ArklineReturReportClient({ eligibleRows, batches, userEm
     return Array.from(grouped.entries())
       .map(([id, name]) => ({ id, name }))
       .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }))
-  }, [batches, progressPoFilter, progressProductFilter])
+  }, [batches, progressPoFilter, progressProductFilter, progressStatusFilter])
+  const progressStatusOptions = useMemo(() => {
+    const source = batches.filter((batch) => {
+      const matchesPo = !progressPoFilter || batch.poId === progressPoFilter
+      const matchesProduct = !progressProductFilter || batch.modelName === progressProductFilter
+      const matchesRejectReason =
+        !progressRejectReasonFilter ||
+        batch.lines.some((line) => String(line.reasonId || line.reasonName || '').trim() === progressRejectReasonFilter)
+      return matchesPo && matchesProduct && matchesRejectReason
+    })
+    return Array.from(new Set(source.map((batch) => String(batch.status || 'SENT')).filter(Boolean))).sort((a, b) =>
+      formatStatus(a).localeCompare(formatStatus(b), undefined, { numeric: true })
+    )
+  }, [batches, progressPoFilter, progressProductFilter, progressRejectReasonFilter])
   const filteredEligibleRows = useMemo(
     () =>
       eligibleRows
@@ -164,9 +332,10 @@ export default function ArklineReturReportClient({ eligibleRows, batches, userEm
         const matchesRejectReason =
           !progressRejectReasonFilter ||
           batch.lines.some((line) => String(line.reasonId || line.reasonName || '').trim() === progressRejectReasonFilter)
-        return matchesPo && matchesProduct && matchesRejectReason
+        const matchesStatus = !progressStatusFilter || String(batch.status || 'SENT') === progressStatusFilter
+        return matchesPo && matchesProduct && matchesRejectReason && matchesStatus
       }),
-    [batches, progressPoFilter, progressProductFilter, progressRejectReasonFilter]
+    [batches, progressPoFilter, progressProductFilter, progressRejectReasonFilter, progressStatusFilter]
   )
   const selectedSummary = useMemo(() => {
     const sizeMap = new Map()
@@ -188,29 +357,19 @@ export default function ArklineReturReportClient({ eligibleRows, batches, userEm
 
     return { total, sizes, grades }
   }, [returnQtyById, selectedRows])
-  const receiptSummary = useMemo(() => {
-    if (!receiptBatch) return { total: 0, sizes: [], sizeRows: [] }
-
-    const sizeMap = new Map()
-    receiptBatch.lines.forEach((line) => {
-      const size = line.size || 'No size'
-      const current = sizeMap.get(size) || { size, sentQty: 0, receivedQty: 0, remainingQty: 0, lines: [] }
-      const sentQty = Number(line.qty || 0)
-      const receivedQty = Number(line.receivedQty || 0)
-      const remainingQty = Math.max(0, sentQty - receivedQty)
-      current.sentQty += sentQty
-      current.receivedQty += receivedQty
-      current.remainingQty += remainingQty
-      current.lines.push({ ...line, remainingQty })
-      sizeMap.set(size, current)
-    })
-
-    const sizeRows = Array.from(sizeMap.values()).sort((a, b) => String(a.size).localeCompare(String(b.size), undefined, { numeric: true }))
-    const total = sizeRows.reduce((sum, row) => sum + Number(row.remainingQty || 0), 0)
-    const sizes = sizeRows.map((row) => ({ size: row.size, qty: row.remainingQty }))
-
-    return { total, sizes, sizeRows }
-  }, [receiptBatch])
+  const receiptSummary = useMemo(() => buildReceiptSummary(receiptBatch), [receiptBatch])
+  const correctableSizeLines = useMemo(() => getCorrectableSizeLines(receiptBatch), [receiptBatch])
+  const selectedCorrectionLine = useMemo(
+    () => correctableSizeLines.find((line) => String(line.id) === String(sizeCorrectionDraft.fromLineId)) || null,
+    [correctableSizeLines, sizeCorrectionDraft.fromLineId]
+  )
+  const correctionToSizeOptions = useMemo(() => {
+    if (!receiptBatch || !selectedCorrectionLine) return []
+    const selectedSize = normalizeSize(selectedCorrectionLine.size)
+    return Array.from(new Set((receiptBatch.sizeOptions || []).map(normalizeSize).filter((size) => size && size !== selectedSize))).sort((a, b) =>
+      String(a).localeCompare(String(b), undefined, { numeric: true })
+    )
+  }, [receiptBatch, selectedCorrectionLine])
   const receiptInputSummary = useMemo(() => {
     const sizes = receiptSummary.sizeRows
       .map((row) => ({
@@ -296,18 +455,46 @@ export default function ArklineReturReportClient({ eligibleRows, batches, userEm
 
   function openReceiptModal(batch) {
     const initialQty = {}
-    const sizes = new Set()
-    batch.lines.forEach((line) => {
-      sizes.add(line.size || 'No size')
-    })
-    sizes.forEach((size) => {
-      initialQty[getReceiptSizeKey(size)] = ''
+    buildReceiptSummary(batch).sizeRows.forEach((sizeRow) => {
+      initialQty[getReceiptSizeKey(sizeRow.size)] = ''
     })
     setReceiptQtyById(initialQty)
     setReceiptDate(todayValue())
     setReceiptNotes('')
+    setSizeCorrectionOpen(false)
+    setSizeCorrectionDraft({ fromLineId: '', toSize: '', qty: '', notes: '' })
     setError('')
     setReceiptBatch(batch)
+  }
+
+  function closeReceiptModal() {
+    setReceiptBatch(null)
+    setSizeCorrectionOpen(false)
+    setSizeCorrectionDraft({ fromLineId: '', toSize: '', qty: '', notes: '' })
+    setError('')
+  }
+
+  function openSizeCorrectionModal() {
+    const firstLine = correctableSizeLines[0]
+    if (!firstLine) {
+      setError('No returned size is available for correction.')
+      return
+    }
+
+    setSizeCorrectionDraft({
+      fromLineId: firstLine.id,
+      toSize: '',
+      qty: '',
+      notes: '',
+    })
+    setSizeCorrectionOpen(true)
+    setError('')
+  }
+
+  function closeSizeCorrectionModal() {
+    setSizeCorrectionOpen(false)
+    setSizeCorrectionDraft({ fromLineId: '', toSize: '', qty: '', notes: '' })
+    setError('')
   }
 
   async function saveReturnBatch() {
@@ -412,6 +599,7 @@ export default function ArklineReturReportClient({ eligibleRows, batches, userEm
       p_created_by: userEmail || '',
       p_lines: receiptLines.map((line) => ({
         return_batch_line_id: line.id,
+        size: normalizeSize(line.size),
         qty: line.inputQty,
       })),
     })
@@ -423,6 +611,88 @@ export default function ArklineReturReportClient({ eligibleRows, batches, userEm
     }
 
     setReceiptBatch(null)
+    setSaving(false)
+    router.refresh()
+  }
+
+  async function saveSizeCorrection() {
+    if (!receiptBatch || !selectedCorrectionLine) return
+
+    const qty = Number(sizeCorrectionDraft.qty || 0)
+    const toSize = normalizeSize(sizeCorrectionDraft.toSize)
+
+    if (!sizeCorrectionDraft.toSize) {
+      setError('Choose the corrected size first.')
+      return
+    }
+
+    if (toSize === normalizeSize(selectedCorrectionLine.size)) {
+      setError('Corrected size must be different from the original size.')
+      return
+    }
+
+    if (qty <= 0 || qty > Number(selectedCorrectionLine.correctableQty || 0)) {
+      setError('Correction qty must be greater than zero and cannot exceed the available original size qty.')
+      return
+    }
+
+    setSaving(true)
+    setError('')
+    let remainingCorrectionQty = qty
+    const correctionPayload = []
+    ;(selectedCorrectionLine.lines || []).forEach((line) => {
+      if (remainingCorrectionQty <= 0) return
+      const lineQty = Math.min(remainingCorrectionQty, Number(line.correctableQty || 0))
+      if (lineQty <= 0) return
+      correctionPayload.push({
+        return_batch_id: receiptBatch.id,
+        from_return_batch_line_id: line.id,
+        from_size: normalizeSize(line.size),
+        to_size: toSize,
+        qty: lineQty,
+        notes: sizeCorrectionDraft.notes.trim() || null,
+        created_by: userEmail || null,
+      })
+      remainingCorrectionQty -= lineQty
+    })
+
+    const { data, error: correctionError } = await supabase
+      .from('arkline_qc_return_size_corrections')
+      .insert(correctionPayload)
+      .select('id, return_batch_id, from_return_batch_line_id, from_size, to_size, qty, notes, created_by, created_at, updated_at')
+
+    if (correctionError) {
+      setError(correctionError.message)
+      setSaving(false)
+      return
+    }
+
+    const normalizedCorrections = (data || []).map(normalizeSizeCorrection)
+    const correctionsByLine = normalizedCorrections.reduce((groups, correction) => {
+      const key = String(correction.fromLineId)
+      groups.set(key, [...(groups.get(key) || []), correction])
+      return groups
+    }, new Map())
+    setReceiptBatch((current) => {
+      if (!current || current.id !== receiptBatch.id) return current
+
+      return {
+        ...current,
+        lines: (current.lines || []).map((line) => {
+          const newCorrections = correctionsByLine.get(String(line.id))
+          if (!newCorrections?.length) return line
+          return {
+            ...line,
+            corrections: [...(line.corrections || []), ...newCorrections],
+          }
+        }),
+        sizeOptions: Array.from(new Set([...(current.sizeOptions || []), toSize])).sort((a, b) =>
+          String(a).localeCompare(String(b), undefined, { numeric: true })
+        ),
+      }
+    })
+    setReceiptQtyById({})
+    closeSizeCorrectionModal()
     setSaving(false)
     router.refresh()
   }
@@ -679,6 +949,7 @@ export default function ArklineReturReportClient({ eligibleRows, batches, userEm
                 setProgressPoFilter(event.target.value)
                 setProgressProductFilter('')
                 setProgressRejectReasonFilter('')
+                setProgressStatusFilter('')
               }}
             >
               <option value="">All PO</option>
@@ -694,6 +965,7 @@ export default function ArklineReturReportClient({ eligibleRows, batches, userEm
               onChange={(event) => {
                 setProgressProductFilter(event.target.value)
                 setProgressRejectReasonFilter('')
+                setProgressStatusFilter('')
               }}
             >
               <option value="">All products</option>
@@ -712,6 +984,18 @@ export default function ArklineReturReportClient({ eligibleRows, batches, userEm
               {progressRejectReasonOptions.map((reason) => <option key={reason.id} value={reason.id}>{reason.name}</option>)}
             </select>
           </div>
+          <div className={styles.field}>
+            <label htmlFor="return-progress-status-filter">Status</label>
+            <select
+              id="return-progress-status-filter"
+              className={styles.input}
+              value={progressStatusFilter}
+              onChange={(event) => setProgressStatusFilter(event.target.value)}
+            >
+              <option value="">All statuses</option>
+              {progressStatusOptions.map((status) => <option key={status} value={status}>{formatStatus(status)}</option>)}
+            </select>
+          </div>
         </div>
 
         {!batches.length ? (
@@ -727,7 +1011,7 @@ export default function ArklineReturReportClient({ eligibleRows, batches, userEm
                   <div className={styles.batchHeader}>
                     <div className={styles.batchTitle}>
                       <strong>{batch.returnNumber}</strong>
-                      <span className={styles.badge}>{formatStatus(batch.status)}</span>
+                      <span className={`${styles.badge} ${getStatusBadgeClass(batch.status)}`.trim()}>{formatStatus(batch.status)}</span>
                     </div>
                     <button
                       type="button"
@@ -842,7 +1126,17 @@ export default function ArklineReturReportClient({ eligibleRows, batches, userEm
                 <h2 id="receipt-title">Record Returned Goods</h2>
                 <p>{receiptBatch.returnNumber} becomes Re-QC Round {Number(receiptBatch.roundNumber || 1) + 1}.</p>
               </div>
-              <button type="button" className={styles.closeButton} onClick={() => setReceiptBatch(null)} aria-label="Close">X</button>
+              <div className={styles.modalHeaderActions}>
+                <button
+                  type="button"
+                  className={styles.secondaryButton}
+                  onClick={openSizeCorrectionModal}
+                  disabled={!canEdit || saving || !correctableSizeLines.length}
+                >
+                  Size Correction
+                </button>
+                <button type="button" className={styles.closeButton} onClick={closeReceiptModal} aria-label="Close">X</button>
+              </div>
             </div>
             <div className={styles.formGrid}>
               <div className={styles.field}>
@@ -862,6 +1156,11 @@ export default function ArklineReturReportClient({ eligibleRows, batches, userEm
                     <div className={styles.lineName}>
                       <strong>Size {sizeRow.size}</strong>
                       Sent {sizeRow.sentQty} / Returned {sizeRow.receivedQty} / Remaining {sizeRow.remainingQty}
+                      {sizeRow.correctionInQty || sizeRow.correctionOutQty ? (
+                        <span className={styles.lineHint}>
+                          Correction +{sizeRow.correctionInQty} / -{sizeRow.correctionOutQty}
+                        </span>
+                      ) : null}
                     </div>
                     <span className={`${styles.badge} ${styles.lineBadge}`}>Remaining {sizeRow.remainingQty}</span>
                     <input
@@ -891,10 +1190,109 @@ export default function ArklineReturReportClient({ eligibleRows, batches, userEm
                 </div>
               </div>
             </div>
+            {receiptBatch.lines.some((line) => line.corrections?.length) ? (
+              <div className={styles.correctionList}>
+                <span>Size correction history</span>
+                {(receiptBatch.lines || []).flatMap((line) => (line.corrections || []).map((correction) => (
+                  <div key={correction.id} className={styles.correctionRow}>
+                    <strong>{correction.fromSize} to {correction.toSize}</strong>
+                    <span>{correction.qty} pcs</span>
+                    <small>{correction.notes || 'No notes'}</small>
+                  </div>
+                )))}
+              </div>
+            ) : null}
             {error ? <p className={styles.error}>{error}</p> : null}
             <div className={styles.modalActions}>
-              <button type="button" className={styles.secondaryButton} onClick={() => setReceiptBatch(null)} disabled={saving}>Cancel</button>
+              <button type="button" className={styles.secondaryButton} onClick={closeReceiptModal} disabled={saving}>Cancel</button>
               <button type="button" className={styles.primaryButton} onClick={saveReworkReceipt} disabled={saving}>{saving ? 'Saving...' : 'Save Returned Goods'}</button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {sizeCorrectionOpen && receiptBatch ? (
+        <div className={styles.overlay} role="presentation">
+          <div className={`${styles.modal} ${styles.sizeCorrectionModal}`.trim()} role="dialog" aria-modal="true" aria-labelledby="size-correction-title">
+            <div className={styles.modalHeader}>
+              <div>
+                <h2 id="size-correction-title">Size Correction</h2>
+                <p>Move returned qty from the sent size into the physically correct size.</p>
+              </div>
+              <button type="button" className={styles.closeButton} onClick={closeSizeCorrectionModal} aria-label="Close">X</button>
+            </div>
+            <div className={styles.formGrid}>
+              <div className={styles.field}>
+                <label htmlFor="size-correction-from">From Size</label>
+                <select
+                  id="size-correction-from"
+                  className={styles.input}
+                  value={sizeCorrectionDraft.fromLineId}
+                  onChange={(event) => {
+                    setSizeCorrectionDraft((current) => ({ ...current, fromLineId: event.target.value, toSize: '', qty: '' }))
+                    setError('')
+                  }}
+                >
+                  {correctableSizeLines.map((line) => (
+                    <option key={line.id} value={line.id}>
+                      {line.size} - available {line.correctableQty}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className={styles.field}>
+                <label htmlFor="size-correction-to">Correct Size</label>
+                <select
+                  id="size-correction-to"
+                  className={styles.input}
+                  value={sizeCorrectionDraft.toSize}
+                  onChange={(event) => {
+                    setSizeCorrectionDraft((current) => ({ ...current, toSize: event.target.value }))
+                    setError('')
+                  }}
+                >
+                  <option value="">Choose size</option>
+                  {correctionToSizeOptions.map((size) => <option key={size} value={size}>{size}</option>)}
+                </select>
+              </div>
+              <div className={styles.field}>
+                <label htmlFor="size-correction-qty">Qty</label>
+                <input
+                  id="size-correction-qty"
+                  className={styles.input}
+                  type="number"
+                  min="1"
+                  max={selectedCorrectionLine?.correctableQty || 1}
+                  value={sizeCorrectionDraft.qty}
+                  onChange={(event) => {
+                    const maxQty = Number(selectedCorrectionLine?.correctableQty || 0)
+                    const value = Number(event.target.value || 0)
+                    setSizeCorrectionDraft((current) => ({ ...current, qty: value > maxQty ? String(maxQty) : event.target.value }))
+                    setError('')
+                  }}
+                  placeholder="0"
+                />
+              </div>
+              <div className={styles.field}>
+                <label htmlFor="size-correction-notes">Notes</label>
+                <input
+                  id="size-correction-notes"
+                  className={styles.input}
+                  value={sizeCorrectionDraft.notes}
+                  onChange={(event) => setSizeCorrectionDraft((current) => ({ ...current, notes: event.target.value }))}
+                  placeholder="Optional"
+                />
+              </div>
+            </div>
+            {selectedCorrectionLine ? (
+              <p className={styles.notice}>
+                Available to correct from size {selectedCorrectionLine.size}: {selectedCorrectionLine.correctableQty} pcs.
+              </p>
+            ) : null}
+            {error ? <p className={styles.error}>{error}</p> : null}
+            <div className={styles.modalActions}>
+              <button type="button" className={styles.secondaryButton} onClick={closeSizeCorrectionModal} disabled={saving}>Cancel</button>
+              <button type="button" className={styles.primaryButton} onClick={saveSizeCorrection} disabled={saving}>{saving ? 'Saving...' : 'Save Correction'}</button>
             </div>
           </div>
         </div>

@@ -44,7 +44,7 @@ function ReturnReportShell({ activeMode, children }) {
 }
 
 async function loadArklineReturnData(supabase) {
-  const [detailResult, qcResult, reasonResult, batchResult, lineResult, receiptResult, poResult] = await Promise.all([
+  const [detailResult, qcResult, reasonResult, batchResult, lineResult, receiptResult, correctionResult, poResult, poSizeResult] = await Promise.all([
     supabase.from('arkline_qc_reject_details').select('*').order('created_at', { ascending: false }),
     supabase
       .from('arkline_qc')
@@ -54,12 +54,17 @@ async function loadArklineReturnData(supabase) {
     supabase.from('arkline_qc_return_batch_lines').select('*'),
     supabase
       .from('arkline_po_item_receipts')
-      .select('source_return_batch_id, source_return_batch_line_id, received_qty')
+      .select('source_return_batch_id, source_return_batch_line_id, size, received_qty')
       .eq('receipt_type', 'REWORK_RETURN'),
+    supabase
+      .from('arkline_qc_return_size_corrections')
+      .select('id, return_batch_id, from_return_batch_line_id, from_size, to_size, qty, notes, created_by, created_at, updated_at')
+      .order('created_at', { ascending: false }),
     supabase.from('arkline_pos').select('po_id, supplier_name'),
+    supabase.from('arkline_po_item_sizes').select('arkline_po_item_id, size, qty'),
   ])
 
-  const firstError = [detailResult, qcResult, reasonResult, batchResult, lineResult, receiptResult, poResult].find(
+  const firstError = [detailResult, qcResult, reasonResult, batchResult, lineResult, receiptResult, correctionResult, poResult, poSizeResult].find(
     (result) => result.error
   )?.error
   if (firstError) {
@@ -105,24 +110,73 @@ async function loadArklineReturnData(supabase) {
     .filter((row) => row.poId && row.poItemId && row.availableQty > 0)
 
   const receiptsByLine = new Map()
+  const receiptsByLineSize = new Map()
+  const receiptSizesByLine = new Map()
   ;(receiptResult.data || []).forEach((receipt) => {
-    const key = String(receipt.source_return_batch_line_id || '')
-    receiptsByLine.set(key, Number(receiptsByLine.get(key) || 0) + Number(receipt.received_qty || 0))
+    const lineKey = String(receipt.source_return_batch_line_id || '')
+    const size = String(receipt.size || 'No size').trim().toUpperCase()
+    const sizeKey = `${lineKey}|||${size}`
+    receiptsByLine.set(lineKey, Number(receiptsByLine.get(lineKey) || 0) + Number(receipt.received_qty || 0))
+    receiptsByLineSize.set(sizeKey, Number(receiptsByLineSize.get(sizeKey) || 0) + Number(receipt.received_qty || 0))
+    receiptSizesByLine.set(lineKey, Array.from(new Set([...(receiptSizesByLine.get(lineKey) || []), size])))
+  })
+  const correctionsByLine = new Map()
+  ;(correctionResult.data || []).forEach((correction) => {
+    const key = String(correction.from_return_batch_line_id || '')
+    const normalized = {
+      id: correction.id,
+      returnBatchId: correction.return_batch_id,
+      fromLineId: correction.from_return_batch_line_id,
+      fromSize: correction.from_size,
+      toSize: correction.to_size,
+      qty: Number(correction.qty || 0),
+      notes: correction.notes || '',
+      createdBy: correction.created_by || '',
+      createdAt: correction.created_at,
+      updatedAt: correction.updated_at,
+    }
+    correctionsByLine.set(key, [...(correctionsByLine.get(key) || []), normalized])
+  })
+  const sizeOptionsByPoItem = new Map()
+  ;(poSizeResult.data || []).forEach((sizeRow) => {
+    const poItemKey = String(sizeRow.arkline_po_item_id || '')
+    const size = String(sizeRow.size || '').trim().toUpperCase()
+    if (!poItemKey || !size) return
+    sizeOptionsByPoItem.set(poItemKey, Array.from(new Set([...(sizeOptionsByPoItem.get(poItemKey) || []), size])))
   })
   const linesByBatch = new Map()
   ;(lineResult.data || []).forEach((line) => {
     const reason = reasonById.get(String(line.reject_reason_id)) || {}
+    const lineId = String(line.id)
+    const size = String(line.size || 'No size').trim().toUpperCase()
     const normalized = {
       id: line.id,
       reasonId: line.reject_reason_id,
       reasonName: reason.reason_name || 'Reject reason',
       grade: line.grade,
-      size: line.size,
+      size,
       qty: Number(line.qty || 0),
-      receivedQty: Number(receiptsByLine.get(String(line.id)) || 0),
+      receivedQty: Number(receiptsByLine.get(lineId) || 0),
+      receivedQtyBySize: Object.fromEntries((receiptSizesByLine.get(lineId) || [size]).map((receiptSize) => [
+        receiptSize,
+        Number(receiptsByLineSize.get(`${lineId}|||${receiptSize}`) || 0),
+      ])),
+      corrections: correctionsByLine.get(lineId) || [],
     }
     const key = String(line.return_batch_id)
     linesByBatch.set(key, [...(linesByBatch.get(key) || []), normalized])
+  })
+
+  const correctionSizeOptionsByBatch = new Map()
+  ;(correctionResult.data || []).forEach((correction) => {
+    const batchKey = String(correction.return_batch_id || '')
+    const fromSize = String(correction.from_size || '').trim().toUpperCase()
+    const toSize = String(correction.to_size || '').trim().toUpperCase()
+    correctionSizeOptionsByBatch.set(batchKey, Array.from(new Set([
+      ...(correctionSizeOptionsByBatch.get(batchKey) || []),
+      fromSize,
+      toSize,
+    ].filter(Boolean))))
   })
 
   const batches = (batchResult.data || []).map((batch) => ({
@@ -140,6 +194,11 @@ async function loadArklineReturnData(supabase) {
     shortQty: Number(batch.short_qty || 0),
     status: batch.status,
     lines: linesByBatch.get(String(batch.id)) || [],
+    sizeOptions: Array.from(new Set([
+      ...(sizeOptionsByPoItem.get(String(batch.arkline_po_item_id)) || []),
+      ...((linesByBatch.get(String(batch.id)) || []).map((line) => line.size).filter(Boolean)),
+      ...(correctionSizeOptionsByBatch.get(String(batch.id)) || []),
+    ])).sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true })),
   }))
 
   return { eligibleRows, batches }

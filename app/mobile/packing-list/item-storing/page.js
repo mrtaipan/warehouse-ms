@@ -5,6 +5,7 @@ import { Suspense, useEffect, useMemo, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { createClient } from '@/utils/supabase/browser'
 import { ADMIN_EMAIL, hasPermission, resolveRole } from '@/utils/permissions'
+import { getRolePermissionCodes } from '@/utils/role-permissions'
 import { getProfileByAuthenticatedUser } from '@/utils/user-profiles'
 
 const supabase = createClient()
@@ -261,10 +262,9 @@ function ItemStoringContent() {
       const emailAdmin = authUser.email?.toLowerCase() === ADMIN_EMAIL
       const role = resolveRole(profileResult.data?.role, emailAdmin)
       const isAdminUser = emailAdmin || role === 'admin'
-      const { data: rolePermissionRows } = isAdminUser
+      const { data: rolePermissions } = isAdminUser
         ? { data: [] }
-        : await supabase.from('dir_user_roles').select('permission_code').eq('role', role)
-      const rolePermissions = (rolePermissionRows || []).map((item) => item.permission_code).filter(Boolean)
+        : await getRolePermissionCodes(supabase, role)
       const canEditSizeBreakdown = hasPermission(rolePermissions, 'packing.size_breakdown.edit', isAdminUser)
 
       if (!canEditSizeBreakdown) {

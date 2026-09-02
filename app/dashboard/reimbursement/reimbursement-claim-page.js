@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { createClient } from '@/utils/supabase/browser'
 import { ADMIN_EMAIL, expandImpliedPermissions, getArklineFeatureAccess, resolveRole } from '@/utils/permissions'
+import { getRolePermissionCodes } from '@/utils/role-permissions'
 import { getProfileByAuthenticatedUser } from '@/utils/user-profiles'
 import { useRealtimeRefresh } from '@/utils/supabase/use-realtime-refresh'
 
@@ -518,7 +519,7 @@ export default function ReimbursementClaimPage({
 
     const [{ data: rolePermissions, error: permissionError }, { data: categoryRows, error: categoryError }, { data: claimRows, error: claimError }] =
       await Promise.all([
-        supabase.from('dir_user_roles').select('permission_code').eq('role', role),
+        getRolePermissionCodes(supabase, role),
         supabase.from('dir_reimbursement_categories').select('id, name, is_active').order('id', { ascending: true }),
         supabase
           .from(resolvedTables.claims)
@@ -572,7 +573,7 @@ export default function ReimbursementClaimPage({
       return
     }
 
-    const permissions = Array.from(expandImpliedPermissions((rolePermissions || []).map((item) => item.permission_code)))
+    const permissions = Array.from(expandImpliedPermissions(rolePermissions || []))
     const resolvedAccess = getArklineFeatureAccess(role, permissions, isAdmin)
     setTableNames(resolvedTables)
 
