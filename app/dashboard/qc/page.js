@@ -568,14 +568,14 @@ const styles = {
     textTransform: 'uppercase',
   },
   rejectRepairabilityCardRepairable: {
-    background: '#ecfdf5',
-    color: '#065f46',
-    borderColor: '#a7f3d0',
+    background: '#166534',
+    color: '#ffffff',
+    borderColor: '#166534',
   },
   rejectRepairabilityCardUnrepairable: {
-    background: '#fff7ed',
-    color: '#9a3412',
-    borderColor: '#fed7aa',
+    background: '#6f1d2a',
+    color: '#ffffff',
+    borderColor: '#6f1d2a',
   },
   rejectSummarySectionRow: {
     padding: '10px 14px',
@@ -585,6 +585,48 @@ const styles = {
     fontWeight: '900',
     letterSpacing: '0.08em',
     textTransform: 'uppercase',
+  },
+  rejectSummarySectionRowRepairable: {
+    background: '#166534',
+    color: '#ffffff',
+  },
+  rejectSummarySectionRowUnrepairable: {
+    background: '#6f1d2a',
+    color: '#ffffff',
+  },
+  readOnlyRejectSection: {
+    border: '1px solid #dbe3ef',
+    borderRadius: '10px',
+    background: '#ffffff',
+    overflow: 'hidden',
+  },
+  readOnlyRejectSectionHeader: {
+    width: '100%',
+    minHeight: '48px',
+    padding: '0 14px',
+    border: 0,
+    borderBottom: '1px solid #e2e8f0',
+    background: '#f8fafc',
+    color: '#0f172a',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: '12px',
+    fontSize: '14px',
+    fontWeight: '850',
+    cursor: 'pointer',
+  },
+  readOnlyRejectSectionMeta: {
+    color: '#64748b',
+    fontSize: '12px',
+    fontWeight: '900',
+    whiteSpace: 'nowrap',
+  },
+  readOnlyRejectSectionBody: {
+    padding: '12px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '12px',
   },
   rejectSummaryToggle: {
     width: '34px',
@@ -1129,6 +1171,17 @@ function formatDisplayDate(value) {
   }).format(new Date(value))
 }
 
+function formatDisplayDateOnly(value) {
+  const dateOnly = getDateOnly(value)
+  if (!dateOnly) return '-'
+
+  return new Intl.DateTimeFormat('en-GB', {
+    day: '2-digit',
+    month: 'long',
+    year: 'numeric',
+  }).format(new Date(`${dateOnly}T00:00:00`))
+}
+
 function formatNumber(value) {
   return new Intl.NumberFormat('en-US').format(Number(value || 0))
 }
@@ -1609,6 +1662,12 @@ export default function QcDashboardPage() {
     notes: '',
   })
   const [expandedRejectReasonRows, setExpandedRejectReasonRows] = useState({})
+  const [readOnlyRejectSections, setReadOnlyRejectSections] = useState({
+    rejectDetail: false,
+    adjustment: false,
+    timeline: false,
+    inspector: false,
+  })
   const [savingRejectDetail, setSavingRejectDetail] = useState(false)
 
   const loadDashboard = useCallback(async (silent = false) => {
@@ -2825,6 +2884,35 @@ export default function QcDashboardPage() {
 
     return Array.from(grouped.values()).sort((a, b) => a.inspector.localeCompare(b.inspector))
   }, [memberNameMap, selectedRejectTaskRows])
+  const readOnlyRejectTimelineRows = useMemo(() => {
+    const grouped = new Map()
+
+    selectedRejectTaskRows.forEach((item) => {
+      const dateKey = getDateOnly(getQcWorkDateValue(item)) || 'unknown'
+      const current =
+        grouped.get(dateKey) || {
+          dateKey,
+          qtyA: 0,
+          qtyB: 0,
+          qtyC: 0,
+          checked: 0,
+          rows: 0,
+        }
+
+      current.qtyA += Number(item.qty_a || 0)
+      current.qtyB += Number(item.qty_b || 0)
+      current.qtyC += Number(item.qty_c || 0)
+      current.checked += getCheckedQty(item)
+      current.rows += 1
+      grouped.set(dateKey, current)
+    })
+
+    return Array.from(grouped.values()).sort((a, b) => {
+      if (a.dateKey === 'unknown') return 1
+      if (b.dateKey === 'unknown') return -1
+      return b.dateKey.localeCompare(a.dateKey)
+    })
+  }, [selectedRejectTaskRows])
   const inspectorPerformance = useMemo(() => {
     const grouped = new Map()
 
@@ -3324,6 +3412,12 @@ export default function QcDashboardPage() {
     setRejectDetailError('')
     setRejectDraftRows(initialRows.length ? initialRows : [createRejectDraftRow()])
     setExpandedRejectReasonRows({})
+    setReadOnlyRejectSections({
+      rejectDetail: false,
+      adjustment: false,
+      timeline: false,
+      inspector: false,
+    })
     setRejectAdjustmentDraft({
       adjustmentType: 'transfer',
       fromGrade: '',
@@ -3345,6 +3439,13 @@ export default function QcDashboardPage() {
     setExpandedRejectReasonRows((prev) => ({
       ...prev,
       [rowKey]: !prev[rowKey],
+    }))
+  }
+
+  function toggleReadOnlyRejectSection(sectionKey) {
+    setReadOnlyRejectSections((prev) => ({
+      ...prev,
+      [sectionKey]: !prev[sectionKey],
     }))
   }
 
@@ -3695,11 +3796,23 @@ export default function QcDashboardPage() {
     }
   }
 
-  function renderReadOnlyRejectSummarySectionRows(title, rows) {
+  function renderReadOnlyRejectSummarySectionRows(title, rows, tone = 'neutral') {
+    const totalQty = rows.reduce((sum, item) => sum + Number(item.totalQty || 0), 0)
+    const sectionStyle = {
+      ...styles.rejectSummarySectionRow,
+      ...(tone === 'repairable' ? styles.rejectSummarySectionRowRepairable : {}),
+      ...(tone === 'unrepairable' ? styles.rejectSummarySectionRowUnrepairable : {}),
+    }
+
     return (
       <>
         <tr>
-          <td style={styles.rejectSummarySectionRow} colSpan={5}>{title}</td>
+          <td style={sectionStyle} colSpan={5}>
+            <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
+              <span>{title}</span>
+              <span>{formatNumber(totalQty)} qty</span>
+            </span>
+          </td>
         </tr>
         {rows.length ? (
           rows.map((item) => {
@@ -3766,22 +3879,8 @@ export default function QcDashboardPage() {
   }
 
   function renderReadOnlyRejectSummaryTable() {
-    const repairableTotalQty = repairableRejectReasonSummaryRows.reduce((sum, item) => sum + Number(item.totalQty || 0), 0)
-    const unrepairableTotalQty = unrepairableRejectReasonSummaryRows.reduce((sum, item) => sum + Number(item.totalQty || 0), 0)
-
     return (
       <div style={styles.rejectSummarySection}>
-        <div style={styles.rejectRepairabilityCards}>
-          <div style={{ ...styles.rejectRepairabilityCard, ...styles.rejectRepairabilityCardRepairable }}>
-            <span>Repairable</span>
-            <strong>{formatNumber(repairableTotalQty)}</strong>
-          </div>
-          <div style={{ ...styles.rejectRepairabilityCard, ...styles.rejectRepairabilityCardUnrepairable }}>
-            <span>Unrepairable</span>
-            <strong>{formatNumber(unrepairableTotalQty)}</strong>
-          </div>
-        </div>
-
         <div style={styles.modalTableWrap}>
           <table style={styles.table}>
             <thead>
@@ -3794,11 +3893,174 @@ export default function QcDashboardPage() {
               </tr>
             </thead>
             <tbody>
-              {renderReadOnlyRejectSummarySectionRows('Repairable', repairableRejectReasonSummaryRows)}
-              {renderReadOnlyRejectSummarySectionRows('Unrepairable', unrepairableRejectReasonSummaryRows)}
+              {renderReadOnlyRejectSummarySectionRows('Repairable', repairableRejectReasonSummaryRows, 'repairable')}
+              {renderReadOnlyRejectSummarySectionRows('Unrepairable', unrepairableRejectReasonSummaryRows, 'unrepairable')}
             </tbody>
           </table>
         </div>
+      </div>
+    )
+  }
+
+  function renderRejectAdjustmentTable() {
+    return (
+      <div style={styles.modalTableWrap}>
+        <table style={styles.table}>
+          <thead>
+            <tr>
+              <th style={styles.th}>Adjustment Type</th>
+              <th style={styles.th}>Grade</th>
+              <th style={styles.th}>Qty</th>
+              <th style={styles.th}>Notes</th>
+              <th style={styles.th}>Date</th>
+            </tr>
+          </thead>
+          <tbody>
+            {selectedRejectExistingAdjustments.length ? (
+              selectedRejectExistingAdjustments.map((item) => (
+                <tr key={item.id}>
+                  <td style={styles.td}>{getArklineAdjustmentLabel(item.adjustment_type)}</td>
+                  <td style={styles.td}>{getArklineAdjustmentGradeLabel(item)}</td>
+                  <td style={styles.td}>{item.qty}</td>
+                  <td style={styles.td}>{item.notes || '-'}</td>
+                  <td style={styles.td}>{String(getArklineAdjustmentDateValue(item) || '-').slice(0, 10)}</td>
+                </tr>
+              ))
+            ) : (
+              <tr>
+                <td style={styles.td} colSpan={5}>
+                  No saved adjustment yet.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    )
+  }
+
+  function renderSavedRejectDetailTable() {
+    return (
+      <div style={styles.modalTableWrap}>
+        <table style={styles.table}>
+          <thead>
+            <tr>
+              <th style={styles.th}>Saved Reason</th>
+              <th style={styles.th}>Grade</th>
+              <th style={styles.th}>Size</th>
+              <th style={styles.th}>Qty</th>
+            </tr>
+          </thead>
+          <tbody>
+            {selectedRejectSortedExistingDetails.length ? (
+              selectedRejectSortedExistingDetails.map((item, index) => (
+                <tr key={`${item.id}-${item.arkline_qc_id || 'reject'}-${index}`}>
+                  <td style={styles.td}>{item.reason?.reason_name || '-'}</td>
+                  <td style={styles.td}>{item.grade}</td>
+                  <td style={styles.td}>{item.size}</td>
+                  <td style={styles.td}>{item.qty}</td>
+                </tr>
+              ))
+            ) : (
+              <tr>
+                <td style={styles.td} colSpan={4}>
+                  No saved reject detail yet.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    )
+  }
+
+  function renderReadOnlyRejectTimelineTable() {
+    return (
+      <div style={styles.modalTableWrap}>
+        <table style={styles.table}>
+          <thead>
+            <tr>
+              <th style={styles.th}>QC Date</th>
+              <th style={{ ...styles.th, ...styles.thCenter }}>Grade A</th>
+              <th style={{ ...styles.th, ...styles.thCenter }}>Grade B</th>
+              <th style={{ ...styles.th, ...styles.thCenter }}>Grade C</th>
+              <th style={{ ...styles.th, ...styles.thCenter }}>Total Inspected</th>
+            </tr>
+          </thead>
+          <tbody>
+            {readOnlyRejectTimelineRows.length ? (
+              readOnlyRejectTimelineRows.map((item) => (
+                <tr key={item.dateKey}>
+                  <td style={styles.td}>{item.dateKey === 'unknown' ? '-' : formatDisplayDateOnly(item.dateKey)}</td>
+                  <td style={{ ...styles.td, ...styles.tdCenter }}>{formatNumber(item.qtyA)}</td>
+                  <td style={{ ...styles.td, ...styles.tdCenter }}>{formatNumber(item.qtyB)}</td>
+                  <td style={{ ...styles.td, ...styles.tdCenter }}>{formatNumber(item.qtyC)}</td>
+                  <td style={{ ...styles.td, ...styles.tdCenter }}>{formatNumber(item.checked)}</td>
+                </tr>
+              ))
+            ) : (
+              <tr>
+                <td style={styles.td} colSpan={5}>
+                  No QC timeline found for this detail.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    )
+  }
+
+  function renderRejectInspectorTable() {
+    return (
+      <div style={styles.inspectorTableWrap}>
+        <table style={styles.table}>
+          <thead>
+            <tr>
+              <th style={{ ...styles.th, ...styles.inspectorTh }}>Inspector</th>
+              <th style={{ ...styles.th, ...styles.thCenter, ...styles.inspectorTh }}>Grade A</th>
+              <th style={{ ...styles.th, ...styles.thCenter, ...styles.inspectorTh }}>Grade B</th>
+              <th style={{ ...styles.th, ...styles.thCenter, ...styles.inspectorTh }}>Grade C</th>
+              <th style={{ ...styles.th, ...styles.thCenter, ...styles.inspectorTh }}>Checked</th>
+            </tr>
+          </thead>
+          <tbody>
+            {selectedRejectInspectorRows.length ? (
+              selectedRejectInspectorRows.map((item) => (
+                <tr key={item.inspectorKey}>
+                  <td style={{ ...styles.td, ...styles.inspectorTd }}>{item.inspector}</td>
+                  <td style={{ ...styles.td, ...styles.tdCenter, ...styles.inspectorTd }}>{item.qtyA}</td>
+                  <td style={{ ...styles.td, ...styles.tdCenter, ...styles.inspectorTd }}>{item.qtyB}</td>
+                  <td style={{ ...styles.td, ...styles.tdCenter, ...styles.inspectorTd }}>{item.qtyC}</td>
+                  <td style={{ ...styles.td, ...styles.tdCenter, ...styles.inspectorTd }}>{item.checked}</td>
+                </tr>
+              ))
+            ) : (
+              <tr>
+                <td style={{ ...styles.td, ...styles.inspectorTd }} colSpan={5}>
+                  No inspector summary found for this detail.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    )
+  }
+
+  function renderReadOnlyRejectSection(sectionKey, title, meta, content) {
+    const expanded = readOnlyRejectSections[sectionKey] !== false
+
+    return (
+      <div style={styles.readOnlyRejectSection}>
+        <button type="button" style={styles.readOnlyRejectSectionHeader} onClick={() => toggleReadOnlyRejectSection(sectionKey)}>
+          <span>{title}</span>
+          <span style={styles.readOnlyRejectSectionMeta}>
+            {meta ? `${meta} ` : ''}
+            {expanded ? '-' : '+'}
+          </span>
+        </button>
+        {expanded ? <div style={styles.readOnlyRejectSectionBody}>{content}</div> : null}
       </div>
     )
   }
@@ -4608,18 +4870,20 @@ export default function QcDashboardPage() {
                 <button type="button" onClick={() => setRejectDetailSummary(null)} style={styles.secondaryButton}>
                   Close
                 </button>
-                <button
-                  type="button"
-                  onClick={handleSaveRejectDetail}
-                  disabled={savingRejectDetail || !canEditArklineRejectDetail}
-                  style={{
-                    ...styles.primaryButton,
-                    ...(!canEditArklineRejectDetail || savingRejectDetail ? { opacity: 0.55, cursor: 'not-allowed' } : {}),
-                  }}
-                  title={!canEditArklineRejectDetail ? rejectDetailReadOnlyReason : 'Save detail'}
-                >
-                  {savingRejectDetail ? 'Saving...' : 'Save Detail'}
-                </button>
+                {canEditArklineRejectDetail ? (
+                  <button
+                    type="button"
+                    onClick={handleSaveRejectDetail}
+                    disabled={savingRejectDetail}
+                    style={{
+                      ...styles.primaryButton,
+                      ...(savingRejectDetail ? { opacity: 0.55, cursor: 'not-allowed' } : {}),
+                    }}
+                    title="Save detail"
+                  >
+                    {savingRejectDetail ? 'Saving...' : 'Save Detail'}
+                  </button>
+                ) : null}
               </div>
             </div>
 
@@ -4653,47 +4917,47 @@ export default function QcDashboardPage() {
               </div>
             </div>
 
-            <div style={styles.inspectorSection}>
-              <button type="button" style={{ ...styles.inspectorSectionHeader, cursor: 'default' }}>
-                <span style={styles.inspectorSectionTitle}>Detail Summary</span>
-                <span style={styles.inspectorSectionMeta}>{selectedRejectInspectorRows.length} inspectors</span>
-              </button>
-              <div style={styles.inspectorSectionBody}>
-                <div style={styles.inspectorTableWrap}>
-                  <table style={styles.table}>
-                    <thead>
-                      <tr>
-                        <th style={{ ...styles.th, ...styles.inspectorTh }}>Inspector</th>
-                        <th style={{ ...styles.th, ...styles.thCenter, ...styles.inspectorTh }}>Grade A</th>
-                        <th style={{ ...styles.th, ...styles.thCenter, ...styles.inspectorTh }}>Grade B</th>
-                        <th style={{ ...styles.th, ...styles.thCenter, ...styles.inspectorTh }}>Grade C</th>
-                        <th style={{ ...styles.th, ...styles.thCenter, ...styles.inspectorTh }}>Checked</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {selectedRejectInspectorRows.length ? (
-                        selectedRejectInspectorRows.map((item) => (
-                          <tr key={item.inspectorKey}>
-                            <td style={{ ...styles.td, ...styles.inspectorTd }}>{item.inspector}</td>
-                            <td style={{ ...styles.td, ...styles.tdCenter, ...styles.inspectorTd }}>{item.qtyA}</td>
-                            <td style={{ ...styles.td, ...styles.tdCenter, ...styles.inspectorTd }}>{item.qtyB}</td>
-                            <td style={{ ...styles.td, ...styles.tdCenter, ...styles.inspectorTd }}>{item.qtyC}</td>
-                            <td style={{ ...styles.td, ...styles.tdCenter, ...styles.inspectorTd }}>{item.checked}</td>
-                          </tr>
-                        ))
-                      ) : (
-                        <tr>
-                          <td style={{ ...styles.td, ...styles.inspectorTd }} colSpan={5}>
-                            No inspector summary found for this detail.
-                          </td>
-                        </tr>
-                      )}
-                    </tbody>
-                  </table>
+            {canEditArklineRejectDetail ? (
+              <div style={styles.inspectorSection}>
+                <button type="button" style={{ ...styles.inspectorSectionHeader, cursor: 'default' }}>
+                  <span style={styles.inspectorSectionTitle}>Detail Summary</span>
+                  <span style={styles.inspectorSectionMeta}>{selectedRejectInspectorRows.length} inspectors</span>
+                </button>
+                <div style={styles.inspectorSectionBody}>
+                  {renderRejectInspectorTable()}
                 </div>
               </div>
-            </div>
+            ) : null}
 
+            {!canEditArklineRejectDetail ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                {renderReadOnlyRejectSection(
+                  'rejectDetail',
+                  'Arkline Reject Detail',
+                  `${formatNumber(readOnlyRejectReasonSummaryRows.reduce((sum, item) => sum + Number(item.totalQty || 0), 0))} qty`,
+                  renderReadOnlyRejectSummaryTable()
+                )}
+                {renderReadOnlyRejectSection(
+                  'adjustment',
+                  'Adjustment',
+                  `${formatNumber(selectedRejectExistingAdjustments.length)} rows`,
+                  renderRejectAdjustmentTable()
+                )}
+                {renderReadOnlyRejectSection(
+                  'timeline',
+                  'Grading Timeline',
+                  `${formatNumber(readOnlyRejectTimelineRows.length)} dates`,
+                  renderReadOnlyRejectTimelineTable()
+                )}
+                {renderReadOnlyRejectSection(
+                  'inspector',
+                  'Inspector in Charge',
+                  `${formatNumber(selectedRejectInspectorRows.length)} inspectors`,
+                  renderRejectInspectorTable()
+                )}
+              </div>
+            ) : (
+              <>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
               <div style={styles.headerRow}>
                 <div>
@@ -4701,10 +4965,6 @@ export default function QcDashboardPage() {
                 </div>
               </div>
 
-              {!canEditArklineRejectDetail ? (
-                renderReadOnlyRejectSummaryTable()
-              ) : (
-              <>
               <datalist id="arkline-reject-size-options">
                 {selectedRejectSizeOptions.map((size) => (
                   <option key={size} value={size} />
@@ -4799,8 +5059,6 @@ export default function QcDashboardPage() {
                   </div>
                 </div>
               ))}
-              </>
-              )}
             </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
@@ -4927,70 +5185,12 @@ export default function QcDashboardPage() {
                 </div>
               </div>
 
-              <div style={styles.modalTableWrap}>
-                <table style={styles.table}>
-                  <thead>
-                    <tr>
-                      <th style={styles.th}>Adjustment Type</th>
-                      <th style={styles.th}>Grade</th>
-                      <th style={styles.th}>Qty</th>
-                      <th style={styles.th}>Notes</th>
-                      <th style={styles.th}>Date</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {selectedRejectExistingAdjustments.length ? (
-                      selectedRejectExistingAdjustments.map((item) => (
-                        <tr key={item.id}>
-                          <td style={styles.td}>{getArklineAdjustmentLabel(item.adjustment_type)}</td>
-                          <td style={styles.td}>{getArklineAdjustmentGradeLabel(item)}</td>
-                          <td style={styles.td}>{item.qty}</td>
-                          <td style={styles.td}>{item.notes || '-'}</td>
-                          <td style={styles.td}>{String(getArklineAdjustmentDateValue(item) || '-').slice(0, 10)}</td>
-                        </tr>
-                      ))
-                    ) : (
-                      <tr>
-                        <td style={styles.td} colSpan={5}>
-                          No saved adjustment yet.
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
+              {renderRejectAdjustmentTable()}
             </div>
 
-            <div style={styles.modalTableWrap}>
-              <table style={styles.table}>
-                <thead>
-                  <tr>
-                    <th style={styles.th}>Saved Reason</th>
-                    <th style={styles.th}>Grade</th>
-                    <th style={styles.th}>Size</th>
-                    <th style={styles.th}>Qty</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {selectedRejectSortedExistingDetails.length ? (
-                    selectedRejectSortedExistingDetails.map((item, index) => (
-                      <tr key={`${item.id}-${item.arkline_qc_id || 'reject'}-${index}`}>
-                        <td style={styles.td}>{item.reason?.reason_name || '-'}</td>
-                        <td style={styles.td}>{item.grade}</td>
-                        <td style={styles.td}>{item.size}</td>
-                        <td style={styles.td}>{item.qty}</td>
-                      </tr>
-                    ))
-                  ) : (
-                    <tr>
-                      <td style={styles.td} colSpan={4}>
-                        No saved reject detail yet.
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
+            {renderSavedRejectDetailTable()}
+              </>
+            )}
 
           </div>
         </div>
