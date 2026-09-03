@@ -816,9 +816,136 @@ function buildQcGradeSummary(rows, adjustmentRows = []) {
   }
 }
 
-function buildRejectDetailSummary(rows, qcSummary = {}) {
+function applyArklineAdjustmentsToRejectRows(summaryRows = [], adjustmentRows = []) {
+  const rows = summaryRows.map((row) => ({ ...row }))
+
+  function findRowsByGrade(grade) {
+    const normalizedGrade = normalizeQcGrade(grade)
+    if (!normalizedGrade) return []
+    return rows
+      .filter((row) => normalizeQcGrade(row.grade) === normalizedGrade && Number(row.qty || 0) > 0)
+      .sort((left, right) => Number(right.qty || 0) - Number(left.qty || 0))
+  }
+
+  function reduceRejectGrade(grade, rawQty) {
+    const qty = Math.max(0, Number(rawQty || 0))
+    if (!qty) return []
+
+    let remainingQty = qty
+    const removedRows = []
+
+    for (const row of findRowsByGrade(grade)) {
+      if (remainingQty <= 0) break
+      const removableQty = Math.min(Number(row.qty || 0), remainingQty)
+      row.qty -= removableQty
+      remainingQty -= removableQty
+      removedRows.push({
+        reason: row.reason,
+        grade: normalizeQcGrade(row.grade),
+        isRepairable: row.isRepairable,
+        qty: removableQty,
+      })
+    }
+
+    return removedRows
+  }
+
+  function addRejectQty({ reason = 'Belum dikategorikan', grade, isRepairable = false, qty }) {
+    const targetGrade = normalizeQcGrade(grade)
+    const numericQty = Math.max(0, Number(qty || 0))
+    if (!targetGrade || !numericQty) return
+
+    const key = `${isRepairable ? 'repairable' : 'non-repairable'}::${reason}::${targetGrade}`
+    const existing = rows.find((row) => row.key === key)
+    if (existing) {
+      existing.qty += numericQty
+      return
+    }
+
+    rows.push({
+      key,
+      reason,
+      grade: targetGrade,
+      isRepairable,
+      qty: numericQty,
+    })
+  }
+
+  function moveRejectQty(fromGrade, toGrade, rawQty) {
+    const sourceGrade = normalizeQcGrade(fromGrade)
+    const targetGrade = normalizeQcGrade(toGrade)
+    const qty = Math.max(0, Number(rawQty || 0))
+    if (!sourceGrade || !targetGrade || sourceGrade === targetGrade || !qty) return
+
+    const removedRows = reduceRejectGrade(sourceGrade, qty)
+    if (targetGrade === 'A') return
+
+    const movedQty = removedRows.reduce((sum, row) => sum + Number(row.qty || 0), 0)
+    if (!movedQty) {
+      addRejectQty({ grade: targetGrade, qty, reason: 'Belum dikategorikan', isRepairable: false })
+      return
+    }
+
+    removedRows.forEach((row) => {
+      addRejectQty({
+        reason: row.reason,
+        grade: targetGrade,
+        isRepairable: row.isRepairable,
+        qty: row.qty,
+      })
+    })
+  }
+
+  ;(adjustmentRows || []).forEach((adjustment) => {
+    const type = String(adjustment?.adjustment_type || '').trim().toLowerCase()
+    const qty = Number(adjustment?.qty || 0)
+    if (!qty) return
+
+    if (type === 'transfer') {
+      if (qty > 0) moveRejectQty(adjustment.from_grade, adjustment.to_grade, qty)
+      if (qty < 0) moveRejectQty(adjustment.to_grade, adjustment.from_grade, Math.abs(qty))
+      return
+    }
+
+    if (type === 'bc_to_a') {
+      if (qty > 0) {
+        const removedFromC = reduceRejectGrade('C', qty).reduce((sum, row) => sum + Number(row.qty || 0), 0)
+        reduceRejectGrade('B', Math.max(0, qty - removedFromC))
+      } else {
+        addRejectQty({ grade: 'C', qty: Math.abs(qty), reason: 'Belum dikategorikan', isRepairable: false })
+      }
+      return
+    }
+
+    if (type === 'inspector_data_error') {
+      const affectedGrade = normalizeQcGrade(adjustment.affected_grade)
+      if (affectedGrade) {
+        if (qty > 0) reduceRejectGrade(affectedGrade, qty)
+        if (qty < 0 && affectedGrade !== 'A') {
+          addRejectQty({ grade: affectedGrade, qty: Math.abs(qty), reason: 'Belum dikategorikan', isRepairable: false })
+        }
+        return
+      }
+
+      if (qty > 0) {
+        const removedFromC = reduceRejectGrade('C', qty).reduce((sum, row) => sum + Number(row.qty || 0), 0)
+        reduceRejectGrade('B', Math.max(0, qty - removedFromC))
+      } else {
+        addRejectQty({ grade: 'C', qty: Math.abs(qty), reason: 'Belum dikategorikan', isRepairable: false })
+      }
+    }
+  })
+
+  return rows
+    .filter((row) => Number(row.qty || 0) > 0)
+    .sort((left, right) => {
+      if (right.qty !== left.qty) return right.qty - left.qty
+      return left.reason.localeCompare(right.reason)
+    })
+}
+
+function buildRejectDetailSummary(rows, qcSummary = {}, adjustmentRows = []) {
   const grouped = new Map()
-  let identifiedQty = 0
 
   ;(rows || []).forEach((row) => {
     const reason = String(row?.reason?.reason_name || row?.reason_name || '').trim() || 'Belum dikategorikan'
@@ -828,18 +955,15 @@ function buildRejectDetailSummary(rows, qcSummary = {}) {
     const qty = Number(row?.qty || 0)
     const current = grouped.get(key) || { key, reason, grade, isRepairable, qty: 0 }
     current.qty += qty
-    identifiedQty += qty
     grouped.set(key, current)
   })
 
-  const summaryRows = Array.from(grouped.values()).sort((left, right) => {
-    if (right.qty !== left.qty) return right.qty - left.qty
-    return left.reason.localeCompare(right.reason)
-  })
+  const adjustedSummaryRows = applyArklineAdjustmentsToRejectRows(Array.from(grouped.values()), adjustmentRows)
+  const adjustedIdentifiedQty = adjustedSummaryRows.reduce((sum, row) => sum + Number(row.qty || 0), 0)
 
-  const unidentifiedQty = Math.max(Number(qcSummary.qtyB || 0) + Number(qcSummary.qtyC || 0) - identifiedQty, 0)
+  const unidentifiedQty = Math.max(Number(qcSummary.qtyB || 0) + Number(qcSummary.qtyC || 0) - adjustedIdentifiedQty, 0)
   if (unidentifiedQty > 0) {
-    summaryRows.push({
+    adjustedSummaryRows.push({
       key: 'unidentified',
       reason: 'Belum dikategorikan',
       grade: 'B/C',
@@ -848,14 +972,17 @@ function buildRejectDetailSummary(rows, qcSummary = {}) {
     })
   }
 
-  return summaryRows
+  return adjustedSummaryRows
 }
 
 function buildRepairabilitySummary(rows = []) {
   return (rows || []).reduce(
     (accumulator, row) => {
       const qty = Number(row?.qty || 0)
-      const isRepairable = Boolean(row?.reason?.is_repairable)
+      const isRepairable =
+        typeof row?.isRepairable === 'boolean'
+          ? row.isRepairable
+          : Boolean(row?.reason?.is_repairable)
       if (isRepairable) {
         accumulator.repairableQty += qty
       } else {
@@ -1121,14 +1248,19 @@ function getQcSampleReportData(productDetail, receiptDateFilter = 'all') {
   const { startDate, nextDate } = selectedOption
   const qcRows = (productDetail?.qcRows || []).filter((row) => isDateWithinReceiptPeriod(getQcRowActivityDate(row), startDate, nextDate))
   const qcIds = new Set(qcRows.map((row) => String(row.id || '')).filter(Boolean))
+  const qcCycleIds = new Set(qcRows.map((row) => String(row.qc_cycle_id || '')).filter(Boolean))
   const rejectRows = (productDetail?.qcRejectRows || []).filter(
-    (row) =>
-      (row.arkline_qc_id && qcIds.has(String(row.arkline_qc_id))) ||
-      isDateWithinReceiptPeriod(row.created_at, startDate, nextDate)
+    (row) => {
+      const rowQcId = String(row.arkline_qc_id || '').trim()
+      if (rowQcId) return qcIds.has(rowQcId)
+      return isDateWithinReceiptPeriod(row.created_at, startDate, nextDate)
+    }
   )
-  const adjustmentRows = (productDetail?.qcRejectAdjustments || []).filter((row) =>
-    isDateWithinReceiptPeriod(getArklineAdjustmentDateValue(row), startDate, nextDate)
-  )
+  const adjustmentRows = (productDetail?.qcRejectAdjustments || []).filter((row) => {
+    const rowCycleId = String(row.qc_cycle_id || '').trim()
+    const matchesCycle = rowCycleId ? qcCycleIds.has(rowCycleId) : true
+    return matchesCycle && isDateWithinReceiptPeriod(getArklineAdjustmentDateValue(row), startDate, nextDate)
+  })
   const receipts = (productDetail?.receipts || []).filter((row) => isDateWithinReceiptPeriod(row.receive_date, startDate, nextDate))
 
   return { options, selectedOption, qcRows, rejectRows, adjustmentRows, receipts }
@@ -2251,7 +2383,7 @@ export default function ArklineProgressOverviewPage() {
         qcReportData.qcRows || [],
         qcReportData.adjustmentRows || []
       )
-      const rejectSummary = buildRejectDetailSummary(qcReportData.rejectRows || [], qcSummary)
+      const rejectSummary = buildRejectDetailSummary(qcReportData.rejectRows || [], qcSummary, qcReportData.adjustmentRows || [])
       const receivingQty =
         qcReportData.selectedOption?.value === 'all'
           ? getReceivingQtyBase(selectedProductDetail.receipts || [], selectedProductDetail.financeSummary?.actualQty || 0)
@@ -3401,8 +3533,8 @@ export default function ArklineProgressOverviewPage() {
                           qcReportData.qcRows || [],
                           qcReportData.adjustmentRows || []
                         )
-                        const rejectSummary = buildRejectDetailSummary(qcReportData.rejectRows || [], qcSummary)
-                        const repairabilitySummary = buildRepairabilitySummary(qcReportData.rejectRows || [])
+                        const rejectSummary = buildRejectDetailSummary(qcReportData.rejectRows || [], qcSummary, qcReportData.adjustmentRows || [])
+                        const repairabilitySummary = buildRepairabilitySummary(rejectSummary)
                         const receivingQty =
                           qcReportData.selectedOption?.value === 'all'
                             ? getReceivingQtyBase(selectedProductDetail.receipts || [], selectedProductDetail.financeSummary?.actualQty || 0)
