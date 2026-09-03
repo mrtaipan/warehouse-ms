@@ -1328,6 +1328,13 @@ function createRejectDraftRow(overrides = {}) {
   }
 }
 
+function hasResolvableRejectDraftReason(row) {
+  const reasonId = String(row?.rejectReasonId || row?.reject_reason_id || '').trim()
+  if (!reasonId) return false
+  if (reasonId !== '__new__') return true
+  return Boolean(String(row?.newReasonName || '').trim())
+}
+
 function buildGroupedRejectDraftRows(rows = []) {
   const grouped = new Map()
 
@@ -2754,7 +2761,10 @@ export default function QcDashboardPage() {
     () => readOnlyRejectReasonSummaryRows.filter((item) => !item.isRepairable),
     [readOnlyRejectReasonSummaryRows]
   )
-  const selectedRejectDetailQty = rejectDraftRows.reduce((sum, item) => sum + Number(item.qty || 0), 0)
+  const selectedRejectDetailQty = rejectDraftRows.reduce(
+    (sum, item) => sum + (hasResolvableRejectDraftReason(item) ? Number(item.qty || 0) : 0),
+    0
+  )
   const selectedRejectAdjustedBaseSummary = useMemo(() => {
     const baseQtyA = selectedRejectTaskRows.reduce((sum, item) => sum + Number(item.qty_a || 0), 0)
     const baseQtyB = selectedRejectTaskRows.reduce((sum, item) => sum + Number(item.qty_b || 0), 0)
@@ -3503,10 +3513,6 @@ export default function QcDashboardPage() {
         throw new Error('Tambahkan minimal satu baris reject detail.')
       }
 
-      if (selectedRejectExpectedRejectQty > 0 && selectedRejectGap !== 0) {
-        throw new Error('Total detail + adjustment harus sama dengan total Grade B/C awal.')
-      }
-
       validRows.forEach((row) => {
         if (!['B', 'C'].includes(String(row.grade || '').toUpperCase())) {
           throw new Error('Grade reject hanya bisa B atau C.')
@@ -3514,10 +3520,17 @@ export default function QcDashboardPage() {
         if (!row.rejectReasonId) {
           throw new Error('Pilih reason untuk setiap baris reject.')
         }
+        if (row.rejectReasonId === '__new__' && !String(row.newReasonName || '').trim()) {
+          throw new Error('Isi reason baru dulu sebelum save.')
+        }
         if (!String(row.size || '').trim()) {
           throw new Error('Pilih size untuk setiap baris reject.')
         }
       })
+
+      if (selectedRejectExpectedRejectQty > 0 && selectedRejectGap !== 0) {
+        throw new Error('Total detail + adjustment harus sama dengan total Grade B/C awal.')
+      }
 
       const rowsWithReasons = []
       for (const row of validRows) {
