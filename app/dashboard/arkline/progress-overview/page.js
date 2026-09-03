@@ -868,7 +868,7 @@ function buildRepairabilitySummary(rows = []) {
 }
 
 function buildReturnReQcSummary(batch = {}) {
-  return (batch.qcRows || []).reduce(
+  const summary = (batch.qcRows || []).reduce(
     (summary, row) => {
       summary.a += Number(row?.qty_a || 0)
       summary.b += Number(row?.qty_b || 0)
@@ -877,6 +877,13 @@ function buildReturnReQcSummary(batch = {}) {
     },
     { a: 0, b: 0, c: 0 }
   )
+
+  const adjustedTotals = applyArklineAdjustmentsToGradeTotals(summary.a, summary.b, summary.c, batch.adjustmentRows || [])
+  return {
+    a: adjustedTotals.qtyA,
+    b: adjustedTotals.qtyB,
+    c: adjustedTotals.qtyC,
+  }
 }
 
 function buildReturnSizeSummary(rows = [], qtyKeys = ['qty']) {
@@ -905,15 +912,18 @@ function formatReturnReQcResult(batch = {}) {
   return `A ${formatNumber(summary.a)} / B ${formatNumber(summary.b)} / C ${formatNumber(summary.c)}`
 }
 
-function buildReturnReasonSummary(rows = []) {
-  return Array.from(
+function buildReturnReasonSummary(rows = [], qcSummary = {}) {
+  let identifiedQty = 0
+  const summaryRows = Array.from(
     (rows || []).reduce((grouped, row) => {
-      const reason = String(row?.reasonName || row?.reason?.reason_name || 'Reject reason').trim() || 'Reject reason'
+      const reason = String(row?.reasonName || row?.reason?.reason_name || 'Belum dikategorikan').trim() || 'Belum dikategorikan'
       const grade = String(row?.grade || '-').trim().toUpperCase() || '-'
       const size = String(row?.size || '-').trim().toUpperCase() || '-'
+      const qty = Number(row?.qty || 0)
       const key = `${reason}::${grade}::${size}`
       const current = grouped.get(key) || { key, reason, grade, size, qty: 0 }
-      current.qty += Number(row?.qty || 0)
+      current.qty += qty
+      identifiedQty += qty
       grouped.set(key, current)
       return grouped
     }, new Map()).values()
@@ -924,6 +934,19 @@ function buildReturnReasonSummary(rows = []) {
     if (gradeCompare) return gradeCompare
     return left.size.localeCompare(right.size, undefined, { numeric: true })
   })
+
+  const unidentifiedQty = Math.max(Number(qcSummary.b || 0) + Number(qcSummary.c || 0) - identifiedQty, 0)
+  if (unidentifiedQty > 0) {
+    summaryRows.push({
+      key: `uncategorized::B/C::ALL::${unidentifiedQty}`,
+      reason: 'Belum dikategorikan',
+      grade: 'B/C',
+      size: 'ALL',
+      qty: unidentifiedQty,
+    })
+  }
+
+  return summaryRows
 }
 
 function formatDateLabel(value) {
@@ -1074,6 +1097,10 @@ function getArklineAdjustmentDateValue(row = {}) {
 
 function isInitialArklineQcRow(row = {}) {
   return String(row?.qc_type || 'INITIAL').trim().toUpperCase() !== 'RE_QC'
+}
+
+function isReturnArklineQcRow(row = {}) {
+  return String(row?.qc_type || '').trim().toUpperCase() === 'RE_QC' || Boolean(row?.source_return_batch_id)
 }
 
 function getQcSampleReportData(productDetail, receiptDateFilter = 'all') {
@@ -1601,6 +1628,8 @@ export default function ArklineProgressOverviewPage() {
       qcRows: [],
       qcRejectRows: [],
       qcRejectAdjustments: [],
+      returnQcRows: [],
+      returnQcRejectAdjustments: [],
       financeSummary: null,
       sizeBreakdown: [],
     })
@@ -1677,8 +1706,13 @@ export default function ArklineProgressOverviewPage() {
       })
       const qcCandidateRows = qcRowsByItem.length ? qcRowsByItem : (qcRowsRaw || []).filter((row) => String(row?.sku_induk || '').trim().toUpperCase() === normalizedSku)
       const qcRows = qcCandidateRows.filter(isInitialArklineQcRow)
+      const returnQcRows = qcCandidateRows.filter(isReturnArklineQcRow)
       const qcTaskIds = qcRows.map((row) => row.id).filter(Boolean)
       const qcCycleIds = new Set(qcRows.map((row) => String(row.qc_cycle_id || '')).filter(Boolean))
+      const returnQcTaskIds = returnQcRows.map((row) => row.id).filter(Boolean)
+      const returnQcTaskIdSet = new Set(returnQcTaskIds.map((id) => String(id)))
+      const returnQcCycleIds = new Set(returnQcRows.map((row) => String(row.qc_cycle_id || '')).filter(Boolean))
+      const allQcTaskIds = Array.from(new Set([...qcTaskIds, ...returnQcTaskIds].map((id) => String(id)).filter(Boolean)))
       const rejectDetailRows = await loadOptionalRows(() => {
         let query = supabase
           .from('arkline_qc_reject_details')
@@ -1701,15 +1735,17 @@ export default function ArklineProgressOverviewPage() {
           )
           .order('created_at', { ascending: false })
 
-        if (!qcTaskIds.length) return query.limit(0)
+        if (!allQcTaskIds.length) return query.limit(0)
 
-        query = query.in('arkline_qc_id', qcTaskIds)
+        query = query.in('arkline_qc_id', allQcTaskIds)
 
         if (normalizedItemId) query = query.eq('arkline_po_item_id', normalizedItemId)
         else if (selectedPoDetail.poId && normalizedSku) query = query.eq('po_id', selectedPoDetail.poId).eq('sku_induk', normalizedSku)
 
         return query
       })
+      const initialRejectDetailRows = (rejectDetailRows || []).filter((row) => !returnQcTaskIdSet.has(String(row.arkline_qc_id || '')))
+      const returnRejectDetailRows = (rejectDetailRows || []).filter((row) => returnQcTaskIdSet.has(String(row.arkline_qc_id || '')))
       const rejectAdjustmentRowsRaw = await loadOptionalRows(() => {
         let query = supabase
           .from('arkline_qc_reject_adjustments')
@@ -1729,6 +1765,10 @@ export default function ArklineProgressOverviewPage() {
       const rejectAdjustmentRows = (rejectAdjustmentRowsRaw || []).filter((row) => {
         const cycleId = String(row?.qc_cycle_id || '')
         return !cycleId || qcCycleIds.has(cycleId)
+      })
+      const returnRejectAdjustmentRows = (rejectAdjustmentRowsRaw || []).filter((row) => {
+        const cycleId = String(row?.qc_cycle_id || '')
+        return cycleId && returnQcCycleIds.has(cycleId)
       })
 
       const returnBatchIds = (returnBatchRows || []).map((row) => row.id).filter(Boolean)
@@ -1769,14 +1809,16 @@ export default function ArklineProgressOverviewPage() {
         ])
       })
       const returnHistory = (returnBatchRows || []).map((batch) => {
-        const batchQcRows = qcRows.filter((row) => String(row.source_return_batch_id || '') === String(batch.id))
+        const batchQcRows = returnQcRows.filter((row) => String(row.source_return_batch_id || '') === String(batch.id))
         const batchQcIds = new Set(batchQcRows.map((row) => String(row.id)))
+        const batchQcCycleIds = new Set(batchQcRows.map((row) => String(row.qc_cycle_id || '')).filter(Boolean))
         return {
           ...batch,
           lines: linesByBatch.get(String(batch.id)) || [],
           receipts: receiptsByBatch.get(String(batch.id)) || [],
           qcRows: batchQcRows,
-          latestRejectRows: (rejectDetailRows || []).filter((row) => batchQcIds.has(String(row.arkline_qc_id))),
+          adjustmentRows: returnRejectAdjustmentRows.filter((row) => batchQcCycleIds.has(String(row.qc_cycle_id || ''))),
+          latestRejectRows: returnRejectDetailRows.filter((row) => batchQcIds.has(String(row.arkline_qc_id))),
         }
       })
 
@@ -1833,8 +1875,10 @@ export default function ArklineProgressOverviewPage() {
         updates: updateRows,
         payments: paymentRows,
         qcRows,
-        qcRejectRows: rejectDetailRows,
+        qcRejectRows: initialRejectDetailRows,
         qcRejectAdjustments: rejectAdjustmentRows,
+        returnQcRows,
+        returnQcRejectAdjustments: returnRejectAdjustmentRows,
         returnHistory,
         sizeBreakdown,
         financeSummary: {
@@ -2462,7 +2506,7 @@ export default function ArklineProgressOverviewPage() {
         ensureSpace(42)
         const reQcResult = formatReturnReQcResult(batch)
         const originalReasons = buildReturnReasonSummary(batch.lines || [])
-        const latestReasons = buildReturnReasonSummary(batch.latestRejectRows || [])
+        const latestReasons = buildReturnReasonSummary(batch.latestRejectRows || [], buildReturnReQcSummary(batch))
         const sentSizeSummary = buildReturnSizeSummary(batch.lines || [], ['qty', 'sent_qty'])
         const returnedSizeSummary = buildReturnSizeSummary(batch.receipts || [], ['received_qty', 'qty'])
         const returnedDates = Array.from(new Set((batch.receipts || []).map((receipt) => formatDateLabel(receipt.receive_date)).filter((date) => date !== '-'))).join(', ')
@@ -3510,8 +3554,8 @@ export default function ArklineProgressOverviewPage() {
                               const returnedDates = Array.from(
                                 new Set((batch.receipts || []).map((receipt) => formatDateLabel(receipt.receive_date)))
                               ).join(', ')
-                              const latestRejectSummary = buildReturnReasonSummary(batch.latestRejectRows || [])
                               const reQcSummary = buildReturnReQcSummary(batch)
+                              const latestRejectSummary = buildReturnReasonSummary(batch.latestRejectRows || [], reQcSummary)
                               const hasReQcDetail = (batch.qcRows || []).length > 0 || latestRejectSummary.length > 0
                               const canCloseShort =
                                 (role === 'admin' || access.progressKanbanEdit) &&
@@ -3580,9 +3624,35 @@ export default function ArklineProgressOverviewPage() {
                                               <strong>{formatNumber(reQcSummary.a + reQcSummary.b + reQcSummary.c)}</strong>
                                             </div>
                                           </div>
+
+                                          {(batch.qcRows || []).length ? (
+                                            <div className={styles.returnHistoryRejectList}>
+                                              <span>Re-QC Tasks</span>
+                                              {(batch.qcRows || []).map((row) => (
+                                                <div key={row.id} className={styles.productDetailRow}>
+                                                  <div>
+                                                    <strong>
+                                                      Round {formatNumber(row.qc_round_number || 2)} / {String(row.status || '-').replaceAll('_', ' ')}
+                                                    </strong>
+                                                    <span>
+                                                      {row.assigned_to || 'No inspector'} / {formatDateLabel(getQcRowActivityDate(row))}
+                                                    </span>
+                                                  </div>
+                                                  <div className={styles.productDetailRowMeta}>
+                                                    <strong>
+                                                      A {formatNumber(row.qty_a)} / B {formatNumber(row.qty_b)} / C {formatNumber(row.qty_c)}
+                                                    </strong>
+                                                  </div>
+                                                </div>
+                                              ))}
+                                            </div>
+                                          ) : (
+                                            <div className={styles.emptyMini}>No Re-QC task has been recorded for this return batch.</div>
+                                          )}
+
                                           {latestRejectSummary.length ? (
                                             <div className={styles.returnHistoryRejectList}>
-                                              <span>Latest Reject Reasons</span>
+                                              <span>Latest Re-QC Reject Reasons</span>
                                               {latestRejectSummary.map((row) => (
                                                 <div key={row.key} className={styles.productDetailRow}>
                                                   <div>

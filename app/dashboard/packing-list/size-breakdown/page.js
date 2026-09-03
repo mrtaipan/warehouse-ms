@@ -2193,7 +2193,7 @@ function getDefaultAllocationTargets(rowQty = 0, modelTotalQty = 0) {
   if (modelTotalQty <= 15) return { mobTargetQty: 0, oiTargetQty: normalizedQty }
   if (modelTotalQty <= 80) return { mobTargetQty: normalizedQty, oiTargetQty: 0 }
 
-  const oiTargetQty = Math.ceil(normalizedQty * 0.15)
+  const oiTargetQty = Math.round(normalizedQty * 0.15)
   return {
     mobTargetQty: Math.max(0, normalizedQty - oiTargetQty),
     oiTargetQty,

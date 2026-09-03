@@ -155,7 +155,7 @@ export default function DeliveryReportClient() {
 
   return (
     <div
-      className={`${styles.deliveryApp} ${moduleId === 'summary' ? styles.summaryApp : ''} ${moduleId === 'delivery-order' ? styles.orderApp : ''} ${moduleId === 'barcode' ? styles.scannerApp : ''} ${moduleId === 'resolution' ? styles.resolutionApp : ''} ${showHome ? styles.homeApp : ''}`}
+      className={`${styles.deliveryApp} ${moduleId === 'summary' ? styles.summaryApp : ''} ${moduleId === 'delivery-order' ? styles.orderApp : ''} ${moduleId === 'barcode' ? styles.scannerApp : ''} ${moduleId === 'resolution' ? styles.resolutionApp : ''} ${moduleId === 'waybill' ? styles.waybillApp : ''} ${showHome ? styles.homeApp : ''}`}
       data-delivery-report
       data-delivery-home={showHome ? '' : undefined}
       data-delivery-summary={moduleId === 'summary' ? '' : undefined}
