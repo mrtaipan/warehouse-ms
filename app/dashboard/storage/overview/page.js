@@ -973,13 +973,22 @@ export default function StorageOverviewPage() {
     return arklineProducts.find((product) => product.label === selectedLabel) || null
   }, [arklineProducts, isRegisterArklineLocation, registerForm.itemName])
 
+  const moveSourceGroupCode = getLocationStorageGroup(moveModalEntry?.location)
+  const moveEligibleRackLocations = rackLocations.filter((item) => {
+    if (!moveSourceGroupCode) {
+      return true
+    }
+
+    return getLocationStorageGroup(item) === moveSourceGroupCode
+  })
+
   const moveLocationTypeOptions = Array.from(
-    new Set(rackLocations.map((item) => item.location_type).filter(Boolean))
+    new Set(moveEligibleRackLocations.map((item) => item.location_type).filter(Boolean))
   ).sort((left, right) => naturalSort.compare(String(left), String(right)))
 
   const moveLocationIdOptions = Array.from(
     new Set(
-      rackLocations
+      moveEligibleRackLocations
         .filter((item) => item.location_type === moveForm.locationType)
         .map((item) => item.location_id)
         .filter(Boolean)
@@ -988,7 +997,7 @@ export default function StorageOverviewPage() {
 
   const moveLocationCodeOptions = Array.from(
     new Set(
-      rackLocations
+      moveEligibleRackLocations
         .filter(
           (item) =>
             item.location_type === moveForm.locationType &&
@@ -1003,7 +1012,7 @@ export default function StorageOverviewPage() {
     .filter((option) => normalizeFilterValue(option).includes(normalizeFilterValue(moveForm.locationCode)))
     .slice(0, 80)
 
-  const moveSubLocationOptions = rackLocations
+  const moveSubLocationOptions = moveEligibleRackLocations
     .filter(
       (item) =>
         item.location_type === moveForm.locationType &&
@@ -2267,6 +2276,14 @@ export default function StorageOverviewPage() {
 
     if (String(selectedMoveLocation.id) === String(moveModalEntry.rack_location_id)) {
       setMoveModalError('Destination location is the same as the current location.')
+      setMoving(false)
+      return
+    }
+
+    const sourceGroupCode = getLocationStorageGroup(moveModalEntry.location)
+    const destinationGroupCode = getLocationStorageGroup(selectedMoveLocation)
+    if (sourceGroupCode && destinationGroupCode !== sourceGroupCode) {
+      setMoveModalError(`Destination must stay inside the ${sourceGroupCode} group.`)
       setMoving(false)
       return
     }
