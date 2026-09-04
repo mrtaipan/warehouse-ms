@@ -294,7 +294,8 @@ const styles = {
     position: 'absolute',
     top: 'calc(100% + 8px)',
     right: 0,
-    width: '240px',
+    width: '380px',
+    maxWidth: 'calc(100vw - 32px)',
     padding: '10px 12px',
     borderRadius: '10px',
     background: '#111827',
@@ -303,6 +304,7 @@ const styles = {
     fontWeight: '500',
     lineHeight: 1.5,
     textTransform: 'none',
+    whiteSpace: 'pre-line',
     zIndex: 20,
     boxShadow: '0 12px 28px rgba(15, 23, 42, 0.22)',
   },
@@ -2802,24 +2804,6 @@ export default function QcDashboardPage() {
     () => [...selectedRejectExistingDetails].sort((a, b) => compareRejectDetailRows(a, b, selectedRejectReasonNameById)),
     [selectedRejectExistingDetails, selectedRejectReasonNameById]
   )
-  const readOnlyRejectReasonSummaryRows = useMemo(
-    () =>
-      buildReadOnlyRejectReasonSummaryRows(
-        selectedRejectSortedExistingDetails,
-        selectedRejectReasonNameById,
-        selectedRejectReasonRepairableById,
-        selectedRejectTaskById
-      ),
-    [selectedRejectReasonNameById, selectedRejectReasonRepairableById, selectedRejectSortedExistingDetails, selectedRejectTaskById]
-  )
-  const repairableRejectReasonSummaryRows = useMemo(
-    () => readOnlyRejectReasonSummaryRows.filter((item) => item.isRepairable),
-    [readOnlyRejectReasonSummaryRows]
-  )
-  const unrepairableRejectReasonSummaryRows = useMemo(
-    () => readOnlyRejectReasonSummaryRows.filter((item) => !item.isRepairable),
-    [readOnlyRejectReasonSummaryRows]
-  )
   const selectedRejectDetailQty = rejectDraftRows.reduce(
     (sum, item) => sum + (hasResolvableRejectDraftReason(item) ? Number(item.qty || 0) : 0),
     0
@@ -2833,7 +2817,126 @@ export default function QcDashboardPage() {
   }, [selectedRejectApplicableAdjustments, selectedRejectTaskRows])
   const selectedRejectExpectedRejectQty = selectedRejectAdjustedBaseSummary.qtyB + selectedRejectAdjustedBaseSummary.qtyC
   const selectedRejectGap = selectedRejectExpectedRejectQty - selectedRejectDetailQty
+  const readOnlyRejectReasonSourceRows = useMemo(() => {
+    const detailQtyByTaskGrade = new Map()
+
+    selectedRejectSortedExistingDetails.forEach((item) => {
+      const taskId = String(item.arkline_qc_id || '')
+      const grade = String(item.grade || '').trim().toUpperCase()
+      if (!taskId || (grade !== 'B' && grade !== 'C')) return
+
+      const key = `${taskId}|||${grade}`
+      detailQtyByTaskGrade.set(key, Number(detailQtyByTaskGrade.get(key) || 0) + Number(item.qty || 0))
+    })
+
+    const detailQtyB = selectedRejectSortedExistingDetails
+      .filter((item) => String(item.grade || '').trim().toUpperCase() === 'B')
+      .reduce((sum, item) => sum + Number(item.qty || 0), 0)
+    const detailQtyC = selectedRejectSortedExistingDetails
+      .filter((item) => String(item.grade || '').trim().toUpperCase() === 'C')
+      .reduce((sum, item) => sum + Number(item.qty || 0), 0)
+    const missingQtyB = Math.max(0, Number(selectedRejectAdjustedBaseSummary.qtyB || 0) - detailQtyB)
+    const missingQtyC = Math.max(0, Number(selectedRejectAdjustedBaseSummary.qtyC || 0) - detailQtyC)
+    const missingRows = []
+    const sourceBuckets = []
+
+    selectedRejectTaskRows.forEach((item) => {
+      const taskId = String(item.id || '')
+      if (!taskId) return
+
+      const gradeSources = [
+        { grade: 'B', qty: Number(item.qty_b || 0) },
+        { grade: 'C', qty: Number(item.qty_c || 0) },
+      ]
+
+      gradeSources.forEach((source) => {
+        const detailQty = Number(detailQtyByTaskGrade.get(`${taskId}|||${source.grade}`) || 0)
+        const availableQty = Math.max(0, source.qty - detailQty)
+        if (availableQty <= 0) return
+
+        sourceBuckets.push({
+          taskId,
+          grade: source.grade,
+          qty: availableQty,
+          dateKey: getDateOnly(getQcWorkDateValue(item)) || '',
+        })
+      })
+    })
+
+    sourceBuckets.sort((a, b) => {
+      const dateCompare = String(a.dateKey || '').localeCompare(String(b.dateKey || ''), undefined, { numeric: true })
+      if (dateCompare !== 0) return dateCompare
+      return String(a.taskId).localeCompare(String(b.taskId), undefined, { numeric: true })
+    })
+
+    const addUnassignedRows = (grade, targetQty) => {
+      let remainingQty = Number(targetQty || 0)
+      if (remainingQty <= 0) return
+
+      sourceBuckets
+        .filter((item) => item.grade === grade)
+        .forEach((bucket) => {
+          if (remainingQty <= 0) return
+
+          const qty = Math.min(bucket.qty, remainingQty)
+          missingRows.push({
+            id: `unassigned-${grade.toLowerCase()}-${bucket.taskId}`,
+            arkline_qc_id: bucket.taskId,
+            grade,
+            qty,
+            size: '-',
+            reasonName: 'BELUM DIKATEGORIKAN',
+            reason: { reason_name: 'BELUM DIKATEGORIKAN', is_repairable: false },
+          })
+          remainingQty -= qty
+      })
+
+      if (remainingQty > 0) {
+        const fallbackTask =
+          selectedRejectTaskRows.find((item) => Number(grade === 'B' ? item.qty_b || 0 : item.qty_c || 0) > 0) ||
+          selectedRejectTaskRows[0]
+
+        missingRows.push({
+          id: `unassigned-${grade.toLowerCase()}-fallback`,
+          arkline_qc_id: fallbackTask?.id || null,
+          grade,
+          qty: remainingQty,
+          size: '-',
+          reasonName: 'BELUM DIKATEGORIKAN',
+          reason: { reason_name: 'BELUM DIKATEGORIKAN', is_repairable: false },
+          created_at: fallbackTask ? getQcWorkDateValue(fallbackTask) : null,
+        })
+      }
+    }
+
+    addUnassignedRows('B', missingQtyB)
+    addUnassignedRows('C', missingQtyC)
+
+    return [...selectedRejectSortedExistingDetails, ...missingRows]
+  }, [selectedRejectAdjustedBaseSummary.qtyB, selectedRejectAdjustedBaseSummary.qtyC, selectedRejectSortedExistingDetails, selectedRejectTaskRows])
+  const readOnlyRejectReasonSummaryRows = useMemo(
+    () =>
+      buildReadOnlyRejectReasonSummaryRows(
+        readOnlyRejectReasonSourceRows,
+        selectedRejectReasonNameById,
+        selectedRejectReasonRepairableById,
+        selectedRejectTaskById
+      ),
+    [readOnlyRejectReasonSourceRows, selectedRejectReasonNameById, selectedRejectReasonRepairableById, selectedRejectTaskById]
+  )
+  const repairableRejectReasonSummaryRows = useMemo(
+    () => readOnlyRejectReasonSummaryRows.filter((item) => item.isRepairable),
+    [readOnlyRejectReasonSummaryRows]
+  )
+  const unrepairableRejectReasonSummaryRows = useMemo(
+    () => readOnlyRejectReasonSummaryRows.filter((item) => !item.isRepairable),
+    [readOnlyRejectReasonSummaryRows]
+  )
   const selectedRejectPreviewSummary = useMemo(() => {
+    if (!canEditArklineRejectDetail) {
+      return selectedRejectAdjustedBaseSummary
+    }
+
     const draftQtyB = rejectDraftRows
       .filter((item) => String(item.grade || '').toUpperCase() === 'B')
       .reduce((sum, item) => sum + Number(item.qty || 0), 0)
@@ -2849,7 +2952,7 @@ export default function QcDashboardPage() {
       qtyB: hasDraftRejectRows ? draftQtyB : selectedRejectAdjustedBaseSummary.qtyB,
       qtyC: hasDraftRejectRows ? draftQtyC : selectedRejectAdjustedBaseSummary.qtyC,
     }
-  }, [rejectDraftRows, selectedRejectAdjustedBaseSummary])
+  }, [canEditArklineRejectDetail, rejectDraftRows, selectedRejectAdjustedBaseSummary])
   const selectedRejectPreviewChecked =
     selectedRejectPreviewSummary.qtyA + selectedRejectPreviewSummary.qtyB + selectedRejectPreviewSummary.qtyC
   const selectedRejectSizeOptions = useMemo(() => {
@@ -3127,6 +3230,63 @@ export default function QcDashboardPage() {
     (sum, item) => sum + (Number(item.locked_qty || 0) - Number(item.allocated_qty || 0)),
     0
   )
+  const allocationGapRows = useMemo(() => {
+    const grouped = new Map()
+
+    activeItems.forEach((item) => {
+      const gapQty = Number(item.locked_qty || 0) - Number(item.allocated_qty || 0)
+      if (!gapQty) return
+
+      const source = qcMode !== 'regular' ? getArklinePoLabel(item) : item.inbound?.grn_number || '-'
+      const product = qcMode !== 'regular' ? getArklineProductLabel(item) : getRegularModelVariantLabel(item) || 'UNKNOWN PRODUCT'
+      const context = qcMode === 're_qc' ? `Round ${Number(item.qc_round_number || 2)}` : ''
+      const key = `${source}|||${product}|||${context}`
+      const current =
+        grouped.get(key) || {
+          source,
+          product,
+          context,
+          qty: 0,
+        }
+
+      current.qty += gapQty
+      grouped.set(key, current)
+    })
+
+    return Array.from(grouped.values())
+      .filter((item) => Number(item.qty || 0) !== 0)
+      .sort((a, b) => {
+        const qtyCompare = Math.abs(Number(b.qty || 0)) - Math.abs(Number(a.qty || 0))
+        if (qtyCompare !== 0) return qtyCompare
+        const sourceCompare = String(a.source || '').localeCompare(String(b.source || ''), undefined, { numeric: true })
+        if (sourceCompare !== 0) return sourceCompare
+        return String(a.product || '').localeCompare(String(b.product || ''), undefined, { numeric: true })
+      })
+  }, [activeItems, qcMode])
+  const allocationGapTooltipText = useMemo(() => {
+    if (!allocationGapRows.length) {
+      return 'No allocation gap for the active filter.'
+    }
+
+    const sourceLabel = qcMode === 'regular' ? 'GRN' : 'PO'
+    const modeLabel = qcMode === 're_qc' ? 'Re-QC' : qcMode === 'regular' ? 'Reguler' : 'Arkline'
+    const visibleRows = allocationGapRows.slice(0, 10)
+    const hiddenCount = Math.max(0, allocationGapRows.length - visibleRows.length)
+    const lines = visibleRows.map((item) => {
+      const signedQty = `${Number(item.qty || 0) > 0 ? '+' : ''}${formatNumber(item.qty)}`
+      const context = item.context ? ` | ${item.context}` : ''
+      return `${sourceLabel}: ${item.source} | Product: ${item.product}${context} | Qty: ${signedQty}`
+    })
+
+    return [
+      `${modeLabel} allocation gap detail`,
+      'Positive means graded qty is higher than allocation; negative means still below allocation.',
+      ...lines,
+      hiddenCount ? `+${formatNumber(hiddenCount)} more rows` : '',
+    ]
+      .filter(Boolean)
+      .join('\n')
+  }, [allocationGapRows, qcMode])
   const selectedSampleSplitTasks = useMemo(() => {
     if (!sampleSplitSummary) return []
 
@@ -4237,7 +4397,7 @@ export default function QcDashboardPage() {
             <div style={styles.compactMetricCard}>
               <span style={styles.summaryLabel}>
                 Allocation Gap
-                <InfoHint text="Perbedaan Qty antara Qty yang dialokasikan dan Qty yang diQC oleh Grader." />
+                <InfoHint text={allocationGapTooltipText} />
               </span>
               <strong
                 style={{
