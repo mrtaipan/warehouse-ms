@@ -10,7 +10,7 @@ import { GROUPS, safeNumber, todayIso } from './delivery-report-helpers'
 import styles from './delivery-report.module.css'
 
 const CREATED_BY_COLUMNS = ['created_by', 'created by']
-const UPDATED_BY_COLUMNS = ['update_by', 'updated_by', 'update by', 'updated by']
+const UPDATED_BY_COLUMNS = ['updated_by', 'update_by', 'updated by', 'update by']
 
 const blankForm = (date) => ({
   delivery_date: date,
@@ -32,7 +32,7 @@ async function insertOrderWithAudit(payload, actorName) {
 
   for (const createdByColumn of CREATED_BY_COLUMNS) {
     for (const updatedByColumn of UPDATED_BY_COLUMNS) {
-      const result = await deliverySupabase.from('Delivery_Order').insert({
+      const result = await deliverySupabase.from('delivery_order').insert({
         ...payload,
         [createdByColumn]: actorName,
         [updatedByColumn]: actorName,
@@ -52,7 +52,7 @@ async function updateOrderWithAudit(id, payload, actorName) {
 
   for (const updatedByColumn of UPDATED_BY_COLUMNS) {
     const result = await deliverySupabase
-      .from('Delivery_Order')
+      .from('delivery_order')
       .update({ ...payload, [updatedByColumn]: actorName })
       .eq('id', id)
 
@@ -81,9 +81,9 @@ export default function DeliveryOrder() {
 
   const loadMasters = useCallback(async () => {
     const [categoryResult, channelResult, courierResult] = await Promise.all([
-      deliverySupabase.from('Delivery_Kategori').select('*').neq('is_active', false).order('nama'),
-      deliverySupabase.from('Delivery_Channel').select('*').neq('is_active', false).order('nama'),
-      deliverySupabase.from('Delivery_Courier').select('*').neq('is_active', false).order('nama'),
+      deliverySupabase.from('delivery_category').select('*').neq('is_active', false).order('nama'),
+      deliverySupabase.from('delivery_channel').select('*').neq('is_active', false).order('nama'),
+      deliverySupabase.from('delivery_courier').select('*').neq('is_active', false).order('nama'),
     ])
     const error = categoryResult.error || channelResult.error || courierResult.error
     if (error) setStatus({ type: 'error', message: `Gagal memuat master data: ${error.message}` })
@@ -97,7 +97,7 @@ export default function DeliveryOrder() {
   const loadRows = useCallback(async () => {
     setLoading(true)
     let query = deliverySupabase
-      .from('Delivery_Order')
+      .from('delivery_order')
       .select('*')
       .eq('delivery_date', filters.date)
       .order('id', { ascending: false })
@@ -200,9 +200,9 @@ export default function DeliveryOrder() {
     const name = masterName.trim().toUpperCase()
     if (!name || !masterModal) return
     const config = {
-      category: ['Delivery_Kategori', 'categories'],
-      channel: ['Delivery_Channel', 'channels'],
-      courier: ['Delivery_Courier', 'couriers'],
+      category: ['delivery_category', 'categories'],
+      channel: ['delivery_channel', 'channels'],
+      courier: ['delivery_courier', 'couriers'],
     }[masterModal]
     const { error } = await deliverySupabase.from(config[0]).insert({ nama: name, is_active: true })
     if (error) setStatus({ type: 'error', message: `Gagal menambah master: ${error.message}` })
@@ -236,7 +236,7 @@ export default function DeliveryOrder() {
 
   async function removeOrder() {
     if (!deleteRow) return
-    const { error } = await deliverySupabase.from('Delivery_Order').delete().eq('id', deleteRow.id)
+    const { error } = await deliverySupabase.from('delivery_order').delete().eq('id', deleteRow.id)
     if (error) setStatus({ type: 'error', message: `Gagal menghapus: ${error.message}` })
     else {
       setStatus({ type: 'success', message: 'Data database berhasil dihapus.' })
@@ -282,16 +282,18 @@ export default function DeliveryOrder() {
                 <span>CHANNEL</span>
                 <div className={styles.inputWithAction}><select value={form.channel} onChange={field('channel')}><option value="">PILIH CHANNEL</option>{masters.channels.map((item) => <option key={item.id}>{item.nama}</option>)}</select><button onClick={() => setMasterModal('channel')}>+ Add</button></div>
               </label>
-              <label className={styles.fullField}>
+              <label className={styles.orderCourierField}>
                 <span>EKSPEDISI</span>
                 <div className={styles.inputWithAction}><select value={form.courier} onChange={field('courier')}><option value="">PILIH EKSPEDISI</option>{masters.couriers.map((item) => <option key={item.id}>{item.nama}</option>)}</select><button onClick={() => setMasterModal('courier')}>+ Add</button></div>
               </label>
+              <div className={styles.orderInlineReset}>
+                <button className={styles.softButton} onClick={() => setForm(blankForm(form.delivery_date))}>Reset</button>
+              </div>
               <div className={`${styles.partPreview} ${styles.fullField}`}><span>NOMOR PART <small>AUTO ITERATION</small></span><strong>{nextPart ? `Part ${nextPart}` : '-'}</strong><p>{nextPart ? 'Nomor part siap dibuat otomatis.' : 'Pilih tanggal, group order, kategori, dan ekspedisi.'}</p></div>
               <label className={styles.fullField}><span>QUANTITY</span><input type="number" min="1" placeholder="MASUKKAN QUANTITY" value={form.quantity} onChange={field('quantity')} /></label>
               <label className={styles.fullField}><span>KETERANGAN</span><textarea placeholder="JIKA ADA MASUKKAN KETERANGAN TAMBAHAN" value={form.keterangan} onChange={field('keterangan')} /></label>
             </div>
             <div className={styles.formActions}>
-              <button className={styles.softButton} onClick={() => setForm(blankForm(form.delivery_date))}>Clear Form</button>
               <button className={styles.primaryButton} disabled={saving} onClick={saveOrder}>{saving ? 'Saving...' : 'Save to Database'}</button>
             </div>
           </div>

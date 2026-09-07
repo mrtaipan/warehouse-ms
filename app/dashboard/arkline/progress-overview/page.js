@@ -88,6 +88,21 @@ function CloseIcon() {
   )
 }
 
+function EditIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className={styles.actionIcon}>
+      <path
+        d="m5 16.8-.8 3 3-.8L18.4 7.8a2.1 2.1 0 0 0-3-3L5 16.8ZM13.8 6.4l3 3"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  )
+}
+
 function SearchIcon() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true" className={styles.actionIcon}>
@@ -1417,6 +1432,7 @@ export default function ArklineProgressOverviewPage() {
     updateStatus: false,
     finance: false,
     qcSampleReport: false,
+    cmtInspection: false,
     returnHistory: false,
   })
   const [productActionMessage, setProductActionMessage] = useState('')
@@ -1432,7 +1448,10 @@ export default function ArklineProgressOverviewPage() {
   const [manualCompleteOpen, setManualCompleteOpen] = useState(false)
   const [savingManualComplete, setSavingManualComplete] = useState(false)
   const [manualCompleteDraft, setManualCompleteDraft] = useState({ completionDate: '', notes: '' })
-  const [receiptDraft, setReceiptDraft] = useState({ receiveDate: '', supplierSj: '', notes: '', sizeQty: {}, isFinal: false, hpp: '' })
+  const [hppModalOpen, setHppModalOpen] = useState(false)
+  const [hppDraft, setHppDraft] = useState('')
+  const [savingHpp, setSavingHpp] = useState(false)
+  const [receiptDraft, setReceiptDraft] = useState({ receiveDate: '', supplierSj: '', notes: '', sizeQty: {}, isFinal: false })
   const [statusDraft, setStatusDraft] = useState({
     editingUpdateId: '',
     updatedDeliveryDate: '',
@@ -1780,11 +1799,13 @@ export default function ArklineProgressOverviewPage() {
     setExpandedReturnBatchId('')
     setQcReceiptDateFilter('all')
     setManualCompleteOpen(false)
+    setHppModalOpen(false)
     setProductDetailSections({
       receivingHistory: false,
       updateStatus: false,
       finance: false,
       qcSampleReport: false,
+      cmtInspection: false,
       returnHistory: false,
     })
     setSelectedProductDetail({
@@ -1806,7 +1827,7 @@ export default function ArklineProgressOverviewPage() {
       financeSummary: null,
       sizeBreakdown: [],
     })
-    setReceiptDraft({ receiveDate: '', supplierSj: '', notes: '', sizeQty: {}, isFinal: false, hpp: '' })
+    setReceiptDraft({ receiveDate: '', supplierSj: '', notes: '', sizeQty: {}, isFinal: false })
     setStatusDraft({
       updatedDeliveryDate: entry.updatedDeliveryDate || '',
       reason: DEFAULT_UPDATE_REASON,
@@ -2080,7 +2101,6 @@ export default function ArklineProgressOverviewPage() {
         }, {}),
         isFinal: false,
         supplierSj: '',
-        hpp: String(hpp || 0),
       })
     } finally {
       setProductDetailLoading(false)
@@ -2105,7 +2125,6 @@ export default function ArklineProgressOverviewPage() {
     } = await supabase.auth.getUser()
     const createdBy = user?.email?.toLowerCase() || null
     const receiptGroupId = crypto.randomUUID()
-    const nextHpp = Number(receiptDraft.hpp || 0)
 
     const insertPayload = sizeEntries.map((row) => ({
       arkline_po_item_id: selectedProductDetail.id,
@@ -2139,7 +2158,6 @@ export default function ArklineProgressOverviewPage() {
           ? 'On Progress'
           : 'Initiated'
     const itemUpdatePayload = {
-      hpp: nextHpp,
       actual_qty: totalReceivedAfterSave,
       status: nextStatus,
     }
@@ -2150,7 +2168,7 @@ export default function ArklineProgressOverviewPage() {
 
     const { error: itemUpdateError } = await supabase.from('arkline_po_items').update(itemUpdatePayload).eq('id', selectedProductDetail.id)
     if (itemUpdateError) {
-      setProductActionError(itemUpdateError.message || 'Receipt saved, but failed to update HPP/item summary.')
+      setProductActionError(itemUpdateError.message || 'Receipt saved, but failed to update item summary.')
       return
     }
 
@@ -2171,10 +2189,91 @@ export default function ArklineProgressOverviewPage() {
         return accumulator
       }, {}),
       isFinal: false,
-      hpp: prev.hpp,
     }))
     await openProductDetail(selectedProductDetail)
     await refreshRows()
+  }
+
+  function openHppEditor() {
+    if (!selectedProductDetail) return
+    setProductActionError('')
+    setProductActionMessage('')
+    const currentHpp = parseNumberValue(selectedProductDetail.financeSummary?.hpp || selectedProductDetail.hpp || 0)
+    setHppDraft(currentHpp ? formatNumber(currentHpp) : '')
+    setHppModalOpen(true)
+  }
+
+  async function handleSaveHpp() {
+    if (!selectedProductDetail || savingHpp) return
+    setProductActionMessage('')
+    setProductActionError('')
+    const nextHpp = parseNumberValue(hppDraft)
+
+    setSavingHpp(true)
+    try {
+      const { error } = await supabase
+        .from('arkline_po_items')
+        .update({ hpp: nextHpp, updated_at: new Date().toISOString() })
+        .eq('id', selectedProductDetail.id)
+
+      if (error) {
+        setProductActionError(error.message || 'Failed to update HPP.')
+        return
+      }
+
+      const updateEntryHpp = (entry) => (entry?.id === selectedProductDetail.id ? { ...entry, hpp: nextHpp } : entry)
+      setPoRows((currentRows) =>
+        currentRows.map((row) => ({
+          ...row,
+          productEntries: (row.productEntries || []).map(updateEntryHpp),
+        }))
+      )
+      setSelectedPoDetail((currentDetail) =>
+        currentDetail
+          ? {
+              ...currentDetail,
+              productEntries: (currentDetail.productEntries || []).map(updateEntryHpp),
+            }
+          : currentDetail
+      )
+      setSelectedProductDetail((currentDetail) =>
+        currentDetail
+          ? (() => {
+              const financeSummary = currentDetail.financeSummary || {}
+              const price = parseNumberValue(financeSummary.price || currentDetail.price || 0)
+              const unitPrice = price || nextHpp
+              const plannedQty = parseNumberValue(financeSummary.plannedQty || currentDetail.qty || 0)
+              const actualQty = parseNumberValue(financeSummary.actualQty ?? currentDetail.actualQty ?? 0)
+              return {
+                ...currentDetail,
+                hpp: nextHpp,
+                financeSummary: {
+                  ...financeSummary,
+                  hpp: nextHpp,
+                  plannedValue: unitPrice * plannedQty,
+                  actualValue: unitPrice * actualQty,
+                },
+              }
+            })()
+          : currentDetail
+      )
+      setHppModalOpen(false)
+      setProductActionMessage('HPP berhasil diperbarui.')
+    } catch (error) {
+      setProductActionError(error?.message || 'Failed to update HPP.')
+    } finally {
+      setSavingHpp(false)
+    }
+  }
+
+  function handleOpenCmtInspectionDraft() {
+    setProductActionError('')
+    setProductActionMessage('Form CMT Inspection belum disambungkan. Struktur tabel perlu dibuat dulu untuk Pre-Final, Final, dan Re-Final.')
+  }
+
+  function handlePrintCmtInspectionDraft() {
+    setProductActionError('')
+    setProductActionMessage('Print CMT Inspection belum tersedia. Button disiapkan dulu untuk flow berikutnya.')
   }
 
   async function handleSaveStatusChange() {
@@ -3371,7 +3470,13 @@ export default function ArklineProgressOverviewPage() {
               <div>
                 <p className={styles.eyebrow}>Product Detail</p>
                 <h3 className={styles.modalTitle}>{selectedProductDetail.productName || 'NO PRODUCT'}</h3>
-                <p className={styles.productDetailSubmeta}>HPP {formatNumber(selectedProductDetail.financeSummary?.hpp || 0)}</p>
+                <div className={styles.productDetailSubmetaRow}>
+                  <p className={styles.productDetailSubmeta}>HPP {formatNumber(selectedProductDetail.financeSummary?.hpp || 0)}</p>
+                  <button type="button" className={styles.productDetailInlineButton} onClick={openHppEditor} aria-label="Edit HPP">
+                    <EditIcon />
+                    <span>Edit</span>
+                  </button>
+                </div>
               </div>
               <div className={styles.productHeaderActions}>
                 <button type="button" className={styles.iconButton} onClick={() => setSelectedProductDetail(null)} aria-label="Close product detail">
@@ -3381,6 +3486,8 @@ export default function ArklineProgressOverviewPage() {
             </div>
 
             {productDetailLoading ? <div className={styles.emptyMini}>Loading product detail...</div> : null}
+            {productActionError ? <div className={styles.productActionError}>{productActionError}</div> : null}
+            {productActionMessage ? <div className={styles.productActionMessage}>{productActionMessage}</div> : null}
 
             {(() => {
               const incomingGoodsGroups = buildIncomingGoodsGroups(selectedProductDetail.receipts || [])
@@ -3669,6 +3776,49 @@ export default function ArklineProgressOverviewPage() {
                     <div className={styles.emptyMini}>No QC report rows.</div>
                   )}
                 </div>
+                ) : null}
+              </div>
+
+              <div className={styles.productDetailSection}>
+                <div className={styles.productDetailSectionHead}>
+                  <div className={styles.productSectionHeadLeft}>
+                    <h4 className={styles.modalSectionTitle}>CMT Inspection</h4>
+                    <button
+                      type="button"
+                      className={styles.productSectionLaunch}
+                      onClick={handleOpenCmtInspectionDraft}
+                      aria-label="Add CMT inspection"
+                      title="Add CMT inspection"
+                    >
+                      <PlusIcon />
+                    </button>
+                    <button
+                      type="button"
+                      className={styles.productSectionLaunch}
+                      onClick={handlePrintCmtInspectionDraft}
+                      aria-label="Print CMT inspection"
+                      title="Print CMT inspection"
+                    >
+                      <PrintIcon />
+                    </button>
+                  </div>
+                  <button type="button" className={styles.productDetailSectionToggle} onClick={() => toggleProductDetailSection('cmtInspection')}>
+                    <span className={styles.productDetailHint}>Pre-Final / Final / Re-Final</span>
+                    <ChevronIcon expanded={productDetailSections.cmtInspection} />
+                  </button>
+                </div>
+                {productDetailSections.cmtInspection ? (
+                  <div className={styles.productDetailRows}>
+                    <div className={styles.cmtInspectionStageGrid}>
+                      {['Pre-Final Inspection', 'Final Inspection', 'Re-Final Inspection'].map((stage) => (
+                        <div key={stage} className={styles.cmtInspectionStageCard}>
+                          <span>{stage}</span>
+                          <strong>Not recorded yet</strong>
+                        </div>
+                      ))}
+                    </div>
+                    <div className={styles.emptyMini}>CMT inspection reports can be connected here after the inspection table and workflow are finalized.</div>
+                  </div>
                 ) : null}
               </div>
 
@@ -4008,17 +4158,6 @@ export default function ArklineProgressOverviewPage() {
                 <div className={styles.readonlyField}>{selectedProductDetail.productName || 'NO PRODUCT'}</div>
               </div>
               <div className={styles.filterField}>
-                <span>HPP</span>
-                <input
-                  className={styles.input}
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={receiptDraft.hpp}
-                  onChange={(event) => setReceiptDraft((prev) => ({ ...prev, hpp: event.target.value }))}
-                />
-              </div>
-              <div className={styles.filterField}>
                 <span>Incoming Qty</span>
                 <div className={styles.readonlyField}>
                   {formatNumber(
@@ -4110,6 +4249,46 @@ export default function ArklineProgressOverviewPage() {
                   />
                 </label>
               </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {selectedProductDetail && hppModalOpen ? (
+        <div className={styles.modalOverlay} onClick={() => (!savingHpp ? setHppModalOpen(false) : null)}>
+          <div className={`${styles.modalCard} ${styles.hppModalCard}`.trim()} onClick={(event) => event.stopPropagation()}>
+            <div className={styles.modalHeader}>
+              <div>
+                <p className={styles.eyebrow}>Item Cost</p>
+                <h3 className={styles.modalTitle}>Edit HPP</h3>
+                <p className={styles.productDetailSubmeta}>{selectedProductDetail.productName || 'NO PRODUCT'}</p>
+              </div>
+              <button type="button" className={styles.iconButton} onClick={() => setHppModalOpen(false)} disabled={savingHpp} aria-label="Close HPP editor">
+                <CloseIcon />
+              </button>
+            </div>
+            <label className={styles.filterField}>
+              <span>HPP per unit</span>
+              <input
+                className={styles.input}
+                inputMode="decimal"
+                value={hppDraft}
+                onChange={(event) => {
+                  const rawValue = event.target.value
+                  setHppDraft(rawValue.trim() ? formatNumber(parseNumberValue(rawValue)) : '')
+                }}
+                placeholder="0"
+                disabled={savingHpp}
+              />
+            </label>
+            {productActionError ? <div className={styles.productActionError}>{productActionError}</div> : null}
+            <div className={styles.productHeaderActions}>
+              <button type="button" className={styles.secondaryButton} onClick={() => setHppModalOpen(false)} disabled={savingHpp}>
+                Cancel
+              </button>
+              <button type="button" className={styles.primaryButton} onClick={() => void handleSaveHpp()} disabled={savingHpp}>
+                {savingHpp ? 'Saving...' : 'Save HPP'}
+              </button>
             </div>
           </div>
         </div>

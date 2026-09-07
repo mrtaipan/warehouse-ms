@@ -88,8 +88,8 @@ export default function ManualWaybill() {
 
   const loadMasters = useCallback(async () => {
     const [courierResult, serviceResult] = await Promise.all([
-      deliverySupabase.from('Delivery_Courier').select('*').neq('is_active', false).order('nama'),
-      deliverySupabase.from('Courier_Subclass').select('*').neq('is_active', false).order('courier_name'),
+      deliverySupabase.from('delivery_courier').select('*').neq('is_active', false).order('nama'),
+      deliverySupabase.from('delivery_courier_subclass').select('*').neq('is_active', false).order('courier_name'),
     ])
     setCouriers(courierResult.data || [])
     setServices(serviceResult.data || [])
@@ -98,7 +98,7 @@ export default function ManualWaybill() {
 
   const loadRows = useCallback(async () => {
     const { data, error } = await deliverySupabase
-      .from('Resi_Manual')
+      .from('delivery_resi_manual')
       .select('*')
       .gte('created_at', jakartaStart(filters.date))
       .lte('created_at', jakartaEnd(filters.date))
@@ -112,7 +112,7 @@ export default function ManualWaybill() {
 
   const calculateNextResi = useCallback(async () => {
     const prefix = manualWaybillPrefix(form.group_order)
-    const { data } = await deliverySupabase.from('Resi_Manual').select('resi_manual').like('resi_manual', `${prefix}%`)
+    const { data } = await deliverySupabase.from('delivery_resi_manual').select('resi_manual').like('resi_manual', `${prefix}%`)
     const max = Math.max(0, ...(data || []).map((row) => Number(String(row.resi_manual).split('-').pop()) || 0))
     setNextResi(`${prefix}${max + 1}`)
   }, [form.group_order])
@@ -127,7 +127,7 @@ export default function ManualWaybill() {
       return
     }
     setSaving(true)
-    const { error } = await deliverySupabase.from('Resi_Manual').insert({
+    const { error } = await deliverySupabase.from('delivery_resi_manual').insert({
       resi_manual: nextResi,
       nama: cleanText(form.nama),
       no_hp: cleanDigits(form.no_hp),

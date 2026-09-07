@@ -184,7 +184,7 @@ export default function DeliverySummary() {
     setLoading(true)
     setStatus(null)
     let orderQuery = deliverySupabase
-      .from('Delivery_Order')
+      .from('delivery_order')
       .select('*')
       .gte('delivery_date', applied.from)
       .lte('delivery_date', applied.to)
@@ -193,13 +193,13 @@ export default function DeliverySummary() {
     if (applied.group !== 'ALL') orderQuery = orderQuery.eq('group_order', applied.group)
 
     let packingQuery = deliverySupabase
-      .from('Delivery_Barcode')
+      .from('delivery_barcode')
       .select('*')
       .gte('timestamp_packing', jakartaStart(applied.from))
       .lte('timestamp_packing', jakartaEnd(applied.to))
 
     let deliveryQuery = deliverySupabase
-      .from('Delivery_Barcode')
+      .from('delivery_barcode')
       .select('*')
       .gte('timestamp_delivery', jakartaStart(applied.from))
       .lte('timestamp_delivery', jakartaEnd(applied.to))
@@ -372,7 +372,10 @@ export default function DeliverySummary() {
       <div className={styles.summaryWrap}>
         <header className={styles.summaryTopbar}>
           <div className={styles.summaryTitleBlock}>
-            <Link href="/dashboard/delivery-report" className={styles.summaryBackButton}>← Back to Home</Link>
+            <div className={styles.summaryBackRow}>
+              <Link href="/dashboard" className={styles.summaryBackButton}>← Back to Dashboard</Link>
+              <Link href="/dashboard/delivery-report" className={styles.summaryBackButton}>← Back to Home</Link>
+            </div>
             <h1>DELIVERY SUMMARY</h1>
             <p>Dashboard progress, matrix, group chart, and courier composition.</p>
           </div>

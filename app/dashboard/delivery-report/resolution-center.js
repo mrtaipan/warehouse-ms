@@ -297,7 +297,7 @@ function getCaseWarningMeta(row, today) {
   }
 }
 
-function normalizeReturnPayload(form, code, actorName) {
+function normalizeReturnPayload(form, code) {
   return {
     alamat: cleanText(form.alamat),
     batas_tanggal_retur: timestampWithCurrentJakartaTime(form.batas_tanggal_retur),
@@ -317,7 +317,6 @@ function normalizeReturnPayload(form, code, actorName) {
     ongkir_keluar: cleanNumeric(form.ongkir_keluar),
     ongkir_masuk: cleanNumeric(form.ongkir_masuk),
     order_id: cleanUpper(form.order_id),
-    pic: cleanUpper(actorName),
     produk_diretur: cleanNullableText(form.produk_diretur),
     produk_pengganti: cleanNullableText(form.produk_pengganti),
     retur_action: cleanNullableText(form.retur_action),
@@ -328,7 +327,7 @@ function normalizeReturnPayload(form, code, actorName) {
   }
 }
 
-function normalizeIssuePayload(form, actorName) {
+function normalizeIssuePayload(form) {
   return {
     alasan_bermasalah: cleanNullableText(form.alasan_bermasalah),
     biaya_timbul: cleanNumeric(form.biaya_timbul),
@@ -337,7 +336,6 @@ function normalizeIssuePayload(form, actorName) {
     nama: cleanUpper(form.nama),
     no_hp: cleanDigits(form.no_hp),
     order_id: cleanUpper(form.order_id),
-    pic: cleanUpper(actorName),
     produk_bermasalah: ensureBulletText(form.produk_bermasalah),
     produk_pengganti: cleanNullableText(ensureBulletText(form.produk_pengganti)),
     tim: cleanNullableUpper(form.tim),
@@ -436,13 +434,13 @@ export default function ResolutionCenter() {
 
   const loadMasters = useCallback(async () => {
     const results = await Promise.all([
-      deliverySupabase.from('Retur_Reason').select('*').neq('is_active', false).order('id'),
-      deliverySupabase.from('Retur_Action').select('*').neq('is_active', false).order('id'),
-      deliverySupabase.from('Delivery_Courier').select('*').neq('is_active', false).order('nama'),
-      deliverySupabase.from('Courier_Subclass').select('*').neq('is_active', false).order('courier_name'),
-      deliverySupabase.from('Order_Issue').select('*').neq('is_active', false).order('id'),
-      deliverySupabase.from('Order_Handling').select('*').neq('is_active', false).order('id'),
-      deliverySupabase.from('Barcode_Rules').select('result_value, pattern, match_type, priority').order('priority', { ascending: true }),
+      deliverySupabase.from('delivery_retur_reason').select('*').neq('is_active', false).order('id'),
+      deliverySupabase.from('delivery_retur_action').select('*').neq('is_active', false).order('id'),
+      deliverySupabase.from('delivery_courier').select('*').neq('is_active', false).order('nama'),
+      deliverySupabase.from('delivery_courier_subclass').select('*').neq('is_active', false).order('courier_name'),
+      deliverySupabase.from('delivery_order_issue').select('*').neq('is_active', false).order('id'),
+      deliverySupabase.from('delivery_order_handling').select('*').neq('is_active', false).order('id'),
+      deliverySupabase.from('delivery_barcode_rules').select('result_value, pattern, match_type, priority').order('priority', { ascending: true }),
     ])
     const error = results.find((result) => result.error)?.error
     if (error) setStatus({ type: 'error', message: `Failed to load Resolution Center master data: ${error.message}` })
@@ -489,7 +487,7 @@ export default function ResolutionCenter() {
   const loadCases = useCallback(async () => {
     if (!caseListAccess.ready) return
     let query = deliverySupabase
-      .from('Error_Retur_Cases')
+      .from('delivery_error_retur_cases')
       .select('*')
       .gte('tanggal_pengajuan', jakartaStart(filters.from))
       .lte('tanggal_pengajuan', jakartaEnd(filters.to))
@@ -501,7 +499,7 @@ export default function ResolutionCenter() {
         setCases([])
         return
       }
-      query = query.eq('pic', caseListAccess.name)
+      query = query.eq('created_by', caseListAccess.name)
     }
     const { data, error } = await query
     if (error) setStatus({ type: 'error', message: `Failed to load return cases: ${error.message}` })
@@ -510,13 +508,13 @@ export default function ResolutionCenter() {
 
   const loadIssues = useCallback(async () => {
     if (!caseListAccess.ready) return
-    let query = deliverySupabase.from('Order_Issue_Cases').select('*').order('created_at', { ascending: false }).limit(5000)
+    let query = deliverySupabase.from('delivery_order_issue_cases').select('*').order('created_at', { ascending: false }).limit(5000)
     if (!caseListAccess.isAdmin) {
       if (!caseListAccess.name) {
         setIssues([])
         return
       }
-      query = query.eq('pic', caseListAccess.name)
+      query = query.eq('created_by', caseListAccess.name)
     }
     const { data, error } = await query
     if (error) setStatus({ type: 'error', message: `Failed to load order issues: ${error.message}` })
@@ -559,7 +557,7 @@ export default function ResolutionCenter() {
     const date = new Date(`${submissionDate || today}T00:00:00+07:00`)
     const codePrefix = `${getGroupPrefix(normalizedGroup)}${romanMonth(date)}${String(date.getFullYear()).slice(-2)}-`
     const { data, error } = await deliverySupabase
-      .from('Error_Retur_Cases')
+      .from('delivery_error_retur_cases')
       .select('kode_kejadian')
       .eq('group_order', normalizedGroup)
       .like('kode_kejadian', `${codePrefix}%`)
@@ -599,7 +597,7 @@ export default function ResolutionCenter() {
   const accessibleCases = useMemo(() => {
     if (!caseListAccess.ready) return []
     if (caseListAccess.isAdmin) return cases
-    return cases.filter((row) => [row.pic, row.created_by].some((value) => cleanUpper(value) === caseListAccess.name))
+    return cases.filter((row) => cleanUpper(row.created_by) === caseListAccess.name)
   }, [caseListAccess.isAdmin, caseListAccess.name, caseListAccess.ready, cases])
 
   const visibleCases = useMemo(() => {
@@ -655,7 +653,7 @@ export default function ResolutionCenter() {
     }
 
     const statusBreakdown = getTopCounts(accessibleCases, 'status_barang', 4)
-    const topPic = getTopCounts(accessibleCases, 'pic', 3)
+    const topCreator = getTopCounts(accessibleCases, 'created_by', 3)
     const topGroups = getTopCounts(accessibleCases, 'group_order', 3)
     const topReasons = getTopCounts(accessibleCases, 'retur_reason', 3)
     const topActions = getTopCounts(accessibleCases, 'retur_action', 3)
@@ -669,8 +667,8 @@ export default function ResolutionCenter() {
         title: 'Status Breakdown',
       },
       {
-        detail: topPic.join(', ') || 'No PIC data yet.',
-        title: 'Top Entry PIC',
+        detail: topCreator.join(', ') || 'No creator data yet.',
+        title: 'Top Creator',
       },
       {
         detail: topGroups.join(', ') || 'No group data yet.',
@@ -694,7 +692,7 @@ export default function ResolutionCenter() {
   const accessibleIssues = useMemo(() => {
     if (!caseListAccess.ready) return []
     if (caseListAccess.isAdmin) return issues
-    return issues.filter((row) => cleanUpper(row.pic) === caseListAccess.name)
+    return issues.filter((row) => cleanUpper(row.created_by) === caseListAccess.name)
   }, [caseListAccess.isAdmin, caseListAccess.name, caseListAccess.ready, issues])
 
   const selectedIssueHandlingMeta = useMemo(() => {
@@ -833,7 +831,6 @@ export default function ResolutionCenter() {
       ongkir_keluar: row.ongkir_keluar ?? '',
       ongkir_masuk: row.ongkir_masuk ?? '',
       order_id: row.order_id || '',
-      pic: row.pic || '',
       produk_diretur: row.produk_diretur || '',
       produk_pengganti: row.produk_pengganti || '',
       retur_action: row.retur_action || '',
@@ -878,11 +875,11 @@ export default function ResolutionCenter() {
     }
 
     const updatePayload = {
-      ...normalizeReturnPayload(detailDraft, detail.kode_kejadian || detailDraft.kode_kejadian, detailDraft.pic || detail.pic || actorName),
+      ...normalizeReturnPayload(detailDraft, detail.kode_kejadian || detailDraft.kode_kejadian),
       updated_at: new Date().toISOString(),
       updated_by: actorName,
     }
-    const { data, error } = await deliverySupabase.from('Error_Retur_Cases').update(updatePayload).eq('id', detail.id).select('*').single()
+    const { data, error } = await deliverySupabase.from('delivery_error_retur_cases').update(updatePayload).eq('id', detail.id).select('*').single()
     setBusy(false)
     if (error) {
       setStatus({ type: 'error', message: `Failed to update case: ${error.message}` })
@@ -931,8 +928,8 @@ export default function ResolutionCenter() {
       setStatus({ type: 'error', message: error.message || 'Failed to load signed-in user.' })
       return
     }
-    const { error } = await deliverySupabase.from('Error_Retur_Cases').insert({
-      ...normalizeReturnPayload(returnForm, nextCaseCode, actorName),
+    const { error } = await deliverySupabase.from('delivery_error_retur_cases').insert({
+      ...normalizeReturnPayload(returnForm, nextCaseCode),
       created_at: new Date().toISOString(),
       created_by: actorName,
       updated_at: new Date().toISOString(),
@@ -972,11 +969,11 @@ export default function ResolutionCenter() {
       setStatus({ type: 'error', message: error.message || 'Failed to load signed-in user.' })
       return
     }
-    const payload = normalizeIssuePayload(issueForm, actorName)
+    const payload = normalizeIssuePayload(issueForm)
     const timestamp = new Date().toISOString()
     const request = editingIssueId
-      ? deliverySupabase.from('Order_Issue_Cases').update({ ...payload, updated_at: timestamp }).eq('id', editingIssueId)
-      : deliverySupabase.from('Order_Issue_Cases').insert({ ...payload, created_at: timestamp, updated_at: timestamp })
+      ? deliverySupabase.from('delivery_order_issue_cases').update({ ...payload, updated_at: timestamp, updated_by: actorName }).eq('id', editingIssueId)
+      : deliverySupabase.from('delivery_order_issue_cases').insert({ ...payload, created_at: timestamp, created_by: actorName, updated_at: timestamp, updated_by: actorName })
     const { error } = await request
     setBusy(false)
     if (error) setStatus({ type: 'error', message: `Failed to save issue: ${error.message}` })
@@ -996,7 +993,7 @@ export default function ResolutionCenter() {
       setStatus({ type: 'error', message: error.message || 'Failed to load signed-in user.' })
       return
     }
-    const { error } = await deliverySupabase.from('Error_Retur_Cases').update({ pic: actorName, status_barang: nextStatus, updated_at: new Date().toISOString(), updated_by: actorName }).eq('id', row.id)
+    const { error } = await deliverySupabase.from('delivery_error_retur_cases').update({ status_barang: nextStatus, updated_at: new Date().toISOString(), updated_by: actorName }).eq('id', row.id)
     if (error) setStatus({ type: 'error', message: `Failed to update status: ${error.message}` })
     else {
       setStatus({ type: 'success', message: `${row.kode_kejadian} was updated to ${nextStatus}.` })
@@ -1063,7 +1060,7 @@ export default function ResolutionCenter() {
     let ignore = false
     const timer = window.setTimeout(async () => {
       const { data, error } = await deliverySupabase
-        .from('Delivery_Barcode')
+        .from('delivery_barcode')
         .select('barcode,packing_team')
         .eq('barcode', barcode)
         .limit(1)
@@ -1276,8 +1273,8 @@ export default function ResolutionCenter() {
 
     const ids = rows.map((row) => row.id).filter(Boolean)
     const { error } = await deliverySupabase
-      .from('Error_Retur_Cases')
-      .update({ pic: actorName, status_barang: 'Completed', updated_at: new Date().toISOString(), updated_by: actorName })
+      .from('delivery_error_retur_cases')
+      .update({ status_barang: 'Completed', updated_at: new Date().toISOString(), updated_by: actorName })
       .in('id', ids)
 
     setBusy(false)
@@ -1314,8 +1311,8 @@ export default function ResolutionCenter() {
 
     const ids = pendingRows.map((row) => row.id).filter(Boolean)
     const { error } = await deliverySupabase
-      .from('Error_Retur_Cases')
-      .update({ pic: actorName, status_barang: 'Sending', updated_at: new Date().toISOString(), updated_by: actorName })
+      .from('delivery_error_retur_cases')
+      .update({ status_barang: 'Sending', updated_at: new Date().toISOString(), updated_by: actorName })
       .in('id', ids)
 
     setBusy(false)
@@ -1347,8 +1344,8 @@ export default function ResolutionCenter() {
       setStatus({ type: 'error', message: 'Select at least one Pending case or enter a case code first.' })
       return
     }
-    let query = deliverySupabase.from('Error_Retur_Cases').select('*').eq('kode_kejadian', code).limit(1)
-    if (!caseListAccess.isAdmin) query = query.eq('pic', caseListAccess.name)
+    let query = deliverySupabase.from('delivery_error_retur_cases').select('*').eq('kode_kejadian', code).limit(1)
+    if (!caseListAccess.isAdmin) query = query.eq('created_by', caseListAccess.name)
     const { data, error } = await query.maybeSingle()
     if (error) {
       setStatus({ type: 'error', message: `Failed to find case: ${error.message}` })
@@ -1574,7 +1571,7 @@ export default function ResolutionCenter() {
                 {!visibleCases.length ? <tr><td colSpan="11"><EmptyState label="No data yet" /></td></tr> : visibleCases.map((row) => {
                   const meta = getCaseWarningMeta(row, today)
                   const rowTone = meta.rank === 2 ? styles.caseRowOverdue : meta.rank > 0 ? styles.caseRowWarning : ''
-                  return <tr key={row.id} className={rowTone}><td>{formatShortDate(row.tanggal_pengajuan)}</td><td><strong>{row.kode_kejadian}</strong></td><td>{renderGroupBadge(row.group_order)}</td><td>{renderTypeBadge(row.internal_external)}</td><td><strong>{row.nama_customer || '-'}</strong><small>{row.nomor_tim || row.pic || '-'}</small></td><td>{row.order_id}</td><td>{row.no_resi_pengiriman}</td><td>{row.retur_reason || '-'}</td><td>{row.retur_action || '-'}</td><td>{renderReturnStatusBadge(row.status_barang)}</td><td><button className={styles.iconActionButton} aria-label={`Open detail for ${row.kode_kejadian || row.order_id}`} onClick={() => openCaseDetail(row)}>🔍</button></td></tr>
+                  return <tr key={row.id} className={rowTone}><td>{formatShortDate(row.tanggal_pengajuan)}</td><td><strong>{row.kode_kejadian}</strong></td><td>{renderGroupBadge(row.group_order)}</td><td>{renderTypeBadge(row.internal_external)}</td><td><strong>{row.nama_customer || '-'}</strong><small>{row.nomor_tim || row.created_by || '-'}</small></td><td>{row.order_id}</td><td>{row.no_resi_pengiriman}</td><td>{row.retur_reason || '-'}</td><td>{row.retur_action || '-'}</td><td>{renderReturnStatusBadge(row.status_barang)}</td><td><button className={styles.iconActionButton} aria-label={`Open detail for ${row.kode_kejadian || row.order_id}`} onClick={() => openCaseDetail(row)}>🔍</button></td></tr>
                 })}
               </tbody></table></div>
             </div>
@@ -1601,7 +1598,7 @@ export default function ResolutionCenter() {
           <div className={styles.tableWrap}><table><thead><tr><th>Select</th><th>Code</th><th>Customer</th><th>Order ID</th><th>AWB</th><th>Group</th><th>Courier</th><th>Deadline</th><th>Status</th><th>Action</th></tr></thead><tbody>
             {!receivingRows.length ? <tr><td colSpan="10"><EmptyState label="No receiving cases yet" /></td></tr> : receivingRows.map((row) => {
               const selected = receivingSelectedIds.includes(String(row.id))
-              return <tr key={row.id}><td><input className={styles.compactCheckbox} type="checkbox" disabled={row.status_barang !== 'Sending'} checked={selected} onChange={(event) => setReceivingSelectedIds((current) => event.target.checked ? [...new Set([...current, String(row.id)])] : current.filter((id) => id !== String(row.id)))} /></td><td><strong>{row.kode_kejadian}</strong></td><td><strong>{row.nama_customer || '-'}</strong><small>{row.nomor_tim || row.pic || '-'}</small></td><td>{row.order_id || '-'}</td><td>{row.no_resi_pengiriman || '-'}</td><td>{renderGroupBadge(row.group_order)}</td><td>{row.courier_name || '-'}</td><td>{formatShortDate(row.batas_tanggal_retur)}</td><td>{renderReturnStatusBadge(row.status_barang)}</td><td><div className={styles.rowActions}><button className={styles.iconActionButton} onClick={() => openCaseDetail(row, { readonly: true })} aria-label={`Open detail for ${row.kode_kejadian || row.order_id}`}>🔍</button>{row.status_barang === 'Completed' && !isRefundOnlyCase(row) ? <button className={styles.iconPrintButton} onClick={() => printReceivingRows([row])} aria-label={`Reprint ${row.kode_kejadian || row.order_id}`}>🖨️</button> : null}</div></td></tr>
+              return <tr key={row.id}><td><input className={styles.compactCheckbox} type="checkbox" disabled={row.status_barang !== 'Sending'} checked={selected} onChange={(event) => setReceivingSelectedIds((current) => event.target.checked ? [...new Set([...current, String(row.id)])] : current.filter((id) => id !== String(row.id)))} /></td><td><strong>{row.kode_kejadian}</strong></td><td><strong>{row.nama_customer || '-'}</strong><small>{row.nomor_tim || row.created_by || '-'}</small></td><td>{row.order_id || '-'}</td><td>{row.no_resi_pengiriman || '-'}</td><td>{renderGroupBadge(row.group_order)}</td><td>{row.courier_name || '-'}</td><td>{formatShortDate(row.batas_tanggal_retur)}</td><td>{renderReturnStatusBadge(row.status_barang)}</td><td><div className={styles.rowActions}><button className={styles.iconActionButton} onClick={() => openCaseDetail(row, { readonly: true })} aria-label={`Open detail for ${row.kode_kejadian || row.order_id}`}>🔍</button>{row.status_barang === 'Completed' && !isRefundOnlyCase(row) ? <button className={styles.iconPrintButton} onClick={() => printReceivingRows([row])} aria-label={`Reprint ${row.kode_kejadian || row.order_id}`}>🖨️</button> : null}</div></td></tr>
             })}
           </tbody></table></div>
         </section>
@@ -1746,7 +1743,7 @@ export default function ResolutionCenter() {
               </div>
             </div>
             <div className={styles.panelBody}>
-              <div className={styles.tableWrap}><table><thead><tr><th>Date</th><th>Group</th><th>Order ID</th><th>Customer</th><th>Faulty Product</th><th>Issue Reason</th><th>Handling</th><th>Team</th><th>Cost</th><th>PIC</th><th>Action</th></tr></thead><tbody>
+              <div className={styles.tableWrap}><table><thead><tr><th>Date</th><th>Group</th><th>Order ID</th><th>Customer</th><th>Faulty Product</th><th>Issue Reason</th><th>Handling</th><th>Team</th><th>Cost</th><th>Created By</th><th>Action</th></tr></thead><tbody>
                 {!visibleIssues.length ? <tr><td colSpan="11"><EmptyState label="No order issue data yet" /></td></tr> : visibleIssues.map((row) => (
                   <tr key={row.id} className={isIssuePending(row) ? styles.caseRowWarning : ''}>
                     <td>{formatShortDate(row.created_at)}</td>
@@ -1758,7 +1755,7 @@ export default function ResolutionCenter() {
                     <td>{row.tindak_lanjut || '-'}</td>
                     <td>{formatIssueTeamLabel(row.tim)}</td>
                     <td>{formatMoney(row.biaya_timbul)}</td>
-                    <td>{row.pic || '-'}</td>
+                    <td>{row.created_by || '-'}</td>
                     <td><div className={styles.rowActions}><button className={styles.iconActionButton} onClick={() => openIssueDetail(row)} aria-label={`Open issue ${row.order_id || row.id}`}>🔍</button></div></td>
                   </tr>
                 ))}
@@ -1866,7 +1863,7 @@ export default function ResolutionCenter() {
                 <div className={styles.resolutionDetailValue}><span>Created Date</span><strong>{formatShortDate(issueDetail.created_at)}</strong></div>
                 <div className={styles.resolutionDetailValue}><span>Group Order</span><strong>{renderGroupBadge(issueDetail.group_order)}</strong></div>
                 <div className={styles.resolutionDetailValue}><span>Team</span><strong>{formatIssueTeamLabel(issueDetail.tim)}</strong></div>
-                <div className={styles.resolutionDetailValue}><span>PIC</span><strong>{issueDetail.pic || '-'}</strong></div>
+                <div className={styles.resolutionDetailValue}><span>Created By</span><strong>{issueDetail.created_by || '-'}</strong></div>
                 <div className={styles.resolutionDetailValue}><span>Need Handling</span><strong>{isIssuePending(issueDetail) ? 'Yes' : 'No'}</strong></div>
                 <div className={styles.resolutionDetailValue}><span>Additional Cost</span><strong>{formatMoney(issueDetail.biaya_timbul)}</strong></div>
               </div>

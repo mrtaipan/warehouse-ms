@@ -103,6 +103,9 @@ export function ModuleHeader({ eyebrow, title, subtitle, actions }) {
       </div>
       <div className={styles.moduleHeaderActions}>
         {actions}
+        <Link href="/dashboard" className={styles.backButton}>
+          ← Back to Dashboard
+        </Link>
         <Link href="/dashboard/delivery-report" className={styles.backButton}>
           ← Back to Home
         </Link>

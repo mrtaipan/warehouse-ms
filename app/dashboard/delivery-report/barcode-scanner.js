@@ -66,7 +66,7 @@ export default function BarcodeScanner() {
 
   useEffect(() => {
     deliverySupabase
-      .from('Barcode_Rules')
+      .from('delivery_barcode_rules')
       .select('*')
       .eq('is_active', true)
       .order('priority')
@@ -149,7 +149,7 @@ export default function BarcodeScanner() {
       const actorName = await getActorDisplayName()
       for (const row of rows) {
         const { data: existing, error: readError } = await deliverySupabase
-          .from('Delivery_Barcode')
+          .from('delivery_barcode')
           .select('*')
           .eq('barcode', row.barcode)
           .maybeSingle()
@@ -182,8 +182,8 @@ export default function BarcodeScanner() {
               is_defined: Boolean(existing?.courier || row.courier),
             }
         const query = existing
-          ? deliverySupabase.from('Delivery_Barcode').update(payload).eq('barcode', row.barcode)
-          : deliverySupabase.from('Delivery_Barcode').insert(payload)
+          ? deliverySupabase.from('delivery_barcode').update(payload).eq('barcode', row.barcode)
+          : deliverySupabase.from('delivery_barcode').insert(payload)
         const { error } = await query
         if (error) rejected.push(row.barcode)
         else inserted.push(row.barcode)
@@ -210,7 +210,7 @@ export default function BarcodeScanner() {
     setCancelOpen(false)
     setBusy(true)
     const barcodes = rows.map((row) => row.barcode)
-    const { data, error } = await deliverySupabase.from('Delivery_Barcode').delete().in('barcode', barcodes).select('barcode')
+    const { data, error } = await deliverySupabase.from('delivery_barcode').delete().in('barcode', barcodes).select('barcode')
     const deleted = (data || []).map((row) => row.barcode)
     setRows((current) => current.filter((row) => !deleted.includes(row.barcode)))
     setBusy(false)
@@ -226,7 +226,7 @@ export default function BarcodeScanner() {
       return
     }
     setBusy(true)
-    const { data, error } = await deliverySupabase.from('Delivery_Barcode').select('*').eq('barcode', normalized).maybeSingle()
+    const { data, error } = await deliverySupabase.from('delivery_barcode').select('*').eq('barcode', normalized).maybeSingle()
     setBusy(false)
     if (error || !data) {
       setSearchResult({ found: false, text: error ? error.message : 'Barcode was not found in the database.' })
