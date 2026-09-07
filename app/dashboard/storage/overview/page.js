@@ -1021,9 +1021,14 @@ export default function StorageOverviewPage() {
     )
     .sort((left, right) => naturalSort.compare(String(left.sub_location), String(right.sub_location)))
 
-  const selectedMoveLocation = moveSubLocationOptions.find(
-    (item) => item.sub_location === moveForm.subLocation
-  )
+  const isMoveArklineLocation = moveSourceGroupCode === 'ARKLINE'
+  const selectedMoveLocation =
+    moveSubLocationOptions.find((item) => item.sub_location === moveForm.subLocation) ||
+    (
+      isMoveArklineLocation
+        ? moveSubLocationOptions.find((item) => !normalizeFilterValue(item.sub_location)) || moveSubLocationOptions[0] || null
+        : null
+    )
 
   const queueStorageGroup = normalizeFilterValue(queueModalEntry?.storing_type)
   const queueEligibleRackLocations = rackLocations.filter((item) => {
@@ -3524,16 +3529,16 @@ export default function StorageOverviewPage() {
                 </div>
 
                 <div style={styles.field}>
-                  <label style={styles.label}>Carton / Level</label>
+                  <label style={styles.label}>{isMoveArklineLocation ? 'ARKLINE Level' : 'Carton / Level'}</label>
                   <select
                     name="subLocation"
-                    value={moveForm.subLocation}
+                    value={isMoveArklineLocation ? '' : moveForm.subLocation}
                     onChange={handleMoveSelectChange}
-                    style={!moveForm.locationCode ? { ...styles.select, ...styles.controlDisabled } : styles.select}
-                    disabled={!moveForm.locationCode}
-                    required
+                    style={isMoveArklineLocation || !moveForm.locationCode ? { ...styles.select, ...styles.controlDisabled } : styles.select}
+                    disabled={isMoveArklineLocation || !moveForm.locationCode}
+                    required={!isMoveArklineLocation}
                   >
-                    <option value="">Select sub location</option>
+                    <option value="">{isMoveArklineLocation ? 'Not required for ARKLINE' : 'Select sub location'}</option>
                     {moveSubLocationOptions.map((option) => (
                       <option key={option.id} value={option.sub_location}>
                         {option.sub_location}
