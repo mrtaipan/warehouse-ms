@@ -994,6 +994,14 @@ const ROUTE_PERMISSION_MAP = [
 export function canAccessPath(pathname, role, permissions = [], isAdmin = false) {
   const resolvedRole = resolveRole(role, isAdmin)
 
+  if (
+    pathname === '/dashboard/delivery-report' ||
+    pathname.startsWith('/dashboard/delivery-report/') ||
+    pathname.startsWith('/dashboard/delivery-report?')
+  ) {
+    return true
+  }
+
   if (pathname.startsWith('/dashboard/user-access')) {
     return isAdmin || resolvedRole === 'admin'
   }
