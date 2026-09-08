@@ -64,6 +64,13 @@ export default function BarcodeScanner() {
   const [cancelOpen, setCancelOpen] = useState(false)
   const [searchResult, setSearchResult] = useState(null)
 
+  function clearBarcodeInput() {
+    setBarcode('')
+    if (inputRef.current) {
+      inputRef.current.value = ''
+    }
+  }
+
   useEffect(() => {
     deliverySupabase
       .from('delivery_barcode_rules')
@@ -82,9 +89,10 @@ export default function BarcodeScanner() {
     inputRef.current?.focus()
   }
 
-  function addBarcode() {
-    const normalized = barcode.trim().toUpperCase()
+  function addBarcode(rawBarcode = barcode) {
+    const normalized = String(rawBarcode || '').trim().toUpperCase()
     if (!normalized || busy) return
+    clearBarcodeInput()
     if (rows.some((row) => row.barcode === normalized && row.phase === phase)) {
       setStatus({ type: 'error', message: `DUPLICATE in this session: ${normalized} (${phase})` })
       beep(180, 120)
@@ -103,7 +111,6 @@ export default function BarcodeScanner() {
       },
       ...current,
     ])
-    setBarcode('')
     setSelected(null)
     setStatus({ type: 'success', message: `Added to scan queue: ${normalized} (${phase} • ${info})` })
     beep(880)
@@ -273,7 +280,7 @@ export default function BarcodeScanner() {
 
             <div className={styles.scannerInputCard}>
               <div className={styles.activePills}><span>● {phase}</span><span className={phase === 'DELIVERY' ? groupPillClass(group) : ''}>● {phase === 'PACKING' ? team : group}</span></div>
-              <label><span>BARCODE INPUT</span><input ref={inputRef} autoFocus inputMode="none" autoComplete="off" placeholder="Scan barcode here..." value={barcode} onChange={(event) => setBarcode(event.target.value.toUpperCase())} onKeyDown={(event) => event.key === 'Enter' && addBarcode()} /></label>
+              <label><span>BARCODE INPUT</span><input ref={inputRef} autoFocus inputMode="none" autoComplete="off" placeholder="Scan barcode here..." value={barcode} onChange={(event) => setBarcode(event.target.value.toUpperCase())} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); addBarcode(event.currentTarget.value) } }} /></label>
               <div className={styles.scannerActions}>
                 <button className={styles.dangerButton} disabled={selected == null || busy} onClick={() => { setRows(rows.filter((row) => row.id !== selected)); setSelected(null) }}>Erase Selected</button>
                 <button className={styles.softButton} disabled={busy} onClick={() => { setRows([]); setSelected(null); setStatus({ type: 'info', message: 'Table cleared.' }) }}>Clear Table</button>
