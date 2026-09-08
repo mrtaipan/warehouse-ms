@@ -1,7 +1,6 @@
 import { redirect } from 'next/navigation'
 
 import { createClient } from '@/utils/supabase/server'
-import { loadAccessContext } from '@/utils/access-control'
 
 import DeliveryReportClient from './delivery-report-client'
 
@@ -17,12 +16,6 @@ export default async function DeliveryReportPage() {
 
   if (!user) {
     redirect('/login')
-  }
-
-  const { isAdmin } = await loadAccessContext(supabase, user)
-
-  if (!isAdmin) {
-    redirect('/dashboard')
   }
 
   return <DeliveryReportClient />

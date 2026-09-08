@@ -698,6 +698,9 @@ export default async function DashboardPage({ searchParams }) {
                 {showPenaltyPointsButton ? (
                   <PenaltyPointsShortcutButton people={announcementRows || []} currentRows={currentPenaltyRows || []} canAdd={canAddPenaltyPoints} />
                 ) : null}
+                <Link href="/dashboard/delivery-report" className={styles.heroProfileLink} aria-label="Open Delivery Report" title="Delivery Report">
+                  <DeliveryReportIcon />
+                </Link>
                 {showOperationsCalendarButton ? (
                   <Link href="/operations-calendar" className={styles.heroProfileLink} aria-label="Open Operations Calendar">
                     <span className={styles.heroActionIcon}>
