@@ -7,7 +7,7 @@ import { ADMIN_EMAIL } from '@/utils/permissions'
 import { createClient } from '@/utils/supabase/browser'
 import { getProfileByAuthenticatedUser } from '@/utils/user-profiles'
 import { EmptyState, Modal, ModuleHeader, StatusMessage } from './delivery-report-client'
-import { GROUPS, formatDate, jakartaEnd, jakartaStart, romanMonth, safeNumber, todayIso } from './delivery-report-helpers'
+import { GROUPS, formatDate, romanMonth, safeNumber, todayIso } from './delivery-report-helpers'
 import styles from './delivery-report.module.css'
 
 const TABS = [
@@ -486,40 +486,21 @@ export default function ResolutionCenter() {
 
   const loadCases = useCallback(async () => {
     if (!caseListAccess.ready) return
-    let query = deliverySupabase
+    const { data, error } = await deliverySupabase
       .from('delivery_error_retur_cases')
       .select('*')
-      .gte('tanggal_pengajuan', jakartaStart(filters.from))
-      .lte('tanggal_pengajuan', jakartaEnd(filters.to))
       .order('tanggal_pengajuan', { ascending: false })
-    if (filters.group) query = query.eq('group_order', filters.group)
-    if (filters.courier) query = query.eq('courier_name', filters.courier)
-    if (!caseListAccess.isAdmin) {
-      if (!caseListAccess.name) {
-        setCases([])
-        return
-      }
-      query = query.eq('created_by', caseListAccess.name)
-    }
-    const { data, error } = await query
+      .limit(5000)
     if (error) setStatus({ type: 'error', message: `Failed to load return cases: ${error.message}` })
     else setCases(data || [])
-  }, [caseListAccess.isAdmin, caseListAccess.name, caseListAccess.ready, filters.courier, filters.from, filters.group, filters.to])
+  }, [caseListAccess.ready])
 
   const loadIssues = useCallback(async () => {
     if (!caseListAccess.ready) return
-    let query = deliverySupabase.from('delivery_order_issue_cases').select('*').order('created_at', { ascending: false }).limit(5000)
-    if (!caseListAccess.isAdmin) {
-      if (!caseListAccess.name) {
-        setIssues([])
-        return
-      }
-      query = query.eq('created_by', caseListAccess.name)
-    }
-    const { data, error } = await query
+    const { data, error } = await deliverySupabase.from('delivery_order_issue_cases').select('*').order('created_at', { ascending: false }).limit(5000)
     if (error) setStatus({ type: 'error', message: `Failed to load order issues: ${error.message}` })
     else setIssues(data || [])
-  }, [caseListAccess.isAdmin, caseListAccess.name, caseListAccess.ready])
+  }, [caseListAccess.ready])
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -603,11 +584,16 @@ export default function ResolutionCenter() {
   const visibleCases = useMemo(() => {
     const keyword = filters.search.trim().toLowerCase()
     return accessibleCases.filter((row) => {
+      const submissionDate = dateOnly(row.tanggal_pengajuan)
+      if (filters.from && submissionDate && submissionDate < filters.from) return false
+      if (filters.to && submissionDate && submissionDate > filters.to) return false
+      if (filters.group && row.group_order !== filters.group) return false
+      if (filters.courier && row.courier_name !== filters.courier) return false
       if (filters.warningOnly && getCaseWarningMeta(row, today).rank <= 0) return false
       if (!keyword) return true
       return [row.kode_kejadian, row.order_id, row.no_resi_pengiriman, row.nama_customer].some((value) => String(value || '').toLowerCase().includes(keyword))
     })
-  }, [accessibleCases, filters.search, filters.warningOnly, today])
+  }, [accessibleCases, filters.courier, filters.from, filters.group, filters.search, filters.to, filters.warningOnly, today])
 
   const casesWithWarningMeta = useMemo(() => {
     return accessibleCases.map((row) => ({ meta: getCaseWarningMeta(row, today), row }))
@@ -1082,7 +1068,7 @@ export default function ResolutionCenter() {
   const searchResults = useMemo(() => {
     const keyword = productSearch.trim().toLowerCase()
     if (!keyword) return []
-    const returnRows = accessibleCases
+    const returnRows = cases
       .map((row) => ({
         action: row.retur_action || '-',
         code: row.kode_kejadian || '-',
@@ -1097,7 +1083,7 @@ export default function ResolutionCenter() {
         sourceLabel: 'Return',
         sourceType: 'return',
       }))
-    const issueRows = accessibleIssues
+    const issueRows = issues
       .map((row) => ({
         action: row.tindak_lanjut || '-',
         code: row.order_id || '-',
@@ -1136,7 +1122,7 @@ export default function ResolutionCenter() {
         return { ...row, foundIn }
       })
       .sort((first, second) => String(second.dateValue || '').localeCompare(String(first.dateValue || '')))
-  }, [accessibleCases, accessibleIssues, productSearch, productSearchFilters.group, productSearchFilters.scope, productSearchFilters.type])
+  }, [cases, issues, productSearch, productSearchFilters.group, productSearchFilters.scope, productSearchFilters.type])
 
   const detailStatusOption = RETURN_STATUS_OPTIONS[detailDraft?.status_barang] || RETURN_STATUS_OPTIONS.Pending
   const canEditDetail = Boolean(detailDraft) && !detailReadonly && activeTab !== 'receiving'
@@ -1152,24 +1138,24 @@ export default function ResolutionCenter() {
 
   const receivingRows = useMemo(() => {
     const keyword = cleanUpper(receivingFilters.search)
-    return accessibleCases
+    return cases
       .filter((row) => ['Sending', 'Completed'].includes(row.status_barang))
       .filter((row) => !receivingFilters.group || row.group_order === receivingFilters.group)
       .filter((row) => !receivingFilters.courier || row.courier_name === receivingFilters.courier)
       .filter((row) => !keyword || [row.kode_kejadian, row.nama_customer, row.order_id, row.no_resi_pengiriman].some((value) => cleanUpper(value).includes(keyword)))
-  }, [accessibleCases, receivingFilters.courier, receivingFilters.group, receivingFilters.search])
+  }, [cases, receivingFilters.courier, receivingFilters.group, receivingFilters.search])
 
   const receivingCourierOptions = useMemo(() => {
-    return Array.from(new Set(accessibleCases.filter((row) => ['Sending', 'Completed'].includes(row.status_barang)).map((row) => cleanUpper(row.courier_name)).filter(Boolean))).sort()
-  }, [accessibleCases])
+    return Array.from(new Set(cases.filter((row) => ['Sending', 'Completed'].includes(row.status_barang)).map((row) => cleanUpper(row.courier_name)).filter(Boolean))).sort()
+  }, [cases])
 
   const receivingAddRows = useMemo(() => {
     const keyword = cleanUpper(receivingAddSearch)
-    return accessibleCases
+    return cases
       .filter((row) => row.status_barang === 'Pending')
       .filter((row) => !keyword || cleanUpper(row.kode_kejadian).includes(keyword))
       .slice(0, 20)
-  }, [accessibleCases, receivingAddSearch])
+  }, [cases, receivingAddSearch])
 
   const selectedReceivingAddRows = useMemo(() => {
     const selected = new Set(receivingAddSelectedIds.map(String))
@@ -1178,12 +1164,12 @@ export default function ResolutionCenter() {
 
   const receivingReprintRows = useMemo(() => {
     const keyword = cleanUpper(receivingReprintSearch)
-    return accessibleCases
+    return cases
       .filter((row) => row.status_barang === 'Completed')
       .filter((row) => !isRefundOnlyCase(row))
       .filter((row) => !keyword || [row.kode_kejadian, row.nama_customer, row.no_resi_pengiriman].some((value) => cleanUpper(value).includes(keyword)))
       .slice(0, 30)
-  }, [accessibleCases, receivingReprintSearch])
+  }, [cases, receivingReprintSearch])
 
   const selectedReceivingRows = useMemo(() => {
     const selected = new Set(receivingSelectedIds.map(String))
@@ -1344,15 +1330,18 @@ export default function ResolutionCenter() {
       setStatus({ type: 'error', message: 'Select at least one Pending case or enter a case code first.' })
       return
     }
-    let query = deliverySupabase.from('delivery_error_retur_cases').select('*').eq('kode_kejadian', code).limit(1)
-    if (!caseListAccess.isAdmin) query = query.eq('created_by', caseListAccess.name)
-    const { data, error } = await query.maybeSingle()
+    const { data, error } = await deliverySupabase
+      .from('delivery_error_retur_cases')
+      .select('*')
+      .eq('kode_kejadian', code)
+      .limit(1)
+      .maybeSingle()
     if (error) {
       setStatus({ type: 'error', message: `Failed to find case: ${error.message}` })
       return
     }
     if (!data) {
-      setStatus({ type: 'error', message: 'Case code was not found for your access.' })
+      setStatus({ type: 'error', message: 'Case code was not found.' })
       return
     }
     await addCaseToReceiving(data)
