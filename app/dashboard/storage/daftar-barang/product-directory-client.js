@@ -827,12 +827,27 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
     const splitSourceVariantIds = new Set()
     const storageQtyBySku = new Map()
     const variantReleaseStateByKey = new Map()
+    const variantById = getMapById(productVariants)
+    const variantBySku = new Map()
+
+    ;(productVariants || []).forEach((variant) => {
+      const sku = normalizeUpper(variant.variant_code || variant.variant_label)
+      if (sku) variantBySku.set(sku, variant)
+    })
 
     ;(warehouseStorageRows || []).forEach((entry) => {
       const sku = normalizeUpper(entry.sku_id)
       if (!sku) return
 
-      storageQtyBySku.set(sku, Number(storageQtyBySku.get(sku) || 0) + Number(entry.total_qty ?? entry.qty ?? 0))
+      const qty = Number(entry.total_qty ?? entry.qty ?? 0)
+      const storageSkuKeys = new Set([sku])
+      const canonicalVariant = getCanonicalVariant(variantBySku.get(sku), variantById)
+      const canonicalSku = normalizeUpper(canonicalVariant?.variant_code || canonicalVariant?.variant_label)
+      if (canonicalSku) storageSkuKeys.add(canonicalSku)
+
+      storageSkuKeys.forEach((storageSku) => {
+        storageQtyBySku.set(storageSku, Number(storageQtyBySku.get(storageSku) || 0) + qty)
+      })
     })
 
     ;(productVariantReleaseStates || []).forEach((state) => {
@@ -874,7 +889,7 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
       inboundById: getMapById(inboundRows),
       breakdownById: getMapById(breakdownRows),
       modelById: getMapById(productModels),
-      variantById: getMapById(productVariants),
+      variantById,
       splitAssignmentByDetailKey,
       splitSourceVariantIds,
       brandById: getMapById(brands),

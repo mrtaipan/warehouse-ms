@@ -636,6 +636,7 @@ export default function StorageOverviewPage() {
     locationId: '',
     locationCode: '',
     subLocation: '',
+    skuId: '',
     itemName: '',
     size: '',
     qty: '',
@@ -969,9 +970,10 @@ export default function StorageOverviewPage() {
     }
 
     const selectedLabel = String(registerForm.itemName || '').trim().toUpperCase()
+    const selectedSku = String(registerForm.skuId || '').trim().toUpperCase()
 
-    return arklineProducts.find((product) => product.label === selectedLabel) || null
-  }, [arklineProducts, isRegisterArklineLocation, registerForm.itemName])
+    return arklineProducts.find((product) => product.label === selectedLabel || product.sku === selectedLabel || product.sku === selectedSku) || null
+  }, [arklineProducts, isRegisterArklineLocation, registerForm.itemName, registerForm.skuId])
 
   const moveSourceGroupCode = getLocationStorageGroup(moveModalEntry?.location)
   const moveEligibleRackLocations = rackLocations.filter((item) => {
@@ -1878,6 +1880,23 @@ export default function StorageOverviewPage() {
 
     if (name === 'itemName' && isRegisterArklineLocation) {
       setIsRegisterArklineProductMenuOpen(true)
+      const nextItemName = value.toUpperCase()
+      const matchedProduct = arklineProducts.find((product) => product.label === nextItemName || product.sku === nextItemName)
+
+      setRegisterForm((prev) => ({
+        ...prev,
+        itemName: nextItemName,
+        skuId: matchedProduct?.sku || '',
+      }))
+      return
+    }
+
+    if (name === 'skuId') {
+      setRegisterForm((prev) => ({
+        ...prev,
+        skuId: value.toUpperCase(),
+      }))
+      return
     }
 
     setRegisterForm((prev) => ({
@@ -1901,6 +1920,7 @@ export default function StorageOverviewPage() {
     setRegisterForm((prev) => ({
       ...prev,
       itemName: product.label,
+      skuId: product.sku,
     }))
     setIsRegisterArklineProductMenuOpen(false)
   }
@@ -1975,6 +1995,10 @@ export default function StorageOverviewPage() {
       return
     }
 
+    const itemSku = String(
+      isRegisterArklineLocation ? selectedRegisterArklineProduct?.sku || '' : registerForm.skuId || ''
+    ).trim().toUpperCase()
+
     const nextQty = Number(registerForm.qty || 0)
 
     if (nextQty <= 0) {
@@ -1985,6 +2009,7 @@ export default function StorageOverviewPage() {
 
     const payload = {
       rack_location_id: selectedRegisterLocation.id,
+      sku_id: itemSku || null,
       item_name: isRegisterArklineLocation ? selectedRegisterArklineProduct.label : registerForm.itemName.trim(),
       size: normalizeSizeValue(registerForm.size) || null,
       qty: nextQty,
@@ -2006,6 +2031,7 @@ export default function StorageOverviewPage() {
     setStorageEntries((currentRows) => mergeWarehouseStorageRows(currentRows, insertedRows || []))
     setRegisterForm((prev) => ({
       ...prev,
+      skuId: '',
       itemName: '',
       size: '',
       qty: '',
@@ -3086,6 +3112,19 @@ export default function StorageOverviewPage() {
                 <strong style={styles.selectedLocationValue}>
                   {selectedRegisterLocation ? getLocationLabel(selectedRegisterLocation) : 'Choose a full location first'}
                 </strong>
+              </div>
+
+              <div style={styles.field}>
+                <label style={styles.label}>SKU</label>
+                <input
+                  name="skuId"
+                  value={registerForm.skuId}
+                  onChange={handleRegisterInputChange}
+                  style={isRegisterArklineLocation ? { ...styles.input, ...styles.controlReadOnly } : styles.input}
+                  placeholder="SKU ID"
+                  autoComplete="off"
+                  readOnly={isRegisterArklineLocation}
+                />
               </div>
 
               <div style={styles.field}>
@@ -4396,6 +4435,11 @@ const styles = {
     color: '#94a3b8',
     background: '#f8fafc',
     cursor: 'not-allowed',
+  },
+  controlReadOnly: {
+    color: '#334155',
+    background: '#f8fafc',
+    cursor: 'default',
   },
   toolbar: {
     display: 'flex',

@@ -11,7 +11,7 @@ const supabase = createClient()
 const BATCH_SIZE = 1000
 const STORAGE_DATA_CACHE_TTL_MS = 15 * 1000
 const WAREHOUSE_MAP_STATIC_CACHE_TTL_MS = 5 * 60 * 1000
-const WAREHOUSE_STORAGE_SELECT_COLUMNS = 'id, rack_location_id, item_name, size, qty, notes, created_at, updated_at'
+const WAREHOUSE_STORAGE_SELECT_COLUMNS = 'id, rack_location_id, sku_id, item_name, size, qty, notes, created_at, updated_at'
 const warehouseStorageCache = { rows: null, expiresAt: 0 }
 const staticWarehouseMapCache = new Map()
 
@@ -1263,6 +1263,7 @@ export default function WarehouseMapClient({ canEditMap = false, canUseRegistry 
   const [registrySuccess, setRegistrySuccess] = useState('')
   const [registryForm, setRegistryForm] = useState({
     subLocationKey: '',
+    skuId: '',
     itemName: '',
     size: '',
     qty: '1',
@@ -1562,9 +1563,10 @@ export default function WarehouseMapClient({ canEditMap = false, canUseRegistry 
     }
 
     const selectedLabel = String(registryForm.itemName || '').trim().toUpperCase()
+    const selectedSku = String(registryForm.skuId || '').trim().toUpperCase()
 
-    return arklineProducts.find((product) => product.label === selectedLabel) || null
-  }, [arklineProducts, registryForm.itemName, selectedZoneIsArkline])
+    return arklineProducts.find((product) => product.label === selectedLabel || product.sku === selectedLabel || product.sku === selectedSku) || null
+  }, [arklineProducts, registryForm.itemName, registryForm.skuId, selectedZoneIsArkline])
   const selectedSubLocation = subLocationSlots.find((slot) => slot.key === selectedSubLocationKey) || null
   const currentGoodsGroups = useMemo(() => {
     if (selectedZoneIsArkline) {
@@ -2191,6 +2193,26 @@ export default function WarehouseMapClient({ canEditMap = false, canUseRegistry 
       return
     }
 
+    if (name === 'skuId') {
+      setRegistryForm((prev) => ({
+        ...prev,
+        skuId: value.toUpperCase(),
+      }))
+      return
+    }
+
+    if (name === 'itemName' && selectedZoneIsArkline) {
+      const nextItemName = value.toUpperCase()
+      const matchedProduct = arklineProducts.find((product) => product.label === nextItemName || product.sku === nextItemName)
+
+      setRegistryForm((prev) => ({
+        ...prev,
+        itemName: nextItemName,
+        skuId: matchedProduct?.sku || '',
+      }))
+      return
+    }
+
     setRegistryForm((prev) => ({
       ...prev,
       [name]:
@@ -2233,8 +2255,13 @@ export default function WarehouseMapClient({ canEditMap = false, canUseRegistry 
       return
     }
 
+    const itemSku = String(
+      selectedZoneIsArkline ? selectedArklineProduct?.sku || '' : registryForm.skuId || ''
+    ).trim().toUpperCase()
+
     const payload = {
       rack_location_id: activeRegistryLocation.id,
+      sku_id: itemSku || null,
       item_name: selectedZoneIsArkline ? selectedArklineProduct.label : registryForm.itemName.trim(),
       size: normalizeSizeValue(registryForm.size) || null,
       qty: Number(registryForm.qty || 0),
@@ -2257,6 +2284,7 @@ export default function WarehouseMapClient({ canEditMap = false, canUseRegistry 
     setRegistrySuccess('Item stored successfully.')
     setRegistryForm((prev) => ({
       ...prev,
+      skuId: '',
       itemName: '',
       size: '',
       qty: '1',
@@ -3013,6 +3041,17 @@ export default function WarehouseMapClient({ canEditMap = false, canUseRegistry 
                               required
                             />
                           )}
+                        </label>
+
+                        <label className={styles.registryField}>
+                          <span>SKU</span>
+                          <input
+                            name="skuId"
+                            value={registryForm.skuId}
+                            onChange={handleRegistryInputChange}
+                            placeholder="SKU ID"
+                            readOnly={selectedZoneIsArkline}
+                          />
                         </label>
 
                         <div className={styles.registryGrid}>
