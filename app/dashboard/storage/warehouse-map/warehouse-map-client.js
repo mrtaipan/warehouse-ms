@@ -695,6 +695,36 @@ function normalizeSizeValue(value) {
   return String(value || '').trim().toUpperCase().replace(/\s+/g, '')
 }
 
+function splitSkuItemName(value) {
+  const text = String(value || '').trim()
+  const separatorIndex = text.indexOf('|')
+
+  if (separatorIndex === -1) {
+    return {
+      skuId: '',
+      itemName: text,
+    }
+  }
+
+  const skuId = text.slice(0, separatorIndex).trim().toUpperCase()
+  const itemName = text.slice(separatorIndex + 1).trim()
+
+  return {
+    skuId,
+    itemName: itemName || text,
+  }
+}
+
+function getStorageItemDisplayName(entry = {}) {
+  const itemName = String(entry.item_name || '').trim()
+  const skuId = String(entry.sku_id || '').trim().toUpperCase()
+
+  if (!skuId) return itemName || '-'
+  if (itemName.toUpperCase().startsWith(`${skuId} |`)) return itemName
+
+  return itemName ? `${skuId} | ${itemName}` : skuId
+}
+
 function formatDateTime(value) {
   if (!value) {
     return '-'
@@ -2122,6 +2152,7 @@ export default function WarehouseMapClient({ canEditMap = false, canUseRegistry 
     setRegistrySuccess('')
     setRegistryForm({
       subLocationKey: '',
+      skuId: '',
       itemName: '',
       size: '',
       qty: '1',
@@ -2255,14 +2286,18 @@ export default function WarehouseMapClient({ canEditMap = false, canUseRegistry 
       return
     }
 
+    const rawItemName = selectedZoneIsArkline
+      ? selectedArklineProduct?.productName || selectedArklineProduct?.label || ''
+      : registryForm.itemName.trim()
+    const parsedItem = splitSkuItemName(rawItemName)
     const itemSku = String(
       selectedZoneIsArkline ? selectedArklineProduct?.sku || '' : registryForm.skuId || ''
-    ).trim().toUpperCase()
+    ).trim().toUpperCase() || parsedItem.skuId
 
     const payload = {
       rack_location_id: activeRegistryLocation.id,
       sku_id: itemSku || null,
-      item_name: selectedZoneIsArkline ? selectedArklineProduct.label : registryForm.itemName.trim(),
+      item_name: parsedItem.itemName,
       size: normalizeSizeValue(registryForm.size) || null,
       qty: Number(registryForm.qty || 0),
       notes: registryForm.notes.trim() || null,
@@ -2792,7 +2827,7 @@ export default function WarehouseMapClient({ canEditMap = false, canUseRegistry 
                         {group.entries.map((entry) => (
                           <article key={entry.id} className={styles.storageRow}>
                             <div>
-                              <h4>{entry.item_name}</h4>
+                              <h4>{getStorageItemDisplayName(entry)}</h4>
                               <p>{entry.size || 'No size'} / {entry.notes || 'No notes'}</p>
                             </div>
                             <strong>{formatNumber(entry.qty)}</strong>
@@ -2930,7 +2965,7 @@ export default function WarehouseMapClient({ canEditMap = false, canUseRegistry 
                             {group.entries.map((entry) => (
                               <article key={entry.id} className={styles.storageRow}>
                                 <div>
-                                  <h4>{entry.item_name}</h4>
+                                  <h4>{getStorageItemDisplayName(entry)}</h4>
                                   <p>{entry.size || 'No size'} / {entry.notes || 'No notes'}</p>
                                 </div>
                                 <strong>{formatNumber(entry.qty)}</strong>
@@ -2950,7 +2985,7 @@ export default function WarehouseMapClient({ canEditMap = false, canUseRegistry 
                         <article key={row.id} className={styles.historyRow}>
                           <span>{formatDateTime(row.completed_at || row.created_at)}</span>
                           <div>
-                            <h4>{row.item_name}</h4>
+                            <h4>{getStorageItemDisplayName(row)}</h4>
                             <p>
                               {formatNumber(row.qty)} qty taken from {selectedZoneIsArkline ? selectedSlotCode : getSubLocationLabel(getHistorySubLocationKey(row, storageEntryById))}
                               {row.requester_name ? ` for ${row.requester_name}` : ''}
@@ -3047,7 +3082,7 @@ export default function WarehouseMapClient({ canEditMap = false, canUseRegistry 
                           <span>SKU</span>
                           <input
                             name="skuId"
-                            value={registryForm.skuId}
+                            value={registryForm.skuId || ''}
                             onChange={handleRegistryInputChange}
                             placeholder="SKU ID"
                             readOnly={selectedZoneIsArkline}

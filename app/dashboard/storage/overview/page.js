@@ -32,6 +32,36 @@ function normalizeFilterValue(value) {
   return String(value || '').trim().toUpperCase()
 }
 
+function splitSkuItemName(value) {
+  const text = String(value || '').trim()
+  const separatorIndex = text.indexOf('|')
+
+  if (separatorIndex === -1) {
+    return {
+      skuId: '',
+      itemName: text,
+    }
+  }
+
+  const skuId = text.slice(0, separatorIndex).trim().toUpperCase()
+  const itemName = text.slice(separatorIndex + 1).trim()
+
+  return {
+    skuId,
+    itemName: itemName || text,
+  }
+}
+
+function getStorageItemDisplayName(entry = {}) {
+  const itemName = String(entry.item_name || '').trim()
+  const skuId = String(entry.sku_id || '').trim().toUpperCase()
+
+  if (!skuId) return itemName || '-'
+  if (itemName.toUpperCase().startsWith(`${skuId} |`)) return itemName
+
+  return itemName ? `${skuId} | ${itemName}` : skuId
+}
+
 function sortStorageEntries(rows = []) {
   return [...rows].sort((left, right) => new Date(right.created_at || 0) - new Date(left.created_at || 0))
 }
@@ -1995,9 +2025,13 @@ export default function StorageOverviewPage() {
       return
     }
 
+    const rawItemName = isRegisterArklineLocation
+      ? selectedRegisterArklineProduct?.productName || selectedRegisterArklineProduct?.label || ''
+      : registerForm.itemName.trim()
+    const parsedItem = splitSkuItemName(rawItemName)
     const itemSku = String(
       isRegisterArklineLocation ? selectedRegisterArklineProduct?.sku || '' : registerForm.skuId || ''
-    ).trim().toUpperCase()
+    ).trim().toUpperCase() || parsedItem.skuId
 
     const nextQty = Number(registerForm.qty || 0)
 
@@ -2010,7 +2044,7 @@ export default function StorageOverviewPage() {
     const payload = {
       rack_location_id: selectedRegisterLocation.id,
       sku_id: itemSku || null,
-      item_name: isRegisterArklineLocation ? selectedRegisterArklineProduct.label : registerForm.itemName.trim(),
+      item_name: parsedItem.itemName,
       size: normalizeSizeValue(registerForm.size) || null,
       qty: nextQty,
       notes: registerForm.notes.trim() || null,
@@ -2835,7 +2869,7 @@ export default function StorageOverviewPage() {
                 {visibleStockRows.map((entry) => (
                   <tr key={entry.id}>
                     <td style={styles.td}>{getLocationLabel(entry.location)}</td>
-                    <td style={styles.td}>{entry.item_name}</td>
+                    <td style={styles.td}>{getStorageItemDisplayName(entry)}</td>
                     <td style={styles.td}>{entry.size || '-'}</td>
                     <td style={styles.td}>{entry.qty}</td>
                     {canShowStorageLocationActions ? (
@@ -2970,7 +3004,7 @@ export default function StorageOverviewPage() {
               <tbody>
                 {visibleHistoryRows.map((entry) => (
                   <tr key={entry.id}>
-                    <td style={styles.td}>{entry.item_name}</td>
+                    <td style={styles.td}>{getStorageItemDisplayName(entry)}</td>
                     <td style={styles.td}>{entry.requester_name || '-'}</td>
                     <td style={styles.td}>{entry.size || '-'}</td>
                     <td style={styles.td}>{entry.qty}</td>
@@ -3118,7 +3152,7 @@ export default function StorageOverviewPage() {
                 <label style={styles.label}>SKU</label>
                 <input
                   name="skuId"
-                  value={registerForm.skuId}
+                  value={registerForm.skuId || ''}
                   onChange={handleRegisterInputChange}
                   style={isRegisterArklineLocation ? { ...styles.input, ...styles.controlReadOnly } : styles.input}
                   placeholder="SKU ID"
@@ -3409,7 +3443,7 @@ export default function StorageOverviewPage() {
             <div style={styles.takeModalSummaryGrid}>
               <div style={styles.takeModalItemCard}>
                 <span style={styles.selectedLocationLabel}>Item</span>
-                <strong style={styles.takeModalItemName}>{takeModalEntry.item_name}</strong>
+                <strong style={styles.takeModalItemName}>{getStorageItemDisplayName(takeModalEntry)}</strong>
                 <div style={styles.takeModalSizeBlock}>
                   <span style={styles.takeModalSizeLabel}>Size</span>
                   <strong style={styles.takeModalSizeValue}>{takeModalEntry.size || '-'}</strong>
@@ -3481,7 +3515,7 @@ export default function StorageOverviewPage() {
             <div style={styles.moveSummaryGrid}>
               <div style={styles.takeModalItemCard}>
                 <span style={styles.selectedLocationLabel}>Item</span>
-                <strong style={styles.takeModalItemName}>{moveModalEntry.item_name}</strong>
+                <strong style={styles.takeModalItemName}>{getStorageItemDisplayName(moveModalEntry)}</strong>
                 <div style={styles.moveMetaRow}>
                   <span style={styles.moveMetaPill}>Size {moveModalEntry.size || '-'}</span>
                   <span style={styles.moveMetaPill}>Qty {moveModalEntry.qty || 0}</span>
