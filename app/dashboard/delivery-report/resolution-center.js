@@ -210,6 +210,12 @@ function getGroupPrefix(group) {
   return 'A'
 }
 
+function formatHandledCaseLabel(row) {
+  const code = cleanText(row?.kode_kejadian || row?.order_id) || '-'
+  const handler = cleanText(row?.created_by)
+  return handler ? `${code} | Handled by ${handler}` : code
+}
+
 function timestampWithCurrentJakartaTime(dateValue) {
   const dateText = cleanText(dateValue) || todayIso()
   const timeParts = new Intl.DateTimeFormat('en-GB', {
@@ -646,8 +652,15 @@ export default function ResolutionCenter() {
     const totalLoss = accessibleCases.reduce((sum, row) => sum + safeNumber(row.nilai_refund_kompensasi), 0)
     const outboundCost = accessibleCases.reduce((sum, row) => sum + safeNumber(row.ongkir_keluar), 0)
     const inboundCost = accessibleCases.reduce((sum, row) => sum + safeNumber(row.ongkir_masuk), 0)
+    const attentionCase = warningRows[0]?.row || accessibleCases.find((row) => ACTIVE_RETURN_STATUSES.has(row.status_barang)) || accessibleCases[0]
 
     return [
+      {
+        detail: attentionCase
+          ? `${attentionCase.nama_customer || '-'} • ${attentionCase.status_barang || '-'} • Deadline ${formatShortDate(attentionCase.batas_tanggal_retur)}`
+          : 'No active case data yet.',
+        title: formatHandledCaseLabel(attentionCase),
+      },
       {
         detail: statusBreakdown.join(', ') || 'No status data yet.',
         title: 'Status Breakdown',
@@ -673,7 +686,7 @@ export default function ResolutionCenter() {
         title: 'Nominal Summary',
       },
     ]
-  }, [accessibleCases])
+  }, [accessibleCases, warningRows])
 
   const accessibleIssues = useMemo(() => {
     if (!caseListAccess.ready) return []
@@ -801,6 +814,7 @@ export default function ResolutionCenter() {
       ...blankReturn(today),
       alamat: row.alamat || '',
       batas_tanggal_retur: dateOnly(row.batas_tanggal_retur) || today,
+      created_by: row.created_by || '',
       courier_name: row.courier_name || '',
       courier_service: row.courier_service || '',
       group_order: row.group_order || 'MOB',
@@ -824,6 +838,7 @@ export default function ResolutionCenter() {
       status_barang: row.status_barang || 'Pending',
       tanggal_pengajuan: dateOnly(row.tanggal_pengajuan) || today,
       total_retur: row.total_retur ?? '',
+      updated_by: row.updated_by || '',
     }
   }
 
@@ -1900,7 +1915,7 @@ export default function ResolutionCenter() {
             <section className={`${styles.resolutionDetailSection} ${styles.resolutionDetailCaseOverview}`}>
               <h3>Case Overview</h3>
               <div className={styles.resolutionDetailGrid}>
-                {renderDetailField({ key: 'kode_kejadian', label: 'Case Code', readonly: true })}
+                <div className={styles.resolutionDetailValue}><span>Case Code</span><strong>{formatHandledCaseLabel(detailDraft)}</strong></div>
                 {renderDetailField({ key: 'tanggal_pengajuan', label: 'Submission Date', type: 'date' })}
                 {renderDetailField({ key: 'batas_tanggal_retur', label: 'Return Deadline', type: 'date' })}
                 {renderDetailField({ key: 'group_order', label: 'Group Order', options: GROUPS })}

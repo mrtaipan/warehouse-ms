@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { createClient } from '@/utils/supabase/browser'
 
@@ -56,10 +56,11 @@ function formatDateDisplay(value) {
   }).format(new Date(value))
 }
 
-function syncOverviewUrl({ supplierId, month, search, page }) {
+function syncOverviewUrl({ supplierId, month, search, page, showAll }) {
   const params = new URLSearchParams()
 
   if (search) params.set('search', search)
+  if (showAll) params.set('showAll', '1')
   if (!search && supplierId) params.set('supplier', supplierId)
   if (!search && month) params.set('month', month)
   if (page > 1) params.set('page', String(page))
@@ -121,6 +122,7 @@ export default function ReceivingFiltersClient({
   initialTotalItems = 0,
   initialFilters = {},
   initialError = '',
+  canShowAll = false,
   canViewReceiving = false,
   canEditReceiving = true,
   canInputReceiving = false,
@@ -134,6 +136,7 @@ export default function ReceivingFiltersClient({
     supplierId: initialFilters.supplierId || '',
     month: initialFilters.month || '',
     search: initialFilters.search || '',
+    showAll: Boolean(initialFilters.showAll) && canShowAll,
   })
   const [page, setPage] = useState(initialFilters.page || 1)
   const [orders, setOrders] = useState(initialOrders)
@@ -146,7 +149,7 @@ export default function ReceivingFiltersClient({
   const hasPreviousPage = safePage > 1
   const hasNextPage = safePage < totalPages
 
-  async function loadOrders(nextFilters, nextPage) {
+  const loadOrders = useCallback(async (nextFilters, nextPage) => {
     const requestId = requestIdRef.current + 1
     requestIdRef.current = requestId
     setLoading(true)
@@ -154,7 +157,7 @@ export default function ReceivingFiltersClient({
 
     const search = sanitizeSearch(nextFilters.search)
     const effectiveFilters = search
-      ? { supplierId: '', month: '', search }
+      ? { supplierId: '', month: '', search, showAll: Boolean(nextFilters.showAll) && canShowAll }
       : { ...nextFilters, search }
     const monthBounds = getMonthBounds(effectiveFilters.month)
     const from = (nextPage - 1) * PAGE_SIZE
@@ -178,7 +181,7 @@ export default function ReceivingFiltersClient({
     if (!search) {
       if (monthBounds) {
         query = query.gte('inbound_date', monthBounds.start).lt('inbound_date', monthBounds.next)
-      } else {
+      } else if (!effectiveFilters.showAll) {
         query = query.gte('inbound_date', getDefaultInboundStartDate())
       }
     }
@@ -200,7 +203,7 @@ export default function ReceivingFiltersClient({
     }
 
     setLoading(false)
-  }
+  }, [canShowAll])
 
   useEffect(() => {
     if (!didMountRef.current) {
@@ -213,16 +216,16 @@ export default function ReceivingFiltersClient({
     }, 250)
 
     return () => window.clearTimeout(timer)
-  }, [filters, page])
+  }, [filters, loadOrders, page])
 
   function updateFilter(name, value) {
     setFilters((prev) => {
       if (name === 'search' && sanitizeSearch(value)) {
-        return { supplierId: '', month: '', search: value }
+        return { supplierId: '', month: '', search: value, showAll: prev.showAll }
       }
 
       if ((name === 'supplierId' || name === 'month') && prev.search) {
-        return { supplierId: '', month: '', search: '', [name]: value }
+        return { supplierId: '', month: '', search: '', showAll: prev.showAll, [name]: value }
       }
 
       return {
@@ -234,7 +237,7 @@ export default function ReceivingFiltersClient({
   }
 
   function resetFilters() {
-    setFilters({ supplierId: '', month: '', search: '' })
+    setFilters({ supplierId: '', month: '', search: '', showAll: false })
     setPage(1)
   }
 
@@ -272,6 +275,18 @@ export default function ReceivingFiltersClient({
           <span style={styles.label}>Month</span>
           <input type="month" value={filters.month} onChange={(event) => updateFilter('month', event.target.value)} style={{ ...styles.input, ...styles.monthInput }} />
         </label>
+
+        {canShowAll ? (
+          <label style={styles.checkField}>
+            <input
+              type="checkbox"
+              checked={filters.showAll}
+              onChange={(event) => updateFilter('showAll', event.target.checked)}
+              style={styles.checkbox}
+            />
+            <span style={styles.checkText}>Show all</span>
+          </label>
+        ) : null}
 
         <button type="button" onClick={resetFilters} style={styles.resetButton}>
           Reset
@@ -468,6 +483,33 @@ const styles = {
   monthInput: {
     width: '100%',
     minWidth: 0,
+  },
+  checkField: {
+    boxSizing: 'border-box',
+    minWidth: 0,
+    flex: '0 0 auto',
+    height: '40px',
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '8px',
+    padding: '0 12px',
+    border: '1px solid #cbd5e1',
+    borderRadius: '9px',
+    background: '#fff',
+    color: '#111827',
+    cursor: 'pointer',
+    whiteSpace: 'nowrap',
+  },
+  checkbox: {
+    width: '16px',
+    height: '16px',
+    accentColor: '#0f766e',
+    cursor: 'pointer',
+  },
+  checkText: {
+    fontSize: '13px',
+    fontWeight: '800',
+    color: '#0f172a',
   },
   select: {
     boxSizing: 'border-box',

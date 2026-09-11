@@ -168,6 +168,119 @@ function normalizePo(row) {
   }
 }
 
+function createPoRevisionSnapshotFromBundle(bundle = {}) {
+  const po = bundle.po || {}
+  return {
+    header: {
+      poId: String(po.po_id || '').trim().toUpperCase(),
+      method: String(po.method || '').trim().toUpperCase(),
+      supplierId: po.supplier_id ?? null,
+      supplierName: String(po.supplier_name || '').trim().toUpperCase(),
+      requestDeliveryDate: String(po.request_delivery_date || '').slice(0, 10) || null,
+      paymentTerms: String(po.payment_terms || '').trim() || null,
+      includePpn: normalizeBoolean(po.include_ppn, true),
+      status: String(po.status || '').trim() || null,
+      notes: String(po.notes || '').trim() || null,
+    },
+    items: (bundle.items || []).map((item) => ({
+      skuInduk: String(item.skuInduk || '').trim().toUpperCase(),
+      namaProduk: String(item.namaProdukSnapshot || '').trim().toUpperCase(),
+      kategoriProduk: String(item.kategoriProdukSnapshot || '').trim().toUpperCase() || null,
+      kategoriPengadaan: String(item.kategoriPengadaanSnapshot || '').trim().toUpperCase() || null,
+      allowancePct: toNumber(item.allowancePct),
+      totalQty: getLineTotalQty(item),
+      price: toNumber(item.price),
+      status: String(item.status || '').trim() || null,
+      notes: String(item.notes || '').trim() || null,
+      qtyBySize: SIZE_OPTIONS.reduce((accumulator, size) => {
+        accumulator[size] = toNumber(item.qtyBySize?.[size])
+        return accumulator
+      }, {}),
+    })),
+  }
+}
+
+function createPoRevisionSnapshotFromDraft({ header, method, items }) {
+  return {
+    header: {
+      poId: String(header.poId || '').trim().toUpperCase(),
+      method: String(method || '').trim().toUpperCase(),
+      supplierId: header.supplierId || null,
+      supplierName: String(header.supplierName || '').trim().toUpperCase(),
+      requestDeliveryDate: String(header.requestDeliveryDate || '').slice(0, 10) || null,
+      paymentTerms: String(header.paymentTerms || '').trim() || null,
+      includePpn: header.includePpn !== false,
+      status: String(header.status || '').trim() || null,
+      notes: String(header.notes || '').trim() || null,
+    },
+    items: (items || []).map((item) => ({
+      skuInduk: String(item.skuInduk || '').trim().toUpperCase(),
+      namaProduk: String(item.namaProdukSnapshot || '').trim().toUpperCase(),
+      kategoriProduk: String(item.kategoriProdukSnapshot || '').trim().toUpperCase() || null,
+      kategoriPengadaan: String(item.kategoriPengadaanSnapshot || '').trim().toUpperCase() || null,
+      allowancePct: toNumber(item.allowancePct),
+      totalQty: getLineTotalQty(item),
+      price: toNumber(item.price),
+      status: String(item.status || '').trim() || null,
+      notes: String(item.notes || '').trim() || null,
+      qtyBySize: SIZE_OPTIONS.reduce((accumulator, size) => {
+        accumulator[size] = toNumber(item.qtyBySize?.[size])
+        return accumulator
+      }, {}),
+    })),
+  }
+}
+
+function getSnapshotItemKey(item = {}, fallbackIndex = 0) {
+  return `${String(item.skuInduk || '').trim().toUpperCase()}::${String(item.namaProduk || '').trim().toUpperCase()}::${fallbackIndex}`
+}
+
+function buildPoRevisionSummary(beforeSnapshot, afterSnapshot) {
+  if (!beforeSnapshot || !afterSnapshot) return 'PO planning updated.'
+
+  const changes = []
+  const beforeHeader = beforeSnapshot.header || {}
+  const afterHeader = afterSnapshot.header || {}
+  const headerLabels = {
+    poId: 'PO ID',
+    method: 'method',
+    supplierName: 'supplier',
+    requestDeliveryDate: 'request delivery date',
+    paymentTerms: 'payment terms',
+    includePpn: 'PPN',
+    status: 'status',
+    notes: 'notes',
+  }
+
+  Object.entries(headerLabels).forEach(([field, label]) => {
+    if (String(beforeHeader[field] ?? '') !== String(afterHeader[field] ?? '')) {
+      changes.push(`changed ${label}`)
+    }
+  })
+
+  const beforeItems = beforeSnapshot.items || []
+  const afterItems = afterSnapshot.items || []
+  const beforeMap = new Map(beforeItems.map((item, index) => [getSnapshotItemKey(item, index), item]))
+  const afterMap = new Map(afterItems.map((item, index) => [getSnapshotItemKey(item, index), item]))
+  const addedCount = [...afterMap.keys()].filter((key) => !beforeMap.has(key)).length
+  const removedCount = [...beforeMap.keys()].filter((key) => !afterMap.has(key)).length
+  const updatedCount = [...afterMap.entries()].filter(([key, item]) => beforeMap.has(key) && JSON.stringify(beforeMap.get(key)) !== JSON.stringify(item)).length
+
+  if (addedCount) changes.push(`added ${addedCount} product line(s)`)
+  if (removedCount) changes.push(`removed ${removedCount} product line(s)`)
+  if (updatedCount) changes.push(`updated ${updatedCount} product line(s)`)
+
+  const beforeQty = beforeItems.reduce((sum, item) => sum + Number(item.totalQty || 0), 0)
+  const afterQty = afterItems.reduce((sum, item) => sum + Number(item.totalQty || 0), 0)
+  if (beforeQty !== afterQty) changes.push(`total qty ${beforeQty} to ${afterQty}`)
+
+  return changes.length ? changes.join(', ') : ''
+}
+
+function hasPoRevisionChanges(beforeSnapshot, afterSnapshot) {
+  return Boolean(buildPoRevisionSummary(beforeSnapshot, afterSnapshot))
+}
+
 function toNumber(value) {
   if (typeof value === 'number') return Number.isFinite(value) ? value : 0
   const normalized = String(value || '')
@@ -663,6 +776,40 @@ async function fetchPoBundle(poId) {
   }
 }
 
+async function savePoRevisionHistory({ beforeSnapshot, afterSnapshot, revisedBy }) {
+  if (!beforeSnapshot || !afterSnapshot || !hasPoRevisionChanges(beforeSnapshot, afterSnapshot)) {
+    return { saved: false, error: null }
+  }
+
+  const poId = String(afterSnapshot.header?.poId || '').trim().toUpperCase()
+  if (!poId) return { saved: false, error: null }
+
+  const changeSummary = buildPoRevisionSummary(beforeSnapshot, afterSnapshot)
+  const { data: latestRows, error: latestError } = await supabase
+    .from('arkline_po_revisions')
+    .select('revision_no')
+    .eq('po_id', poId)
+    .order('revision_no', { ascending: false })
+    .limit(1)
+
+  if (latestError) {
+    return { saved: false, error: latestError }
+  }
+
+  const latestRevisionNo = Number(latestRows?.[0]?.revision_no || 0)
+  const { error: insertError } = await supabase.from('arkline_po_revisions').insert({
+    po_id: poId,
+    revision_no: latestRevisionNo + 1,
+    revision_type: 'PRODUCTION_PLANNING',
+    change_summary: changeSummary || 'PO planning updated.',
+    before_snapshot: beforeSnapshot,
+    after_snapshot: afterSnapshot,
+    revised_by: revisedBy,
+  })
+
+  return { saved: !insertError, error: insertError || null }
+}
+
 export default function ArklineProductionPlanningPage() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -690,6 +837,7 @@ export default function ArklineProductionPlanningPage() {
   const [method, setMethod] = useState('FOB')
   const [selectedExistingPoId, setSelectedExistingPoId] = useState('')
   const [currentPoDbId, setCurrentPoDbId] = useState(null)
+  const [loadedPlanningSnapshot, setLoadedPlanningSnapshot] = useState(null)
 
   const [header, setHeader] = useState(createInitialHeader())
   const [categoryFilter, setCategoryFilter] = useState('')
@@ -788,7 +936,39 @@ export default function ArklineProductionPlanningPage() {
   const isExistingModeLocked = mode === 'existing' && !selectedExistingPoId
   const isEditingLine = Boolean(lineDraft.localId || lineDraft.dbId)
   const isPriceDisabled = isExistingModeLocked
-  const canPrintPurchaseOrder = Boolean(currentPoDbId && header.poId && !isPlanningDirty && !saving && !loading)
+  const currentPlanningSnapshot = useMemo(
+    () => createPoRevisionSnapshotFromDraft({ header, method, items: poItems }),
+    [header, method, poItems]
+  )
+  const hasPendingLineDraftChanges = useMemo(() => {
+    const draftHasInput =
+      Boolean(String(productSearch || '').trim()) ||
+      Boolean(String(lineDraft.skuInduk || '').trim()) ||
+      Boolean(String(lineDraft.notes || '').trim()) ||
+      toNumber(lineDraft.price) > 0 ||
+      Object.values(lineDraft.qtyBySize || {}).some((value) => toNumber(value) > 0)
+
+    if (!lineDraft.localId && !lineDraft.dbId) {
+      return draftHasInput
+    }
+
+    const savedLine = poItems.find(
+      (item) => String(item.localId || '') === String(lineDraft.localId || '') || String(item.dbId || '') === String(lineDraft.dbId || '')
+    )
+
+    if (!savedLine) {
+      return draftHasInput
+    }
+
+    const savedLineSnapshot = createPoRevisionSnapshotFromDraft({ header: createInitialHeader(), method, items: [savedLine] }).items[0]
+    const draftLineSnapshot = createPoRevisionSnapshotFromDraft({ header: createInitialHeader(), method, items: [lineDraft] }).items[0]
+    return JSON.stringify(savedLineSnapshot) !== JSON.stringify(draftLineSnapshot)
+  }, [lineDraft, method, poItems, productSearch])
+  const hasUnsavedSavedPoChanges =
+    mode === 'existing' && loadedPlanningSnapshot
+      ? hasPoRevisionChanges(loadedPlanningSnapshot, currentPlanningSnapshot) || hasPendingLineDraftChanges
+      : isPlanningDirty
+  const canPrintPurchaseOrder = Boolean(currentPoDbId && header.poId && !hasUnsavedSavedPoChanges && !saving && !loading)
 
   const isTemporaryPo = isEditablePoSuffix(header.poId)
 
@@ -864,6 +1044,7 @@ export default function ArklineProductionPlanningPage() {
     setIsEditingExistingPoSuffix(false)
     setShowExistingPoPicker(nextMode === 'existing')
     setCurrentPoDbId(null)
+    setLoadedPlanningSnapshot(null)
     setHeader({
       ...createInitialHeader(),
       poId: nextMode === 'new' ? buildDefaultPoId(poRows) : '',
@@ -1236,6 +1417,7 @@ export default function ArklineProductionPlanningPage() {
       setShowExistingPoPicker(false)
       setIsEditingExistingPoSuffix(false)
       setCurrentPoDbId(bundle.po.id)
+      setLoadedPlanningSnapshot(createPoRevisionSnapshotFromBundle(bundle))
       setHeader(normalizedHeader)
       setCategoryFilter('')
       setPoItems(bundle.items)
@@ -1300,6 +1482,18 @@ export default function ArklineProductionPlanningPage() {
         const missingPriceLine = poItems.find((item) => toNumber(item.price) <= 0)
         if (missingPriceLine) {
           throw new Error('Enter price for all product lines before saving final PO.')
+        }
+      }
+
+      const shouldRecordRevision = Boolean(currentPoDbId && selectedExistingPoId)
+      let beforeRevisionSnapshot = null
+      let revisionWarning = ''
+
+      if (shouldRecordRevision) {
+        try {
+          beforeRevisionSnapshot = createPoRevisionSnapshotFromBundle(await fetchPoBundle(selectedExistingPoId))
+        } catch (revisionSnapshotError) {
+          revisionWarning = revisionSnapshotError.message || 'Could not capture PO revision snapshot.'
         }
       }
 
@@ -1446,10 +1640,36 @@ export default function ArklineProductionPlanningPage() {
         }
       }
 
+      if (shouldRecordRevision && beforeRevisionSnapshot) {
+        const afterRevisionSnapshot = createPoRevisionSnapshotFromDraft({
+          header: {
+            ...header,
+            poId: headerPayload.po_id,
+            supplierId: headerPayload.supplier_id,
+            supplierName: headerPayload.supplier_name,
+            requestDeliveryDate: headerPayload.request_delivery_date,
+            paymentTerms: headerPayload.payment_terms,
+            includePpn: headerPayload.include_ppn,
+            status: headerPayload.status,
+            notes: headerPayload.notes,
+          },
+          method: headerPayload.method,
+          items: poItems,
+        })
+        const revisionResult = await savePoRevisionHistory({
+          beforeSnapshot: beforeRevisionSnapshot,
+          afterSnapshot: afterRevisionSnapshot,
+          revisedBy: userEmail,
+        })
+        if (revisionResult.error) {
+          revisionWarning = revisionResult.error.message || 'PO revision was not saved.'
+        }
+      }
+
       const refreshedPos = await refreshPoListAndKeepSelection(header.poId)
       resetPlanningState('new', refreshedPos)
       setExistingPos(refreshedPos)
-      setSuccess(`PO ${header.poId} saved successfully.`)
+      setSuccess(revisionWarning ? `PO ${header.poId} saved successfully. Revision history not saved yet: ${revisionWarning}` : `PO ${header.poId} saved successfully.`)
     } catch (saveError) {
       setError(saveError.message || 'Failed to save Arkline production planning.')
     } finally {
@@ -1461,7 +1681,7 @@ export default function ArklineProductionPlanningPage() {
     setError('')
     setSuccess('')
 
-    if (!currentPoDbId || isPlanningDirty) {
+    if (!currentPoDbId || hasUnsavedSavedPoChanges) {
       setError('Save the PO first before printing.')
       return
     }
@@ -1527,12 +1747,14 @@ export default function ArklineProductionPlanningPage() {
     setIsEditingExistingPoSuffix(false)
     setSelectedExistingPoId('')
     setCurrentPoDbId(null)
+    setLoadedPlanningSnapshot(null)
     setHeader((prev) => ({
       ...prev,
       poId: '',
     }))
     setPoItems([])
     resetLineDraft()
+    setIsPlanningDirty(false)
     setError('')
     setSuccess('')
   }

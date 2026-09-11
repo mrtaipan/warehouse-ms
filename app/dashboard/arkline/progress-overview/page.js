@@ -5,6 +5,11 @@ import { Fragment, useEffect, useMemo, useState } from 'react'
 
 import { createClient } from '@/utils/supabase/browser'
 import useArklineAccess from '../use-arkline-access'
+import {
+  createGarmentPurchaseOrderPreviewHtml,
+  fetchGarmentPoBundle,
+  openPreviewWindow,
+} from '../directory/po-directory-utils'
 
 import shellStyles from '../arkline.module.css'
 import styles from './progress-overview.module.css'
@@ -14,8 +19,38 @@ const supabase = createClient()
 const BOARD_STATUSES = ['Initiated', 'On Progress', 'Completed']
 const MATERIAL_BOARD_STATUSES = ['Ordered', 'Received', 'Sent']
 const RECEIPT_SIZE_ORDER = ['XS', 'S', 'M', 'L', 'XL', 'XXL']
+const PPN_RATE = 0.11
 const DEFAULT_UPDATE_REASON = 'FABRIC ISSUE'
 const OTHERS_UPDATE_REASON = 'OTHERS'
+const CMT_INSPECTION_BUCKET = 'arkline-po'
+const PAYMENT_REQUEST_BUCKET = 'arkline-payments'
+const CMT_INSPECTION_RESULT_OPTIONS = ['PASSED', 'REJECTED']
+const CMT_INSPECTION_TYPE_OPTIONS = [
+  { value: 'INLINE', label: 'In-Line' },
+  { value: 'PREFINAL', label: 'Pre-Final' },
+  { value: 'FINAL', label: 'Final' },
+]
+const CMT_PRODUCTION_STATUS_ROWS = [
+  { key: 'cutting', label: 'Cutting' },
+  { key: 'printing', label: 'Printing' },
+  { key: 'sewing', label: 'Sewing' },
+]
+const CMT_QC_INFO_OPTIONS = ['PPS/Approval Sample', 'Buyer Comment', 'Washing Std.', 'Test Report', "Trim's Card"]
+const CMT_ACCESSORIES_OPTIONS = [
+  'Main Label',
+  'Care Label',
+  'Logo Print Label',
+  'Barcode Label',
+  'Thread',
+  'I/L',
+  'Button/Snap',
+  'Eyelet/Rivet',
+  'Cord String',
+  'Elastic',
+  'Velcro Tape',
+  'Spare Button',
+]
+const CMT_PACKING_OPTIONS = ['Shipping Mark', 'Barcode Sticker', 'Size/CLR Ratio', 'Hanger', 'Polybag', 'Hangtag', 'Tissue Paper']
 
 function CalendarIcon() {
   return (
@@ -70,6 +105,21 @@ function PrintIcon() {
     <svg viewBox="0 0 24 24" aria-hidden="true" className={styles.actionIcon}>
       <path
         d="M7 9V4.8h10V9M7.2 14.5H6.4A2.4 2.4 0 0 1 4 12.1V9.9a2.4 2.4 0 0 1 2.4-2.4h11.2A2.4 2.4 0 0 1 20 9.9v2.2a2.4 2.4 0 0 1-2.4 2.4h-.8M8 12.5h8v6.7H8zM16.6 10.8h.01"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  )
+}
+
+function AttachmentIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className={styles.actionIcon}>
+      <path
+        d="M8.5 12.3 13 7.8a3 3 0 0 1 4.2 4.2l-6.1 6.1a4.2 4.2 0 0 1-5.9-5.9l6.5-6.5"
         fill="none"
         stroke="currentColor"
         strokeWidth="1.8"
@@ -205,7 +255,30 @@ function getFinanceQtyForItem(entry) {
   if (status === 'Initiated') {
     return parseNumberValue(entry?.qty || entry?.totalQty || 0)
   }
-  return parseNumberValue(entry?.actualQty || entry?.actual_qty || 0)
+  return Math.max(parseNumberValue(entry?.actualQty || entry?.actual_qty || 0) - parseNumberValue(entry?.shortQty || entry?.short_qty || 0), 0)
+}
+
+function normalizeBoolean(value, fallback = false) {
+  if (typeof value === 'boolean') return value
+  if (value === null || value === undefined || value === '') return fallback
+  const normalized = String(value).trim().toLowerCase()
+  if (['true', 'yes', 'with', 'with ppn', '1'].includes(normalized)) return true
+  if (['false', 'no', 'without', 'without ppn', '0'].includes(normalized)) return false
+  return fallback
+}
+
+function applyPpnToAmount(value, includePpn) {
+  const amount = parseNumberValue(value)
+  return roundCurrencyValue(normalizeBoolean(includePpn, true) ? amount * (1 + PPN_RATE) : amount)
+}
+
+function roundCurrencyValue(value) {
+  const amount = parseNumberValue(value)
+  return Number.isFinite(amount) ? Math.round(amount) : 0
+}
+
+function getFinanceOutstandingValue(dueValue, paidValue) {
+  return Math.max(roundCurrencyValue(dueValue) - roundCurrencyValue(paidValue), 0)
 }
 
 function getLaterIsoDate(...values) {
@@ -289,6 +362,7 @@ function normalizePoRow(row) {
   const startDate = String(row?.created_at || '').slice(0, 10)
   const targetDate = String(row?.request_delivery_date || '').slice(0, 10)
   const status = normalizeBoardStatus(row?.status)
+  const includePpn = normalizeBoolean(row?.include_ppn, true)
 
   return {
     id: String(row?.id || poId).trim(),
@@ -296,6 +370,8 @@ function normalizePoRow(row) {
     supplier,
     method,
     status,
+    includePpn,
+    createdAt: row?.created_at || '',
     startDate,
     targetDate,
     updatedDate: '',
@@ -316,20 +392,30 @@ async function loadSnapshotRows() {
     { data: itemData, error: itemError },
     { data: receiptData, error: receiptError },
     { data: sizeData, error: sizeError },
+    { data: paymentData, error: paymentError },
+    { data: returnBatchData, error: returnBatchError },
   ] = await Promise.all([
     supabase
       .from('arkline_pos')
-      .select('id, po_id, supplier_name, method, status, request_delivery_date, notes, created_at, updated_at')
+      .select('id, po_id, supplier_name, method, status, request_delivery_date, include_ppn, notes, created_at, updated_at')
       .not('po_id', 'is', null)
       .order('created_at', { ascending: false }),
     supabase
       .from('arkline_po_items')
-      .select('id, po_id, sku_induk, nama_produk, total_qty, actual_qty, price, hpp, updated_delivery_date, notes, status'),
+      .select('id, po_id, sku_induk, nama_produk, kategori_pengadaan, kategori_produk, total_qty, actual_qty, price, hpp, updated_delivery_date, notes, status'),
     supabase
       .from('arkline_po_item_receipts')
       .select('arkline_po_item_id, size, received_qty')
       .eq('receipt_type', 'INITIAL'),
     supabase.from('arkline_po_item_sizes').select('arkline_po_item_id, size, qty'),
+    supabase
+      .from('arkline_payment')
+      .select('po_number, amount, status, paid_at')
+      .eq('payment_basis', 'PO_BASED')
+      .eq('po_source_type', 'GARMENT'),
+    supabase
+      .from('arkline_qc_return_batches')
+      .select('arkline_po_item_id, short_qty'),
   ])
 
   if (poError) {
@@ -347,6 +433,29 @@ async function loadSnapshotRows() {
   if (sizeError) {
     throw new Error(sizeError.message)
   }
+
+  if (paymentError) {
+    throw new Error(paymentError.message)
+  }
+
+  if (returnBatchError) {
+    throw new Error(returnBatchError.message)
+  }
+
+  const paidValueByPoId = (paymentData || []).reduce((accumulator, row) => {
+    if (!isPaidFinancePayment(row)) return accumulator
+    const poId = String(row?.po_number || '').trim().toUpperCase()
+    if (!poId) return accumulator
+    accumulator[poId] = (accumulator[poId] || 0) + parseNumberValue(row?.amount)
+    return accumulator
+  }, {})
+
+  const shortQtyByItemId = (returnBatchData || []).reduce((accumulator, row) => {
+    const key = String(row?.arkline_po_item_id || '').trim()
+    if (!key) return accumulator
+    accumulator[key] = (accumulator[key] || 0) + Number(row?.short_qty || 0)
+    return accumulator
+  }, {})
 
   const receiptQtyByItemId = (receiptData || []).reduce((accumulator, row) => {
     const key = String(row?.arkline_po_item_id || '').trim()
@@ -381,13 +490,15 @@ async function loadSnapshotRows() {
 
     const productName = String(row?.nama_produk || '').trim().toUpperCase()
     const productSku = String(row?.sku_induk || '').trim().toUpperCase()
+    const productCategory = String(row?.kategori_pengadaan || row?.kategori_produk || '').trim().toUpperCase()
     const totalQty = Number(row?.total_qty || 0)
-    const actualQty = Number(receiptQtyByItemId[String(row?.id || '').trim()] ?? row?.actual_qty ?? 0)
+    const itemId = String(row?.id || '').trim()
+    const actualQty = Number(receiptQtyByItemId[itemId] ?? row?.actual_qty ?? 0)
+    const shortQty = Number(shortQtyByItemId[itemId] || 0)
     const updatedDeliveryDate = String(row?.updated_delivery_date || '').slice(0, 10)
     const price = parseNumberValue(row?.price)
     const hpp = parseNumberValue(row?.hpp)
     const itemNotes = String(row?.notes || '').trim()
-    const itemId = String(row?.id || '').trim()
     const savedItemStatus = normalizeBoardStatus(row?.status)
     const itemStatus =
       savedItemStatus === 'Completed' || (totalQty > 0 && actualQty >= totalQty)
@@ -422,6 +533,7 @@ async function loadSnapshotRows() {
         productNames: [],
         productEntries: [],
         totalQty: 0,
+        financeDueValue: 0,
         latestUpdatedDeliveryDate: '',
         itemCount: 0,
         completedItemCount: 0,
@@ -437,8 +549,10 @@ async function loadSnapshotRows() {
       id: String(row?.id || `${poId}::${productName || 'NO PRODUCT'}::${accumulator[poId].productEntries.length}`),
       sku: productSku || 'NO SKU',
       productName: productName || 'NO PRODUCT',
+      category: productCategory,
       qty: Number.isFinite(totalQty) ? totalQty : 0,
       actualQty: Number.isFinite(actualQty) ? actualQty : 0,
+      shortQty: Number.isFinite(shortQty) ? shortQty : 0,
       remainingQty: Math.max((Number.isFinite(totalQty) ? totalQty : 0) - (Number.isFinite(actualQty) ? actualQty : 0), 0),
       price: Number.isFinite(price) ? price : 0,
       hpp: Number.isFinite(hpp) ? hpp : 0,
@@ -448,6 +562,12 @@ async function loadSnapshotRows() {
       sizeBreakdown,
     })
 
+    accumulator[poId].financeDueValue += getFinanceQtyForItem({
+      qty: totalQty,
+      actualQty,
+      shortQty,
+      status: itemStatus,
+    }) * price
     accumulator[poId].itemCount += 1
     if (itemStatus === 'Completed') {
       accumulator[poId].completedItemCount += 1
@@ -472,6 +592,9 @@ async function loadSnapshotRows() {
             : normalized.status
       const latestUpdatedDeliveryDate = summary?.latestUpdatedDeliveryDate || ''
       const actualDate = getLaterIsoDate(normalized.targetDate, latestUpdatedDeliveryDate)
+      const financeDueValue = applyPpnToAmount(summary?.financeDueValue || 0, normalized.includePpn)
+      const financePaidValue = paidValueByPoId[normalized.poId] || 0
+      const financeOutstandingValue = getFinanceOutstandingValue(financeDueValue, financePaidValue)
       return {
         ...normalized,
         status: derivedStatus,
@@ -482,6 +605,10 @@ async function loadSnapshotRows() {
           displayDate: getLaterIsoDate(normalized.targetDate, entry.updatedDeliveryDate),
         })),
         totalQty: summary?.totalQty || 0,
+        financeDueValue,
+        financePaidValue,
+        financeOutstandingValue,
+        isFinanceSettled: derivedStatus === 'Completed' && financeDueValue > 0 && financeOutstandingValue === 0,
         updatedDate: actualDate,
         displayDate: actualDate || normalized.targetDate || normalized.startDate,
         completionDate: derivedStatus === 'Completed' ? actualDate : '',
@@ -634,6 +761,160 @@ function parseNumberValue(value) {
   return Number.isFinite(parsed) ? parsed : 0
 }
 
+function sanitizeFileName(value) {
+  return String(value || 'file')
+    .trim()
+    .replace(/[^a-zA-Z0-9._-]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 120) || 'file'
+}
+
+function getArklinePoStorageFolder(poId) {
+  return `Arkline PO/${sanitizeFileName(poId || 'PO')}`
+}
+
+function getSignedPoStorageFolder(poId) {
+  return `${getArklinePoStorageFolder(poId)}/Signed PO`
+}
+
+function normalizeSignedPoStorageObject(row, folder) {
+  if (!row || row.id === null || !row.name || row.name === '.emptyFolderPlaceholder') return null
+  const fileName = String(row.name || 'Signed PO').trim()
+  return {
+    id: String(row.id || `${folder}/${fileName}`).trim(),
+    storageBucket: CMT_INSPECTION_BUCKET,
+    storagePath: `${folder}/${fileName}`,
+    fileName,
+    mimeType: String(row.metadata?.mimetype || row.metadata?.mimeType || '').trim(),
+    createdAt: row.created_at || row.updated_at || '',
+  }
+}
+
+async function loadSignedPoFiles(poId) {
+  const folder = getSignedPoStorageFolder(poId)
+  const { data, error } = await supabase.storage.from(CMT_INSPECTION_BUCKET).list(folder, {
+    limit: 100,
+    sortBy: { column: 'created_at', order: 'desc' },
+  })
+  if (error) return []
+  return (data || []).map((row) => normalizeSignedPoStorageObject(row, folder)).filter(Boolean)
+}
+
+function getLatestSignedPoDate(files = []) {
+  return [...(files || [])]
+    .map((file) => file?.createdAt)
+    .filter(Boolean)
+    .sort((left, right) => new Date(right).getTime() - new Date(left).getTime())[0]
+}
+
+function getStorageAttachmentPreviewType(attachment) {
+  const mimeType = String(attachment?.mimeType || '').toLowerCase()
+  const fileName = String(attachment?.fileName || attachment?.storagePath || '').toLowerCase()
+  if (mimeType.includes('pdf') || fileName.endsWith('.pdf')) return 'pdf'
+  if (mimeType.startsWith('image/') || /\.(png|jpe?g|webp|gif)$/i.test(fileName)) return 'image'
+  return 'file'
+}
+
+function getNextCmtInspectionRound(inspections = [], inspectionType = 'FINAL') {
+  const normalizedType = String(inspectionType || 'FINAL').toUpperCase()
+  const rounds = (inspections || [])
+    .filter((row) => String(row?.inspection_type || '').toUpperCase() === normalizedType)
+    .map((row) => Number(row?.round_number || 0))
+  return Math.max(0, ...rounds) + 1
+}
+
+function getNextFinalInspectionRound(inspections = []) {
+  return getNextCmtInspectionRound(inspections, 'FINAL')
+}
+
+function getEmptyChecklist(options = []) {
+  return options.reduce((accumulator, item) => {
+    accumulator[item] = false
+    return accumulator
+  }, {})
+}
+
+function createCmtInspectionDraft(productDetail = {}) {
+  const orderQty = parseNumberValue(productDetail?.financeSummary?.plannedQty || productDetail?.qty || 0)
+  return {
+    inspectionType: 'FINAL',
+    roundNumber: String(getNextFinalInspectionRound(productDetail?.cmtInspections || [])),
+    inspectionDate: getTodayDateInputValue(),
+    samplingQty: '',
+    printingQty: '',
+    printingPct: '',
+    cuttingQty: '',
+    cuttingPct: '',
+    sewingQty: '',
+    sewingPct: '',
+    acceptanceStandard: '',
+    rejectStandard: '',
+    acceptQty: '',
+    rejectQty: '',
+    measurementPdfPath: '',
+    qcInformation: getEmptyChecklist(CMT_QC_INFO_OPTIONS),
+    accessoriesChecklist: getEmptyChecklist(CMT_ACCESSORIES_OPTIONS),
+    packingInformation: getEmptyChecklist(CMT_PACKING_OPTIONS),
+    inspectionResult: '',
+    notes: '',
+    orderQty: String(orderQty || 0),
+  }
+}
+
+function getCmtInspectionTitle(row = {}) {
+  const type = String(row?.inspection_type || '').trim().toUpperCase()
+  const roundNumber = Number(row?.round_number || 1)
+  if (type === 'INLINE') return `In-Line Round ${roundNumber || 1}`
+  if (type === 'PREFINAL') return 'Pre-Final'
+  return `Final Round ${roundNumber || 1}`
+}
+
+function getCmtInspectionReportTitle(row = {}) {
+  const type = String(row?.inspection_type || '').trim().toUpperCase()
+  if (type === 'INLINE') return 'IN-LINE INSPECTION REPORT'
+  if (type === 'PREFINAL') return 'PRE-FINAL INSPECTION REPORT'
+  return 'FINAL INSPECTION REPORT'
+}
+
+function getCmtInspectionRoundSubtitle(row = {}) {
+  const type = String(row?.inspection_type || '').trim().toUpperCase()
+  if (type === 'PREFINAL') return 'Pre-Final'
+  return `Round ${Number(row?.round_number || 1) || 1}`
+}
+
+function getCmtInspectionResultLabel(row = {}) {
+  const type = String(row?.inspection_type || '').trim().toUpperCase()
+  if (type === 'PREFINAL') return row?.prefinal_pdf_path ? 'PDF Uploaded' : 'PDF Missing'
+  return String(row?.inspection_result || 'Draft').replace('_', ' ')
+}
+
+function getCmtInspectionDefectQty(row = {}) {
+  return (row.defects || []).reduce((sum, defect) => sum + Number(defect?.major_qty || 0) + Number(defect?.minor_qty || 0), 0)
+}
+
+function getCmtInspectionPhotoList(row = {}) {
+  if (!row) return []
+  return Array.isArray(row.defect_photo_urls) ? row.defect_photo_urls : []
+}
+
+function sortCmtInspectionsByDate(rows = []) {
+  return [...rows].sort((left, right) => {
+    const leftTime = new Date(left?.inspection_date || left?.created_at || 0).getTime() || 0
+    const rightTime = new Date(right?.inspection_date || right?.created_at || 0).getTime() || 0
+    if (leftTime !== rightTime) return leftTime - rightTime
+    const typeCompare = String(left?.inspection_type || '').localeCompare(String(right?.inspection_type || ''))
+    if (typeCompare) return typeCompare
+    return Number(left?.round_number || 0) - Number(right?.round_number || 0)
+  })
+}
+
+function getCheckedChecklistItems(value = {}) {
+  return Object.entries(value || {})
+    .filter(([, isChecked]) => Boolean(isChecked))
+    .map(([label]) => label)
+}
+
 function formatPercent(value, total) {
   const numericValue = Number(value || 0)
   const numericTotal = Number(total || 0)
@@ -716,16 +997,84 @@ function normalizeFinancePaymentRow(row) {
     id: row?.id || '',
     paymentDate: String(row?.paid_at || row?.created_at || '').slice(0, 10),
     paidAt: row?.paid_at || '',
+    createdAt: row?.created_at || '',
     invoiceNumber: String(row?.invoice_number || '').trim().toUpperCase(),
     paymentLabel: String(row?.invoice_number || row?.status || 'Payment').trim() || 'Payment',
     amount: parseNumberValue(row?.amount),
     notes: row?.notes || '',
     status: String(row?.status || 'SUBMITTED').trim().toUpperCase() || 'SUBMITTED',
+    attachments: Array.isArray(row?.attachments) ? row.attachments.map(normalizeFinanceAttachmentRow) : [],
   }
 }
 
 function isPaidFinancePayment(row) {
   return String(row?.status || '').trim().toUpperCase() === 'PAID' || Boolean(row?.paidAt)
+}
+
+function normalizeFinanceAttachmentRow(row) {
+  return {
+    id: row?.id || '',
+    storageBucket: String(row?.storage_bucket || PAYMENT_REQUEST_BUCKET).trim(),
+    storagePath: String(row?.storage_path || '').trim(),
+    fileName: String(row?.file_name || 'Attachment').trim(),
+    mimeType: String(row?.mime_type || '').trim(),
+    createdAt: row?.created_at || '',
+  }
+}
+
+function getFinanceAttachmentKind(attachment) {
+  return String(attachment?.storagePath || '').includes('/payment-proof/') ? 'PAYMENT_PROOF' : 'SUBMISSION_PROOF'
+}
+
+function getFinanceAttachmentsByKind(payment, kind) {
+  return (payment?.attachments || []).filter((attachment) => getFinanceAttachmentKind(attachment) === kind)
+}
+
+function buildReceiptDocumentRows(receipts = []) {
+  const grouped = new Map()
+
+  ;(receipts || []).forEach((row) => {
+    const receiveDate = String(row?.receive_date || '').slice(0, 10)
+    if (!receiveDate) return
+    const key = [receiveDate, String(row?.supplier_sj || '').trim().toUpperCase()].join('::')
+    const existing = grouped.get(key) || {
+      key,
+      receiveDate,
+      supplierSj: String(row?.supplier_sj || '').trim(),
+      qty: 0,
+    }
+    existing.qty += Number(row?.received_qty || 0)
+    grouped.set(key, existing)
+  })
+
+  return Array.from(grouped.values()).sort((left, right) => {
+    const leftTime = parseIso(left.receiveDate)?.getTime() || 0
+    const rightTime = parseIso(right.receiveDate)?.getTime() || 0
+    if (leftTime !== rightTime) return rightTime - leftTime
+    return left.key.localeCompare(right.key, undefined, { numeric: true })
+  })
+}
+
+function buildGarmentPrintBundle(rawBundle) {
+  const po = rawBundle?.po || {}
+  const supplier = rawBundle?.supplier || {}
+  const supplierContact = [supplier.contactPerson, supplier.phone].filter(Boolean).join(' | ')
+
+  return {
+    poId: String(po.po_id || '').trim().toUpperCase(),
+    method: String(po.method || '').trim().toUpperCase(),
+    poCreatedAt: po.created_at,
+    header: {
+      supplierName: supplier.supplierName || String(po.supplier_name || '').trim().toUpperCase() || '-',
+      supplierAddress: supplier.address || '',
+      supplierContact,
+      requestDeliveryDate: po.request_delivery_date || '',
+      paymentTerms: String(po.payment_terms || po.method || '').trim(),
+      notes: String(po.notes || '').trim(),
+      includePpn: normalizeBoolean(po.include_ppn, true),
+    },
+    items: rawBundle?.items || [],
+  }
 }
 
 const QC_GRADE_OPTIONS = ['A', 'B', 'C']
@@ -1421,7 +1770,10 @@ export default function ArklineProgressOverviewPage() {
   const [poDetailSections, setPoDetailSections] = useState({
     productLists: false,
     finance: false,
+    documentHistory: false,
   })
+  const [printingPoDetail, setPrintingPoDetail] = useState(false)
+  const [uploadingSignedPo, setUploadingSignedPo] = useState(false)
   const [selectedProductDetail, setSelectedProductDetail] = useState(null)
   const [productDetailLoading, setProductDetailLoading] = useState(false)
   const [deliveryModalOpen, setDeliveryModalOpen] = useState(false)
@@ -1439,6 +1791,7 @@ export default function ArklineProgressOverviewPage() {
   const [productActionError, setProductActionError] = useState('')
   const [printingQcReport, setPrintingQcReport] = useState(false)
   const [printingReturnHistory, setPrintingReturnHistory] = useState(false)
+  const [printingCmtInspectionId, setPrintingCmtInspectionId] = useState('')
   const [qcReceiptDateFilter, setQcReceiptDateFilter] = useState('all')
   const [expandedReturnBatchId, setExpandedReturnBatchId] = useState('')
   const [savingStatusChange, setSavingStatusChange] = useState(false)
@@ -1451,6 +1804,21 @@ export default function ArklineProgressOverviewPage() {
   const [hppModalOpen, setHppModalOpen] = useState(false)
   const [hppDraft, setHppDraft] = useState('')
   const [savingHpp, setSavingHpp] = useState(false)
+  const [cmtInspectionModalOpen, setCmtInspectionModalOpen] = useState(false)
+  const [savingCmtInspection, setSavingCmtInspection] = useState(false)
+  const [cmtInspectionDraft, setCmtInspectionDraft] = useState(() => createCmtInspectionDraft())
+  const [cmtDefectDrafts, setCmtDefectDrafts] = useState([])
+  const [cmtRejectReasons, setCmtRejectReasons] = useState([])
+  const [cmtPrefinalPdfFile, setCmtPrefinalPdfFile] = useState(null)
+  const [cmtPrefinalPdfPreview, setCmtPrefinalPdfPreview] = useState(null)
+  const [cmtMeasurementPdfFile, setCmtMeasurementPdfFile] = useState(null)
+  const [cmtMeasurementPdfPreview, setCmtMeasurementPdfPreview] = useState(null)
+  const [cmtDefectPhotoFiles, setCmtDefectPhotoFiles] = useState([])
+  const [cmtDefectPhotoPreviews, setCmtDefectPhotoPreviews] = useState([])
+  const [cmtAttachmentPreview, setCmtAttachmentPreview] = useState(null)
+  const [selectedCmtInspectionDetail, setSelectedCmtInspectionDetail] = useState(null)
+  const [cmtSavedPhotoPreviews, setCmtSavedPhotoPreviews] = useState([])
+  const [cmtReasonFocusIndex, setCmtReasonFocusIndex] = useState(null)
   const [receiptDraft, setReceiptDraft] = useState({ receiveDate: '', supplierSj: '', notes: '', sizeQty: {}, isFinal: false })
   const [statusDraft, setStatusDraft] = useState({
     editingUpdateId: '',
@@ -1479,6 +1847,85 @@ export default function ArklineProgressOverviewPage() {
   useEffect(() => {
     void refreshRows()
   }, [])
+
+  useEffect(() => {
+    const previews = cmtDefectPhotoFiles.map((file) => ({
+      file,
+      url: URL.createObjectURL(file),
+    }))
+    setCmtDefectPhotoPreviews(previews)
+
+    return () => {
+      previews.forEach((preview) => URL.revokeObjectURL(preview.url))
+    }
+  }, [cmtDefectPhotoFiles])
+
+  useEffect(() => {
+    if (!cmtPrefinalPdfFile) {
+      setCmtPrefinalPdfPreview(null)
+      return undefined
+    }
+
+    const preview = {
+      file: cmtPrefinalPdfFile,
+      url: URL.createObjectURL(cmtPrefinalPdfFile),
+    }
+    setCmtPrefinalPdfPreview(preview)
+
+    return () => {
+      URL.revokeObjectURL(preview.url)
+    }
+  }, [cmtPrefinalPdfFile])
+
+  useEffect(() => {
+    if (!cmtMeasurementPdfFile) {
+      setCmtMeasurementPdfPreview(null)
+      return undefined
+    }
+
+    const preview = {
+      file: cmtMeasurementPdfFile,
+      url: URL.createObjectURL(cmtMeasurementPdfFile),
+    }
+    setCmtMeasurementPdfPreview(preview)
+
+    return () => {
+      URL.revokeObjectURL(preview.url)
+    }
+  }, [cmtMeasurementPdfFile])
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function loadSavedPhotoPreviews() {
+      const photos = getCmtInspectionPhotoList(selectedCmtInspectionDetail)
+      if (!photos.length) {
+        setCmtSavedPhotoPreviews([])
+        return
+      }
+
+      const previewRows = await Promise.all(
+        photos.map(async (photo, index) => {
+          const path = String(photo?.path || '').trim()
+          if (!path) {
+            return { ...photo, index, previewUrl: '' }
+          }
+          const { data } = await supabase.storage.from(CMT_INSPECTION_BUCKET).createSignedUrl(path, 60 * 60)
+          return { ...photo, index, previewUrl: data?.signedUrl || '' }
+        })
+      )
+
+      if (!cancelled) {
+        setCmtSavedPhotoPreviews(previewRows)
+      }
+    }
+
+    void loadSavedPhotoPreviews()
+
+    return () => {
+      cancelled = true
+    }
+  }, [selectedCmtInspectionDetail])
 
   async function refreshRows() {
     setLoading(true)
@@ -1726,6 +2173,7 @@ export default function ArklineProgressOverviewPage() {
   function closePoDetail() {
     setSelectedPoDetail(null)
     setSelectedProductDetail(null)
+    setPrintingPoDetail(false)
     setDeliveryModalOpen(false)
     setStatusModalOpen(false)
     setProductActionMessage('')
@@ -1745,30 +2193,57 @@ export default function ArklineProgressOverviewPage() {
     setSelectedPoDetail({
       ...item,
       payments: [],
+      documentHistory: {
+        receipts: [],
+        signedPoFiles: [],
+      },
     })
     setPoDetailSections({
       productLists: false,
       finance: false,
+      documentHistory: false,
     })
     setSelectedProductDetail(null)
 
-    const paymentRowsRaw = await loadOptionalRows(() =>
-      supabase
-        .from('arkline_payment')
-        .select('id, payment_basis, po_source_type, po_db_id, po_number, invoice_number, amount, notes, status, paid_at, created_at')
-        .eq('payment_basis', 'PO_BASED')
-        .eq('po_source_type', 'GARMENT')
-        .eq('po_number', item.poId)
-        .order('created_at', { ascending: false })
-    )
+    const poItemIds = (item.productEntries || []).map((entry) => String(entry?.id || '').trim()).filter(Boolean)
+    const [paymentRowsRaw, receiptRowsRaw, signedPoFiles] = await Promise.all([
+      loadOptionalRows(() =>
+        supabase
+          .from('arkline_payment')
+          .select(
+            `id, payment_basis, po_source_type, po_db_id, po_number, invoice_number, amount, notes, status, paid_at, created_at,
+            attachments:arkline_payment_attachments(id, storage_bucket, storage_path, file_name, mime_type, file_size, uploaded_by, created_at)`
+          )
+          .eq('payment_basis', 'PO_BASED')
+          .eq('po_source_type', 'GARMENT')
+          .eq('po_number', item.poId)
+          .order('created_at', { ascending: false })
+      ),
+      poItemIds.length
+        ? loadOptionalRows(() =>
+            supabase
+              .from('arkline_po_item_receipts')
+              .select('id, arkline_po_item_id, receipt_group_id, receive_date, supplier_sj, received_qty, created_at')
+              .in('arkline_po_item_id', poItemIds)
+              .eq('receipt_type', 'INITIAL')
+              .order('receive_date', { ascending: false })
+          )
+        : Promise.resolve([]),
+      loadSignedPoFiles(item.poId),
+    ])
 
     const paymentRows = (paymentRowsRaw || []).map(normalizeFinancePaymentRow)
+    const receiptRows = buildReceiptDocumentRows(receiptRowsRaw || [])
 
     setSelectedPoDetail((prev) => {
       if (!prev || String(prev.id) !== String(item.id)) return prev
       return {
         ...prev,
         payments: paymentRows,
+        documentHistory: {
+          receipts: receiptRows,
+          signedPoFiles,
+        },
       }
     })
   }
@@ -1791,6 +2266,117 @@ export default function ArklineProgressOverviewPage() {
     }))
   }
 
+  async function handlePrintPoDetail() {
+    if (!selectedPoDetail || printingPoDetail) return
+
+    const previewWindow = openPreviewWindow('Preparing purchase order preview...')
+    if (!previewWindow) {
+      setMessage('Popup blocked. Please allow popups to print the PO.')
+      return
+    }
+
+    setPrintingPoDetail(true)
+    setMessage('')
+
+    try {
+      const bundle = buildGarmentPrintBundle(await fetchGarmentPoBundle(supabase, selectedPoDetail.poId))
+      const previewHtml = await createGarmentPurchaseOrderPreviewHtml(bundle)
+      previewWindow.document.open()
+      previewWindow.document.write(previewHtml)
+      previewWindow.document.close()
+      setMessage(`PO ${selectedPoDetail.poId} print preview opened.`)
+    } catch (error) {
+      previewWindow.close()
+      setMessage(error?.message || 'Failed to prepare purchase order print preview.')
+    } finally {
+      setPrintingPoDetail(false)
+    }
+  }
+
+  async function openFinanceAttachment(attachment) {
+    const storageBucket = String(attachment?.storageBucket || PAYMENT_REQUEST_BUCKET).trim()
+    const storagePath = String(attachment?.storagePath || '').trim()
+    if (!storageBucket || !storagePath) return
+
+    const { data, error } = await supabase.storage.from(storageBucket).createSignedUrl(storagePath, 300)
+    if (error) {
+      setMessage(error.message || 'Failed to open attachment.')
+      return
+    }
+
+    if (data?.signedUrl) {
+      window.open(data.signedUrl, '_blank', 'noopener,noreferrer')
+    }
+  }
+
+  async function openSignedPoAttachment(attachment) {
+    const storagePath = String(attachment?.storagePath || '').trim()
+    if (!storagePath) return
+
+    const { data, error } = await supabase.storage.from(CMT_INSPECTION_BUCKET).createSignedUrl(storagePath, 300)
+    if (error) {
+      setMessage(error.message || 'Failed to open signed PO.')
+      return
+    }
+
+    if (!data?.signedUrl) return
+    const previewType = getStorageAttachmentPreviewType(attachment)
+    if (previewType === 'pdf' || previewType === 'image') {
+      setCmtAttachmentPreview({
+        type: previewType,
+        url: data.signedUrl,
+        title: attachment.fileName || 'Signed PO',
+      })
+      return
+    }
+
+    window.open(data.signedUrl, '_blank', 'noopener,noreferrer')
+  }
+
+  async function handleSignedPoUpload(files) {
+    if (!selectedPoDetail || uploadingSignedPo) return
+    const uploadFiles = Array.from(files || []).filter(Boolean)
+    if (!uploadFiles.length) return
+
+    setUploadingSignedPo(true)
+    setMessage('')
+    const uploadedPaths = []
+
+    try {
+      const folder = getSignedPoStorageFolder(selectedPoDetail.poId)
+      for (const file of uploadFiles) {
+        const safeName = sanitizeFileName(file.name || 'signed-po')
+        const filePath = `${folder}/${Date.now()}-${crypto.randomUUID()}-${safeName}`
+        const { error } = await supabase.storage.from(CMT_INSPECTION_BUCKET).upload(filePath, file, {
+          cacheControl: '3600',
+          upsert: false,
+        })
+        if (error) throw new Error(error.message || `Failed to upload ${file.name || 'signed PO'}.`)
+        uploadedPaths.push(filePath)
+      }
+
+      const signedPoFiles = await loadSignedPoFiles(selectedPoDetail.poId)
+      setSelectedPoDetail((prev) => {
+        if (!prev || String(prev.poId || '') !== String(selectedPoDetail.poId || '')) return prev
+        return {
+          ...prev,
+          documentHistory: {
+            ...(prev.documentHistory || {}),
+            signedPoFiles,
+          },
+        }
+      })
+      setMessage(`${uploadFiles.length} signed PO file(s) uploaded.`)
+    } catch (error) {
+      if (uploadedPaths.length) {
+        await supabase.storage.from(CMT_INSPECTION_BUCKET).remove(uploadedPaths)
+      }
+      setMessage(error?.message || 'Failed to upload signed PO.')
+    } finally {
+      setUploadingSignedPo(false)
+    }
+  }
+
   async function openProductDetail(entry) {
     if (!selectedPoDetail || !entry) return
     setProductDetailLoading(true)
@@ -1800,6 +2386,12 @@ export default function ArklineProgressOverviewPage() {
     setQcReceiptDateFilter('all')
     setManualCompleteOpen(false)
     setHppModalOpen(false)
+    setCmtInspectionModalOpen(false)
+    setSelectedCmtInspectionDetail(null)
+    setCmtPrefinalPdfFile(null)
+    setCmtMeasurementPdfFile(null)
+    setCmtDefectPhotoFiles([])
+    setCmtDefectDrafts([])
     setProductDetailSections({
       receivingHistory: false,
       updateStatus: false,
@@ -1824,6 +2416,7 @@ export default function ArklineProgressOverviewPage() {
       qcRejectAdjustments: [],
       returnQcRows: [],
       returnQcRejectAdjustments: [],
+      cmtInspections: [],
       financeSummary: null,
       sizeBreakdown: [],
     })
@@ -1835,11 +2428,11 @@ export default function ArklineProgressOverviewPage() {
       notes: '',
     })
     try {
-      const [itemRows, sizeRows, receiptRows, updateRows, paymentRowsRaw, qcRowsRaw, returnBatchRows] = await Promise.all([
+      const [itemRows, sizeRows, receiptRows, updateRows, paymentRowsRaw, qcRowsRaw, returnBatchRows, cmtInspectionRows, cmtRejectReasonRows] = await Promise.all([
         loadOptionalRows(() =>
           supabase
             .from('arkline_po_items')
-            .select('id, sku_induk, nama_produk, total_qty, actual_qty, allowance_pct, price, hpp, notes, status, updated_delivery_date, completion_date')
+            .select('id, sku_induk, nama_produk, kategori_pengadaan, kategori_produk, total_qty, actual_qty, allowance_pct, price, hpp, notes, status, updated_delivery_date, completion_date')
             .eq('id', entry.id)
             .limit(1)
         ),
@@ -1889,7 +2482,23 @@ export default function ArklineProgressOverviewPage() {
             .eq('arkline_po_item_id', entry.id)
             .order('return_date', { ascending: false })
         ),
+        loadOptionalRows(() =>
+          supabase
+            .from('arkline_cmt_inspections')
+            .select('*')
+            .eq('arkline_po_item_id', entry.id)
+            .order('inspection_date', { ascending: false })
+            .order('round_number', { ascending: false })
+        ),
+        loadOptionalRows(() =>
+          supabase
+            .from('arkline_qc_reject_reasons')
+            .select('id, reason_name, is_active')
+            .eq('is_active', true)
+            .order('reason_name', { ascending: true })
+        ),
       ])
+      setCmtRejectReasons(cmtRejectReasonRows || [])
 
       const normalizedItemId = String(entry.id || '').trim()
       const normalizedSku = String(entry.sku || '').trim().toUpperCase()
@@ -2014,6 +2623,26 @@ export default function ArklineProgressOverviewPage() {
           latestRejectRows: returnRejectDetailRows.filter((row) => batchQcIds.has(String(row.arkline_qc_id))),
         }
       })
+      const cmtInspectionIds = (cmtInspectionRows || []).map((row) => row.id).filter(Boolean)
+      const cmtDefectRows = cmtInspectionIds.length
+        ? await loadOptionalRows(() =>
+            supabase
+              .from('arkline_cmt_inspection_defects')
+              .select('id, cmt_inspection_id, reject_reason_id, reject_reason_name, major_qty, minor_qty, notes, created_at')
+              .in('cmt_inspection_id', cmtInspectionIds)
+              .order('created_at', { ascending: true })
+          )
+        : []
+      const cmtDefectsByInspection = new Map()
+      ;(cmtDefectRows || []).forEach((row) => {
+        const key = String(row?.cmt_inspection_id || '')
+        cmtDefectsByInspection.set(key, [...(cmtDefectsByInspection.get(key) || []), row])
+      })
+      const cmtInspections = (cmtInspectionRows || []).map((row) => ({
+        ...row,
+        inspected_by: String(row?.inspected_by || '').trim(),
+        defects: cmtDefectsByInspection.get(String(row.id)) || [],
+      }))
 
       const paymentRows = (paymentRowsRaw || []).map(normalizeFinancePaymentRow)
       const itemDetail = itemRows[0] || null
@@ -2022,11 +2651,14 @@ export default function ArklineProgressOverviewPage() {
       const plannedQty = parseNumberValue(itemDetail?.total_qty || entry.qty || 0)
       const actualQty = parseNumberValue(itemDetail?.actual_qty || 0)
       const totalReceived = receiptRows.reduce((sum, row) => sum + Number(row?.received_qty || 0), 0)
-      const financeUnitPrice = price || hpp
+      const totalShortQty = returnHistory.reduce((sum, row) => sum + Number(row?.short_qty || 0), 0)
+      const financeUnitPrice = price
+      const financeTaxMultiplier = normalizeBoolean(selectedPoDetail.includePpn, true) ? 1 + PPN_RATE : 1
       const actualFinanceQty = actualQty || totalReceived
       const financeQty = getFinanceQtyForItem({
         qty: plannedQty,
         actualQty: actualFinanceQty,
+        shortQty: totalShortQty,
         status: itemDetail?.status || entry.status,
       })
       const receivedBySize = receiptRows.reduce((accumulator, row) => {
@@ -2056,11 +2688,13 @@ export default function ArklineProgressOverviewPage() {
         poId: selectedPoDetail.poId,
         supplier: selectedPoDetail.supplier,
         method: selectedPoDetail.method,
+        includePpn: selectedPoDetail.includePpn,
         requestDeliveryDate: selectedPoDetail.targetDate,
         actualSnapshotDate: entry.updatedDeliveryDate || selectedPoDetail.updatedDate || selectedPoDetail.targetDate,
         poNotes: selectedPoDetail.notes || '',
         notes: itemDetail?.notes || entry.notes || '',
         status: itemDetail?.status || entry.status || '',
+        category: String(itemDetail?.kategori_pengadaan || itemDetail?.kategori_produk || entry.category || '').trim().toUpperCase(),
         price,
         updatedDeliveryDate: itemDetail?.updated_delivery_date || entry.updatedDeliveryDate || '',
         completionDate: itemDetail?.completion_date || entry.completionDate || '',
@@ -2073,15 +2707,18 @@ export default function ArklineProgressOverviewPage() {
         returnQcRows,
         returnQcRejectAdjustments: returnRejectAdjustmentRows,
         returnHistory,
+        cmtInspections,
         sizeBreakdown,
         financeSummary: {
           price,
           hpp,
           plannedQty,
           actualQty,
+          shortQty: totalShortQty,
           allowancePct: Number(itemDetail?.allowance_pct || 0),
-          plannedValue: financeUnitPrice * plannedQty,
-          actualValue: financeUnitPrice * financeQty,
+          includePpn: selectedPoDetail.includePpn,
+          plannedValue: financeUnitPrice * plannedQty * financeTaxMultiplier,
+          actualValue: financeUnitPrice * financeQty * financeTaxMultiplier,
           paidValue: paymentRows.filter(isPaidFinancePayment).reduce((sum, row) => sum + parseNumberValue(row?.amount), 0),
         },
       })
@@ -2241,17 +2878,22 @@ export default function ArklineProgressOverviewPage() {
           ? (() => {
               const financeSummary = currentDetail.financeSummary || {}
               const price = parseNumberValue(financeSummary.price || currentDetail.price || 0)
-              const unitPrice = price || nextHpp
+              const unitPrice = price
+              const financeTaxMultiplier = normalizeBoolean(financeSummary.includePpn ?? currentDetail.includePpn, true) ? 1 + PPN_RATE : 1
               const plannedQty = parseNumberValue(financeSummary.plannedQty || currentDetail.qty || 0)
-              const actualQty = parseNumberValue(financeSummary.actualQty ?? currentDetail.actualQty ?? 0)
+              const actualQty = getFinanceQtyForItem({
+                actualQty: parseNumberValue(financeSummary.actualQty ?? currentDetail.actualQty ?? 0),
+                shortQty: parseNumberValue(financeSummary.shortQty || currentDetail.shortQty || 0),
+                status: currentDetail.status,
+              })
               return {
                 ...currentDetail,
                 hpp: nextHpp,
                 financeSummary: {
                   ...financeSummary,
                   hpp: nextHpp,
-                  plannedValue: unitPrice * plannedQty,
-                  actualValue: unitPrice * actualQty,
+                  plannedValue: unitPrice * plannedQty * financeTaxMultiplier,
+                  actualValue: unitPrice * actualQty * financeTaxMultiplier,
                 },
               }
             })()
@@ -2268,12 +2910,762 @@ export default function ArklineProgressOverviewPage() {
 
   function handleOpenCmtInspectionDraft() {
     setProductActionError('')
-    setProductActionMessage('Form CMT Inspection belum disambungkan. Struktur tabel perlu dibuat dulu untuk Pre-Final, Final, dan Re-Final.')
+    setProductActionMessage('')
+    setCmtInspectionDraft(createCmtInspectionDraft(selectedProductDetail || {}))
+    setCmtDefectDrafts([])
+    setCmtPrefinalPdfFile(null)
+    setCmtDefectPhotoFiles([])
+    setCmtInspectionModalOpen(true)
   }
 
-  function handlePrintCmtInspectionDraft() {
+  async function openStoredCmtAttachmentPreview(path, type = 'pdf', title = 'Attachment') {
+    const normalizedPath = String(path || '').trim()
+    if (!normalizedPath) {
+      setProductActionError('Attachment belum tersedia.')
+      return
+    }
+
     setProductActionError('')
-    setProductActionMessage('Print CMT Inspection belum tersedia. Button disiapkan dulu untuk flow berikutnya.')
+    const { data, error } = await supabase.storage.from(CMT_INSPECTION_BUCKET).createSignedUrl(normalizedPath, 60 * 60)
+    if (error || !data?.signedUrl) {
+      setProductActionError(error?.message || 'Failed to open attachment preview.')
+      return
+    }
+    setCmtAttachmentPreview({ type, url: data.signedUrl, title })
+  }
+
+  async function handlePrintCmtInspection(inspection) {
+    if (!selectedProductDetail || !inspection?.id || printingCmtInspectionId) return
+    setProductActionError('')
+    setPrintingCmtInspectionId(String(inspection.id))
+
+    try {
+      const { jsPDF } = await import('jspdf')
+      const doc = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' })
+      const pageWidth = doc.internal.pageSize.getWidth()
+      const pageHeight = doc.internal.pageSize.getHeight()
+      const margin = 12
+      const contentWidth = pageWidth - margin * 2
+      let cursorY = 14
+
+      const ensureSpace = (height = 10) => {
+        if (cursorY + height <= pageHeight - margin) return
+        doc.addPage()
+        cursorY = 14
+      }
+
+      const drawText = (text, x, y, options = {}) => {
+        const maxWidth = options.maxWidth || contentWidth
+        const lines = doc.splitTextToSize(String(text || '-'), maxWidth)
+        if (options.align) {
+          doc.text(lines, x, y, { align: options.align })
+        } else {
+          doc.text(lines, x, y)
+        }
+        return lines.length
+      }
+
+      const drawBox = (x, y, width, height, title) => {
+        doc.setDrawColor(17, 24, 39)
+        doc.setLineWidth(0.25)
+        doc.rect(x, y, width, height)
+        doc.setFont('helvetica', 'bold')
+        doc.setTextColor(15, 23, 42)
+        doc.setFontSize(8)
+        doc.text(title, x + 2, y + 5)
+      }
+
+      const defectRows = inspection.defects || []
+      const photoList = getCmtInspectionPhotoList(inspection)
+      const isPrefinal = String(inspection.inspection_type || '').toUpperCase() === 'PREFINAL'
+      const safePoId = String(selectedProductDetail.poId || 'PO').replace(/[^A-Z0-9_-]+/gi, '-')
+      const safeTitle = getCmtInspectionTitle(inspection).replace(/[^A-Z0-9_-]+/gi, '-')
+      const getSignedStorageUrl = async (path) => {
+        const normalizedPath = String(path || '').trim()
+        if (!normalizedPath) return ''
+        const { data } = await supabase.storage.from(CMT_INSPECTION_BUCKET).createSignedUrl(normalizedPath, 60 * 60)
+        return data?.signedUrl || ''
+      }
+      const imageToDataUrl = async (path) => {
+        try {
+          const signedUrl = await getSignedStorageUrl(path)
+          if (!signedUrl) return null
+          const response = await fetch(signedUrl)
+          const blob = await response.blob()
+          if (!blob.type.startsWith('image/')) return null
+          return await new Promise((resolve) => {
+            const reader = new FileReader()
+            reader.onload = () => resolve(reader.result)
+            reader.onerror = () => resolve(null)
+            reader.readAsDataURL(blob)
+          })
+        } catch {
+          return null
+        }
+      }
+      const visiblePhotos = photoList.slice(0, 8)
+      const photoPreviews = await Promise.all(visiblePhotos.map((photo) => imageToDataUrl(photo.path)))
+
+      doc.setFont('helvetica', 'bold')
+      doc.setFontSize(20)
+      doc.setCharSpace(3.4)
+      doc.setTextColor(15, 23, 42)
+      doc.text('ARKLINE', pageWidth - margin - 24, cursorY, { align: 'right' })
+      doc.setCharSpace(0)
+
+      doc.setFontSize(14)
+      doc.text(getCmtInspectionReportTitle(inspection), margin, cursorY)
+      cursorY += 6
+      doc.setFontSize(8.5)
+      doc.setFont('helvetica', 'bold')
+      doc.text(getCmtInspectionRoundSubtitle(inspection), margin, cursorY)
+      cursorY += 8
+
+      doc.setDrawColor(17, 24, 39)
+      doc.setLineWidth(0.4)
+      doc.line(margin, cursorY, pageWidth - margin, cursorY)
+      cursorY += 7
+
+      const leftLabelX = margin
+      const leftValueX = margin + 28
+      const rightLabelX = margin + 104
+      const rightValueX = margin + 135
+      const headerRow = (label, value, rightLabel, rightValue) => {
+        doc.setFont('helvetica', 'bold')
+        doc.setFontSize(8)
+        doc.setTextColor(15, 23, 42)
+        doc.text(label, leftLabelX, cursorY)
+        doc.setFont('helvetica', 'normal')
+        const leftLines = drawText(value, leftValueX, cursorY, { maxWidth: 72 })
+        let rightLines = 1
+        if (rightLabel) {
+          doc.setFont('helvetica', 'bold')
+          doc.text(rightLabel, rightLabelX, cursorY)
+          doc.setFont('helvetica', 'normal')
+          rightLines = drawText(rightValue, rightValueX, cursorY, { maxWidth: pageWidth - margin - rightValueX })
+        }
+        cursorY += Math.max(leftLines, rightLines, 1) * 4.4 + 1.6
+      }
+
+      headerRow('BUYER', 'ARKLINE', 'INSP. DATE', formatDateLabel(inspection.inspection_date))
+      headerRow('STYLE NO.', selectedProductDetail.productName || '-', 'INSPECTED BY', inspection.inspected_by || '-')
+      headerRow('PO NO.', selectedProductDetail.poId || '-', 'ORDER QTY', `${formatNumber(selectedProductDetail.qty || inspection.order_qty || 0)} pcs`)
+      headerRow('DESCRIPTION', selectedProductDetail.category || selectedProductDetail.productName || '-', 'SKU', selectedProductDetail.sku || '-')
+      cursorY += 4
+
+      if (!isPrefinal) {
+        const checked = (source, label) => (source?.[label] ? 'Y' : '-')
+        const firstBoxY = cursorY
+        const boxGap = 4
+        const smallBoxWidth = (contentWidth - boxGap * 2) / 3
+        const smallBoxHeight = 42
+        const prodX = margin
+        const qcX = margin + smallBoxWidth + boxGap
+        const packX = margin + (smallBoxWidth + boxGap) * 2
+        drawBox(prodX, firstBoxY, smallBoxWidth, smallBoxHeight, 'PROD. STATUS')
+        drawBox(qcX, firstBoxY, smallBoxWidth, smallBoxHeight, 'QC INFORMATION')
+        drawBox(packX, firstBoxY, smallBoxWidth, smallBoxHeight, 'PACKING INFORMATION')
+
+        doc.setFont('helvetica', 'normal')
+        doc.setFontSize(6.6)
+        doc.setTextColor(15, 23, 42)
+        ;[
+          ['Cutting', inspection.cutting_qty, inspection.cutting_pct],
+          ['Printing', inspection.printing_qty, inspection.printing_pct],
+          ['Sewing', inspection.sewing_qty, inspection.sewing_pct],
+        ].forEach(([label, qty, pct], index) => {
+          const y = firstBoxY + 13 + index * 8
+          doc.text(label.toUpperCase(), prodX + 2, y)
+          doc.text(formatNumber(qty || 0), prodX + 32, y, { align: 'right' })
+          doc.text(`${formatNumber(pct || 0)}%`, prodX + smallBoxWidth - 3, y, { align: 'right' })
+        })
+
+        CMT_QC_INFO_OPTIONS.forEach((label, index) => {
+          const y = firstBoxY + 12 + index * 5.6
+          doc.text(label.toUpperCase(), qcX + 2, y)
+          doc.text(checked(inspection.qc_information, label), qcX + smallBoxWidth - 5, y, { align: 'right' })
+        })
+
+        CMT_PACKING_OPTIONS.forEach((label, index) => {
+          const y = firstBoxY + 11 + index * 4.6
+          doc.text(label.toUpperCase(), packX + 2, y)
+          doc.text(checked(inspection.packing_information, label), packX + smallBoxWidth - 5, y, { align: 'right' })
+        })
+
+        cursorY += smallBoxHeight + 4
+        const accessoryBoxHeight = 39
+        drawBox(margin, cursorY, contentWidth, accessoryBoxHeight, 'ACCESSORIES CHECK LIST')
+        doc.setFont('helvetica', 'normal')
+        doc.setFontSize(6.6)
+        doc.setTextColor(15, 23, 42)
+        const accessoryColumns = [CMT_ACCESSORIES_OPTIONS.slice(0, 6), CMT_ACCESSORIES_OPTIONS.slice(6)]
+        accessoryColumns.forEach((labels, columnIndex) => {
+          labels.forEach((label, index) => {
+            const y = cursorY + 11 + index * 4.8
+            const x = margin + 2 + columnIndex * 92
+            doc.text(label.toUpperCase(), x, y)
+            doc.text(checked(inspection.accessories_checklist, label), x + 78, y, { align: 'right' })
+          })
+        })
+        cursorY += accessoryBoxHeight + 8
+
+        doc.setFont('helvetica', 'bold')
+        doc.setFontSize(8)
+        doc.text('SAMPLING QTY :', margin, cursorY)
+        doc.setFont('helvetica', 'normal')
+        doc.text(formatNumber(inspection.sampling_qty || 0), margin + 32, cursorY)
+        doc.setFont('helvetica', 'bold')
+        doc.text('ACCEPTANCE STD. :', margin + 62, cursorY)
+        doc.setFont('helvetica', 'normal')
+        doc.text(formatNumber(inspection.acceptance_standard || 0), margin + 100, cursorY)
+        doc.setFont('helvetica', 'bold')
+        doc.text('REJECTION STD. :', margin + 124, cursorY)
+        doc.setFont('helvetica', 'normal')
+        doc.text(formatNumber(inspection.reject_standard || 0), margin + 158, cursorY)
+        cursorY += 3
+
+        doc.setFillColor(17, 24, 39)
+        doc.rect(margin, cursorY, contentWidth, 7, 'F')
+        doc.setTextColor(255, 255, 255)
+        doc.setFont('helvetica', 'bold')
+        doc.setFontSize(8)
+        doc.text('DEFECTIVES FOUND', margin + 2, cursorY + 5)
+        const majorColumnX = pageWidth - margin - 35
+        const minorColumnX = pageWidth - margin - 11
+        doc.text('MAJOR', majorColumnX, cursorY + 5, { align: 'center' })
+        doc.text('MINOR', minorColumnX, cursorY + 5, { align: 'center' })
+        cursorY += 7
+        doc.setTextColor(15, 23, 42)
+        doc.setFont('helvetica', 'normal')
+        doc.setFontSize(8)
+        const defectTableTop = cursorY
+        const defectRowsToDraw = defectRows.length ? defectRows : [{ reject_reason_name: '-', major_qty: 0, minor_qty: 0 }]
+        const totalMajorQty = defectRowsToDraw.reduce((sum, row) => sum + Number(row?.major_qty || 0), 0)
+        const totalMinorQty = defectRowsToDraw.reduce((sum, row) => sum + Number(row?.minor_qty || 0), 0)
+        defectRowsToDraw.slice(0, 9).forEach((row, index) => {
+          const y = cursorY + index * 5.4
+          doc.setDrawColor(203, 213, 225)
+          doc.line(margin, y, pageWidth - margin, y)
+          doc.text(`${index + 1}. ${row.reject_reason_name || '-'}`, margin + 2, y + 3.8)
+          doc.text(row.major_qty ? formatNumber(row.major_qty) : '-', majorColumnX, y + 3.8, { align: 'center' })
+          doc.text(row.minor_qty ? formatNumber(row.minor_qty) : '-', minorColumnX, y + 3.8, { align: 'center' })
+        })
+        cursorY = defectTableTop + defectRowsToDraw.slice(0, 9).length * 5.4
+        doc.line(margin, cursorY, pageWidth - margin, cursorY)
+        doc.setFont('helvetica', 'bold')
+        doc.text('TOTAL', margin + 2, cursorY + 4.2)
+        doc.text(formatNumber(totalMajorQty), majorColumnX, cursorY + 4.2, { align: 'center' })
+        doc.text(formatNumber(totalMinorQty), minorColumnX, cursorY + 4.2, { align: 'center' })
+        cursorY += 5.6
+        doc.line(margin, cursorY, pageWidth - margin, cursorY)
+        cursorY += 5
+
+        if (visiblePhotos.length) {
+          const photoColumns = 4
+          const photoGap = 3
+          const photoRows = Math.ceil(visiblePhotos.length / photoColumns)
+          const photoBoxSize = (contentWidth - photoGap * (photoColumns - 1)) / photoColumns
+          ensureSpace(9 + photoRows * (photoBoxSize + photoGap))
+          doc.setFont('helvetica', 'bold')
+          doc.setFontSize(8)
+          doc.text('PHOTOS OF DEFECTS :', margin, cursorY)
+          cursorY += 4
+          const photoAreaY = cursorY
+          visiblePhotos.forEach((photo, index) => {
+            const column = index % photoColumns
+            const row = Math.floor(index / photoColumns)
+            const x = margin + column * (photoBoxSize + photoGap)
+            const y = photoAreaY + row * (photoBoxSize + photoGap)
+            doc.setDrawColor(203, 213, 225)
+            doc.rect(x, y, photoBoxSize, photoBoxSize)
+            const imageData = photoPreviews[index]
+            if (imageData) {
+              const imageType = String(imageData).startsWith('data:image/png') ? 'PNG' : 'JPEG'
+              const imageProps = doc.getImageProperties(imageData)
+              const maxImageSize = photoBoxSize - 1.6
+              const imageScale = Math.min(maxImageSize / imageProps.width, maxImageSize / imageProps.height)
+              const drawWidth = imageProps.width * imageScale
+              const drawHeight = imageProps.height * imageScale
+              doc.addImage(
+                imageData,
+                imageType,
+                x + (photoBoxSize - drawWidth) / 2,
+                y + (photoBoxSize - drawHeight) / 2,
+                drawWidth,
+                drawHeight,
+                undefined,
+                'FAST'
+              )
+            } else {
+              doc.setFont('helvetica', 'normal')
+              doc.setFontSize(6.5)
+              doc.setTextColor(148, 163, 184)
+              doc.text(photo?.name || 'Photo attached', x + photoBoxSize / 2, y + photoBoxSize / 2, {
+                align: 'center',
+                maxWidth: photoBoxSize - 3,
+              })
+              doc.setTextColor(15, 23, 42)
+            }
+          })
+          cursorY = photoAreaY + photoRows * photoBoxSize + Math.max(0, photoRows - 1) * photoGap + 7
+        }
+      } else {
+        doc.setFont('helvetica', 'bold')
+        doc.setFontSize(9)
+        doc.setTextColor(15, 23, 42)
+        doc.text('PRE-FINAL ATTACHMENT', margin, cursorY)
+        cursorY += 7
+        doc.setFont('helvetica', 'normal')
+        doc.setFontSize(8.5)
+        doc.text(`PDF: ${inspection.prefinal_pdf_path ? 'Attached' : 'Not attached'}`, margin, cursorY)
+        cursorY += 24
+      }
+
+      ensureSpace(34)
+      doc.setDrawColor(17, 24, 39)
+      doc.rect(margin, cursorY, contentWidth, 17)
+      doc.setFont('helvetica', 'bold')
+      doc.setFontSize(8)
+      doc.text('COMMENT :', margin + 2, cursorY + 6)
+      doc.setFont('helvetica', 'normal')
+      doc.setFontSize(8)
+      drawText(inspection.notes || '-', margin + 2, cursorY + 11, { maxWidth: contentWidth - 6 })
+      cursorY += 22
+
+      const resultX = margin
+      const signatureX = margin + 63
+      const signatureWidth = 36
+      const signatureGap = 8
+      doc.setFont('helvetica', 'bold')
+      doc.setFontSize(8.5)
+      doc.text('INSPECTION RESULT :', resultX, cursorY)
+      const resultValue = String(inspection.inspection_result || '').toUpperCase()
+      ;['PASSED', 'REJECTED'].forEach((result, index) => {
+        const y = cursorY + 8 + index * 7
+        doc.setFont('helvetica', 'normal')
+        doc.text(result, resultX, y)
+        doc.rect(resultX + 29, y - 4, 4, 4)
+        if (resultValue === result) {
+          doc.setFont('helvetica', 'bold')
+          doc.text('X', resultX + 30.1, y - 0.6)
+        }
+      })
+      ;['QA Inspector', 'Production Manager', 'QA Manager'].forEach((label, index) => {
+        const x = signatureX + index * (signatureWidth + signatureGap)
+        doc.line(x, cursorY + 18, x + signatureWidth, cursorY + 18)
+        doc.setFont('helvetica', 'bold')
+        doc.setFontSize(8)
+        doc.text(`${label} :`, x + signatureWidth / 2, cursorY + 23, { align: 'center' })
+      })
+
+      doc.save(`cmt-inspection-${safePoId}-${safeTitle}.pdf`)
+    } catch (error) {
+      setProductActionError(error?.message || 'Failed to generate CMT inspection PDF.')
+    } finally {
+      setPrintingCmtInspectionId('')
+    }
+  }
+
+  function updateCmtInspectionDraft(field, value) {
+    setCmtInspectionDraft((prev) => ({
+      ...prev,
+      [field]: value,
+    }))
+  }
+
+  function handleCmtInspectionTypeChange(value) {
+    const nextType = String(value || 'FINAL').toUpperCase()
+    const isPrefinal = nextType === 'PREFINAL'
+    setCmtInspectionDraft((prev) => ({
+      ...prev,
+      inspectionType: nextType,
+      roundNumber: nextType === 'PREFINAL' ? '1' : String(getNextCmtInspectionRound(selectedProductDetail?.cmtInspections || [], nextType)),
+      samplingQty: isPrefinal ? '' : prev.samplingQty,
+      cuttingQty: isPrefinal ? '' : prev.cuttingQty,
+      cuttingPct: isPrefinal ? '' : prev.cuttingPct,
+      printingQty: isPrefinal ? '' : prev.printingQty,
+      printingPct: isPrefinal ? '' : prev.printingPct,
+      sewingQty: isPrefinal ? '' : prev.sewingQty,
+      sewingPct: isPrefinal ? '' : prev.sewingPct,
+      acceptanceStandard: isPrefinal ? '' : prev.acceptanceStandard,
+      rejectStandard: isPrefinal ? '' : prev.rejectStandard,
+      acceptQty: isPrefinal ? '' : prev.acceptQty,
+      rejectQty: isPrefinal ? '' : prev.rejectQty,
+      inspectionResult: isPrefinal ? '' : prev.inspectionResult,
+    }))
+    if (isPrefinal) {
+      setCmtDefectDrafts([])
+      setCmtDefectPhotoFiles([])
+      setCmtMeasurementPdfFile(null)
+    }
+  }
+
+  function toggleCmtChecklistValue(groupKey, option) {
+    setCmtInspectionDraft((prev) => ({
+      ...prev,
+      [groupKey]: {
+        ...(prev[groupKey] || {}),
+        [option]: !prev[groupKey]?.[option],
+      },
+    }))
+  }
+
+  function addCmtDefectDraft() {
+    setCmtDefectDrafts((prev) => [
+      ...prev,
+      {
+        rejectReasonId: '',
+        rejectReasonName: '',
+        newReasonName: '',
+        majorQty: '',
+        minorQty: '',
+        notes: '',
+      },
+    ])
+  }
+
+  function updateCmtDefectDraft(index, field, value) {
+    setCmtDefectDrafts((prev) =>
+      prev.map((row, rowIndex) => {
+        if (rowIndex !== index) return row
+        if (field === 'rejectReasonId') {
+          const reason = cmtRejectReasons.find((item) => String(item.id) === String(value))
+          return {
+            ...row,
+            rejectReasonId: value,
+            rejectReasonName: String(reason?.reason_name || '').trim().toUpperCase(),
+          }
+        }
+        if (field === 'rejectReasonName') {
+          const reasonName = String(value || '').toUpperCase()
+          const matchedReason = cmtRejectReasons.find((item) => String(item.reason_name || '').trim().toUpperCase() === reasonName.trim().toUpperCase())
+          return {
+            ...row,
+            rejectReasonId: matchedReason?.id || '',
+            rejectReasonName: matchedReason?.reason_name || reasonName,
+            newReasonName: matchedReason ? '' : reasonName,
+          }
+        }
+        return {
+          ...row,
+          [field]: field === 'newReasonName' ? String(value || '').toUpperCase() : value,
+        }
+      })
+    )
+  }
+
+  function removeCmtDefectDraft(index) {
+    setCmtDefectDrafts((prev) => prev.filter((_, rowIndex) => rowIndex !== index))
+  }
+
+  async function compressCmtDefectPhoto(file) {
+    if (!file?.type?.startsWith('image/')) return file
+    const imageUrl = URL.createObjectURL(file)
+    try {
+      const image = await new Promise((resolve, reject) => {
+        const img = new Image()
+        img.onload = () => resolve(img)
+        img.onerror = reject
+        img.src = imageUrl
+      })
+      const maxSize = 1600
+      const ratio = Math.min(1, maxSize / Math.max(image.width || maxSize, image.height || maxSize))
+      const canvas = document.createElement('canvas')
+      canvas.width = Math.max(1, Math.round((image.width || maxSize) * ratio))
+      canvas.height = Math.max(1, Math.round((image.height || maxSize) * ratio))
+      const context = canvas.getContext('2d')
+      context.drawImage(image, 0, 0, canvas.width, canvas.height)
+      const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.78))
+      if (!blob) return file
+      const baseName = sanitizeFileName(file.name || 'defect-photo').replace(/\.[^.]+$/, '')
+      return new File([blob], `${baseName}.jpg`, { type: 'image/jpeg', lastModified: Date.now() })
+    } finally {
+      URL.revokeObjectURL(imageUrl)
+    }
+  }
+
+  async function addCmtDefectPhotos(files = []) {
+    const nextFiles = Array.from(files || [])
+    if (!nextFiles.length) return
+    const compressedFiles = await Promise.all(nextFiles.map((file) => compressCmtDefectPhoto(file)))
+    setCmtDefectPhotoFiles((prev) => [...prev, ...compressedFiles])
+  }
+
+  function removeCmtDefectPhoto(index) {
+    setCmtDefectPhotoFiles((prev) => prev.filter((_, rowIndex) => rowIndex !== index))
+  }
+
+  function selectCmtRejectReason(index, reason) {
+    setCmtDefectDrafts((prev) =>
+      prev.map((row, rowIndex) =>
+        rowIndex === index
+          ? {
+              ...row,
+              rejectReasonId: reason?.id || '',
+              rejectReasonName: String(reason?.reason_name || '').trim().toUpperCase(),
+              newReasonName: '',
+            }
+          : row
+      )
+    )
+    setCmtReasonFocusIndex(null)
+  }
+
+  async function resolveCmtRejectReason(row) {
+    if (row.rejectReasonId) return row.rejectReasonId
+    const reasonName = String(row.rejectReasonName || row.newReasonName || '').trim().toUpperCase()
+    if (!reasonName) {
+      throw new Error('Isi reject reason dulu.')
+    }
+
+    const existingReason = cmtRejectReasons.find((item) => String(item.reason_name || '').trim().toUpperCase() === reasonName)
+    if (existingReason) return existingReason.id
+
+    const { data, error: insertError } = await supabase
+      .from('arkline_qc_reject_reasons')
+      .insert({ reason_name: reasonName })
+      .select('id, reason_name, is_active')
+      .single()
+
+    if (insertError) {
+      const { data: fallbackReason, error: fallbackError } = await supabase
+        .from('arkline_qc_reject_reasons')
+        .select('id, reason_name, is_active')
+        .eq('reason_name', reasonName)
+        .single()
+
+      if (fallbackError) {
+        throw new Error(insertError.message || 'Failed to save reject reason.')
+      }
+
+      setCmtRejectReasons((items) => [...items, fallbackReason].sort((a, b) => a.reason_name.localeCompare(b.reason_name)))
+      return fallbackReason.id
+    }
+
+    setCmtRejectReasons((items) => [...items, data].sort((a, b) => a.reason_name.localeCompare(b.reason_name)))
+    return data.id
+  }
+
+  async function addCmtRejectReasonFromDraft(index) {
+    setProductActionError('')
+    try {
+      const row = cmtDefectDrafts[index]
+      const reasonId = await resolveCmtRejectReason(row || {})
+      const reason = cmtRejectReasons.find((item) => String(item.id) === String(reasonId))
+      setCmtDefectDrafts((prev) =>
+        prev.map((item, rowIndex) =>
+          rowIndex === index
+            ? {
+                ...item,
+                rejectReasonId: reasonId,
+                rejectReasonName: reason?.reason_name || item.rejectReasonName || item.newReasonName,
+                newReasonName: '',
+              }
+            : item
+        )
+      )
+      setCmtReasonFocusIndex(null)
+    } catch (error) {
+      setProductActionError(error?.message || 'Failed to add reject reason.')
+    }
+  }
+
+  async function uploadCmtInspectionFile(file, folder) {
+    if (!file || !selectedProductDetail) return null
+    const safePoId = sanitizeFileName(selectedProductDetail.poId || 'PO')
+    const safeName = sanitizeFileName(file.name || 'attachment')
+    const filePath = `Arkline PO/${safePoId}/${folder}/${Date.now()}-${crypto.randomUUID()}-${safeName}`
+    const { error } = await supabase.storage.from(CMT_INSPECTION_BUCKET).upload(filePath, file, {
+      cacheControl: '3600',
+      upsert: false,
+    })
+    if (error) {
+      throw new Error(error.message || `Failed to upload ${file.name || 'file'}.`)
+    }
+    return {
+      path: filePath,
+      name: file.name || safeName,
+      type: file.type || null,
+      size: Number(file.size || 0),
+    }
+  }
+
+  async function handleSaveCmtInspection() {
+    if (!selectedProductDetail || savingCmtInspection) return
+    setProductActionError('')
+    setProductActionMessage('')
+
+    const inspectionType = String(cmtInspectionDraft.inspectionType || 'FINAL').trim().toUpperCase()
+    const isPrefinal = inspectionType === 'PREFINAL'
+    const roundNumber = isPrefinal ? 1 : Number(cmtInspectionDraft.roundNumber || getNextFinalInspectionRound(selectedProductDetail.cmtInspections || []))
+    const inspectionDate = String(cmtInspectionDraft.inspectionDate || '').trim()
+    const orderQty = parseNumberValue(cmtInspectionDraft.orderQty || selectedProductDetail.financeSummary?.plannedQty || selectedProductDetail.qty || 0)
+    const samplingQty = isPrefinal ? 0 : parseNumberValue(cmtInspectionDraft.samplingQty)
+    const acceptanceStandard = isPrefinal ? 0 : parseNumberValue(cmtInspectionDraft.acceptanceStandard)
+    const rejectStandard = isPrefinal ? 0 : parseNumberValue(cmtInspectionDraft.rejectStandard)
+
+    if (!inspectionDate) {
+      setProductActionError('Isi tanggal inspection dulu.')
+      return
+    }
+    if (isPrefinal && !cmtPrefinalPdfFile) {
+      setProductActionError('Upload PDF Pre-Final dulu.')
+      return
+    }
+    if (!isPrefinal && (!samplingQty || !cmtInspectionDraft.inspectionResult)) {
+      setProductActionError('Isi sampling qty dan inspection result dulu.')
+      return
+    }
+    const defectDraftRows = isPrefinal
+      ? []
+      : cmtDefectDrafts
+          .map((row) => ({
+            rejectReasonId: row.rejectReasonId || '',
+            rejectReasonName: String(row.rejectReasonName || row.newReasonName || '').trim().toUpperCase(),
+            major_qty: parseNumberValue(row.majorQty),
+            minor_qty: parseNumberValue(row.minorQty),
+            notes: String(row.notes || '').trim() || null,
+          }))
+          .filter((row) => row.rejectReasonName || row.major_qty || row.minor_qty || row.notes)
+
+    const invalidDefectRow = defectDraftRows.find((row) => !row.rejectReasonName || row.major_qty + row.minor_qty <= 0)
+    if (invalidDefectRow) {
+      setProductActionError('Lengkapi reject reason dan qty major/minor untuk setiap defective found.')
+      return
+    }
+    const uploadedPaths = []
+    setSavingCmtInspection(true)
+    try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser()
+      let inspectedBy = String(user?.user_metadata?.display_name || user?.user_metadata?.full_name || '').trim()
+      const userId = String(user?.id || '').trim()
+      if (userId) {
+        const { data: inspectorProfiles } = await supabase
+          .from('dir_user_profiles')
+          .select('display_name')
+          .or(`authenticated_id.eq.${userId},id.eq.${userId}`)
+          .limit(1)
+        inspectedBy = String(inspectorProfiles?.[0]?.display_name || inspectedBy).trim()
+      }
+      const defectPayloadRows = isPrefinal
+        ? []
+        : await Promise.all(
+            defectDraftRows.map(async (row) => {
+              const rejectReasonId = await resolveCmtRejectReason({
+                rejectReasonId: row.rejectReasonId,
+                rejectReasonName: row.rejectReasonName,
+              })
+              return {
+                reject_reason_id: rejectReasonId || null,
+                reject_reason_name: row.rejectReasonName,
+                major_qty: row.major_qty,
+                minor_qty: row.minor_qty,
+                notes: row.notes,
+              }
+            })
+          )
+      const existingPrefinalPath = isPrefinal
+        ? String(
+            (selectedProductDetail.cmtInspections || []).find(
+              (row) => String(row?.inspection_type || '').toUpperCase() === 'PREFINAL' && Number(row?.round_number || 1) === 1
+            )?.prefinal_pdf_path || ''
+          )
+        : ''
+      const prefinalPdf = isPrefinal ? await uploadCmtInspectionFile(cmtPrefinalPdfFile, 'Pre-Final') : null
+      if (prefinalPdf?.path) uploadedPaths.push(prefinalPdf.path)
+      const measurementPdf = !isPrefinal && cmtMeasurementPdfFile ? await uploadCmtInspectionFile(cmtMeasurementPdfFile, `${inspectionType === 'FINAL' ? `Final/Round ${roundNumber}` : `In-Line/Round ${roundNumber}`}/Measurement`) : null
+      if (measurementPdf?.path) uploadedPaths.push(measurementPdf.path)
+
+      const defectPhotos = []
+      if (!isPrefinal) {
+        for (const file of cmtDefectPhotoFiles || []) {
+          const folderName = inspectionType === 'FINAL' ? `Final/Round ${roundNumber}/Defect Photos` : `In-Line/Round ${roundNumber}/Defect Photos`
+          const uploadedPhoto = await uploadCmtInspectionFile(file, folderName)
+          if (uploadedPhoto?.path) {
+            uploadedPaths.push(uploadedPhoto.path)
+            defectPhotos.push(uploadedPhoto)
+          }
+        }
+      }
+
+      const inspectionPayload = {
+        po_id: String(selectedProductDetail.poId || '').trim().toUpperCase(),
+        arkline_po_item_id: selectedProductDetail.id,
+        sku_induk: String(selectedProductDetail.sku || '').trim().toUpperCase(),
+        product_name: String(selectedProductDetail.productName || '').trim().toUpperCase(),
+        kategori_pengadaan: String(selectedProductDetail.category || '').trim().toUpperCase() || null,
+        inspection_type: inspectionType,
+        round_number: roundNumber || 1,
+        order_qty: orderQty,
+        sampling_qty: samplingQty,
+        printing_qty: isPrefinal ? 0 : parseNumberValue(cmtInspectionDraft.printingQty),
+        printing_pct: isPrefinal ? 0 : parseNumberValue(cmtInspectionDraft.printingPct),
+        cutting_qty: isPrefinal ? 0 : parseNumberValue(cmtInspectionDraft.cuttingQty),
+        cutting_pct: isPrefinal ? 0 : parseNumberValue(cmtInspectionDraft.cuttingPct),
+        sewing_qty: isPrefinal ? 0 : parseNumberValue(cmtInspectionDraft.sewingQty),
+        sewing_pct: isPrefinal ? 0 : parseNumberValue(cmtInspectionDraft.sewingPct),
+        acceptance_standard: acceptanceStandard,
+        reject_standard: rejectStandard,
+        accept_qty: 0,
+        reject_qty: 0,
+        qc_information: isPrefinal ? {} : cmtInspectionDraft.qcInformation || {},
+        accessories_checklist: isPrefinal ? {} : cmtInspectionDraft.accessoriesChecklist || {},
+        packing_information: isPrefinal ? {} : cmtInspectionDraft.packingInformation || {},
+        inspection_result: isPrefinal ? null : String(cmtInspectionDraft.inspectionResult || '').trim().toUpperCase(),
+        prefinal_pdf_path: prefinalPdf?.path || null,
+        measurement_pdf_path: measurementPdf?.path || null,
+        defect_photo_urls: defectPhotos,
+        notes: String(cmtInspectionDraft.notes || '').trim() || null,
+        inspected_by: inspectedBy || null,
+        inspection_date: inspectionDate,
+      }
+
+      const query = isPrefinal
+        ? supabase
+            .from('arkline_cmt_inspections')
+            .upsert(inspectionPayload, { onConflict: 'arkline_po_item_id,inspection_type,round_number' })
+            .select('id')
+            .single()
+        : supabase.from('arkline_cmt_inspections').insert(inspectionPayload).select('id').single()
+
+      const { data: insertedInspection, error: inspectionError } = await query
+      if (inspectionError) {
+        throw new Error(inspectionError.message || 'Failed to save CMT inspection.')
+      }
+
+      if (!isPrefinal && defectPayloadRows.length) {
+        const { error: defectError } = await supabase.from('arkline_cmt_inspection_defects').insert(
+          defectPayloadRows.map((row) => ({
+            ...row,
+            cmt_inspection_id: insertedInspection.id,
+          }))
+        )
+        if (defectError) {
+          await supabase.from('arkline_cmt_inspections').delete().eq('id', insertedInspection.id)
+          throw new Error(defectError.message || 'Inspection saved, but failed to save defect rows.')
+        }
+      }
+
+      setCmtInspectionModalOpen(false)
+      setCmtPrefinalPdfFile(null)
+      setCmtMeasurementPdfFile(null)
+      setCmtDefectPhotoFiles([])
+      setCmtDefectDrafts([])
+      await openProductDetail(selectedProductDetail)
+      if (existingPrefinalPath && prefinalPdf?.path && existingPrefinalPath !== prefinalPdf.path) {
+        await supabase.storage.from(CMT_INSPECTION_BUCKET).remove([existingPrefinalPath])
+      }
+      setProductActionMessage(isPrefinal ? 'Pre-Final PDF berhasil disimpan.' : 'CMT Inspection berhasil disimpan.')
+    } catch (error) {
+      if (uploadedPaths.length) {
+        await supabase.storage.from(CMT_INSPECTION_BUCKET).remove(uploadedPaths)
+      }
+      setProductActionError(error?.message || 'Failed to save CMT inspection.')
+    } finally {
+      setSavingCmtInspection(false)
+    }
   }
 
   async function handleSaveStatusChange() {
@@ -3064,11 +4456,13 @@ export default function ArklineProgressOverviewPage() {
                 <div className={styles.boardDropzone}>
                   {(boardItemsByStatus[status] || []).length ? (
                     boardItemsByStatus[status].map((item) => {
-                      const tone = getDelayTone(item.targetDate, item.updatedDate)
+                      const isSettledCompletedCard = status === 'Completed' && item.isFinanceSettled
                       return (
                         <article
                           key={item.id}
-                          className={`${styles.boardCard} ${!canOpenKanbanDetail ? styles.boardCardStatic : ''}`.trim()}
+                          className={`${styles.boardCard} ${isSettledCompletedCard ? styles.boardCardFinanceSettled : ''} ${
+                            !canOpenKanbanDetail ? styles.boardCardStatic : ''
+                          }`.trim()}
                           role={canOpenKanbanDetail ? 'button' : undefined}
                           tabIndex={canOpenKanbanDetail ? 0 : undefined}
                           onClick={canOpenKanbanDetail ? () => openPoDetail(item) : undefined}
@@ -3402,14 +4796,15 @@ export default function ArklineProgressOverviewPage() {
               {poDetailSections.finance ? (
                 <>
                   {(() => {
-                    const dueValue = (selectedPoDetail.productEntries || []).reduce(
-                      (sum, entry) => sum + getFinanceQtyForItem(entry) * parseNumberValue(entry?.price || entry?.hpp || 0),
+                    const dueNetValue = (selectedPoDetail.productEntries || []).reduce(
+                      (sum, entry) => sum + getFinanceQtyForItem(entry) * parseNumberValue(entry?.price || 0),
                       0
                     )
+                    const dueValue = applyPpnToAmount(dueNetValue, selectedPoDetail.includePpn)
                     const paidValue = (selectedPoDetail.payments || [])
                       .filter(isPaidFinancePayment)
                       .reduce((sum, row) => sum + parseNumberValue(row?.amount), 0)
-                    const outstandingValue = Math.max(dueValue - paidValue, 0)
+                    const outstandingValue = getFinanceOutstandingValue(dueValue, paidValue)
 
                     return (
                       <>
@@ -3458,6 +4853,179 @@ export default function ArklineProgressOverviewPage() {
                   })()}
                 </>
               ) : null}
+            </div>
+
+            <div className={styles.modalSection}>
+              <div className={styles.productDetailSectionHead}>
+                <h4 className={styles.modalSectionTitle}>Document History</h4>
+                <button type="button" className={styles.productDetailSectionToggle} onClick={() => togglePoDetailSection('documentHistory')}>
+                  <ChevronIcon expanded={poDetailSections.documentHistory} />
+                </button>
+              </div>
+              {poDetailSections.documentHistory
+                ? (() => {
+                    const signedPoFiles = selectedPoDetail.documentHistory?.signedPoFiles || []
+                    const signedPoDate = getLatestSignedPoDate(signedPoFiles)
+                    const signedPoInputId = `signed-po-upload-${sanitizeFileName(selectedPoDetail.poId || selectedPoDetail.id)}`
+
+                    return (
+                      <div className={styles.documentHistoryList}>
+                        <div className={styles.documentHistoryGroup}>
+                          <div className={styles.documentHistoryGroupHead}>
+                            <span>Purchase Order</span>
+                            <strong>{selectedPoDetail.poId}</strong>
+                          </div>
+                          <div className={styles.documentHistoryMiniList}>
+                            <div className={styles.documentHistoryMiniRow}>
+                              <strong>Generated PO</strong>
+                              <span>{formatDateTimeLabel(selectedPoDetail.createdAt || selectedPoDetail.startDate)}</span>
+                              <div className={styles.documentHistoryActions}>
+                                <button
+                                  type="button"
+                                  className={styles.documentHistoryIconButton}
+                                  onClick={() => void handlePrintPoDetail()}
+                                  disabled={printingPoDetail}
+                                  title="Print PO"
+                                  aria-label="Print PO"
+                                >
+                                  <PrintIcon />
+                                </button>
+                              </div>
+                            </div>
+
+                            <div className={styles.documentHistoryMiniRow}>
+                              <strong>Signed PO</strong>
+                              <span>{signedPoDate ? formatDateTimeLabel(signedPoDate) : 'No signed PO file yet'}</span>
+                              <div className={styles.documentHistoryActions}>
+                                <input
+                                  id={signedPoInputId}
+                                  type="file"
+                                  accept="application/pdf,image/*"
+                                  multiple
+                                  className={styles.hiddenFileInput}
+                                  disabled={uploadingSignedPo}
+                                  onChange={(event) => {
+                                    const files = Array.from(event.target.files || [])
+                                    event.target.value = ''
+                                    void handleSignedPoUpload(files)
+                                  }}
+                                />
+                                <label
+                                  className={`${styles.documentHistoryIconButton} ${uploadingSignedPo ? styles.documentHistoryIconButtonDisabled : ''}`}
+                                  htmlFor={signedPoInputId}
+                                  title={uploadingSignedPo ? 'Uploading signed PO...' : 'Upload signed PO'}
+                                  aria-label="Upload signed PO"
+                                >
+                                  <PlusIcon />
+                                </label>
+                                {signedPoFiles.map((attachment, index) => (
+                                  <button
+                                    key={attachment.id || attachment.storagePath || index}
+                                    type="button"
+                                    className={styles.documentHistoryIconButton}
+                                    onClick={() => void openSignedPoAttachment(attachment)}
+                                    title={attachment.fileName || `Signed PO ${index + 1}`}
+                                    aria-label={`Open signed PO ${index + 1}`}
+                                  >
+                                    <AttachmentIcon />
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className={styles.documentHistoryGroup}>
+                          <div className={styles.documentHistoryGroupHead}>
+                            <span>Receipt History</span>
+                            <strong>{selectedPoDetail.documentHistory?.receipts?.length || 0} receipt date(s)</strong>
+                          </div>
+                          {(selectedPoDetail.documentHistory?.receipts || []).length ? (
+                            <div className={styles.documentHistoryMiniList}>
+                              {selectedPoDetail.documentHistory.receipts.map((receipt) => (
+                                <div key={receipt.key} className={styles.documentHistoryMiniRow}>
+                                  <strong>{formatDateLabel(receipt.receiveDate)}</strong>
+                                  <span>{receipt.supplierSj ? `SJ ${receipt.supplierSj}` : 'No supplier SJ'}</span>
+                                  <em>{formatNumber(receipt.qty)} pcs</em>
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <div className={styles.emptyMini}>No receipt rows yet.</div>
+                          )}
+                        </div>
+
+                        <div className={styles.documentHistoryGroup}>
+                          <div className={styles.documentHistoryGroupHead}>
+                            <span>Payment Arrangement</span>
+                            <strong>{(selectedPoDetail.payments || []).length} invoice row(s)</strong>
+                          </div>
+                          {(selectedPoDetail.payments || []).length ? (
+                            <div className={styles.documentHistoryPaymentTable}>
+                              <div className={`${styles.documentHistoryPaymentRow} ${styles.documentHistoryPaymentHeader}`}>
+                                <span>Invoice Number</span>
+                                <span>Submitted At</span>
+                                <span>Proof</span>
+                                <span>Paid At</span>
+                                <span>Proof</span>
+                              </div>
+                              {selectedPoDetail.payments.map((payment) => {
+                                const submissionProofs = getFinanceAttachmentsByKind(payment, 'SUBMISSION_PROOF')
+                                const paymentProofs = getFinanceAttachmentsByKind(payment, 'PAYMENT_PROOF')
+                                const paidDate = isPaidFinancePayment(payment) ? payment.paidAt || payment.paymentDate : ''
+                                return (
+                                  <div key={`payment-arrangement-${payment.id}`} className={styles.documentHistoryPaymentRow}>
+                                    <strong>{payment.invoiceNumber || payment.paymentLabel || '-'}</strong>
+                                    <span>{formatDateTimeLabel(payment.createdAt)}</span>
+                                    <div className={styles.documentHistoryActions}>
+                                      {submissionProofs.length ? (
+                                        submissionProofs.map((attachment, index) => (
+                                          <button
+                                            key={attachment.id || attachment.storagePath || index}
+                                            type="button"
+                                            className={styles.documentHistoryIconButton}
+                                            onClick={() => void openFinanceAttachment(attachment)}
+                                            title={attachment.fileName || `Invoice proof ${index + 1}`}
+                                            aria-label={`Open invoice proof ${index + 1}`}
+                                          >
+                                            <AttachmentIcon />
+                                          </button>
+                                        ))
+                                      ) : (
+                                        <em>No proof</em>
+                                      )}
+                                    </div>
+                                    <span>{paidDate ? formatDateTimeLabel(paidDate) : '-'}</span>
+                                    <div className={styles.documentHistoryActions}>
+                                      {paymentProofs.length ? (
+                                        paymentProofs.map((attachment, index) => (
+                                          <button
+                                            key={attachment.id || attachment.storagePath || index}
+                                            type="button"
+                                            className={styles.documentHistoryIconButton}
+                                            onClick={() => void openFinanceAttachment(attachment)}
+                                            title={attachment.fileName || `Payment proof ${index + 1}`}
+                                            aria-label={`Open payment proof ${index + 1}`}
+                                          >
+                                            <AttachmentIcon />
+                                          </button>
+                                        ))
+                                      ) : (
+                                        <em>No proof</em>
+                                      )}
+                                    </div>
+                                  </div>
+                                )
+                              })}
+                            </div>
+                          ) : (
+                            <div className={styles.emptyMini}>No payment arrangement rows yet.</div>
+                          )}
+                        </div>
+                      </div>
+                    )
+                  })()
+                : null}
             </div>
           </div>
         </div>
@@ -3574,6 +5142,79 @@ export default function ArklineProgressOverviewPage() {
                     )
                   })()}
                 </div>
+                ) : null}
+              </div>
+
+              <div className={styles.productDetailSection}>
+                <div className={styles.productDetailSectionHead}>
+                  <div className={styles.productSectionHeadLeft}>
+                    <h4 className={styles.modalSectionTitle}>CMT Inspection</h4>
+                    <button
+                      type="button"
+                      className={styles.productSectionLaunch}
+                      onClick={handleOpenCmtInspectionDraft}
+                      aria-label="Add CMT inspection"
+                      title="Add CMT inspection"
+                    >
+                      <PlusIcon />
+                    </button>
+                  </div>
+                  <button type="button" className={styles.productDetailSectionToggle} onClick={() => toggleProductDetailSection('cmtInspection')}>
+                    <span className={styles.productDetailHint}>CMT Report(s)</span>
+                    <ChevronIcon expanded={productDetailSections.cmtInspection} />
+                  </button>
+                </div>
+                {productDetailSections.cmtInspection ? (
+                  <div className={styles.productDetailRows}>
+                    {(selectedProductDetail.cmtInspections || []).length ? (
+                      <div className={styles.cmtInspectionStageGrid}>
+                        {sortCmtInspectionsByDate(selectedProductDetail.cmtInspections || []).map((inspection) => {
+                          const defectQty = getCmtInspectionDefectQty(inspection)
+                          const isPrefinal = String(inspection.inspection_type || '').toUpperCase() === 'PREFINAL'
+                          return (
+                            <div
+                              key={inspection.id}
+                              role="button"
+                              tabIndex={0}
+                              className={styles.cmtInspectionStageCard}
+                              onClick={() => setSelectedCmtInspectionDetail(inspection)}
+                              onKeyDown={(event) => {
+                                if (event.key === 'Enter' || event.key === ' ') {
+                                  event.preventDefault()
+                                  setSelectedCmtInspectionDetail(inspection)
+                                }
+                              }}
+                            >
+                              <div className={styles.cmtInspectionStageTop}>
+                                <span>{getCmtInspectionTitle(inspection)}</span>
+                                <button
+                                  type="button"
+                                  className={styles.cmtInspectionPrintButton}
+                                  onClick={(event) => {
+                                    event.stopPropagation()
+                                    void handlePrintCmtInspection(inspection)
+                                  }}
+                                  disabled={printingCmtInspectionId === String(inspection.id)}
+                                  aria-label={`Print ${getCmtInspectionTitle(inspection)}`}
+                                  title={`Print ${getCmtInspectionTitle(inspection)}`}
+                                >
+                                  <PrintIcon />
+                                </button>
+                              </div>
+                              <strong>{isPrefinal ? getCmtInspectionResultLabel(inspection) : `${formatNumber(defectQty)} defect qty`}</strong>
+                              <div className={styles.cmtInspectionStageMeta}>
+                                <span>{formatDateLabel(inspection.inspection_date)}</span>
+                                <span>Sample {formatNumber(inspection.sampling_qty || 0)}</span>
+                                <span>Defect {formatNumber(defectQty)}</span>
+                              </div>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    ) : (
+                      <div className={styles.emptyMini}>No CMT inspection yet.</div>
+                    )}
+                  </div>
                 ) : null}
               </div>
 
@@ -3776,49 +5417,6 @@ export default function ArklineProgressOverviewPage() {
                     <div className={styles.emptyMini}>No QC report rows.</div>
                   )}
                 </div>
-                ) : null}
-              </div>
-
-              <div className={styles.productDetailSection}>
-                <div className={styles.productDetailSectionHead}>
-                  <div className={styles.productSectionHeadLeft}>
-                    <h4 className={styles.modalSectionTitle}>CMT Inspection</h4>
-                    <button
-                      type="button"
-                      className={styles.productSectionLaunch}
-                      onClick={handleOpenCmtInspectionDraft}
-                      aria-label="Add CMT inspection"
-                      title="Add CMT inspection"
-                    >
-                      <PlusIcon />
-                    </button>
-                    <button
-                      type="button"
-                      className={styles.productSectionLaunch}
-                      onClick={handlePrintCmtInspectionDraft}
-                      aria-label="Print CMT inspection"
-                      title="Print CMT inspection"
-                    >
-                      <PrintIcon />
-                    </button>
-                  </div>
-                  <button type="button" className={styles.productDetailSectionToggle} onClick={() => toggleProductDetailSection('cmtInspection')}>
-                    <span className={styles.productDetailHint}>Pre-Final / Final / Re-Final</span>
-                    <ChevronIcon expanded={productDetailSections.cmtInspection} />
-                  </button>
-                </div>
-                {productDetailSections.cmtInspection ? (
-                  <div className={styles.productDetailRows}>
-                    <div className={styles.cmtInspectionStageGrid}>
-                      {['Pre-Final Inspection', 'Final Inspection', 'Re-Final Inspection'].map((stage) => (
-                        <div key={stage} className={styles.cmtInspectionStageCard}>
-                          <span>{stage}</span>
-                          <strong>Not recorded yet</strong>
-                        </div>
-                      ))}
-                    </div>
-                    <div className={styles.emptyMini}>CMT inspection reports can be connected here after the inspection table and workflow are finalized.</div>
-                  </div>
                 ) : null}
               </div>
 
@@ -4249,6 +5847,707 @@ export default function ArklineProgressOverviewPage() {
                   />
                 </label>
               </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {selectedProductDetail && cmtInspectionModalOpen ? (
+        <div className={styles.modalOverlay} onClick={() => (!savingCmtInspection ? setCmtInspectionModalOpen(false) : null)}>
+          <div className={`${styles.modalCard} ${styles.actionModalCard} ${styles.cmtInspectionModalCard}`.trim()} onClick={(event) => event.stopPropagation()}>
+            <div className={styles.modalHeader}>
+              <div>
+                <p className={styles.eyebrow}>CMT Inspection</p>
+                <h3 className={styles.modalTitle}>{selectedProductDetail.productName || 'NO PRODUCT'}</h3>
+                <div className={styles.cmtInspectionMetaGrid}>
+                  <div>
+                    <span>PO Number</span>
+                    <strong>{selectedProductDetail.poId || '-'}</strong>
+                  </div>
+                  <div>
+                    <span>SKU</span>
+                    <strong>{selectedProductDetail.sku || '-'}</strong>
+                  </div>
+                  <div>
+                    <span>Category</span>
+                    <strong>{selectedProductDetail.category || 'NO CATEGORY'}</strong>
+                  </div>
+                  <div>
+                    <span>Total Order</span>
+                    <strong>{formatNumber(cmtInspectionDraft.orderQty || selectedProductDetail.qty || 0)} pcs</strong>
+                  </div>
+                </div>
+              </div>
+              <div className={styles.productHeaderActions}>
+                <button type="button" className={styles.blackPrimaryButton} onClick={() => void handleSaveCmtInspection()} disabled={savingCmtInspection}>
+                  {savingCmtInspection ? 'Saving...' : 'Save Inspection'}
+                </button>
+                <button
+                  type="button"
+                  className={styles.iconButton}
+                  onClick={() => setCmtInspectionModalOpen(false)}
+                  disabled={savingCmtInspection}
+                  aria-label="Close CMT inspection"
+                >
+                  <CloseIcon />
+                </button>
+              </div>
+            </div>
+
+            {productActionError ? <div className={styles.productActionError}>{productActionError}</div> : null}
+            {productActionMessage ? <div className={styles.productActionMessage}>{productActionMessage}</div> : null}
+
+            <div className={styles.productFormGrid}>
+              <label className={styles.filterField}>
+                <span>Inspection Type</span>
+                <select
+                  className={styles.select}
+                  value={cmtInspectionDraft.inspectionType}
+                  onChange={(event) => handleCmtInspectionTypeChange(event.target.value)}
+                  disabled={savingCmtInspection}
+                >
+                  {CMT_INSPECTION_TYPE_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className={styles.filterField}>
+                <span>Round</span>
+                <div className={styles.readonlyField}>
+                  {cmtInspectionDraft.inspectionType === 'PREFINAL'
+                    ? 'Pre-Final'
+                    : cmtInspectionDraft.inspectionType === 'FINAL'
+                      ? getCmtInspectionTitle({ inspection_type: 'FINAL', round_number: cmtInspectionDraft.roundNumber })
+                      : getCmtInspectionTitle({ inspection_type: 'INLINE', round_number: cmtInspectionDraft.roundNumber })}
+                </div>
+              </label>
+              <label className={styles.filterField}>
+                <span>Inspection Date</span>
+                <input
+                  className={styles.input}
+                  type="date"
+                  value={cmtInspectionDraft.inspectionDate}
+                  onChange={(event) => updateCmtInspectionDraft('inspectionDate', event.target.value)}
+                  disabled={savingCmtInspection}
+                />
+              </label>
+            </div>
+
+            {cmtInspectionDraft.inspectionType === 'PREFINAL' ? (
+              <div className={styles.cmtInspectionFormSection}>
+                <div className={styles.filterField}>
+                  <span>Pre-Final PDF</span>
+                  <div className={styles.cmtPhotoUploadBox}>
+                    <input
+                      id="cmt-prefinal-pdf-input"
+                      className={styles.hiddenFileInput}
+                      type="file"
+                      accept="application/pdf"
+                      onChange={(event) => setCmtPrefinalPdfFile(event.target.files?.[0] || null)}
+                      disabled={savingCmtInspection}
+                    />
+                    <label className={styles.cmtPhotoAddButton} htmlFor="cmt-prefinal-pdf-input" aria-label="Add Pre-Final PDF">
+                      <PlusIcon />
+                    </label>
+                    <span>{cmtPrefinalPdfFile ? cmtPrefinalPdfFile.name : 'Add Pre-Final PDF'}</span>
+                  </div>
+                  {cmtPrefinalPdfPreview ? (
+                    <div className={styles.cmtMeasurementPreviewCard}>
+                      <button
+                        type="button"
+                        onClick={() => setCmtAttachmentPreview({ type: 'pdf', url: cmtPrefinalPdfPreview.url, title: cmtPrefinalPdfPreview.file.name || 'Pre-Final PDF' })}
+                      >
+                        Preview PDF
+                      </button>
+                      <button type="button" onClick={() => setCmtPrefinalPdfFile(null)} disabled={savingCmtInspection}>
+                        Remove
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
+                <label className={styles.filterField}>
+                  <span>Notes / Comment</span>
+                  <textarea
+                    className={styles.textarea}
+                    value={cmtInspectionDraft.notes}
+                    onChange={(event) => updateCmtInspectionDraft('notes', event.target.value)}
+                    placeholder="Optional notes for this Pre-Final PDF"
+                    disabled={savingCmtInspection}
+                  />
+                </label>
+              </div>
+            ) : (
+              <>
+                <div className={styles.cmtInspectionMatrix}>
+                  <div className={styles.cmtMatrixColumn}>
+                    <div className={styles.cmtMatrixTitle}>Production Status</div>
+                    <div className={styles.cmtStatusTable}>
+                      <div className={styles.cmtStatusHeader} aria-hidden="true">
+                        <span />
+                        <span>Qty</span>
+                        <span>%</span>
+                      </div>
+                      {CMT_PRODUCTION_STATUS_ROWS.map((row) => (
+                        <div key={row.key} className={styles.cmtStatusRow}>
+                          <strong>{row.label}</strong>
+                          <input
+                            className={styles.input}
+                            type="number"
+                            min="0"
+                            value={cmtInspectionDraft[`${row.key}Qty`] || ''}
+                            onChange={(event) => updateCmtInspectionDraft(`${row.key}Qty`, event.target.value)}
+                            disabled={savingCmtInspection}
+                          />
+                          <input
+                            className={styles.input}
+                            inputMode="decimal"
+                            value={cmtInspectionDraft[`${row.key}Pct`] || ''}
+                            onChange={(event) => updateCmtInspectionDraft(`${row.key}Pct`, event.target.value)}
+                            disabled={savingCmtInspection}
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className={styles.cmtMatrixColumn}>
+                    <div className={styles.cmtMatrixTitle}>QC Info</div>
+                    <div className={styles.cmtChecklistStack}>
+                      {CMT_QC_INFO_OPTIONS.map((option) => (
+                        <label key={option} className={styles.cmtChecklistItem}>
+                          <input
+                            type="checkbox"
+                            checked={Boolean(cmtInspectionDraft.qcInformation?.[option])}
+                            onChange={() => toggleCmtChecklistValue('qcInformation', option)}
+                            disabled={savingCmtInspection}
+                          />
+                          <span>{option}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className={styles.cmtMatrixColumn}>
+                    <div className={styles.cmtMatrixTitle}>Accessories Checklist</div>
+                    <div className={styles.cmtChecklistStack}>
+                      {CMT_ACCESSORIES_OPTIONS.map((option) => (
+                        <label key={option} className={styles.cmtChecklistItem}>
+                          <input
+                            type="checkbox"
+                            checked={Boolean(cmtInspectionDraft.accessoriesChecklist?.[option])}
+                            onChange={() => toggleCmtChecklistValue('accessoriesChecklist', option)}
+                            disabled={savingCmtInspection}
+                          />
+                          <span>{option}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className={styles.cmtMatrixColumn}>
+                    <div className={styles.cmtMatrixTitle}>Packing Info</div>
+                    <div className={styles.cmtChecklistStack}>
+                      {CMT_PACKING_OPTIONS.map((option) => (
+                        <label key={option} className={styles.cmtChecklistItem}>
+                          <input
+                            type="checkbox"
+                            checked={Boolean(cmtInspectionDraft.packingInformation?.[option])}
+                            onChange={() => toggleCmtChecklistValue('packingInformation', option)}
+                            disabled={savingCmtInspection}
+                          />
+                          <span>{option}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                <div className={`${styles.cmtInspectionFormSection} ${styles.cmtDefectPanel}`.trim()}>
+                  <div className={styles.cmtInspectionSectionHeader}>
+                    <strong>Defective Found</strong>
+                  </div>
+                  <div className={styles.cmtStandardsGrid}>
+                    <label className={styles.filterField}>
+                      <span>Sampling Qty</span>
+                      <input
+                        className={styles.input}
+                        type="number"
+                        min="0"
+                        value={cmtInspectionDraft.samplingQty}
+                        onChange={(event) => updateCmtInspectionDraft('samplingQty', event.target.value)}
+                        disabled={savingCmtInspection}
+                      />
+                    </label>
+                    <label className={styles.filterField}>
+                      <span>Acceptance Standard</span>
+                      <input
+                        className={styles.input}
+                        type="number"
+                        min="0"
+                        value={cmtInspectionDraft.acceptanceStandard}
+                        onChange={(event) => updateCmtInspectionDraft('acceptanceStandard', event.target.value)}
+                        disabled={savingCmtInspection}
+                      />
+                    </label>
+                    <label className={styles.filterField}>
+                      <span>Reject Standard</span>
+                      <input
+                        className={styles.input}
+                        type="number"
+                        min="0"
+                        value={cmtInspectionDraft.rejectStandard}
+                        onChange={(event) => updateCmtInspectionDraft('rejectStandard', event.target.value)}
+                        disabled={savingCmtInspection}
+                      />
+                    </label>
+                  </div>
+                  {cmtDefectDrafts.length ? (
+                    <div className={styles.cmtDefectRows}>
+                      <div className={styles.cmtDefectHeader} aria-hidden="true">
+                        <span>Reject Reason</span>
+                        <span>Major</span>
+                        <span>Minor</span>
+                        <span>Notes</span>
+                        <span />
+                      </div>
+                      {cmtDefectDrafts.map((row, index) => (
+                        <div key={`cmt-defect-${index}`} className={styles.cmtDefectRow}>
+                          <div className={styles.cmtReasonField}>
+                            <input
+                              className={styles.input}
+                              value={row.rejectReasonName || row.newReasonName || ''}
+                              onChange={(event) => updateCmtDefectDraft(index, 'rejectReasonName', event.target.value)}
+                              placeholder="Type or choose reason"
+                              disabled={savingCmtInspection}
+                              onFocus={() => setCmtReasonFocusIndex(index)}
+                              onBlur={() => window.setTimeout(() => setCmtReasonFocusIndex((current) => (current === index ? null : current)), 120)}
+                            />
+                            {cmtReasonFocusIndex === index ? (
+                              <div className={styles.cmtReasonDropdown}>
+                                {cmtRejectReasons
+                                  .filter((reason) => {
+                                    const keyword = String(row.rejectReasonName || row.newReasonName || '').trim().toUpperCase()
+                                    if (!keyword) return true
+                                    return String(reason.reason_name || '').toUpperCase().includes(keyword)
+                                  })
+                                  .slice(0, 6)
+                                  .map((reason) => (
+                                    <button key={reason.id} type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => selectCmtRejectReason(index, reason)}>
+                                      {reason.reason_name}
+                                    </button>
+                                  ))}
+                                {!row.rejectReasonId && String(row.rejectReasonName || row.newReasonName || '').trim() ? (
+                                  <button
+                                    type="button"
+                                    className={styles.cmtReasonAddOption}
+                                    onMouseDown={(event) => event.preventDefault()}
+                                    onClick={() => void addCmtRejectReasonFromDraft(index)}
+                                    disabled={savingCmtInspection}
+                                  >
+                                    {`+ Add ${String(row.rejectReasonName || row.newReasonName || '').trim().toUpperCase()}`}
+                                  </button>
+                                ) : null}
+                              </div>
+                            ) : null}
+                          </div>
+                          <div>
+                            <input
+                              className={styles.input}
+                              type="number"
+                              min="0"
+                              value={row.majorQty}
+                              onChange={(event) => updateCmtDefectDraft(index, 'majorQty', event.target.value)}
+                              disabled={savingCmtInspection}
+                            />
+                          </div>
+                          <div>
+                            <input
+                              className={styles.input}
+                              type="number"
+                              min="0"
+                              value={row.minorQty}
+                              onChange={(event) => updateCmtDefectDraft(index, 'minorQty', event.target.value)}
+                              disabled={savingCmtInspection}
+                            />
+                          </div>
+                          <div>
+                            <input
+                              className={styles.input}
+                              value={row.notes}
+                              onChange={(event) => updateCmtDefectDraft(index, 'notes', event.target.value)}
+                              disabled={savingCmtInspection}
+                            />
+                          </div>
+                          <button
+                            type="button"
+                            className={styles.iconDangerButton}
+                            onClick={() => removeCmtDefectDraft(index)}
+                            disabled={savingCmtInspection}
+                            aria-label="Remove defect row"
+                          >
+                            <CloseIcon />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className={styles.emptyMini}>No defective rows added yet.</div>
+                  )}
+                  <div className={styles.cmtAddDefectRow}>
+                    <button type="button" className={styles.cmtAddDefectButton} onClick={addCmtDefectDraft} disabled={savingCmtInspection}>
+                      Add Defect
+                    </button>
+                  </div>
+                </div>
+
+                <div className={styles.cmtClosingGrid}>
+                  <div className={styles.cmtClosingStack}>
+                    <div className={styles.filterField}>
+                      <span>Measurement Attachment</span>
+                      <div className={styles.cmtPhotoUploadBox}>
+                        <input
+                          id="cmt-measurement-pdf-input"
+                          className={styles.hiddenFileInput}
+                          type="file"
+                          accept="application/pdf"
+                          onChange={(event) => setCmtMeasurementPdfFile(event.target.files?.[0] || null)}
+                          disabled={savingCmtInspection}
+                        />
+                        <label className={styles.cmtPhotoAddButton} htmlFor="cmt-measurement-pdf-input" aria-label="Add measurement PDF">
+                          <PlusIcon />
+                        </label>
+                        <span>{cmtMeasurementPdfFile ? cmtMeasurementPdfFile.name : 'Add measurement PDF'}</span>
+                      </div>
+                      {cmtMeasurementPdfPreview ? (
+                        <div className={styles.cmtMeasurementPreviewCard}>
+                          <button
+                            type="button"
+                            onClick={() => setCmtAttachmentPreview({ type: 'pdf', url: cmtMeasurementPdfPreview.url, title: cmtMeasurementPdfPreview.file.name || 'Measurement Attachment' })}
+                          >
+                            Preview PDF
+                          </button>
+                          <button type="button" onClick={() => setCmtMeasurementPdfFile(null)} disabled={savingCmtInspection}>
+                            Remove
+                          </button>
+                        </div>
+                      ) : null}
+                    </div>
+                    <div className={styles.filterField}>
+                      <span>Defect Photos</span>
+                      <div className={styles.cmtPhotoUploadBox}>
+                        <input
+                          id="cmt-defect-photos-input"
+                          className={styles.hiddenFileInput}
+                          type="file"
+                          accept="image/*"
+                          multiple
+                          onChange={(event) => {
+                            addCmtDefectPhotos(event.target.files || [])
+                            event.target.value = ''
+                          }}
+                          disabled={savingCmtInspection}
+                        />
+                        <label className={styles.cmtPhotoAddButton} htmlFor="cmt-defect-photos-input" aria-label="Add defect photos">
+                          <PlusIcon />
+                        </label>
+                        <span>{cmtDefectPhotoFiles.length ? `${formatNumber(cmtDefectPhotoFiles.length)} photo(s) selected` : 'Add defect photos'}</span>
+                      </div>
+                      {cmtDefectPhotoPreviews.length ? (
+                        <div className={styles.cmtPhotoPreviewGrid}>
+                          {cmtDefectPhotoPreviews.map((preview, index) => (
+                            <div key={`${preview.file.name}-${preview.file.size}-${index}`} className={styles.cmtPhotoPreviewCard}>
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img
+                                src={preview.url}
+                                alt={preview.file.name || `Defect photo ${index + 1}`}
+                                onClick={() => setCmtAttachmentPreview({ type: 'image', url: preview.url, title: preview.file.name || `Defect photo ${index + 1}` })}
+                              />
+                              <div>
+                                <span>{preview.file.name || `Defect photo ${index + 1}`}</span>
+                                <button type="button" onClick={() => removeCmtDefectPhoto(index)} disabled={savingCmtInspection}>
+                                  Remove
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
+                    <label className={styles.filterField}>
+                      <span>Notes / Comment</span>
+                      <textarea
+                        className={styles.textarea}
+                        value={cmtInspectionDraft.notes}
+                        onChange={(event) => updateCmtInspectionDraft('notes', event.target.value)}
+                        placeholder="Inspection notes"
+                        disabled={savingCmtInspection}
+                      />
+                    </label>
+                  </div>
+
+                  <div className={styles.cmtResultPanel}>
+                    <div className={styles.cmtMatrixTitle}>Inspection Result</div>
+                    <div className={styles.cmtResultGrid}>
+                      {CMT_INSPECTION_RESULT_OPTIONS.map((result) => (
+                        <button
+                          key={result}
+                          type="button"
+                          className={`${styles.cmtResultCard} ${styles[`cmtResult${result}`] || ''} ${
+                            cmtInspectionDraft.inspectionResult === result ? styles.cmtResultCardActive : ''
+                          }`.trim()}
+                          onClick={() => updateCmtInspectionDraft('inspectionResult', result)}
+                          disabled={savingCmtInspection}
+                        >
+                          <span>{result}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      ) : null}
+
+      {selectedProductDetail && selectedCmtInspectionDetail ? (
+        <div className={styles.modalOverlay} onClick={() => setSelectedCmtInspectionDetail(null)}>
+          <div className={`${styles.modalCard} ${styles.actionModalCard} ${styles.cmtInspectionModalCard}`.trim()} onClick={(event) => event.stopPropagation()}>
+            <div className={styles.modalHeader}>
+              <div>
+                <p className={styles.eyebrow}>CMT Inspection Detail</p>
+                <h3 className={styles.modalTitle}>{getCmtInspectionTitle(selectedCmtInspectionDetail)}</h3>
+                <div className={styles.cmtInspectionMetaGrid}>
+                  <div>
+                    <span>PO</span>
+                    <strong>{selectedProductDetail.poId || '-'}</strong>
+                  </div>
+                  <div>
+                    <span>SKU</span>
+                    <strong>{selectedProductDetail.sku || '-'}</strong>
+                  </div>
+                  <div>
+                    <span>Category</span>
+                    <strong>{selectedProductDetail.category || '-'}</strong>
+                  </div>
+                  <div>
+                    <span>Total Order</span>
+                    <strong>{formatNumber(selectedProductDetail.qty || selectedCmtInspectionDetail.order_qty || 0)} pcs</strong>
+                  </div>
+                </div>
+              </div>
+              <div className={styles.productHeaderActions}>
+                <button
+                  type="button"
+                  className={styles.blackPrimaryButton}
+                  onClick={() => void handlePrintCmtInspection(selectedCmtInspectionDetail)}
+                  disabled={printingCmtInspectionId === String(selectedCmtInspectionDetail.id)}
+                >
+                  {printingCmtInspectionId === String(selectedCmtInspectionDetail.id) ? 'Generating...' : 'Print PDF'}
+                </button>
+                <button type="button" className={styles.iconButton} onClick={() => setSelectedCmtInspectionDetail(null)} aria-label="Close CMT inspection detail">
+                  <CloseIcon />
+                </button>
+              </div>
+            </div>
+
+            <div className={styles.cmtViewSummaryGrid}>
+              <div>
+                <span>Inspection Date</span>
+                <strong>{formatDateLabel(selectedCmtInspectionDetail.inspection_date)}</strong>
+              </div>
+              <div>
+                <span>Sample Qty</span>
+                <strong>{formatNumber(selectedCmtInspectionDetail.sampling_qty || 0)}</strong>
+              </div>
+              <div>
+                <span>Defect Qty</span>
+                <strong>{formatNumber(getCmtInspectionDefectQty(selectedCmtInspectionDetail))}</strong>
+              </div>
+              <div>
+                <span>Result</span>
+                <strong>{getCmtInspectionResultLabel(selectedCmtInspectionDetail)}</strong>
+              </div>
+            </div>
+
+            {String(selectedCmtInspectionDetail.inspection_type || '').toUpperCase() === 'PREFINAL' ? (
+              <div className={styles.cmtViewAttachmentRow}>
+                <button
+                  type="button"
+                  className={styles.secondaryButton}
+                  onClick={() =>
+                    void openStoredCmtAttachmentPreview(
+                      selectedCmtInspectionDetail.prefinal_pdf_path,
+                      'pdf',
+                      `${getCmtInspectionTitle(selectedCmtInspectionDetail)} PDF`
+                    )
+                  }
+                  disabled={!selectedCmtInspectionDetail.prefinal_pdf_path}
+                >
+                  Preview Pre-Final PDF
+                </button>
+              </div>
+            ) : (
+              <>
+                <div className={styles.cmtInspectionMatrix}>
+                  <div className={styles.cmtMatrixColumn}>
+                    <div className={styles.cmtMatrixTitle}>Production Status</div>
+                    <div className={styles.cmtStatusTable}>
+                      {[
+                        ['Cutting', selectedCmtInspectionDetail.cutting_qty, selectedCmtInspectionDetail.cutting_pct],
+                        ['Printing', selectedCmtInspectionDetail.printing_qty, selectedCmtInspectionDetail.printing_pct],
+                        ['Sewing', selectedCmtInspectionDetail.sewing_qty, selectedCmtInspectionDetail.sewing_pct],
+                      ].map(([label, qty, pct]) => (
+                        <div key={label} className={styles.cmtViewStatusRow}>
+                          <strong>{label}</strong>
+                          <span>{formatNumber(qty || 0)} pcs</span>
+                          <span>{formatNumber(pct || 0)}%</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  <div className={styles.cmtMatrixColumn}>
+                    <div className={styles.cmtMatrixTitle}>QC Info</div>
+                    <div className={styles.cmtViewChecklistStack}>
+                      {CMT_QC_INFO_OPTIONS.map((option) => (
+                        <label key={option} className={styles.cmtViewChecklistItem}>
+                          <input type="checkbox" checked={Boolean(selectedCmtInspectionDetail.qc_information?.[option])} readOnly disabled />
+                          <span>{option}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                  <div className={styles.cmtMatrixColumn}>
+                    <div className={styles.cmtMatrixTitle}>Accessories Checklist</div>
+                    <div className={styles.cmtViewChecklistStack}>
+                      {CMT_ACCESSORIES_OPTIONS.map((option) => (
+                        <label key={option} className={styles.cmtViewChecklistItem}>
+                          <input type="checkbox" checked={Boolean(selectedCmtInspectionDetail.accessories_checklist?.[option])} readOnly disabled />
+                          <span>{option}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                  <div className={styles.cmtMatrixColumn}>
+                    <div className={styles.cmtMatrixTitle}>Packing Info</div>
+                    <div className={styles.cmtViewChecklistStack}>
+                      {CMT_PACKING_OPTIONS.map((option) => (
+                        <label key={option} className={styles.cmtViewChecklistItem}>
+                          <input type="checkbox" checked={Boolean(selectedCmtInspectionDetail.packing_information?.[option])} readOnly disabled />
+                          <span>{option}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                <div className={`${styles.cmtInspectionFormSection} ${styles.cmtDefectPanel}`.trim()}>
+                  <div className={styles.cmtInspectionSectionHeader}>
+                    <strong>Defective Found</strong>
+                  </div>
+                  <div className={styles.cmtViewStandardsLine}>
+                    <span>Sampling Qty <strong>{formatNumber(selectedCmtInspectionDetail.sampling_qty || 0)}</strong></span>
+                    <span>Accept Std <strong>{formatNumber(selectedCmtInspectionDetail.acceptance_standard || 0)}</strong></span>
+                    <span>Reject Std <strong>{formatNumber(selectedCmtInspectionDetail.reject_standard || 0)}</strong></span>
+                  </div>
+                  {(selectedCmtInspectionDetail.defects || []).length ? (
+                    <div className={styles.cmtViewDefectTable}>
+                      <div className={styles.cmtViewDefectTableHead}>
+                        <span>Reject Reason</span>
+                        <span>Major</span>
+                        <span>Minor</span>
+                        <span>Notes</span>
+                      </div>
+                      {(selectedCmtInspectionDetail.defects || []).map((row) => (
+                        <div key={row.id || row.reject_reason_name} className={styles.cmtViewDefectRow}>
+                          <strong>{row.reject_reason_name || '-'}</strong>
+                          <span>{formatNumber(row.major_qty || 0)}</span>
+                          <span>{formatNumber(row.minor_qty || 0)}</span>
+                          <em>{row.notes || '-'}</em>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className={styles.emptyMini}>No defective rows recorded.</div>
+                  )}
+                </div>
+
+                <div className={styles.cmtViewAttachmentRow}>
+                  <button
+                    type="button"
+                    className={styles.secondaryButton}
+                    onClick={() =>
+                      void openStoredCmtAttachmentPreview(
+                        selectedCmtInspectionDetail.measurement_pdf_path,
+                        'pdf',
+                        `${getCmtInspectionTitle(selectedCmtInspectionDetail)} Measurement`
+                      )
+                    }
+                    disabled={!selectedCmtInspectionDetail.measurement_pdf_path}
+                  >
+                    Preview Measurement PDF
+                  </button>
+                </div>
+                {cmtSavedPhotoPreviews.length ? (
+                  <div className={styles.cmtSavedPhotoGrid}>
+                    {cmtSavedPhotoPreviews.map((photo, index) => (
+                      <button
+                        key={`${photo.path || photo.name || index}`}
+                        type="button"
+                        className={styles.cmtSavedPhotoCard}
+                        onClick={() =>
+                          photo.previewUrl
+                            ? setCmtAttachmentPreview({ type: 'image', url: photo.previewUrl, title: photo.name || `Defect photo ${index + 1}` })
+                            : void openStoredCmtAttachmentPreview(photo.path, 'image', photo.name || `Defect photo ${index + 1}`)
+                        }
+                      >
+                        {photo.previewUrl ? (
+                          <>
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img src={photo.previewUrl} alt={photo.name || `Defect photo ${index + 1}`} />
+                          </>
+                        ) : (
+                          <span>{photo.name || `Defect photo ${index + 1}`}</span>
+                        )}
+                        <small>{photo.name || `Defect photo ${index + 1}`}</small>
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+              </>
+            )}
+
+            <div className={styles.cmtViewNotesBox}>
+              <span>Notes / Comment</span>
+              <p>{selectedCmtInspectionDetail.notes || '-'}</p>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {cmtAttachmentPreview ? (
+        <div className={styles.cmtPreviewOverlay} onClick={() => setCmtAttachmentPreview(null)}>
+          <div className={styles.cmtPreviewCard} onClick={(event) => event.stopPropagation()}>
+            <div className={styles.modalHeader}>
+              <div>
+                <p className={styles.eyebrow}>{cmtAttachmentPreview.type === 'pdf' ? 'PDF Preview' : 'Photo Preview'}</p>
+                <h3 className={styles.modalTitle}>{cmtAttachmentPreview.title || 'Attachment Preview'}</h3>
+              </div>
+              <button type="button" className={styles.iconButton} onClick={() => setCmtAttachmentPreview(null)} aria-label="Close attachment preview">
+                <CloseIcon />
+              </button>
+            </div>
+            <div className={styles.cmtPreviewBody}>
+              {cmtAttachmentPreview.type === 'pdf' ? (
+                <iframe className={styles.cmtPreviewPdf} src={cmtAttachmentPreview.url} title={cmtAttachmentPreview.title || 'Measurement attachment'} />
+              ) : (
+                <>
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img className={styles.cmtPreviewImage} src={cmtAttachmentPreview.url} alt={cmtAttachmentPreview.title || 'Defect photo'} />
+                </>
+              )}
             </div>
           </div>
         </div>

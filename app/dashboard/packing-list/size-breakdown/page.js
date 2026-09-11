@@ -2307,13 +2307,7 @@ function getPdfMeasurementNumber(value) {
 }
 
 function comparePdfSizeChartRows(left, right) {
-  const leftLength = getPdfMeasurementNumber(left.length_value)
-  const rightLength = getPdfMeasurementNumber(right.length_value)
-
-  if (leftLength !== null && rightLength !== null && leftLength !== rightLength) return leftLength - rightLength
-  if (leftLength !== null && rightLength === null) return -1
-  if (leftLength === null && rightLength !== null) return 1
-  return left.size_label.localeCompare(right.size_label, undefined, { numeric: true })
+  return comparePdfSizeLabels(left.size_label, right.size_label)
 }
 
 function haveConflictingPdfMeasurements(leftRow, rightRow) {
@@ -2351,7 +2345,7 @@ function buildPdfSizeChartGroups(rows = []) {
           PDF_SIZE_CHART_COLUMNS.map((column) => [column.key, formatPdfValue(row[column.key])])
         ),
       }))
-      .sort((a, b) => a.size_label.localeCompare(b.size_label, undefined, { numeric: true }))
+      .sort(comparePdfSizeChartRows)
 
     return {
       plId,

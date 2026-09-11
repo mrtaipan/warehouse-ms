@@ -9,6 +9,7 @@ const supabase = createClient()
 
 const SIZE_OPTIONS = ['XS', 'S', 'M', 'L', 'XL', 'XXL']
 const NO_PO_VALUE = '__NO_PO__'
+const NO_PO_MATERIAL_SOURCE_CODE = '00'
 const ORDERED_AS_OPTIONS = ['PT ANUGERAH RETAIL KARYA', 'CV MITRA KARSA GARMINDO']
 const SIZE_SORT_ORDER = SIZE_OPTIONS.reduce((accumulator, size, index) => {
   accumulator[size] = index
@@ -372,14 +373,15 @@ function escapeRegExp(value) {
   return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
-function getNextMaterialPoSequence(existingNumbers, prefix) {
-  const normalizedPrefix = String(prefix || '').trim().toUpperCase()
-  const prefixPattern = escapeRegExp(normalizedPrefix)
+function getNextMaterialPoSequence(existingNumbers, prefixes) {
+  const normalizedPrefixes = (Array.isArray(prefixes) ? prefixes : [prefixes])
+    .map((prefix) => String(prefix || '').trim().toUpperCase())
+    .filter(Boolean)
   const usedNumbers = existingNumbers.reduce((set, value) => {
-    const match = String(value || '')
-      .trim()
-      .toUpperCase()
-      .match(new RegExp(`^${prefixPattern}-(\\d+)$`))
+    const normalizedValue = String(value || '').trim().toUpperCase()
+    const match = normalizedPrefixes
+      .map((prefix) => normalizedValue.match(new RegExp(`^${escapeRegExp(prefix)}-(\\d+)$`)))
+      .find(Boolean)
 
     if (match?.[1]) {
       set.add(Number(match[1]))
@@ -404,7 +406,7 @@ function buildMaterialPoNumber(lines, existingNumbers, date = new Date()) {
   }
 
   const dateCode = getMaterialPoDateCode(date)
-  let sourceCode = 'FREE'
+  let sourceCode = NO_PO_MATERIAL_SOURCE_CODE
 
   if (sourcePoIds.length === 1) {
     const garmentPoSequence = extractGarmentPoSequence(sourcePoIds[0])
@@ -417,7 +419,10 @@ function buildMaterialPoNumber(lines, existingNumbers, date = new Date()) {
   }
 
   const prefix = `MPO-${sourceCode}-${dateCode}`
-  return `${prefix}-${getNextMaterialPoSequence(existingNumbers, prefix)}`
+  const sequencePrefixes =
+    sourceCode === NO_PO_MATERIAL_SOURCE_CODE ? [prefix, `MPO-FREE-${dateCode}`] : [prefix]
+
+  return `${prefix}-${getNextMaterialPoSequence(existingNumbers, sequencePrefixes)}`
 }
 
 async function loadBomLinesForProduct(product) {

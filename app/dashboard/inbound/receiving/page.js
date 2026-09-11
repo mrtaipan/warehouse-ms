@@ -55,10 +55,11 @@ function getMonthBounds(value) {
   return { start, next }
 }
 
-function createOverviewHref({ supplierId, month, search, page }) {
+function createOverviewHref({ supplierId, month, search, page, showAll }) {
   const params = new URLSearchParams()
 
   if (search) params.set('search', search)
+  if (showAll) params.set('showAll', '1')
   if (!search && supplierId) params.set('supplier', supplierId)
   if (!search && month) params.set('month', month)
   if (page > 1) params.set('page', String(page))
@@ -102,6 +103,7 @@ export default async function InboundReceivingPage({ searchParams }) {
 
   const params = await searchParams
   const search = sanitizeSearch(getSingleValue(params?.search))
+  const showAll = isAdmin && getSingleValue(params?.showAll) === '1'
   const supplierId = search ? '' : (getSingleValue(params?.supplier) || '').trim()
   const month = search ? '' : (getSingleValue(params?.month) || '').trim()
   const currentPage = getPage(params?.page)
@@ -135,7 +137,7 @@ export default async function InboundReceivingPage({ searchParams }) {
   if (!search) {
     if (monthBounds) {
       ordersQuery = ordersQuery.gte('inbound_date', monthBounds.start).lt('inbound_date', monthBounds.next)
-    } else {
+    } else if (!showAll) {
       ordersQuery = ordersQuery.gte('inbound_date', defaultInboundStartDate)
     }
   }
@@ -152,7 +154,7 @@ export default async function InboundReceivingPage({ searchParams }) {
   const totalPages = totalItems > 0 ? Math.ceil(totalItems / PAGE_SIZE) : 1
 
   if (totalItems > 0 && currentPage > totalPages) {
-    redirect(createOverviewHref({ supplierId, month, search, page: totalPages }))
+    redirect(createOverviewHref({ supplierId, month, search, page: totalPages, showAll }))
   }
 
   const safeCurrentPage = Math.min(currentPage, totalPages)
@@ -174,12 +176,13 @@ export default async function InboundReceivingPage({ searchParams }) {
       </div>
 
       <ReceivingFiltersClient
-        key={`${supplierId}-${month}-${search}`}
+        key={`${supplierId}-${month}-${search}-${showAll ? 'all' : 'recent'}`}
         suppliers={suppliers || []}
         initialOrders={orders || []}
         initialTotalItems={totalItems}
-        initialFilters={{ supplierId, month, search, page: safeCurrentPage }}
+        initialFilters={{ supplierId, month, search, page: safeCurrentPage, showAll }}
         initialError={supplierError?.message || error?.message || ''}
+        canShowAll={isAdmin}
         canViewReceiving={canViewReceiving}
         canEditReceiving={canEditReceiving}
         canInputReceiving={canInputReceiving}
