@@ -17,7 +17,8 @@ const QUEUE_PAGE_SIZE = 25
 const STORAGE_DATA_CACHE_TTL_MS = 15 * 1000
 const STORAGE_STATIC_CACHE_TTL_MS = 5 * 60 * 1000
 const STORAGE_GROUP_FILTERS = ['ARKLINE', 'MOB', 'OI']
-const WAREHOUSE_STORAGE_SELECT_COLUMNS = 'id, rack_location_id, sku_id, item_name, size, qty, notes, created_at, updated_at'
+const WAREHOUSE_STORAGE_BASE_SELECT_COLUMNS = 'id, rack_location_id, sku_id, item_name, size, qty, notes, created_at, updated_at'
+const WAREHOUSE_STORAGE_SELECT_COLUMNS = `${WAREHOUSE_STORAGE_BASE_SELECT_COLUMNS}, category_id`
 const warehouseStorageCache = { rows: null, expiresAt: 0 }
 const staticStorageCache = new Map()
 const naturalSort = new Intl.Collator(undefined, {
@@ -30,6 +31,16 @@ const letterSizeRanks = new Map(
 
 function normalizeFilterValue(value) {
   return String(value || '').trim().toUpperCase()
+}
+
+function isSchemaColumnError(error) {
+  const message = normalizeFilterValue(error?.message || error?.details || '')
+  return (
+    message.includes('SCHEMA CACHE') ||
+    message.includes('COULD NOT FIND') ||
+    message.includes('DOES NOT EXIST') ||
+    (message.includes('COLUMN') && message.includes('NOT'))
+  )
 }
 
 function splitSkuItemName(value) {
@@ -60,6 +71,30 @@ function getStorageItemDisplayName(entry = {}) {
   if (itemName.toUpperCase().startsWith(`${skuId} |`)) return itemName
 
   return itemName ? `${skuId} | ${itemName}` : skuId
+}
+
+function getCategoryDisplayName(category = {}) {
+  return String(
+    category.category_name ||
+    category.category_code ||
+    category.full_name ||
+    category.full_code ||
+    '-'
+  ).trim() || '-'
+}
+
+function getCategoryPath(category = {}, categoryById = new Map()) {
+  const path = []
+  let current = category
+  const visited = new Set()
+
+  while (current?.id && !visited.has(Number(current.id))) {
+    visited.add(Number(current.id))
+    path.unshift(current)
+    current = current.parent_id ? categoryById.get(Number(current.parent_id)) : null
+  }
+
+  return path
 }
 
 function sortStorageEntries(rows = []) {
@@ -337,35 +372,81 @@ async function fetchAllWarehouseStorage({ force = false } = {}) {
     return warehouseStorageCache.rows
   }
 
-  const allRows = []
-  let from = 0
+  async function loadRows(selectColumns) {
+    const rows = []
+    let from = 0
 
-  while (true) {
-    const to = from + BATCH_SIZE - 1
-    const { data, error } = await supabase
-      .from('warehouse_storage')
-      .select(WAREHOUSE_STORAGE_SELECT_COLUMNS)
-      .order('created_at', { ascending: false })
-      .range(from, to)
+    while (true) {
+      const to = from + BATCH_SIZE - 1
+      const { data, error } = await supabase
+        .from('warehouse_storage')
+        .select(selectColumns)
+        .order('created_at', { ascending: false })
+        .range(from, to)
 
-    if (error) {
+      if (error) {
+        throw error
+      }
+
+      if (!data || data.length === 0) {
+        break
+      }
+
+      rows.push(...data)
+
+      if (data.length < BATCH_SIZE) {
+        break
+      }
+
+      from += BATCH_SIZE
+    }
+
+    return rows
+  }
+
+  try {
+    return setWarehouseStorageCache(await loadRows(WAREHOUSE_STORAGE_SELECT_COLUMNS))
+  } catch (error) {
+    if (!isSchemaColumnError(error)) {
       throw error
     }
 
-    if (!data || data.length === 0) {
-      break
-    }
-
-    allRows.push(...data)
-
-    if (data.length < BATCH_SIZE) {
-      break
-    }
-
-    from += BATCH_SIZE
+    return setWarehouseStorageCache(await loadRows(WAREHOUSE_STORAGE_BASE_SELECT_COLUMNS))
   }
+}
 
-  return setWarehouseStorageCache(allRows)
+async function fetchCategoryDirectory() {
+  return readStaticStorageCache('category-directory', async () => {
+    const allRows = []
+    let from = 0
+
+    while (true) {
+      const to = from + BATCH_SIZE - 1
+      const { data, error } = await supabase
+        .from('dir_categories')
+        .select('id, category_code, category_name, full_name, full_code, parent_id, level, is_active')
+        .order('full_code', { ascending: true })
+        .range(from, to)
+
+      if (error) {
+        throw error
+      }
+
+      if (!data || data.length === 0) {
+        break
+      }
+
+      allRows.push(...data)
+
+      if (data.length < BATCH_SIZE) {
+        break
+      }
+
+      from += BATCH_SIZE
+    }
+
+    return allRows
+  })
 }
 
 async function fetchAllRestockHistory() {
@@ -382,7 +463,6 @@ async function fetchAllRestockHistory() {
 
   return data || []
 }
-
 async function fetchAllStorageQueueRows() {
   const allRows = []
   let from = 0
@@ -570,6 +650,7 @@ const EMPTY_STORAGE_ACCESS = {
   productDirectoryEdit: false,
   warehouseMap: false,
   brandLookup: false,
+  categoryManage: false,
 }
 
 async function fetchCurrentStorageAccess() {
@@ -588,7 +669,10 @@ async function fetchCurrentStorageAccess() {
     ? { data: [] }
     : await getRolePermissionCodes(supabase, role)
 
-  return getStorageFeatureAccess(role, rolePermissions || [], isAdmin)
+  return {
+    ...getStorageFeatureAccess(role, rolePermissions || [], isAdmin),
+    categoryManage: Boolean(isAdmin || role === 'admin' || role === 'leader' || role === 'warehouse_leader'),
+  }
 }
 
 async function getCurrentUserEmail() {
@@ -612,22 +696,26 @@ export default function StorageOverviewPage() {
   const [inboundRows, setInboundRows] = useState([])
   const [arklineProducts, setArklineProducts] = useState([])
   const [brandRows, setBrandRows] = useState([])
+  const [categoryRows, setCategoryRows] = useState([])
   const [userProfilesByEmail, setUserProfilesByEmail] = useState({})
   const [loading, setLoading] = useState(true)
   const [taking, setTaking] = useState(false)
   const [editing, setEditing] = useState(false)
   const [moving, setMoving] = useState(false)
+  const [categorizing, setCategorizing] = useState(false)
   const [registering, setRegistering] = useState(false)
   const [storingQueue, setStoringQueue] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
   const [takeModalError, setTakeModalError] = useState('')
   const [moveModalError, setMoveModalError] = useState('')
+  const [categoryModalError, setCategoryModalError] = useState('')
   const [queueModalError, setQueueModalError] = useState('')
   const [storageAccess, setStorageAccess] = useState(EMPTY_STORAGE_ACCESS)
   const [takeModalEntry, setTakeModalEntry] = useState(null)
   const [editModalEntry, setEditModalEntry] = useState(null)
   const [moveModalEntry, setMoveModalEntry] = useState(null)
+  const [categoryModalEntries, setCategoryModalEntries] = useState([])
   const [queueModalEntry, setQueueModalEntry] = useState(null)
   const [isRegisterModalOpen, setIsRegisterModalOpen] = useState(initialRegisterOpen)
   const [isRegisterLocationCodeMenuOpen, setIsRegisterLocationCodeMenuOpen] = useState(false)
@@ -638,6 +726,7 @@ export default function StorageOverviewPage() {
   const [activeListMode, setActiveListMode] = useState(initialListMode)
   const [stockPage, setStockPage] = useState(1)
   const [queuePage, setQueuePage] = useState(1)
+  const [selectedCategoryRowIds, setSelectedCategoryRowIds] = useState([])
   const [productSearch, setProductSearch] = useState(initialProductSearch)
   const [brandLookupSearch, setBrandLookupSearch] = useState('')
   const [historyPickerFilter, setHistoryPickerFilter] = useState('')
@@ -660,6 +749,11 @@ export default function StorageOverviewPage() {
     locationId: '',
     locationCode: '',
     subLocation: '',
+  })
+  const [categoryForm, setCategoryForm] = useState({
+    categoryId: '',
+    subCategoryId: '',
+    itemTypeId: '',
   })
   const [registerForm, setRegisterForm] = useState({
     locationType: '',
@@ -695,7 +789,7 @@ export default function StorageOverviewPage() {
     }
 
     try {
-      const [rackData, storageData, restockRows, queueRows, breakdownRows, variantRows, inboundData, arklineProductRows, brandData, profileRows] = await Promise.all([
+      const [rackData, storageData, restockRows, queueRows, breakdownRows, variantRows, inboundData, arklineProductRows, brandData, categoryData, profileRows] = await Promise.all([
         fetchAllRackLocations(),
         fetchAllWarehouseStorage({ force: forceStorage }),
         fetchAllRestockHistory(),
@@ -705,6 +799,7 @@ export default function StorageOverviewPage() {
         fetchInboundSummaries(),
         fetchActiveArklineProducts(),
         fetchBrandDirectory(),
+        fetchCategoryDirectory(),
         fetchUserProfilesByEmail(),
       ])
 
@@ -748,6 +843,7 @@ export default function StorageOverviewPage() {
       setInboundRows(inboundData || [])
       setArklineProducts(arklineProductRows || [])
       setBrandRows(brandData || [])
+      setCategoryRows(categoryData || [])
       setUserProfilesByEmail(profileRows || {})
       setLoading(false)
     } catch (loadError) {
@@ -798,6 +894,49 @@ export default function StorageOverviewPage() {
     () => new Map(rackLocations.map((item) => [item.id, item])),
     [rackLocations]
   )
+  const categoryById = useMemo(
+    () => new Map((categoryRows || []).map((item) => [Number(item.id), item])),
+    [categoryRows]
+  )
+  const categoryOptions = useMemo(
+    () =>
+      (categoryRows || [])
+        .filter((item) => item.is_active !== false && (!item.parent_id || Number(item.level || 0) === 1))
+        .map((item) => ({
+          id: String(item.id),
+          label: getCategoryDisplayName(item),
+        }))
+        .sort((left, right) => naturalSort.compare(left.label, right.label)),
+    [categoryRows]
+  )
+  const subCategoryOptions = useMemo(() => {
+    if (!categoryForm.categoryId) return []
+
+    return (categoryRows || [])
+      .filter((item) => (
+        item.is_active !== false &&
+        String(item.parent_id || '') === categoryForm.categoryId
+      ))
+      .map((item) => ({
+        id: String(item.id),
+        label: getCategoryDisplayName(item),
+      }))
+      .sort((left, right) => naturalSort.compare(left.label, right.label))
+  }, [categoryForm.categoryId, categoryRows])
+  const itemTypeOptions = useMemo(() => {
+    if (!categoryForm.subCategoryId) return []
+
+    return (categoryRows || [])
+      .filter((item) => (
+        item.is_active !== false &&
+        String(item.parent_id || '') === categoryForm.subCategoryId
+      ))
+      .map((item) => ({
+        id: String(item.id),
+        label: getCategoryDisplayName(item),
+      }))
+      .sort((left, right) => naturalSort.compare(left.label, right.label))
+  }, [categoryForm.subCategoryId, categoryRows])
 
   const storageRows = useMemo(
     () =>
@@ -805,14 +944,16 @@ export default function StorageOverviewPage() {
         .map((entry) => ({
           ...entry,
           location: locationById.get(entry.rack_location_id) || null,
+          category: categoryById.get(Number(entry.category_id || 0)) || null,
         }))
         .filter((entry) => entry.location),
-    [locationById, storageEntries]
+    [categoryById, locationById, storageEntries]
   )
   const canRegisterStorageItem = Boolean(storageAccess.locationAdd)
   const canEditStorageItem = Boolean(storageAccess.locationEdit)
   const canTakeStorageItem = Boolean(storageAccess.locationEdit)
   const canMoveStorageItem = Boolean(storageAccess.locationEdit)
+  const canCategorizeStorageItem = Boolean(storageAccess.categoryManage)
   const canStoreQueueItem = Boolean(storageAccess.queueEdit)
   const canManageProductDirectory = Boolean(storageAccess.productDirectoryAdd || storageAccess.productDirectoryEdit)
   const canShowStorageLocationActions = canEditStorageItem || canTakeStorageItem || canMoveStorageItem
@@ -1312,6 +1453,19 @@ export default function StorageOverviewPage() {
   const stockPageStartIndex = (safeStockPage - 1) * STOCK_PAGE_SIZE
   const stockPageEndIndex = Math.min(stockPageStartIndex + STOCK_PAGE_SIZE, filteredRows.length)
   const visibleStockRows = filteredRows.slice(stockPageStartIndex, stockPageStartIndex + STOCK_PAGE_SIZE)
+  const selectedCategoryRowIdSet = useMemo(
+    () => new Set(selectedCategoryRowIds.map((id) => String(id))),
+    [selectedCategoryRowIds]
+  )
+  const selectedCategoryRows = useMemo(
+    () => storageRows.filter((entry) => selectedCategoryRowIdSet.has(String(entry.id))),
+    [selectedCategoryRowIdSet, storageRows]
+  )
+  const visibleCategoryRowIds = visibleStockRows.map((entry) => String(entry.id))
+  const allVisibleCategoryRowsSelected =
+    canCategorizeStorageItem &&
+    visibleCategoryRowIds.length > 0 &&
+    visibleCategoryRowIds.every((id) => selectedCategoryRowIdSet.has(id))
   const totalQueuePages = Math.max(1, Math.ceil(filteredQueueRows.length / QUEUE_PAGE_SIZE))
   const safeQueuePage = Math.min(queuePage, totalQueuePages)
   const queuePageStartIndex = (safeQueuePage - 1) * QUEUE_PAGE_SIZE
@@ -1668,6 +1822,56 @@ export default function StorageOverviewPage() {
     setSuccess('')
   }
 
+  function toggleCategoryRowSelection(entryId) {
+    const normalizedId = String(entryId)
+
+    setSelectedCategoryRowIds((currentIds) => (
+      currentIds.some((id) => String(id) === normalizedId)
+        ? currentIds.filter((id) => String(id) !== normalizedId)
+        : [...currentIds, normalizedId]
+    ))
+  }
+
+  function toggleVisibleCategoryRows(checked) {
+    setSelectedCategoryRowIds((currentIds) => {
+      const visibleIdSet = new Set(visibleCategoryRowIds)
+
+      if (!checked) {
+        return currentIds.filter((id) => !visibleIdSet.has(String(id)))
+      }
+
+      const nextIds = new Set(currentIds.map((id) => String(id)))
+      visibleCategoryRowIds.forEach((id) => nextIds.add(String(id)))
+
+      return Array.from(nextIds)
+    })
+  }
+
+  function openCategoryModal(entries) {
+    if (!canCategorizeStorageItem) return
+    const selectedEntries = Array.isArray(entries) ? entries.filter(Boolean) : [entries].filter(Boolean)
+
+    if (selectedEntries.length === 0) return
+
+    const uniqueCategoryIds = new Set(selectedEntries.map((entry) => String(entry.category_id || '')))
+    const seedEntry = uniqueCategoryIds.size === 1 ? selectedEntries[0] : null
+    const categoryPath = seedEntry
+      ? getCategoryPath(seedEntry.category || categoryById.get(Number(seedEntry.category_id || 0)), categoryById)
+      : []
+    const rootCategory = categoryPath[0] || null
+    const selectedSubCategory = categoryPath[1] || null
+    const selectedItemType = categoryPath[2] || null
+    setCategoryModalEntries(selectedEntries)
+    setCategoryForm({
+      categoryId: rootCategory?.id ? String(rootCategory.id) : '',
+      subCategoryId: selectedSubCategory?.id ? String(selectedSubCategory.id) : '',
+      itemTypeId: selectedItemType?.id ? String(selectedItemType.id) : '',
+    })
+    setCategoryModalError('')
+    setError('')
+    setSuccess('')
+  }
+
   function closeTakeModal() {
     setTakeModalEntry(null)
     setTakeModalError('')
@@ -1697,6 +1901,17 @@ export default function StorageOverviewPage() {
       subLocation: '',
     })
     setIsMoveLocationCodeMenuOpen(false)
+  }
+
+  function closeCategoryModal() {
+    setCategoryModalEntries([])
+    setCategoryModalError('')
+    setCategoryForm({
+      categoryId: '',
+      subCategoryId: '',
+      itemTypeId: '',
+    })
+    setCategorizing(false)
   }
 
   function handleTakeFormChange(event) {
@@ -2390,6 +2605,84 @@ export default function StorageOverviewPage() {
     closeMoveModal()
   }
 
+  async function handleCategorySubmit(event) {
+    event.preventDefault()
+
+    if (!canCategorizeStorageItem || categoryModalEntries.length === 0) return
+
+    setCategorizing(true)
+    setCategoryModalError('')
+    setError('')
+    setSuccess('')
+
+    if (categoryForm.categoryId && subCategoryOptions.length > 0 && !categoryForm.subCategoryId) {
+      setCategoryModalError('Please choose the sub category first.')
+      setCategorizing(false)
+      return
+    }
+
+    if (categoryForm.subCategoryId && itemTypeOptions.length > 0 && !categoryForm.itemTypeId) {
+      setCategoryModalError('Please choose the item type first.')
+      setCategorizing(false)
+      return
+    }
+
+    const nextCategoryId = categoryForm.itemTypeId
+      ? Number(categoryForm.itemTypeId)
+      : categoryForm.subCategoryId
+        ? Number(categoryForm.subCategoryId)
+        : categoryForm.categoryId
+          ? Number(categoryForm.categoryId)
+          : null
+    const updatedAt = new Date().toISOString()
+    const updatedBy = await getCurrentUserEmail()
+    const entryIds = categoryModalEntries.map((entry) => entry.id).filter(Boolean)
+    const entryIdSet = new Set(entryIds.map((id) => String(id)))
+
+    if (entryIds.length === 0) {
+      setCategoryModalError('No selected storage row found.')
+      setCategorizing(false)
+      return
+    }
+
+    const { error: updateError } = await supabase
+      .from('warehouse_storage')
+      .update({
+        category_id: nextCategoryId,
+        updated_by: updatedBy,
+        updated_at: updatedAt,
+      })
+      .in('id', entryIds)
+
+    if (updateError) {
+      setCategoryModalError(
+        isSchemaColumnError(updateError)
+          ? 'Category column is not ready yet. Please run the storage category SQL first.'
+          : updateError.message
+      )
+      setCategorizing(false)
+      return
+    }
+
+    setStorageEntries((currentRows) => {
+      const nextRows = currentRows.map((row) => (
+        entryIdSet.has(String(row.id))
+          ? {
+              ...row,
+              category_id: nextCategoryId,
+              updated_at: updatedAt,
+            }
+          : row
+      ))
+
+      return setWarehouseStorageCache(nextRows)
+    })
+    setSelectedCategoryRowIds((currentIds) => currentIds.filter((id) => !entryIdSet.has(String(id))))
+    setSuccess(`${entryIds.length} storage item(s) categorized successfully.`)
+    setCategorizing(false)
+    closeCategoryModal()
+  }
+
   function getLocationLabel(location) {
     return `${location.location_type} / ${location.location_id} / ${location.location_code} / ${location.sub_location}`
   }
@@ -2436,6 +2729,28 @@ export default function StorageOverviewPage() {
                   <path d="M7 17h4" />
                   <path d="M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z" />
                 </svg>
+              </button>
+            ) : null}
+            {canCategorizeStorageItem ? (
+              <button
+                type="button"
+                onClick={() => openCategoryModal(selectedCategoryRows)}
+                style={{
+                  ...styles.iconActionButton,
+                  ...styles.iconActionButtonWithBadge,
+                  ...(selectedCategoryRows.length === 0 ? styles.iconActionButtonDisabled : {}),
+                }}
+                title="Set Item Category"
+                aria-label="Set Item Category"
+                disabled={selectedCategoryRows.length === 0}
+              >
+                <svg viewBox="0 0 24 24" style={styles.actionIcon} aria-hidden="true">
+                  <path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8Z" />
+                  <path d="M7.5 7.5h.01" />
+                </svg>
+                {selectedCategoryRows.length > 0 ? (
+                  <span style={styles.actionBadge}>{selectedCategoryRows.length}</span>
+                ) : null}
               </button>
             ) : null}
           </div>
@@ -2858,6 +3173,17 @@ export default function StorageOverviewPage() {
             <table style={styles.table}>
               <thead>
                 <tr>
+                  {canCategorizeStorageItem ? (
+                    <th style={{ ...styles.th, ...styles.selectTh }}>
+                      <input
+                        type="checkbox"
+                        checked={allVisibleCategoryRowsSelected}
+                        onChange={(event) => toggleVisibleCategoryRows(event.target.checked)}
+                        style={styles.rowCheckbox}
+                        aria-label="Select visible storage rows"
+                      />
+                    </th>
+                  ) : null}
                   <th style={styles.th}>Location</th>
                   <th style={styles.th}>Item</th>
                   <th style={styles.th}>Size</th>
@@ -2868,8 +3194,24 @@ export default function StorageOverviewPage() {
               <tbody>
                 {visibleStockRows.map((entry) => (
                   <tr key={entry.id}>
+                    {canCategorizeStorageItem ? (
+                      <td style={{ ...styles.td, ...styles.selectTd }}>
+                        <input
+                          type="checkbox"
+                          checked={selectedCategoryRowIdSet.has(String(entry.id))}
+                          onChange={() => toggleCategoryRowSelection(entry.id)}
+                          style={styles.rowCheckbox}
+                          aria-label={`Select ${getStorageItemDisplayName(entry)}`}
+                        />
+                      </td>
+                    ) : null}
                     <td style={styles.td}>{getLocationLabel(entry.location)}</td>
-                    <td style={styles.td}>{getStorageItemDisplayName(entry)}</td>
+                    <td style={styles.td}>
+                      <div style={styles.cellStack}>
+                        <span>{getStorageItemDisplayName(entry)}</span>
+                        <span style={styles.cellMeta}>{entry.category ? getCategoryDisplayName(entry.category) : 'Uncategorized'}</span>
+                      </div>
+                    </td>
                     <td style={styles.td}>{entry.size || '-'}</td>
                     <td style={styles.td}>{entry.qty}</td>
                     {canShowStorageLocationActions ? (
@@ -3634,6 +3976,110 @@ export default function StorageOverviewPage() {
         </div>
       ) : null}
 
+      {categoryModalEntries.length > 0 && canCategorizeStorageItem ? (
+        <div style={styles.modalOverlay}>
+          <div style={styles.modalCard}>
+            <div style={styles.modalHeader}>
+              <div style={styles.modalTitleGroup}>
+                <p style={styles.modalEyebrow}>Warehouse</p>
+                <h2 style={styles.modalTitle}>Set Item Category</h2>
+              </div>
+              <div style={styles.modalHeaderActions}>
+                <button type="button" onClick={closeCategoryModal} style={styles.modalCancelButton}>
+                  Cancel
+                </button>
+                <button type="submit" form="item-category-form" style={styles.editButton} disabled={categorizing}>
+                  {categorizing ? 'Saving...' : 'Save Category'}
+                </button>
+              </div>
+            </div>
+
+            {categoryModalEntries.length === 1 ? (
+              <>
+                <p style={styles.modalText}>
+                  <strong>Item:</strong> {getStorageItemDisplayName(categoryModalEntries[0])}
+                </p>
+                <p style={styles.modalText}>
+                  <strong>Location:</strong> {getLocationLabel(categoryModalEntries[0].location)}
+                </p>
+              </>
+            ) : (
+              <p style={styles.modalText}>
+                <strong>Selected Items:</strong> {categoryModalEntries.length} storage row(s)
+              </p>
+            )}
+
+            <form id="item-category-form" onSubmit={handleCategorySubmit} style={styles.modalForm}>
+              <div style={styles.field}>
+                <label style={styles.label}>Category</label>
+                <select
+                  name="categoryId"
+                  value={categoryForm.categoryId}
+                  onChange={(event) => setCategoryForm({
+                    categoryId: event.target.value,
+                    subCategoryId: '',
+                    itemTypeId: '',
+                  })}
+                  style={styles.select}
+                >
+                  <option value="">Uncategorized</option>
+                  {categoryOptions.map((category) => (
+                    <option key={category.id} value={category.id}>
+                      {category.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              {categoryForm.categoryId ? (
+                <div style={styles.field}>
+                  <label style={styles.label}>Sub Category</label>
+                  <select
+                    name="subCategoryId"
+                    value={categoryForm.subCategoryId}
+                    onChange={(event) => setCategoryForm((prev) => ({
+                      ...prev,
+                      subCategoryId: event.target.value,
+                      itemTypeId: '',
+                    }))}
+                    style={styles.select}
+                    disabled={subCategoryOptions.length === 0}
+                    required={subCategoryOptions.length > 0}
+                  >
+                    <option value="">{subCategoryOptions.length > 0 ? 'Select sub category' : 'No sub category available'}</option>
+                    {subCategoryOptions.map((subCategory) => (
+                      <option key={subCategory.id} value={subCategory.id}>
+                        {subCategory.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              ) : null}
+              {categoryForm.subCategoryId ? (
+                <div style={styles.field}>
+                  <label style={styles.label}>Item Type</label>
+                  <select
+                    name="itemTypeId"
+                    value={categoryForm.itemTypeId}
+                    onChange={(event) => setCategoryForm((prev) => ({ ...prev, itemTypeId: event.target.value }))}
+                    style={styles.select}
+                    disabled={itemTypeOptions.length === 0}
+                    required={itemTypeOptions.length > 0}
+                  >
+                    <option value="">{itemTypeOptions.length > 0 ? 'Select item type' : 'No item type available'}</option>
+                    {itemTypeOptions.map((itemType) => (
+                      <option key={itemType.id} value={itemType.id}>
+                        {itemType.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              ) : null}
+              {categoryModalError ? <p style={styles.modalInlineError}>{categoryModalError}</p> : null}
+            </form>
+          </div>
+        </div>
+      ) : null}
+
       {editModalEntry && canEditStorageItem ? (
         <div style={styles.modalOverlay}>
           <div style={styles.modalCard}>
@@ -3783,6 +4229,32 @@ const styles = {
     textDecoration: 'none',
     boxShadow: '0 10px 22px rgba(15, 23, 42, 0.06)',
     padding: 0,
+  },
+  iconActionButtonWithBadge: {
+    position: 'relative',
+  },
+  iconActionButtonDisabled: {
+    opacity: 0.45,
+    cursor: 'not-allowed',
+  },
+  actionBadge: {
+    position: 'absolute',
+    top: '-6px',
+    right: '-6px',
+    minWidth: '18px',
+    height: '18px',
+    padding: '0 5px',
+    borderRadius: '999px',
+    background: '#111827',
+    color: '#fff',
+    border: '2px solid #fff',
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    fontSize: '10px',
+    fontWeight: '900',
+    lineHeight: 1,
+    boxSizing: 'border-box',
   },
   titleRow: {
     display: 'flex',
@@ -4729,6 +5201,20 @@ const styles = {
   actionTd: {
     textAlign: 'center',
     width: '148px',
+  },
+  selectTh: {
+    width: '42px',
+    textAlign: 'center',
+  },
+  selectTd: {
+    width: '42px',
+    textAlign: 'center',
+  },
+  rowCheckbox: {
+    width: '16px',
+    height: '16px',
+    accentColor: '#111827',
+    cursor: 'pointer',
   },
   cellStack: {
     display: 'flex',
