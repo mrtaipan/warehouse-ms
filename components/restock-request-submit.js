@@ -12,6 +12,7 @@ const TAKE_REQUESTS_TABLE = 'restock_request'
 const SOURCE_OPTIONS = [
   { value: 'MOB', label: 'MOB' },
   { value: 'ARKLINE', label: 'ARKLINE' },
+  { value: 'OI', label: 'OI' },
 ]
 const DEFAULT_SOURCE_TYPE = 'MOB'
 
@@ -76,7 +77,8 @@ function normalizeText(value) {
 
 function normalizeRequestSource(value) {
   const normalizedValue = normalizeText(value)
-  return normalizedValue === 'ARKLINE' ? 'ARKLINE' : DEFAULT_SOURCE_TYPE
+  if (normalizedValue === 'ARKLINE' || normalizedValue === 'OI') return normalizedValue
+  return DEFAULT_SOURCE_TYPE
 }
 
 function getRackLocationGroup(location) {
@@ -635,7 +637,7 @@ export default function RestockRequestSubmit({
     }
 
     if (!form.sourceType) {
-      setError('Choose a request source first: MOB or ARKLINE.')
+      setError('Choose a request source first: MOB, ARKLINE, or OI.')
       setSubmitting(false)
       return
     }
@@ -872,7 +874,7 @@ export default function RestockRequestSubmit({
               </div>
             </>
           ) : (
-            <div style={styles.emptyState}>Choose MOB or ARKLINE first to open the request fields.</div>
+            <div style={styles.emptyState}>Choose MOB, ARKLINE, or OI first to open the request fields.</div>
           )}
 
           {error ? <p style={styles.error}>{error}</p> : null}
@@ -1060,7 +1062,7 @@ const styles = {
   },
   sourceSelector: {
     display: 'grid',
-    gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+    gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
     gap: '8px',
   },
   sourceButton: {

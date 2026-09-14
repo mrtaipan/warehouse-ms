@@ -36,7 +36,7 @@ alter table public.restock_request
 
 alter table public.restock_request
   add constraint restock_request_source_type_check
-  check (source_type in ('MOB', 'ARKLINE'));
+  check (source_type in ('MOB', 'ARKLINE', 'OI'));
 
 create index if not exists restock_request_status_created_idx
   on public.restock_request (request_status, created_at desc);

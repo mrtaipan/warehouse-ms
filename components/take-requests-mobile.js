@@ -30,7 +30,8 @@ function normalizeText(value) {
 
 function normalizeRequestSource(value) {
   const normalizedValue = normalizeText(value)
-  return normalizedValue === 'ARKLINE' ? 'ARKLINE' : DEFAULT_SOURCE_TYPE
+  if (normalizedValue === 'ARKLINE' || normalizedValue === 'OI') return normalizedValue
+  return DEFAULT_SOURCE_TYPE
 }
 
 function getLocationKey(value) {
