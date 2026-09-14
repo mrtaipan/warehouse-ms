@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { createClient } from '@/utils/supabase/browser'
 import { useRealtimeRefresh } from '@/utils/supabase/use-realtime-refresh'
@@ -9,6 +9,11 @@ const supabase = createClient()
 const TAKE_REQUESTS_TABLE = 'restock_request'
 const RACK_LOCATION_BATCH_SIZE = 1000
 const DEFAULT_SOURCE_TYPE = 'MOB'
+const REQUEST_FILTER_OPTIONS = [
+  { value: 'MOB', label: 'MOB' },
+  { value: 'OI', label: 'OI' },
+  { value: 'ARKLINE', label: 'ARKLINE' },
+]
 
 async function fetchOpenRequests() {
   const { data, error } = await supabase
@@ -32,6 +37,18 @@ function normalizeRequestSource(value) {
   const normalizedValue = normalizeText(value)
   if (normalizedValue === 'ARKLINE' || normalizedValue === 'OI') return normalizedValue
   return DEFAULT_SOURCE_TYPE
+}
+
+function getRequestSourceCounts(rows = []) {
+  return rows.reduce(
+    (counts, row) => {
+      const sourceType = normalizeRequestSource(row.source_type)
+      counts.all += 1
+      counts[sourceType] = Number(counts[sourceType] || 0) + 1
+      return counts
+    },
+    { all: 0, MOB: 0, OI: 0, ARKLINE: 0 }
+  )
 }
 
 function getLocationKey(value) {
@@ -294,8 +311,15 @@ export default function TakeRequestsMobile() {
   const [sourceOptions, setSourceOptions] = useState([])
   const [selectedSourceValue, setSelectedSourceValue] = useState('unrecorded')
   const [loadingSourceOptions, setLoadingSourceOptions] = useState(false)
+  const [sourceFilter, setSourceFilter] = useState('all')
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
+  const requestSourceCounts = useMemo(() => getRequestSourceCounts(requests), [requests])
+  const visibleRequests = useMemo(() => {
+    if (sourceFilter === 'all') return requests
+
+    return requests.filter((row) => normalizeRequestSource(row.source_type) === sourceFilter)
+  }, [requests, sourceFilter])
 
   async function refreshRequests(showSpinner = false) {
     if (showSpinner) {
@@ -502,7 +526,7 @@ export default function TakeRequestsMobile() {
           <div style={styles.summaryHeader}>
             <div>
               <span style={styles.summaryLabel}>Open Requests</span>
-              <strong style={styles.summaryValue}>{requests.length}</strong>
+              <strong style={styles.summaryValue}>{requestSourceCounts[sourceFilter] || 0}</strong>
             </div>
 
             <button
@@ -514,18 +538,42 @@ export default function TakeRequestsMobile() {
               {refreshing ? 'Refreshing...' : 'Refresh'}
             </button>
           </div>
+          <div style={styles.requestFilterGrid} aria-label="Stock replenishment source filter">
+            {REQUEST_FILTER_OPTIONS.map((option) => {
+              const isActive = sourceFilter === option.value
+              const count = requestSourceCounts[option.value] || 0
+
+              return (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => setSourceFilter(isActive && option.value !== 'all' ? 'all' : option.value)}
+                  style={{
+                    ...styles.requestFilterButton,
+                    ...(isActive ? styles.requestFilterButtonActive : {}),
+                  }}
+                  aria-pressed={isActive}
+                >
+                  <span>{option.label}</span>
+                  <strong>{count}</strong>
+                </button>
+              )
+            })}
+          </div>
         </div>
 
         {error ? <p style={styles.error}>{error}</p> : null}
         {success ? <p style={styles.success}>{success}</p> : null}
 
-        {requests.length === 0 ? (
+        {visibleRequests.length === 0 ? (
           <div style={styles.emptyState}>
-            No active requests yet. This page updates automatically every few seconds.
+            {requests.length === 0
+              ? 'No active requests yet. This page updates automatically every few seconds.'
+              : `No ${sourceFilter} requests are active right now.`}
           </div>
         ) : (
           <div style={styles.requestList}>
-            {requests.map((row) => (
+            {visibleRequests.map((row) => (
               <div key={row.id} style={styles.requestCard}>
                 <div style={styles.ownerCard}>
                   <span style={styles.ownerLabel}>For</span>
@@ -765,6 +813,35 @@ const styles = {
     lineHeight: 1,
     color: '#111827',
     display: 'block',
+  },
+  requestFilterGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(84px, 1fr))',
+    gap: '8px',
+    marginTop: '10px',
+  },
+  requestFilterButton: {
+    minHeight: '42px',
+    borderRadius: '12px',
+    borderWidth: '1px',
+    borderStyle: 'solid',
+    borderColor: '#fed7aa',
+    background: '#fff',
+    color: '#7c2d12',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: '6px',
+    padding: '0 10px',
+    fontSize: '11px',
+    fontWeight: '800',
+    cursor: 'pointer',
+    fontFamily: 'inherit',
+  },
+  requestFilterButtonActive: {
+    borderColor: '#111827',
+    background: '#111827',
+    color: '#fff',
   },
   requestList: {
     display: 'flex',

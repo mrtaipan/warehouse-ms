@@ -14,6 +14,7 @@ const SOURCE_OPTIONS = [
   { value: 'ARKLINE', label: 'ARKLINE' },
   { value: 'OI', label: 'OI' },
 ]
+const REQUEST_FILTER_OPTIONS = SOURCE_OPTIONS
 const DEFAULT_SOURCE_TYPE = 'MOB'
 
 async function fetchAllRackLocations() {
@@ -79,6 +80,23 @@ function normalizeRequestSource(value) {
   const normalizedValue = normalizeText(value)
   if (normalizedValue === 'ARKLINE' || normalizedValue === 'OI') return normalizedValue
   return DEFAULT_SOURCE_TYPE
+}
+
+function getRequestSourceCounts(rows = []) {
+  return rows.reduce(
+    (counts, row) => {
+      const sourceType = normalizeRequestSource(row.source_type)
+      counts.all += 1
+      counts[sourceType] = Number(counts[sourceType] || 0) + 1
+      return counts
+    },
+    { all: 0, MOB: 0, ARKLINE: 0, OI: 0 }
+  )
+}
+
+function isSourceTypeConstraintError(error) {
+  const message = normalizeText(`${error?.message || ''} ${error?.details || ''}`)
+  return message.includes('RESTOCK_REQUEST_SOURCE_TYPE_CHECK')
 }
 
 function getRackLocationGroup(location) {
@@ -462,6 +480,7 @@ export default function RestockRequestSubmit({
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
   const [arklineDropdownOpen, setArklineDropdownOpen] = useState(false)
+  const [pickListSourceFilter, setPickListSourceFilter] = useState('all')
   const [form, setForm] = useState({
     sourceType: '',
     size: '',
@@ -485,6 +504,12 @@ export default function RestockRequestSubmit({
       .filter((label) => normalizeText(label).includes(searchValue))
       .slice(0, 30)
   }, [arklineProductOptions, form.searchTerm])
+  const requestSourceCounts = useMemo(() => getRequestSourceCounts(requests), [requests])
+  const visibleRequests = useMemo(() => {
+    if (pickListSourceFilter === 'all') return requests
+
+    return requests.filter((row) => normalizeRequestSource(row.source_type) === pickListSourceFilter)
+  }, [pickListSourceFilter, requests])
 
   async function fetchRequesterName() {
     const {
@@ -706,7 +731,9 @@ export default function RestockRequestSubmit({
 
     if (insertError) {
       setError(
-        `${insertError.message} Make sure the ${TAKE_REQUESTS_TABLE} table and insert/select policies are available.`
+        isSourceTypeConstraintError(insertError)
+          ? 'Database source type is not ready for OI yet. Please run the restock_request source type SQL update in Supabase.'
+          : `${insertError.message} Make sure the ${TAKE_REQUESTS_TABLE} table and insert/select policies are available.`
       )
       setSubmitting(false)
       return
@@ -904,13 +931,38 @@ export default function RestockRequestSubmit({
             </div>
           </div>
 
-          {requests.length === 0 ? (
+          <div style={styles.requestFilterGrid} aria-label="Pick list source filter">
+            {REQUEST_FILTER_OPTIONS.map((option) => {
+              const isActive = pickListSourceFilter === option.value
+              const count = requestSourceCounts[option.value] || 0
+
+              return (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => setPickListSourceFilter(isActive && option.value !== 'all' ? 'all' : option.value)}
+                  style={{
+                    ...styles.requestFilterButton,
+                    ...(isActive ? styles.requestFilterButtonActive : {}),
+                  }}
+                  aria-pressed={isActive}
+                >
+                  <span>{option.label}</span>
+                  <strong>{count}</strong>
+                </button>
+              )
+            })}
+          </div>
+
+          {visibleRequests.length === 0 ? (
             <div style={styles.emptyState}>
-              No requests yet. Submit an item from the form above to start the pick list.
+              {requests.length === 0
+                ? 'No requests yet. Submit an item from the form above to start the pick list.'
+                : `No ${pickListSourceFilter} requests are open right now.`}
             </div>
           ) : (
             <div style={styles.requestList}>
-              {requests.map((row) => (
+              {visibleRequests.map((row) => (
                 <div key={row.id} style={styles.requestCard}>
                   <div style={styles.requestOwner}>
                     <span style={styles.requestOwnerLabel}>For</span>
@@ -1214,6 +1266,34 @@ const styles = {
     fontSize: '11px',
     fontWeight: '700',
     border: '1px solid #fdba74',
+  },
+  requestFilterGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(84px, 1fr))',
+    gap: '8px',
+  },
+  requestFilterButton: {
+    minHeight: '42px',
+    borderRadius: '12px',
+    borderWidth: '1px',
+    borderStyle: 'solid',
+    borderColor: '#fed7aa',
+    background: '#fff',
+    color: '#7c2d12',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: '6px',
+    padding: '0 10px',
+    fontSize: '11px',
+    fontWeight: '800',
+    cursor: 'pointer',
+    fontFamily: 'inherit',
+  },
+  requestFilterButtonActive: {
+    borderColor: '#111827',
+    background: '#111827',
+    color: '#fff',
   },
   requestList: {
     display: 'flex',
