@@ -390,6 +390,17 @@ const styles = {
     letterSpacing: '0.04em',
     textTransform: 'uppercase',
   },
+  grnOptionDone: {
+    backgroundColor: '#f0fdf4',
+    color: '#166534',
+  },
+  grnOptionActive: {
+    backgroundColor: '#f8fafc',
+  },
+  grnOptionDoneActive: {
+    backgroundColor: '#dcfce7',
+    color: '#14532d',
+  },
   input: {
     height: '40px',
     padding: '0 12px',
@@ -405,6 +416,12 @@ const styles = {
     borderColor: '#e5e7eb',
     color: '#9ca3af',
     cursor: 'not-allowed',
+  },
+  inputDone: {
+    backgroundColor: '#f0fdf4',
+    borderColor: '#86efac',
+    color: '#166534',
+    fontWeight: '700',
   },
   select: {
     height: '40px',
@@ -1336,6 +1353,52 @@ function getSourceStatus(source, qcItems) {
   return 'planned'
 }
 
+function buildSourceOptionsFromUnloadRows(rows = []) {
+  const groupedSamples = new Map()
+  const groupedKoli = new Map()
+
+  rows.forEach((row) => {
+    if (row.is_sample) {
+      const sequence = Number(row.koli_sequence || 0)
+      const key = `sample:${sequence || row.id}`
+      if (!groupedSamples.has(key)) {
+        groupedSamples.set(key, {
+          key,
+          label: sequence ? `Sample ${sequence}` : 'Sample',
+          type: 'sample',
+          sequence,
+          sourceId: row.id,
+          rows: [],
+        })
+      }
+
+      groupedSamples.get(key).rows.push(row)
+      return
+    }
+
+    const key = `koli:${row.koli_sequence}`
+    if (!groupedKoli.has(key)) {
+      groupedKoli.set(key, {
+        key,
+        label: `Koli ${row.koli_sequence}`,
+        type: 'koli',
+        sourceId: row.id,
+        rows: [],
+      })
+    }
+
+    groupedKoli.get(key).rows.push(row)
+  })
+
+  const result = Array.from(groupedSamples.values()).sort(
+    (a, b) => Number(a.sequence || 0) - Number(b.sequence || 0) || a.label.localeCompare(b.label, undefined, { numeric: true })
+  )
+
+  result.push(...Array.from(groupedKoli.values()).sort((a, b) => a.label.localeCompare(b.label, undefined, { numeric: true })))
+
+  return result
+}
+
 function buildModelRowsForSource(source, unloadRows, qcItems) {
   if (!source) {
     return []
@@ -1476,6 +1539,7 @@ export default function QcReceivingPage() {
   const newRowCounterRef = useRef(0)
   const [viewportWidth, setViewportWidth] = useState(1280)
   const [inbounds, setInbounds] = useState([])
+  const [allUnloadRows, setAllUnloadRows] = useState([])
   const [unloadRows, setUnloadRows] = useState([])
   const [brands, setBrands] = useState([])
   const [categories, setCategories] = useState([])
@@ -1492,6 +1556,7 @@ export default function QcReceivingPage() {
   const [qcMode, setQcMode] = useState('regular')
   const [arklinePlannerMode, setArklinePlannerMode] = useState('product')
   const [grnSearch, setGrnSearch] = useState('')
+  const [showGrnOptions, setShowGrnOptions] = useState(false)
   const [selectedInboundId, setSelectedInboundId] = useState('')
   const [selectedSourceKey, setSelectedSourceKey] = useState('')
   const [bulkAllocationInspector, setBulkAllocationInspector] = useState('')
@@ -1553,6 +1618,7 @@ export default function QcReceivingPage() {
 
       const [
         { data: inboundRows, error: inboundError },
+        { data: allUnloadData, error: allUnloadError },
         { data: brandRows, error: brandError },
         { data: categoryRows, error: categoryError },
         { data: modelRows, error: modelError },
@@ -1568,6 +1634,11 @@ export default function QcReceivingPage() {
           .from('inbound')
           .select('id, grn_number, inbound_date, item_name, suppliers:dir_suppliers!supplier_id (supplier_name)')
           .order('created_at', { ascending: false }),
+        supabase
+          .from('inbound_unload')
+          .select('id, inbound_id, brand_id, category_id, product_model_id, product_model_variant_id, model_name, variant_name, qty, pic_name, is_sample, koli_sequence, photo_url, qc_receiving_status')
+          .order('inbound_id', { ascending: false })
+          .order('koli_sequence', { ascending: true }),
         supabase
           .from('dir_brands')
           .select('id, brand_name')
@@ -1612,6 +1683,7 @@ export default function QcReceivingPage() {
 
       if (
         inboundError ||
+        allUnloadError ||
         brandError ||
         categoryError ||
         modelError ||
@@ -1624,6 +1696,7 @@ export default function QcReceivingPage() {
       ) {
         setError(
           inboundError?.message ||
+            allUnloadError?.message ||
             brandError?.message ||
             categoryError?.message ||
             modelError?.message ||
@@ -1648,6 +1721,7 @@ export default function QcReceivingPage() {
       )
 
       setInbounds(inboundRows || [])
+      setAllUnloadRows((allUnloadData || []).map(normalizeInboundUnloadRow))
       setBrands(brandRows || [])
       setCategories(categoryRows || [])
       setProductModels(modelRows || [])
@@ -1751,51 +1825,41 @@ export default function QcReceivingPage() {
     : styles.buttonRow
 
   const selectedInbound = inbounds.find((item) => item.id === Number(selectedInboundId)) || null
-  const sourceOptions = useMemo(() => {
-    const groupedSamples = new Map()
-    const groupedKoli = new Map()
+  const sourceOptions = useMemo(() => buildSourceOptionsFromUnloadRows(unloadRows), [unloadRows])
+  const inboundStatusById = useMemo(() => {
+    const rowsByInboundId = new Map()
 
-    unloadRows.forEach((row) => {
-      if (row.is_sample) {
-        const sequence = Number(row.koli_sequence || 0)
-        const key = `sample:${sequence || row.id}`
-        if (!groupedSamples.has(key)) {
-          groupedSamples.set(key, {
-            key,
-            label: sequence ? `Sample ${sequence}` : 'Sample',
-            type: 'sample',
-            sequence,
-            sourceId: row.id,
-            rows: [],
-          })
-        }
+    allUnloadRows.forEach((row) => {
+      const inboundId = Number(row.inbound_id || 0)
+      if (!inboundId) return
 
-        groupedSamples.get(key).rows.push(row)
-        return
-      }
-
-      const key = `koli:${row.koli_sequence}`
-      if (!groupedKoli.has(key)) {
-        groupedKoli.set(key, {
-          key,
-          label: `Koli ${row.koli_sequence}`,
-          type: 'koli',
-          sourceId: row.id,
-          rows: [],
-        })
-      }
-
-      groupedKoli.get(key).rows.push(row)
+      const rows = rowsByInboundId.get(inboundId) || []
+      rows.push(row)
+      rowsByInboundId.set(inboundId, rows)
     })
 
-    const result = Array.from(groupedSamples.values()).sort(
-      (a, b) => Number(a.sequence || 0) - Number(b.sequence || 0) || a.label.localeCompare(b.label, undefined, { numeric: true })
-    )
+    const statusById = new Map()
+    rowsByInboundId.forEach((rows, inboundId) => {
+      const options = buildSourceOptionsFromUnloadRows(rows)
+      const statuses = options.map((source) => getSourceStatus(source, qcItems))
+      const isCompleted = statuses.length > 0 && statuses.every((status) => status === 'completed')
 
-    result.push(...Array.from(groupedKoli.values()).sort((a, b) => a.label.localeCompare(b.label, undefined, { numeric: true })))
+      statusById.set(inboundId, isCompleted ? 'completed' : 'open')
+    })
 
-    return result
-  }, [unloadRows])
+    return statusById
+  }, [allUnloadRows, qcItems])
+  const visibleGrnOptions = useMemo(() => {
+    const search = grnSearch.trim().toUpperCase()
+
+    return inbounds.filter((item) => {
+      if (!search) return true
+
+      return [item.grn_number, item.item_name, item.suppliers?.supplier_name]
+        .map((value) => String(value || '').trim().toUpperCase())
+        .some((value) => value.includes(search))
+    })
+  }, [grnSearch, inbounds])
   const selectedSource = sourceOptions.find((item) => item.key === selectedSourceKey) || null
   const selectedSourceId = selectedSource?.sourceId || null
 
@@ -2123,6 +2187,12 @@ export default function QcReceivingPage() {
       : selectedSourceStatus === 'started' || selectedSourceStatus === 'completed'
   const isSelectedSourceCompleted =
     isArklineMode ? false : selectedSourceStatus === 'completed'
+  const isSelectedInboundCompleted =
+    !isArklineMode &&
+    Boolean(selectedInboundId) &&
+    !sourceLoading &&
+    sourceOptions.length > 0 &&
+    sourceOptions.every((source) => getSourceStatus(source, qcItems) === 'completed')
   const canEditSavedPlan = isArklineMode ? true : !isSelectedSourceStarted
   const canAdjustAllocations = isArklineMode ? true : !isSelectedSourceCompleted
   function handleGrnChange(value) {
@@ -2135,6 +2205,21 @@ export default function QcReceivingPage() {
     setModelRows([])
     setError('')
     setSuccess('')
+  }
+
+  function handleGrnInputClick() {
+    if (!selectedInboundId) {
+      setShowGrnOptions(true)
+      return
+    }
+
+    handleGrnChange('')
+    setShowGrnOptions(true)
+  }
+
+  function handleGrnOptionSelect(item) {
+    handleGrnChange(item.grn_number || '')
+    setShowGrnOptions(false)
   }
 
   function handleQcModeChange(nextMode) {
@@ -3789,18 +3874,50 @@ export default function QcReceivingPage() {
         <div style={plannerGridStyle}>
           <div style={styles.field}>
             <label style={styles.label}>GRN Number</label>
-            <input
-              list="qc-receiving-grn-options"
-              value={grnSearch}
-              onChange={(event) => handleGrnChange(event.target.value)}
-              style={styles.input}
-              placeholder="Type or choose GRN Number"
-            />
-            <datalist id="qc-receiving-grn-options">
-              {inbounds.map((item) => (
-                <option key={item.id} value={item.grn_number} />
-              ))}
-            </datalist>
+            <div style={styles.comboBox}>
+              <input
+                value={grnSearch}
+                onChange={(event) => {
+                  handleGrnChange(event.target.value)
+                  setShowGrnOptions(true)
+                }}
+                onFocus={() => setShowGrnOptions(true)}
+                onBlur={() => setShowGrnOptions(false)}
+                onClick={handleGrnInputClick}
+                style={{ ...styles.input, ...(isSelectedInboundCompleted ? styles.inputDone : {}) }}
+                placeholder="Type or choose GRN Number"
+              />
+              {showGrnOptions && visibleGrnOptions.length ? (
+                <div style={styles.comboList}>
+                  {visibleGrnOptions.map((item) => {
+                    const isDone = inboundStatusById.get(Number(item.id)) === 'completed'
+                    const isActive = Number(item.id) === Number(selectedInboundId)
+
+                    return (
+                      <button
+                        key={item.id}
+                        type="button"
+                        onMouseDown={(event) => {
+                          event.preventDefault()
+                          handleGrnOptionSelect(item)
+                        }}
+                        style={{
+                          ...styles.comboOption,
+                          ...(isDone ? styles.grnOptionDone : {}),
+                          ...(isActive ? (isDone ? styles.grnOptionDoneActive : styles.grnOptionActive) : {}),
+                        }}
+                      >
+                        <strong>{item.grn_number}</strong>
+                        <span style={styles.comboOptionMeta}>
+                          {isDone ? 'DONE' : 'OPEN'}
+                          {item.suppliers?.supplier_name ? ` · ${item.suppliers.supplier_name}` : ''}
+                        </span>
+                      </button>
+                    )
+                  })}
+                </div>
+              ) : null}
+            </div>
           </div>
 
           <div style={styles.field}>

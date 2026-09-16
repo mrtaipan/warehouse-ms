@@ -1,6 +1,5 @@
 'use client'
 
-import Link from 'next/link'
 import { useEffect, useMemo, useState } from 'react'
 
 import { createClient } from '@/utils/supabase/browser'
@@ -10,14 +9,6 @@ import shellStyles from '../../arkline.module.css'
 import styles from '../financial-management.module.css'
 
 const supabase = createClient()
-
-function EntryIcon() {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  )
-}
 
 function HistoryIcon() {
   return (
@@ -44,17 +35,6 @@ function formatMonthLabel(value) {
   return new Intl.DateTimeFormat('en-GB', { month: 'long', year: 'numeric' }).format(new Date(Number(year), Number(month) - 1, 1))
 }
 
-function formatDate(value) {
-  if (!value) return '-'
-  const date = new Date(`${value}T00:00:00`)
-  if (Number.isNaN(date.getTime())) return value
-  return new Intl.DateTimeFormat('en-GB', {
-    day: '2-digit',
-    month: 'short',
-    year: 'numeric',
-  }).format(date)
-}
-
 function normalizePaidRow(row) {
   return {
     id: row?.id || '',
@@ -62,6 +42,14 @@ function normalizePaidRow(row) {
     category_name: row?.category?.name || row?.supplier_name_snapshot || 'Manual / Unlinked',
     amount: Number(row?.amount || 0),
     paid_at: row?.paid_at || '',
+  }
+}
+
+function normalizeAccountPayableRow(row) {
+  return {
+    id: row?.id || '',
+    amount: Number(row?.amount || 0),
+    created_at: row?.created_at || '',
   }
 }
 
@@ -73,30 +61,6 @@ function normalizeReimbursementRow(row) {
     category_name: row?.category?.name || 'Reimbursement',
     amount: Number(row?.total_amount || 0),
     paid_at: row?.paid_at || '',
-  }
-}
-
-function normalizeSession(row) {
-  return {
-    id: row?.id || '',
-    session_date: row?.session_date || '',
-    start_time: row?.start_time || '',
-    end_time: row?.end_time || '',
-    session_type: row?.session_type || 'STANDALONE',
-    wearing_product_sku: row?.wearing_product_sku || '',
-    partner_wearing_product_sku: row?.partner_wearing_product_sku || '',
-    gross_amount: Number(row?.gross_amount || 0),
-    host_display_name_snapshot: row?.host_display_name_snapshot || '-',
-    partner_display_name_snapshot: row?.partner_display_name_snapshot || '',
-  }
-}
-
-function normalizeCredit(row) {
-  return {
-    id: row?.id || '',
-    host_display_name: row?.host_profile?.display_name || row?.host_display_name_snapshot || '-',
-    credited_amount: Number(row?.credited_amount || 0),
-    session_date: row?.session?.session_date || '',
   }
 }
 
@@ -119,8 +83,7 @@ export default function ArklineFinancialReportingPage() {
   const [hoveredTrendKey, setHoveredTrendKey] = useState('')
   const [paidRequests, setPaidRequests] = useState([])
   const [paidReimbursements, setPaidReimbursements] = useState([])
-  const [sessions, setSessions] = useState([])
-  const [credits, setCredits] = useState([])
+  const [accountPayables, setAccountPayables] = useState([])
 
   useEffect(() => {
     let active = true
@@ -153,45 +116,19 @@ export default function ArklineFinancialReportingPage() {
         .eq('status', 'PAID')
         .order('paid_at', { ascending: false }),
       supabase
-        .from('arkline_live_reporting_sessions')
-        .select(
-          `
-            id,
-            session_date,
-            start_time,
-            end_time,
-            session_type,
-            wearing_product_sku,
-            partner_wearing_product_sku,
-            gross_amount,
-            host_display_name_snapshot,
-            partner_display_name_snapshot
-          `
-        )
-        .order('session_date', { ascending: false })
-        .order('start_time', { ascending: false }),
-      supabase
-        .from('arkline_live_reporting_credits')
-        .select(
-          `
-            id,
-            credited_amount,
-            host_display_name_snapshot,
-            host_profile:dir_user_profiles!arkline_live_reporting_credits_host_profile_id_fkey(display_name),
-            session:arkline_live_reporting_sessions!arkline_live_reporting_credits_session_id_fkey(
-              session_date
-            )
-          `
-        ),
-    ]).then(([paymentResult, reimbursementResult, sessionResult, creditResult]) => {
+        .from('arkline_payment')
+        .select('id, amount, created_at')
+        .eq('payment_basis', 'PO_BASED')
+        .neq('status', 'PAID')
+        .order('created_at', { ascending: false }),
+    ]).then(([paymentResult, reimbursementResult, accountPayableResult]) => {
       if (!active) return
 
-      if (paymentResult.error || reimbursementResult.error || sessionResult.error || creditResult.error) {
+      if (paymentResult.error || reimbursementResult.error || accountPayableResult.error) {
         setError(
           paymentResult.error?.message ||
             reimbursementResult.error?.message ||
-            sessionResult.error?.message ||
-            creditResult.error?.message ||
+            accountPayableResult.error?.message ||
             'Failed to load financial reporting.'
         )
         setLoading(false)
@@ -200,8 +137,7 @@ export default function ArklineFinancialReportingPage() {
 
       setPaidRequests((paymentResult.data || []).map(normalizePaidRow))
       setPaidReimbursements((reimbursementResult.data || []).map(normalizeReimbursementRow))
-      setSessions((sessionResult.data || []).map(normalizeSession))
-      setCredits((creditResult.data || []).map(normalizeCredit))
+      setAccountPayables((accountPayableResult.data || []).map(normalizeAccountPayableRow))
       setLoading(false)
     })
 
@@ -214,12 +150,12 @@ export default function ArklineFinancialReportingPage() {
     return [
       ...paidRequests.map((item) => item.paid_at),
       ...paidReimbursements.map((item) => item.paid_at),
-      ...sessions.map((item) => item.session_date),
+      ...accountPayables.map((item) => item.created_at),
     ]
       .filter(Boolean)
       .map((value) => new Date(value))
       .filter((date) => !Number.isNaN(date.getTime()))
-  }, [paidRequests, paidReimbursements, sessions])
+  }, [accountPayables, paidRequests, paidReimbursements])
 
   const monthOptions = useMemo(() => {
     const values = Array.from(new Set(allTimelineDates.map((date) => String(date.getMonth() + 1).padStart(2, '0')))).sort((a, b) => Number(a) - Number(b))
@@ -241,16 +177,6 @@ export default function ArklineFinancialReportingPage() {
     return `${monthLabel} • ${yearLabel}`
   }, [monthFilter, monthOptions, yearFilter, yearOptions])
 
-  const filteredSessions = useMemo(
-    () => sessions.filter((item) => getDateMatch(item.session_date, monthFilter, yearFilter)),
-    [sessions, monthFilter, yearFilter]
-  )
-
-  const filteredCredits = useMemo(
-    () => credits.filter((item) => getDateMatch(item.session_date, monthFilter, yearFilter)),
-    [credits, monthFilter, yearFilter]
-  )
-
   const filteredPaidRequests = useMemo(
     () => paidRequests.filter((item) => getDateMatch(item.paid_at, monthFilter, yearFilter)),
     [paidRequests, monthFilter, yearFilter]
@@ -264,9 +190,9 @@ export default function ArklineFinancialReportingPage() {
     [paidReimbursements, monthFilter, yearFilter]
   )
 
-  const totalLiveNominal = useMemo(
-    () => filteredSessions.reduce((sum, item) => sum + Number(item.gross_amount || 0), 0),
-    [filteredSessions]
+  const filteredAccountPayables = useMemo(
+    () => accountPayables.filter((item) => getDateMatch(item.created_at, monthFilter, yearFilter)),
+    [accountPayables, monthFilter, yearFilter]
   )
 
   const totalExpenditure = useMemo(
@@ -276,21 +202,10 @@ export default function ArklineFinancialReportingPage() {
     [filteredPaidRequests, filteredPaidReimbursements]
   )
 
-  const latestEntry = useMemo(() => filteredSessions[0] || null, [filteredSessions])
-
-  const ranking = useMemo(() => {
-    return Array.from(
-      filteredCredits.reduce((map, item) => {
-        const key = item.host_display_name || 'Unknown'
-        map.set(key, (map.get(key) || 0) + Number(item.credited_amount || 0))
-        return map
-      }, new Map())
-    )
-      .map(([name, amount]) => ({ name, amount }))
-      .sort((left, right) => right.amount - left.amount)
-  }, [filteredCredits])
-
-  const topUser = useMemo(() => ranking[0] || null, [ranking])
+  const totalAccountPayable = useMemo(
+    () => filteredAccountPayables.reduce((sum, item) => sum + Number(item.amount || 0), 0),
+    [filteredAccountPayables]
+  )
 
   const categoryBreakdown = useMemo(() => {
     const grouped = new Map()
@@ -386,51 +301,46 @@ export default function ArklineFinancialReportingPage() {
       <section className={`${styles.panel} ${styles.reportingPanel}`.trim()}>
         <div className={`${styles.header} ${styles.reportingHeader}`.trim()}>
           <div className={styles.headerCopy}>
-            <p className={styles.eyebrow}>Arkline</p>
-            <h1 className={styles.title}>Financial Reporting</h1>
-          </div>
-
-          <div className={styles.reportingFilters}>
-            {access.financialManagementLiveReportingView ? (
-              <Link href="/mobile/arkline/live-reporting" className={styles.iconActionButton} aria-label="Open live entry">
-                <EntryIcon />
-              </Link>
-            ) : (
-              <span />
-            )}
-            <button
-              type="button"
-              className={`${styles.iconActionButton} ${styles.iconActionButtonPrimary}`.trim()}
-              onClick={() => {
-                setMonthFilter('all')
-                setYearFilter('all')
-                setTrendGroup('MONTH')
-              }}
-              aria-label="Reset reporting filters"
-            >
-              <HistoryIcon />
-            </button>
-            <div className={styles.filterField}>
-              <span>Month</span>
-              <select className={styles.select} value={monthFilter} onChange={(event) => setMonthFilter(event.target.value)}>
-                <option value="all">All months</option>
-                {monthOptions.map((item) => (
-                  <option key={item.value} value={item.value}>
-                    {item.label}
-                  </option>
-                ))}
-              </select>
+            <div className={styles.reportingTitleBlock}>
+              <p className={styles.eyebrow}>Arkline</p>
+              <h1 className={styles.title}>Financial Reporting</h1>
             </div>
-            <div className={styles.filterField}>
-              <span>Year</span>
-              <select className={styles.select} value={yearFilter} onChange={(event) => setYearFilter(event.target.value)}>
-                <option value="all">All years</option>
-                {yearOptions.map((item) => (
-                  <option key={item.value} value={item.value}>
-                    {item.label}
-                  </option>
-                ))}
-              </select>
+
+            <div className={styles.reportingFiltersInline}>
+              <button
+                type="button"
+                className={`${styles.iconActionButton} ${styles.iconActionButtonPrimary}`.trim()}
+                onClick={() => {
+                  setMonthFilter('all')
+                  setYearFilter('all')
+                  setTrendGroup('MONTH')
+                }}
+                aria-label="Reset reporting filters"
+              >
+                <HistoryIcon />
+              </button>
+              <div className={styles.filterField}>
+                <span>Month</span>
+                <select className={styles.select} value={monthFilter} onChange={(event) => setMonthFilter(event.target.value)}>
+                  <option value="all">All months</option>
+                  {monthOptions.map((item) => (
+                    <option key={item.value} value={item.value}>
+                      {item.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className={styles.filterField}>
+                <span>Year</span>
+                <select className={styles.select} value={yearFilter} onChange={(event) => setYearFilter(event.target.value)}>
+                  <option value="all">All years</option>
+                  {yearOptions.map((item) => (
+                    <option key={item.value} value={item.value}>
+                      {item.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
           </div>
         </div>
@@ -445,15 +355,6 @@ export default function ArklineFinancialReportingPage() {
           <>
             <div className={styles.reportingSummaryGrid}>
               <div className={styles.reportingMetricCard}>
-                <div className={styles.reportingMetricIcon}>G</div>
-                <div>
-                  <span>Live GMV</span>
-                  <strong>{formatCurrency(totalLiveNominal)}</strong>
-                  <p>{selectedPeriodLabel}</p>
-                </div>
-              </div>
-
-              <div className={styles.reportingMetricCard}>
                 <div className={styles.reportingMetricIcon}>E</div>
                 <div>
                   <span>Total Expenditure</span>
@@ -461,88 +362,17 @@ export default function ArklineFinancialReportingPage() {
                   <p>{selectedPeriodLabel}</p>
                 </div>
               </div>
-
               <div className={styles.reportingMetricCard}>
-                <div className={styles.reportingMetricIcon}>U</div>
+                <div className={styles.reportingMetricIcon}>A</div>
                 <div>
-                  <span>User Total</span>
-                  <strong>{topUser ? formatCurrency(topUser.amount) : formatCurrency(0)}</strong>
-                  <p>{topUser ? topUser.name : 'No live reporting data'}</p>
-                </div>
-              </div>
-
-              <div className={styles.reportingMetricCard}>
-                <div className={styles.reportingMetricIcon}>L</div>
-                <div>
-                  <span>Latest Entry</span>
-                  <strong>{latestEntry ? formatCurrency(latestEntry.gross_amount) : formatCurrency(0)}</strong>
-                  <p>{latestEntry ? `${latestEntry.wearing_product_sku || 'No product'} | ${formatDate(latestEntry.session_date)}` : 'No live session found'}</p>
+                  <span>Account Payable</span>
+                  <strong>{formatCurrency(totalAccountPayable)}</strong>
+                  <p>Unpaid PO-based requests • {selectedPeriodLabel}</p>
                 </div>
               </div>
             </div>
 
             <div className={styles.reportingDashboardGrid}>
-              <section className={`${styles.reportingCard} ${styles.reportingCardCompact}`.trim()}>
-                <div className={styles.reportingCardHead}>
-                  <div>
-                    <p className={styles.columnEyebrow}>Live Dashboard</p>
-                    <h2 className={styles.columnTitle}>User Total</h2>
-                  </div>
-                </div>
-
-                {!ranking.length ? (
-                  <div className={styles.emptyColumn}>No live reporting data found for the selected period.</div>
-                ) : (
-                  <div className={styles.chartList}>
-                    {ranking.map((item, index) => (
-                      <div key={item.name} className={styles.chartRow}>
-                        <div className={styles.chartHead}>
-                          <div className={styles.reportingRowCopy}>
-                            <p className={styles.reportingRowTitle}>
-                              {index + 1}. {item.name}
-                            </p>
-                            <p className={styles.reportingRowMeta}>Total user credit for the filtered period.</p>
-                          </div>
-                          <strong className={styles.reportingAmount}>{formatCurrency(item.amount)}</strong>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </section>
-
-              <section className={`${styles.reportingCard} ${styles.reportingCardCompact}`.trim()}>
-                <div className={styles.reportingCardHead}>
-                  <div>
-                    <p className={styles.columnEyebrow}>Recent Live Session</p>
-                    <h2 className={styles.columnTitle}>Latest Entry</h2>
-                  </div>
-                </div>
-
-                {!filteredSessions.length ? (
-                  <div className={styles.emptyColumn}>No live session found for the selected period.</div>
-                ) : (
-                  <div className={styles.chartList}>
-                    {filteredSessions.slice(0, 5).map((item) => (
-                      <div key={item.id} className={styles.chartRow}>
-                        <div className={styles.chartHead}>
-                          <div className={styles.reportingRowCopy}>
-                            <p className={styles.reportingRowTitle}>{item.wearing_product_sku || 'No product'}</p>
-                            <p className={styles.reportingRowMeta}>
-                              {formatDate(item.session_date)} | {item.start_time?.slice(0, 5)} - {item.end_time?.slice(0, 5)} | {item.session_type === 'PAIRING' ? `Pairing with ${item.partner_display_name_snapshot || '-'}` : 'Standalone'}
-                            </p>
-                            <p className={styles.reportingRowMeta}>
-                              Host {item.host_display_name_snapshot || '-'}{item.session_type === 'PAIRING' ? ` | Partner SKU ${item.partner_wearing_product_sku || '-'}` : ''}
-                            </p>
-                          </div>
-                          <strong className={styles.reportingAmount}>{formatCurrency(item.gross_amount)}</strong>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </section>
-
               <section className={`${styles.reportingCard} ${styles.trendPanel} ${styles.reportingTrendCard}`.trim()}>
                 <div className={styles.reportingCardHead}>
                   <div>

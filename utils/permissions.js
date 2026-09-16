@@ -4,6 +4,9 @@ export const ROLE_OPTIONS = [
   { value: 'admin', label: 'Admin' },
   { value: 'hrga', label: 'HRGA' },
   { value: 'leader', label: 'Leader' },
+  { value: 'mob_cs', label: 'MOB CS' },
+  { value: 'arkline_cs', label: 'Arkline CS' },
+  { value: 'oi_cs', label: 'OI CS' },
   { value: 'warehouse_leader', label: 'Warehouse Leader' },
   { value: 'packing_coordinator', label: 'Packing Coordinator' },
   { value: 'packing_staff', label: 'Packing Staff' },
@@ -17,6 +20,7 @@ export const ROLE_OPTIONS = [
   { value: 'arkline_staff', label: 'Arkline Staff' },
   { value: 'arkline_merchandiser', label: 'Arkline Merchandiser' },
   { value: 'arkline_host', label: 'Arkline Host' },
+  { value: 'external', label: 'External' },
   { value: 'guest', label: 'Guest' },
 ]
 
@@ -25,6 +29,16 @@ export const OFFICIAL_ROLE_VALUES = ROLE_OPTIONS.map((item) => item.value)
 export const LEGACY_ROLE_MAP = {
   arkline_viewer: 'arkline_staff',
   arkline_purchaser: 'arkline_merchandiser',
+}
+
+export const ROLE_LOCKED_GROUPS = {
+  arkline_cs: 'ARKLINE',
+  mob_cs: 'MOB',
+  oi_cs: 'OI',
+}
+
+export function getRoleLockedGroup(role) {
+  return ROLE_LOCKED_GROUPS[String(role || '').trim().toLowerCase()] || ''
 }
 
 const BASE_PERMISSION_GROUPS = [
@@ -54,6 +68,19 @@ const BASE_PERMISSION_GROUPS = [
       { key: 'restock_instruction', label: 'Restock Instruction', codePrefix: 'storage.restock_instruction', description: 'Pintu masuk cepat untuk restock submit dan restock picker.', actions: ['view'] },
       { key: 'restock_instruction.submit', label: 'Restock Submit', codePrefix: 'storage.restock_submit', description: 'Buat dan ubah permintaan restock internal.', actions: ['view', 'add', 'edit'] },
       { key: 'restock_instruction.picker', label: 'Restock Picker', codePrefix: 'storage.restock_picker', description: 'Proses pengambilan barang untuk restock instruction.', actions: ['view', 'edit'] },
+    ],
+  },
+  {
+    key: 'delivery_report',
+    label: 'Delivery Report',
+    items: [
+      {
+        key: 'home',
+        label: 'Delivery Report',
+        codePrefix: 'delivery_report',
+        description: 'Akses halaman Delivery Report System dari dashboard WMS.',
+        actions: ['view'],
+      },
     ],
   },
   {
@@ -278,6 +305,9 @@ const DEFAULT_ROLE_BUNDLES = {
     'hrga.penalty_points.delete',
   ],
   leader: ['dashboard.home.view', 'myarklife.view', 'inbound.unload.view'],
+  mob_cs: ['dashboard.home.view', 'myarklife.view', 'inbound.unload.view'],
+  oi_cs: ['dashboard.home.view', 'myarklife.view', 'inbound.unload.view'],
+  arkline_cs: ['dashboard.home.view', 'myarklife.view'],
   warehouse_leader: [
     'dashboard.home.view',
     'myarklife.view',
@@ -487,9 +517,10 @@ const DEFAULT_ROLE_BUNDLES = {
     'arkline.progress_snapshot.products.view',
   ],
 }
+const UNIVERSAL_DEFAULT_PERMISSIONS = ['delivery_report.view']
 
 export function getDefaultPermissionsForRole(role) {
-  return [...new Set((DEFAULT_ROLE_BUNDLES[role] || []).filter((code) => PERMISSION_CODE_SET.has(code)))]
+  return [...new Set([...(DEFAULT_ROLE_BUNDLES[role] || []), ...UNIVERSAL_DEFAULT_PERMISSIONS].filter((code) => PERMISSION_CODE_SET.has(code)))]
 }
 
 export function normalizeRole(role) {
@@ -602,9 +633,10 @@ export function canAccessPeopleManagement(permissions = [], isAdmin = false) {
 }
 
 export function getArklineFeatureAccess(role, permissions = [], isAdmin = false) {
-  const canReviewReimbursement = role === 'hrga' || role === 'leader'
+  const resolvedRole = resolveRole(role, isAdmin)
+  const canReviewReimbursement = resolvedRole === 'hrga' || resolvedRole === 'leader'
 
-  if (isAdmin || role === 'admin') {
+  if (isAdmin || resolvedRole === 'admin') {
     return {
       menu: true,
       menuHref: '/dashboard/arkline',
@@ -655,6 +687,60 @@ export function getArklineFeatureAccess(role, permissions = [], isAdmin = false)
       reimbursementEdit: true,
       reimbursementApprove: true,
       reimbursementPay: true,
+    }
+  }
+
+  if (resolvedRole === 'external') {
+    return {
+      menu: true,
+      menuHref: '/dashboard/arkline/progress-overview',
+      overview: false,
+      directory: false,
+      directoryBom: false,
+      directoryCreate: false,
+      directoryProducts: false,
+      directoryProductsCreate: false,
+      directoryProductsEdit: false,
+      directoryProductsDelete: false,
+      directoryMaterials: false,
+      directoryMaterialsCreate: false,
+      directoryMaterialsEdit: false,
+      directoryMaterialsDelete: false,
+      directorySuppliers: false,
+      directorySuppliersCreate: false,
+      directorySuppliersEdit: false,
+      directoryPurchaseOrders: false,
+      directoryPurchaseOrdersPrint: false,
+      progressOverview: true,
+      progressKanban: true,
+      progressKanbanAdd: false,
+      progressKanbanEdit: false,
+      progressCalendar: false,
+      progressProducts: false,
+      productionPlanning: false,
+      productionOrdersView: false,
+      productionOrdersAdd: false,
+      productionOrdersEdit: false,
+      productionOrdersDelete: false,
+      productionOrdersPrint: false,
+      materialFulfillmentView: false,
+      materialFulfillmentAdd: false,
+      materialFulfillmentEdit: false,
+      materialFulfillmentDelete: false,
+      financialManagement: false,
+      financialManagementHref: '/dashboard/arkline/financial-management',
+      financialManagementPaymentSubmissionView: false,
+      financialManagementPaymentSubmissionAdd: false,
+      financialManagementPaymentSubmissionEdit: false,
+      financialManagementLiveReportingView: false,
+      financialManagementLiveReportingAdd: false,
+      financialManagementLiveReportingEdit: false,
+      financialReporting: false,
+      reimbursementView: false,
+      reimbursementSubmit: false,
+      reimbursementEdit: false,
+      reimbursementApprove: false,
+      reimbursementPay: false,
     }
   }
 
@@ -873,6 +959,7 @@ export function canAccessOperationsCalendar(role, permissions = [], isAdmin = fa
 export function getLandingPath(role, permissions = [], isAdmin = false) {
   const resolvedRole = resolveRole(role, isAdmin)
   if (isAdmin || resolvedRole === 'admin') return '/dashboard'
+  if (resolvedRole === 'external') return '/dashboard/arkline/progress-overview'
   if (resolvedRole === 'inbound_coordinator' || resolvedRole === 'inbound_staff') return '/dashboard'
   if (hasPermission(permissions, 'dashboard.home.view', isAdmin)) return '/dashboard'
 
@@ -974,6 +1061,7 @@ const ROUTE_PERMISSION_MAP = [
   { matcher: (pathname) => pathname.startsWith('/dashboard/packing-list/receiving'), codes: ['packing.receiving.view'] },
   { matcher: (pathname) => pathname.startsWith('/dashboard/packing-list/size-breakdown'), codes: ['packing.size_breakdown.view'] },
   { matcher: (pathname) => pathname.startsWith('/mobile/packing-list/item-storing'), codes: ['packing.size_breakdown.view'] },
+  { matcher: (pathname) => pathname === '/dashboard/delivery-report' || pathname.startsWith('/dashboard/delivery-report/') || pathname.startsWith('/dashboard/delivery-report?'), codes: ['delivery_report.view'] },
   { matcher: (pathname) => pathname === '/dashboard/arkline' || pathname.startsWith('/dashboard/arkline?'), codes: ['arkline.overview.view'] },
   { matcher: (pathname) => pathname === '/dashboard/arkline/directory' || pathname.startsWith('/dashboard/arkline/directory?'), codes: ['arkline.directory.view', 'arkline.directory.products.view'] },
   { matcher: (pathname) => pathname.startsWith('/dashboard/arkline/directory/bom'), codes: ['arkline.directory.bom.view'] },
@@ -993,41 +1081,53 @@ const ROUTE_PERMISSION_MAP = [
 
 export function canAccessPath(pathname, role, permissions = [], isAdmin = false) {
   const resolvedRole = resolveRole(role, isAdmin)
+  const normalizedPathname = String(pathname || '')
 
-  if (
-    pathname === '/dashboard/delivery-report' ||
-    pathname.startsWith('/dashboard/delivery-report/') ||
-    pathname.startsWith('/dashboard/delivery-report?')
-  ) {
-    return true
-  }
-
-  if (pathname.startsWith('/dashboard/user-access')) {
+  if (normalizedPathname.startsWith('/dashboard/user-access')) {
     return isAdmin || resolvedRole === 'admin'
   }
 
   if (
-    pathname.startsWith('/dashboard/settings') ||
-    pathname.startsWith('/dashboard/suppliers') ||
-    pathname.startsWith('/dashboard/brands') ||
-    pathname.startsWith('/dashboard/categories') ||
-    pathname.startsWith('/dashboard/skus') ||
-    pathname.startsWith('/dashboard/rack-locations')
+    normalizedPathname.startsWith('/dashboard/settings') ||
+    normalizedPathname.startsWith('/dashboard/suppliers') ||
+    normalizedPathname.startsWith('/dashboard/brands') ||
+    normalizedPathname.startsWith('/dashboard/categories') ||
+    normalizedPathname.startsWith('/dashboard/skus') ||
+    normalizedPathname.startsWith('/dashboard/rack-locations')
   ) {
     return isAdmin || resolvedRole === 'admin'
   }
 
   if (isAdmin || resolvedRole === 'admin') return true
 
-  if (pathname === '/operations-calendar' || pathname.startsWith('/operations-calendar?')) {
+  if (resolvedRole === 'external') {
+    return (
+      normalizedPathname === '/dashboard' ||
+      normalizedPathname === '/dashboard/arkline/progress-overview' ||
+      normalizedPathname.startsWith('/dashboard/arkline/progress-overview?') ||
+      (
+        hasPermission(permissions, 'delivery_report.view', false) &&
+        (
+          normalizedPathname === '/dashboard/delivery-report' ||
+          normalizedPathname.startsWith('/dashboard/delivery-report/') ||
+          normalizedPathname.startsWith('/dashboard/delivery-report?')
+        )
+      )
+    )
+  }
+
+  if (normalizedPathname === '/operations-calendar' || normalizedPathname.startsWith('/operations-calendar?')) {
     return canAccessOperationsCalendar(resolvedRole, permissions, false)
   }
 
-  if ((resolvedRole === 'packing_staff' || resolvedRole === 'packing_coordinator') && (pathname === '/take-requests' || pathname.startsWith('/take-requests?'))) {
+  if (
+    (resolvedRole === 'packing_staff' || resolvedRole === 'packing_coordinator') &&
+    (normalizedPathname === '/take-requests' || normalizedPathname.startsWith('/take-requests?'))
+  ) {
     return false
   }
 
-  const matched = ROUTE_PERMISSION_MAP.find((item) => item.matcher(pathname))
+  const matched = ROUTE_PERMISSION_MAP.find((item) => item.matcher(normalizedPathname))
   if (!matched) return false
   return hasAnyPermission(permissions, matched.codes, false)
 }

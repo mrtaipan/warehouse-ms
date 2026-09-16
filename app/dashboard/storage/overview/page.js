@@ -4,7 +4,7 @@ import Link from 'next/link'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { createClient } from '@/utils/supabase/browser'
-import { ADMIN_EMAIL, getStorageFeatureAccess, resolveRole } from '@/utils/permissions'
+import { ADMIN_EMAIL, getRoleLockedGroup, getStorageFeatureAccess, resolveRole } from '@/utils/permissions'
 import { getRolePermissionCodes } from '@/utils/role-permissions'
 import { getProfileByAuthenticatedUser } from '@/utils/user-profiles'
 import { useRealtimeRefresh } from '@/utils/supabase/use-realtime-refresh'
@@ -651,6 +651,7 @@ const EMPTY_STORAGE_ACCESS = {
   warehouseMap: false,
   brandLookup: false,
   categoryManage: false,
+  lockedGroup: '',
 }
 
 async function fetchCurrentStorageAccess() {
@@ -671,7 +672,16 @@ async function fetchCurrentStorageAccess() {
 
   return {
     ...getStorageFeatureAccess(role, rolePermissions || [], isAdmin),
-    categoryManage: Boolean(isAdmin || role === 'admin' || role === 'leader' || role === 'warehouse_leader'),
+    categoryManage: Boolean(
+      isAdmin ||
+        role === 'admin' ||
+        role === 'leader' ||
+        role === 'warehouse_leader' ||
+        role === 'arkline_cs' ||
+        role === 'mob_cs' ||
+        role === 'oi_cs'
+    ),
+    lockedGroup: getRoleLockedGroup(role),
   }
 }
 
@@ -938,6 +948,21 @@ export default function StorageOverviewPage() {
       .sort((left, right) => naturalSort.compare(left.label, right.label))
   }, [categoryForm.subCategoryId, categoryRows])
 
+  const lockedStorageGroup = normalizeFilterValue(storageAccess.lockedGroup)
+  const scopedRackLocations = useMemo(
+    () => (lockedStorageGroup ? rackLocations.filter((item) => getLocationStorageGroup(item) === lockedStorageGroup) : rackLocations),
+    [lockedStorageGroup, rackLocations]
+  )
+
+  useEffect(() => {
+    if (!lockedStorageGroup) return
+    const timer = window.setTimeout(() => {
+      setFilters((current) => ({ ...current, groupCode: lockedStorageGroup }))
+      setQueueFilters((current) => ({ ...current, group: lockedStorageGroup }))
+    }, 0)
+    return () => window.clearTimeout(timer)
+  }, [lockedStorageGroup])
+
   const storageRows = useMemo(
     () =>
       storageEntries
@@ -946,8 +971,8 @@ export default function StorageOverviewPage() {
           location: locationById.get(entry.rack_location_id) || null,
           category: categoryById.get(Number(entry.category_id || 0)) || null,
         }))
-        .filter((entry) => entry.location),
-    [categoryById, locationById, storageEntries]
+        .filter((entry) => entry.location && (!lockedStorageGroup || getLocationStorageGroup(entry.location) === lockedStorageGroup)),
+    [categoryById, locationById, lockedStorageGroup, storageEntries]
   )
   const canRegisterStorageItem = Boolean(storageAccess.locationAdd)
   const canEditStorageItem = Boolean(storageAccess.locationEdit)
@@ -1086,12 +1111,12 @@ export default function StorageOverviewPage() {
   }, [brandLookupSearch, brandRows])
 
   const registerLocationTypeOptions = Array.from(
-    new Set(rackLocations.map((item) => item.location_type).filter(Boolean))
+    new Set(scopedRackLocations.map((item) => item.location_type).filter(Boolean))
   ).sort((left, right) => naturalSort.compare(String(left), String(right)))
 
   const registerLocationIdOptions = Array.from(
     new Set(
-      rackLocations
+      scopedRackLocations
         .filter((item) => item.location_type === registerForm.locationType)
         .map((item) => item.location_id)
         .filter(Boolean)
@@ -1100,7 +1125,7 @@ export default function StorageOverviewPage() {
 
   const registerLocationCodeOptions = Array.from(
     new Set(
-      rackLocations
+      scopedRackLocations
         .filter(
           (item) =>
             item.location_type === registerForm.locationType &&
@@ -1114,7 +1139,7 @@ export default function StorageOverviewPage() {
     .filter((option) => normalizeFilterValue(option).includes(normalizeFilterValue(registerForm.locationCode)))
     .slice(0, 80)
 
-  const registerSubLocationOptions = rackLocations
+  const registerSubLocationOptions = scopedRackLocations
     .filter(
       (item) =>
         item.location_type === registerForm.locationType &&
@@ -1147,7 +1172,7 @@ export default function StorageOverviewPage() {
   }, [arklineProducts, isRegisterArklineLocation, registerForm.itemName, registerForm.skuId])
 
   const moveSourceGroupCode = getLocationStorageGroup(moveModalEntry?.location)
-  const moveEligibleRackLocations = rackLocations.filter((item) => {
+  const moveEligibleRackLocations = scopedRackLocations.filter((item) => {
     if (!moveSourceGroupCode) {
       return true
     }
@@ -1204,7 +1229,7 @@ export default function StorageOverviewPage() {
     )
 
   const queueStorageGroup = normalizeFilterValue(queueModalEntry?.storing_type)
-  const queueEligibleRackLocations = rackLocations.filter((item) => {
+  const queueEligibleRackLocations = scopedRackLocations.filter((item) => {
     if (item.location_type !== 'PALLET') {
       return false
     }
@@ -1550,6 +1575,18 @@ export default function StorageOverviewPage() {
     }
 
     if (name === 'groupCode') {
+      if (lockedStorageGroup) {
+        setFilters((prev) => ({
+          ...prev,
+          groupCode: lockedStorageGroup,
+          locationId: '',
+          locationCode: '',
+          locationName: '',
+          subLocation: '',
+        }))
+        return
+      }
+
       setFilters((prev) => ({
         ...prev,
         groupCode: normalizeFilterValue(prev.groupCode) === normalizeFilterValue(value) ? '' : value.toUpperCase(),
@@ -1600,7 +1637,7 @@ export default function StorageOverviewPage() {
 
       return {
         ...prev,
-        [name]: options.toggle && normalizedCurrent === normalizedNext ? '' : normalizedNext,
+        [name]: name === 'group' && lockedStorageGroup ? lockedStorageGroup : options.toggle && normalizedCurrent === normalizedNext ? '' : normalizedNext,
       }
     })
   }
@@ -1608,7 +1645,7 @@ export default function StorageOverviewPage() {
   function clearQueueFilters() {
     setProductSearch('')
     setQueueFilters({
-      group: '',
+      group: lockedStorageGroup,
       grn: '',
     })
     setQueuePage(1)
@@ -1617,7 +1654,7 @@ export default function StorageOverviewPage() {
   function clearFilters() {
     setFilters({
       locationType: '',
-      groupCode: '',
+      groupCode: lockedStorageGroup,
       locationId: '',
       locationCode: '',
       locationName: '',
@@ -1626,7 +1663,7 @@ export default function StorageOverviewPage() {
     })
     setProductSearch('')
     setQueueFilters({
-      group: '',
+      group: lockedStorageGroup,
       grn: '',
     })
     setStockPage(1)
@@ -2802,6 +2839,7 @@ export default function StorageOverviewPage() {
             embedded
             activeSection="directory"
             canManage={canManageProductDirectory}
+            lockedGroup={lockedStorageGroup}
           />
         ) : (
           <>
@@ -2809,6 +2847,11 @@ export default function StorageOverviewPage() {
           style={{
             ...styles.searchToolbar,
             ...(visibleListMode === 'queue' ? styles.queueSearchToolbar : {}),
+            ...(visibleListMode === 'stock'
+              ? canRegisterStorageItem
+                ? styles.stockSearchToolbarWithAction
+                : styles.stockSearchToolbar
+              : {}),
             ...(isCompactLayout ? styles.searchToolbarCompact : {}),
           }}
         >
@@ -2829,13 +2872,14 @@ export default function StorageOverviewPage() {
             <div style={styles.queueGroupField}>
               <label style={styles.label}>Group</label>
               <div style={styles.queueGroupToggle} aria-label="Storage queue group filter">
-                {queueGroupOptions.map((groupOption) => {
+                {(lockedStorageGroup ? [lockedStorageGroup] : queueGroupOptions).map((groupOption) => {
                   const isActive = normalizeFilterValue(queueFilters.group) === normalizeFilterValue(groupOption)
 
                   return (
                     <button
                       key={groupOption}
                       type="button"
+                      disabled={Boolean(lockedStorageGroup)}
                       onClick={() => handleQueueFilterChange('group', groupOption, { toggle: true })}
                       style={{
                         ...styles.queueGroupButton,
@@ -2908,16 +2952,17 @@ export default function StorageOverviewPage() {
             </div>
           ) : null}
           {visibleListMode === 'stock' ? (
-            <div style={styles.toolbarGroupField}>
+            <div style={lockedStorageGroup ? { ...styles.toolbarGroupField, ...styles.toolbarGroupFieldLocked } : styles.toolbarGroupField}>
               <label style={styles.groupFilterLabel}>Group</label>
-              <div style={styles.storageGroupToggleGrid} aria-label="Storage group filter">
-                {STORAGE_GROUP_FILTERS.map((groupCode) => {
+              <div style={lockedStorageGroup ? { ...styles.storageGroupToggleGrid, ...styles.storageGroupToggleGridLocked } : styles.storageGroupToggleGrid} aria-label="Storage group filter">
+                {(lockedStorageGroup ? [lockedStorageGroup] : STORAGE_GROUP_FILTERS).map((groupCode) => {
                   const isActive = normalizeFilterValue(filters.groupCode) === groupCode
 
                   return (
                     <button
                       key={groupCode}
                       type="button"
+                      disabled={Boolean(lockedStorageGroup)}
                       onClick={() =>
                         handleFilterChange({
                           target: { name: 'groupCode', value: groupCode, type: 'button' },
@@ -2925,6 +2970,7 @@ export default function StorageOverviewPage() {
                       }
                       style={{
                         ...styles.storageGroupToggleButton,
+                        ...(lockedStorageGroup ? styles.storageGroupToggleButtonLocked : {}),
                         ...(isActive ? styles.storageGroupToggleButtonActive : {}),
                       }}
                       aria-pressed={isActive}
@@ -4550,7 +4596,7 @@ const styles = {
   },
   searchToolbar: {
     display: 'grid',
-    gridTemplateColumns: 'minmax(260px, 1fr) auto auto minmax(76px, 84px) minmax(150px, 180px)',
+    gridTemplateColumns: 'minmax(260px, 1fr) auto auto minmax(76px, 84px) minmax(170px, 220px)',
     gap: '12px',
     alignItems: 'flex-end',
   },
@@ -4559,6 +4605,12 @@ const styles = {
   },
   queueSearchToolbar: {
     gridTemplateColumns: 'minmax(280px, 1fr) minmax(180px, 240px) minmax(200px, 280px) auto',
+  },
+  stockSearchToolbar: {
+    gridTemplateColumns: 'minmax(260px, 1fr) 44px minmax(76px, 84px) minmax(190px, 240px)',
+  },
+  stockSearchToolbarWithAction: {
+    gridTemplateColumns: 'minmax(260px, 1fr) minmax(128px, 170px) 44px minmax(76px, 84px) minmax(190px, 240px)',
   },
   queueGroupField: {
     display: 'flex',
@@ -4626,6 +4678,11 @@ const styles = {
     minHeight: '66px',
     minWidth: 0,
     gap: '6px',
+  },
+  toolbarGroupFieldLocked: {
+    minHeight: '52px',
+    justifyContent: 'flex-end',
+    gap: '5px',
   },
   toolbarQtyField: {
     display: 'flex',
@@ -4764,10 +4821,10 @@ const styles = {
   },
   filteredQtyCard: {
     minHeight: '66px',
-    minWidth: 0,
+    minWidth: '160px',
     width: '100%',
-    maxWidth: '180px',
-    padding: '9px 12px',
+    maxWidth: '220px',
+    padding: '10px 16px',
     borderRadius: '10px',
     border: '1px solid #dbe4ef',
     background: '#fff',
@@ -4787,7 +4844,7 @@ const styles = {
   },
   filteredQtyValue: {
     color: '#0f172a',
-    fontSize: '18px',
+    fontSize: '22px',
     lineHeight: 1,
     fontWeight: '900',
     fontVariantNumeric: 'tabular-nums',
@@ -4803,6 +4860,14 @@ const styles = {
     border: '1px solid #dbe4ef',
     borderRadius: '10px',
     background: '#fff',
+  },
+  storageGroupToggleGridLocked: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    width: 'max-content',
+    minWidth: '66px',
+    minHeight: '36px',
+    padding: '4px',
   },
   groupFilterLabel: {
     color: '#111827',
@@ -4821,6 +4886,12 @@ const styles = {
     fontWeight: '850',
     lineHeight: 1,
     cursor: 'pointer',
+  },
+  storageGroupToggleButtonLocked: {
+    minHeight: '28px',
+    padding: '0 12px',
+    fontSize: '12px',
+    cursor: 'default',
   },
   storageGroupToggleButtonActive: {
     background: '#111827',

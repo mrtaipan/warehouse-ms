@@ -5,6 +5,8 @@ import Link from 'next/link'
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/utils/supabase/browser'
+import { resolveRole } from '@/utils/permissions'
+import { getProfileByAuthenticatedUser } from '@/utils/user-profiles'
 
 function isValidEmail(value) {
   return /\S+@\S+\.\S+/.test(value)
@@ -101,7 +103,22 @@ export default function LoginPage() {
     }
 
     const nextPath = new URLSearchParams(window.location.search).get('next')
-    router.push(nextPath || '/dashboard')
+    let landingPath = nextPath || '/dashboard'
+    if (!nextPath) {
+      try {
+        const {
+          data: { user },
+        } = await supabase.auth.getUser()
+        const { data: profile } = await getProfileByAuthenticatedUser(supabase, user, 'role')
+        if (resolveRole(profile?.role, false) === 'external') {
+          landingPath = '/dashboard/arkline/progress-overview'
+        }
+      } catch {
+        landingPath = '/dashboard'
+      }
+    }
+
+    router.push(landingPath)
     router.refresh()
   }
 

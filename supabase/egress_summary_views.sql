@@ -5,11 +5,13 @@ create or replace view public.warehouse_storage_sku_totals
 with (security_invoker = true)
 as
 select
-  nullif(trim(sku_id), '') as sku_id,
-  sum(coalesce(qty, 0)) as total_qty
-from public.warehouse_storage
-where nullif(trim(sku_id), '') is not null
-group by nullif(trim(sku_id), '');
+  nullif(trim(ws.sku_id), '') as sku_id,
+  nullif(trim(rl.group_code), '') as group_code,
+  sum(coalesce(ws.qty, 0)) as total_qty
+from public.warehouse_storage ws
+left join public.dir_rack_locations rl on rl.id = ws.rack_location_id
+where nullif(trim(ws.sku_id), '') is not null
+group by nullif(trim(ws.sku_id), ''), nullif(trim(rl.group_code), '');
 
 create or replace view public.operations_calendar_pl_receiving_daily_summary
 with (security_invoker = true)

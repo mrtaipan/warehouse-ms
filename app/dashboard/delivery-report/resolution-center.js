@@ -108,6 +108,11 @@ function cleanUpper(value) {
   return cleanText(value).toUpperCase()
 }
 
+function normalizeLockedGroup(value) {
+  const normalized = cleanUpper(value)
+  return GROUPS.includes(normalized) ? normalized : ''
+}
+
 function cleanNullableText(value) {
   const text = cleanText(value)
   return text || null
@@ -208,6 +213,22 @@ function getGroupPrefix(group) {
   if (group === 'MOB') return 'M'
   if (group === 'OI') return 'O'
   return 'A'
+}
+
+function getCaseCodePrefix(groupOrder, submissionDate, fallbackDate) {
+  const normalizedGroup = cleanUpper(groupOrder || 'ARKLINE')
+  const date = new Date(`${submissionDate || fallbackDate || todayIso()}T00:00:00+07:00`)
+  return `${getGroupPrefix(normalizedGroup)}${romanMonth(date)}${String(date.getFullYear()).slice(-2)}-`
+}
+
+function hasExpectedCaseCodePrefix(code, groupOrder, submissionDate, fallbackDate) {
+  return cleanUpper(code).startsWith(getCaseCodePrefix(groupOrder, submissionDate, fallbackDate))
+}
+
+function isCaseCodeDuplicateError(error) {
+  const message = String(error?.message || '').toLowerCase()
+  const details = String(error?.details || '').toLowerCase()
+  return error?.code === '23505' && (message.includes('kode_kejadian') || details.includes('kode_kejadian') || message.includes('duplicate key'))
 }
 
 function formatHandledCaseLabel(row) {
@@ -403,24 +424,26 @@ const blankIssue = () => ({
   tindak_lanjut: '',
 })
 
-export default function ResolutionCenter() {
+export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) {
   const supabase = useMemo(() => createClient(), [])
   const today = useMemo(() => todayIso(), [])
+  const lockedGroup = useMemo(() => normalizeLockedGroup(lockedGroupProp), [lockedGroupProp])
+  const groupOptions = useMemo(() => (lockedGroup ? [lockedGroup] : GROUPS), [lockedGroup])
   const [activeTab, setActiveTab] = useState('registration')
   const [pic, setPic] = useState('')
   const [caseListAccess, setCaseListAccess] = useState({ isAdmin: false, name: '', ready: false })
   const [status, setStatus] = useState(null)
   const [busy, setBusy] = useState(false)
-  const [filters, setFilters] = useState({ courier: '', from: addDays(today, -6), group: '', search: '', to: today, warningOnly: false })
+  const [filters, setFilters] = useState({ courier: '', from: addDays(today, -6), group: lockedGroup, search: '', to: today, warningOnly: false })
   const [cases, setCases] = useState([])
   const [issues, setIssues] = useState([])
   const [masters, setMasters] = useState({ actions: [], barcodeRules: [], couriers: [], issueActions: [], issueReasons: [], reasons: [], services: [] })
-  const [returnForm, setReturnForm] = useState(blankReturn(today))
-  const [issueForm, setIssueForm] = useState(blankIssue())
+  const [returnForm, setReturnForm] = useState({ ...blankReturn(today), group_order: lockedGroup || 'MOB' })
+  const [issueForm, setIssueForm] = useState({ ...blankIssue(), group_order: lockedGroup || 'ARKLINE' })
   const [editingIssueId, setEditingIssueId] = useState(null)
   const [issueDetail, setIssueDetail] = useState(null)
   const [issueDetailReadonly, setIssueDetailReadonly] = useState(false)
-  const [issueFilters, setIssueFilters] = useState({ from: addDays(today, -6), group: '', search: '', to: today })
+  const [issueFilters, setIssueFilters] = useState({ from: addDays(today, -6), group: lockedGroup, search: '', to: today })
   const [issueSummaryMonth, setIssueSummaryMonth] = useState(today.slice(0, 7))
   const [caseCode, setCaseCode] = useState('')
   const [detail, setDetail] = useState(null)
@@ -434,9 +457,9 @@ export default function ResolutionCenter() {
   const [receivingReprintSearch, setReceivingReprintSearch] = useState('')
   const [receivingSelectedIds, setReceivingSelectedIds] = useState([])
   const [receivingReprintSelectedIds, setReceivingReprintSelectedIds] = useState([])
-  const [receivingFilters, setReceivingFilters] = useState({ courier: '', group: '', search: '' })
+  const [receivingFilters, setReceivingFilters] = useState({ courier: '', group: lockedGroup, search: '' })
   const [productSearch, setProductSearch] = useState('')
-  const [productSearchFilters, setProductSearchFilters] = useState({ group: '', scope: '', type: '' })
+  const [productSearchFilters, setProductSearchFilters] = useState({ group: lockedGroup, scope: '', type: '' })
 
   const loadMasters = useCallback(async () => {
     const results = await Promise.all([
@@ -540,13 +563,10 @@ export default function ResolutionCenter() {
   }, [getActorContext])
 
   const generateNextCaseCode = useCallback(async (groupOrder, submissionDate) => {
-    const normalizedGroup = cleanUpper(groupOrder || 'ARKLINE')
-    const date = new Date(`${submissionDate || today}T00:00:00+07:00`)
-    const codePrefix = `${getGroupPrefix(normalizedGroup)}${romanMonth(date)}${String(date.getFullYear()).slice(-2)}-`
+    const codePrefix = getCaseCodePrefix(groupOrder, submissionDate, today)
     const { data, error } = await deliverySupabase
       .from('delivery_error_retur_cases')
       .select('kode_kejadian')
-      .eq('group_order', normalizedGroup)
       .like('kode_kejadian', `${codePrefix}%`)
       .order('created_at', { ascending: false })
       .limit(2000)
@@ -583,9 +603,10 @@ export default function ResolutionCenter() {
 
   const accessibleCases = useMemo(() => {
     if (!caseListAccess.ready) return []
+    if (lockedGroup) return cases.filter((row) => cleanUpper(row.group_order) === lockedGroup)
     if (caseListAccess.isAdmin) return cases
     return cases.filter((row) => cleanUpper(row.created_by) === caseListAccess.name)
-  }, [caseListAccess.isAdmin, caseListAccess.name, caseListAccess.ready, cases])
+  }, [caseListAccess.isAdmin, caseListAccess.name, caseListAccess.ready, cases, lockedGroup])
 
   const visibleCases = useMemo(() => {
     const keyword = filters.search.trim().toLowerCase()
@@ -690,9 +711,10 @@ export default function ResolutionCenter() {
 
   const accessibleIssues = useMemo(() => {
     if (!caseListAccess.ready) return []
+    if (lockedGroup) return issues.filter((row) => cleanUpper(row.group_order) === lockedGroup)
     if (caseListAccess.isAdmin) return issues
     return issues.filter((row) => cleanUpper(row.created_by) === caseListAccess.name)
-  }, [caseListAccess.isAdmin, caseListAccess.name, caseListAccess.ready, issues])
+  }, [caseListAccess.isAdmin, caseListAccess.name, caseListAccess.ready, issues, lockedGroup])
 
   const selectedIssueHandlingMeta = useMemo(() => {
     const selected = normalizeIssueHandlingKey(issueForm.tindak_lanjut)
@@ -737,7 +759,7 @@ export default function ResolutionCenter() {
   const issueSummaryStats = useMemo(() => {
     const pendingRows = issueSummaryRows.filter(isIssuePending)
     const costTotal = issueSummaryRows.reduce((sum, row) => sum + safeNumber(row.biaya_timbul), 0)
-    const groups = GROUPS.map((group) => {
+    const groups = groupOptions.map((group) => {
       const rows = issueSummaryRows.filter((row) => cleanUpper(row.group_order) === group)
       const pending = rows.filter(isIssuePending)
       return {
@@ -765,7 +787,7 @@ export default function ResolutionCenter() {
       topHandling,
       total: issueSummaryRows.length,
     }
-  }, [isIssuePending, issueSummaryRows])
+  }, [groupOptions, isIssuePending, issueSummaryRows])
 
   const issueQuickInsights = useMemo(() => {
     const pendingRows = issueSummaryStats.pendingRows
@@ -875,8 +897,19 @@ export default function ResolutionCenter() {
       return
     }
 
+    let nextCaseCode = detail.kode_kejadian || detailDraft.kode_kejadian
+    try {
+      if (!hasExpectedCaseCodePrefix(nextCaseCode, detailDraft.group_order, detailDraft.tanggal_pengajuan, today)) {
+        nextCaseCode = await generateNextCaseCode(detailDraft.group_order, detailDraft.tanggal_pengajuan)
+      }
+    } catch (error) {
+      setBusy(false)
+      setStatus({ type: 'error', message: `Failed to generate case code: ${error.message}` })
+      return
+    }
+
     const updatePayload = {
-      ...normalizeReturnPayload(detailDraft, detail.kode_kejadian || detailDraft.kode_kejadian),
+      ...normalizeReturnPayload(detailDraft, nextCaseCode),
       updated_at: new Date().toISOString(),
       updated_by: actorName,
     }
@@ -886,7 +919,7 @@ export default function ResolutionCenter() {
       setStatus({ type: 'error', message: `Failed to update case: ${error.message}` })
       return
     }
-    setStatus({ type: 'success', message: `${detail.kode_kejadian || 'Case'} was updated successfully.` })
+    setStatus({ type: 'success', message: `${nextCaseCode || detail.kode_kejadian || 'Case'} was updated successfully.` })
     setDetail(data)
     setDetailDraft(createDetailDraft(data))
     setDetailMode('view')
@@ -919,28 +952,50 @@ export default function ResolutionCenter() {
     }
     setBusy(true)
     let actorName = pic
-    let nextCaseCode = caseCode
     try {
       actorName = await resolveActorName()
-      nextCaseCode = await generateNextCaseCode(returnForm.group_order, returnForm.tanggal_pengajuan)
-      setCaseCode(nextCaseCode)
     } catch (error) {
       setBusy(false)
       setStatus({ type: 'error', message: error.message || 'Failed to load signed-in user.' })
       return
     }
-    const { error } = await deliverySupabase.from('delivery_error_retur_cases').insert({
-      ...normalizeReturnPayload(returnForm, nextCaseCode),
-      created_at: new Date().toISOString(),
-      created_by: actorName,
-      updated_at: new Date().toISOString(),
-      updated_by: actorName,
-    })
+
+    let savedCaseCode = ''
+    let saveError = null
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      let nextCaseCode = ''
+      try {
+        nextCaseCode = await generateNextCaseCode(returnForm.group_order, returnForm.tanggal_pengajuan)
+        setCaseCode(nextCaseCode)
+      } catch (error) {
+        saveError = error
+        break
+      }
+
+      const timestamp = new Date().toISOString()
+      const { error } = await deliverySupabase.from('delivery_error_retur_cases').insert({
+        ...normalizeReturnPayload(returnForm, nextCaseCode),
+        created_at: timestamp,
+        created_by: actorName,
+        updated_at: timestamp,
+        updated_by: actorName,
+      })
+
+      if (!error) {
+        savedCaseCode = nextCaseCode
+        saveError = null
+        break
+      }
+
+      saveError = error
+      if (!isCaseCodeDuplicateError(error)) break
+    }
+
     setBusy(false)
-    if (error) setStatus({ type: 'error', message: `Failed to save case: ${error.message}` })
+    if (saveError) setStatus({ type: 'error', message: `Failed to save case: ${saveError.message}` })
     else {
-      setStatus({ type: 'success', message: `Case ${nextCaseCode} was saved successfully.` })
-      setReturnForm(blankReturn(today))
+      setStatus({ type: 'success', message: `Case ${savedCaseCode} was saved successfully.` })
+      setReturnForm({ ...blankReturn(today), group_order: lockedGroup || 'MOB' })
       await loadCases()
     }
   }
@@ -980,7 +1035,7 @@ export default function ResolutionCenter() {
     if (error) setStatus({ type: 'error', message: `Failed to save issue: ${error.message}` })
     else {
       setStatus({ type: 'success', message: editingIssueId ? 'Order issue was updated successfully.' : 'Order issue was saved successfully.' })
-      setIssueForm(blankIssue())
+      setIssueForm({ ...blankIssue(), group_order: lockedGroup || 'ARKLINE' })
       setEditingIssueId(null)
       await loadIssues()
     }
@@ -1003,6 +1058,7 @@ export default function ResolutionCenter() {
   }
 
   const returnField = (key) => (event) => {
+    if (key === 'group_order' && lockedGroup) return
     const value = event.target.type === 'checkbox' ? event.target.checked : event.target.value
     setReturnForm((current) => ({
       ...current,
@@ -1011,6 +1067,7 @@ export default function ResolutionCenter() {
     }))
   }
   const issueField = (key) => (event) => {
+    if (key === 'group_order' && lockedGroup) return
     const rawValue = event.target.value
     let value = rawValue
     if (['group_order', 'order_id', 'nama', 'tim'].includes(key)) value = cleanUpper(rawValue)
@@ -1019,7 +1076,7 @@ export default function ResolutionCenter() {
   }
 
   function resetIssueForm() {
-    setIssueForm(blankIssue())
+    setIssueForm({ ...blankIssue(), group_order: lockedGroup || 'ARKLINE' })
     setEditingIssueId(null)
   }
 
@@ -1039,7 +1096,7 @@ export default function ResolutionCenter() {
     setIssueForm({
       alasan_bermasalah: row.alasan_bermasalah || '',
       biaya_timbul: row.biaya_timbul ?? '',
-      group_order: cleanUpper(row.group_order || 'ARKLINE'),
+      group_order: lockedGroup || cleanUpper(row.group_order || 'ARKLINE'),
       keterangan: row.keterangan || '',
       nama: cleanUpper(row.nama),
       no_hp: cleanDigits(row.no_hp),
@@ -1294,7 +1351,12 @@ export default function ResolutionCenter() {
   }
 
   async function addRowsToReceiving(rows) {
-    const pendingRows = rows.filter((row) => row?.status_barang === 'Pending')
+    const scopedRows = lockedGroup ? rows.filter((row) => cleanUpper(row?.group_order) === lockedGroup) : rows
+    if (lockedGroup && scopedRows.length !== rows.length) {
+      setStatus({ type: 'error', message: `Only ${lockedGroup} cases can be processed by this role.` })
+      return
+    }
+    const pendingRows = scopedRows.filter((row) => row?.status_barang === 'Pending')
     if (!pendingRows.length) {
       setStatus({ type: 'error', message: 'Only Pending cases can be added to Receiving Confirmation.' })
       return
@@ -1379,7 +1441,7 @@ export default function ResolutionCenter() {
         return (
           <label key={key} className={styles.resolutionDetailField}>
             <span>{labelNode}</span>
-            <select value={value} onChange={detailField(key)}>
+            <select value={value} onChange={detailField(key)} disabled={key === 'group_order' && Boolean(lockedGroup)}>
               <option value="">Select</option>
               {options.map((option) => <option key={option}>{option}</option>)}
             </select>
@@ -1431,7 +1493,7 @@ export default function ResolutionCenter() {
                     <label><span>RETURN DEADLINE</span><input type="date" value={returnForm.batas_tanggal_retur} onChange={returnField('batas_tanggal_retur')} /></label>
                   </div>
                   <div className={styles.resolutionChoiceRow}>
-                    <div><span className={styles.fieldTitle}>GROUP ORDER</span><div className={styles.choicePills}>{GROUPS.map((group) => <button key={group} className={`${returnForm.group_order === group ? styles.active : ''} ${GROUP_CHOICE_CLASS[group] || ''}`} onClick={() => setReturnForm({ ...returnForm, group_order: group })}>{group}</button>)}</div></div>
+                    <div><span className={styles.fieldTitle}>GROUP ORDER</span><div className={styles.choicePills}>{groupOptions.map((group) => <button key={group} disabled={Boolean(lockedGroup)} className={`${returnForm.group_order === group ? styles.active : ''} ${GROUP_CHOICE_CLASS[group] || ''}`} onClick={() => setReturnForm({ ...returnForm, group_order: lockedGroup || group })}>{group}</button>)}</div></div>
                     <div><span className={styles.fieldTitle}>INTERNAL / EXTERNAL</span><div className={styles.choicePills}>{['Internal', 'External'].map((type) => <button key={type} className={`${returnForm.internal_external === type ? styles.active : ''} ${TYPE_CHOICE_CLASS[type] || ''}`} onClick={() => setReturnForm({ ...returnForm, internal_external: type })}>{type}</button>)}</div></div>
                   </div>
                 </section>
@@ -1506,7 +1568,7 @@ export default function ResolutionCenter() {
                   </div>
                 </section>
 
-                <div className={styles.formActions}><button className={styles.primaryButton} disabled={busy} onClick={saveReturn}>{busy ? 'Saving...' : 'Save'}</button><button className={styles.softButton} onClick={() => setReturnForm(blankReturn(today))}>Reset Form</button></div>
+                <div className={styles.formActions}><button className={styles.primaryButton} disabled={busy} onClick={saveReturn}>{busy ? 'Saving...' : 'Save'}</button><button className={styles.softButton} onClick={() => setReturnForm({ ...blankReturn(today), group_order: lockedGroup || 'MOB' })}>Reset Form</button></div>
               </div>
             </article>
 
@@ -1563,7 +1625,7 @@ export default function ResolutionCenter() {
               <div className={styles.resolutionCaseFilters}>
                 <label><span>DATE FROM</span><input type="date" value={filters.from} onChange={(event) => setFilters({ ...filters, from: event.target.value })} /></label>
                 <label><span>DATE TO</span><input type="date" value={filters.to} onChange={(event) => setFilters({ ...filters, to: event.target.value })} /></label>
-                <label><span>GROUP</span><select value={filters.group} onChange={(event) => setFilters({ ...filters, group: event.target.value })}><option value="">ALL GROUPS</option>{GROUPS.map((group) => <option key={group}>{group}</option>)}</select></label>
+                <label><span>GROUP</span><select value={filters.group} onChange={(event) => setFilters({ ...filters, group: lockedGroup || event.target.value })} disabled={Boolean(lockedGroup)}>{lockedGroup ? null : <option value="">ALL GROUPS</option>}{groupOptions.map((group) => <option key={group}>{group}</option>)}</select></label>
                 <label><span>COURIER</span><select value={filters.courier} onChange={(event) => setFilters({ ...filters, courier: event.target.value })}><option value="">ALL COURIERS</option>{courierOptions.map((item) => <option key={item}>{item}</option>)}</select></label>
                 <label className={styles.searchField}><span>SEARCH</span><input placeholder="Search case code, order ID, AWB, or customer name" value={filters.search} onChange={(event) => setFilters({ ...filters, search: event.target.value })} /></label>
                 <button className={styles.softButton} onClick={loadCases}>Refresh</button>
@@ -1593,7 +1655,7 @@ export default function ResolutionCenter() {
             <span className={styles.caseCountPill}>{receivingRows.filter((row) => row.status_barang === 'Sending').length} Sending</span>
             <span className={styles.selectedCountPill}>{selectedReceivingRows.length} Selected</span>
             <label className={styles.inlineCheck}><input className={styles.compactCheckbox} type="checkbox" checked={allReceivingSelected} onChange={(event) => setReceivingSelectedIds(event.target.checked ? receivingRows.filter((row) => row.status_barang === 'Sending').map((row) => String(row.id)) : [])} /> Select All</label>
-            <select className={styles.receivingSelect} aria-label="Group Order" value={receivingFilters.group} onChange={(event) => setReceivingFilters({ ...receivingFilters, group: event.target.value })}><option value="">ALL GROUPS</option>{GROUPS.map((group) => <option key={group}>{group}</option>)}</select>
+            <select className={styles.receivingSelect} aria-label="Group Order" value={receivingFilters.group} onChange={(event) => setReceivingFilters({ ...receivingFilters, group: lockedGroup || event.target.value })} disabled={Boolean(lockedGroup)}>{lockedGroup ? null : <option value="">ALL GROUPS</option>}{groupOptions.map((group) => <option key={group}>{group}</option>)}</select>
             <select className={styles.receivingSelect} aria-label="Courier" value={receivingFilters.courier} onChange={(event) => setReceivingFilters({ ...receivingFilters, courier: event.target.value })}><option value="">ALL COURIERS</option>{receivingCourierOptions.map((courier) => <option key={courier}>{courier}</option>)}</select>
             <input className={styles.receivingToolbarSearch} aria-label="Search receiving cases" placeholder="SEARCH CODE / CUSTOMER / ORDER ID / AWB" value={receivingFilters.search} onChange={(event) => setReceivingFilters({ ...receivingFilters, search: event.target.value })} />
             <button className={styles.softButton} onClick={() => setReceivingAddOpen(true)}>Add by Case Code</button>
@@ -1675,8 +1737,8 @@ export default function ResolutionCenter() {
                     <div>
                       <span className={styles.fieldTitle}>GROUP ORDER</span>
                       <div className={styles.choicePills}>
-                        {GROUPS.map((group) => (
-                          <button key={group} type="button" className={`${issueForm.group_order === group ? styles.active : ''} ${styles[`groupChoice${group.charAt(0)}${group.slice(1).toLowerCase()}`] || ''}`} onClick={() => setIssueForm((current) => ({ ...current, group_order: group }))}>{group}</button>
+                        {groupOptions.map((group) => (
+                          <button key={group} type="button" disabled={Boolean(lockedGroup)} className={`${issueForm.group_order === group ? styles.active : ''} ${styles[`groupChoice${group.charAt(0)}${group.slice(1).toLowerCase()}`] || ''}`} onClick={() => setIssueForm((current) => ({ ...current, group_order: lockedGroup || group }))}>{group}</button>
                         ))}
                       </div>
                     </div>
@@ -1741,7 +1803,7 @@ export default function ResolutionCenter() {
               <div className={styles.resolutionCaseFilters}>
                 <label><span>DATE FROM</span><input type="date" value={issueFilters.from} onChange={(event) => setIssueFilters({ ...issueFilters, from: event.target.value })} /></label>
                 <label><span>DATE TO</span><input type="date" value={issueFilters.to} onChange={(event) => setIssueFilters({ ...issueFilters, to: event.target.value })} /></label>
-                <label><span>GROUP</span><select value={issueFilters.group} onChange={(event) => setIssueFilters({ ...issueFilters, group: event.target.value })}><option value="">ALL GROUPS</option>{GROUPS.map((group) => <option key={group}>{group}</option>)}</select></label>
+                <label><span>GROUP</span><select value={issueFilters.group} onChange={(event) => setIssueFilters({ ...issueFilters, group: lockedGroup || event.target.value })} disabled={Boolean(lockedGroup)}>{lockedGroup ? null : <option value="">ALL GROUPS</option>}{groupOptions.map((group) => <option key={group}>{group}</option>)}</select></label>
                 <label className={styles.searchField}><span>SEARCH</span><input placeholder="Search order ID, customer, reason, handling, product, or team" value={issueFilters.search} onChange={(event) => setIssueFilters({ ...issueFilters, search: event.target.value })} /></label>
                 <button className={styles.softButton} onClick={loadIssues}>Refresh</button>
               </div>
@@ -1779,8 +1841,8 @@ export default function ResolutionCenter() {
             <label className={styles.searchField}><span>PRODUCT SEARCH</span><input autoFocus placeholder="EXAMPLE: BLACK OVERSIZE T-SHIRT" value={productSearch} onChange={(event) => setProductSearch(cleanUpper(event.target.value))} /></label>
             <label><span>TYPE</span><select value={productSearchFilters.type} onChange={(event) => setProductSearchFilters({ ...productSearchFilters, type: event.target.value })}><option value="">ALL TYPES</option><option value="return">RETURN</option><option value="issue">ORDER ISSUE</option></select></label>
             <label><span>ITEM TYPE</span><select value={productSearchFilters.scope} onChange={(event) => setProductSearchFilters({ ...productSearchFilters, scope: event.target.value })}><option value="">ALL ITEM TYPES</option><option value="returned">RETURN / FAULTY PRODUCT</option><option value="replacement">REPLACEMENT PRODUCT</option></select></label>
-            <label><span>GROUP ORDER</span><select value={productSearchFilters.group} onChange={(event) => setProductSearchFilters({ ...productSearchFilters, group: event.target.value })}><option value="">ALL GROUPS</option>{GROUPS.map((group) => <option key={group}>{group}</option>)}</select></label>
-            <button className={styles.softButton} onClick={() => { setProductSearch(''); setProductSearchFilters({ group: '', scope: '', type: '' }) }}>Reset</button>
+            <label><span>GROUP ORDER</span><select value={productSearchFilters.group} onChange={(event) => setProductSearchFilters({ ...productSearchFilters, group: lockedGroup || event.target.value })} disabled={Boolean(lockedGroup)}>{lockedGroup ? null : <option value="">ALL GROUPS</option>}{groupOptions.map((group) => <option key={group}>{group}</option>)}</select></label>
+            <button className={styles.softButton} onClick={() => { setProductSearch(''); setProductSearchFilters({ group: lockedGroup, scope: '', type: '' }) }}>Reset</button>
           </div>
           <div className={styles.productSearchResults}>
             {!productSearch ? (
@@ -1918,7 +1980,7 @@ export default function ResolutionCenter() {
                 <div className={styles.resolutionDetailValue}><span>Case Code</span><strong>{formatHandledCaseLabel(detailDraft)}</strong></div>
                 {renderDetailField({ key: 'tanggal_pengajuan', label: 'Submission Date', type: 'date' })}
                 {renderDetailField({ key: 'batas_tanggal_retur', label: 'Return Deadline', type: 'date' })}
-                {renderDetailField({ key: 'group_order', label: 'Group Order', options: GROUPS })}
+                {renderDetailField({ key: 'group_order', label: 'Group Order', options: groupOptions, readonly: Boolean(lockedGroup) })}
                 {renderDetailField({ key: 'internal_external', label: 'Internal / External', options: ['Internal', 'External'] })}
                 <div className={styles.resolutionDetailValue}><span>Warning</span><strong><span className={`${styles.statusBadge} ${getCaseWarningMeta(detailDraft, today).tone}`}>{getCaseWarningMeta(detailDraft, today).label}</span></strong></div>
               </div>

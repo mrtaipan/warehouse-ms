@@ -150,7 +150,7 @@ export function Modal({ open, title, description, children, actions, onClose }) 
   )
 }
 
-export default function DeliveryReportClient() {
+export default function DeliveryReportClient({ lockedGroup = '' }) {
   const searchParams = useSearchParams()
   const moduleId = searchParams.get('module')
   const isKnownModule = modules.some((module) => module.id === moduleId)
@@ -167,11 +167,11 @@ export default function DeliveryReportClient() {
       data-delivery-resolution={moduleId === 'resolution' ? '' : undefined}
     >
       {showHome ? <Home /> : null}
-      {moduleId === 'summary' ? <DeliverySummary /> : null}
-      {moduleId === 'delivery-order' ? <DeliveryOrder /> : null}
-      {moduleId === 'barcode' ? <BarcodeScanner /> : null}
-      {moduleId === 'resolution' ? <ResolutionCenter /> : null}
-      {moduleId === 'waybill' ? <ManualWaybill /> : null}
+      {moduleId === 'summary' ? <DeliverySummary lockedGroup={lockedGroup} /> : null}
+      {moduleId === 'delivery-order' ? <DeliveryOrder lockedGroup={lockedGroup} /> : null}
+      {moduleId === 'barcode' ? <BarcodeScanner lockedGroup={lockedGroup} /> : null}
+      {moduleId === 'resolution' ? <ResolutionCenter lockedGroup={lockedGroup} /> : null}
+      {moduleId === 'waybill' ? <ManualWaybill lockedGroup={lockedGroup} /> : null}
     </div>
   )
 }

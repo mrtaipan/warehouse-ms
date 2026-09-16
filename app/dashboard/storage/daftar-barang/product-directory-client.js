@@ -285,6 +285,36 @@ function getVariantReleaseStateKey(variantId, storingType) {
   return normalizedVariantId && normalizedStoringType ? `${normalizedVariantId}:${normalizedStoringType}` : ''
 }
 
+function getStorageQtyKey(sku, groupCode) {
+  const normalizedSku = normalizeUpper(sku)
+  const normalizedGroup = normalizeUpper(groupCode)
+
+  return normalizedSku && normalizedGroup ? `${normalizedSku}:${normalizedGroup}` : ''
+}
+
+function addStorageQty(storageMap, sku, groupCode, qty) {
+  const key = getStorageQtyKey(sku, groupCode)
+  if (!key) return
+
+  storageMap.set(key, Number(storageMap.get(key) || 0) + Number(qty || 0))
+}
+
+function getGroupedStorageQty(lookup = {}, sku = '', type = 'all') {
+  const normalizedSku = normalizeUpper(sku)
+  if (!normalizedSku) return 0
+
+  const normalizedType = normalizeUpper(type)
+  if (normalizedType === 'MOB' || normalizedType === 'OI') {
+    return Number(lookup.storageQtyBySkuAndGroup?.get(getStorageQtyKey(normalizedSku, normalizedType)) || 0)
+  }
+
+  const mobOiQty =
+    Number(lookup.storageQtyBySkuAndGroup?.get(getStorageQtyKey(normalizedSku, 'MOB')) || 0) +
+    Number(lookup.storageQtyBySkuAndGroup?.get(getStorageQtyKey(normalizedSku, 'OI')) || 0)
+
+  return mobOiQty || Number(lookup.storageQtyBySku?.get(normalizedSku) || 0)
+}
+
 function getModelTypeReleaseSource(variant = {}, storingType = '', lookup = {}, fallbackRow = null) {
   const variantId = Number(variant?.id || 0)
   const releaseKey = getVariantReleaseStateKey(variantId, storingType)
@@ -448,14 +478,26 @@ async function fetchAllRows(tableName, selectColumns = '*', orderColumn = 'id') 
 
 async function fetchWarehouseStorageSkuTotals() {
   try {
-    return await fetchAllRows('warehouse_storage_sku_totals', 'sku_id, total_qty', 'sku_id')
+    const rows = await fetchAllRows('warehouse_storage_sku_totals', 'sku_id, group_code, total_qty', 'sku_id')
+    if ((rows || []).some((row) => Object.prototype.hasOwnProperty.call(row, 'group_code'))) {
+      return rows
+    }
   } catch (fetchError) {
     if (!isMissingSchemaObjectError(fetchError)) {
       throw fetchError
     }
-
-    return fetchAllRows('warehouse_storage', 'sku_id, qty', 'created_at')
   }
+
+  const [storageRows, rackRows] = await Promise.all([
+    fetchAllRows('warehouse_storage', 'sku_id, qty, rack_location_id', 'created_at'),
+    fetchAllRows('dir_rack_locations', 'id, group_code', 'id'),
+  ])
+  const rackGroupById = new Map((rackRows || []).map((rack) => [Number(rack.id), normalizeUpper(rack.group_code)]))
+
+  return (storageRows || []).map((row) => ({
+    ...row,
+    group_code: rackGroupById.get(Number(row.rack_location_id)) || '',
+  }))
 }
 
 async function fetchOptionalRows(tableName, selectColumns = '*', orderColumn = 'id') {
@@ -719,7 +761,8 @@ function buildProductKey(row, breakdown, model, variant, brand, productName) {
   return `fallback:${normalizeKey(brand)}:${normalizeKey(productName)}:${modelName}:${variantName}`
 }
 
-export default function ProductDirectoryClient({ embedded = false, activeSection = 'directory', canManage = true }) {
+export default function ProductDirectoryClient({ embedded = false, activeSection = 'directory', canManage = true, lockedGroup = '' }) {
+  const lockedProductGroup = ['MOB', 'OI'].includes(normalizeUpper(lockedGroup)) ? normalizeUpper(lockedGroup) : ''
   const [packingRows, setPackingRows] = useState([])
   const [inboundRows, setInboundRows] = useState([])
   const [breakdownRows, setBreakdownRows] = useState([])
@@ -734,7 +777,7 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
   const [error, setError] = useState('')
   const [isAdminUser, setIsAdminUser] = useState(false)
   const [filters, setFilters] = useState({
-    type: 'all',
+    type: lockedProductGroup || 'all',
     viewMode: 'grn',
     grn: '',
     brand: '',
@@ -762,6 +805,16 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
   const [mergeEditor, setMergeEditor] = useState(null)
   const [mergeTargetVariantId, setMergeTargetVariantId] = useState('')
   const [confirmDialog, setConfirmDialog] = useState(null)
+
+  useEffect(() => {
+    if (!lockedProductGroup) return
+    const timer = window.setTimeout(() => {
+      setFilters((prev) => ({ ...prev, type: lockedProductGroup }))
+      setSelectedProductKeys([])
+      setCurrentPage(1)
+    }, 0)
+    return () => window.clearTimeout(timer)
+  }, [lockedProductGroup])
 
   useEffect(() => {
     async function loadData() {
@@ -826,6 +879,7 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
     const splitAssignmentByDetailKey = new Map()
     const splitSourceVariantIds = new Set()
     const storageQtyBySku = new Map()
+    const storageQtyBySkuAndGroup = new Map()
     const variantReleaseStateByKey = new Map()
     const variantById = getMapById(productVariants)
     const variantBySku = new Map()
@@ -840,6 +894,7 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
       if (!sku) return
 
       const qty = Number(entry.total_qty ?? entry.qty ?? 0)
+      const groupCode = normalizeUpper(entry.group_code)
       const storageSkuKeys = new Set([sku])
       const canonicalVariant = getCanonicalVariant(variantBySku.get(sku), variantById)
       const canonicalSku = normalizeUpper(canonicalVariant?.variant_code || canonicalVariant?.variant_label)
@@ -847,6 +902,7 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
 
       storageSkuKeys.forEach((storageSku) => {
         storageQtyBySku.set(storageSku, Number(storageQtyBySku.get(storageSku) || 0) + qty)
+        addStorageQty(storageQtyBySkuAndGroup, storageSku, groupCode, qty)
       })
     })
 
@@ -896,6 +952,7 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
       brandByCode: new Map((brands || []).map((brand) => [normalizeUpper(brand.brand_code), brand])),
       categoryById: getMapById(categories),
       storageQtyBySku,
+      storageQtyBySkuAndGroup,
       variantReleaseStateByKey,
     }
   }, [brands, breakdownRows, categories, identityEvents, inboundRows, productModels, productVariantReleaseStates, productVariants, warehouseStorageRows])
@@ -1013,7 +1070,7 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
           releaseHistory: [],
           latestReleasedAt: '',
           latestReleasedBy: '',
-          storageQty: filters.viewMode === 'model' ? Number(lookup.storageQtyBySku.get(normalizedSku) || 0) : 0,
+          storageQty: filters.viewMode === 'model' ? getGroupedStorageQty(lookup, normalizedSku, filters.type) : 0,
           unreleasedQueuedQty: 0,
           earliestDate: '',
           latestDate: '',
@@ -1657,6 +1714,7 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
   }
 
   function setTypeFilter(type) {
+    if (lockedProductGroup) return
     setFilters((prev) => {
       const nextType = prev.type === type && type !== 'all' ? 'all' : type
       return {
@@ -2785,14 +2843,15 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
                 <label style={styles.label}>Product Search</label>
                 <div style={styles.smallToggleStack}>
                   <div style={styles.smallSegmentedControl} role="tablist" aria-label="Product type filter">
-                    {[
+                    {(lockedProductGroup ? [[lockedProductGroup, lockedProductGroup]] : [
                       ['all', 'All'],
                       ['MOB', 'MOB'],
                       ['OI', 'OI'],
-                    ].map(([value, label]) => (
+                    ]).map(([value, label]) => (
                       <button
                         key={value}
                         type="button"
+                        disabled={Boolean(lockedProductGroup)}
                         onClick={() => setTypeFilter(value)}
                         style={{
                           ...styles.smallSegmentedButton,

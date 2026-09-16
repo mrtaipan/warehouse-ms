@@ -96,6 +96,31 @@ function formatMonthLabel(year, month) {
   return new Intl.DateTimeFormat('en-GB', { month: 'long', year: 'numeric' }).format(new Date(Number(year), Number(month) - 1, 1))
 }
 
+function buildLiveTrendChart(series) {
+  if (!series.length) return { area: '', points: '', labels: [] }
+
+  const width = 720
+  const height = 224
+  const paddingX = 52
+  const paddingTop = 24
+  const paddingBottom = 42
+  const maxValue = Math.max(...series.map((item) => item.value), 1)
+  const stepX = series.length > 1 ? (width - paddingX * 2) / (series.length - 1) : 0
+
+  const labels = series.map((item, index) => {
+    const x = series.length === 1 ? width / 2 : paddingX + stepX * index
+    const y = height - paddingBottom - (item.value / maxValue) * (height - paddingTop - paddingBottom)
+    return { ...item, x, y }
+  })
+
+  const points = labels.map((item) => `${item.x},${item.y}`).join(' ')
+  const firstPoint = labels[0]
+  const lastPoint = labels[labels.length - 1]
+  const area = firstPoint && lastPoint ? `${firstPoint.x},${height - paddingBottom} ${points} ${lastPoint.x},${height - paddingBottom}` : ''
+
+  return { area, points, labels }
+}
+
 function getProductOptionLabel(product) {
   if (!product) return ''
   return [product.sku, product.name].filter(Boolean).join(' - ')
@@ -175,6 +200,8 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
   const [credits, setCredits] = useState([])
   const [monthFilter, setMonthFilter] = useState('all')
   const [yearFilter, setYearFilter] = useState('all')
+  const [trendGroup, setTrendGroup] = useState('MONTH')
+  const [hoveredTrendKey, setHoveredTrendKey] = useState('')
   const [selectedRanking, setSelectedRanking] = useState(null)
 
   const canView = access.financialManagementLiveReportingView
@@ -333,39 +360,7 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
     void loadWorkspace()
   }, [])
 
-  const monthOptions = useMemo(() => {
-    const values = Array.from(
-      new Set(
-        sessions
-          .map((item) => {
-            if (!item.session_date) return ''
-            const [year, month] = String(item.session_date).split('-')
-            return year && month ? month : ''
-          })
-          .filter(Boolean)
-      )
-    ).sort((a, b) => Number(a) - Number(b))
-
-    return values.map((value) => ({
-      value,
-      label: new Intl.DateTimeFormat('en-GB', { month: 'long' }).format(new Date(2026, Number(value) - 1, 1)),
-    }))
-  }, [sessions])
-
-  const yearOptions = useMemo(() => {
-    const values = Array.from(
-      new Set(
-        sessions
-          .map((item) => {
-            if (!item.session_date) return ''
-            return String(item.session_date).split('-')[0] || ''
-          })
-          .filter(Boolean)
-      )
-    ).sort((a, b) => Number(b) - Number(a))
-
-    return values.map((value) => ({ value, label: value }))
-  }, [sessions])
+  const periodFilter = monthFilter !== 'all' && yearFilter !== 'all' ? `${yearFilter}-${monthFilter}` : ''
 
   const filteredSessions = useMemo(() => {
     return sessions.filter((item) => {
@@ -411,6 +406,45 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
       .map(([name, amount]) => ({ name, amount }))
       .sort((left, right) => right.amount - left.amount)
   }, [filteredCredits])
+
+  const trendSeries = useMemo(() => {
+    const grouped = new Map()
+
+    filteredSessions.forEach((item) => {
+      const date = new Date(`${item.session_date}T00:00:00`)
+      if (Number.isNaN(date.getTime())) return
+
+      let key = ''
+      let label = ''
+
+      if (trendGroup === 'DAY') {
+        key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+        label = new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short' }).format(date)
+      } else if (trendGroup === 'YEAR') {
+        key = String(date.getFullYear())
+        label = key
+      } else {
+        key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`
+        label = formatMonthLabel(date.getFullYear(), date.getMonth() + 1)
+      }
+
+      const existing = grouped.get(key) || { key, label, value: 0, count: 0 }
+      existing.value += Number(item.gross_amount || 0)
+      existing.count += 1
+      grouped.set(key, existing)
+    })
+
+    return Array.from(grouped.values()).sort((left, right) => left.key.localeCompare(right.key))
+  }, [filteredSessions, trendGroup])
+
+  const trendChart = useMemo(() => {
+    return buildLiveTrendChart(trendSeries)
+  }, [trendSeries])
+
+  const hoveredTrendPoint = useMemo(
+    () => trendChart.labels.find((item) => item.key === hoveredTrendKey) || null,
+    [trendChart.labels, hoveredTrendKey]
+  )
 
   async function handleSubmit(event) {
     event.preventDefault()
@@ -517,13 +551,30 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
       <section className={`${styles.shell} ${mobile ? styles.mobileShell : ''}`.trim()}>
         {!mobile ? (
           <div className={styles.header}>
-            <div />
+            <div className={styles.titleBlock}>
+              <p className={styles.sectionEyebrow}>Arkline</p>
+              <h1 className={styles.title}>Live Reporting</h1>
+            </div>
             <div className={styles.headerActions}>
-              <Link href="/mobile/arkline/live-reporting" className={styles.ghostButton}>
-                Live Entry
-              </Link>
-              <Link href="/mobile/arkline/live-reporting/history" className={styles.primaryButton}>
-                History
+              <input
+                type="month"
+                className={styles.periodInput}
+                value={periodFilter}
+                onChange={(event) => {
+                  const value = event.target.value
+                  if (!value) {
+                    setMonthFilter('all')
+                    setYearFilter('all')
+                    return
+                  }
+                  const [year, month] = value.split('-')
+                  setYearFilter(year || 'all')
+                  setMonthFilter(month || 'all')
+                }}
+                aria-label="Filter live reporting period"
+              />
+              <Link href="/mobile/arkline/live-reporting" className={styles.iconLinkButton} aria-label="Open live entry">
+                <AddIcon />
               </Link>
             </div>
           </div>
@@ -539,79 +590,133 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
         ) : (
           <>
             {!mobile ? (
-              <div className={styles.dashboardTop}>
-                <section className={styles.metricCard}>
-                  <div className={styles.metricHead}>
-                    <div>
-                      <p className={styles.sectionEyebrow}>Filter</p>
-                      <h2 className={styles.sectionTitle}>Dashboard</h2>
-                    </div>
+              <div className={styles.reportingColumns}>
+              <section className={styles.liveTrendPanel}>
+                <div className={styles.sectionHead}>
+                  <div>
+                    <h2 className={styles.sectionTitle}>GMV Trend</h2>
                   </div>
-
-                  <div className={styles.filterRow}>
-                    <div className={styles.field}>
-                      <label className={styles.label}>Month</label>
-                      <select className={styles.select} value={monthFilter} onChange={(event) => setMonthFilter(event.target.value)}>
-                        <option value="all">All months</option>
-                        {monthOptions.map((item) => (
-                          <option key={item.value} value={item.value}>
-                            {item.label}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-
-                    <div className={styles.field}>
-                      <label className={styles.label}>Year</label>
-                      <select className={styles.select} value={yearFilter} onChange={(event) => setYearFilter(event.target.value)}>
-                        <option value="all">All years</option>
-                        {yearOptions.map((item) => (
-                          <option key={item.value} value={item.value}>
-                            {item.label}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
+                  <div className={styles.segmentedControl}>
+                    {['DAY', 'MONTH', 'YEAR'].map((item) => (
+                      <button
+                        key={item}
+                        type="button"
+                        className={`${styles.segmentButton} ${trendGroup === item ? styles.segmentButtonActive : ''}`.trim()}
+                        onClick={() => setTrendGroup(item)}
+                        aria-pressed={trendGroup === item}
+                      >
+                        {item === 'DAY' ? 'Day' : item === 'MONTH' ? 'Month' : 'Year'}
+                      </button>
+                    ))}
                   </div>
+                </div>
 
-                  <div className={styles.totalCard}>
+                <div className={styles.liveTrendChartWrap}>
+                  {!trendChart.labels.length ? (
+                    <div className={styles.emptyState}>No GMV trend data found for the selected period.</div>
+                  ) : (
+                    <svg viewBox="0 0 720 224" className={styles.liveTrendChart} aria-label="Live GMV trend chart">
+                      {[40, 78, 116, 154].map((y) => (
+                        <line key={y} x1="52" y1={y} x2="668" y2={y} className={styles.liveTrendGridLine} />
+                      ))}
+                      <polygon points={trendChart.area} className={styles.liveTrendArea} />
+                      <polyline points={trendChart.points} className={styles.liveTrendLine} />
+                      {trendChart.labels.map((point, index) => {
+                        const labelStep = Math.max(Math.ceil(trendChart.labels.length / 6), 1)
+                        const shouldShowLabel = index === 0 || index === trendChart.labels.length - 1 || index % labelStep === 0
+
+                        return (
+                          <g key={point.key} onMouseEnter={() => setHoveredTrendKey(point.key)} onMouseLeave={() => setHoveredTrendKey('')}>
+                            <circle cx={point.x} cy={point.y} r="16" className={styles.liveTrendPointHit} />
+                            <circle cx={point.x} cy={point.y} r={hoveredTrendKey === point.key ? '7' : '5'} className={styles.liveTrendPoint} />
+                            {shouldShowLabel ? (
+                              <text x={point.x} y="204" textAnchor="middle" className={styles.liveTrendAxisLabel}>
+                                {point.label}
+                              </text>
+                            ) : null}
+                          </g>
+                        )
+                      })}
+                      {hoveredTrendPoint ? (
+                        <g>
+                          <rect
+                            x={Math.max(12, Math.min(720 - 154, hoveredTrendPoint.x - 77))}
+                            y={Math.max(12, hoveredTrendPoint.y - 42)}
+                            width="154"
+                            height="32"
+                            rx="14"
+                            className={styles.liveTrendTooltipBox}
+                          />
+                          <text
+                            x={Math.max(12, Math.min(720 - 154, hoveredTrendPoint.x - 77)) + 77}
+                            y={Math.max(12, hoveredTrendPoint.y - 42) + 21}
+                            textAnchor="middle"
+                            className={styles.liveTrendTooltipText}
+                          >
+                            {formatCurrency(hoveredTrendPoint.value)}
+                          </text>
+                        </g>
+                      ) : null}
+                    </svg>
+                  )}
+                </div>
+              </section>
+              <section className={`${styles.panelCard} ${styles.rankingPanel}`.trim()}>
+                <div className={styles.leaderboardHead}>
+                  <h2 className={styles.sectionTitle}>Leaderboard</h2>
+                  <div className={styles.totalPill}>
                     <span>Total Nominal</span>
                     <strong>{formatCurrency(totalNominal)}</strong>
                   </div>
-                </section>
+                </div>
 
-                <section className={styles.panelCard}>
-                  <div className={styles.sectionHead}>
-                    <div>
-                      <p className={styles.sectionEyebrow}>Ranking</p>
-                      <h2 className={styles.sectionTitle}>User Total</h2>
-                    </div>
-                  </div>
-
-                  {!ranking.length ? (
-                    <div className={styles.emptyState}>No ranking data for this period.</div>
-                  ) : (
-                    <div className={styles.rankingList}>
-                      {ranking.map((item, index) => (
-                        <div key={item.name} className={styles.rankingRow}>
-                          <span className={styles.rankIndex}>{index + 1}</span>
-                          <div className={styles.rankingCopy}>
-                            <strong>{item.name}</strong>
-                            <span>{formatCurrency(item.amount)}</span>
-                          </div>
-                          <button type="button" className={styles.inlineAction} onClick={() => setSelectedRanking(item.name)}>
-                            View Detail
+                {!ranking.length ? (
+                  <div className={styles.emptyState}>No host live data found for the selected period.</div>
+                ) : (
+                  <>
+                    <div className={styles.podium} aria-label="Top three hosts">
+                      {[1, 0, 2].filter((index) => ranking[index]).map((index) => {
+                        const item = ranking[index]
+                        return (
+                          <button
+                            key={item.name}
+                            type="button"
+                            className={`${styles.podiumHost} ${index === 0 ? styles.podiumWinner : ''}`.trim()}
+                            style={{ '--podium-height': `${[136, 104, 80][index]}px` }}
+                            onClick={() => setSelectedRanking(item.name)}
+                            aria-label={`Rank ${index + 1}: ${item.name}, ${formatCurrency(item.amount)}. View detail`}
+                            title={`View ${item.name}'s sessions`}
+                          >
+                            <strong className={styles.podiumName}>{item.name}</strong>
+                            <span className={styles.podiumAmount}>{formatCurrency(item.amount)}</span>
+                            <span className={styles.podiumStep}><span>{String(index + 1).padStart(2, '0')}</span></span>
                           </button>
-                        </div>
+                        )
+                      })}
+                    </div>
+                    <div className={styles.leaderboardList}>
+                      {ranking.slice(3).map((item, index) => (
+                        <button
+                          key={item.name}
+                          type="button"
+                          className={styles.leaderboardRow}
+                          onClick={() => setSelectedRanking(item.name)}
+                          title={`View ${item.name}'s sessions`}
+                        >
+                          <span className={styles.leaderboardRank}>{String(index + 4).padStart(2, '0')}</span>
+                          <span className={styles.leaderboardName}>{item.name}</span>
+                          <strong className={styles.leaderboardAmount}>{formatCurrency(item.amount)}</strong>
+                        </button>
                       ))}
                     </div>
-                  )}
-                </section>
+                  </>
+                )}
+              </section>
               </div>
             ) : null}
 
-          <section className={`${styles.formCard} ${mobile ? styles.mobileFormCard : ''}`.trim()}>
-            {mobile ? (
+          {mobile ? (
+            <section className={`${styles.formCard} ${styles.mobileFormCard}`.trim()}>
               <div className={styles.mobilePanelHead}>
                 <div>
                   <p className={styles.sectionEyebrow}>Arkline</p>
@@ -632,16 +737,6 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
                   )}
                 </div>
               </div>
-            ) : null}
-
-            {!mobile ? (
-              <div className={styles.sectionHead}>
-                <div>
-                  <p className={styles.sectionEyebrow}>Live GMV</p>
-                  <h2 className={styles.title}>Session Entry</h2>
-                  </div>
-                </div>
-              ) : null}
 
               {mobileView === 'history' ? (
                 <div className={styles.form}>
@@ -826,6 +921,7 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
               </form>
               )}
             </section>
+          ) : null}
 
           </>
         )}

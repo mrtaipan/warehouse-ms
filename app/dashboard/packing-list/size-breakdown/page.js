@@ -9,7 +9,7 @@ import {
   resolveProductCatalogIdentity,
 } from '@/utils/catalog-identity'
 import { createClient } from '@/utils/supabase/browser'
-import { ADMIN_EMAIL, hasPermission, resolveRole } from '@/utils/permissions'
+import { ADMIN_EMAIL, getRoleLockedGroup, hasPermission, resolveRole } from '@/utils/permissions'
 import { getProfileByAuthenticatedUser } from '@/utils/user-profiles'
 
 const supabase = createClient()
@@ -91,6 +91,10 @@ const styles = {
     color: '#0f172a',
     borderColor: '#cbd5e1',
     boxShadow: '0 6px 14px rgba(15, 23, 42, 0.08)',
+  },
+  segmentedButtonLocked: {
+    cursor: 'default',
+    opacity: 1,
   },
   toolIconButton: {
     width: '40px',
@@ -2249,6 +2253,13 @@ function getPdfGroupLabel(qtyMode = 'all') {
   return 'ALL'
 }
 
+function getPackingLockedQtyMode(role) {
+  const lockedGroup = getRoleLockedGroup(role)
+  if (lockedGroup === 'MOB') return 'mob'
+  if (lockedGroup === 'OI') return 'oi'
+  return ''
+}
+
 function getPdfItemNameWithCode(itemName = '', variantCode = '') {
   const cleanItemName = formatPdfValue(itemName)
   const cleanVariantCode = String(variantCode || '').trim()
@@ -3394,6 +3405,7 @@ export default function PackingListSizeBreakdownPage() {
   const [pageMode, setPageMode] = useState('all')
   const [selectedMultipageKey, setSelectedMultipageKey] = useState('')
   const [qtyMode, setQtyMode] = useState('all')
+  const [lockedPackingQtyMode, setLockedPackingQtyMode] = useState('')
   const [editSection, setEditSection] = useState('breakdown')
   const [baselineSignature, setBaselineSignature] = useState('')
   const [plRows, setPlRows] = useState([])
@@ -3438,6 +3450,7 @@ export default function PackingListSizeBreakdownPage() {
       const { data: profile } = await getProfileByAuthenticatedUser(supabase, user, 'role')
       const emailAdmin = user.email?.toLowerCase() === ADMIN_EMAIL
       const role = resolveRole(profile?.role, emailAdmin)
+      const nextLockedPackingQtyMode = getPackingLockedQtyMode(role)
       const isAdminUser = emailAdmin || role === 'admin'
       const { data: rolePermissionRows } = isAdminUser
         ? { data: [] }
@@ -3445,6 +3458,10 @@ export default function PackingListSizeBreakdownPage() {
       const rolePermissions = (rolePermissionRows || []).map((item) => item.permission_code).filter(Boolean)
       const nextCanEditSizeBreakdown = hasPermission(rolePermissions, 'packing.size_breakdown.edit', isAdminUser)
       setCanEditSizeBreakdown(nextCanEditSizeBreakdown)
+      setLockedPackingQtyMode(nextLockedPackingQtyMode)
+      if (nextLockedPackingQtyMode) {
+        setQtyMode(nextLockedPackingQtyMode)
+      }
 
       if (role === 'packing_staff' && nextCanEditSizeBreakdown && initialGrn) {
         router.replace(`/mobile/packing-list/item-storing?grn=${encodeURIComponent(initialGrn)}`)
@@ -6172,6 +6189,13 @@ export default function PackingListSizeBreakdownPage() {
       : Boolean(payload.modelRows?.length)
   })
   const selectedKoliPrintRows = packingKoliRows.filter((row) => selectedKoliPrintKeys.includes(row.key))
+  const qtyModeOptions = lockedPackingQtyMode
+    ? [[lockedPackingQtyMode, lockedPackingQtyMode === 'mob' ? 'MOB' : 'OI']]
+    : [
+        ['all', 'All'],
+        ['mob', 'MOB'],
+        ['oi', 'OI'],
+      ]
   const visibleKoliPrintKeys = packingKoliRows.map((row) => row.key)
   const allVisibleKoliSelected = visibleKoliPrintKeys.length > 0 && visibleKoliPrintKeys.every((key) => selectedKoliPrintKeys.includes(key))
   const activePrintGrnNumber = pageMode === 'multipage'
@@ -6620,18 +6644,16 @@ export default function PackingListSizeBreakdownPage() {
                 </button>
               </div>
               <div style={styles.segmentedToggle} role="tablist" aria-label="Qty allocation mode">
-                {[
-                  ['all', 'All'],
-                  ['mob', 'MOB'],
-                  ['oi', 'OI'],
-                ].map(([mode, label]) => (
+                {qtyModeOptions.map(([mode, label]) => (
                   <button
                     key={mode}
                     type="button"
-                    onClick={() => setQtyMode(mode)}
+                    disabled={Boolean(lockedPackingQtyMode)}
+                    onClick={() => setQtyMode(lockedPackingQtyMode || mode)}
                     style={{
                       ...styles.segmentedButton,
                       ...(qtyMode === mode ? styles.segmentedButtonActive : {}),
+                      ...(lockedPackingQtyMode ? styles.segmentedButtonLocked : {}),
                     }}
                   >
                     {label}

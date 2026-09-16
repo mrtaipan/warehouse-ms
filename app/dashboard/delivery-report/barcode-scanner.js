@@ -30,6 +30,11 @@ const GROUP_STYLE_MAP = {
   },
 }
 
+function normalizeLockedGroup(value) {
+  const normalized = String(value || '').trim().toUpperCase()
+  return DELIVERY_GROUPS.includes(normalized) ? normalized : ''
+}
+
 function beep(frequency, duration = 80) {
   try {
     const AudioContext = window.AudioContext || window.webkitAudioContext
@@ -49,12 +54,14 @@ function beep(frequency, duration = 80) {
   } catch {}
 }
 
-export default function BarcodeScanner() {
+export default function BarcodeScanner({ lockedGroup: lockedGroupProp = '' }) {
   const supabase = useMemo(() => createClient(), [])
   const inputRef = useRef(null)
+  const lockedGroup = useMemo(() => normalizeLockedGroup(lockedGroupProp), [lockedGroupProp])
+  const deliveryGroups = useMemo(() => (lockedGroup ? [lockedGroup] : DELIVERY_GROUPS), [lockedGroup])
   const [phase, setPhase] = useState('PACKING')
   const [team, setTeam] = useState('TIM 2')
-  const [group, setGroup] = useState('MOB')
+  const [group, setGroup] = useState(lockedGroup || 'MOB')
   const [barcode, setBarcode] = useState('')
   const [rows, setRows] = useState([])
   const [rules, setRules] = useState([])
@@ -117,9 +124,9 @@ export default function BarcodeScanner() {
   }
 
   const counters = useMemo(() => {
-    const labels = phase === 'PACKING' ? ['TIM 1', 'TIM 2', 'TIM 3'] : DELIVERY_GROUPS
+    const labels = phase === 'PACKING' ? ['TIM 1', 'TIM 2', 'TIM 3'] : deliveryGroups
     return labels.map((label) => rows.filter((row) => row.phase === phase && (phase === 'PACKING' ? row.info : row.group) === label).length)
-  }, [phase, rows])
+  }, [deliveryGroups, phase, rows])
 
   async function getActorDisplayName() {
     const {
@@ -272,9 +279,9 @@ export default function BarcodeScanner() {
             </div>
             <h3 className={styles.sectionLabel}>{phase === 'PACKING' ? 'SELECT TEAM' : 'SELECT GROUP'}</h3>
             <div className={styles.choiceGrid}>
-              {(phase === 'PACKING' ? PACKING_TEAMS : DELIVERY_GROUPS).map((item) => {
+              {(phase === 'PACKING' ? PACKING_TEAMS : deliveryGroups).map((item) => {
                 const active = phase === 'PACKING' ? team === item : group === item
-                return <button disabled={busy} key={item} onClick={() => phase === 'PACKING' ? setTeam(item) : setGroup(item)} className={`${active ? styles.selectedChoice : ''} ${phase === 'DELIVERY' ? groupChoiceClass(item) : ''}`}><span>{item}</span><i /></button>
+                return <button disabled={busy || (phase === 'DELIVERY' && Boolean(lockedGroup))} key={item} onClick={() => phase === 'PACKING' ? setTeam(item) : setGroup(lockedGroup || item)} className={`${active ? styles.selectedChoice : ''} ${phase === 'DELIVERY' ? groupChoiceClass(item) : ''}`}><span>{item}</span><i /></button>
               })}
             </div>
 
@@ -298,7 +305,7 @@ export default function BarcodeScanner() {
           <div className={styles.panelHeader}><h2>MONITORING</h2><span>Live summary & scan queue</span></div>
           <div className={styles.panelBody}>
             <div className={styles.scannerStats}>
-              {(phase === 'PACKING' ? ['TIM 1', 'TIM 2', 'TIM 3'] : DELIVERY_GROUPS).map((label, index) => <div key={label} className={phase === 'DELIVERY' ? groupStatClass(label) : ''}><span>Qty {label}</span><strong>{counters[index]}</strong></div>)}
+              {(phase === 'PACKING' ? ['TIM 1', 'TIM 2', 'TIM 3'] : deliveryGroups).map((label, index) => <div key={label} className={phase === 'DELIVERY' ? groupStatClass(label) : ''}><span>Qty {label}</span><strong>{counters[index]}</strong></div>)}
               <div><span>Total Scan</span><strong>{rows.length}</strong></div>
             </div>
             <div className={styles.queueCard}>

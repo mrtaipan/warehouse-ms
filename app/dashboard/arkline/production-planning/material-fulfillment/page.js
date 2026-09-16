@@ -1,6 +1,13 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
+import {
+  buildArklinePoId,
+  buildUniqueArklinePoId,
+  getArklineIssueDateCode,
+  getArklinePoSequence,
+  getNextArklinePoSequence,
+} from '@/utils/arkline-po-number'
 import { createClient } from '@/utils/supabase/browser'
 import shellStyles from '../../arkline.module.css'
 import styles from '../production-planning.module.css'
@@ -9,8 +16,8 @@ const supabase = createClient()
 
 const SIZE_OPTIONS = ['XS', 'S', 'M', 'L', 'XL', 'XXL']
 const NO_PO_VALUE = '__NO_PO__'
-const NO_PO_MATERIAL_SOURCE_CODE = '00'
 const ORDERED_AS_OPTIONS = ['PT ANUGERAH RETAIL KARYA', 'CV MITRA KARSA GARMINDO']
+const MATERIAL_TYPE_OPTIONS = ['FABRIC', 'ACCESSORIES']
 const SIZE_SORT_ORDER = SIZE_OPTIONS.reduce((accumulator, size, index) => {
   accumulator[size] = index
   return accumulator
@@ -39,12 +46,14 @@ function createEmptyMaterialDraft() {
   return {
     materialName: '',
     unit: 'PCS',
+    materialType: 'ACCESSORIES',
   }
 }
 
 function createEmptySupplierDraft() {
   return {
     supplierCode: '',
+    initial: '',
     supplierName: '',
     contactPerson: '',
     phone: '',
@@ -62,6 +71,10 @@ function isMissingColumnError(error, columnName) {
   const normalizedColumn = String(columnName || '').trim().toLowerCase()
   const message = `${error?.message || ''} ${error?.details || ''} ${error?.hint || ''}`.toLowerCase()
   return Boolean(normalizedColumn && message.includes(normalizedColumn) && message.includes('column'))
+}
+
+function normalizeMaterialType(value) {
+  return String(value || '').trim().toUpperCase()
 }
 
 function formatQty(value) {
@@ -93,6 +106,7 @@ function normalizeMaterialRequirement(row) {
     skuInduk: String(row?.sku_induk || '').trim().toUpperCase(),
     materialId: String(row?.material_id || '').trim(),
     materialNameSnapshot: String(row?.material_name_snapshot || '').trim().toUpperCase(),
+    materialType: normalizeMaterialType(row?.material_type),
     sizeVariant: String(row?.size_variant || '').trim().toUpperCase(),
     colorVariant: String(row?.color_variant || '').trim().toUpperCase(),
     unit: String(row?.unit || 'PCS').trim().toUpperCase(),
@@ -144,10 +158,36 @@ async function generateSupplierCode() {
   return `SUPP-${String(nextNumber).padStart(3, '0')}`
 }
 
+async function loadArklineMaterialRows({ materialIds = [], activeOnly = false } = {}) {
+  const normalizedIds = Array.from(new Set((materialIds || []).map((id) => String(id || '').trim()).filter(Boolean)))
+  const createQuery = (selectColumns) => {
+    let query = supabase.from('arkline_dir_materials').select(selectColumns)
+
+    if (normalizedIds.length) {
+      query = query.in('id', normalizedIds)
+    }
+
+    if (activeOnly) {
+      query = query.eq('is_active', true).order('material_name', { ascending: true })
+    }
+
+    return query
+  }
+
+  let response = await createQuery('id, material_name, material_type, unit, is_active')
+
+  if (response.error && isMissingColumnError(response.error, 'material_type')) {
+    response = await createQuery('id, material_name, unit, is_active')
+  }
+
+  return response
+}
+
 function normalizeMaterialMaster(row) {
   return {
     id: String(row?.id || '').trim(),
     materialName: String(row?.material_name || '').trim().toUpperCase(),
+    materialType: normalizeMaterialType(row?.material_type),
     unit: String(row?.unit || 'PCS').trim().toUpperCase(),
     isActive: row?.is_active !== false,
   }
@@ -176,6 +216,7 @@ function normalizeBomLine(row) {
     kategoriPengadaan: String(row?.kategori_pengadaan || '').trim().toUpperCase(),
     materialId: String(row?.material_id || row?.material?.id || '').trim(),
     materialName: String(row?.material_name || row?.material?.material_name || '').trim().toUpperCase(),
+    materialType: normalizeMaterialType(row?.material_type || row?.material?.material_type),
     unit: String(row?.unit || row?.material?.unit || 'PCS').trim().toUpperCase(),
     sizeVariant: String(row?.size_variant || '').trim().toUpperCase(),
     colorVariant: String(row?.color_variant || '').trim().toUpperCase(),
@@ -324,8 +365,6 @@ function buildMultilineHtml(value) {
     .join('<br />')
 }
 
-const ROMAN_MONTHS = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X', 'XI', 'XII']
-
 function getMaterialDraftSourcePoIds(lines) {
   return Array.from(
     new Set(
@@ -354,75 +393,40 @@ function getSourcePoIdsFromSources(sources) {
   )
 }
 
-function extractGarmentPoSequence(poId) {
-  const match = String(poId || '')
-    .trim()
-    .toUpperCase()
-    .match(/^PO-([^-]+)-/)
-  return match?.[1] || ''
+function getMaterialDraftMaterialType(lines) {
+  return lines.some((line) => normalizeMaterialType(line?.materialType) === 'FABRIC') ? 'FABRIC' : ''
 }
 
-function getMaterialPoDateCode(date = new Date()) {
-  const dayCode = String(date.getDate()).padStart(2, '0')
-  const monthCode = ROMAN_MONTHS[date.getMonth()] || ''
-  const yearCode = String(date.getFullYear())
-  return `${dayCode}${monthCode}${yearCode}`
+function getMaterialDraftMethod(lines, poMeta = {}) {
+  const sourcePoIds = getMaterialDraftSourcePoIds(lines)
+  const linkedPo = sourcePoIds[0] ? poMeta[sourcePoIds[0]] : null
+  return linkedPo?.method || 'CMT'
 }
 
-function escapeRegExp(value) {
-  return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-}
-
-function getNextMaterialPoSequence(existingNumbers, prefixes) {
-  const normalizedPrefixes = (Array.isArray(prefixes) ? prefixes : [prefixes])
-    .map((prefix) => String(prefix || '').trim().toUpperCase())
-    .filter(Boolean)
-  const usedNumbers = existingNumbers.reduce((set, value) => {
-    const normalizedValue = String(value || '').trim().toUpperCase()
-    const match = normalizedPrefixes
-      .map((prefix) => normalizedValue.match(new RegExp(`^${escapeRegExp(prefix)}-(\\d+)$`)))
-      .find(Boolean)
-
-    if (match?.[1]) {
-      set.add(Number(match[1]))
-    }
-
-    return set
-  }, new Set())
-
-  let nextNumber = 1
-  while (usedNumbers.has(nextNumber)) {
-    nextNumber += 1
-  }
-
-  return String(nextNumber).padStart(3, '0')
-}
-
-function buildMaterialPoNumber(lines, existingNumbers, date = new Date()) {
+function buildMaterialPoNumber(lines, existingNumbers, { includePpn = true, poMeta = {}, date = new Date() } = {}) {
   const sourcePoIds = getMaterialDraftSourcePoIds(lines)
 
   if (sourcePoIds.length > 1) {
     throw new Error('Material PO draft cannot mix multiple garment POs. Please keep one garment PO per material PO draft.')
   }
 
-  const dateCode = getMaterialPoDateCode(date)
-  let sourceCode = NO_PO_MATERIAL_SOURCE_CODE
+  const sourceSequence = sourcePoIds.length ? getArklinePoSequence(sourcePoIds[0]) : null
 
-  if (sourcePoIds.length === 1) {
-    const garmentPoSequence = extractGarmentPoSequence(sourcePoIds[0])
-
-    if (!garmentPoSequence) {
-      throw new Error('Failed to read the garment PO number format for this material PO draft.')
-    }
-
-    sourceCode = garmentPoSequence
+  if (sourcePoIds.length === 1 && !sourceSequence) {
+    throw new Error('Failed to read the garment PO number format for this material PO draft.')
   }
 
-  const prefix = `MPO-${sourceCode}-${dateCode}`
-  const sequencePrefixes =
-    sourceCode === NO_PO_MATERIAL_SOURCE_CODE ? [prefix, `MPO-FREE-${dateCode}`] : [prefix]
+  const basePoNumber = buildArklinePoId({
+    sequence: sourceSequence || getNextArklinePoSequence(existingNumbers),
+    includePpn,
+    method: getMaterialDraftMethod(lines, poMeta),
+    documentType: 'MATERIAL',
+    materialType: getMaterialDraftMaterialType(lines),
+    flowCode: sourcePoIds.length ? undefined : 'SA',
+    suffix: getArklineIssueDateCode(date),
+  })
 
-  return `${prefix}-${getNextMaterialPoSequence(existingNumbers, sequencePrefixes)}`
+  return buildUniqueArklinePoId(basePoNumber, existingNumbers)
 }
 
 async function loadBomLinesForProduct(product) {
@@ -466,10 +470,7 @@ async function loadBomLinesForProduct(product) {
   let materialsById = {}
 
   if (materialIds.length) {
-    const { data: materialRows, error: materialError } = await supabase
-      .from('arkline_dir_materials')
-      .select('id, material_name, unit, is_active')
-      .in('id', materialIds)
+    const { data: materialRows, error: materialError } = await loadArklineMaterialRows({ materialIds })
 
     if (materialError) {
       throw new Error(materialError.message)
@@ -817,6 +818,7 @@ export default function ArklineMaterialFulfillmentPage() {
   const [requirementWarnings, setRequirementWarnings] = useState([])
   const [requirements, setRequirements] = useState([])
   const [poOptions, setPoOptions] = useState([])
+  const [poMeta, setPoMeta] = useState({})
   const [suppliers, setSuppliers] = useState([])
   const [materialOptions, setMaterialOptions] = useState([])
   const [materialPoNumbers, setMaterialPoNumbers] = useState([])
@@ -846,13 +848,14 @@ export default function ArklineMaterialFulfillmentPage() {
         const normalizedRequirements = (materialRows || []).map(normalizeMaterialRequirement)
         const itemIds = Array.from(new Set(normalizedRequirements.map((item) => item.arklinePoItemId).filter(Boolean)))
 
-        const [poResponse, itemResponse, supplierResponse, materialMasterResponse, materialPoResponse] = await Promise.all([
+        const [poResponse, allPoResponse, itemResponse, supplierResponse, materialMasterResponse, materialPoResponse] = await Promise.all([
           supabase
             .from('arkline_pos')
             .select('po_id, supplier_name, request_delivery_date, method, status')
             .eq('method', 'CMT')
             .eq('status', 'Initiated')
             .order('po_id', { ascending: true }),
+          supabase.from('arkline_pos').select('po_id, method').not('po_id', 'is', null),
           itemIds.length
             ? supabase.from('arkline_po_items').select('id, nama_produk, kategori_produk').in('id', itemIds)
             : Promise.resolve({ data: [], error: null }),
@@ -863,11 +866,12 @@ export default function ArklineMaterialFulfillmentPage() {
             .eq('supplier_level', 'MATERIAL')
             .eq('is_active', true)
             .order('supplier_name', { ascending: true }),
-          supabase.from('arkline_dir_materials').select('id, material_name, unit, is_active').eq('is_active', true).order('material_name', { ascending: true }),
+          loadArklineMaterialRows({ activeOnly: true }),
           supabase.from('arkline_po_material_ordered').select('material_po_number'),
         ])
 
         if (poResponse.error) throw new Error(poResponse.error.message)
+        if (allPoResponse.error) throw new Error(allPoResponse.error.message)
         if (itemResponse.error) throw new Error(itemResponse.error.message)
         if (supplierResponse.error) throw new Error(supplierResponse.error.message)
         if (materialMasterResponse.error) throw new Error(materialMasterResponse.error.message)
@@ -887,30 +891,42 @@ export default function ArklineMaterialFulfillmentPage() {
           return accumulator
         }, {})
 
-        const enrichedRequirements = normalizedRequirements
-          .filter((item) => nextPoMeta[item.poId])
-          .map((item) => ({
-            ...item,
-            productName: itemMetaById[item.arklinePoItemId]?.productName || '',
-            categoryName: itemMetaById[item.arklinePoItemId]?.categoryName || '',
-          }))
-
         const normalizedSuppliers = (supplierResponse.data || [])
           .map(normalizeSupplier)
           .filter((item) => item.isActive && item.supplierName)
         const normalizedMaterials = (materialMasterResponse.data || [])
           .map(normalizeMaterialMaster)
           .filter((item) => item.isActive && item.materialName)
+        const materialMetaById = normalizedMaterials.reduce((accumulator, item) => {
+          accumulator[item.id] = item
+          return accumulator
+        }, {})
+        const enrichedRequirements = normalizedRequirements
+          .filter((item) => nextPoMeta[item.poId])
+          .map((item) => ({
+            ...item,
+            materialType: item.materialType || materialMetaById[item.materialId]?.materialType || '',
+            productName: itemMetaById[item.arklinePoItemId]?.productName || '',
+            categoryName: itemMetaById[item.arklinePoItemId]?.categoryName || '',
+          }))
+        const allGarmentPoNumbers = (allPoResponse.data || [])
+          .map((item) => String(item.po_id || '').trim().toUpperCase())
+          .filter(Boolean)
+        const materialNumberRows = (materialPoResponse.data || [])
+          .map((item) => String(item.material_po_number || '').trim().toUpperCase())
+          .filter(Boolean)
 
         setRequirements(enrichedRequirements)
         setPoOptions(normalizedPoOptions)
+        setPoMeta(nextPoMeta)
         setSuppliers(normalizedSuppliers)
         setMaterialOptions(normalizedMaterials)
-        setMaterialPoNumbers((materialPoResponse.data || []).map((item) => String(item.material_po_number || '').trim().toUpperCase()).filter(Boolean))
+        setMaterialPoNumbers([...allGarmentPoNumbers, ...materialNumberRows])
         setPoFilter((current) => (current === NO_PO_VALUE || nextPoMeta[current] ? current : NO_PO_VALUE))
       } catch (loadError) {
         setRequirements([])
         setPoOptions([])
+        setPoMeta({})
         setSuppliers([])
         setMaterialOptions([])
         setMaterialPoNumbers([])
@@ -957,11 +973,14 @@ export default function ArklineMaterialFulfillmentPage() {
 
   const materialDraftPoNumber = useMemo(() => {
     try {
-      return savedMaterialPoNumber || (orderLines.length ? buildMaterialPoNumber(orderLines, materialPoNumbers) : '')
+      return savedMaterialPoNumber || (orderLines.length ? buildMaterialPoNumber(orderLines, materialPoNumbers, {
+        includePpn: orderHeader.includePpn !== false,
+        poMeta,
+      }) : '')
     } catch {
       return ''
     }
-  }, [materialPoNumbers, orderLines, savedMaterialPoNumber])
+  }, [materialPoNumbers, orderHeader.includePpn, orderLines, poMeta, savedMaterialPoNumber])
 
   function markMaterialDraftUnsaved(options = {}) {
     setIsMaterialPoSaved(false)
@@ -1014,7 +1033,12 @@ export default function ArklineMaterialFulfillmentPage() {
   }
 
   function updateSupplierDraft(name, value) {
-    const nextValue = name === 'phone' ? value.replace(/\D/g, '') : value.toUpperCase()
+    const nextValue =
+      name === 'phone'
+        ? value.replace(/\D/g, '')
+        : name === 'initial'
+          ? value.replace(/[^a-zA-Z]/g, '').toUpperCase().slice(0, 3)
+          : value.toUpperCase()
     setSupplierDraft((current) => ({ ...current, [name]: nextValue }))
   }
 
@@ -1026,6 +1050,11 @@ export default function ArklineMaterialFulfillmentPage() {
       return
     }
 
+    if (!/^[A-Z]{3}$/.test(supplierDraft.initial.trim().toUpperCase())) {
+      setError('Supplier initial is required and must be exactly 3 letters.')
+      return
+    }
+
     setSavingSupplier(true)
 
     try {
@@ -1033,6 +1062,7 @@ export default function ArklineMaterialFulfillmentPage() {
         .from('dir_suppliers')
         .insert({
           supplier_code: supplierDraft.supplierCode.trim().toUpperCase(),
+          initial: supplierDraft.initial.trim().toUpperCase(),
           supplier_name: supplierDraft.supplierName.trim().toUpperCase(),
           group: 'ARKLINE',
           supplier_level: 'MATERIAL',
@@ -1045,6 +1075,9 @@ export default function ArklineMaterialFulfillmentPage() {
         .single()
 
       if (insertError) {
+        if (isMissingColumnError(insertError, 'initial')) {
+          throw new Error('Column initial belum ada di dir_suppliers. Tambahkan kolom initial text dulu.')
+        }
         throw new Error(insertError.message)
       }
 
@@ -1085,8 +1118,15 @@ export default function ArklineMaterialFulfillmentPage() {
   async function handleSaveQuickMaterial() {
     setError('')
 
+    const normalizedMaterialType = normalizeMaterialType(materialDraft.materialType)
+
     if (!materialDraft.materialName.trim()) {
       setError('Material name is required.')
+      return
+    }
+
+    if (!MATERIAL_TYPE_OPTIONS.includes(normalizedMaterialType)) {
+      setError('Choose material type first.')
       return
     }
 
@@ -1098,12 +1138,16 @@ export default function ArklineMaterialFulfillmentPage() {
         .insert({
           material_name: materialDraft.materialName.trim().toUpperCase(),
           unit: materialDraft.unit.trim().toUpperCase() || 'PCS',
+          material_type: normalizedMaterialType,
           is_active: true,
         })
-        .select('id, material_name, unit, is_active')
+        .select('id, material_name, material_type, unit, is_active')
         .single()
 
       if (insertError) {
+        if (isMissingColumnError(insertError, 'material_type')) {
+          throw new Error('Column material_type belum ada di arkline_dir_materials. Tambahkan kolom material_type text dulu.')
+        }
         throw new Error(insertError.message)
       }
 
@@ -1172,6 +1216,7 @@ export default function ArklineMaterialFulfillmentPage() {
         key: buildOrderLineKey(row),
         materialId: row.materialId,
         materialName: row.materialNameSnapshot,
+        materialType: row.materialType,
         unit: row.unit,
         sizeVariant: row.sizeVariant,
         colorVariant: row.colorVariant,
@@ -1235,6 +1280,7 @@ export default function ArklineMaterialFulfillmentPage() {
       }),
       materialId: selectedMaterial.id,
       materialName: selectedMaterial.materialName,
+      materialType: selectedMaterial.materialType,
       unit: selectedMaterial.unit,
       sizeVariant: '',
       colorVariant: '',
@@ -1293,6 +1339,7 @@ export default function ArklineMaterialFulfillmentPage() {
         .map(normalizeMaterialRequirement)
         .map((item) => ({
           ...item,
+          materialType: item.materialType || materialOptions.find((material) => material.id === item.materialId)?.materialType || '',
           productName: itemMetaById[item.arklinePoItemId]?.productName || '',
           categoryName: itemMetaById[item.arklinePoItemId]?.categoryName || '',
         }))
@@ -1452,7 +1499,12 @@ export default function ArklineMaterialFulfillmentPage() {
 
       const userEmail = user?.email?.toLowerCase() || null
       const normalizedOrderedAs = String(orderedAs || ORDERED_AS_OPTIONS[0]).trim().toUpperCase()
-      const materialPoNumber = savedMaterialPoNumber || buildMaterialPoNumber(orderLines, materialPoNumbers)
+      const materialPoNumber =
+        savedMaterialPoNumber ||
+        buildMaterialPoNumber(orderLines, materialPoNumbers, {
+          includePpn: orderHeader.includePpn !== false,
+          poMeta,
+        })
       const selectedSupplier = suppliers.find((item) => item.id === orderHeader.supplierId) || null
       const sourcePoIds = getMaterialDraftSourcePoIds(orderLines)
       const headerPayload = {
@@ -2094,6 +2146,17 @@ export default function ArklineMaterialFulfillmentPage() {
               </div>
 
               <div className={styles.field}>
+                <label className={styles.label}>Initial</label>
+                <input
+                  className={styles.input}
+                  value={supplierDraft.initial}
+                  onChange={(event) => updateSupplierDraft('initial', event.target.value)}
+                  placeholder="ABC"
+                  maxLength={3}
+                />
+              </div>
+
+              <div className={styles.field}>
                 <label className={styles.label}>Supplier Name</label>
                 <input
                   className={styles.input}
@@ -2177,6 +2240,18 @@ export default function ArklineMaterialFulfillmentPage() {
                   onChange={(event) => updateMaterialDraft('unit', event.target.value)}
                   placeholder="PCS"
                 />
+              </div>
+
+              <div className={styles.field}>
+                <label className={styles.label}>Material Type</label>
+                <select
+                  className={styles.select}
+                  value={materialDraft.materialType}
+                  onChange={(event) => updateMaterialDraft('materialType', event.target.value)}
+                >
+                  <option value="FABRIC">Fabric</option>
+                  <option value="ACCESSORIES">Accessories</option>
+                </select>
               </div>
             </div>
 

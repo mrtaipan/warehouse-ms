@@ -2,6 +2,17 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 
+import {
+  TEMPORARY_PO_SUFFIX,
+  buildArklinePoId,
+  buildArklinePoPrefix,
+  extractArklinePoNumberInfo as extractPoNumberInfo,
+  getArklinePoPrefix as getPoPrefix,
+  getArklinePoSuffix as getPoSuffix,
+  getNextArklinePoSequence,
+  isTemporaryArklinePo as isEditablePoSuffix,
+  normalizeArklinePoSuffix,
+} from '@/utils/arkline-po-number'
 import { createClient } from '@/utils/supabase/browser'
 
 import shellStyles from '../arkline.module.css'
@@ -11,7 +22,6 @@ const supabase = createClient()
 
 const SIZE_OPTIONS = ['XS', 'S', 'M', 'L', 'XL', 'XXL']
 const METHOD_OPTIONS = ['FOB', 'CMT']
-const TEMPORARY_PO_SUFFIX = 'TEMPORER'
 
 function createEmptySizeQuantities() {
   return SIZE_OPTIONS.reduce((accumulator, size) => {
@@ -38,38 +48,6 @@ function createEmptyLineDraft() {
 
 function createProductSearchLabel(product) {
   return String(product?.namaProduk || '').trim().toUpperCase()
-}
-
-function extractPoNumberInfo(poId) {
-  const normalized = String(poId || '').trim().toUpperCase()
-  const match = normalized.match(/^PO-([A-Z0-9]+)-?(.*)$/)
-
-  if (!match) {
-    return null
-  }
-
-  const numericValue = /^\d+$/.test(match[1]) ? Number(match[1]) : null
-
-  return {
-    numberText: match[1],
-    numberValue: numericValue,
-    suffix: match[2] || '',
-  }
-}
-
-function getPoPrefix(poId) {
-  const info = extractPoNumberInfo(poId)
-  return info ? `PO-${info.numberText}-` : ''
-}
-
-function getPoSuffix(poId) {
-  const info = extractPoNumberInfo(poId)
-  return info ? info.suffix : String(poId || '').trim().toUpperCase()
-}
-
-function isEditablePoSuffix(poId) {
-  const normalized = String(poId || '').trim().toUpperCase()
-  return /^PO-\d+-TEMPORER$/.test(normalized)
 }
 
 function createInitialHeader() {
@@ -335,24 +313,23 @@ function formatCurrency(value) {
   }).format(amount)
 }
 
-function buildNextPoId(records) {
-  const maxNumber = records.reduce(
-    (currentMax, item) => {
-      const info = extractPoNumberInfo(item?.poId)
-      if (!info || !Number.isFinite(info.numberValue)) {
-        return currentMax
-      }
-
-      return Math.max(currentMax, info.numberValue)
-    },
-    0
-  )
-
-  return `PO-${maxNumber + 1}-`
+function buildPoNumberRegistry(garmentRows = [], materialRows = []) {
+  return [
+    ...garmentRows.map((item) => item?.poId || item?.po_id),
+    ...materialRows.map((item) => item?.material_po_number || item?.poId),
+  ]
+    .map((value) => String(value || '').trim().toUpperCase())
+    .filter(Boolean)
 }
 
-function buildDefaultPoId(records) {
-  return `${buildNextPoId(records)}${TEMPORARY_PO_SUFFIX}`
+function buildNextGarmentPoId(registry = [], { includePpn = true, method = 'FOB', suffix = TEMPORARY_PO_SUFFIX } = {}) {
+  return buildArklinePoId({
+    sequence: getNextArklinePoSequence(registry),
+    includePpn,
+    method,
+    documentType: 'GARMENT',
+    suffix,
+  })
 }
 
 function getLineTotalQty(line) {
@@ -680,6 +657,26 @@ async function loadExistingPos() {
     })
 }
 
+async function loadPoNumberRegistry() {
+  const [garmentResponse, materialResponse] = await Promise.all([
+    supabase.from('arkline_pos').select('po_id').not('po_id', 'is', null),
+    supabase.from('arkline_po_material_ordered').select('material_po_number').not('material_po_number', 'is', null),
+  ])
+
+  if (garmentResponse.error) {
+    throw new Error(garmentResponse.error.message)
+  }
+
+  if (materialResponse.error) {
+    throw new Error(materialResponse.error.message)
+  }
+
+  return buildPoNumberRegistry(
+    (garmentResponse.data || []).map((item) => ({ poId: item.po_id })),
+    materialResponse.data || []
+  )
+}
+
 async function fetchPoBundle(poId) {
   const { data: poRow, error: poError } = await supabase
     .from('arkline_pos')
@@ -832,6 +829,7 @@ export default function ArklineProductionPlanningPage() {
   const [suppliers, setSuppliers] = useState([])
   const [products, setProducts] = useState([])
   const [existingPos, setExistingPos] = useState([])
+  const [poNumberRegistry, setPoNumberRegistry] = useState([])
 
   const [mode, setMode] = useState('new')
   const [method, setMethod] = useState('FOB')
@@ -851,14 +849,25 @@ export default function ArklineProductionPlanningPage() {
       setError('')
 
       try {
-        const [supplierRows, productRows, poRows] = await Promise.all([loadSuppliers(), loadProducts(), loadExistingPos()])
+        const [supplierRows, productRows, poRows, registryRows] = await Promise.all([
+          loadSuppliers(),
+          loadProducts(),
+          loadExistingPos(),
+          loadPoNumberRegistry(),
+        ])
 
         setSuppliers(supplierRows)
         setProducts(productRows)
         setExistingPos(poRows)
+        setPoNumberRegistry(registryRows)
         setHeader((prev) => ({
           ...prev,
-          poId: prev.poId || buildDefaultPoId(poRows),
+          poId:
+            prev.poId ||
+            buildNextGarmentPoId(registryRows, {
+              includePpn: prev.includePpn,
+              method: 'FOB',
+            }),
         }))
       } catch (loadError) {
         setError(loadError.message || 'Failed to load Arkline planning master data.')
@@ -884,8 +893,18 @@ export default function ArklineProductionPlanningPage() {
     [products]
   )
 
-  const nextPoPrefix = useMemo(() => buildNextPoId(existingPos), [existingPos])
-  const currentPoPrefix = mode === 'new' ? getPoPrefix(header.poId) || nextPoPrefix : getPoPrefix(header.poId)
+  const nextPoSequence = useMemo(() => getNextArklinePoSequence(poNumberRegistry), [poNumberRegistry])
+  const nextPoPrefix = useMemo(
+    () =>
+      buildArklinePoPrefix({
+        sequence: nextPoSequence,
+        includePpn: header.includePpn,
+        method,
+        documentType: 'GARMENT',
+      }),
+    [header.includePpn, method, nextPoSequence]
+  )
+  const currentPoPrefix = mode === 'new' ? nextPoPrefix : getPoPrefix(header.poId)
   const currentPoSuffix = mode === 'new' ? getPoSuffix(header.poId) : ''
   const filteredExistingPos = useMemo(
     () => existingPos.filter((item) => String(item.method || '').trim().toUpperCase() === method),
@@ -1037,7 +1056,7 @@ export default function ArklineProductionPlanningPage() {
     setCategoryFilter(nextCategory)
   }
 
-  function resetPlanningState(nextMode = 'new', poRows = existingPos) {
+  function resetPlanningState(nextMode = 'new', registryRows = poNumberRegistry) {
     setMode(nextMode)
     setMethod('FOB')
     setSelectedExistingPoId('')
@@ -1047,7 +1066,7 @@ export default function ArklineProductionPlanningPage() {
     setLoadedPlanningSnapshot(null)
     setHeader({
       ...createInitialHeader(),
-      poId: nextMode === 'new' ? buildDefaultPoId(poRows) : '',
+      poId: nextMode === 'new' ? buildNextGarmentPoId(registryRows, { includePpn: true, method: 'FOB' }) : '',
     })
     setCategoryFilter('')
     setPoItems([])
@@ -1065,6 +1084,17 @@ export default function ArklineProductionPlanningPage() {
 
   function handleMethodChange(nextMethod) {
     setMethod(nextMethod)
+    if (mode === 'new') {
+      setHeader((prev) => ({
+        ...prev,
+        poId: `${buildArklinePoPrefix({
+          sequence: nextPoSequence,
+          includePpn: prev.includePpn,
+          method: nextMethod,
+          documentType: 'GARMENT',
+        })}${normalizeArklinePoSuffix(getPoSuffix(prev.poId))}`,
+      }))
+    }
     setIsPlanningDirty(true)
     setSuccess('')
     setError('')
@@ -1077,7 +1107,7 @@ export default function ArklineProductionPlanningPage() {
     if (name === 'poSuffix') {
       setHeader((prev) => ({
         ...prev,
-        poId: `${(mode === 'new' ? getPoPrefix(prev.poId) || nextPoPrefix : getPoPrefix(prev.poId)) || nextPoPrefix}${value.toUpperCase()}`,
+        poId: `${(mode === 'new' ? nextPoPrefix : getPoPrefix(prev.poId)) || nextPoPrefix}${value.toUpperCase()}`,
       }))
       setIsPlanningDirty(true)
       setError('')
@@ -1096,10 +1126,24 @@ export default function ArklineProductionPlanningPage() {
       return
     }
 
-    setHeader((prev) => ({
-      ...prev,
-      [name]: type === 'checkbox' ? checked : value,
-    }))
+    setHeader((prev) => {
+      const nextValue = type === 'checkbox' ? checked : value
+      const nextHeader = {
+        ...prev,
+        [name]: nextValue,
+      }
+
+      if (name === 'includePpn' && mode === 'new') {
+        nextHeader.poId = `${buildArklinePoPrefix({
+          sequence: nextPoSequence,
+          includePpn: nextValue,
+          method,
+          documentType: 'GARMENT',
+        })}${normalizeArklinePoSuffix(getPoSuffix(prev.poId))}`
+      }
+
+      return nextHeader
+    })
     setIsPlanningDirty(true)
     setError('')
   }
@@ -1448,12 +1492,17 @@ export default function ArklineProductionPlanningPage() {
       } = await supabase.auth.getUser()
 
       const userEmail = user?.email?.toLowerCase() || null
+      const resolvedPoSuffix = normalizeArklinePoSuffix(getPoSuffix(header.poId), '')
+      const resolvedPoId =
+        mode === 'new'
+          ? `${nextPoPrefix}${resolvedPoSuffix}`.trim().toUpperCase()
+          : String(header.poId || '').trim().toUpperCase()
 
-      if (!header.poId.trim()) {
+      if (!resolvedPoId) {
         throw new Error('PO ID is required.')
       }
 
-      if (mode === 'new' && !getPoSuffix(header.poId)) {
+      if (mode === 'new' && !resolvedPoSuffix) {
         throw new Error('Isi bagian nomor PO setelah prefix otomatis.')
       }
 
@@ -1473,7 +1522,7 @@ export default function ArklineProductionPlanningPage() {
         throw new Error('Add at least one product line before saving.')
       }
 
-      if (!isTemporaryPo) {
+      if (!isEditablePoSuffix(resolvedPoId)) {
         const missingQtyLine = poItems.find((item) => getLineTotalQty(item) <= 0)
         if (missingQtyLine) {
           throw new Error('Enter qty by size for all product lines before saving final PO.')
@@ -1500,7 +1549,7 @@ export default function ArklineProductionPlanningPage() {
       let poDbId = currentPoDbId
 
       const headerPayload = {
-        po_id: header.poId.trim().toUpperCase(),
+        po_id: resolvedPoId,
         method,
         supplier_id: header.supplierId ? Number(header.supplierId) || header.supplierId : null,
         supplier_name: header.supplierName || null,
@@ -1557,7 +1606,7 @@ export default function ArklineProductionPlanningPage() {
         const { data: existingItemIds, error: fetchExistingItemError } = await supabase
           .from('arkline_po_items')
           .select('id')
-          .eq('po_id', header.poId.trim().toUpperCase())
+          .eq('po_id', resolvedPoId)
 
         if (fetchExistingItemError) {
           throw new Error(fetchExistingItemError.message)
@@ -1576,7 +1625,7 @@ export default function ArklineProductionPlanningPage() {
         const { error: deleteItemError } = await supabase
           .from('arkline_po_items')
           .delete()
-          .eq('po_id', header.poId.trim().toUpperCase())
+          .eq('po_id', resolvedPoId)
 
         if (deleteItemError) {
           throw new Error(deleteItemError.message)
@@ -1587,7 +1636,7 @@ export default function ArklineProductionPlanningPage() {
         const itemPrice = toNumber(item.price)
 
         return {
-          po_id: header.poId.trim().toUpperCase(),
+          po_id: resolvedPoId,
           sku_induk: item.skuInduk,
           nama_produk: item.namaProdukSnapshot,
           kategori_produk: item.kategoriProdukSnapshot || null,
@@ -1666,10 +1715,12 @@ export default function ArklineProductionPlanningPage() {
         }
       }
 
-      const refreshedPos = await refreshPoListAndKeepSelection(header.poId)
-      resetPlanningState('new', refreshedPos)
+      const refreshedPos = await refreshPoListAndKeepSelection(resolvedPoId)
+      const refreshedRegistry = await loadPoNumberRegistry()
+      setPoNumberRegistry(refreshedRegistry)
+      resetPlanningState('new', refreshedRegistry)
       setExistingPos(refreshedPos)
-      setSuccess(revisionWarning ? `PO ${header.poId} saved successfully. Revision history not saved yet: ${revisionWarning}` : `PO ${header.poId} saved successfully.`)
+      setSuccess(revisionWarning ? `PO ${resolvedPoId} saved successfully. Revision history not saved yet: ${revisionWarning}` : `PO ${resolvedPoId} saved successfully.`)
     } catch (saveError) {
       setError(saveError.message || 'Failed to save Arkline production planning.')
     } finally {

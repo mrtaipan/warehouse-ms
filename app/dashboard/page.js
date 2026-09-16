@@ -628,6 +628,10 @@ export default async function DashboardPage({ searchParams }) {
   }
 
   const { profile, role, permissions, isAdmin } = await loadAccessContext(supabase, user, 'role, display_name')
+  if (role === 'external') {
+    redirect('/dashboard/arkline/progress-overview')
+  }
+
   const menus = getAllowedMenus(role, permissions, isAdmin)
   const storageAccess = getStorageFeatureAccess(role, permissions, isAdmin)
   const restockActions = getRestockActions(storageAccess)
@@ -640,6 +644,7 @@ export default async function DashboardPage({ searchParams }) {
   const params = await searchParams
   const selectedGrn = String(params?.grn || '').trim()
   const showOperationsCalendarButton = canAccessOperationsCalendar(role, permissions, isAdmin)
+  const showDeliveryReportButton = hasPermission(permissions, 'delivery_report.view', isAdmin)
   const showPenaltyPointsButton = hasPermission(permissions, 'hrga.penalty_points.view', isAdmin)
   const canAddPenaltyPoints = hasPermission(permissions, 'hrga.penalty_points.add', isAdmin)
 
@@ -698,9 +703,11 @@ export default async function DashboardPage({ searchParams }) {
                 {showPenaltyPointsButton ? (
                   <PenaltyPointsShortcutButton people={announcementRows || []} currentRows={currentPenaltyRows || []} canAdd={canAddPenaltyPoints} />
                 ) : null}
-                <Link href="/dashboard/delivery-report" className={styles.heroProfileLink} aria-label="Open Delivery Report" title="Delivery Report">
-                  <DeliveryReportIcon />
-                </Link>
+                {showDeliveryReportButton ? (
+                  <Link href="/dashboard/delivery-report" className={styles.heroProfileLink} aria-label="Open Delivery Report" title="Delivery Report">
+                    <DeliveryReportIcon />
+                  </Link>
+                ) : null}
                 {showOperationsCalendarButton ? (
                   <Link href="/operations-calendar" className={styles.heroProfileLink} aria-label="Open Operations Calendar">
                     <span className={styles.heroActionIcon}>
@@ -784,9 +791,11 @@ export default async function DashboardPage({ searchParams }) {
               {showPenaltyPointsButton ? (
                 <PenaltyPointsShortcutButton people={announcementRows || []} currentRows={currentPenaltyRows || []} canAdd={canAddPenaltyPoints} />
               ) : null}
-              <Link href="/dashboard/delivery-report" className={styles.heroProfileLink} aria-label="Open Delivery Report" title="Delivery Report">
-                <DeliveryReportIcon />
-              </Link>
+              {showDeliveryReportButton ? (
+                <Link href="/dashboard/delivery-report" className={styles.heroProfileLink} aria-label="Open Delivery Report" title="Delivery Report">
+                  <DeliveryReportIcon />
+                </Link>
+              ) : null}
               {showOperationsCalendarButton ? (
                 <Link href="/operations-calendar" className={styles.heroProfileLink} aria-label="Open Operations Calendar">
                   <span className={styles.heroActionIcon}>

@@ -18,6 +18,12 @@ export default function ArklineFinancialManagementLayout({ children }) {
       enabled: access.financialManagementPaymentSubmissionView,
     },
     {
+      href: '/dashboard/arkline/financial-management/live-reporting',
+      label: 'Live Reporting',
+      exact: false,
+      enabled: access.financialManagementLiveReportingView,
+    },
+    {
       href: '/dashboard/arkline/financial-management/reporting',
       label: 'Financial Reporting',
       exact: false,

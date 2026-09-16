@@ -564,21 +564,53 @@
 }
 
 .reportingHeader {
-  flex-direction: row;
+  flex-direction: column;
   align-items: flex-start;
-  justify-content: space-between;
-  gap: 24px;
+  justify-content: flex-start;
+  gap: 16px;
   padding-bottom: 12px;
   border-bottom: 1px solid #e8eef6;
 }
 
 .reportingPanel {
   gap: 16px;
-  padding: 24px;
-  border-radius: 24px;
-  border-color: #dbe6f3;
-  background: #f7f9fc;
-  box-shadow: 0 18px 42px rgba(15, 23, 42, 0.05);
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.financialTitleBlock,
+.reportingTitleBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.financialTitleBlock .eyebrow,
+.reportingPanel .eyebrow {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+}
+
+.financialTitleBlock .title,
+.reportingPanel .title {
+  font-size: clamp(1.28rem, 2.5vw, 1.8rem);
+  line-height: 1.02;
+  font-weight: 900;
+}
+
+.reportingPanel .columnEyebrow {
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.reportingPanel .columnTitle {
+  font-size: 15px;
+  line-height: 1.22;
+  font-weight: 700;
 }
 
 .reportingFilters {
@@ -593,25 +625,43 @@
   box-shadow: 0 10px 24px rgba(15, 23, 42, 0.04);
 }
 
+.reportingFiltersCompact {
+  grid-template-columns: 44px minmax(184px, 208px) minmax(144px, 164px);
+}
+
+.reportingFiltersInline {
+  display: grid;
+  grid-template-columns: 40px minmax(184px, 208px) minmax(144px, 164px);
+  gap: 10px;
+  align-items: end;
+  margin-top: 16px;
+}
+
 .reportingFilters .filterField {
   gap: 8px;
 }
 
-.reportingFilters .filterField span {
+.reportingFiltersInline .filterField {
+  gap: 8px;
+}
+
+.reportingFilters .filterField span,
+.reportingFiltersInline .filterField span {
   color: #475569;
-  font-size: 11px;
-  font-weight: 800;
+  font-size: 10px;
+  font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
 
-.reportingFilters .select {
+.reportingFilters .select,
+.reportingFiltersInline .select {
   min-height: 40px;
   padding: 0 12px;
   border-radius: 12px;
   border-color: #dce5f0;
   background: #ffffff;
-  font-size: 13px;
+  font-size: 12px;
 }
 
 .iconActionButton {
@@ -644,7 +694,7 @@
 
 .reportingSummaryGrid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(260px, 420px));
   gap: 12px;
 }
 
@@ -663,34 +713,34 @@
 }
 
 .reportingMetricIcon {
-  width: 42px;
-  height: 42px;
+  width: 38px;
+  height: 38px;
   border-radius: 14px;
   background: #eff6ff;
   color: #2563eb;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 13px;
-  font-weight: 900;
+  font-size: 11px;
+  font-weight: 700;
 }
 
 .reportingMetricCard span {
   display: block;
   color: #64748b;
-  font-size: 10px;
-  font-weight: 800;
+  font-size: 9px;
+  font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
 
 .reportingMetricCard strong {
   display: block;
-  margin-top: 10px;
+  margin-top: 8px;
   color: #0f172a;
-  font-size: clamp(1.1rem, 1.45vw, 1.55rem);
-  line-height: 1;
-  font-weight: 900;
+  font-size: clamp(0.96rem, 1.18vw, 1.24rem);
+  line-height: 1.08;
+  font-weight: 800;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
   overflow: hidden;
@@ -700,8 +750,8 @@
 .reportingMetricCard p {
   margin: 8px 0 0;
   color: #64748b;
-  font-size: 12px;
-  font-weight: 600;
+  font-size: 11px;
+  font-weight: 500;
   line-height: 1.35;
   white-space: nowrap;
   overflow: hidden;
@@ -815,6 +865,7 @@
   min-width: 42px;
   padding: 0 8px;
   font-size: 9px;
+  font-weight: 700;
 }
 
 .reportingSplit {
@@ -827,19 +878,9 @@
 .reportingDashboardGrid {
   display: grid;
   grid-template-columns: minmax(0, 1.28fr) minmax(320px, 0.72fr);
-  grid-template-areas:
-    "users latest"
-    "trend categories";
+  grid-template-areas: "trend categories";
   gap: 12px;
   align-items: start;
-}
-
-.reportingDashboardGrid > :nth-child(1) {
-  grid-area: users;
-}
-
-.reportingDashboardGrid > :nth-child(2) {
-  grid-area: latest;
 }
 
 .reportingTrendCard {
@@ -892,7 +933,7 @@
 .reportingCardNote {
   margin: 4px 0 0;
   color: #64748b;
-  font-size: 12px;
+  font-size: 11px;
   line-height: 1.5;
 }
 
@@ -993,14 +1034,14 @@
 
 .trendAxisLabel {
   fill: #5f6f86;
-  font-size: 11px;
-  font-weight: 700;
+  font-size: 10px;
+  font-weight: 600;
 }
 
 .trendLegendLabel {
   color: #64748b;
-  font-size: 11px;
-  font-weight: 700;
+  font-size: 10px;
+  font-weight: 600;
 }
 
 .trendTooltipGroup {
@@ -1014,8 +1055,8 @@
 
 .trendTooltipText {
   fill: #ffffff;
-  font-size: 11px;
-  font-weight: 800;
+  font-size: 10px;
+  font-weight: 700;
 }
 
 .trendTableRow {
@@ -1058,22 +1099,22 @@
 .reportingRowTitle {
   margin: 0;
   color: #0f172a;
-  font-size: 13px;
-  font-weight: 800;
+  font-size: 12px;
+  font-weight: 700;
   line-height: 1.35;
 }
 
 .reportingRowMeta {
   margin: 0;
   color: #64748b;
-  font-size: 11px;
+  font-size: 10.5px;
   line-height: 1.45;
 }
 
 .reportingAmount {
   color: #0f172a;
-  font-size: 13px;
-  font-weight: 900;
+  font-size: 12px;
+  font-weight: 800;
   font-variant-numeric: tabular-nums;
   text-align: right;
   white-space: nowrap;
@@ -1101,8 +1142,8 @@
   border-bottom: 1px solid #e6edf5;
   background: #f8fbff;
   color: #64748b;
-  font-size: 11px;
-  font-weight: 800;
+  font-size: 10px;
+  font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
@@ -1117,14 +1158,14 @@
 
 .reportingMiniTableLabel {
   color: #334155;
-  font-size: 12px;
-  font-weight: 700;
+  font-size: 11px;
+  font-weight: 600;
 }
 
 .reportingMiniTableAmount {
   color: #0f172a;
-  font-size: 12px;
-  font-weight: 900;
+  font-size: 11px;
+  font-weight: 700;
   font-variant-numeric: tabular-nums;
   text-align: right;
 }
@@ -1142,8 +1183,8 @@
   align-items: center;
   gap: 8px;
   color: #64748b;
-  font-size: 12px;
-  font-weight: 700;
+  font-size: 11px;
+  font-weight: 600;
 }
 
 .categoryLegendSwatch {
@@ -1247,16 +1288,24 @@
   }
 
   .reportingHeader {
-    flex-direction: column;
     align-items: stretch;
   }
 
   .reportingPanel {
-    padding: 24px;
+    padding: 0;
   }
 
   .reportingFilters {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+    width: 100%;
+  }
+
+  .reportingFiltersCompact {
+    grid-template-columns: 44px repeat(2, minmax(0, 1fr));
+  }
+
+  .reportingFiltersInline {
+    grid-template-columns: 44px repeat(2, minmax(0, 1fr));
     width: 100%;
   }
 
@@ -1266,8 +1315,6 @@
 
   .reportingDashboardGrid {
     grid-template-areas:
-      "users"
-      "latest"
       "trend"
       "categories";
   }
@@ -1279,8 +1326,8 @@
 
 @media (max-width: 720px) {
   .reportingPanel {
-    padding: 18px;
-    border-radius: 22px;
+    padding: 0;
+    border-radius: 0;
   }
 
   .summaryCard {
@@ -1299,6 +1346,14 @@
   .reportingFilters {
     grid-template-columns: 1fr 1fr;
     padding: 10px;
+  }
+
+  .reportingFiltersCompact {
+    grid-template-columns: 44px 1fr 1fr;
+  }
+
+  .reportingFiltersInline {
+    grid-template-columns: 44px 1fr 1fr;
   }
 
   .reportingSummaryGrid {

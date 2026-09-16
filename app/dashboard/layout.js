@@ -16,6 +16,14 @@ export default async function DashboardLayout({ children }) {
   }
 
   const { role, permissions, isAdmin } = await loadAccessContext(supabase, user, 'role, display_name')
+  if (role === 'external') {
+    return (
+      <div className={`${styles.shell} ${styles.externalShell}`.trim()} data-dashboard-shell data-external-dashboard-shell>
+        <main className={`${styles.main} ${styles.externalMain}`.trim()} data-dashboard-main>{children}</main>
+      </div>
+    )
+  }
+
   const menus = getAllowedMenus(role, permissions, isAdmin)
   const navItems = [
     { href: menus.inboundHref || '/dashboard/inbound/receiving', label: 'Inbound', icon: 'inbound', show: menus.inbound },

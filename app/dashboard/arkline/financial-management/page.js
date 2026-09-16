@@ -1182,12 +1182,14 @@ export default function ArklineFinancialManagementPage({
 
   return (
     <div className={embedded ? undefined : styles.page}>
-      <section className={styles.panel}>
+      <section className={`${styles.panel} ${styles.panelEmbedded}`.trim()}>
         {showHeader ? (
           <div className={styles.header}>
             <div className={styles.headerCopy}>
-              <p className={styles.eyebrow}>{headerEyebrow}</p>
-              <h1 className={styles.title}>{headerTitle}</h1>
+              <div className={styles.financialTitleBlock}>
+                <p className={styles.eyebrow}>{headerEyebrow}</p>
+                <h1 className={styles.title}>{headerTitle}</h1>
+              </div>
             </div>
 
             <div className={styles.headerActionsInline}>

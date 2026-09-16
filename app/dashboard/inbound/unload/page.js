@@ -917,6 +917,26 @@ const styles = {
     fontWeight: '650',
     lineHeight: 1.35,
   },
+  brandSkuLine: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    flexWrap: 'wrap',
+  },
+  skuBadge: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    minHeight: '18px',
+    padding: '0 7px',
+    borderRadius: '999px',
+    background: '#f1f5f9',
+    color: '#475569',
+    border: '1px solid #e2e8f0',
+    fontSize: '10px',
+    fontWeight: '850',
+    lineHeight: 1,
+    letterSpacing: '0.02em',
+  },
   qtyPill: {
     display: 'inline-flex',
     alignItems: 'center',
@@ -2470,6 +2490,7 @@ export default function UnloadPage() {
     brandId: '',
     categoryId: '',
     modelName: '',
+    sampleMode: '',
     qtyMode: '',
     qtyValue: '',
     search: '',
@@ -3508,6 +3529,7 @@ export default function UnloadPage() {
     breakdownFilters.brandId ||
     breakdownFilters.categoryId ||
     breakdownFilters.modelName ||
+    breakdownFilters.sampleMode ||
     breakdownFilters.qtyMode ||
     breakdownFilters.qtyValue ||
     breakdownFilters.search
@@ -3530,6 +3552,7 @@ export default function UnloadPage() {
       brandId: '',
       categoryId: '',
       modelName: '',
+      sampleMode: '',
       qtyMode: '',
       qtyValue: '',
       search: '',
@@ -3567,6 +3590,13 @@ export default function UnloadPage() {
       normalizeVariantLookupValue(row.model_name) !== normalizeVariantLookupValue(breakdownFilters.modelName)
     ) {
       return false
+    }
+
+    if (ignoredFilter !== 'sampleMode' && breakdownFilters.sampleMode) {
+      const rowIsSample = Boolean(row.is_sample)
+
+      if (breakdownFilters.sampleMode === 'true' && !rowIsSample) return false
+      if (breakdownFilters.sampleMode === 'false' && rowIsSample) return false
     }
 
     if (ignoredFilter !== 'search' && breakdownFilters.search.trim()) {
@@ -3681,6 +3711,31 @@ export default function UnloadPage() {
     const matchingVariant = getVariantForRow(row)
 
     return matchingVariant ? getVariantDisplayName(matchingVariant) : row.variant_name || row.variant_label || row.variant_code || ''
+  }
+
+  function getSkuForRow(row) {
+    const matchingVariant = getVariantForRow(row)
+    return String(
+      matchingVariant?.sku_code ||
+      matchingVariant?.sku ||
+      matchingVariant?.variant_code ||
+      row?.sku_code ||
+      row?.sku ||
+      row?.variant_code ||
+      row?.variant_label ||
+      ''
+    ).trim()
+  }
+
+  function renderBrandWithSku(brandName, row) {
+    const sku = getSkuForRow(row)
+
+    return (
+      <span style={styles.brandSkuLine}>
+        <strong>{brandName || '-'}</strong>
+        {sku ? <span style={styles.skuBadge}>{sku}</span> : null}
+      </span>
+    )
   }
 
   function getVariantPhotoForRow(row) {
@@ -6138,6 +6193,16 @@ export default function UnloadPage() {
                     </option>
                   ))}
                 </select>
+                <select
+                  value={breakdownFilters.sampleMode}
+                  onChange={(event) => updateBreakdownFilter('sampleMode', event.target.value)}
+                  style={styles.filterSelect}
+                  aria-label="Filter sample rows"
+                >
+                  <option value="">Sample</option>
+                  <option value="true">True</option>
+                  <option value="false">False</option>
+                </select>
                 <div style={styles.qtyFilterGroup}>
                   <select
                     value={breakdownFilters.qtyMode}
@@ -6146,9 +6211,9 @@ export default function UnloadPage() {
                     aria-label="Filter quantity comparison"
                   >
                     <option value="">Qty</option>
-                    <option value="lt">Less than</option>
-                    <option value="eq">Equal</option>
-                    <option value="gt">Greater than</option>
+                    <option value="lt">&lt;</option>
+                    <option value="eq">=</option>
+                    <option value="gt">&gt;</option>
                   </select>
                   <input
                     value={breakdownFilters.qtyValue}
@@ -6226,7 +6291,7 @@ export default function UnloadPage() {
                               </td>
                               <td style={{ ...styles.td, ...groupBorderStyle }}>
                                 <div style={styles.tableDetailLine}>
-                                  <strong>{brand?.brand_name || '-'}</strong>
+                                  {renderBrandWithSku(brand?.brand_name || '-', row)}
                                   <span style={styles.itemMeta}>{getItemTypeSubcategoryLabel(row.category_id)}</span>
                                   <span style={styles.itemMeta}>{getModelVariantLabelForRow(row)}</span>
                                 </div>
@@ -6288,7 +6353,7 @@ export default function UnloadPage() {
                               </td>
                               <td style={{ ...styles.td, ...groupBorderStyle }}>
                                 <div style={styles.tableDetailLine}>
-                                  <strong>{brand?.brand_name || '-'}</strong>
+                                  {renderBrandWithSku(brand?.brand_name || '-', row)}
                                   <span style={styles.itemMeta}>{getItemTypeSubcategoryLabel(row.category_id)}</span>
                                   <span style={styles.itemMeta}>{getModelVariantLabelForRow(row)}</span>
                                 </div>
@@ -6377,7 +6442,7 @@ export default function UnloadPage() {
 
                       return (
                         <tr key={group.key}>
-                          <td style={{ ...styles.td, ...styles.koliGroupTd }}>{brand?.brand_name || '-'}</td>
+                          <td style={{ ...styles.td, ...styles.koliGroupTd }}>{renderBrandWithSku(brand?.brand_name || '-', group)}</td>
                           <td style={{ ...styles.td, ...styles.koliGroupTd }}>{renderProductPhotoFrame(group)}</td>
                           <td style={{ ...styles.td, ...styles.koliGroupTd }}>{category?.full_name || category?.category_name || '-'}</td>
                           <td style={{ ...styles.td, ...styles.koliGroupTd }}>

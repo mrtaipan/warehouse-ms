@@ -1753,7 +1753,8 @@ async function loadOptionalRows(queryFactory) {
 export default function ArklineProgressOverviewPage() {
   const { access, loading: accessLoading, role } = useArklineAccess()
   const searchParams = useSearchParams()
-  const canOpenKanbanDetail = role === 'admin' || access.progressKanbanAdd || access.progressKanbanEdit
+  const isExternalView = role === 'external'
+  const canOpenKanbanDetail = isExternalView || role === 'admin' || access.progressKanbanAdd || access.progressKanbanEdit
   const requestedPoId = String(searchParams.get('po') || '').trim().toUpperCase()
   const [view, setView] = useState('')
   const [monthDate, setMonthDate] = useState(() => new Date())
@@ -1831,6 +1832,11 @@ export default function ArklineProgressOverviewPage() {
   useEffect(() => {
     if (accessLoading) return
 
+    if (isExternalView) {
+      setView('kanban')
+      return
+    }
+
     setView((current) => {
       if (current === 'kanban' && access.progressKanban) return current
       if (current === 'calendar' && access.progressCalendar) return current
@@ -1842,7 +1848,7 @@ export default function ArklineProgressOverviewPage() {
       if (access.progressOverview) return 'materials'
       return 'calendar'
     })
-  }, [access.progressCalendar, access.progressKanban, access.progressOverview, access.progressProducts, accessLoading])
+  }, [access.progressCalendar, access.progressKanban, access.progressOverview, access.progressProducts, accessLoading, isExternalView])
 
   useEffect(() => {
     void refreshRows()
@@ -2199,7 +2205,7 @@ export default function ArklineProgressOverviewPage() {
       },
     })
     setPoDetailSections({
-      productLists: false,
+      productLists: isExternalView,
       finance: false,
       documentHistory: false,
     })
@@ -2207,18 +2213,20 @@ export default function ArklineProgressOverviewPage() {
 
     const poItemIds = (item.productEntries || []).map((entry) => String(entry?.id || '').trim()).filter(Boolean)
     const [paymentRowsRaw, receiptRowsRaw, signedPoFiles] = await Promise.all([
-      loadOptionalRows(() =>
-        supabase
-          .from('arkline_payment')
-          .select(
-            `id, payment_basis, po_source_type, po_db_id, po_number, invoice_number, amount, notes, status, paid_at, created_at,
-            attachments:arkline_payment_attachments(id, storage_bucket, storage_path, file_name, mime_type, file_size, uploaded_by, created_at)`
-          )
-          .eq('payment_basis', 'PO_BASED')
-          .eq('po_source_type', 'GARMENT')
-          .eq('po_number', item.poId)
-          .order('created_at', { ascending: false })
-      ),
+      isExternalView
+        ? Promise.resolve([])
+        : loadOptionalRows(() =>
+            supabase
+              .from('arkline_payment')
+              .select(
+                `id, payment_basis, po_source_type, po_db_id, po_number, invoice_number, amount, notes, status, paid_at, created_at,
+                attachments:arkline_payment_attachments(id, storage_bucket, storage_path, file_name, mime_type, file_size, uploaded_by, created_at)`
+              )
+              .eq('payment_basis', 'PO_BASED')
+              .eq('po_source_type', 'GARMENT')
+              .eq('po_number', item.poId)
+              .order('created_at', { ascending: false })
+          ),
       poItemIds.length
         ? loadOptionalRows(() =>
             supabase
@@ -2229,7 +2237,7 @@ export default function ArklineProgressOverviewPage() {
               .order('receive_date', { ascending: false })
           )
         : Promise.resolve([]),
-      loadSignedPoFiles(item.poId),
+      isExternalView ? Promise.resolve([]) : loadSignedPoFiles(item.poId),
     ])
 
     const paymentRows = (paymentRowsRaw || []).map(normalizeFinancePaymentRow)
@@ -2377,8 +2385,9 @@ export default function ArklineProgressOverviewPage() {
     }
   }
 
-  async function openProductDetail(entry) {
+  async function openProductDetail(entry, options = {}) {
     if (!selectedPoDetail || !entry) return
+    const openCmtInspectionOnly = Boolean(options.openCmtInspectionOnly)
     setProductDetailLoading(true)
     setProductActionMessage('')
     setProductActionError('')
@@ -2459,15 +2468,17 @@ export default function ArklineProgressOverviewPage() {
             .eq('arkline_po_item_id', entry.id)
             .order('created_at', { ascending: false })
         ),
-        loadOptionalRows(() =>
-          supabase
-            .from('arkline_payment')
-            .select('id, payment_basis, po_source_type, po_db_id, po_number, invoice_number, amount, notes, status, paid_at, created_at')
-            .eq('payment_basis', 'PO_BASED')
-            .eq('po_source_type', 'GARMENT')
-            .eq('po_number', selectedPoDetail.poId)
-            .order('created_at', { ascending: false })
-        ),
+        isExternalView
+          ? Promise.resolve([])
+          : loadOptionalRows(() =>
+              supabase
+                .from('arkline_payment')
+                .select('id, payment_basis, po_source_type, po_db_id, po_number, invoice_number, amount, notes, status, paid_at, created_at')
+                .eq('payment_basis', 'PO_BASED')
+                .eq('po_source_type', 'GARMENT')
+                .eq('po_number', selectedPoDetail.poId)
+                .order('created_at', { ascending: false })
+            ),
         loadOptionalRows(() =>
           supabase
             .from('arkline_qc')
@@ -2683,7 +2694,7 @@ export default function ArklineProgressOverviewPage() {
         receivedQty: Number(receivedBySize[size] || 0),
       }))
 
-      setSelectedProductDetail({
+      const nextProductDetail = {
         ...entry,
         poId: selectedPoDetail.poId,
         supplier: selectedPoDetail.supplier,
@@ -2721,7 +2732,19 @@ export default function ArklineProgressOverviewPage() {
           actualValue: financeUnitPrice * financeQty * financeTaxMultiplier,
           paidValue: paymentRows.filter(isPaidFinancePayment).reduce((sum, row) => sum + parseNumberValue(row?.amount), 0),
         },
-      })
+      }
+      setSelectedProductDetail(nextProductDetail)
+      if (openCmtInspectionOnly) {
+        setCmtInspectionDraft(createCmtInspectionDraft(nextProductDetail))
+        setCmtDefectDrafts([])
+        setCmtPrefinalPdfFile(null)
+        setCmtPrefinalPdfPreview(null)
+        setCmtMeasurementPdfFile(null)
+        setCmtMeasurementPdfPreview(null)
+        setCmtDefectPhotoFiles([])
+        setCmtDefectPhotoPreviews([])
+        setCmtInspectionModalOpen(true)
+      }
       setStatusDraft({
         editingUpdateId: '',
         updatedDeliveryDate: itemDetail?.updated_delivery_date || entry.updatedDeliveryDate || '',
@@ -2916,6 +2939,14 @@ export default function ArklineProgressOverviewPage() {
     setCmtPrefinalPdfFile(null)
     setCmtDefectPhotoFiles([])
     setCmtInspectionModalOpen(true)
+  }
+
+  function closeCmtInspectionModal() {
+    if (savingCmtInspection) return
+    setCmtInspectionModalOpen(false)
+    if (isExternalView) {
+      setSelectedProductDetail(null)
+    }
   }
 
   async function openStoredCmtAttachmentPreview(path, type = 'pdf', title = 'Attachment') {
@@ -3653,7 +3684,11 @@ export default function ArklineProgressOverviewPage() {
       setCmtMeasurementPdfFile(null)
       setCmtDefectPhotoFiles([])
       setCmtDefectDrafts([])
-      await openProductDetail(selectedProductDetail)
+      if (isExternalView) {
+        setSelectedProductDetail(null)
+      } else {
+        await openProductDetail(selectedProductDetail)
+      }
       if (existingPrefinalPath && prefinalPdf?.path && existingPrefinalPath !== prefinalPdf.path) {
         await supabase.storage.from(CMT_INSPECTION_BUCKET).remove([existingPrefinalPath])
       }
@@ -4365,8 +4400,9 @@ export default function ArklineProgressOverviewPage() {
               <p className={styles.eyebrow}>Arkline</p>
               <h2 className={styles.scheduleTitle}>Progress Snapshot</h2>
             </div>
-            <div className={styles.segmented}>
-              {access.progressKanban ? (
+            {!isExternalView ? (
+              <div className={styles.segmented}>
+                {access.progressKanban ? (
                 <button
                   type="button"
                   aria-label="Kanban view"
@@ -4376,35 +4412,36 @@ export default function ArklineProgressOverviewPage() {
                 >
                   <KanbanIcon />
                 </button>
-              ) : null}
-              <button
-                type="button"
-                aria-label="Calendar view"
-                data-view-label="Calendar View"
-                className={`${styles.segmentButton} ${view === 'calendar' ? styles.segmentButtonActive : ''}`.trim()}
-                onClick={() => setView('calendar')}
-              >
-                <CalendarIcon />
-              </button>
-              <button
-                type="button"
-                aria-label="Product snapshot view"
-                data-view-label="Product Snapshot"
-                className={`${styles.segmentButton} ${view === 'products' ? styles.segmentButtonActive : ''}`.trim()}
-                onClick={() => setView('products')}
-              >
-                <ProductListIcon />
-              </button>
-              <button
-                type="button"
-                aria-label="Material progress view"
-                data-view-label="Material Progress"
-                className={`${styles.segmentButton} ${view === 'materials' ? styles.segmentButtonActive : ''}`.trim()}
-                onClick={() => setView('materials')}
-              >
-                <MaterialStackIcon />
-              </button>
-            </div>
+                ) : null}
+                <button
+                  type="button"
+                  aria-label="Calendar view"
+                  data-view-label="Calendar View"
+                  className={`${styles.segmentButton} ${view === 'calendar' ? styles.segmentButtonActive : ''}`.trim()}
+                  onClick={() => setView('calendar')}
+                >
+                  <CalendarIcon />
+                </button>
+                <button
+                  type="button"
+                  aria-label="Product snapshot view"
+                  data-view-label="Product Snapshot"
+                  className={`${styles.segmentButton} ${view === 'products' ? styles.segmentButtonActive : ''}`.trim()}
+                  onClick={() => setView('products')}
+                >
+                  <ProductListIcon />
+                </button>
+                <button
+                  type="button"
+                  aria-label="Material progress view"
+                  data-view-label="Material Progress"
+                  className={`${styles.segmentButton} ${view === 'materials' ? styles.segmentButtonActive : ''}`.trim()}
+                  onClick={() => setView('materials')}
+                >
+                  <MaterialStackIcon />
+                </button>
+              </div>
+            ) : null}
           </div>
 
           <div className={styles.toolbar}>
@@ -4747,7 +4784,12 @@ export default function ArklineProgressOverviewPage() {
                           {group.items.map((entry) => {
                             const variance = getShipmentVariance(entry)
                             return (
-                              <button key={entry.id} type="button" className={styles.modalListButton} onClick={() => openProductDetail(entry)}>
+                              <button
+                                key={entry.id}
+                                type="button"
+                                className={styles.modalListButton}
+                                onClick={() => openProductDetail(entry, isExternalView ? { openCmtInspectionOnly: true } : undefined)}
+                              >
                                 <div
                                   className={`${styles.modalListRow} ${
                                     styles[`modalListRow${(() => {
@@ -4786,16 +4828,17 @@ export default function ArklineProgressOverviewPage() {
               ) : null}
             </div>
 
-            <div className={styles.modalSection}>
-              <div className={styles.productDetailSectionHead}>
-                <h4 className={styles.modalSectionTitle}>Finance</h4>
-                <button type="button" className={styles.productDetailSectionToggle} onClick={() => togglePoDetailSection('finance')}>
-                  <ChevronIcon expanded={poDetailSections.finance} />
-                </button>
-              </div>
-              {poDetailSections.finance ? (
-                <>
-                  {(() => {
+            {!isExternalView ? (
+              <div className={styles.modalSection}>
+                <div className={styles.productDetailSectionHead}>
+                  <h4 className={styles.modalSectionTitle}>Finance</h4>
+                  <button type="button" className={styles.productDetailSectionToggle} onClick={() => togglePoDetailSection('finance')}>
+                    <ChevronIcon expanded={poDetailSections.finance} />
+                  </button>
+                </div>
+                {poDetailSections.finance ? (
+                  <>
+                    {(() => {
                     const dueNetValue = (selectedPoDetail.productEntries || []).reduce(
                       (sum, entry) => sum + getFinanceQtyForItem(entry) * parseNumberValue(entry?.price || 0),
                       0
@@ -4850,20 +4893,22 @@ export default function ArklineProgressOverviewPage() {
                         </div>
                       </>
                     )
-                  })()}
-                </>
-              ) : null}
-            </div>
-
-            <div className={styles.modalSection}>
-              <div className={styles.productDetailSectionHead}>
-                <h4 className={styles.modalSectionTitle}>Document History</h4>
-                <button type="button" className={styles.productDetailSectionToggle} onClick={() => togglePoDetailSection('documentHistory')}>
-                  <ChevronIcon expanded={poDetailSections.documentHistory} />
-                </button>
+                    })()}
+                  </>
+                ) : null}
               </div>
-              {poDetailSections.documentHistory
-                ? (() => {
+            ) : null}
+
+            {!isExternalView ? (
+              <div className={styles.modalSection}>
+                <div className={styles.productDetailSectionHead}>
+                  <h4 className={styles.modalSectionTitle}>Document History</h4>
+                  <button type="button" className={styles.productDetailSectionToggle} onClick={() => togglePoDetailSection('documentHistory')}>
+                    <ChevronIcon expanded={poDetailSections.documentHistory} />
+                  </button>
+                </div>
+                {poDetailSections.documentHistory
+                  ? (() => {
                     const signedPoFiles = selectedPoDetail.documentHistory?.signedPoFiles || []
                     const signedPoDate = getLatestSignedPoDate(signedPoFiles)
                     const signedPoInputId = `signed-po-upload-${sanitizeFileName(selectedPoDetail.poId || selectedPoDetail.id)}`
@@ -5024,14 +5069,15 @@ export default function ArklineProgressOverviewPage() {
                         </div>
                       </div>
                     )
-                  })()
-                : null}
-            </div>
+                    })()
+                  : null}
+              </div>
+            ) : null}
           </div>
         </div>
       ) : null}
 
-      {selectedProductDetail ? (
+      {selectedProductDetail && !isExternalView ? (
         <div className={styles.modalOverlay} onClick={() => setSelectedProductDetail(null)}>
           <div className={`${styles.modalCard} ${styles.productModalCard}`.trim()} onClick={(event) => event.stopPropagation()}>
             <div className={styles.modalHeader}>
@@ -5853,7 +5899,7 @@ export default function ArklineProgressOverviewPage() {
       ) : null}
 
       {selectedProductDetail && cmtInspectionModalOpen ? (
-        <div className={styles.modalOverlay} onClick={() => (!savingCmtInspection ? setCmtInspectionModalOpen(false) : null)}>
+        <div className={styles.modalOverlay} onClick={closeCmtInspectionModal}>
           <div className={`${styles.modalCard} ${styles.actionModalCard} ${styles.cmtInspectionModalCard}`.trim()} onClick={(event) => event.stopPropagation()}>
             <div className={styles.modalHeader}>
               <div>
@@ -5885,7 +5931,7 @@ export default function ArklineProgressOverviewPage() {
                 <button
                   type="button"
                   className={styles.iconButton}
-                  onClick={() => setCmtInspectionModalOpen(false)}
+                  onClick={closeCmtInspectionModal}
                   disabled={savingCmtInspection}
                   aria-label="Close CMT inspection"
                 >

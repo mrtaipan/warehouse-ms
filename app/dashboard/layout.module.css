@@ -327,6 +327,16 @@
   padding: 8px 6px 8px 0;
 }
 
+.externalShell {
+  display: block;
+  padding: 0;
+}
+
+.externalMain {
+  min-height: 100vh;
+  padding: 0;
+}
+
 @media (max-width: 900px) {
   .shell {
     grid-template-columns: 1fr;

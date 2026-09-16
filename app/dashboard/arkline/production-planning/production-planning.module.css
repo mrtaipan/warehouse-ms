@@ -1016,7 +1016,7 @@
 
 .quickMaterialGrid {
   display: grid;
-  grid-template-columns: minmax(0, 1.6fr) minmax(120px, 0.6fr);
+  grid-template-columns: minmax(0, 1.4fr) minmax(100px, 0.55fr) minmax(140px, 0.8fr);
   gap: 12px;
 }
 

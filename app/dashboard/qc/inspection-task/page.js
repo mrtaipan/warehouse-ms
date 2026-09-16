@@ -1,7 +1,7 @@
 'use client'
 
 import Image from 'next/image'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createClient } from '@/utils/supabase/browser'
 import { ADMIN_EMAIL, expandImpliedPermissions, resolveRole } from '@/utils/permissions'
 import { getRolePermissionCodes } from '@/utils/role-permissions'
@@ -257,6 +257,11 @@ const styles = {
     fontSize: '16px',
     width: '100%',
     background: '#fff',
+  },
+  inputDisabled: {
+    background: '#f1f5f9',
+    color: '#94a3b8',
+    cursor: 'not-allowed',
   },
   buttonRow: {
     display: 'flex',
@@ -665,6 +670,8 @@ export default function QcInspectionTaskPage() {
   const [historyRows, setHistoryRows] = useState([])
   const [historyLoading, setHistoryLoading] = useState(false)
   const [historyError, setHistoryError] = useState('')
+  const submittingTaskIdsRef = useRef(new Set())
+  const [submittingTaskIds, setSubmittingTaskIds] = useState({})
 
   useEffect(() => {
     let isMounted = true
@@ -1038,10 +1045,11 @@ export default function QcInspectionTaskPage() {
     [tasks]
   )
   const activeTaskInputs = getTaskGradeInputs(activeTask, gradeInputs)
+  const isSubmittingActiveTask = activeTask ? Boolean(submittingTaskIds[activeTask.id]) : false
   const canSubmitActiveTask = activeTask
-    ? shouldTrackTaskTime(activeTask)
+    ? !isSubmittingActiveTask && shouldTrackTaskTime(activeTask)
       ? activeTask.status === 'in_progress'
-      : ['queued', 'in_progress', 'paused'].includes(activeTask.status)
+      : !isSubmittingActiveTask && ['queued', 'in_progress', 'paused'].includes(activeTask.status)
     : false
   const runningSeconds = useMemo(() => {
     if (!activeTask) {
@@ -1271,140 +1279,163 @@ export default function QcInspectionTaskPage() {
   }
 
   async function handleFinish(task) {
+    if (!task?.id || submittingTaskIdsRef.current.has(task.id)) {
+      return
+    }
+
+    submittingTaskIdsRef.current.add(task.id)
+    setSubmittingTaskIds((prev) => ({ ...prev, [task.id]: true }))
     setError('')
     setSuccess('')
-    const normalizedEmail = normalizeEmail(userEmail)
+    try {
+      const normalizedEmail = normalizeEmail(userEmail)
 
-    const currentInputs = gradeInputs[task.id] || { qty_a: '', qty_b: '', qty_c: '' }
-    if (!currentInputs.qty_a && !currentInputs.qty_b && !currentInputs.qty_c) {
-      setShowEmptySubmitModal(true)
-      return
-    }
-
-    const { data: latestTaskRow, error: latestTaskError } = await supabase
-      .from(getTaskTableName(task))
-      .select('qty_a, qty_b, qty_c, allocated_qty, locked_qty')
-      .eq('id', task.id)
-      .eq('assigned_to', normalizedEmail)
-      .single()
-
-    if (latestTaskError) {
-      setError(latestTaskError.message)
-      return
-    }
-
-    const remainingBeforeSubmit = Math.max(
-      0,
-      Number(latestTaskRow?.allocated_qty || task.allocated_qty || 0) - Number(latestTaskRow?.locked_qty || 0)
-    )
-    const submittedQty = getSubmittedQty(currentInputs)
-
-    if (submittedQty > remainingBeforeSubmit) {
-      setError(`Submitted qty (${submittedQty}) cannot be greater than remaining qty (${remainingBeforeSubmit}).`)
-      return
-    }
-
-    const qtyA = Number(latestTaskRow?.qty_a || 0) + Number(currentInputs.qty_a || 0)
-    const qtyB = Number(latestTaskRow?.qty_b || 0) + Number(currentInputs.qty_b || 0)
-    const qtyC = Number(latestTaskRow?.qty_c || 0) + Number(currentInputs.qty_c || 0)
-    const nextLockedQty = qtyA + qtyB + qtyC
-    const isMarkedComplete = Boolean(completeChecks[task.id])
-    const shouldTrackTime = shouldTrackTaskTime(task)
-    const isTaskComplete =
-      isMarkedComplete || nextLockedQty >= Number(latestTaskRow?.allocated_qty || task.allocated_qty || 0)
-    const finishedAt = new Date().toISOString()
-    const nextStatus = isTaskComplete ? 'done' : shouldTrackTime ? 'paused' : 'queued'
-
-    if (isTaskComplete && shouldTrackTime) {
-      const pauseLogResult = await closeOpenPauseLog({
-        taskId: task.id,
-        sourceType: task.source_type,
-        resumedBy: userEmail,
-        resumedAt: finishedAt,
-      })
-
-      if (pauseLogResult.error) {
-        setError(pauseLogResult.error.message)
+      const currentInputs = gradeInputs[task.id] || { qty_a: '', qty_b: '', qty_c: '' }
+      if (!currentInputs.qty_a && !currentInputs.qty_b && !currentInputs.qty_c) {
+        setShowEmptySubmitModal(true)
         return
       }
-    }
 
-    const { data: updatedTask, error: updateError } = await supabase
-      .from(getTaskTableName(task))
-      .update({
-        status: nextStatus,
-        qty_a: qtyA,
-        qty_b: qtyB,
-        qty_c: qtyC,
-        stopwatch_seconds: shouldTrackTime ? runningSeconds : 0,
-        finished_at: isTaskComplete ? finishedAt : null,
-        locked_qty: nextLockedQty,
-        started_at: null,
-        paused_at: null,
-        pause_reason: null,
-      })
-      .eq('id', task.id)
-      .eq('assigned_to', normalizedEmail)
-      .select(task.source_type === 'arkline' ? '*' : `
-        *,
-        inbound:inbound_id (
-          id,
-          grn_number
-        ),
-        inbound_unload:inbound_unload_id (
-          id,
-          brand_id,
-          category_id,
-          model_name,
-          variant_name,
-          photo_url,
-          is_sample,
-          koli_sequence,
-          brands:dir_brands!brand_id (
-            id,
-            brand_name
-          ),
-          categories:dir_categories!category_id (
-            id,
-            category_name,
-            full_name
-          )
-        )
-      `)
-      .single()
+      const { data: latestTaskRow, error: latestTaskError } = await supabase
+        .from(getTaskTableName(task))
+        .select('qty_a, qty_b, qty_c, allocated_qty, locked_qty')
+        .eq('id', task.id)
+        .eq('assigned_to', normalizedEmail)
+        .single()
 
-    if (updateError) {
-      setError(updateError.message)
-      return
-    }
+      if (latestTaskError) {
+        setError(latestTaskError.message)
+        return
+      }
 
-    setTasks((prev) =>
-      isTaskComplete
-        ? prev.filter((item) => item.id !== task.id)
-        : prev.map((item) => (item.id === task.id ? { ...updatedTask, source_type: task.source_type } : item))
-    )
-    setActiveTaskId(null)
-    setGradeInputs((prev) => {
-      const next = { ...prev }
-      delete next[task.id]
-      return next
-    })
-    setCompleteChecks((prev) => {
-      const next = { ...prev }
-      delete next[task.id]
-      return next
-    })
-    if (isTaskComplete) {
-      const allocationGap = getLockedQty(updatedTask) - Number(updatedTask.allocated_qty || 0)
-      setSuccess(
-        allocationGap !== 0
-          ? `QC task completed with allocation gap ${allocationGap}.`
-          : 'QC task completed.'
+      const latestLockedQty = Number(latestTaskRow?.locked_qty || 0)
+      const remainingBeforeSubmit = Math.max(
+        0,
+        Number(latestTaskRow?.allocated_qty || task.allocated_qty || 0) - latestLockedQty
       )
-      return
-    }
+      const submittedQty = getSubmittedQty(currentInputs)
 
-    setSuccess(`QC checkpoint saved. ${getRemainingQty(updatedTask)} qty still remaining in this task.`)
+      if (submittedQty > remainingBeforeSubmit) {
+        setError(`Submitted qty (${submittedQty}) cannot be greater than remaining qty (${remainingBeforeSubmit}).`)
+        return
+      }
+
+      const qtyA = Number(latestTaskRow?.qty_a || 0) + Number(currentInputs.qty_a || 0)
+      const qtyB = Number(latestTaskRow?.qty_b || 0) + Number(currentInputs.qty_b || 0)
+      const qtyC = Number(latestTaskRow?.qty_c || 0) + Number(currentInputs.qty_c || 0)
+      const nextLockedQty = qtyA + qtyB + qtyC
+      const isMarkedComplete = Boolean(completeChecks[task.id])
+      const shouldTrackTime = shouldTrackTaskTime(task)
+      const isTaskComplete =
+        isMarkedComplete || nextLockedQty >= Number(latestTaskRow?.allocated_qty || task.allocated_qty || 0)
+      const finishedAt = new Date().toISOString()
+      const nextStatus = isTaskComplete ? 'done' : shouldTrackTime ? 'paused' : 'queued'
+
+      if (isTaskComplete && shouldTrackTime) {
+        const pauseLogResult = await closeOpenPauseLog({
+          taskId: task.id,
+          sourceType: task.source_type,
+          resumedBy: userEmail,
+          resumedAt: finishedAt,
+        })
+
+        if (pauseLogResult.error) {
+          setError(pauseLogResult.error.message)
+          return
+        }
+      }
+
+      const { data: updatedTask, error: updateError } = await supabase
+        .from(getTaskTableName(task))
+        .update({
+          status: nextStatus,
+          qty_a: qtyA,
+          qty_b: qtyB,
+          qty_c: qtyC,
+          stopwatch_seconds: shouldTrackTime ? runningSeconds : 0,
+          finished_at: isTaskComplete ? finishedAt : null,
+          locked_qty: nextLockedQty,
+          started_at: null,
+          paused_at: null,
+          pause_reason: null,
+        })
+        .eq('id', task.id)
+        .eq('assigned_to', normalizedEmail)
+        .eq('locked_qty', latestLockedQty)
+        .select(task.source_type === 'arkline' ? '*' : `
+          *,
+          inbound:inbound_id (
+            id,
+            grn_number
+          ),
+          inbound_unload:inbound_unload_id (
+            id,
+            brand_id,
+            category_id,
+            model_name,
+            variant_name,
+            photo_url,
+            is_sample,
+            koli_sequence,
+            brands:dir_brands!brand_id (
+              id,
+              brand_name
+            ),
+            categories:dir_categories!category_id (
+              id,
+              category_name,
+              full_name
+            )
+          )
+        `)
+        .maybeSingle()
+
+      if (updateError) {
+        setError(updateError.message)
+        return
+      }
+
+      if (!updatedTask) {
+        setError('QC task was already updated. The task list has been refreshed; please check the remaining qty before submitting again.')
+        setRefreshKey((prev) => prev + 1)
+        return
+      }
+
+      setTasks((prev) =>
+        isTaskComplete
+          ? prev.filter((item) => item.id !== task.id)
+          : prev.map((item) => (item.id === task.id ? { ...updatedTask, source_type: task.source_type } : item))
+      )
+      setActiveTaskId(null)
+      setGradeInputs((prev) => {
+        const next = { ...prev }
+        delete next[task.id]
+        return next
+      })
+      setCompleteChecks((prev) => {
+        const next = { ...prev }
+        delete next[task.id]
+        return next
+      })
+      if (isTaskComplete) {
+        const allocationGap = getLockedQty(updatedTask) - Number(updatedTask.allocated_qty || 0)
+        setSuccess(
+          allocationGap !== 0
+            ? `QC task completed with allocation gap ${allocationGap}.`
+            : 'QC task completed.'
+        )
+        return
+      }
+
+      setSuccess(`QC checkpoint saved. ${getRemainingQty(updatedTask)} qty still remaining in this task.`)
+    } finally {
+      submittingTaskIdsRef.current.delete(task.id)
+      setSubmittingTaskIds((prev) => {
+        const next = { ...prev }
+        delete next[task.id]
+        return next
+      })
+    }
   }
 
   if (loading) {
@@ -1551,7 +1582,8 @@ export default function QcInspectionTaskPage() {
                     },
                   }))
                 }
-                style={styles.input}
+                style={{ ...styles.input, ...(isSubmittingActiveTask ? styles.inputDisabled : {}) }}
+                disabled={isSubmittingActiveTask}
               />
             </div>
 
@@ -1570,7 +1602,8 @@ export default function QcInspectionTaskPage() {
                     },
                   }))
                 }
-                style={styles.input}
+                style={{ ...styles.input, ...(isSubmittingActiveTask ? styles.inputDisabled : {}) }}
+                disabled={isSubmittingActiveTask}
               />
             </div>
 
@@ -1589,7 +1622,8 @@ export default function QcInspectionTaskPage() {
                     },
                   }))
                 }
-                style={styles.input}
+                style={{ ...styles.input, ...(isSubmittingActiveTask ? styles.inputDisabled : {}) }}
+                disabled={isSubmittingActiveTask}
               />
             </div>
           </div>
@@ -1598,6 +1632,7 @@ export default function QcInspectionTaskPage() {
             <input
               type="checkbox"
               checked={Boolean(completeChecks[activeTask.id])}
+              disabled={isSubmittingActiveTask}
               onChange={(event) =>
                 setCompleteChecks((prev) => ({
                   ...prev,
@@ -1625,10 +1660,10 @@ export default function QcInspectionTaskPage() {
             <button
               type="button"
               onClick={() => handleFinish(activeTask)}
-              style={styles.primaryButton}
+              style={{ ...styles.primaryButton, ...(!canSubmitActiveTask ? styles.buttonDisabled : {}) }}
               disabled={!canSubmitActiveTask}
             >
-              {shouldTrackTaskTime(activeTask) ? 'Stop & Submit' : 'Submit QC'}
+              {isSubmittingActiveTask ? 'Submitting...' : shouldTrackTaskTime(activeTask) ? 'Stop & Submit' : 'Submit QC'}
             </button>
           </div>
 

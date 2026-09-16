@@ -1,55 +1,49 @@
 'use client'
 
-import Link from 'next/link'
-import { useSelectedLayoutSegment } from 'next/navigation'
+import { useEffect } from 'react'
+import { usePathname, useRouter } from 'next/navigation'
+import DashboardSubnav from '@/components/dashboardsubnav'
+
 import styles from './arkline.module.css'
 import useArklineAccess from './use-arkline-access'
 
-function ArklineSubnav() {
-  const segment = useSelectedLayoutSegment()
-  const { access, loading } = useArklineAccess()
+function ArklineSubnav({ children }) {
+  const pathname = usePathname()
+  const router = useRouter()
+  const { access, loading, role } = useArklineAccess()
+  const isExternal = role === 'external'
 
-  if (!segment) {
-    return null
-  }
+  useEffect(() => {
+    if (!isExternal || !pathname || pathname.startsWith('/dashboard/arkline/progress-overview')) return
+    router.replace('/dashboard/arkline/progress-overview')
+  }, [isExternal, pathname, router])
 
   const items = [
-    { href: '/dashboard/arkline/directory', label: 'Directory', segment: 'directory', enabled: access.directory },
-    { href: '/dashboard/arkline/progress-overview', label: 'Progress Snapshot', segment: 'progress-overview', enabled: access.progressOverview },
-    { href: '/dashboard/arkline/production-planning', label: 'Production Planning', segment: 'production-planning', enabled: access.productionPlanning },
+    { href: '/dashboard/arkline/directory', label: 'Directory', enabled: access.directory },
+    { href: '/dashboard/arkline/progress-overview', label: 'Progress Snapshot', enabled: access.progressOverview },
+    { href: '/dashboard/arkline/production-planning', label: 'Production Planning', enabled: access.productionPlanning },
     {
       href: access.financialManagementHref || '/dashboard/arkline/financial-management',
       label: 'Financial Management',
-      segment: 'financial-management',
       enabled: access.financialManagement,
     },
-  ]
+  ].filter((item) => item.enabled)
 
-  return (
-    <nav className={styles.subnav}>
-      {items.map((item) => {
-        const isActive = segment === item.segment
-        const className = `${styles.subnavLink} ${isActive ? styles.subnavLinkActive : ''} ${!loading && !item.enabled ? styles.subnavLinkDisabled : ''}`.trim()
+  if (isExternal) {
+    return pathname.startsWith('/dashboard/arkline/progress-overview') ? children : null
+  }
 
-        return !loading && item.enabled ? (
-          <Link key={item.href} href={item.href} className={className}>
-            {item.label}
-          </Link>
-        ) : (
-          <span key={item.href} className={className} aria-disabled={!loading && !item.enabled ? 'true' : undefined}>
-            {item.label}
-          </span>
-        )
-      })}
-    </nav>
-  )
+  if (pathname === '/dashboard/arkline' || pathname === '/dashboard/arkline/' || loading || items.length <= 1) {
+    return children
+  }
+
+  return <DashboardSubnav items={items} variant="qcMenu">{children}</DashboardSubnav>
 }
 
 export default function ArklineLayout({ children }) {
   return (
     <div className={styles.page}>
-      <ArklineSubnav />
-      {children}
+      <ArklineSubnav>{children}</ArklineSubnav>
     </div>
   )
 }

@@ -6,21 +6,50 @@ import styles from '../../arkline.module.css'
 import useArklineAccess from '../../use-arkline-access'
 
 const supabase = createClient()
+const MATERIAL_TYPE_OPTIONS = ['FABRIC', 'ACCESSORIES']
 
 const emptyDraft = {
   id: '',
   material_name: '',
+  material_type: 'ACCESSORIES',
   unit: 'PCS',
   is_active: true,
+}
+
+function isMissingColumnError(error, columnName) {
+  const normalizedColumn = String(columnName || '').trim().toLowerCase()
+  const message = `${error?.message || ''} ${error?.details || ''} ${error?.hint || ''}`.toLowerCase()
+  return Boolean(normalizedColumn && message.includes(normalizedColumn) && message.includes('column'))
+}
+
+function normalizeMaterialType(value) {
+  return String(value || '').trim().toUpperCase()
 }
 
 function normalizeMaterial(row) {
   return {
     id: String(row?.id || '').trim(),
     material_name: String(row?.material_name || '').trim().toUpperCase(),
+    material_type: normalizeMaterialType(row?.material_type),
     unit: String(row?.unit || 'PCS').trim().toUpperCase(),
     is_active: row?.is_active !== false,
   }
+}
+
+async function fetchMaterialRows() {
+  let response = await supabase
+    .from('arkline_dir_materials')
+    .select('id, material_name, material_type, unit, is_active')
+    .order('material_name', { ascending: true })
+
+  if (response.error && isMissingColumnError(response.error, 'material_type')) {
+    response = await supabase
+      .from('arkline_dir_materials')
+      .select('id, material_name, unit, is_active')
+      .order('material_name', { ascending: true })
+  }
+
+  return response
 }
 
 export default function ArklineMaterialDirectoryPage() {
@@ -44,10 +73,7 @@ export default function ArklineMaterialDirectoryPage() {
       setLoading(true)
       setError('')
 
-      const { data, error: fetchError } = await supabase
-        .from('arkline_dir_materials')
-        .select('id, material_name, unit, is_active')
-        .order('material_name', { ascending: true })
+      const { data, error: fetchError } = await fetchMaterialRows()
 
       if (fetchError) {
         setError(fetchError.message)
@@ -66,7 +92,7 @@ export default function ArklineMaterialDirectoryPage() {
     const keyword = search.trim().toUpperCase()
 
     return materials.filter((item) => {
-      const matchesKeyword = !keyword || [item.material_name, item.unit].filter(Boolean).join(' ').includes(keyword)
+      const matchesKeyword = !keyword || [item.material_name, item.material_type, item.unit].filter(Boolean).join(' ').includes(keyword)
       const matchesStatus =
         statusFilter === 'all' ||
         (statusFilter === 'active' && item.is_active) ||
@@ -119,6 +145,12 @@ export default function ArklineMaterialDirectoryPage() {
       return
     }
 
+    const normalizedMaterialType = normalizeMaterialType(draft.material_type)
+    if (!MATERIAL_TYPE_OPTIONS.includes(normalizedMaterialType)) {
+      setError('Material type is required.')
+      return
+    }
+
     setSaving(true)
 
     if (isEditing) {
@@ -126,15 +158,20 @@ export default function ArklineMaterialDirectoryPage() {
         .from('arkline_dir_materials')
         .update({
           material_name: draft.material_name,
+          material_type: normalizedMaterialType,
           unit: draft.unit || 'PCS',
           is_active: draft.is_active,
         })
         .eq('id', draft.id)
-        .select('id, material_name, unit, is_active')
+        .select('id, material_name, material_type, unit, is_active')
         .single()
 
       if (updateError) {
-        setError(updateError.message)
+        setError(
+          isMissingColumnError(updateError, 'material_type')
+            ? 'Column material_type belum ada di arkline_dir_materials. Tambahkan kolom material_type text dulu.'
+            : updateError.message
+        )
         setSaving(false)
         return
       }
@@ -154,14 +191,19 @@ export default function ArklineMaterialDirectoryPage() {
       .from('arkline_dir_materials')
       .insert({
         material_name: draft.material_name,
+        material_type: normalizedMaterialType,
         unit: draft.unit || 'PCS',
         is_active: draft.is_active,
       })
-      .select('id, material_name, unit, is_active')
+      .select('id, material_name, material_type, unit, is_active')
       .single()
 
     if (insertError) {
-      setError(insertError.message)
+      setError(
+        isMissingColumnError(insertError, 'material_type')
+          ? 'Column material_type belum ada di arkline_dir_materials. Tambahkan kolom material_type text dulu.'
+          : insertError.message
+      )
       setSaving(false)
       return
     }
@@ -249,6 +291,7 @@ export default function ArklineMaterialDirectoryPage() {
           <div className={`${styles.listWrap} ${styles.directoryListWrap}`.trim()}>
             <div className={`${styles.listHead} ${styles.directoryListHead}`.trim()}>
               <span>Material</span>
+              <span>Type</span>
               <span>Unit</span>
               <span>Status</span>
               <span>Action</span>
@@ -258,8 +301,9 @@ export default function ArklineMaterialDirectoryPage() {
               <div key={item.id} className={`${styles.listRow} ${styles.directoryListRow}`.trim()}>
                 <div>
                   <p className={styles.cellTitle}>{item.material_name}</p>
-                  <p className={styles.cellMeta}>{item.is_active ? 'Active material' : 'Inactive material'}</p>
+                  <p className={styles.cellMeta}>{item.material_type || 'NO TYPE'}</p>
                 </div>
+                <div>{item.material_type || '-'}</div>
                 <div>{item.unit || '-'}</div>
                 <div>{item.is_active ? 'Active' : 'Inactive'}</div>
                 <div className={`${styles.buttonRow} ${styles.directoryActionCell}`.trim()}>
@@ -295,6 +339,10 @@ export default function ArklineMaterialDirectoryPage() {
                     aria-label={item.is_active ? 'Active' : 'Inactive'}
                   />
                 </div>
+
+                <p className={styles.featureText}>
+                  <strong>Type:</strong> {item.material_type || '-'}
+                </p>
 
                 <p className={styles.featureText}>
                   <strong>Unit:</strong> {item.unit || '-'}
@@ -347,6 +395,18 @@ export default function ArklineMaterialDirectoryPage() {
                   onChange={(event) => setDraft((prev) => ({ ...prev, unit: event.target.value.toUpperCase() }))}
                   placeholder="PCS"
                 />
+              </div>
+
+              <div className={styles.field}>
+                <label className={styles.label}>Material Type</label>
+                <select
+                  className={styles.select}
+                  value={draft.material_type}
+                  onChange={(event) => setDraft((prev) => ({ ...prev, material_type: event.target.value }))}
+                >
+                  <option value="FABRIC">Fabric</option>
+                  <option value="ACCESSORIES">Accessories</option>
+                </select>
               </div>
 
               <div className={styles.fieldCheckbox}>

@@ -22,6 +22,11 @@ const blankForm = (date) => ({
   keterangan: '',
 })
 
+function normalizeLockedGroup(value) {
+  const normalized = String(value || '').trim().toUpperCase()
+  return GROUPS.includes(normalized) ? normalized : ''
+}
+
 function isColumnLookupError(error) {
   const text = `${error?.code || ''} ${error?.message || ''} ${error?.details || ''}`.toLowerCase()
   return error?.code === 'PGRST204' || text.includes('schema cache') || text.includes('could not find')
@@ -64,11 +69,13 @@ async function updateOrderWithAudit(id, payload, actorName) {
   return { error: lastError }
 }
 
-export default function DeliveryOrder() {
+export default function DeliveryOrder({ lockedGroup: lockedGroupProp = '' }) {
   const supabase = useMemo(() => createClient(), [])
   const today = useMemo(() => todayIso(), [])
-  const [form, setForm] = useState(blankForm(today))
-  const [filters, setFilters] = useState({ date: today, group: '', category: '', channel: '', courier: '' })
+  const lockedGroup = useMemo(() => normalizeLockedGroup(lockedGroupProp), [lockedGroupProp])
+  const groupOptions = useMemo(() => (lockedGroup ? [lockedGroup] : GROUPS), [lockedGroup])
+  const [form, setForm] = useState({ ...blankForm(today), group_order: lockedGroup })
+  const [filters, setFilters] = useState({ date: today, group: lockedGroup, category: '', channel: '', courier: '' })
   const [rows, setRows] = useState([])
   const [masters, setMasters] = useState({ categories: [], channels: [], couriers: [] })
   const [loading, setLoading] = useState(true)
@@ -186,7 +193,7 @@ export default function DeliveryOrder() {
       if (error) setStatus({ type: 'error', message: `Gagal menyimpan: ${error.message}` })
       else {
         setStatus({ type: 'success', message: 'Delivery Order berhasil disimpan.' })
-        setForm(blankForm(form.delivery_date))
+        setForm({ ...blankForm(form.delivery_date), group_order: lockedGroup })
         await loadRows()
       }
     } catch (error) {
@@ -245,7 +252,10 @@ export default function DeliveryOrder() {
     }
   }
 
-  const field = (key) => (event) => setForm((current) => ({ ...current, [key]: event.target.value }))
+  const field = (key) => (event) => {
+    if (key === 'group_order' && lockedGroup) return
+    setForm((current) => ({ ...current, [key]: event.target.value }))
+  }
   const groupClass = (group) =>
     ({
       ARKLINE: styles.groupBadgeArkline,
@@ -273,7 +283,7 @@ export default function DeliveryOrder() {
             <h3 className={styles.sectionLabel}>DELIVERY ORDER DATA</h3>
             <div className={styles.formGrid}>
               <label><span>TANGGAL</span><input type="date" value={form.delivery_date} onChange={field('delivery_date')} /></label>
-              <label><span>GROUP ORDER</span><select value={form.group_order} onChange={field('group_order')}><option value="">PILIH GROUP</option>{GROUPS.map((group) => <option key={group}>{group}</option>)}</select></label>
+              <label><span>GROUP ORDER</span><select value={form.group_order} onChange={field('group_order')} disabled={Boolean(lockedGroup)}><option value="">PILIH GROUP</option>{groupOptions.map((group) => <option key={group}>{group}</option>)}</select></label>
               <label className={styles.fullField}>
                 <span>KATEGORI DELIVERY</span>
                 <div className={styles.inputWithAction}><select value={form.delivery_category} onChange={field('delivery_category')}><option value="">PILIH KATEGORI DELIVERY</option>{masters.categories.map((item) => <option key={item.id}>{item.nama}</option>)}</select><button onClick={() => setMasterModal('category')}>+ Add</button></div>
@@ -287,7 +297,7 @@ export default function DeliveryOrder() {
                 <div className={styles.inputWithAction}><select value={form.courier} onChange={field('courier')}><option value="">PILIH EKSPEDISI</option>{masters.couriers.map((item) => <option key={item.id}>{item.nama}</option>)}</select><button onClick={() => setMasterModal('courier')}>+ Add</button></div>
               </label>
               <div className={styles.orderInlineReset}>
-                <button className={styles.softButton} onClick={() => setForm(blankForm(form.delivery_date))}>Reset</button>
+                <button className={styles.softButton} onClick={() => setForm({ ...blankForm(form.delivery_date), group_order: lockedGroup })}>Reset</button>
               </div>
               <div className={`${styles.partPreview} ${styles.fullField}`}><span>NOMOR PART <small>AUTO ITERATION</small></span><strong>{nextPart ? `Part ${nextPart}` : '-'}</strong><p>{nextPart ? 'Nomor part siap dibuat otomatis.' : 'Pilih tanggal, group order, kategori, dan ekspedisi.'}</p></div>
               <label className={styles.fullField}><span>QUANTITY</span><input type="number" min="1" placeholder="MASUKKAN QUANTITY" value={form.quantity} onChange={field('quantity')} /></label>
@@ -304,7 +314,7 @@ export default function DeliveryOrder() {
           <div className={styles.panelBody}>
             <div className={styles.databaseFilter}>
               <label><span>TANGGAL</span><input type="date" value={filters.date} onChange={(event) => setFilters({ ...filters, date: event.target.value })} /></label>
-              <label><span>GROUP</span><select value={filters.group} onChange={(event) => setFilters({ ...filters, group: event.target.value })}><option value="">SEMUA GROUP</option>{GROUPS.map((group) => <option key={group}>{group}</option>)}</select></label>
+              <label><span>GROUP</span><select value={filters.group} onChange={(event) => setFilters({ ...filters, group: lockedGroup || event.target.value })} disabled={Boolean(lockedGroup)}>{lockedGroup ? null : <option value="">SEMUA GROUP</option>}{groupOptions.map((group) => <option key={group}>{group}</option>)}</select></label>
               <label><span>KATEGORI</span><select value={filters.category} onChange={(event) => setFilters({ ...filters, category: event.target.value })}><option value="">SEMUA KATEGORI</option>{masters.categories.map((item) => <option key={item.id}>{item.nama}</option>)}</select></label>
               <label><span>CHANNEL</span><select value={filters.channel} onChange={(event) => setFilters({ ...filters, channel: event.target.value })}><option value="">SEMUA CHANNEL</option>{masters.channels.map((item) => <option key={item.id}>{item.nama}</option>)}</select></label>
               <label><span>COURIER</span><select value={filters.courier} onChange={(event) => setFilters({ ...filters, courier: event.target.value })}><option value="">SEMUA COURIER</option>{masters.couriers.map((item) => <option key={item.id}>{item.nama}</option>)}</select></label>

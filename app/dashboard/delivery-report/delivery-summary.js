@@ -25,6 +25,9 @@ const PROGRESS_COLORS = {
   warning: '#f59e0b',
   success: '#16a34a',
 }
+const SUMMARY_PAGE_SIZE = 1000
+const SUMMARY_ORDER_COLUMNS = 'id,delivery_date,delivery_category,group_order,courier,quantity'
+const SUMMARY_BARCODE_COLUMNS = 'barcode,timestamp_delivery,timestamp_packing,group_order,courier,is_defined,is_packed,is_delivered,packing_team'
 
 function getProgressColor(percentage) {
   if (percentage > 80) return PROGRESS_COLORS.success
@@ -40,12 +43,35 @@ function normalizeBarcode(value) {
   return String(value || '').trim().toUpperCase()
 }
 
+function normalizeLockedGroup(value) {
+  const normalized = String(value || '').trim().toUpperCase()
+  return GROUPS.includes(normalized) ? normalized : ''
+}
+
 function hasPackingScan(row) {
   return Boolean(row?.is_packed || row?.timestamp_packing)
 }
 
 function hasDeliveryScan(row) {
   return Boolean(row?.is_delivered || row?.timestamp_delivery)
+}
+
+async function fetchAllSummaryRows(createQuery) {
+  const rows = []
+  let from = 0
+
+  while (true) {
+    const { data, error } = await createQuery().range(from, from + SUMMARY_PAGE_SIZE - 1)
+    if (error) return { data: rows, error }
+
+    const page = data || []
+    rows.push(...page)
+
+    if (page.length < SUMMARY_PAGE_SIZE) break
+    from += SUMMARY_PAGE_SIZE
+  }
+
+  return { data: rows, error: null }
 }
 
 function CourierComposition({ values }) {
@@ -167,9 +193,11 @@ function BarChart({ values, series }) {
   )
 }
 
-export default function DeliverySummary() {
+export default function DeliverySummary({ lockedGroup: lockedGroupProp = '' }) {
   const today = useMemo(() => todayIso(), [])
-  const [filters, setFilters] = useState({ mode: 'DAY', from: today, to: today, group: 'ALL', category: 'ALL' })
+  const lockedGroup = useMemo(() => normalizeLockedGroup(lockedGroupProp), [lockedGroupProp])
+  const visibleGroups = useMemo(() => (lockedGroup ? [lockedGroup] : GROUPS), [lockedGroup])
+  const [filters, setFilters] = useState({ mode: 'DAY', from: today, to: today, group: lockedGroup || 'ALL', category: 'ALL' })
   const [applied, setApplied] = useState(filters)
   const [orders, setOrders] = useState([])
   const [packingRows, setPackingRows] = useState([])
@@ -183,36 +211,47 @@ export default function DeliverySummary() {
   const loadData = useCallback(async () => {
     setLoading(true)
     setStatus(null)
-    let orderQuery = deliverySupabase
-      .from('delivery_order')
-      .select('*')
-      .gte('delivery_date', applied.from)
-      .lte('delivery_date', applied.to)
-      .order('delivery_date', { ascending: true })
+    const createOrderQuery = () => {
+      let query = deliverySupabase
+        .from('delivery_order')
+        .select(SUMMARY_ORDER_COLUMNS)
+        .gte('delivery_date', applied.from)
+        .lte('delivery_date', applied.to)
+        .order('delivery_date', { ascending: true })
+        .order('id', { ascending: true })
 
-    if (applied.group !== 'ALL') orderQuery = orderQuery.eq('group_order', applied.group)
+      if (applied.group !== 'ALL') query = query.eq('group_order', applied.group)
+      return query
+    }
 
-    let packingQuery = deliverySupabase
-      .from('delivery_barcode')
-      .select('*')
-      .gte('timestamp_packing', jakartaStart(applied.from))
-      .lte('timestamp_packing', jakartaEnd(applied.to))
+    const createPackingQuery = () => {
+      let query = deliverySupabase
+        .from('delivery_barcode')
+        .select(SUMMARY_BARCODE_COLUMNS)
+        .gte('timestamp_packing', jakartaStart(applied.from))
+        .lte('timestamp_packing', jakartaEnd(applied.to))
+        .order('barcode', { ascending: true })
 
-    let deliveryQuery = deliverySupabase
-      .from('delivery_barcode')
-      .select('*')
-      .gte('timestamp_delivery', jakartaStart(applied.from))
-      .lte('timestamp_delivery', jakartaEnd(applied.to))
+      if (applied.group !== 'ALL') query = query.eq('group_order', applied.group)
+      return query
+    }
 
-    if (applied.group !== 'ALL') {
-      packingQuery = packingQuery.eq('group_order', applied.group)
-      deliveryQuery = deliveryQuery.eq('group_order', applied.group)
+    const createDeliveryQuery = () => {
+      let query = deliverySupabase
+        .from('delivery_barcode')
+        .select(SUMMARY_BARCODE_COLUMNS)
+        .gte('timestamp_delivery', jakartaStart(applied.from))
+        .lte('timestamp_delivery', jakartaEnd(applied.to))
+        .order('barcode', { ascending: true })
+
+      if (applied.group !== 'ALL') query = query.eq('group_order', applied.group)
+      return query
     }
 
     const [ordersResult, packingResult, deliveryResult] = await Promise.all([
-      orderQuery,
-      packingQuery,
-      deliveryQuery,
+      fetchAllSummaryRows(createOrderQuery),
+      fetchAllSummaryRows(createPackingQuery),
+      fetchAllSummaryRows(createDeliveryQuery),
     ])
 
     const error = ordersResult.error || packingResult.error || deliveryResult.error
@@ -234,20 +273,20 @@ export default function DeliverySummary() {
   const targetByGroup = useMemo(
     () =>
       Object.fromEntries(
-        GROUPS.map((group) => [
+        visibleGroups.map((group) => [
           group,
           orders.filter((row) => row.group_order === group).reduce((sum, row) => sum + safeNumber(row.quantity), 0),
         ])
       ),
-    [orders]
+    [orders, visibleGroups]
   )
   const totalTarget = Object.values(targetByGroup).reduce((sum, value) => sum + value, 0)
   const totalScanned = scanPhase === 'PACKING' ? packingRows.length : deliveryRows.length
   const totalProgress = pct(totalScanned, totalTarget)
 
   const deliveryByGroup = useMemo(
-    () => Object.fromEntries(GROUPS.map((group) => [group, deliveryRows.filter((row) => row.group_order === group).length])),
-    [deliveryRows]
+    () => Object.fromEntries(visibleGroups.map((group) => [group, deliveryRows.filter((row) => row.group_order === group).length])),
+    [deliveryRows, visibleGroups]
   )
 
   const categoryFilteredOrders = useMemo(
@@ -270,7 +309,7 @@ export default function DeliverySummary() {
     return names
       .map((courier) => {
         const row = { courier }
-        GROUPS.forEach((group) => {
+        visibleGroups.forEach((group) => {
           const target = orders
             .filter((item) => item.group_order === group && (item.courier || 'UNDEFINED') === courier)
             .reduce((sum, item) => sum + safeNumber(item.quantity), 0)
@@ -279,13 +318,13 @@ export default function DeliverySummary() {
           ).length
           row[group] = matrixMode === 'SHORTAGE' ? target - delivered : target
         })
-        row.total = GROUPS.reduce((sum, group) => sum + row[group], 0)
+        row.total = visibleGroups.reduce((sum, group) => sum + row[group], 0)
         return row
       })
       .sort((a, b) => b.total - a.total)
-  }, [deliveryRows, matrixMode, orders])
+  }, [deliveryRows, matrixMode, orders, visibleGroups])
 
-  const chartSeries = GROUPS
+  const chartSeries = visibleGroups
 
   const barValues = useMemo(() => {
     const map = new Map()
@@ -297,14 +336,14 @@ export default function DeliverySummary() {
           : applied.mode === 'MONTH'
             ? new Intl.DateTimeFormat('id-ID', { month: 'short', year: '2-digit' }).format(date)
             : new Intl.DateTimeFormat('id-ID', { day: '2-digit', month: 'short' }).format(date)
-      if (!map.has(key)) map.set(key, { label: key, ARKLINE: 0, MOB: 0, OI: 0 })
+      if (!map.has(key)) map.set(key, { label: key, ...Object.fromEntries(visibleGroups.map((group) => [group, 0])) })
       const bucket = map.get(key)
-      if (GROUPS.includes(row.group_order)) {
+      if (visibleGroups.includes(row.group_order)) {
         bucket[row.group_order] += safeNumber(row.quantity)
       }
     })
     return [...map.values()]
-  }, [applied.mode, categoryFilteredOrders])
+  }, [applied.mode, categoryFilteredOrders, visibleGroups])
 
   const categories = useMemo(() => {
     const values = new Set(orders.map((row) => row.delivery_category).filter(Boolean))
@@ -405,9 +444,9 @@ export default function DeliverySummary() {
             </label>
             <label>
               <span>GROUP</span>
-              <select value={filters.group} onChange={(event) => setFilters({ ...filters, group: event.target.value })}>
-                <option>ALL</option>
-                {GROUPS.map((group) => <option key={group}>{group}</option>)}
+              <select value={filters.group} onChange={(event) => setFilters({ ...filters, group: lockedGroup || event.target.value })} disabled={Boolean(lockedGroup)}>
+                {lockedGroup ? null : <option>ALL</option>}
+                {visibleGroups.map((group) => <option key={group}>{group}</option>)}
               </select>
             </label>
             <button className={styles.darkButton} onClick={() => setApplied(filters)} disabled={loading}>APPLY</button>
@@ -419,7 +458,7 @@ export default function DeliverySummary() {
         <StatusMessage status={status} />
 
         <section className={styles.metricGrid} aria-busy={loading}>
-        {GROUPS.map((group) => {
+        {visibleGroups.map((group) => {
           const target = targetByGroup[group]
           const current = scanPhase === 'DELIVERY' ? deliveryByGroup[group] : null
           const progress = current == null ? 0 : pct(current, target)
@@ -499,18 +538,18 @@ export default function DeliverySummary() {
           </p>
           <div className={styles.tableWrap}>
             <table>
-              <thead><tr><th>Courier</th>{GROUPS.map((group) => <th key={group}>{group}</th>)}<th>Total</th></tr></thead>
+              <thead><tr><th>Courier</th>{visibleGroups.map((group) => <th key={group}>{group}</th>)}<th>Total</th></tr></thead>
               <tbody>
                 {matrixRows.length ? matrixRows.map((row) => (
                   <tr key={row.courier}>
                     <td><strong>{row.courier}</strong></td>
-                    {GROUPS.map((group) => <td key={group}>{row[group]}</td>)}
+                    {visibleGroups.map((group) => <td key={group}>{row[group]}</td>)}
                     <td><strong>{row.total}</strong></td>
                   </tr>
                 )) : <tr><td colSpan="5"><EmptyState /></td></tr>}
               </tbody>
               {matrixRows.length ? (
-                <tfoot><tr><td><strong>TOTAL</strong></td>{GROUPS.map((group) => <td key={group}><strong>{matrixRows.reduce((sum, row) => sum + row[group], 0)}</strong></td>)}<td><strong>{matrixRows.reduce((sum, row) => sum + row.total, 0)}</strong></td></tr></tfoot>
+                <tfoot><tr><td><strong>TOTAL</strong></td>{visibleGroups.map((group) => <td key={group}><strong>{matrixRows.reduce((sum, row) => sum + row[group], 0)}</strong></td>)}<td><strong>{matrixRows.reduce((sum, row) => sum + row.total, 0)}</strong></td></tr></tfoot>
               ) : null}
             </table>
           </div>
