@@ -462,6 +462,20 @@ function shouldTrackTaskTime(task) {
   return !isRegularSampleTask(task)
 }
 
+function getFinalStopwatchSeconds(task, fallbackSeconds, finishedAt = new Date().toISOString()) {
+  const fallback = Math.max(0, Number(fallbackSeconds || 0))
+  const baseSeconds = Math.max(0, Number(task?.stopwatch_seconds || 0))
+  const startedAtMs = task?.started_at ? new Date(task.started_at).getTime() : null
+  const finishedAtMs = finishedAt ? new Date(finishedAt).getTime() : Date.now()
+
+  if (!startedAtMs || Number.isNaN(startedAtMs) || Number.isNaN(finishedAtMs)) {
+    return fallback
+  }
+
+  const wallClockSeconds = baseSeconds + Math.max(0, Math.floor((finishedAtMs - startedAtMs) / 1000))
+  return Math.max(fallback, wallClockSeconds)
+}
+
 function getTaskGradeInputs(task, gradeInputs) {
   if (!task) {
     return { qty_a: '', qty_b: '', qty_c: '' }
@@ -1209,6 +1223,7 @@ export default function QcInspectionTaskPage() {
     const normalizedEmail = normalizeEmail(userEmail)
     const pausedAt = new Date().toISOString()
     const shouldTrackTime = shouldTrackTaskTime(task)
+    const finalStopwatchSeconds = shouldTrackTime ? getFinalStopwatchSeconds(task, runningSeconds, pausedAt) : 0
     const pauseLogResult = shouldTrackTime
       ? await createPauseLog({
           taskId: task.id,
@@ -1228,10 +1243,9 @@ export default function QcInspectionTaskPage() {
       .from(getTaskTableName(task))
       .update({
         status: 'paused',
-        stopwatch_seconds: shouldTrackTime ? runningSeconds : 0,
+        stopwatch_seconds: finalStopwatchSeconds,
         pause_reason: interruptReason,
         paused_at: pausedAt,
-        started_at: null,
       })
       .eq('id', task.id)
       .eq('assigned_to', normalizedEmail)
@@ -1298,7 +1312,7 @@ export default function QcInspectionTaskPage() {
 
       const { data: latestTaskRow, error: latestTaskError } = await supabase
         .from(getTaskTableName(task))
-        .select('qty_a, qty_b, qty_c, allocated_qty, locked_qty')
+        .select('qty_a, qty_b, qty_c, allocated_qty, locked_qty, stopwatch_seconds, started_at')
         .eq('id', task.id)
         .eq('assigned_to', normalizedEmail)
         .single()
@@ -1330,6 +1344,12 @@ export default function QcInspectionTaskPage() {
         isMarkedComplete || nextLockedQty >= Number(latestTaskRow?.allocated_qty || task.allocated_qty || 0)
       const finishedAt = new Date().toISOString()
       const nextStatus = isTaskComplete ? 'done' : shouldTrackTime ? 'paused' : 'queued'
+      const timerTask = {
+        ...task,
+        stopwatch_seconds: latestTaskRow?.stopwatch_seconds ?? task.stopwatch_seconds,
+        started_at: latestTaskRow?.started_at ?? task.started_at,
+      }
+      const finalStopwatchSeconds = shouldTrackTime ? getFinalStopwatchSeconds(timerTask, runningSeconds, finishedAt) : 0
 
       if (isTaskComplete && shouldTrackTime) {
         const pauseLogResult = await closeOpenPauseLog({
@@ -1352,10 +1372,9 @@ export default function QcInspectionTaskPage() {
           qty_a: qtyA,
           qty_b: qtyB,
           qty_c: qtyC,
-          stopwatch_seconds: shouldTrackTime ? runningSeconds : 0,
+          stopwatch_seconds: finalStopwatchSeconds,
           finished_at: isTaskComplete ? finishedAt : null,
           locked_qty: nextLockedQty,
-          started_at: null,
           paused_at: null,
           pause_reason: null,
         })

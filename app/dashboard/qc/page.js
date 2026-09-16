@@ -3240,29 +3240,50 @@ export default function QcDashboardPage() {
       const source = qcMode !== 'regular' ? getArklinePoLabel(item) : item.inbound?.grn_number || '-'
       const product = qcMode !== 'regular' ? getArklineProductLabel(item) : getRegularModelVariantLabel(item) || 'UNKNOWN PRODUCT'
       const context = qcMode === 're_qc' ? `Round ${Number(item.qc_round_number || 2)}` : ''
-      const key = `${source}|||${product}|||${context}`
+      const sourceKey = String(source || '-')
+      const inspectorKey = String(item.assigned_to || '-').trim().toLowerCase() || '-'
+      const grader = memberNameMap[inspectorKey] || (inspectorKey === '-' ? 'Unassigned' : String(item.assigned_to || inspectorKey))
+      const detailKey = `${product}|||${context}|||${grader}`
       const current =
-        grouped.get(key) || {
+        grouped.get(sourceKey) || {
           source,
+          qty: 0,
+          details: new Map(),
+        }
+      const detail =
+        current.details.get(detailKey) || {
           product,
           context,
+          grader,
           qty: 0,
         }
 
       current.qty += gapQty
-      grouped.set(key, current)
+      detail.qty += gapQty
+      current.details.set(detailKey, detail)
+      grouped.set(sourceKey, current)
     })
 
     return Array.from(grouped.values())
       .filter((item) => Number(item.qty || 0) !== 0)
+      .map((item) => ({
+        ...item,
+        details: Array.from(item.details.values())
+          .filter((detail) => Number(detail.qty || 0) !== 0)
+          .sort((a, b) => {
+            const qtyCompare = Math.abs(Number(b.qty || 0)) - Math.abs(Number(a.qty || 0))
+            if (qtyCompare !== 0) return qtyCompare
+            const productCompare = String(a.product || '').localeCompare(String(b.product || ''), undefined, { numeric: true })
+            if (productCompare !== 0) return productCompare
+            return String(a.grader || '').localeCompare(String(b.grader || ''), undefined, { numeric: true })
+          }),
+      }))
       .sort((a, b) => {
         const qtyCompare = Math.abs(Number(b.qty || 0)) - Math.abs(Number(a.qty || 0))
         if (qtyCompare !== 0) return qtyCompare
-        const sourceCompare = String(a.source || '').localeCompare(String(b.source || ''), undefined, { numeric: true })
-        if (sourceCompare !== 0) return sourceCompare
-        return String(a.product || '').localeCompare(String(b.product || ''), undefined, { numeric: true })
+        return String(a.source || '').localeCompare(String(b.source || ''), undefined, { numeric: true })
       })
-  }, [activeItems, qcMode])
+  }, [activeItems, memberNameMap, qcMode])
   const allocationGapTooltipText = useMemo(() => {
     if (!allocationGapRows.length) {
       return 'No allocation gap for the active filter.'
@@ -3270,19 +3291,28 @@ export default function QcDashboardPage() {
 
     const sourceLabel = qcMode === 'regular' ? 'GRN' : 'PO'
     const modeLabel = qcMode === 're_qc' ? 'Re-QC' : qcMode === 'regular' ? 'Reguler' : 'Arkline'
-    const visibleRows = allocationGapRows.slice(0, 10)
-    const hiddenCount = Math.max(0, allocationGapRows.length - visibleRows.length)
-    const lines = visibleRows.map((item) => {
+    const visibleRows = allocationGapRows.slice(0, 6)
+    const hiddenSourceCount = Math.max(0, allocationGapRows.length - visibleRows.length)
+    const hiddenDetailCount = visibleRows.reduce((sum, item) => sum + Math.max(0, (item.details?.length || 0) - 4), 0)
+    const lines = visibleRows.flatMap((item) => {
       const signedQty = `${Number(item.qty || 0) > 0 ? '+' : ''}${formatNumber(item.qty)}`
-      const context = item.context ? ` | ${item.context}` : ''
-      return `${sourceLabel}: ${item.source} | Product: ${item.product}${context} | Qty: ${signedQty}`
+      const detailLines = (item.details || []).slice(0, 4).map((detail) => {
+        const detailQty = `${Number(detail.qty || 0) > 0 ? '+' : ''}${formatNumber(detail.qty)}`
+        const context = detail.context ? ` | ${detail.context}` : ''
+        return `- ${detail.product}${context} | Grader: ${detail.grader} | Qty: ${detailQty}`
+      })
+
+      return [
+        `${sourceLabel}: ${item.source} | Total gap: ${signedQty}`,
+        ...detailLines,
+      ]
     })
 
     return [
       `${modeLabel} allocation gap detail`,
-      'Positive means graded qty is higher than allocation; negative means still below allocation.',
       ...lines,
-      hiddenCount ? `+${formatNumber(hiddenCount)} more rows` : '',
+      hiddenDetailCount ? `+${formatNumber(hiddenDetailCount)} more detail rows` : '',
+      hiddenSourceCount ? `+${formatNumber(hiddenSourceCount)} more ${sourceLabel} rows` : '',
     ]
       .filter(Boolean)
       .join('\n')
