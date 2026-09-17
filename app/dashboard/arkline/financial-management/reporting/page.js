@@ -10,16 +10,6 @@ import styles from '../financial-management.module.css'
 
 const supabase = createClient()
 
-function HistoryIcon() {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M4 12a8 8 0 1 0 2.3-5.7" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-      <path d="M4 4v4h4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-      <path d="M12 8v4l2.6 1.8" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  )
-}
-
 function formatCurrency(value) {
   return new Intl.NumberFormat('id-ID', {
     style: 'currency',
@@ -71,6 +61,17 @@ function getDateMatch(dateValue, monthFilter, yearFilter) {
   const matchesMonth = monthFilter === 'all' ? true : String(date.getMonth() + 1).padStart(2, '0') === monthFilter
   const matchesYear = yearFilter === 'all' ? true : String(date.getFullYear()) === yearFilter
   return matchesMonth && matchesYear
+}
+
+function buildSmoothTrendPath(points) {
+  if (!points.length) return ''
+  if (points.length === 1) return `M ${points[0].x} ${points[0].y}`
+
+  return points.slice(1).reduce((path, point, index) => {
+    const previous = points[index]
+    const controlOffset = (point.x - previous.x) / 2
+    return `${path} C ${previous.x + controlOffset} ${previous.y}, ${point.x - controlOffset} ${point.y}, ${point.x} ${point.y}`
+  }, `M ${points[0].x} ${points[0].y}`)
 }
 
 export default function ArklineFinancialReportingPage() {
@@ -146,36 +147,12 @@ export default function ArklineFinancialReportingPage() {
     }
   }, [])
 
-  const allTimelineDates = useMemo(() => {
-    return [
-      ...paidRequests.map((item) => item.paid_at),
-      ...paidReimbursements.map((item) => item.paid_at),
-      ...accountPayables.map((item) => item.created_at),
-    ]
-      .filter(Boolean)
-      .map((value) => new Date(value))
-      .filter((date) => !Number.isNaN(date.getTime()))
-  }, [accountPayables, paidRequests, paidReimbursements])
-
-  const monthOptions = useMemo(() => {
-    const values = Array.from(new Set(allTimelineDates.map((date) => String(date.getMonth() + 1).padStart(2, '0')))).sort((a, b) => Number(a) - Number(b))
-
-    return values.map((value) => ({
-      value,
-      label: new Intl.DateTimeFormat('en-GB', { month: 'long' }).format(new Date(2026, Number(value) - 1, 1)),
-    }))
-  }, [allTimelineDates])
-
-  const yearOptions = useMemo(() => {
-    const values = Array.from(new Set(allTimelineDates.map((date) => String(date.getFullYear())))).sort((a, b) => Number(b) - Number(a))
-    return values.map((value) => ({ value, label: value }))
-  }, [allTimelineDates])
+  const periodFilter = monthFilter !== 'all' && yearFilter !== 'all' ? `${yearFilter}-${monthFilter}` : ''
 
   const selectedPeriodLabel = useMemo(() => {
-    const monthLabel = monthFilter === 'all' ? 'All months' : monthOptions.find((item) => item.value === monthFilter)?.label || 'Selected month'
-    const yearLabel = yearFilter === 'all' ? 'All years' : yearOptions.find((item) => item.value === yearFilter)?.label || yearFilter
-    return `${monthLabel} • ${yearLabel}`
-  }, [monthFilter, monthOptions, yearFilter, yearOptions])
+    if (!periodFilter) return 'All periods'
+    return formatMonthLabel(periodFilter)
+  }, [periodFilter])
 
   const filteredPaidRequests = useMemo(
     () => paidRequests.filter((item) => getDateMatch(item.paid_at, monthFilter, yearFilter)),
@@ -206,6 +183,8 @@ export default function ArklineFinancialReportingPage() {
     () => filteredAccountPayables.reduce((sum, item) => sum + Number(item.amount || 0), 0),
     [filteredAccountPayables]
   )
+
+  const totalExpenditureRecords = filteredPaidRequests.length + filteredPaidReimbursements.length
 
   const categoryBreakdown = useMemo(() => {
     const grouped = new Map()
@@ -270,23 +249,29 @@ export default function ArklineFinancialReportingPage() {
   }, [filteredPaidRequests, filteredPaidReimbursements, trendGroup])
 
   const trendChart = useMemo(() => {
-    if (!trendSeries.length) return { points: '', labels: [] }
+    if (!trendSeries.length) return { areaPath: '', linePath: '', labels: [] }
 
     const width = 640
-    const height = 176
+    const height = 216
     const paddingX = 46
-    const paddingY = 18
+    const paddingTop = 28
+    const paddingBottom = 42
     const maxValue = Math.max(...trendSeries.map((item) => item.value), 1)
     const stepX = trendSeries.length > 1 ? (width - paddingX * 2) / (trendSeries.length - 1) : 0
 
     const points = trendSeries.map((item, index) => {
       const x = trendSeries.length === 1 ? width / 2 : paddingX + stepX * index
-      const y = height - paddingY - (item.value / maxValue) * (height - paddingY * 2)
+      const y = height - paddingBottom - (item.value / maxValue) * (height - paddingTop - paddingBottom)
       return { ...item, x, y }
     })
+    const linePath = buildSmoothTrendPath(points)
+    const firstPoint = points[0]
+    const lastPoint = points[points.length - 1]
+    const areaPath = firstPoint && lastPoint ? `${linePath} L ${lastPoint.x} ${height - paddingBottom} L ${firstPoint.x} ${height - paddingBottom} Z` : ''
 
     return {
-      points: points.map((item) => `${item.x},${item.y}`).join(' '),
+      areaPath,
+      linePath,
       labels: points,
     }
   }, [trendSeries])
@@ -307,39 +292,25 @@ export default function ArklineFinancialReportingPage() {
             </div>
 
             <div className={styles.reportingFiltersInline}>
-              <button
-                type="button"
-                className={`${styles.iconActionButton} ${styles.iconActionButtonPrimary}`.trim()}
-                onClick={() => {
-                  setMonthFilter('all')
-                  setYearFilter('all')
-                  setTrendGroup('MONTH')
-                }}
-                aria-label="Reset reporting filters"
-              >
-                <HistoryIcon />
-              </button>
               <div className={styles.filterField}>
-                <span>Month</span>
-                <select className={styles.select} value={monthFilter} onChange={(event) => setMonthFilter(event.target.value)}>
-                  <option value="all">All months</option>
-                  {monthOptions.map((item) => (
-                    <option key={item.value} value={item.value}>
-                      {item.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className={styles.filterField}>
-                <span>Year</span>
-                <select className={styles.select} value={yearFilter} onChange={(event) => setYearFilter(event.target.value)}>
-                  <option value="all">All years</option>
-                  {yearOptions.map((item) => (
-                    <option key={item.value} value={item.value}>
-                      {item.label}
-                    </option>
-                  ))}
-                </select>
+                <span>Period</span>
+                <input
+                  type="month"
+                  className={styles.select}
+                  value={periodFilter}
+                  onChange={(event) => {
+                    const value = event.target.value
+                    if (!value) {
+                      setMonthFilter('all')
+                      setYearFilter('all')
+                      return
+                    }
+                    const [year, month] = value.split('-')
+                    setYearFilter(year || 'all')
+                    setMonthFilter(month || 'all')
+                  }}
+                  aria-label="Filter financial reporting period"
+                />
               </div>
             </div>
           </div>
@@ -355,14 +326,6 @@ export default function ArklineFinancialReportingPage() {
           <>
             <div className={styles.reportingSummaryGrid}>
               <div className={styles.reportingMetricCard}>
-                <div className={styles.reportingMetricIcon}>E</div>
-                <div>
-                  <span>Total Expenditure</span>
-                  <strong>{formatCurrency(totalExpenditure)}</strong>
-                  <p>{selectedPeriodLabel}</p>
-                </div>
-              </div>
-              <div className={styles.reportingMetricCard}>
                 <div className={styles.reportingMetricIcon}>A</div>
                 <div>
                   <span>Account Payable</span>
@@ -373,50 +336,63 @@ export default function ArklineFinancialReportingPage() {
             </div>
 
             <div className={styles.reportingDashboardGrid}>
-              <section className={`${styles.reportingCard} ${styles.trendPanel} ${styles.reportingTrendCard}`.trim()}>
-                <div className={styles.reportingCardHead}>
-                  <div>
-                    <p className={styles.columnEyebrow}>Trend</p>
-                    <h2 className={styles.columnTitle}>Expenditure Trend</h2>
-                    <p className={styles.reportingCardNote}>Paid payment and reimbursement totals by the selected grouping.</p>
-                  </div>
-
-                  <div className={styles.segmentedControl}>
-                    {['DAY', 'MONTH', 'YEAR'].map((item) => (
-                      <button
-                        key={item}
-                        type="button"
-                        className={`${styles.segmentButton} ${styles.reportingSegmentButton} ${trendGroup === item ? styles.segmentButtonActive : ''}`.trim()}
-                        onClick={() => setTrendGroup(item)}
-                      >
-                        {item === 'DAY' ? 'Day' : item === 'MONTH' ? 'Month' : 'Year'}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
+              <section className={`${styles.trendPanel} ${styles.reportingTrendCard}`.trim()}>
                 {!trendChart.labels.length ? (
                   <div className={styles.emptyColumn}>No expenditure trend found for the selected period.</div>
                 ) : (
-                  <div className={styles.trendCard}>
+                  <div className={styles.trendVisualCard}>
+                    <div className={styles.trendVisualHeader}>
+                      <div className={styles.trendVisualMetric}>
+                        <strong>{totalExpenditureRecords}</strong>
+                        <span>Invoices</span>
+                      </div>
+                      <div className={styles.trendVisualMetric}>
+                        <strong>{formatCurrency(totalExpenditure)}</strong>
+                        <span>Total Expenditure</span>
+                      </div>
+                      <div className={`${styles.segmentedControl} ${styles.trendVisualControl}`.trim()}>
+                        {['DAY', 'MONTH', 'YEAR'].map((item) => (
+                          <button
+                            key={item}
+                            type="button"
+                            className={`${styles.segmentButton} ${styles.reportingSegmentButton} ${trendGroup === item ? styles.segmentButtonActive : ''}`.trim()}
+                            onClick={() => setTrendGroup(item)}
+                          >
+                            {item === 'DAY' ? 'Day' : item === 'MONTH' ? 'Month' : 'Year'}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
                     <div className={styles.trendChartWrap}>
-                      <svg viewBox="0 0 640 176" className={styles.trendChart} aria-hidden="true">
-                        {[32, 68, 104, 140].map((y) => (
+                      <svg viewBox="0 0 640 216" className={styles.trendChart} aria-label="Expenditure trend chart">
+                        <defs>
+                          <linearGradient id="arkline-expenditure-area" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="0%" stopColor="#38bdf8" stopOpacity="0.38" />
+                            <stop offset="58%" stopColor="#2563eb" stopOpacity="0.16" />
+                            <stop offset="100%" stopColor="#0f172a" stopOpacity="0" />
+                          </linearGradient>
+                          <filter id="arkline-expenditure-glow" x="-20%" y="-20%" width="140%" height="140%">
+                            <feGaussianBlur stdDeviation="3" result="blur" />
+                            <feMerge>
+                              <feMergeNode in="blur" />
+                              <feMergeNode in="SourceGraphic" />
+                            </feMerge>
+                          </filter>
+                        </defs>
+                        {[48, 84, 120, 156].map((y) => (
                           <line key={y} x1="46" y1={y} x2="594" y2={y} className={styles.trendGridLine} />
                         ))}
-                        <polyline
-                          fill="none"
-                          stroke="#2563eb"
-                          strokeWidth="4"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          points={trendChart.points}
+                        <path d={trendChart.areaPath} className={styles.trendArea} />
+                        <path
+                          d={trendChart.linePath}
+                          className={styles.trendLine}
+                          filter="url(#arkline-expenditure-glow)"
                         />
                         {trendChart.labels.map((point) => (
                           <g key={point.key} onMouseEnter={() => setHoveredTrendKey(point.key)} onMouseLeave={() => setHoveredTrendKey('')}>
                             <circle cx={point.x} cy={point.y} r="16" className={styles.trendPointHit} />
-                            <circle cx={point.x} cy={point.y} r={hoveredTrendKey === point.key ? '7' : '5'} fill="#2563eb" />
-                            <text x={point.x} y="166" textAnchor="middle" className={styles.trendAxisLabel}>
+                            <circle cx={point.x} cy={point.y} r={hoveredTrendKey === point.key ? '7' : '5'} className={styles.trendPoint} />
+                            <text x={point.x} y="202" textAnchor="middle" className={styles.trendAxisLabel}>
                               {point.label}
                             </text>
                           </g>
@@ -425,16 +401,16 @@ export default function ArklineFinancialReportingPage() {
                           <g className={styles.trendTooltipGroup}>
                             <rect
                               x={Math.max(10, Math.min(640 - 130, hoveredTrendPoint.x - 65))}
-                              y={Math.max(10, hoveredTrendPoint.y - 38)}
+                              y={Math.max(10, hoveredTrendPoint.y - 40)}
                               rx="12"
                               ry="12"
                               width="130"
-                              height="28"
+                              height="30"
                               className={styles.trendTooltipBox}
                             />
                             <text
                               x={Math.max(10, Math.min(640 - 130, hoveredTrendPoint.x - 65)) + 65}
-                              y={Math.max(10, hoveredTrendPoint.y - 38) + 18}
+                              y={Math.max(10, hoveredTrendPoint.y - 40) + 19}
                               textAnchor="middle"
                               className={styles.trendTooltipText}
                             >
@@ -444,18 +420,6 @@ export default function ArklineFinancialReportingPage() {
                         ) : null}
                       </svg>
                     </div>
-                    <div className={styles.reportingMiniTable}>
-                      <div className={styles.reportingMiniTableHead}>
-                        <span>Date</span>
-                        <span>Expense</span>
-                      </div>
-                      {trendChart.labels.map((point) => (
-                        <div key={point.key} className={styles.reportingMiniTableRow}>
-                          <span className={styles.reportingMiniTableLabel}>{point.label}</span>
-                          <strong className={styles.reportingMiniTableAmount}>{formatCurrency(point.value)}</strong>
-                        </div>
-                      ))}
-                    </div>
                   </div>
                 )}
               </section>
@@ -463,9 +427,7 @@ export default function ArklineFinancialReportingPage() {
               <section className={`${styles.reportingCard} ${styles.reportingCategoryCard}`.trim()}>
                 <div className={styles.reportingCardHead}>
                   <div>
-                    <p className={styles.columnEyebrow}>Payment + Reimbursement</p>
                     <h2 className={styles.columnTitle}>Expense Category</h2>
-                    <p className={styles.reportingCardNote}>Combined paid spend across both sources for the selected period.</p>
                   </div>
                 </div>
 

@@ -196,6 +196,14 @@
   gap: 16px;
 }
 
+.penaltyHeaderActions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
 .penaltyForm label span,
 .penaltyFilterRow label span {
   display: block;
@@ -236,6 +244,19 @@
   margin: 0;
   color: #0f172a;
   font-size: 18px;
+}
+
+.penaltyFormHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.penaltyFormHeader .penaltyPrimaryButton {
+  min-height: 34px;
+  padding: 0 14px;
+  white-space: nowrap;
 }
 
 .penaltyPanelHeader span {
@@ -307,7 +328,7 @@
   display: flex;
   flex-direction: column;
   gap: 12px;
-  overflow-y: auto;
+  overflow: visible;
 }
 
 .penaltyForm label {
@@ -381,6 +402,84 @@
   background: #ffffff;
   border-color: #dbe4ef;
   color: #0f172a;
+}
+
+.penaltyCriteriaOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(15, 23, 42, 0.38);
+}
+
+.penaltyCriteriaModal {
+  width: min(720px, 100%);
+  max-height: min(78vh, 620px);
+  overflow-y: auto;
+  border: 1px solid #dbe4ef;
+  border-radius: 24px;
+  background: #ffffff;
+  box-shadow: 0 28px 70px rgba(15, 23, 42, 0.22);
+  padding: 22px;
+}
+
+.penaltyCriteriaHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.penaltyCriteriaHeader h3 {
+  margin: 0;
+  color: #0f172a;
+  font-size: 24px;
+  line-height: 1.1;
+}
+
+.penaltyCriteriaEyebrow {
+  margin: 0 0 6px;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.penaltyCriteriaList {
+  display: grid;
+  gap: 12px;
+}
+
+.penaltyCriteriaCard {
+  border: 1px solid #e2e8f0;
+  border-radius: 16px;
+  background: #f8fafc;
+  padding: 16px;
+}
+
+.penaltyCriteriaCard strong {
+  display: block;
+  margin-bottom: 10px;
+  color: #0f172a;
+  font-size: 14px;
+  letter-spacing: 0.06em;
+}
+
+.penaltyCriteriaCard ul {
+  margin: 0;
+  padding-left: 18px;
+  color: #334155;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.penaltyCriteriaCard li + li {
+  margin-top: 8px;
 }
 
 .penaltyPrimaryButton:disabled {

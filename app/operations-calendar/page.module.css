@@ -621,20 +621,20 @@
   opacity: 0.74;
 }
 
-.timelineItemCardTarget {
+.timelineItemCard.timelineItemCardTarget {
   background: #991b1b;
   border-color: #7f1d1d;
   box-shadow: 0 10px 24px rgba(153, 27, 27, 0.18);
 }
 
-.timelineItemCardTarget .timelineItemEyebrow,
-.timelineItemCardTarget strong,
-.timelineItemCardTarget span,
-.timelineItemCardTarget small {
+.timelineItemCard.timelineItemCardTarget .timelineItemEyebrow,
+.timelineItemCard.timelineItemCardTarget strong,
+.timelineItemCard.timelineItemCardTarget span,
+.timelineItemCard.timelineItemCardTarget small {
   color: #ffffff;
 }
 
-.timelineItemCardTarget small {
+.timelineItemCard.timelineItemCardTarget small {
   opacity: 0.78;
 }
 
@@ -660,7 +660,7 @@
   color: #64748b;
 }
 
-.timelineItemCardTarget .timelineItemEditButton,
+.timelineItemCard.timelineItemCardTarget .timelineItemEditButton,
 .detailModalItemTarget .timelineItemEditButton {
   border-color: rgba(255, 255, 255, 0.34);
   background: rgba(255, 255, 255, 0.16);

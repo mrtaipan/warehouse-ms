@@ -631,7 +631,7 @@
 
 .reportingFiltersInline {
   display: grid;
-  grid-template-columns: 40px minmax(184px, 208px) minmax(144px, 164px);
+  grid-template-columns: minmax(190px, 240px);
   gap: 10px;
   align-items: end;
   margin-top: 16px;
@@ -694,7 +694,7 @@
 
 .reportingSummaryGrid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(260px, 420px));
+  grid-template-columns: minmax(260px, 420px);
   gap: 12px;
 }
 
@@ -899,6 +899,10 @@
 
 .trendPanel {
   min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
 }
 
 .reportingGrid {
@@ -1008,12 +1012,86 @@
   gap: 12px;
 }
 
+.trendVisualCard {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 18px;
+  padding: 22px 24px 18px;
+  border-radius: 18px;
+  background:
+    radial-gradient(circle at 78% 12%, rgba(14, 165, 233, 0.16), transparent 34%),
+    linear-gradient(180deg, #171923 0%, #111827 100%);
+  box-shadow: 0 18px 34px rgba(15, 23, 42, 0.14);
+  overflow: hidden;
+}
+
+.trendVisualCard::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.08), transparent 34%);
+  pointer-events: none;
+}
+
+.trendVisualHeader {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: flex-start;
+  gap: 26px;
+  flex-wrap: wrap;
+}
+
+.trendVisualControl {
+  margin-left: auto;
+  border-color: rgba(148, 163, 184, 0.28);
+  background: rgba(15, 23, 42, 0.44);
+  box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.24);
+}
+
+.trendVisualControl .reportingSegmentButton {
+  color: #94a3b8;
+}
+
+.trendVisualControl .segmentButtonActive {
+  background: #0ea5e9;
+  color: #ffffff;
+  box-shadow: 0 8px 20px rgba(14, 165, 233, 0.24);
+}
+
+.trendVisualMetric {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.trendVisualMetric strong {
+  color: #f8fafc;
+  font-size: clamp(1.5rem, 2.4vw, 2.4rem);
+  line-height: 0.98;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+.trendVisualMetric span {
+  color: #94a3b8;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
 .trendChartWrap {
-  padding: 16px 18px 6px;
-  border-radius: 16px;
-  border: 1px solid #e7edf5;
-  background: #fbfdff;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.72);
+  position: relative;
+  z-index: 1;
+  padding: 0;
+  border-radius: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 .trendChart {
@@ -1023,19 +1101,39 @@
 }
 
 .trendGridLine {
-  stroke: #d7e2ef;
+  stroke: rgba(148, 163, 184, 0.26);
   stroke-width: 1;
   stroke-dasharray: 4 6;
 }
 
+.trendArea {
+  fill: url(#arkline-expenditure-area);
+}
+
+.trendLine {
+  fill: none;
+  stroke: #0ea5e9;
+  stroke-width: 4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
 .trendPointHit {
   fill: transparent;
+  cursor: pointer;
+}
+
+.trendPoint {
+  fill: #38bdf8;
+  stroke: #111827;
+  stroke-width: 3;
+  transition: r 140ms ease;
 }
 
 .trendAxisLabel {
-  fill: #5f6f86;
+  fill: #94a3b8;
   font-size: 10px;
-  font-weight: 600;
+  font-weight: 700;
 }
 
 .trendLegendLabel {
@@ -1049,12 +1147,12 @@
 }
 
 .trendTooltipBox {
-  fill: #0f172a;
-  opacity: 0.96;
+  fill: #f8fafc;
+  opacity: 0.98;
 }
 
 .trendTooltipText {
-  fill: #ffffff;
+  fill: #0f172a;
   font-size: 10px;
   font-weight: 700;
 }
@@ -1118,56 +1216,6 @@
   font-variant-numeric: tabular-nums;
   text-align: right;
   white-space: nowrap;
-}
-
-.reportingMiniTable {
-  display: flex;
-  flex-direction: column;
-  border-radius: 14px;
-  border: 1px solid #e6edf5;
-  background: #ffffff;
-  overflow: hidden;
-}
-
-.reportingMiniTableHead,
-.reportingMiniTableRow {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 16px;
-  padding: 10px 12px;
-}
-
-.reportingMiniTableHead {
-  border-bottom: 1px solid #e6edf5;
-  background: #f8fbff;
-  color: #64748b;
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.reportingMiniTableRow + .reportingMiniTableRow {
-  border-top: 1px solid #eef3f8;
-}
-
-.reportingMiniTableRow:hover {
-  background: #fbfdff;
-}
-
-.reportingMiniTableLabel {
-  color: #334155;
-  font-size: 11px;
-  font-weight: 600;
-}
-
-.reportingMiniTableAmount {
-  color: #0f172a;
-  font-size: 11px;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-  text-align: right;
 }
 
 .categoryLegend {
@@ -1305,7 +1353,7 @@
   }
 
   .reportingFiltersInline {
-    grid-template-columns: 44px repeat(2, minmax(0, 1fr));
+    grid-template-columns: minmax(190px, 240px);
     width: 100%;
   }
 
@@ -1353,7 +1401,7 @@
   }
 
   .reportingFiltersInline {
-    grid-template-columns: 44px 1fr 1fr;
+    grid-template-columns: 1fr;
   }
 
   .reportingSummaryGrid {
@@ -1380,11 +1428,6 @@
   }
 
   .trendChartWrap {
-    padding: 14px 12px 4px;
-  }
-
-  .reportingMiniTableHead,
-  .reportingMiniTableRow {
-    padding: 12px 14px;
+    padding: 0;
   }
 }

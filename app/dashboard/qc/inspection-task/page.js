@@ -506,6 +506,35 @@ function getSubmittedQty(values) {
   return Number(values?.qty_a || 0) + Number(values?.qty_b || 0) + Number(values?.qty_c || 0)
 }
 
+async function syncQcAllocatedLockedPenalty(task) {
+  const allocatedQty = Number(task?.allocated_qty || 0)
+  const lockedQty = getLockedQty(task)
+  const gapQty = Math.abs(lockedQty - allocatedQty)
+
+  if (!task?.id || gapQty <= 0) {
+    return
+  }
+
+  const taskModel = getTaskModelInfo(task)
+  await fetch('/api/penalty-points/qc', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      eventType: 'QC_ALLOCATED_LOCKED_GAP',
+      taskId: task.id,
+      taskTable: getTaskTableName(task),
+      taskRef: `${getTaskTableName(task)}:${task.id}`,
+      assignedTo: task.assigned_to,
+      picName: task.pic_name || task.assigned_to,
+      grnNumber: task.inbound?.grn_number || task.po_number || task.po_id || '',
+      modelName: [taskModel.modelName, taskModel.modelColor].map((value) => String(value || '').trim()).filter(Boolean).join(' - '),
+      allocatedQty,
+      lockedQty,
+      penaltyDate: getTodayLocalDate(),
+    }),
+  }).catch(() => null)
+}
+
 function getTaskHistoryDate(task) {
   return getDateOnly(task?.finished_at || task?.updated_at || task?.created_at)
 }
@@ -1438,6 +1467,9 @@ export default function QcInspectionTaskPage() {
       })
       if (isTaskComplete) {
         const allocationGap = getLockedQty(updatedTask) - Number(updatedTask.allocated_qty || 0)
+        if (allocationGap !== 0) {
+          syncQcAllocatedLockedPenalty({ ...updatedTask, source_type: task.source_type })
+        }
         setSuccess(
           allocationGap !== 0
             ? `QC task completed with allocation gap ${allocationGap}.`

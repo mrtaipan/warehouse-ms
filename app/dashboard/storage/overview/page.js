@@ -97,6 +97,17 @@ function getCategoryPath(category = {}, categoryById = new Map()) {
   return path
 }
 
+function getCategoryLookupCode(value = '') {
+  const normalizedValue = normalizeFilterValue(value).replace(/[^A-Z0-9]/g, '')
+  const skuCategoryMatch = normalizedValue.match(/(?:01|02|03|04)([A-Z]{3})/)
+
+  return skuCategoryMatch?.[1] || normalizedValue
+}
+
+function getStorageCategoryPath(entry = {}, categoryById = new Map()) {
+  return getCategoryPath(entry.category || categoryById.get(Number(entry.category_id || 0)), categoryById)
+}
+
 function sortStorageEntries(rows = []) {
   return [...rows].sort((left, right) => new Date(right.created_at || 0) - new Date(left.created_at || 0))
 }
@@ -738,6 +749,7 @@ export default function StorageOverviewPage() {
   const [queuePage, setQueuePage] = useState(1)
   const [selectedCategoryRowIds, setSelectedCategoryRowIds] = useState([])
   const [productSearch, setProductSearch] = useState(initialProductSearch)
+  const [brandLookupMode, setBrandLookupMode] = useState('brand')
   const [brandLookupSearch, setBrandLookupSearch] = useState('')
   const [historyPickerFilter, setHistoryPickerFilter] = useState('')
   const [queueFilters, setQueueFilters] = useState({
@@ -791,6 +803,9 @@ export default function StorageOverviewPage() {
     locationName: '',
     subLocation: '',
     size: '',
+    categoryId: '',
+    subCategoryId: '',
+    itemTypeId: '',
   })
 
   const refreshInventoryData = useCallback(async ({ showLoading = false, forceStorage = false } = {}) => {
@@ -1094,6 +1109,113 @@ export default function StorageOverviewPage() {
         .filter(Boolean)
     )
   ).sort(compareSizeValues)
+  const categoryFilterScopedRows = useMemo(
+    () =>
+      productScopedStorageRows.filter((entry) => {
+        const location = entry.location || {}
+        const normalizedLocationType = normalizeFilterValue(location.location_type)
+
+        if (filters.locationType && normalizedLocationType !== normalizeFilterValue(filters.locationType)) {
+          return false
+        }
+
+        if (filters.locationName && !normalizeFilterValue(location.location_name).includes(normalizeFilterValue(filters.locationName))) {
+          return false
+        }
+
+        if (filters.locationId && normalizeFilterValue(location.location_id) !== normalizeFilterValue(filters.locationId)) {
+          return false
+        }
+
+        if (filters.locationCode && normalizeFilterValue(location.location_code) !== normalizeFilterValue(filters.locationCode)) {
+          return false
+        }
+
+        if (filters.subLocation && normalizeFilterValue(location.sub_location) !== normalizeFilterValue(filters.subLocation)) {
+          return false
+        }
+
+        if (filters.size && normalizeSizeValue(entry.size) !== normalizeSizeValue(filters.size)) {
+          return false
+        }
+
+        return true
+      }),
+    [filters.locationCode, filters.locationId, filters.locationName, filters.locationType, filters.size, filters.subLocation, productScopedStorageRows]
+  )
+  const stockCategoryOptions = useMemo(() => {
+    const optionIds = new Set()
+
+    categoryFilterScopedRows.forEach((entry) => {
+      const categoryPath = getStorageCategoryPath(entry, categoryById)
+      if (categoryPath[0]?.id) {
+        optionIds.add(String(categoryPath[0].id))
+      }
+    })
+
+    return Array.from(optionIds)
+      .map((id) => {
+        const category = categoryById.get(Number(id))
+        return category ? { id, label: getCategoryDisplayName(category) } : null
+      })
+      .filter(Boolean)
+      .sort((left, right) => naturalSort.compare(left.label, right.label))
+  }, [categoryById, categoryFilterScopedRows])
+  const stockSubCategoryOptions = useMemo(() => {
+    const optionIds = new Set()
+
+    categoryFilterScopedRows.forEach((entry) => {
+      const categoryPath = getStorageCategoryPath(entry, categoryById)
+      const categoryId = String(categoryPath[0]?.id || '')
+      const subCategoryId = String(categoryPath[1]?.id || '')
+
+      if (filters.categoryId && categoryId !== String(filters.categoryId)) {
+        return
+      }
+
+      if (subCategoryId) {
+        optionIds.add(subCategoryId)
+      }
+    })
+
+    return Array.from(optionIds)
+      .map((id) => {
+        const category = categoryById.get(Number(id))
+        return category ? { id, label: getCategoryDisplayName(category) } : null
+      })
+      .filter(Boolean)
+      .sort((left, right) => naturalSort.compare(left.label, right.label))
+  }, [categoryById, categoryFilterScopedRows, filters.categoryId])
+  const stockItemTypeOptions = useMemo(() => {
+    const optionIds = new Set()
+
+    categoryFilterScopedRows.forEach((entry) => {
+      const categoryPath = getStorageCategoryPath(entry, categoryById)
+      const categoryId = String(categoryPath[0]?.id || '')
+      const subCategoryId = String(categoryPath[1]?.id || '')
+      const itemTypeId = String(categoryPath[2]?.id || '')
+
+      if (filters.categoryId && categoryId !== String(filters.categoryId)) {
+        return
+      }
+
+      if (filters.subCategoryId && subCategoryId !== String(filters.subCategoryId)) {
+        return
+      }
+
+      if (itemTypeId) {
+        optionIds.add(itemTypeId)
+      }
+    })
+
+    return Array.from(optionIds)
+      .map((id) => {
+        const category = categoryById.get(Number(id))
+        return category ? { id, label: getCategoryDisplayName(category) } : null
+      })
+      .filter(Boolean)
+      .sort((left, right) => naturalSort.compare(left.label, right.label))
+  }, [categoryById, categoryFilterScopedRows, filters.categoryId, filters.subCategoryId])
   const visibleBrandRows = useMemo(() => {
     const query = normalizeFilterValue(brandLookupSearch)
 
@@ -1109,6 +1231,32 @@ export default function StorageOverviewPage() {
       })
       .slice(0, 100)
   }, [brandLookupSearch, brandRows])
+  const visibleLookupCategoryRows = useMemo(() => {
+    const query = normalizeFilterValue(brandLookupSearch)
+    const lookupCode = getCategoryLookupCode(query)
+
+    return (categoryRows || [])
+      .filter((category) => {
+        const fullCode = normalizeFilterValue(category.full_code)
+
+        if (fullCode.length !== 5) {
+          return false
+        }
+
+        if (!query) {
+          return true
+        }
+
+        return [
+          category.full_code,
+          category.category_name,
+        ]
+          .map((value) => normalizeFilterValue(value))
+          .some((value) => value.includes(query) || (lookupCode && value.includes(lookupCode)))
+      })
+      .sort((left, right) => naturalSort.compare(String(left.full_code || ''), String(right.full_code || '')))
+      .slice(0, 100)
+  }, [brandLookupSearch, categoryRows])
 
   const registerLocationTypeOptions = Array.from(
     new Set(scopedRackLocations.map((item) => item.location_type).filter(Boolean))
@@ -1336,6 +1484,10 @@ export default function StorageOverviewPage() {
     const normalizedSubLocation = normalizeFilterValue(location.sub_location)
     const normalizedGroupCode = getLocationStorageGroup(location)
     const normalizedSize = normalizeSizeValue(entry.size)
+    const categoryPath = getStorageCategoryPath(entry, categoryById)
+    const categoryId = String(categoryPath[0]?.id || '')
+    const subCategoryId = String(categoryPath[1]?.id || '')
+    const itemTypeId = String(categoryPath[2]?.id || '')
 
     if (!storageEntryMatchesProductSearch(entry, normalizedProductSearch)) {
       return false
@@ -1386,6 +1538,27 @@ export default function StorageOverviewPage() {
     if (
       filters.size &&
       normalizedSize !== normalizeSizeValue(filters.size)
+    ) {
+      return false
+    }
+
+    if (
+      filters.categoryId &&
+      categoryId !== String(filters.categoryId)
+    ) {
+      return false
+    }
+
+    if (
+      filters.subCategoryId &&
+      subCategoryId !== String(filters.subCategoryId)
+    ) {
+      return false
+    }
+
+    if (
+      filters.itemTypeId &&
+      itemTypeId !== String(filters.itemTypeId)
     ) {
       return false
     }
@@ -1608,6 +1781,25 @@ export default function StorageOverviewPage() {
       return
     }
 
+    if (name === 'categoryId') {
+      setFilters((prev) => ({
+        ...prev,
+        categoryId: value,
+        subCategoryId: '',
+        itemTypeId: '',
+      }))
+      return
+    }
+
+    if (name === 'subCategoryId') {
+      setFilters((prev) => ({
+        ...prev,
+        subCategoryId: value,
+        itemTypeId: '',
+      }))
+      return
+    }
+
     setFilters((prev) => ({
       ...prev,
       [name]: value.toUpperCase(),
@@ -1660,6 +1852,9 @@ export default function StorageOverviewPage() {
       locationName: '',
       subLocation: '',
       size: '',
+      categoryId: '',
+      subCategoryId: '',
+      itemTypeId: '',
     })
     setProductSearch('')
     setQueueFilters({
@@ -2754,6 +2949,7 @@ export default function StorageOverviewPage() {
                 type="button"
                 onClick={() => {
                   setIsBrandLookupOpen(true)
+                  setBrandLookupMode('brand')
                   setBrandLookupSearch('')
                 }}
                 style={styles.iconActionButton}
@@ -3141,6 +3337,59 @@ export default function StorageOverviewPage() {
                 <option key={option} value={option} />
               ))}
             </datalist>
+          </div>
+
+          <div style={styles.field}>
+            <label style={styles.label}>Category</label>
+            <select
+              name="categoryId"
+              value={filters.categoryId}
+              onChange={handleFilterChange}
+              style={styles.select}
+            >
+              <option value="">All categories</option>
+              {stockCategoryOptions.map((option) => (
+                <option key={option.id} value={option.id}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div style={styles.field}>
+            <label style={styles.label}>Sub Category</label>
+            <select
+              name="subCategoryId"
+              value={filters.subCategoryId}
+              onChange={handleFilterChange}
+              style={styles.select}
+              disabled={stockSubCategoryOptions.length === 0}
+            >
+              <option value="">All sub categories</option>
+              {stockSubCategoryOptions.map((option) => (
+                <option key={option.id} value={option.id}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div style={styles.field}>
+            <label style={styles.label}>Item Type</label>
+            <select
+              name="itemTypeId"
+              value={filters.itemTypeId}
+              onChange={handleFilterChange}
+              style={styles.select}
+              disabled={stockItemTypeOptions.length === 0}
+            >
+              <option value="">All item types</option>
+              {stockItemTypeOptions.map((option) => (
+                <option key={option.id} value={option.id}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
           </div>
 
         </div>
@@ -3625,11 +3874,11 @@ export default function StorageOverviewPage() {
 
       {isBrandLookupOpen ? (
         <div style={styles.modalOverlay}>
-          <div style={styles.modalCard}>
+          <div style={{ ...styles.modalCard, ...styles.lookupModalCard }}>
             <div style={styles.modalHeader}>
               <div style={styles.modalTitleGroup}>
                 <p style={styles.modalEyebrow}>Warehouse</p>
-                <h2 style={styles.modalTitle}>Brand Lookup</h2>
+                <h2 style={styles.modalTitle}>Directory Lookup</h2>
               </div>
               <div style={styles.modalHeaderActions}>
                 <button
@@ -3642,41 +3891,93 @@ export default function StorageOverviewPage() {
               </div>
             </div>
 
+            <div style={styles.lookupModeToggle} aria-label="Lookup mode">
+              {[
+                ['brand', 'Brand'],
+                ['category', 'Category'],
+              ].map(([mode, label]) => {
+                const isActive = brandLookupMode === mode
+
+                return (
+                  <button
+                    key={mode}
+                    type="button"
+                    onClick={() => {
+                      setBrandLookupMode(mode)
+                      setBrandLookupSearch('')
+                    }}
+                    style={{
+                      ...styles.lookupModeButton,
+                      ...(isActive ? styles.lookupModeButtonActive : {}),
+                    }}
+                    aria-pressed={isActive}
+                  >
+                    {label}
+                  </button>
+                )
+              })}
+            </div>
+
             <div style={styles.field}>
-              <label style={styles.label}>Search Brand</label>
+              <label style={styles.label}>{brandLookupMode === 'category' ? 'Search Category' : 'Search Brand'}</label>
               <input
                 value={brandLookupSearch}
                 onChange={(event) => setBrandLookupSearch(event.target.value.toUpperCase())}
                 style={styles.input}
-                placeholder="Search brand name or code"
+                placeholder={brandLookupMode === 'category' ? 'Search category code, name, or SKU' : 'Search brand name or code'}
                 autoComplete="off"
               />
             </div>
 
             <div style={styles.brandLookupTableWrap}>
               <table style={styles.table}>
-                <thead>
-                  <tr>
-                    <th style={styles.th}>Brand Code</th>
-                    <th style={styles.th}>Brand Name</th>
-                    <th style={{ ...styles.th, ...styles.centerCell }}>Status</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {visibleBrandRows.length > 0 ? visibleBrandRows.map((brand) => (
-                    <tr key={brand.id}>
-                      <td style={styles.td}>{brand.brand_code || '-'}</td>
-                      <td style={styles.td}>{brand.brand_name || '-'}</td>
-                      <td style={{ ...styles.td, ...styles.centerCell }}>
-                        {brand.is_active === false ? 'Inactive' : 'Active'}
-                      </td>
-                    </tr>
-                  )) : (
-                    <tr>
-                      <td style={styles.td} colSpan={3}>No brand found.</td>
-                    </tr>
-                  )}
-                </tbody>
+                {brandLookupMode === 'category' ? (
+                  <>
+                    <thead>
+                      <tr>
+                        <th style={styles.th}>Full Code</th>
+                        <th style={styles.th}>Category Name</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {visibleLookupCategoryRows.length > 0 ? visibleLookupCategoryRows.map((category) => (
+                        <tr key={category.id}>
+                          <td style={styles.td}>{category.full_code || '-'}</td>
+                          <td style={styles.td}>{getCategoryDisplayName(category)}</td>
+                        </tr>
+                      )) : (
+                        <tr>
+                          <td style={styles.td} colSpan={2}>No category found.</td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </>
+                ) : (
+                  <>
+                    <thead>
+                      <tr>
+                        <th style={styles.th}>Brand Code</th>
+                        <th style={styles.th}>Brand Name</th>
+                        <th style={{ ...styles.th, ...styles.centerCell }}>Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {visibleBrandRows.length > 0 ? visibleBrandRows.map((brand) => (
+                        <tr key={brand.id}>
+                          <td style={styles.td}>{brand.brand_code || '-'}</td>
+                          <td style={styles.td}>{brand.brand_name || '-'}</td>
+                          <td style={{ ...styles.td, ...styles.centerCell }}>
+                            {brand.is_active === false ? 'Inactive' : 'Active'}
+                          </td>
+                        </tr>
+                      )) : (
+                        <tr>
+                          <td style={styles.td} colSpan={3}>No brand found.</td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </>
+                )}
               </table>
             </div>
           </div>
@@ -5236,10 +5537,42 @@ const styles = {
   brandLookupTableWrap: {
     overflowX: 'auto',
     overflowY: 'auto',
-    maxHeight: '420px',
+    maxHeight: 'min(420px, 44vh)',
     border: '1px solid #e5e7eb',
     borderRadius: '12px',
     background: '#fff',
+  },
+  lookupModalCard: {
+    maxWidth: '760px',
+    maxHeight: 'calc(100vh - 48px)',
+    overflowY: 'auto',
+  },
+  lookupModeToggle: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+    gap: '8px',
+    padding: '4px',
+    borderRadius: '12px',
+    border: '1px solid #dbe4ef',
+    background: '#f8fafc',
+  },
+  lookupModeButton: {
+    height: '36px',
+    borderRadius: '9px',
+    borderWidth: '1px',
+    borderStyle: 'solid',
+    borderColor: 'transparent',
+    background: 'transparent',
+    color: '#64748b',
+    fontSize: '13px',
+    fontWeight: '800',
+    cursor: 'pointer',
+    fontFamily: 'inherit',
+  },
+  lookupModeButtonActive: {
+    borderColor: '#111827',
+    background: '#111827',
+    color: '#fff',
   },
   table: {
     width: '100%',

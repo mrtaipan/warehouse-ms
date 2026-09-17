@@ -6,6 +6,7 @@ create table if not exists public.arkline_live_reporting_sessions (
   start_time time not null,
   end_time time not null,
   session_type text not null default 'STANDALONE',
+  sales_channel text not null default 'TIKTOK',
   host_profile_id text references public.dir_user_profiles(id) on delete set null,
   host_display_name_snapshot text,
   partner_profile_id text references public.dir_user_profiles(id) on delete set null,
@@ -16,8 +17,26 @@ create table if not exists public.arkline_live_reporting_sessions (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   constraint arkline_live_reporting_sessions_type_check check (session_type in ('STANDALONE', 'PAIRING')),
+  constraint arkline_live_reporting_sessions_channel_check check (sales_channel in ('TIKTOK', 'SHOPEE')),
   constraint arkline_live_reporting_sessions_amount_check check (gross_amount >= 0)
 );
+
+alter table public.arkline_live_reporting_sessions
+  add column if not exists sales_channel text not null default 'TIKTOK';
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'arkline_live_reporting_sessions_channel_check'
+      and conrelid = 'public.arkline_live_reporting_sessions'::regclass
+  ) then
+    alter table public.arkline_live_reporting_sessions
+      add constraint arkline_live_reporting_sessions_channel_check
+      check (sales_channel in ('TIKTOK', 'SHOPEE'));
+  end if;
+end $$;
 
 create table if not exists public.arkline_live_reporting_credits (
   id bigint generated always as identity primary key,
@@ -34,6 +53,9 @@ create index if not exists idx_arkline_live_reporting_sessions_date
 
 create index if not exists idx_arkline_live_reporting_sessions_type
   on public.arkline_live_reporting_sessions (session_type, session_date desc);
+
+create index if not exists idx_arkline_live_reporting_sessions_channel
+  on public.arkline_live_reporting_sessions (sales_channel, session_date desc);
 
 create index if not exists idx_arkline_live_reporting_credits_session
   on public.arkline_live_reporting_credits (session_id, created_at desc);

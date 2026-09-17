@@ -1,7 +1,7 @@
 'use client'
 
 import Image from 'next/image'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import { createClient } from '@/utils/supabase/browser'
 import { getProfileByAuthenticatedUser } from '@/utils/user-profiles'
@@ -20,6 +20,11 @@ function formatDateDisplay(value) {
     month: 'short',
     year: 'numeric',
   }).format(new Date(value))
+}
+
+function getTodayDateString() {
+  const now = new Date()
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
 }
 
 function buildCategoryMaps(categories) {
@@ -757,8 +762,8 @@ const styles = {
     maxWidth: '100%',
   },
   breakdownFilters: {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 148px), 1fr))',
+    display: 'flex',
+    flexWrap: 'wrap',
     gap: '8px',
     alignItems: 'center',
     flex: '1 1 560px',
@@ -767,6 +772,7 @@ const styles = {
     width: '100%',
   },
   filterSelect: {
+    flex: '1 1 148px',
     width: '100%',
     minWidth: 0,
     height: '34px',
@@ -779,10 +785,15 @@ const styles = {
     fontWeight: '750',
     outline: 'none',
   },
+  sampleFilterSelect: {
+    flex: '0 0 92px',
+    maxWidth: '92px',
+  },
   qtyFilterGroup: {
     display: 'grid',
     gridTemplateColumns: 'minmax(0, 1fr) 56px',
     gap: '6px',
+    flex: '0 1 150px',
     minWidth: 0,
     maxWidth: '100%',
     width: '100%',
@@ -2485,6 +2496,7 @@ export default function UnloadPage() {
   const [supportsReturnVariant, setSupportsReturnVariant] = useState(false)
   const [supportsReturnVariantCode, setSupportsReturnVariantCode] = useState(false)
   const [supportsReturnVariantName, setSupportsReturnVariantName] = useState(false)
+  const syncedPenaltyKeyRef = useRef('')
   const [breakdownMode, setBreakdownMode] = useState('koli')
   const [breakdownFilters, setBreakdownFilters] = useState({
     brandId: '',
@@ -3205,6 +3217,50 @@ export default function UnloadPage() {
       { statedQty: 0, qcQty: 0, modelErrorQty: 0, variance: 0 }
     )
   }, [performanceRows])
+
+  useEffect(() => {
+    if (!selectedInbound || !performanceRows.length) return
+
+    const eligibleRows = performanceRows.filter((row) => Number(row.modelErrorQty || 0) > 0 || Math.abs(Number(row.variance || 0)) > 0)
+    if (!eligibleRows.length) return
+
+    const syncKey = JSON.stringify({
+      inboundId: selectedInbound.id,
+      rows: eligibleRows.map((row) => ({
+        picName: row.picName,
+        modelErrorQty: Number(row.modelErrorQty || 0),
+        variance: Number(row.variance || 0),
+      })),
+    })
+
+    if (syncedPenaltyKeyRef.current === syncKey) return
+    syncedPenaltyKeyRef.current = syncKey
+
+    async function syncInboundPenaltyPoints() {
+      const response = await fetch('/api/penalty-points/inbound-performance', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          grnNumber: selectedInbound.grn_number,
+          penaltyDate: selectedInbound.inbound_date || getTodayDateString(),
+          rows: eligibleRows.map((row) => ({
+            picName: row.picName,
+            modelErrorQty: row.modelErrorQty,
+            variance: row.variance,
+          })),
+        }),
+      })
+
+      if (!response.ok) {
+        syncedPenaltyKeyRef.current = ''
+      }
+    }
+
+    syncInboundPenaltyPoints().catch(() => {
+      syncedPenaltyKeyRef.current = ''
+    })
+  }, [performanceRows, selectedInbound])
+
   const displayFirstName = getFirstName(displayName)
   const currentKoliQty = currentKoliItems.reduce((sum, row) => sum + Number(row.qty || 0), 0)
   const builderSampleResolveExistingRows = builderSampleResolveSource
@@ -3383,7 +3439,12 @@ export default function UnloadPage() {
     })
 
     return Array.from(grouped.values())
-      .sort((a, b) => getModelVariantLabelForRow(a).localeCompare(getModelVariantLabelForRow(b)))
+      .sort((a, b) => {
+        const qtyCompare = Number(b.total_qty || 0) - Number(a.total_qty || 0)
+        if (qtyCompare !== 0) return qtyCompare
+
+        return getModelVariantLabelForRow(a).localeCompare(getModelVariantLabelForRow(b))
+      })
       .map((group) => ({
         ...group,
         koli_list: Array.from(group.koli_sequences).sort((a, b) => a - b),
@@ -6196,7 +6257,7 @@ export default function UnloadPage() {
                 <select
                   value={breakdownFilters.sampleMode}
                   onChange={(event) => updateBreakdownFilter('sampleMode', event.target.value)}
-                  style={styles.filterSelect}
+                  style={{ ...styles.filterSelect, ...styles.sampleFilterSelect }}
                   aria-label="Filter sample rows"
                 >
                   <option value="">Sample</option>

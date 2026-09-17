@@ -1355,46 +1355,6 @@ async function loadOperationsCalendarData(supabase, monthValue, nonWorkingDateSe
     throw error
   }
 
-  groupRowsByDate(targetRows || [], (row) => extractDateKey(row.target_date)).forEach((rows, dateKey) => {
-    rows.forEach((row) => {
-      const brandName = String(row.brand_name || '').trim()
-
-      pushTimelineItem(timelineMap, row.division_key, dateKey, {
-        label: 'Target',
-        eyebrow: 'Urgent',
-        count: 1,
-        qty: 0,
-        note: `${row.grn_number || 'GRN'} | ${brandName || 'All Brands'}`,
-        detail: '',
-        tone: 'target',
-        recordId: row.id,
-        targetDate: dateKey,
-        divisionKey: row.division_key,
-        grnNumber: row.grn_number,
-        brandName,
-      })
-    })
-  })
-
-  groupRowsByDate(manualReportRows || [], (row) => extractDateKey(row.report_date)).forEach((rows, dateKey) => {
-    rows.forEach((row) => {
-      pushTimelineItem(timelineMap, row.division_key, dateKey, {
-        label: row.title || 'Manual Report',
-        eyebrow: 'Manual',
-        count: 1,
-        qty: 0,
-        note: row.description || row.pic_name || '',
-        detail: row.pic_name ? `PIC ${row.pic_name}` : '',
-        tone: 'manual',
-        recordId: row.id,
-        reportDate: dateKey,
-        divisionKey: row.division_key,
-        title: row.title || '',
-        description: row.description || '',
-      })
-    })
-  })
-
   const plReceivingSummaryRows = (plReceivingRows || []).filter((row) => row.event_date)
   const plReceivingRawRows = (plReceivingRows || []).filter((row) => !row.event_date)
   const plBreakdownSummaryRows = (plBreakdownRows || []).filter((row) => row.event_date)
@@ -1443,6 +1403,15 @@ async function loadOperationsCalendarData(supabase, monthValue, nonWorkingDateSe
   const now = new Date()
   const unloadRowsByInbound = groupRowsByValue(inboundUnloadRows || [], (row) => String(row.inbound_id || '').trim())
   const qcRowsByInbound = groupRowsByValue(qcItemRows || [], (row) => String(row.inbound_id || '').trim())
+  const inboundIdsByGrn = new Map()
+  inboundById.forEach((inbound, inboundId) => {
+    const grnNumber = String(inbound?.grn_number || '').trim()
+    if (!grnNumber) return
+    if (!inboundIdsByGrn.has(grnNumber)) {
+      inboundIdsByGrn.set(grnNumber, [])
+    }
+    inboundIdsByGrn.get(grnNumber).push(inboundId)
+  })
   const { data: qcPauseRows, error: qcPauseError } = await loadQcPauseRowsForTaskIds(
     supabase,
     (qcItemRows || []).map((row) => row.id)
@@ -1466,6 +1435,102 @@ async function loadOperationsCalendarData(supabase, monthValue, nonWorkingDateSe
     return result
   }, new Map())
 
+  function matchesTargetBrand(row, brandName) {
+    const normalizedBrand = String(brandName || '').trim()
+    if (!normalizedBrand) return true
+
+    return String(row?.inbound_unload?.brands?.brand_name || row?.brands?.brand_name || '').trim() === normalizedBrand
+  }
+
+  function getTargetProgress(row) {
+    const divisionKey = String(row.division_key || '').trim()
+    const grnNumber = String(row.grn_number || '').trim()
+    const brandName = String(row.brand_name || '').trim()
+    const inboundIds = inboundIdsByGrn.get(grnNumber) || []
+    const progress = {
+      expectedQty: 0,
+      sortedQty: 0,
+      qcInQty: 0,
+      qcDoneQty: 0,
+      passingQty: 0,
+      packingQty: 0,
+    }
+
+    inboundIds.forEach((inboundId) => {
+      const inbound = inboundById.get(String(inboundId))
+      const sortingRows = (unloadRowsByInbound.get(String(inboundId)) || []).filter((item) => matchesTargetBrand(item, brandName))
+      const qcRows = (qcRowsByInbound.get(String(inboundId)) || []).filter((item) => matchesTargetBrand(item, brandName))
+      const sortedQty = sumBy(sortingRows, 'qty')
+      const targetQty = brandName ? sortedQty : Number(inbound?.total_claimed_qty || inbound?.total_received_qty || sortedQty || 0)
+
+      progress.expectedQty += targetQty
+      progress.sortedQty += sortedQty
+      progress.qcInQty += sumBy(qcRows, 'qty_in')
+      progress.qcDoneQty += qcRows.reduce((total, item) => total + Number(item.qty_a || 0) + Number(item.qty_b || 0) + Number(item.qty_c || 0), 0)
+      progress.passingQty += qcRows.reduce((total, item) => total + Number(item.qty_a || 0), 0)
+    })
+
+    const targetQty = progress.sortedQty || progress.expectedQty
+    progress.packingQty = Math.max(
+      sumBy(plReceivingSummaryRows.filter((item) => !grnNumber || (Array.isArray(item.grn_numbers) && item.grn_numbers.includes(grnNumber))), ['validated_qty', 'received_qty']),
+      sumBy(plBreakdownSummaryRows.filter((item) => !grnNumber || (Array.isArray(item.grn_numbers) && item.grn_numbers.includes(grnNumber))), ['breakdown_qty', 'qty']),
+      sumBy(plReceivingRawRows.filter((item) => inboundIds.includes(String(item.inbound_id || ''))), ['received_qty', 'qty', 'qc_confirm_qty']),
+      sumBy(plBreakdownRawRows.filter((item) => inboundIds.includes(String(item.inbound_id || ''))), ['qty', 'received_qty', 'breakdown_qty'])
+    )
+
+    return {
+      ...progress,
+      targetQty,
+      isCompleted:
+        (divisionKey === 'inbound' && targetQty > 0 && progress.sortedQty >= targetQty) ||
+        (divisionKey === 'qc' && targetQty > 0 && Math.max(progress.qcInQty, progress.qcDoneQty) >= targetQty) ||
+        (divisionKey === 'packing' && targetQty > 0 && progress.packingQty >= targetQty),
+    }
+  }
+
+  groupRowsByDate(targetRows || [], (row) => extractDateKey(row.target_date)).forEach((rows, dateKey) => {
+    rows.forEach((row) => {
+      const brandName = String(row.brand_name || '').trim()
+      const progress = getTargetProgress(row)
+
+      if (progress.isCompleted) return
+
+      pushTimelineItem(timelineMap, row.division_key, dateKey, {
+        label: 'Target',
+        eyebrow: 'Urgent',
+        count: 1,
+        qty: 0,
+        note: `${row.grn_number || 'GRN'} | ${brandName || 'All Brands'}`,
+        detail: '',
+        tone: 'target',
+        recordId: row.id,
+        targetDate: dateKey,
+        divisionKey: row.division_key,
+        grnNumber: row.grn_number,
+        brandName,
+      })
+    })
+  })
+
+  groupRowsByDate(manualReportRows || [], (row) => extractDateKey(row.report_date)).forEach((rows, dateKey) => {
+    rows.forEach((row) => {
+      pushTimelineItem(timelineMap, row.division_key, dateKey, {
+        label: row.title || 'Manual Report',
+        eyebrow: 'Manual',
+        count: 1,
+        qty: 0,
+        note: row.description || row.pic_name || '',
+        detail: row.pic_name ? `PIC ${row.pic_name}` : '',
+        tone: 'manual',
+        recordId: row.id,
+        reportDate: dateKey,
+        divisionKey: row.division_key,
+        title: row.title || '',
+        description: row.description || '',
+      })
+    })
+  })
+
   inboundById.forEach((inbound, inboundId) => {
     const sortingRows = unloadRowsByInbound.get(inboundId) || []
     const targetQty = Number(inbound.total_claimed_qty || inbound.total_received_qty || 0)
@@ -1478,8 +1543,11 @@ async function loadOperationsCalendarData(supabase, monthValue, nonWorkingDateSe
     const qcPassingQty = qcRows.reduce((total, row) => total + Number(row.qty_a || 0), 0)
     const passingPendingQty = Math.max(0, qcPassingQty - Number(confirmedPassingQtyByInbound.get(inboundId) || 0))
     const isPassingGradeClosed = qcPassingQty > 0 && passingPendingQty <= 0
+    const qcTargetQty = sortedQty || targetQty
+    const qcInQty = sumBy(qcRows, 'qty_in')
+    const isQcInClosed = qcTargetQty > 0 && qcInQty >= qcTargetQty
 
-    if (isPassingGradeClosed) return
+    if (isPassingGradeClosed || isQcInClosed) return
 
     const inboundEstimate = calculateProjectedFinish({
       targetQty,
@@ -1520,7 +1588,6 @@ async function loadOperationsCalendarData(supabase, monthValue, nonWorkingDateSe
     const qcDoneQty = qcRows.reduce((total, row) => (
       total + Number(row.qty_a || 0) + Number(row.qty_b || 0) + Number(row.qty_c || 0)
     ), 0)
-    const qcTargetQty = sortedQty || targetQty
     const qcActivityRows = qcRows.filter((row) => Number(row.qty_a || 0) + Number(row.qty_b || 0) + Number(row.qty_c || 0) > 0)
     const qcPauseRowsForInbound = qcRows.flatMap((row) => qcPauseRowsByTaskId.get(String(row.id || '')) || [])
     const qcCapacity = calculateProductiveHoursFromPauseRows(qcActivityRows, qcPauseRowsForInbound, now)

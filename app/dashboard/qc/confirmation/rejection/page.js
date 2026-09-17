@@ -46,6 +46,14 @@ function getDisplayName(user, profile) {
   )
 }
 
+async function syncQcAdjustmentPenalty(row) {
+  await fetch('/api/penalty-points/qc', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(row),
+  }).catch(() => null)
+}
+
 function XIcon() {
   return (
     <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -1369,6 +1377,7 @@ export default function QcConfirmationRejectionPage() {
         source_qty: 0,
         taken_qty: 0,
         returned_qty: 0,
+        pic_names: new Set(familyRow?.pic_names || []),
         is_adjustment_only: true,
       }
 
@@ -1391,6 +1400,7 @@ export default function QcConfirmationRejectionPage() {
       sourceVariantCode,
       grade,
       qty,
+      picName,
     }) {
       if (Number(qty || 0) <= 0) {
         return
@@ -1421,6 +1431,7 @@ export default function QcConfirmationRejectionPage() {
         source_qty: 0,
         taken_qty: 0,
         returned_qty: 0,
+        pic_names: new Set(),
       }
 
       if (!current.photo_url && photoUrl) {
@@ -1430,6 +1441,9 @@ export default function QcConfirmationRejectionPage() {
       current.product_model_variant_id = current.product_model_variant_id || productModelVariantId || null
       current.source_variant_code = current.source_variant_code || sourceVariantCode || null
       current.source_qty += Number(qty || 0)
+      if (picName) {
+        current.pic_names.add(picName)
+      }
       grouped.set(key, current)
       rememberFamily(current)
     }
@@ -1457,6 +1471,7 @@ export default function QcConfirmationRejectionPage() {
               sourceVariantCode: getSourceVariantCode(item),
               grade: gradeRow.grade,
               qty: gradeRow.qty,
+              picName: item.assigned_to || item.pic_name,
             })
           })
       })
@@ -1484,6 +1499,7 @@ export default function QcConfirmationRejectionPage() {
               sourceVariantCode: getSampleSourceVariantCode(item),
               grade: gradeRow.grade,
               qty: gradeRow.qty,
+              picName: item.qc_item?.assigned_to,
             })
           })
       })
@@ -1516,7 +1532,10 @@ export default function QcConfirmationRejectionPage() {
         }
       })
 
-    return Array.from(grouped.values()).sort((a, b) => {
+    return Array.from(grouped.values()).map((item) => ({
+      ...item,
+      pic_names: Array.from(item.pic_names || []),
+    })).sort((a, b) => {
       if (a.brand_name !== b.brand_name) return a.brand_name.localeCompare(b.brand_name)
       if (a.category_name !== b.category_name) return a.category_name.localeCompare(b.category_name)
       if (a.grade !== b.grade) return a.grade.localeCompare(b.grade)
@@ -1706,6 +1725,7 @@ export default function QcConfirmationRejectionPage() {
       qty,
       grade: type === 'take' ? targetGrade : row.grade,
       source_grade: row.grade,
+      pic_names: row.pic_names || [],
     }
   }
 
@@ -1847,6 +1867,7 @@ export default function QcConfirmationRejectionPage() {
       source_variant_code: selectedAdjustmentModel.source_variant_code || null,
       qty: nextQty,
       grade: adjustmentGrade,
+      pic_names: selectedAdjustmentModel.pic_names || [],
       is_adjustment: true,
       adjustment_type: 'REJECTION_MANUAL',
     }
@@ -2003,6 +2024,23 @@ export default function QcConfirmationRejectionPage() {
       setSavingTake(false)
       return
     }
+
+    ;(data || []).forEach((row, index) => {
+      const draftItem = currentTakeKoliItems[index]
+      if (String(draftItem?.adjustment_type || '').toUpperCase() !== 'REJECTION_MANUAL') {
+        return
+      }
+
+      syncQcAdjustmentPenalty({
+        eventType: 'QC_CONFIRM_ADJUSTMENT',
+        adjustmentRef: `qc_confirm:${row.id}`,
+        adjustmentType: 'REJECTION_MANUAL',
+        grnNumber: selectedInbound?.grn_number || grnFilter || '',
+        modelName: [draftItem.model_name, draftItem.model_color].map((value) => String(value || '').trim()).filter(Boolean).join(' - '),
+        qty: draftItem.qty,
+        picNames: draftItem.pic_names || [],
+      })
+    })
 
     setConfirmRows((prev) => [...prev, ...(data || []).map(normalizeConfirmRow)])
     setCurrentTakeKoliItems([])

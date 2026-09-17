@@ -36,6 +36,14 @@ function getDisplayName(user, profile) {
   )
 }
 
+async function syncQcAdjustmentPenalty(row) {
+  await fetch('/api/penalty-points/qc', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(row),
+  }).catch(() => null)
+}
+
 function BuilderIcon() {
   return (
     <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -2029,6 +2037,7 @@ export default function QcConfirmationNextProcessPage() {
       product_model_variant_id: selectedSourceRow.product_model_variant_id || null,
       source_variant_code: selectedSourceRow.source_variant_code || null,
       qty,
+      pic_names: selectedSourceRow.pic_names || [],
       grade: 'A',
       is_adjustment: isAdjustment,
       adjustment_type: type,
@@ -2216,6 +2225,23 @@ export default function QcConfirmationNextProcessPage() {
       setSaving(false)
       return
     }
+
+    ;(data || []).forEach((row, index) => {
+      const draftItem = currentKoliItems[index]
+      if (!draftItem?.is_adjustment || !['SURPLUS', 'SHORTAGE'].includes(String(draftItem.adjustment_type || '').toUpperCase())) {
+        return
+      }
+
+      syncQcAdjustmentPenalty({
+        eventType: 'QC_CONFIRM_ADJUSTMENT',
+        adjustmentRef: `qc_confirm:${row.id}`,
+        adjustmentType: draftItem.adjustment_type,
+        grnNumber: selectedInbound?.grn_number || grnFilter || '',
+        modelName: [draftItem.model_name, draftItem.model_color].map((value) => String(value || '').trim()).filter(Boolean).join(' - '),
+        qty: draftItem.qty,
+        picNames: draftItem.pic_names || [],
+      })
+    })
 
     setConfirmRows((prev) => [...prev, ...(data || []).map(normalizeConfirmRow)])
     setCurrentKoliItems([])

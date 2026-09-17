@@ -1044,6 +1044,35 @@ const styles = {
     fontWeight: 750,
     lineHeight: 1.35,
   },
+  modelPickerFilters: {
+    padding: '10px 10px 0',
+    display: 'grid',
+    gridTemplateColumns: 'minmax(0, 1fr) minmax(130px, 0.62fr)',
+    gap: '8px',
+  },
+  modelPickerFilterInput: {
+    minHeight: '40px',
+    width: '100%',
+    borderWidth: '1px',
+    borderStyle: 'solid',
+    borderColor: '#cbd5e1',
+    borderRadius: '10px',
+    background: '#fff',
+    color: '#0f172a',
+    padding: '0 10px',
+    fontSize: '13px',
+    fontWeight: 750,
+    boxSizing: 'border-box',
+  },
+  modelPickerFeedback: {
+    margin: '0 10px',
+    padding: '8px 10px',
+    borderRadius: '10px',
+    background: '#fef2f2',
+    color: '#dc2626',
+    fontSize: '12px',
+    fontWeight: 850,
+  },
   modelPickerClose: {
     width: '32px',
     height: '32px',
@@ -1209,6 +1238,12 @@ function buildPackingRows(confirmRows, catalogLookup = null) {
   ;(confirmRows || []).forEach((item) => {
     const catalogIdentity = resolveProductCatalogIdentity(item, catalogLookup)
     const key = getProductCatalogIdentityKey(item, catalogIdentity)
+    const categoryName =
+      item.categories?.full_name ||
+      item.categories?.category_name ||
+      catalogIdentity.model?.categories?.full_name ||
+      catalogIdentity.model?.categories?.category_name ||
+      ''
     const current = grouped.get(key) || {
       id: `source-${key}`,
       source_key: key,
@@ -1216,7 +1251,8 @@ function buildPackingRows(confirmRows, catalogLookup = null) {
       model_color: item.model_color || '',
       brand_id: item.brand_id || catalogIdentity.model?.brand_id || null,
       category_id: item.category_id || catalogIdentity.model?.category_id || null,
-      brand_name: item.brands?.brand_name || '',
+      brand_name: item.brands?.brand_name || catalogIdentity.model?.brands?.brand_name || '',
+      category_name: categoryName,
       photo_url: item.photo_url || '',
       product_model_id: catalogIdentity.product_model_id,
       product_model_variant_id: catalogIdentity.product_model_variant_id,
@@ -1227,6 +1263,7 @@ function buildPackingRows(confirmRows, catalogLookup = null) {
 
     current.qty += Number(item.qty || 0)
     current.photo_url = current.photo_url || item.photo_url || ''
+    current.category_name = current.category_name || categoryName
     current.product_model_id = current.product_model_id || catalogIdentity.product_model_id
     current.product_model_variant_id = current.product_model_variant_id || catalogIdentity.product_model_variant_id
     current.source_variant_code = current.source_variant_code || catalogIdentity.source_variant_code
@@ -1249,6 +1286,7 @@ function createDraftRows(sourceRows) {
     brand_id: row.brand_id || null,
     category_id: row.category_id || null,
     brand_name: row.brand_name || '',
+    category_name: row.category_name || '',
     photo_url: row.photo_url || '',
     product_model_id: row.product_model_id || null,
     product_model_variant_id: row.product_model_variant_id || null,
@@ -1279,6 +1317,11 @@ export default function PackingListReceivingPage() {
   const [draftRows, setDraftRows] = useState([])
   const [receivedWithNames, setReceivedWithNames] = useState([])
   const [modelChooser, setModelChooser] = useState(null)
+  const [modelChooserError, setModelChooserError] = useState('')
+  const [modelChooserFilters, setModelChooserFilters] = useState({
+    query: '',
+    category: '',
+  })
   const [validationRows, setValidationRows] = useState([])
   const [previewPhoto, setPreviewPhoto] = useState(null)
   const [detailTableMode, setDetailTableMode] = useState('koli')
@@ -1829,6 +1872,7 @@ export default function PackingListReceivingPage() {
         brand_id: row.brand_id || null,
         category_id: row.category_id || null,
         brand_name: row.brand_name || '',
+        category_name: row.category_name || '',
         photo_url: row.photo_url || '',
         product_model_id: row.product_model_id || null,
         product_model_variant_id: row.product_model_variant_id || null,
@@ -1838,6 +1882,28 @@ export default function PackingListReceivingPage() {
       }))
       .filter((row) => row.key && row.key !== '::')
   }, [catalogLookup, confirmRows, detailGrn, grnFilter, selectedInbound?.grn_number])
+  const modelChooserCategoryOptions = useMemo(
+    () => getUniqueOptions(modelOptions.map((item) => item.category_name).filter(Boolean)),
+    [modelOptions]
+  )
+  const filteredModelOptions = useMemo(() => {
+    const query = String(modelChooserFilters.query || '').trim().toUpperCase()
+    return modelOptions.filter((item) => {
+      if (modelChooserFilters.category && item.category_name !== modelChooserFilters.category) return false
+      if (!query) return true
+
+      return [
+        item.label,
+        item.model_name,
+        item.model_color,
+        item.brand_name,
+        item.category_name,
+        item.source_variant_code,
+      ]
+        .map((value) => String(value || '').toUpperCase())
+        .some((value) => value.includes(query))
+    })
+  }, [modelChooserFilters.category, modelChooserFilters.query, modelOptions])
   const grnModelMap = useMemo(() => {
     const mapped = new Map()
     modelOptions.forEach((item) => {
@@ -1935,6 +2001,7 @@ export default function PackingListReceivingPage() {
             brand_id: matchedModel?.brand_id || matchedSource?.brand_id || null,
             category_id: matchedModel?.category_id || matchedSource?.category_id || null,
             brand_name: matchedModel?.brand_name || matchedSource?.brand_name || '',
+            category_name: matchedModel?.category_name || matchedSource?.category_name || '',
             product_model_id: effectiveIdentity.product_model_id || matchedModel?.product_model_id || null,
             product_model_variant_id: effectiveIdentity.product_model_variant_id || matchedModel?.product_model_variant_id || null,
             source_variant_code: effectiveIdentity.source_variant_code || matchedModel?.source_variant_code || null,
@@ -1997,11 +2064,15 @@ export default function PackingListReceivingPage() {
 
   function openModelChooser(mode, rowId = '') {
     if (!canManageReceiving || isValidated) return
+    setModelChooserError('')
+    setModelChooserFilters({ query: '', category: '' })
     setModelChooser({ mode, rowId })
   }
 
   function closeModelChooser() {
     setModelChooser(null)
+    setModelChooserError('')
+    setModelChooserFilters({ query: '', category: '' })
   }
 
   function applyDraftModel(rowId, selectedModel) {
@@ -2012,7 +2083,7 @@ export default function PackingListReceivingPage() {
     )
     if (isAlreadyUsed) {
       setSuccess('')
-      setError('Model is already listed in this receiving input.')
+      setModelChooserError('Model is already listed in this receiving input.')
       return
     }
 
@@ -2026,6 +2097,7 @@ export default function PackingListReceivingPage() {
               brand_id: selectedModel.brand_id || null,
               category_id: selectedModel.category_id || null,
               brand_name: selectedModel.brand_name || '',
+              category_name: selectedModel.category_name || '',
               photo_url: selectedModel.photo_url || row.photo_url || '',
               product_model_id: selectedModel.product_model_id || null,
               product_model_variant_id: selectedModel.product_model_variant_id || null,
@@ -2035,20 +2107,21 @@ export default function PackingListReceivingPage() {
       )
     )
     closeModelChooser()
+    setModelChooserError('')
     setError('')
   }
 
   function addDraftModelRow(selectedModel) {
     if (!selectedModel) {
       setSuccess('')
-      setError('Choose model first before adding a row.')
+      setModelChooserError('Choose model first before adding a row.')
       return
     }
 
     const isAlreadyAdded = draftRows.some((row) => getProductCatalogIdentityKey(row) === selectedModel.key)
     if (isAlreadyAdded) {
       setSuccess('')
-      setError('Model is already listed in this receiving input.')
+      setModelChooserError('Model is already listed in this receiving input.')
       return
     }
 
@@ -2063,6 +2136,7 @@ export default function PackingListReceivingPage() {
         brand_id: selectedModel.brand_id || null,
         category_id: selectedModel.category_id || null,
         brand_name: selectedModel.brand_name || '',
+        category_name: selectedModel.category_name || '',
         photo_url: selectedModel.photo_url || '',
         product_model_id: selectedModel.product_model_id || null,
         product_model_variant_id: selectedModel.product_model_variant_id || null,
@@ -2071,6 +2145,7 @@ export default function PackingListReceivingPage() {
       },
     ])
     closeModelChooser()
+    setModelChooserError('')
     setError('')
   }
 
@@ -2228,6 +2303,16 @@ export default function PackingListReceivingPage() {
     if (invalidRow) {
       setSuccess('')
       setError('Every PL Receiving row must have a model and qty. Use 0 if nothing was received.')
+      return
+    }
+
+    const invalidQtyRow = draftRows.find((row) => {
+      const qty = Number(row.qty)
+      return !Number.isFinite(qty) || qty < 0
+    })
+    if (invalidQtyRow) {
+      setSuccess('')
+      setError('PL Received Qty must be 0 or more before validating.')
       return
     }
 
@@ -2908,25 +2993,67 @@ export default function PackingListReceivingPage() {
                 X
               </button>
             </div>
+            <div style={styles.modelPickerFilters}>
+              <input
+                type="search"
+                value={modelChooserFilters.query}
+                onChange={(event) => {
+                  setModelChooserError('')
+                  setModelChooserFilters((current) => ({ ...current, query: event.target.value }))
+                }}
+                placeholder="Search model-variant"
+                style={styles.modelPickerFilterInput}
+                aria-label="Search model-variant"
+              />
+              <select
+                value={modelChooserFilters.category}
+                onChange={(event) => {
+                  setModelChooserError('')
+                  setModelChooserFilters((current) => ({ ...current, category: event.target.value }))
+                }}
+                style={styles.modelPickerFilterInput}
+                aria-label="Filter by category"
+              >
+                <option value="">All Category</option>
+                {modelChooserCategoryOptions.map((categoryName) => (
+                  <option key={`chooser-category-${categoryName}`} value={categoryName}>
+                    {categoryName}
+                  </option>
+                ))}
+              </select>
+            </div>
+            {modelChooserError ? <p style={styles.modelPickerFeedback}>{modelChooserError}</p> : null}
             <div style={styles.modelPickerList}>
-              {modelOptions.length ? (
-                modelOptions.map((item) => (
+              {filteredModelOptions.length ? (
+                filteredModelOptions.map((item) => (
                   <button key={item.key} type="button" onClick={() => handleChooseModel(item)} style={styles.modelPickerItem}>
                     {item.photo_url ? (
-                      <Image src={item.photo_url} alt={item.label} width={80} height={80} unoptimized style={styles.modelPickerThumb} />
+                      <Image
+                        src={item.photo_url}
+                        alt={item.label}
+                        width={80}
+                        height={80}
+                        unoptimized
+                        style={{ ...styles.modelPickerThumb, cursor: 'zoom-in' }}
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          setPreviewPhoto({ url: item.photo_url, label: item.label })
+                        }}
+                        title="Preview photo"
+                      />
                     ) : (
                       <span style={styles.modelPickerNoPhoto}>NO PHOTO</span>
                     )}
                     <span>
                       <span style={styles.modelPickerName}>{item.label || '-'}</span>
                       <span style={styles.modelPickerMeta}>
-                        {item.brand_name || 'UNBRANDED'} | QC Confirm Qty {item.qty || 0}
+                        {item.brand_name || 'UNBRANDED'}{item.category_name ? ` | ${item.category_name}` : ''} | QC Confirm Qty {item.qty || 0}
                       </span>
                     </span>
                   </button>
                 ))
               ) : (
-                <p style={styles.emptyText}>No model found for this GRN.</p>
+                <p style={styles.emptyText}>No model matches the current filters.</p>
               )}
             </div>
           </div>

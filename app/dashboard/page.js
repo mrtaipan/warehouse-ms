@@ -140,6 +140,31 @@ function getTodayDateString() {
   return `${year}-${month}-${day}`
 }
 
+function filterVisibleBirthdayGiftRows(rows) {
+  const today = new Date()
+  const todayValue = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime()
+
+  return (rows || []).filter((item) => {
+    const status = String(item?.status || '').toUpperCase()
+    if (status === 'SUBMITTED') return true
+    if (status !== 'APPROVED') return false
+
+    const approvedAt = new Date(item?.approved_at || '')
+    if (Number.isNaN(approvedAt.getTime())) return false
+    const expiry = new Date(approvedAt.getFullYear(), approvedAt.getMonth(), approvedAt.getDate())
+    expiry.setDate(expiry.getDate() + 3)
+    return expiry.getTime() >= todayValue
+  })
+}
+
+function sortRowsByRecent(rows) {
+  return [...(rows || [])].sort((left, right) => {
+    const leftValue = new Date(left?.submitted_at || left?.created_at || 0).getTime()
+    const rightValue = new Date(right?.submitted_at || right?.created_at || 0).getTime()
+    return rightValue - leftValue
+  })
+}
+
 function formatNumber(value) {
   return new Intl.NumberFormat('id-ID', { maximumFractionDigits: 0 }).format(Number(value || 0))
 }
@@ -647,10 +672,14 @@ export default async function DashboardPage({ searchParams }) {
   const showDeliveryReportButton = hasPermission(permissions, 'delivery_report.view', isAdmin)
   const showPenaltyPointsButton = hasPermission(permissions, 'hrga.penalty_points.view', isAdmin)
   const canAddPenaltyPoints = hasPermission(permissions, 'hrga.penalty_points.add', isAdmin)
+  const showBirthdayGiftRequestAnnouncements = isAdmin || role === 'warehouse_leader' || role === 'mob_cs'
 
   const { data: announcementRows } = await supabase.from('dir_user_profiles').select('*')
   const { data: currentPenaltyRows } = showPenaltyPointsButton
     ? await supabase.from('hrga_penalty_points_current').select('*')
+    : { data: [] }
+  const { data: birthdayGiftRequestRows } = showBirthdayGiftRequestAnnouncements
+    ? await supabase.from('hrga_birthday_gift').select('*')
     : { data: [] }
   const { data: broadcastRows, error: broadcastError } = await supabase
     .from('hrd_announcement')
@@ -671,6 +700,20 @@ export default async function DashboardPage({ searchParams }) {
           : `${item.start_date} to ${item.end_date}`
         : 'Active now',
   }))
+  const birthdayGiftAnnouncements = filterVisibleBirthdayGiftRows(sortRowsByRecent(birthdayGiftRequestRows || [])).map((item) => {
+    const status = String(item.status || 'SUBMITTED').toUpperCase()
+    const name = formatDashboardName(item.employee_name_snapshot || item.employee_email_snapshot || 'Team')
+    const itemName = String(item.item_name || item.notes || 'Birthday gift').trim()
+    const sizeLabel = item.size ? ` • Size ${item.size}` : ''
+
+    return {
+      id: `birthday-gift-${item.id}`,
+      title: `${name} - Birthday Gift`,
+      message: `${itemName}${sizeLabel}`,
+      dateLabel: status === 'APPROVED' ? 'Birthday gift approved' : 'Birthday gift request',
+    }
+  })
+  const newsAnnouncements = [...activeBroadcasts, ...birthdayGiftAnnouncements]
   const birthdayAnnouncements = (announcementRows || [])
     .map((person) => {
       const offset = getUpcomingBirthdayOffset(getBirthDateValue(person))
@@ -734,8 +777,8 @@ export default async function DashboardPage({ searchParams }) {
           <p className={styles.sectionKicker}>News &amp; Updates</p>
 
           <div className={styles.insightStack}>
-            {activeBroadcasts.length ? (
-              activeBroadcasts.map((item) => (
+            {newsAnnouncements.length ? (
+              newsAnnouncements.map((item) => (
                 <div key={item.id} className={styles.insightCard}>
                   <span className={styles.insightLabel}>{item.dateLabel}</span>
                   <strong
@@ -825,8 +868,8 @@ export default async function DashboardPage({ searchParams }) {
             <p className={styles.sectionKicker}>News &amp; Updates</p>
 
             <div className={styles.insightStack}>
-              {activeBroadcasts.length ? (
-                activeBroadcasts.map((item) => (
+              {newsAnnouncements.length ? (
+                newsAnnouncements.map((item) => (
                   <div key={item.id} className={styles.insightCard}>
                     <span className={styles.insightLabel}>{item.dateLabel}</span>
                     <strong

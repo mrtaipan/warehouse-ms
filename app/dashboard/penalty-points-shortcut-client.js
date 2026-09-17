@@ -6,6 +6,27 @@ import styles from './dashboard.module.css'
 
 const supabase = createClient()
 
+const PENALTY_CRITERIA = [
+  {
+    division: 'INBOUND',
+    items: [
+      'Salah model 1 pcs setelah dibandingkan dengan QC In: 1 poin untuk PIC terkait.',
+      'Salah model lebih dari 1 pcs setelah dibandingkan dengan QC In: 2 poin untuk PIC terkait.',
+      'Salah qty 1 pcs, baik kurang atau lebih, setelah dibandingkan dengan QC In: 1 poin untuk PIC terkait.',
+      'Salah qty lebih dari 1 pcs, baik kurang atau lebih, setelah dibandingkan dengan QC In: 2 poin untuk PIC terkait.',
+    ],
+  },
+  {
+    division: 'QC',
+    items: [
+      'Allocated qty berbeda dengan locked qty sebesar 1 pcs saat task QC selesai: 1 poin untuk grader terkait.',
+      'Allocated qty berbeda dengan locked qty lebih dari 1 pcs saat task QC selesai: 2 poin untuk grader terkait.',
+      'Ada surplus/shortage adjustment di QC Confirm Grade A: 1 poin untuk semua grader pada source model tersebut.',
+      'Ada adjustment rejection grade yang menambah Grade B/C: 1 poin untuk semua grader pada source model tersebut.',
+    ],
+  },
+]
+
 function AwardIcon() {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -55,6 +76,7 @@ function toProperCase(value) {
 
 export default function PenaltyPointsShortcutButton({ people = [], currentRows = [], canAdd = false }) {
   const [open, setOpen] = useState(false)
+  const [criteriaOpen, setCriteriaOpen] = useState(false)
   const [selectedProfileId, setSelectedProfileId] = useState('')
   const [selectedPersonText, setSelectedPersonText] = useState('')
   const [personFilter, setPersonFilter] = useState('')
@@ -128,6 +150,7 @@ export default function PenaltyPointsShortcutButton({ people = [], currentRows =
     setReason('')
     setMessage('')
     setError('')
+    setCriteriaOpen(false)
   }
 
   function handleClose() {
@@ -194,9 +217,14 @@ export default function PenaltyPointsShortcutButton({ people = [], currentRows =
               <div>
                 <h2 className={styles.penaltyTitle}>Penalty Points</h2>
               </div>
-              <button type="button" className={styles.penaltyCloseButton} onClick={handleClose} aria-label="Close Penalty Points">
-                X
-              </button>
+              <div className={styles.penaltyHeaderActions}>
+                <button type="button" className={styles.penaltySecondaryButton} onClick={() => setCriteriaOpen(true)}>
+                  Penalty Points Criteria
+                </button>
+                <button type="button" className={styles.penaltyCloseButton} onClick={handleClose} aria-label="Close Penalty Points">
+                  X
+                </button>
+              </div>
             </div>
 
             <div className={styles.penaltyContentGrid}>
@@ -251,7 +279,12 @@ export default function PenaltyPointsShortcutButton({ people = [], currentRows =
 
               {canAdd ? (
                 <form className={styles.penaltyForm} onSubmit={handleSubmit}>
-                  <h3>Input Points</h3>
+                  <div className={styles.penaltyFormHeader}>
+                    <h3>Input Points</h3>
+                    <button type="submit" className={styles.penaltyPrimaryButton} disabled={isPending}>
+                      {isPending ? 'Saving...' : 'Save Points'}
+                    </button>
+                  </div>
                   <label>
                     <span>Person</span>
                     <input
@@ -286,13 +319,37 @@ export default function PenaltyPointsShortcutButton({ people = [], currentRows =
                   </label>
                   {error ? <p className={styles.penaltyError}>{error}</p> : null}
                   {message ? <p className={styles.penaltySuccess}>{message}</p> : null}
-                  <button type="submit" className={styles.penaltyPrimaryButton} disabled={isPending}>
-                    {isPending ? 'Saving...' : 'Save Points'}
-                  </button>
                 </form>
               ) : null}
             </div>
           </div>
+          {criteriaOpen ? (
+            <div className={styles.penaltyCriteriaOverlay} onClick={() => setCriteriaOpen(false)}>
+              <section className={styles.penaltyCriteriaModal} onClick={(event) => event.stopPropagation()}>
+                <div className={styles.penaltyCriteriaHeader}>
+                  <div>
+                    <p className={styles.penaltyCriteriaEyebrow}>Reference</p>
+                    <h3>Penalty Points Criteria</h3>
+                  </div>
+                  <button type="button" className={styles.penaltyCloseButton} onClick={() => setCriteriaOpen(false)} aria-label="Close criteria">
+                    X
+                  </button>
+                </div>
+                <div className={styles.penaltyCriteriaList}>
+                  {PENALTY_CRITERIA.map((section) => (
+                    <article key={section.division} className={styles.penaltyCriteriaCard}>
+                      <strong>{section.division}</strong>
+                      <ul>
+                        {section.items.map((item) => (
+                          <li key={item}>{item}</li>
+                        ))}
+                      </ul>
+                    </article>
+                  ))}
+                </div>
+              </section>
+            </div>
+          ) : null}
         </div>
       ) : null}
     </>

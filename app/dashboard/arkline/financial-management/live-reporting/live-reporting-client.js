@@ -53,6 +53,7 @@ function createDraft() {
     start_time: '',
     end_time: '',
     session_type: 'STANDALONE',
+    sales_channel: 'TIKTOK',
     partner_profile_id: '',
     partner_profile_query: '',
     wearing_product_id: '',
@@ -94,6 +95,11 @@ function formatDate(value) {
 
 function formatMonthLabel(year, month) {
   return new Intl.DateTimeFormat('en-GB', { month: 'long', year: 'numeric' }).format(new Date(Number(year), Number(month) - 1, 1))
+}
+
+function formatSalesChannel(value) {
+  if (value === 'SHOPEE') return 'Shopee'
+  return 'TikTok'
 }
 
 function buildLiveTrendChart(series) {
@@ -161,6 +167,7 @@ function normalizeSession(row) {
     start_time: row?.start_time || '',
     end_time: row?.end_time || '',
     session_type: row?.session_type || 'STANDALONE',
+    sales_channel: row?.sales_channel || 'TIKTOK',
     wearing_product_sku: row?.wearing_product_sku || '',
     partner_wearing_product_sku: row?.partner_wearing_product_sku || '',
     gross_amount: Number(row?.gross_amount || 0),
@@ -179,6 +186,7 @@ function normalizeCredit(row) {
     session_start_time: row?.session?.start_time || '',
     session_end_time: row?.session?.end_time || '',
     session_type: row?.session?.session_type || 'STANDALONE',
+    sales_channel: row?.session?.sales_channel || 'TIKTOK',
     wearing_product_sku: row?.session?.wearing_product_sku || '',
     partner_wearing_product_sku: row?.session?.partner_wearing_product_sku || '',
     host_display_name_snapshot: row?.session?.host_display_name_snapshot || '',
@@ -288,6 +296,7 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
             start_time,
             end_time,
             session_type,
+            sales_channel,
             wearing_product_sku,
             partner_wearing_product_sku,
             gross_amount,
@@ -313,6 +322,7 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
               start_time,
               end_time,
               session_type,
+              sales_channel,
               wearing_product_sku,
               partner_wearing_product_sku,
               host_display_name_snapshot,
@@ -498,6 +508,7 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
         start_time: `${draft.start_time}:00`,
         end_time: `${draft.end_time}:00`,
         session_type: draft.session_type,
+        sales_channel: draft.sales_channel,
         host_profile_id: profile.id,
         host_display_name_snapshot: profile.display_name || profile.email,
         partner_profile_id: draft.session_type === 'PAIRING' ? draft.partner_profile_id : null,
@@ -760,8 +771,8 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
                             </span>
                             <span>
                               {item.session_type === 'PAIRING'
-                                ? `Pairing with ${item.partner_display_name_snapshot || '-'} | Partner SKU ${item.partner_wearing_product_sku || '-'}`
-                                : `Standalone | ${item.host_display_name || '-'}`
+                                ? `${formatSalesChannel(item.sales_channel)} | Pairing with ${item.partner_display_name_snapshot || '-'} | Partner SKU ${item.partner_wearing_product_sku || '-'}`
+                                : `${formatSalesChannel(item.sales_channel)} | Standalone | ${item.host_display_name || '-'}`
                               }
                             </span>
                           </div>
@@ -773,7 +784,7 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
                 </div>
               ) : (
               <form className={styles.form} onSubmit={handleSubmit}>
-                <div className={mobile ? styles.mobileSegment : styles.formRowTwo}>
+                <div className={mobile ? styles.mobileSegment : styles.formRowThree}>
                   <div className={styles.field}>
                     {!mobile ? <label className={styles.label}>Session Type *</label> : null}
                     <div className={styles.segmentedControl}>
@@ -801,6 +812,18 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
                         Pairing
                       </button>
                     </div>
+                  </div>
+
+                  <div className={styles.field}>
+                    <label className={styles.label}>Sales Channel *</label>
+                    <select
+                      className={styles.select}
+                      value={draft.sales_channel || 'TIKTOK'}
+                      onChange={(event) => setDraft((prev) => ({ ...prev, sales_channel: event.target.value }))}
+                    >
+                      <option value="TIKTOK">TikTok</option>
+                      <option value="SHOPEE">Shopee</option>
+                    </select>
                   </div>
 
                   <div className={styles.field}>
@@ -946,6 +969,7 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
                   <tr>
                     <th>Date</th>
                     <th>Time</th>
+                    <th>Channel</th>
                     <th>Type</th>
                     <th>Host</th>
                     <th>Pairing</th>
@@ -963,6 +987,7 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
                         <td>
                           {item.session_start_time?.slice(0, 5)} - {item.session_end_time?.slice(0, 5)}
                         </td>
+                        <td>{formatSalesChannel(item.sales_channel)}</td>
                         <td>{item.session_type === 'PAIRING' ? 'Pairing' : 'Standalone'}</td>
                         <td>{item.host_display_name_snapshot || '-'}</td>
                         <td>{item.partner_display_name_snapshot || '-'}</td>
