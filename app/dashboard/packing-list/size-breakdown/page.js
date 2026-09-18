@@ -5,7 +5,6 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import { useEffect, useMemo, useState } from 'react'
 import {
   buildCatalogIdentityLookup,
-  getProductCatalogIdentityKey,
   resolveProductCatalogIdentity,
 } from '@/utils/catalog-identity'
 import { createClient } from '@/utils/supabase/browser'
@@ -2036,20 +2035,60 @@ function getShortGrnLabel(grnNumber) {
 }
 
 function getBreakdownIdentity(row = {}) {
-  if (row.product_model_variant_id) return `variant:${row.product_model_variant_id}`
-  return `model:${row.product_model_id || 'legacy'}`
+  return getPlVariantIdentityKey(row)
+}
+
+function getNormalizedPlVariantCode(row = {}, resolvedIdentity = null) {
+  return normalize(
+    row.source_variant_code ||
+      row.variant_code ||
+      row.sku_code ||
+      row.sku ||
+      resolvedIdentity?.source_variant_code ||
+      resolvedIdentity?.variant?.variant_code ||
+      resolvedIdentity?.variant?.sku_code ||
+      resolvedIdentity?.variant?.sku ||
+      row.variant_label
+  )
+}
+
+function getPlVariantIdentityKey(row = {}, resolvedIdentity = null) {
+  const variantCode = getNormalizedPlVariantCode(row, resolvedIdentity)
+  if (variantCode) return `code:${variantCode}`
+
+  const variantId = Number(resolvedIdentity?.product_model_variant_id || row.product_model_variant_id || 0)
+  if (variantId) return `variant:${variantId}`
+
+  const modelId = Number(resolvedIdentity?.product_model_id || row.product_model_id || 0)
+  if (modelId) {
+    return [
+      'model',
+      modelId,
+      normalize(row.model_color || row.variant_name || row.catalogName || row.variant_label) || 'BASE',
+    ].join(':')
+  }
+
+  return [
+    'legacy',
+    Number(row.brand_id || 0) || normalize(row.brand_name) || 'UNBRANDED',
+    Number(row.category_id || 0) || normalize(row.category_name) || 'UNCATEGORIZED',
+    normalize(row.model_name) || 'MODEL',
+    normalize(row.model_color || row.variant_name || row.catalogName || row.variant_label) || 'BASE',
+  ].join('::')
 }
 
 function matchesPlReturnCard(row = {}, card = {}) {
   if (Number(row.inbound_id || 0) !== Number(card.inbound_id || 0)) return false
 
+  const rowVariantCode = getNormalizedPlVariantCode(row)
+  const cardVariantCode = getNormalizedPlVariantCode(card)
+  if (rowVariantCode || cardVariantCode) {
+    return Boolean(rowVariantCode && cardVariantCode && rowVariantCode === cardVariantCode)
+  }
+
   const rowVariantId = Number(row.product_model_variant_id || 0)
   const cardVariantId = Number(card.product_model_variant_id || 0)
   if (rowVariantId) return rowVariantId === cardVariantId
-
-  const rowVariantCode = normalize(row.source_variant_code || row.sku_code || row.sku)
-  const cardVariantCode = normalize(card.source_variant_code || card.variant_code)
-  if (rowVariantCode) return Boolean(cardVariantCode) && rowVariantCode === cardVariantCode
 
   const rowModelId = Number(row.product_model_id || 0)
   const cardModelId = Number(card.product_model_id || 0)
@@ -3591,7 +3630,7 @@ export default function PackingListSizeBreakdownPage() {
     const nextMap = new Map()
     confirmRows.forEach((row) => {
       const identity = resolveProductCatalogIdentity(row, catalogContext)
-      const key = `${Number(row.inbound_id || 0)}::${getProductCatalogIdentityKey(row, identity)}`
+      const key = `${Number(row.inbound_id || 0)}::${getPlVariantIdentityKey(row, identity)}`
       if (!nextMap.has(key) && row.photo_url) {
         nextMap.set(key, row.photo_url)
       }
@@ -3629,11 +3668,13 @@ export default function PackingListSizeBreakdownPage() {
           ...row,
           brand_id: catalogModel?.brand_id || sourceConfirm?.brand_id || null,
           category_id: catalogModel?.category_id || sourceConfirm?.category_id || null,
+          source_variant_code: sourceVariantCode,
+          variant_code: getVariantCode(catalogVariant) || sourceVariantCode || '',
         }
-        const key = getProductCatalogIdentityKey(identitySource, identity)
+        const key = getPlVariantIdentityKey(identitySource, identity)
         const photoKey = `${Number(row.inbound_id || 0)}::${key}`
         const sourceKey = sourceConfirm && sourceIdentity
-          ? getProductCatalogIdentityKey(sourceConfirm, sourceIdentity)
+          ? getPlVariantIdentityKey(sourceConfirm, sourceIdentity)
           : ''
         const sourcePhotoUrl = sourceKey === key ? sourceConfirm?.photo_url || '' : ''
         const current = grouped.get(key) || {
@@ -3697,7 +3738,7 @@ export default function PackingListSizeBreakdownPage() {
         const productModelVariantId = identity.product_model_variant_id
         const catalogModel = identity.model || catalogContext.modelById.get(Number(productModelId || 0)) || null
         const catalogVariant = identity.variant || catalogContext.variantById.get(Number(productModelVariantId || 0)) || null
-        const key = getProductCatalogIdentityKey(row, identity)
+        const key = getPlVariantIdentityKey(row, identity)
 
         if (grouped.has(key)) return
 
@@ -3750,7 +3791,7 @@ export default function PackingListSizeBreakdownPage() {
 
     return assignPlIdentities(sortedCards).map((card) => ({
       ...card,
-      breakdown_qty: breakdownByIdentity.get(card.product_model_variant_id ? `variant:${card.product_model_variant_id}` : `model:${card.product_model_id}`) || 0,
+      breakdown_qty: breakdownByIdentity.get(getPlVariantIdentityKey(card)) || 0,
     }))
   }, [breakdownRows, catalogContext, confirmRows, initialGrn, photoMap, plReceivingRows])
 
@@ -3948,11 +3989,7 @@ export default function PackingListSizeBreakdownPage() {
 
     const identityRows = sourceBreakdownRows.filter((row) => {
       if (Number(row.inbound_id || 0) !== Number(card.inbound_id || 0)) return false
-      if (Number(row.product_model_id || 0) !== Number(card.product_model_id || 0)) return false
-      if (card.product_model_variant_id) {
-        return Number(row.product_model_variant_id || 0) === Number(card.product_model_variant_id || 0)
-      }
-      return !row.product_model_variant_id
+      return getPlVariantIdentityKey(row) === getPlVariantIdentityKey(card)
     })
 
     const grouped = new Map()

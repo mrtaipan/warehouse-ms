@@ -49,6 +49,8 @@ function getTodayDateValue() {
 
 function createDraft() {
   return {
+    live_mode: 'NEW',
+    live_run_id: '',
     session_date: getTodayDateValue(),
     start_time: '',
     end_time: '',
@@ -162,6 +164,8 @@ function findProfileByInput(profiles, value) {
 function normalizeSession(row) {
   return {
     id: row?.id || '',
+    live_run_id: row?.live_run_id || '',
+    checkpoint_no: Number(row?.checkpoint_no || 0),
     host_profile_id: row?.host_profile_id || '',
     session_date: row?.session_date || '',
     start_time: row?.start_time || '',
@@ -171,9 +175,22 @@ function normalizeSession(row) {
     wearing_product_sku: row?.wearing_product_sku || '',
     partner_wearing_product_sku: row?.partner_wearing_product_sku || '',
     gross_amount: Number(row?.gross_amount || 0),
+    previous_gross_amount: Number(row?.previous_gross_amount || 0),
+    incremental_amount: Number(row?.incremental_amount ?? row?.gross_amount ?? 0),
     host_display_name: row?.host_profile?.display_name || row?.host_display_name_snapshot || '-',
     partner_display_name_snapshot: row?.partner_profile?.display_name || row?.partner_display_name_snapshot || '',
     created_at: row?.created_at || '',
+  }
+}
+
+function normalizeLiveRun(row) {
+  return {
+    id: row?.id || '',
+    sales_channel: row?.sales_channel || 'TIKTOK',
+    status: row?.status || 'ACTIVE',
+    started_by_display_name: row?.started_by_profile?.display_name || row?.started_by_display_name_snapshot || '-',
+    current_gross_amount: Number(row?.current_gross_amount || 0),
+    started_at: row?.started_at || '',
   }
 }
 
@@ -204,6 +221,7 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
   const [profile, setProfile] = useState(null)
   const [profiles, setProfiles] = useState([])
   const [products, setProducts] = useState([])
+  const [liveRuns, setLiveRuns] = useState([])
   const [sessions, setSessions] = useState([])
   const [credits, setCredits] = useState([])
   const [monthFilter, setMonthFilter] = useState('all')
@@ -277,6 +295,7 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
     const [
       { data: profileRows, error: profileRowsError },
       { data: productRows, error: productError },
+      { data: liveRunRows, error: liveRunError },
       { data: sessionRows, error: sessionError },
       { data: creditRows, error: creditError },
     ] = await Promise.all([
@@ -287,10 +306,17 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
         .order('display_name', { ascending: true }),
       supabase.from('arkline_dir_products').select('sku_induk, nama_produk').order('nama_produk', { ascending: true }),
       supabase
+        .from('arkline_live_reporting_runs')
+        .select('id, sales_channel, status, current_gross_amount, started_at, started_by_display_name_snapshot, started_by_profile:dir_user_profiles!arkline_live_reporting_runs_started_by_profile_id_fkey(display_name)')
+        .eq('status', 'ACTIVE')
+        .order('started_at', { ascending: false }),
+      supabase
         .from('arkline_live_reporting_sessions')
         .select(
           `
             id,
+            live_run_id,
+            checkpoint_no,
             host_profile_id,
             session_date,
             start_time,
@@ -300,6 +326,8 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
             wearing_product_sku,
             partner_wearing_product_sku,
             gross_amount,
+            previous_gross_amount,
+            incremental_amount,
             host_display_name_snapshot,
             partner_display_name_snapshot,
             created_at,
@@ -332,8 +360,8 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
         ),
     ])
 
-    if (profileRowsError || productError || sessionError || creditError) {
-      setError(profileRowsError?.message || productError?.message || sessionError?.message || creditError?.message || 'Failed to load live reporting workspace.')
+    if (profileRowsError || productError || liveRunError || sessionError || creditError) {
+      setError(profileRowsError?.message || productError?.message || liveRunError?.message || sessionError?.message || creditError?.message || 'Failed to load live reporting workspace.')
       setLoading(false)
       return
     }
@@ -361,6 +389,7 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
         sku: String(item.sku_induk || '').trim().toUpperCase(),
       }))
     )
+    setLiveRuns((liveRunRows || []).map(normalizeLiveRun))
     setSessions((sessionRows || []).map(normalizeSession))
     setCredits((creditRows || []).map(normalizeCredit))
     setLoading(false)
@@ -393,7 +422,7 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
   }, [credits, monthFilter, yearFilter])
 
   const totalNominal = useMemo(
-    () => filteredSessions.reduce((sum, item) => sum + Number(item.gross_amount || 0), 0),
+    () => filteredSessions.reduce((sum, item) => sum + Number(item.incremental_amount || 0), 0),
     [filteredSessions]
   )
 
@@ -417,6 +446,11 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
       .sort((left, right) => right.amount - left.amount)
   }, [filteredCredits])
 
+  const currentLiveRuns = useMemo(
+    () => liveRuns.filter((item) => item.sales_channel === draft.sales_channel),
+    [liveRuns, draft.sales_channel]
+  )
+
   const trendSeries = useMemo(() => {
     const grouped = new Map()
 
@@ -439,7 +473,7 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
       }
 
       const existing = grouped.get(key) || { key, label, value: 0, count: 0 }
-      existing.value += Number(item.gross_amount || 0)
+      existing.value += Number(item.incremental_amount || 0)
       existing.count += 1
       grouped.set(key, existing)
     })
@@ -498,57 +532,36 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
 
     const partner = profiles.find((item) => item.id === draft.partner_profile_id)
     const grossAmount = Number(normalizeDigits(draft.amount))
-    const creditedAmount = draft.session_type === 'PAIRING' ? grossAmount / 2 : grossAmount
+
+    if (draft.live_mode === 'CONTINUE' && !draft.live_run_id) {
+      setError('Select the current live that you want to continue.')
+      return
+    }
 
     setSaving(true)
 
     try {
-      const sessionPayload = {
-        session_date: draft.session_date,
-        start_time: `${draft.start_time}:00`,
-        end_time: `${draft.end_time}:00`,
-        session_type: draft.session_type,
-        sales_channel: draft.sales_channel,
-        host_profile_id: profile.id,
-        host_display_name_snapshot: profile.display_name || profile.email,
-        partner_profile_id: draft.session_type === 'PAIRING' ? draft.partner_profile_id : null,
-        partner_display_name_snapshot: draft.session_type === 'PAIRING' ? partner?.display_name || null : null,
-        wearing_product_sku: draft.wearing_product_id,
-        partner_wearing_product_sku: draft.session_type === 'PAIRING' ? draft.partner_wearing_product_id : null,
-        gross_amount: grossAmount,
-      }
+      const { error: checkpointError } = await supabase.rpc('arkline_live_reporting_add_checkpoint', {
+        p_start_new: draft.live_mode === 'NEW',
+        p_live_run_id: draft.live_mode === 'CONTINUE' ? Number(draft.live_run_id) : null,
+        p_session_date: draft.session_date,
+        p_start_time: `${draft.start_time}:00`,
+        p_end_time: `${draft.end_time}:00`,
+        p_session_type: draft.session_type,
+        p_sales_channel: draft.sales_channel,
+        p_host_profile_id: profile.id,
+        p_host_display_name_snapshot: profile.display_name || profile.email,
+        p_partner_profile_id: draft.session_type === 'PAIRING' ? draft.partner_profile_id : null,
+        p_partner_display_name_snapshot: draft.session_type === 'PAIRING' ? partner?.display_name || null : null,
+        p_wearing_product_sku: draft.wearing_product_id,
+        p_partner_wearing_product_sku: draft.session_type === 'PAIRING' ? draft.partner_wearing_product_id : null,
+        p_gross_amount: grossAmount,
+      })
 
-      const { data: insertedSession, error: sessionError } = await supabase
-        .from('arkline_live_reporting_sessions')
-        .insert(sessionPayload)
-        .select('id')
-        .single()
-
-      if (sessionError) throw new Error(sessionError.message)
-
-      const creditPayload = [
-        {
-          session_id: insertedSession.id,
-          host_profile_id: profile.id,
-          host_display_name_snapshot: profile.display_name || profile.email,
-          credited_amount: creditedAmount,
-        },
-      ]
-
-      if (draft.session_type === 'PAIRING' && partner) {
-        creditPayload.push({
-          session_id: insertedSession.id,
-          host_profile_id: partner.id,
-          host_display_name_snapshot: partner.display_name || partner.email,
-          credited_amount: creditedAmount,
-        })
-      }
-
-      const { error: creditError } = await supabase.from('arkline_live_reporting_credits').insert(creditPayload)
-      if (creditError) throw new Error(creditError.message)
+      if (checkpointError) throw new Error(checkpointError.message)
 
       setDraft(createDraft())
-      setSuccess('Live GMV session saved.')
+      setSuccess('Live GMV checkpoint saved and credit calculated.')
       await loadWorkspace()
     } catch (submitError) {
       setError(submitError.message || 'Failed to save live GMV session.')
@@ -734,7 +747,7 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
                   <h2 className={styles.title}>{mobileView === 'history' ? 'History' : 'Live Reporting'}</h2>
                 </div>
                 <div className={styles.mobilePanelActions}>
-                  <Link href="/dashboard" className={styles.mobileHomeButton} aria-label="Go to dashboard home">
+                  <Link href="/dashboard/arkline/financial-management/live-reporting" className={styles.mobileHomeButton} aria-label="Go to Live Reporting dashboard">
                     <HomeIcon />
                   </Link>
                   {mobileView === 'history' ? (
@@ -819,7 +832,7 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
                     <select
                       className={styles.select}
                       value={draft.sales_channel || 'TIKTOK'}
-                      onChange={(event) => setDraft((prev) => ({ ...prev, sales_channel: event.target.value }))}
+                      onChange={(event) => setDraft((prev) => ({ ...prev, sales_channel: event.target.value, live_run_id: '' }))}
                     >
                       <option value="TIKTOK">TikTok</option>
                       <option value="SHOPEE">Shopee</option>
@@ -836,6 +849,40 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
                         placeholder="0"
                       />
                   </div>
+                </div>
+
+                <div className={styles.liveRunControl}>
+                  <label className={styles.checkboxLabel}>
+                    <input
+                      type="checkbox"
+                      checked={draft.live_mode === 'CONTINUE'}
+                      onChange={(event) =>
+                        setDraft((prev) => ({
+                          ...prev,
+                          live_mode: event.target.checked ? 'CONTINUE' : 'NEW',
+                          live_run_id: event.target.checked ? currentLiveRuns[0]?.id || '' : '',
+                        }))
+                      }
+                    />
+                    <span>Continue current live</span>
+                  </label>
+                  {draft.live_mode === 'CONTINUE' ? (
+                    <select
+                      className={styles.select}
+                      value={draft.live_run_id || ''}
+                      onChange={(event) => setDraft((prev) => ({ ...prev, live_run_id: event.target.value }))}
+                      disabled={!currentLiveRuns.length}
+                    >
+                      <option value="">Choose active live</option>
+                      {currentLiveRuns.map((run) => (
+                        <option key={run.id} value={run.id}>
+                          {run.started_by_display_name} · {formatCurrency(run.current_gross_amount)}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <span className={styles.liveRunHint}>Start New Live resets the GMV baseline.</span>
+                  )}
                 </div>
 
                 <div className={`${styles.formRowThree} ${styles.dateTimeRow}`.trim()}>

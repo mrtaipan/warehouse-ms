@@ -415,7 +415,7 @@ async function loadSnapshotRows() {
       .eq('po_source_type', 'GARMENT'),
     supabase
       .from('arkline_qc_return_batches')
-      .select('arkline_po_item_id, short_qty'),
+      .select('arkline_po_item_id, sent_qty, returned_qty, short_qty'),
   ])
 
   if (poError) {
@@ -457,6 +457,18 @@ async function loadSnapshotRows() {
     return accumulator
   }, {})
 
+  const openReturnQtyByItemId = (returnBatchData || []).reduce((accumulator, row) => {
+    const key = String(row?.arkline_po_item_id || '').trim()
+    if (!key) return accumulator
+    const sentQty = Number(row?.sent_qty || 0)
+    const returnedQty = Number(row?.returned_qty || 0)
+    const shortQty = Number(row?.short_qty || 0)
+    const openReturnQty = Math.max(sentQty - returnedQty - shortQty, 0)
+    if (openReturnQty <= 0) return accumulator
+    accumulator[key] = (accumulator[key] || 0) + openReturnQty
+    return accumulator
+  }, {})
+
   const receiptQtyByItemId = (receiptData || []).reduce((accumulator, row) => {
     const key = String(row?.arkline_po_item_id || '').trim()
     if (!key) return accumulator
@@ -495,6 +507,7 @@ async function loadSnapshotRows() {
     const itemId = String(row?.id || '').trim()
     const actualQty = Number(receiptQtyByItemId[itemId] ?? row?.actual_qty ?? 0)
     const shortQty = Number(shortQtyByItemId[itemId] || 0)
+    const openReturnQty = Number(openReturnQtyByItemId[itemId] || 0)
     const updatedDeliveryDate = String(row?.updated_delivery_date || '').slice(0, 10)
     const price = parseNumberValue(row?.price)
     const hpp = parseNumberValue(row?.hpp)
@@ -553,6 +566,8 @@ async function loadSnapshotRows() {
       qty: Number.isFinite(totalQty) ? totalQty : 0,
       actualQty: Number.isFinite(actualQty) ? actualQty : 0,
       shortQty: Number.isFinite(shortQty) ? shortQty : 0,
+      openReturnQty: Number.isFinite(openReturnQty) ? openReturnQty : 0,
+      hasOpenReturn: openReturnQty > 0,
       remainingQty: Math.max((Number.isFinite(totalQty) ? totalQty : 0) - (Number.isFinite(actualQty) ? actualQty : 0), 0),
       price: Number.isFinite(price) ? price : 0,
       hpp: Number.isFinite(hpp) ? hpp : 0,
@@ -2663,6 +2678,12 @@ export default function ArklineProgressOverviewPage() {
       const actualQty = parseNumberValue(itemDetail?.actual_qty || 0)
       const totalReceived = receiptRows.reduce((sum, row) => sum + Number(row?.received_qty || 0), 0)
       const totalShortQty = returnHistory.reduce((sum, row) => sum + Number(row?.short_qty || 0), 0)
+      const totalOpenReturnQty = returnHistory.reduce((sum, row) => {
+        const sentQty = Number(row?.sent_qty || 0)
+        const returnedQty = Number(row?.returned_qty || 0)
+        const shortQty = Number(row?.short_qty || 0)
+        return sum + Math.max(sentQty - returnedQty - shortQty, 0)
+      }, 0)
       const financeUnitPrice = price
       const financeTaxMultiplier = normalizeBoolean(selectedPoDetail.includePpn, true) ? 1 + PPN_RATE : 1
       const actualFinanceQty = actualQty || totalReceived
@@ -2705,6 +2726,8 @@ export default function ArklineProgressOverviewPage() {
         poNotes: selectedPoDetail.notes || '',
         notes: itemDetail?.notes || entry.notes || '',
         status: itemDetail?.status || entry.status || '',
+        openReturnQty: totalOpenReturnQty,
+        hasOpenReturn: totalOpenReturnQty > 0,
         category: String(itemDetail?.kategori_pengadaan || itemDetail?.kategori_produk || entry.category || '').trim().toUpperCase(),
         price,
         updatedDeliveryDate: itemDetail?.updated_delivery_date || entry.updatedDeliveryDate || '',
@@ -2726,6 +2749,7 @@ export default function ArklineProgressOverviewPage() {
           plannedQty,
           actualQty,
           shortQty: totalShortQty,
+          openReturnQty: totalOpenReturnQty,
           allowancePct: Number(itemDetail?.allowance_pct || 0),
           includePpn: selectedPoDetail.includePpn,
           plannedValue: financeUnitPrice * plannedQty * financeTaxMultiplier,
@@ -4800,7 +4824,18 @@ export default function ArklineProgressOverviewPage() {
                                 >
                                   <div className={styles.modalListIdentity}>
                                     <span>{entry.status || '-'}</span>
-                                    <strong>{entry.productName || 'NO PRODUCT'}</strong>
+                                    <strong className={styles.productReturnName}>
+                                      {entry.productName || 'NO PRODUCT'}
+                                      {entry.hasOpenReturn ? (
+                                        <span
+                                          className={styles.returnInProgressMark}
+                                          title={`Return in progress: ${formatNumber(entry.openReturnQty || 0)} qty`}
+                                          aria-label={`Return in progress: ${formatNumber(entry.openReturnQty || 0)} qty`}
+                                        >
+                                          *
+                                        </span>
+                                      ) : null}
+                                    </strong>
                                     <span>{entry.sku || 'NO SKU'}</span>
                                   </div>
                                   <div className={styles.modalListMeta}>
@@ -4848,6 +4883,7 @@ export default function ArklineProgressOverviewPage() {
                       .filter(isPaidFinancePayment)
                       .reduce((sum, row) => sum + parseNumberValue(row?.amount), 0)
                     const outstandingValue = getFinanceOutstandingValue(dueValue, paidValue)
+                    const hasOpenReturnProduct = (selectedPoDetail.productEntries || []).some((entry) => entry.hasOpenReturn)
 
                     return (
                       <>
@@ -4862,9 +4898,26 @@ export default function ArklineProgressOverviewPage() {
                           </div>
                           <div className={styles.modalMetric}>
                             <span>Outstanding</span>
-                            <strong>{formatNumber(outstandingValue)}</strong>
+                            <strong className={styles.financeOutstandingValue}>
+                              {formatNumber(outstandingValue)}
+                              {hasOpenReturnProduct ? (
+                                <span
+                                  className={`${styles.returnInProgressMark} ${styles.financeReturnInProgressMark}`.trim()}
+                                  title="There is an unresolved product return in this PO."
+                                  aria-label="There is an unresolved product return in this PO."
+                                >
+                                  *
+                                </span>
+                              ) : null}
+                            </strong>
                           </div>
                         </div>
+                        {hasOpenReturnProduct ? (
+                          <p className={styles.financeReturnNote}>
+                            <span className={`${styles.returnInProgressMark} ${styles.financeReturnNoteMark}`.trim()}>*</span>
+                            There is a product return that has not been fully returned or closed.
+                          </p>
+                        ) : null}
                         <div className={styles.financeTableWrap}>
                           {(selectedPoDetail.payments || []).length ? (
                             <table className={styles.financeTable}>
@@ -5083,7 +5136,20 @@ export default function ArklineProgressOverviewPage() {
             <div className={styles.modalHeader}>
               <div>
                 <p className={styles.eyebrow}>Product Detail</p>
-                <h3 className={styles.modalTitle}>{selectedProductDetail.productName || 'NO PRODUCT'}</h3>
+                <h3 className={styles.modalTitle}>
+                  <span className={styles.productReturnName}>
+                    {selectedProductDetail.productName || 'NO PRODUCT'}
+                    {selectedProductDetail.hasOpenReturn ? (
+                      <span
+                        className={styles.returnInProgressMark}
+                        title={`Return in progress: ${formatNumber(selectedProductDetail.openReturnQty || 0)} qty`}
+                        aria-label={`Return in progress: ${formatNumber(selectedProductDetail.openReturnQty || 0)} qty`}
+                      >
+                        *
+                      </span>
+                    ) : null}
+                  </span>
+                </h3>
                 <div className={styles.productDetailSubmetaRow}>
                   <p className={styles.productDetailSubmeta}>HPP {formatNumber(selectedProductDetail.financeSummary?.hpp || 0)}</p>
                   <button type="button" className={styles.productDetailInlineButton} onClick={openHppEditor} aria-label="Edit HPP">

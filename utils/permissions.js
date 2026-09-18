@@ -515,6 +515,9 @@ const DEFAULT_ROLE_BUNDLES = {
     'arkline.progress_snapshot.kanban.view',
     'arkline.progress_snapshot.calendar.view',
     'arkline.progress_snapshot.products.view',
+    'arkline.financial_management.live_reporting.view',
+    'arkline.financial_management.live_reporting.add',
+    'arkline.financial_management.live_reporting.edit',
   ],
 }
 const UNIVERSAL_DEFAULT_PERMISSIONS = ['delivery_report.view']
@@ -795,7 +798,7 @@ export function getArklineFeatureAccess(role, permissions = [], isAdmin = false)
 
   let financialManagementHref = '/dashboard/arkline/financial-management'
   if (financialManagement.view || paymentSubmission.view) financialManagementHref = '/dashboard/arkline/financial-management'
-  else if (liveReporting.view) financialManagementHref = '/mobile/arkline/live-reporting'
+  else if (liveReporting.view) financialManagementHref = '/dashboard/arkline/financial-management/live-reporting'
   else if (financialReporting.view) financialManagementHref = '/dashboard/arkline/financial-management/reporting'
 
   if (menuHref === '/dashboard' && (financialManagement.view || paymentSubmission.view || liveReporting.view || financialReporting.view)) {

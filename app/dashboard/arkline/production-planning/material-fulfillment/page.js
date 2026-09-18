@@ -7,6 +7,7 @@ import {
   getArklineIssueDateCode,
   getArklinePoSequence,
   getNextArklinePoSequence,
+  normalizeArklineSupplierInitial,
 } from '@/utils/arkline-po-number'
 import { createClient } from '@/utils/supabase/browser'
 import shellStyles from '../../arkline.module.css'
@@ -129,6 +130,7 @@ function normalizeSupplier(row) {
   return {
     id: String(row?.id || '').trim(),
     supplierName: String(row?.supplier_name || row?.nama_supplier || '').trim().toUpperCase(),
+    initial: normalizeArklineSupplierInitial(row?.initial),
     supplierLevel: String(row?.supplier_level || '').trim().toUpperCase(),
     contactPerson: String(row?.contact_person || '').trim(),
     phone: String(row?.phone || '').trim(),
@@ -403,7 +405,7 @@ function getMaterialDraftMethod(lines, poMeta = {}) {
   return linkedPo?.method || 'CMT'
 }
 
-function buildMaterialPoNumber(lines, existingNumbers, { includePpn = true, poMeta = {}, date = new Date() } = {}) {
+function buildMaterialPoNumber(lines, existingNumbers, { includePpn = true, poMeta = {}, supplierInitial = '', date = new Date() } = {}) {
   const sourcePoIds = getMaterialDraftSourcePoIds(lines)
 
   if (sourcePoIds.length > 1) {
@@ -423,6 +425,7 @@ function buildMaterialPoNumber(lines, existingNumbers, { includePpn = true, poMe
     documentType: 'MATERIAL',
     materialType: getMaterialDraftMaterialType(lines),
     flowCode: sourcePoIds.length ? undefined : 'SA',
+    supplierInitial,
     suffix: getArklineIssueDateCode(date),
   })
 
@@ -861,7 +864,7 @@ export default function ArklineMaterialFulfillmentPage() {
             : Promise.resolve({ data: [], error: null }),
           supabase
             .from('dir_suppliers')
-            .select('id, supplier_name, supplier_level, contact_person, phone, address, "group", is_active')
+            .select('id, supplier_name, initial, supplier_level, contact_person, phone, address, "group", is_active')
             .eq('group', 'ARKLINE')
             .eq('supplier_level', 'MATERIAL')
             .eq('is_active', true)
@@ -940,6 +943,11 @@ export default function ArklineMaterialFulfillmentPage() {
   }, [])
 
   const selectedPoId = poFilter === NO_PO_VALUE ? '' : poFilter
+  const selectedOrderSupplier = useMemo(
+    () => suppliers.find((item) => item.id === orderHeader.supplierId) || null,
+    [orderHeader.supplierId, suppliers]
+  )
+  const selectedSupplierInitial = selectedOrderSupplier?.initial || ''
 
   const assignedRequirementIds = useMemo(() => {
     const ids = new Set()
@@ -973,14 +981,15 @@ export default function ArklineMaterialFulfillmentPage() {
 
   const materialDraftPoNumber = useMemo(() => {
     try {
-      return savedMaterialPoNumber || (orderLines.length ? buildMaterialPoNumber(orderLines, materialPoNumbers, {
+      return isMaterialPoSaved && savedMaterialPoNumber ? savedMaterialPoNumber : (orderLines.length ? buildMaterialPoNumber(orderLines, materialPoNumbers, {
         includePpn: orderHeader.includePpn !== false,
         poMeta,
+        supplierInitial: selectedSupplierInitial,
       }) : '')
     } catch {
       return ''
     }
-  }, [materialPoNumbers, orderHeader.includePpn, orderLines, poMeta, savedMaterialPoNumber])
+  }, [isMaterialPoSaved, materialPoNumbers, orderHeader.includePpn, orderLines, poMeta, savedMaterialPoNumber, selectedSupplierInitial])
 
   function markMaterialDraftUnsaved(options = {}) {
     setIsMaterialPoSaved(false)
@@ -992,7 +1001,7 @@ export default function ArklineMaterialFulfillmentPage() {
   }
 
   function updateOrderHeader(name, value) {
-    markMaterialDraftUnsaved()
+    markMaterialDraftUnsaved({ clearPoNumber: ['supplierId', 'includePpn'].includes(name) })
 
     if (name === 'supplierId') {
       const selectedSupplier = suppliers.find((item) => item.id === value)
@@ -1008,6 +1017,48 @@ export default function ArklineMaterialFulfillmentPage() {
       ...current,
       [name]: value,
     }))
+  }
+
+  function validateSupplierForOrderDraft(targetSetter = setError) {
+    if (!orderHeader.supplierId) {
+      targetSetter('Choose one material supplier first.')
+      return false
+    }
+
+    if (!selectedSupplierInitial) {
+      targetSetter('Selected material supplier needs a 3-character initial first.')
+      return false
+    }
+
+    return true
+  }
+
+  function handlePoFilterChange(nextValue) {
+    const nextPoId = nextValue === NO_PO_VALUE ? '' : String(nextValue || '').trim().toUpperCase()
+    setPoFilter(nextValue)
+    setSelectedRequirementIds([])
+    setRequirementWarnings([])
+    setError('')
+    setSuccess('')
+    markMaterialDraftUnsaved({ clearPoNumber: true })
+    setOrderLines((current) => {
+      const hasGeneratedSource = current.some((line) => (line.sources || []).some((source) => source.sourceType === 'PO'))
+      if (hasGeneratedSource) return current
+
+      return current.map((line) => ({
+        ...line,
+        sources: (line.sources || []).map((source) =>
+          source.sourceType === 'FREE'
+            ? {
+                ...source,
+                poId: nextPoId,
+                productName: nextPoId ? `FREE MATERIAL - ${nextPoId}` : 'FREE MATERIAL',
+                label: nextPoId ? `${nextPoId} - Free Material` : 'Free Material',
+              }
+            : source
+        ),
+      }))
+    })
   }
 
   async function openSupplierModal() {
@@ -1071,7 +1122,7 @@ export default function ArklineMaterialFulfillmentPage() {
           address: supplierDraft.address.trim().toUpperCase() || null,
           is_active: true,
         })
-        .select('id, supplier_name, supplier_level, contact_person, phone, address, "group", is_active')
+        .select('id, supplier_name, initial, supplier_level, contact_person, phone, address, "group", is_active')
         .single()
 
       if (insertError) {
@@ -1083,7 +1134,7 @@ export default function ArklineMaterialFulfillmentPage() {
 
       const normalizedSupplier = normalizeSupplier(insertedSupplier)
       setSuppliers((current) => [...current, normalizedSupplier].sort(sortSuppliersByName))
-      markMaterialDraftUnsaved()
+      markMaterialDraftUnsaved({ clearPoNumber: true })
       setOrderHeader((current) => ({
         ...current,
         supplierId: normalizedSupplier.id,
@@ -1178,6 +1229,10 @@ export default function ArklineMaterialFulfillmentPage() {
     setSuccess('')
     setFreeMaterialError('')
 
+    if (!validateSupplierForOrderDraft()) {
+      return
+    }
+
     const selectedRows = filteredRequirements.filter((item) => selectedRequirementIds.includes(item.id))
 
     if (!selectedRows.length) {
@@ -1239,6 +1294,10 @@ export default function ArklineMaterialFulfillmentPage() {
     setError('')
     setSuccess('')
     setFreeMaterialError('')
+
+    if (!validateSupplierForOrderDraft(setFreeMaterialError)) {
+      return
+    }
 
     const selectedMaterial = materialOptions.find((item) => item.id === freeMaterialDraft.materialId)
     const qty = toNumber(freeMaterialDraft.qty)
@@ -1414,6 +1473,11 @@ export default function ArklineMaterialFulfillmentPage() {
       return false
     }
 
+    if (!selectedSupplierInitial) {
+      setError('Selected material supplier needs a 3-character initial first.')
+      return false
+    }
+
     if (!orderHeader.requestDeliveryDate) {
       setError('Fill the request delivery date first.')
       return false
@@ -1500,12 +1564,13 @@ export default function ArklineMaterialFulfillmentPage() {
       const userEmail = user?.email?.toLowerCase() || null
       const normalizedOrderedAs = String(orderedAs || ORDERED_AS_OPTIONS[0]).trim().toUpperCase()
       const materialPoNumber =
-        savedMaterialPoNumber ||
+        isMaterialPoSaved && savedMaterialPoNumber ? savedMaterialPoNumber :
         buildMaterialPoNumber(orderLines, materialPoNumbers, {
           includePpn: orderHeader.includePpn !== false,
           poMeta,
+          supplierInitial: selectedSupplierInitial,
         })
-      const selectedSupplier = suppliers.find((item) => item.id === orderHeader.supplierId) || null
+      const selectedSupplier = selectedOrderSupplier
       const sourcePoIds = getMaterialDraftSourcePoIds(orderLines)
       const headerPayload = {
         material_po_number: materialPoNumber,
@@ -1735,13 +1800,7 @@ export default function ArklineMaterialFulfillmentPage() {
               <select
                 className={styles.select}
                 value={poFilter}
-                onChange={(event) => {
-                  setPoFilter(event.target.value)
-                  setSelectedRequirementIds([])
-                  setRequirementWarnings([])
-                  setError('')
-                  setSuccess('')
-                }}
+                onChange={(event) => handlePoFilterChange(event.target.value)}
               >
                 <option value={NO_PO_VALUE}>No PO</option>
                 {poOptions.map((po) => (

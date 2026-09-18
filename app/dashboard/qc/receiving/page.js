@@ -391,14 +391,14 @@ const styles = {
     textTransform: 'uppercase',
   },
   grnOptionDone: {
-    backgroundColor: '#f0fdf4',
+    background: '#f0fdf4',
     color: '#166534',
   },
   grnOptionActive: {
-    backgroundColor: '#f8fafc',
+    background: '#f8fafc',
   },
   grnOptionDoneActive: {
-    backgroundColor: '#dcfce7',
+    background: '#dcfce7',
     color: '#14532d',
   },
   input: {
@@ -3905,14 +3905,10 @@ export default function QcReceivingPage() {
                           ...styles.comboOption,
                           ...(isDone ? styles.grnOptionDone : {}),
                           ...(isActive ? (isDone ? styles.grnOptionDoneActive : styles.grnOptionActive) : {}),
-                        }}
-                      >
-                        <strong>{item.grn_number}</strong>
-                        <span style={styles.comboOptionMeta}>
-                          {isDone ? 'DONE' : 'OPEN'}
-                          {item.suppliers?.supplier_name ? ` · ${item.suppliers.supplier_name}` : ''}
-                        </span>
-                      </button>
+                      }}
+                    >
+                      <strong>{item.grn_number}</strong>
+                    </button>
                     )
                   })}
                 </div>

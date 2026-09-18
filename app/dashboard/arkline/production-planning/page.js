@@ -12,6 +12,7 @@ import {
   getNextArklinePoSequence,
   isTemporaryArklinePo as isEditablePoSuffix,
   normalizeArklinePoSuffix,
+  normalizeArklineSupplierInitial,
 } from '@/utils/arkline-po-number'
 import { createClient } from '@/utils/supabase/browser'
 
@@ -66,6 +67,7 @@ function createInitialHeader() {
 function createEmptySupplierDraft() {
   return {
     supplierCode: '',
+    initial: '',
     supplierName: '',
     contactPerson: '',
     phone: '',
@@ -119,6 +121,7 @@ function normalizeSupplier(row, source) {
   return {
     id: String(row?.id || '').trim(),
     supplierName: String(row?.supplier_name || row?.nama_supplier || '').trim().toUpperCase(),
+    initial: normalizeArklineSupplierInitial(row?.initial),
     supplierGroup: String(row?.group || '').trim().toUpperCase(),
     supplierLevel: String(row?.supplier_level || '').trim().toUpperCase(),
     contactPerson: String(row?.contact_person || '').trim(),
@@ -322,12 +325,13 @@ function buildPoNumberRegistry(garmentRows = [], materialRows = []) {
     .filter(Boolean)
 }
 
-function buildNextGarmentPoId(registry = [], { includePpn = true, method = 'FOB', suffix = TEMPORARY_PO_SUFFIX } = {}) {
+function buildNextGarmentPoId(registry = [], { includePpn = true, method = 'FOB', supplierInitial = '', suffix = TEMPORARY_PO_SUFFIX } = {}) {
   return buildArklinePoId({
     sequence: getNextArklinePoSequence(registry),
     includePpn,
     method,
     documentType: 'GARMENT',
+    supplierInitial,
     suffix,
   })
 }
@@ -601,7 +605,7 @@ async function createPurchaseOrderPreviewHtml(bundle) {
 async function loadSuppliers() {
   const { data, error } = await supabase
     .from('dir_suppliers')
-    .select('id, supplier_name, supplier_code, "group", supplier_level, contact_person, phone, address, is_active')
+    .select('id, supplier_name, supplier_code, initial, "group", supplier_level, contact_person, phone, address, is_active')
     .eq('group', 'ARKLINE')
     .eq('supplier_level', 'GARMENT')
     .order('supplier_name', { ascending: true })
@@ -697,7 +701,7 @@ async function fetchPoBundle(poId) {
   if (poRow.supplier_id != null) {
     const { data: supplierRow, error: supplierError } = await supabase
       .from('dir_suppliers')
-      .select('id, supplier_name, supplier_code, "group", supplier_level, contact_person, phone, address, is_active')
+      .select('id, supplier_name, supplier_code, initial, "group", supplier_level, contact_person, phone, address, is_active')
       .eq('id', poRow.supplier_id)
       .maybeSingle()
 
@@ -893,6 +897,11 @@ export default function ArklineProductionPlanningPage() {
     [products]
   )
 
+  const selectedHeaderSupplier = useMemo(
+    () => suppliers.find((item) => item.id === header.supplierId) || null,
+    [header.supplierId, suppliers]
+  )
+  const selectedSupplierInitial = selectedHeaderSupplier?.initial || ''
   const nextPoSequence = useMemo(() => getNextArklinePoSequence(poNumberRegistry), [poNumberRegistry])
   const nextPoPrefix = useMemo(
     () =>
@@ -901,8 +910,9 @@ export default function ArklineProductionPlanningPage() {
         includePpn: header.includePpn,
         method,
         documentType: 'GARMENT',
+        supplierInitial: selectedSupplierInitial,
       }),
-    [header.includePpn, method, nextPoSequence]
+    [header.includePpn, method, nextPoSequence, selectedSupplierInitial]
   )
   const currentPoPrefix = mode === 'new' ? nextPoPrefix : getPoPrefix(header.poId)
   const currentPoSuffix = mode === 'new' ? getPoSuffix(header.poId) : ''
@@ -1092,6 +1102,7 @@ export default function ArklineProductionPlanningPage() {
           includePpn: prev.includePpn,
           method: nextMethod,
           documentType: 'GARMENT',
+          supplierInitial: selectedSupplierInitial,
         })}${normalizeArklinePoSuffix(getPoSuffix(prev.poId))}`,
       }))
     }
@@ -1120,6 +1131,16 @@ export default function ArklineProductionPlanningPage() {
         ...prev,
         supplierId: value,
         supplierName: selected?.supplierName || '',
+        poId:
+          mode === 'new'
+            ? `${buildArklinePoPrefix({
+                sequence: nextPoSequence,
+                includePpn: prev.includePpn,
+                method,
+                documentType: 'GARMENT',
+                supplierInitial: selected?.initial || '',
+              })}${normalizeArklinePoSuffix(getPoSuffix(prev.poId))}`
+            : prev.poId,
       }))
       setIsPlanningDirty(true)
       setError('')
@@ -1139,6 +1160,7 @@ export default function ArklineProductionPlanningPage() {
           includePpn: nextValue,
           method,
           documentType: 'GARMENT',
+          supplierInitial: selectedSupplierInitial,
         })}${normalizeArklinePoSuffix(getPoSuffix(prev.poId))}`
       }
 
@@ -1172,7 +1194,12 @@ export default function ArklineProductionPlanningPage() {
   }
 
   function updateSupplierDraft(name, value) {
-    const nextValue = name === 'phone' ? value.replace(/\D/g, '') : value.toUpperCase()
+    const nextValue =
+      name === 'phone'
+        ? value.replace(/\D/g, '')
+        : name === 'initial'
+          ? value.replace(/[^a-zA-Z]/g, '').toUpperCase().slice(0, 3)
+          : value.toUpperCase()
     setSupplierDraft((current) => ({ ...current, [name]: nextValue }))
   }
 
@@ -1184,6 +1211,11 @@ export default function ArklineProductionPlanningPage() {
       return
     }
 
+    if (!/^[A-Z]{3}$/.test(supplierDraft.initial.trim().toUpperCase())) {
+      setError('Supplier initial is required and must be exactly 3 letters.')
+      return
+    }
+
     setSavingSupplier(true)
 
     try {
@@ -1191,6 +1223,7 @@ export default function ArklineProductionPlanningPage() {
         .from('dir_suppliers')
         .insert({
           supplier_code: supplierDraft.supplierCode.trim().toUpperCase(),
+          initial: supplierDraft.initial.trim().toUpperCase(),
           supplier_name: supplierDraft.supplierName.trim().toUpperCase(),
           group: 'ARKLINE',
           supplier_level: 'GARMENT',
@@ -1199,10 +1232,13 @@ export default function ArklineProductionPlanningPage() {
           address: supplierDraft.address.trim().toUpperCase() || null,
           is_active: true,
         })
-        .select('id, supplier_name, supplier_code, "group", supplier_level, contact_person, phone, address, is_active')
+        .select('id, supplier_name, supplier_code, initial, "group", supplier_level, contact_person, phone, address, is_active')
         .single()
 
       if (insertError) {
+        if (isMissingColumnError(insertError, 'initial')) {
+          throw new Error('Column initial belum ada di dir_suppliers. Tambahkan kolom initial text dulu.')
+        }
         throw new Error(insertError.message)
       }
 
@@ -1212,6 +1248,16 @@ export default function ArklineProductionPlanningPage() {
         ...current,
         supplierId: normalizedSupplier.id,
         supplierName: normalizedSupplier.supplierName,
+        poId:
+          mode === 'new'
+            ? `${buildArklinePoPrefix({
+                sequence: nextPoSequence,
+                includePpn: current.includePpn,
+                method,
+                documentType: 'GARMENT',
+                supplierInitial: normalizedSupplier.initial,
+              })}${normalizeArklinePoSuffix(getPoSuffix(current.poId))}`
+            : current.poId,
       }))
       setIsPlanningDirty(true)
       setSuccess('Garment supplier added.')
@@ -1355,6 +1401,16 @@ export default function ArklineProductionPlanningPage() {
   }
 
   function validateLineDraft() {
+    if (!header.supplierId) {
+      setLineError('Choose supplier first before adding a product line.')
+      return null
+    }
+
+    if (!selectedSupplierInitial) {
+      setLineError('Selected supplier needs a 3-character initial before adding a product line.')
+      return null
+    }
+
     if (!lineDraft.skuInduk) {
       setLineError('Choose an Arkline product first.')
       return null
@@ -1508,6 +1564,10 @@ export default function ArklineProductionPlanningPage() {
 
       if (!header.supplierId) {
         throw new Error('Choose a supplier first.')
+      }
+
+      if (!selectedSupplierInitial) {
+        throw new Error('Selected supplier needs a 3-character initial before saving this PO.')
       }
 
       if (!header.requestDeliveryDate) {
@@ -2400,6 +2460,17 @@ export default function ArklineProductionPlanningPage() {
               <div className={styles.field}>
                 <label className={styles.label}>Supplier Code</label>
                 <input className={styles.inputReadonly} value={supplierCodeLoading ? 'GENERATING...' : supplierDraft.supplierCode} readOnly />
+              </div>
+
+              <div className={styles.field}>
+                <label className={styles.label}>Initial</label>
+                <input
+                  className={styles.input}
+                  value={supplierDraft.initial}
+                  onChange={(event) => updateSupplierDraft('initial', event.target.value)}
+                  placeholder="ABC"
+                  maxLength={3}
+                />
               </div>
 
               <div className={styles.field}>

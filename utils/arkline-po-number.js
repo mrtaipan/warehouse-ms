@@ -2,6 +2,10 @@ export const TEMPORARY_PO_SUFFIX = 'TEMPORER'
 
 const ROMAN_MONTHS = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X', 'XI', 'XII']
 
+export function normalizeArklineSupplierInitial(value) {
+  return String(value || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '')
+}
+
 export function normalizeArklinePoSuffix(value, fallback = TEMPORARY_PO_SUFFIX) {
   const normalized = String(value || '').trim().toUpperCase()
   return normalized || fallback
@@ -9,18 +13,20 @@ export function normalizeArklinePoSuffix(value, fallback = TEMPORARY_PO_SUFFIX) 
 
 export function extractArklinePoNumberInfo(value) {
   const normalized = String(value || '').trim().toUpperCase()
-  const nextFormatMatch = normalized.match(/^PO-?(\d+)-([A-Z0-9]+)(?:\/|-)([A-Z0-9]+)(?:-(.*))?$/)
+  const nextFormatMatch = normalized.match(/^PO-?(\d+)-([A-Z0-9]+)(?:\/|-)([A-Z0-9]+)(?:\/([A-Z0-9]+))?(?:-(.*))?$/)
 
   if (nextFormatMatch) {
-    const sequenceText = String(Number(nextFormatMatch[1] || 0) || nextFormatMatch[1])
+    const sequenceText = String(Number(nextFormatMatch[1] || 0) || nextFormatMatch[1]).padStart(2, '0')
+    const supplierInitial = normalizeArklineSupplierInitial(nextFormatMatch[4])
     return {
       kind: 'next',
       numberText: sequenceText,
       numberValue: Number(nextFormatMatch[1]),
       ownershipCode: nextFormatMatch[2] || '',
       flowCode: nextFormatMatch[3] || '',
-      suffix: nextFormatMatch[4] || '',
-      prefix: `PO-${sequenceText}-${nextFormatMatch[2]}/${nextFormatMatch[3]}-`,
+      supplierInitial,
+      suffix: nextFormatMatch[5] || '',
+      prefix: `PO-${sequenceText}-${nextFormatMatch[2]}/${nextFormatMatch[3]}${supplierInitial ? `/${supplierInitial}` : ''}-`,
     }
   }
 
@@ -98,14 +104,16 @@ export function buildArklinePoPrefix({
   documentType = 'GARMENT',
   materialType = '',
   flowCode,
+  supplierInitial = '',
 } = {}) {
   const nextSequence = Number(sequence || 0)
-  const sequenceText = String(Number.isFinite(nextSequence) && nextSequence > 0 ? nextSequence : 1)
+  const sequenceText = String(Number.isFinite(nextSequence) && nextSequence > 0 ? nextSequence : 1).padStart(2, '0')
   const ownershipCode = getArklineOwnershipCode({ includePpn, materialType })
   const normalizedFlowCode =
     String(flowCode || '').trim().toUpperCase() || `${getArklineMethodCode(method)}${getArklineDocumentCode(documentType)}`
+  const normalizedSupplierInitial = normalizeArklineSupplierInitial(supplierInitial)
 
-  return `PO-${sequenceText}-${ownershipCode}/${normalizedFlowCode}-`
+  return `PO-${sequenceText}-${ownershipCode}/${normalizedFlowCode}${normalizedSupplierInitial ? `/${normalizedSupplierInitial}` : ''}-`
 }
 
 export function buildArklinePoId({
@@ -115,9 +123,10 @@ export function buildArklinePoId({
   documentType = 'GARMENT',
   materialType = '',
   flowCode,
+  supplierInitial = '',
   suffix = TEMPORARY_PO_SUFFIX,
 } = {}) {
-  return `${buildArklinePoPrefix({ sequence, includePpn, method, documentType, materialType, flowCode })}${normalizeArklinePoSuffix(suffix)}`
+  return `${buildArklinePoPrefix({ sequence, includePpn, method, documentType, materialType, flowCode, supplierInitial })}${normalizeArklinePoSuffix(suffix)}`
 }
 
 export function getArklineIssueDateCode(date = new Date()) {

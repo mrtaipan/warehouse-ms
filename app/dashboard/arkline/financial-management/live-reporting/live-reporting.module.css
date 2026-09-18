@@ -446,6 +446,38 @@
   min-width: 0;
 }
 
+.liveRunControl {
+  display: grid;
+  grid-template-columns: minmax(190px, 0.45fr) minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  background: #f8fafc;
+}
+
+.checkboxLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  color: #0f172a;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.checkboxLabel input {
+  width: 16px;
+  height: 16px;
+  accent-color: #0f172a;
+}
+
+.liveRunHint {
+  color: #64748b;
+  font-size: 12px;
+}
+
 .label {
   color: #64748b;
   font-size: 11px;
@@ -848,6 +880,10 @@
 
   .dateTimeRow .field:first-child {
     grid-column: 1 / -1;
+  }
+
+  .liveRunControl {
+    grid-template-columns: 1fr;
   }
 }
 

@@ -195,7 +195,7 @@ using (
         profile.authenticated_id = (select auth.uid())
         or profile.id = (select auth.uid())::text
       )
-      and profile.role in ('admin', 'arkline_staff', 'arkline_merchandiser', 'arkline_host')
+      and profile.role in ('admin', 'arkline_staff', 'arkline_merchandiser', 'arkline_host', 'external')
   )
 );
 
@@ -211,7 +211,7 @@ with check (
         profile.authenticated_id = (select auth.uid())
         or profile.id = (select auth.uid())::text
       )
-      and profile.role in ('admin', 'arkline_merchandiser', 'arkline_host')
+      and profile.role in ('admin', 'arkline_merchandiser', 'arkline_host', 'external')
   )
 );
 
@@ -227,7 +227,7 @@ using (
         profile.authenticated_id = (select auth.uid())
         or profile.id = (select auth.uid())::text
       )
-      and profile.role in ('admin', 'arkline_merchandiser', 'arkline_host')
+      and profile.role in ('admin', 'arkline_merchandiser', 'arkline_host', 'external')
   )
 )
 with check (
@@ -238,7 +238,7 @@ with check (
         profile.authenticated_id = (select auth.uid())
         or profile.id = (select auth.uid())::text
       )
-      and profile.role in ('admin', 'arkline_merchandiser', 'arkline_host')
+      and profile.role in ('admin', 'arkline_merchandiser', 'arkline_host', 'external')
   )
 );
 
@@ -275,7 +275,7 @@ using (
         profile.authenticated_id = (select auth.uid())
         or profile.id = (select auth.uid())::text
       )
-      and profile.role in ('admin', 'arkline_staff', 'arkline_merchandiser', 'arkline_host')
+      and profile.role in ('admin', 'arkline_staff', 'arkline_merchandiser', 'arkline_host', 'external')
   )
 );
 
@@ -291,7 +291,7 @@ with check (
         profile.authenticated_id = (select auth.uid())
         or profile.id = (select auth.uid())::text
       )
-      and profile.role in ('admin', 'arkline_merchandiser', 'arkline_host')
+      and profile.role in ('admin', 'arkline_merchandiser', 'arkline_host', 'external')
   )
 );
 
@@ -307,7 +307,7 @@ using (
         profile.authenticated_id = (select auth.uid())
         or profile.id = (select auth.uid())::text
       )
-      and profile.role in ('admin', 'arkline_merchandiser', 'arkline_host')
+      and profile.role in ('admin', 'arkline_merchandiser', 'arkline_host', 'external')
   )
 )
 with check (
@@ -318,7 +318,7 @@ with check (
         profile.authenticated_id = (select auth.uid())
         or profile.id = (select auth.uid())::text
       )
-      and profile.role in ('admin', 'arkline_merchandiser', 'arkline_host')
+      and profile.role in ('admin', 'arkline_merchandiser', 'arkline_host', 'external')
   )
 );
 
@@ -361,7 +361,7 @@ using (
         profile.authenticated_id = (select auth.uid())
         or profile.id = (select auth.uid())::text
       )
-      and profile.role in ('admin', 'arkline_staff', 'arkline_merchandiser', 'arkline_host')
+      and profile.role in ('admin', 'arkline_staff', 'arkline_merchandiser', 'arkline_host', 'external')
   )
 );
 
@@ -378,7 +378,7 @@ with check (
         profile.authenticated_id = (select auth.uid())
         or profile.id = (select auth.uid())::text
       )
-      and profile.role in ('admin', 'arkline_merchandiser', 'arkline_host')
+      and profile.role in ('admin', 'arkline_merchandiser', 'arkline_host', 'external')
   )
 );
 
@@ -395,7 +395,7 @@ using (
         profile.authenticated_id = (select auth.uid())
         or profile.id = (select auth.uid())::text
       )
-      and profile.role in ('admin', 'arkline_merchandiser', 'arkline_host')
+      and profile.role in ('admin', 'arkline_merchandiser', 'arkline_host', 'external')
   )
 )
 with check (
@@ -407,7 +407,7 @@ with check (
         profile.authenticated_id = (select auth.uid())
         or profile.id = (select auth.uid())::text
       )
-      and profile.role in ('admin', 'arkline_merchandiser', 'arkline_host')
+      and profile.role in ('admin', 'arkline_merchandiser', 'arkline_host', 'external')
   )
 );
 

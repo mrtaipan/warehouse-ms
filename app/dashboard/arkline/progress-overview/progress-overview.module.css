@@ -942,6 +942,29 @@
   font-weight: 900;
 }
 
+.productReturnName {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.returnInProgressMark {
+  display: inline-flex;
+  width: 20px;
+  height: 20px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: #fff7ed;
+  color: #c2410c;
+  border: 1px solid #fed7aa;
+  font-size: 16px;
+  font-weight: 900;
+  line-height: 1;
+  box-shadow: 0 6px 14px rgba(194, 65, 12, 0.16);
+  transform: translateY(-2px);
+}
+
 .modalMetaLine {
   margin: 6px 0 0;
   color: #64748b;
@@ -1272,6 +1295,13 @@
 .modalListButton:hover .modalMetricCard {
   border-color: rgba(255, 255, 255, 0.22);
   background: rgba(255, 255, 255, 0.08);
+}
+
+.modalListButton:hover .returnInProgressMark {
+  border-color: rgba(255, 255, 255, 0.7);
+  background: #fb923c;
+  color: #111827;
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.18);
 }
 
 .modalListIdentity,
@@ -2980,6 +3010,42 @@
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
+}
+
+.financeOutstandingValue {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.financeReturnInProgressMark {
+  width: 24px;
+  height: 24px;
+  font-size: 19px;
+  transform: translateY(-4px);
+}
+
+.financeReturnNote {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 2px 0 0;
+  padding: 9px 11px;
+  border-radius: 12px;
+  border: 1px solid #fed7aa;
+  background: #fff7ed;
+  color: #9a3412;
+  font-size: 11px;
+  font-weight: 750;
+  line-height: 1.4;
+}
+
+.financeReturnNoteMark {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  font-size: 15px;
+  transform: none;
 }
 
 .financeTableWrap {
