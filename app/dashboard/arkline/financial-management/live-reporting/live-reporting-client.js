@@ -47,13 +47,18 @@ function getTodayDateValue() {
   return `${year}-${month}-${day}`
 }
 
+function getCurrentTimeValue() {
+  const now = new Date()
+  return `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`
+}
+
 function createDraft() {
   return {
     live_mode: 'NEW',
     live_run_id: '',
     session_date: getTodayDateValue(),
     start_time: '',
-    end_time: '',
+    end_time: getCurrentTimeValue(),
     session_type: 'STANDALONE',
     sales_channel: 'TIKTOK',
     partner_profile_id: '',
@@ -229,6 +234,7 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
   const [trendGroup, setTrendGroup] = useState('MONTH')
   const [hoveredTrendKey, setHoveredTrendKey] = useState('')
   const [selectedRanking, setSelectedRanking] = useState(null)
+  const [previewActiveLive, setPreviewActiveLive] = useState(false)
 
   const canView = access.financialManagementLiveReportingView
   const canSubmit = access.financialManagementLiveReportingAdd
@@ -399,6 +405,10 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
     void loadWorkspace()
   }, [])
 
+  useEffect(() => {
+    setPreviewActiveLive(new URLSearchParams(window.location.search).get('preview') === 'active')
+  }, [])
+
   const periodFilter = monthFilter !== 'all' && yearFilter !== 'all' ? `${yearFilter}-${monthFilter}` : ''
 
   const filteredSessions = useMemo(() => {
@@ -447,8 +457,40 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
   }, [filteredCredits])
 
   const currentLiveRuns = useMemo(
-    () => liveRuns.filter((item) => item.sales_channel === draft.sales_channel),
-    [liveRuns, draft.sales_channel]
+    () => {
+      const matchingRuns = liveRuns
+        .filter((item) => item.sales_channel === draft.sales_channel)
+        .map((run) => {
+          const latestSession = sessions
+            .filter((item) => String(item.live_run_id) === String(run.id))
+            .sort((left, right) => {
+              if (right.checkpoint_no !== left.checkpoint_no) return right.checkpoint_no - left.checkpoint_no
+              return String(right.created_at || '').localeCompare(String(left.created_at || ''))
+            })[0]
+
+          if (!latestSession) return run
+
+          const latestHost = latestSession.host_display_name || latestSession.host_display_name_snapshot || run.started_by_display_name
+          const latestLabel = latestSession.session_type === 'PAIRING'
+            ? `${latestHost} + ${latestSession.partner_display_name_snapshot || 'Partner'} · Pairing`
+            : `${latestHost} · Standalone`
+
+          return { ...run, latest_session_label: latestLabel }
+        })
+      if (previewActiveLive && draft.sales_channel === 'TIKTOK') {
+        matchingRuns.unshift({
+          id: 'preview-active-live',
+          sales_channel: 'TIKTOK',
+          status: 'ACTIVE',
+          started_by_display_name: 'Marcel',
+          current_gross_amount: 12500000,
+          started_at: getTodayDateValue(),
+          latest_session_label: 'Marcel · Standalone',
+        })
+      }
+      return matchingRuns
+    },
+    [liveRuns, sessions, draft.sales_channel, previewActiveLive]
   )
 
   const trendSeries = useMemo(() => {
@@ -535,6 +577,11 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
 
     if (draft.live_mode === 'CONTINUE' && !draft.live_run_id) {
       setError('Select the current live that you want to continue.')
+      return
+    }
+
+    if (draft.live_run_id === 'preview-active-live') {
+      setError('Preview data only. Start a real live session before saving.')
       return
     }
 
@@ -832,7 +879,14 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
                     <select
                       className={styles.select}
                       value={draft.sales_channel || 'TIKTOK'}
-                      onChange={(event) => setDraft((prev) => ({ ...prev, sales_channel: event.target.value, live_run_id: '' }))}
+                      onChange={(event) =>
+                        setDraft((prev) => ({
+                          ...prev,
+                          sales_channel: event.target.value,
+                          live_mode: 'NEW',
+                          live_run_id: '',
+                        }))
+                      }
                     >
                       <option value="TIKTOK">TikTok</option>
                       <option value="SHOPEE">Shopee</option>
@@ -856,6 +910,7 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
                     <input
                       type="checkbox"
                       checked={draft.live_mode === 'CONTINUE'}
+                      disabled={!currentLiveRuns.length}
                       onChange={(event) =>
                         setDraft((prev) => ({
                           ...prev,
@@ -876,10 +931,12 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
                       <option value="">Choose active live</option>
                       {currentLiveRuns.map((run) => (
                         <option key={run.id} value={run.id}>
-                          {run.started_by_display_name} · {formatCurrency(run.current_gross_amount)}
+                          {run.latest_session_label || run.started_by_display_name} · {formatCurrency(run.current_gross_amount)} · {formatDate(run.started_at?.slice(0, 10))}
                         </option>
                       ))}
                     </select>
+                  ) : !currentLiveRuns.length ? (
+                    <span className={styles.liveRunHint}>No active live for this channel. Start New Live will create a new baseline.</span>
                   ) : (
                     <span className={styles.liveRunHint}>Start New Live resets the GMV baseline.</span>
                   )}
