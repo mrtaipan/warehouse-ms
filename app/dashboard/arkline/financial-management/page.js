@@ -284,6 +284,8 @@ export default function ArklineFinancialManagementPage({
   headerTitle = 'Payment Submission',
   allowCreateOverride = null,
   hrgaView = false,
+  selfService = false,
+  hidePaymentBasisSelector = false,
 } = {}) {
   const { loading: accessLoading, access, role } = useArklineAccess()
   const [loading, setLoading] = useState(true)
@@ -317,15 +319,15 @@ export default function ArklineFinancialManagementPage({
   const paymentProofInputRef = useRef(null)
   const imagePreviewDragRef = useRef(null)
 
-  const canView = hrgaView ? true : access.financialManagement || access.financialManagementPaymentSubmissionView
+  const canView = selfService || hrgaView ? true : access.financialManagement || access.financialManagementPaymentSubmissionView
   const canSubmitBase =
     access.financialManagementPaymentSubmissionView ||
     access.financialManagementPaymentSubmissionAdd ||
     access.financialManagementPaymentSubmissionEdit
   const canSubmit = allowCreateOverride === null ? (hrgaView ? false : canSubmitBase) : Boolean(allowCreateOverride)
-  const canReviewAllRequests = hrgaView || role === 'admin' || role === 'hrga' || role === 'leader'
-  const canPay = hrgaView ? role === 'admin' || role === 'hrga' || role === 'leader' : role === 'admin'
-  const canApprove = hrgaView ? role === 'admin' || role === 'hrga' || role === 'leader' : role === 'admin'
+  const canReviewAllRequests = !selfService && (hrgaView || role === 'admin' || role === 'hrga' || role === 'leader')
+  const canPay = !selfService && (hrgaView ? role === 'admin' || role === 'hrga' || role === 'leader' : role === 'admin')
+  const canApprove = !selfService && (hrgaView ? role === 'admin' || role === 'hrga' || role === 'leader' : role === 'admin')
 
   const hydrateRequestDisplayNames = useCallback(
     (row) => {
@@ -418,7 +420,7 @@ export default function ArklineFinancialManagementPage({
           .select(ARKLINE_PAYMENT_DETAIL_SELECT)
           .order('created_at', { ascending: true })
 
-        if (!canReviewAllRequests) {
+        if (selfService || !canReviewAllRequests) {
           paymentQuery = paymentQuery.eq('created_by', String(profileRow?.email || user.email || '').trim().toLowerCase())
         }
 
@@ -501,7 +503,7 @@ export default function ArklineFinancialManagementPage({
     )
     setCategories((categoryRows || []).map((item) => ({ id: String(item.id), name: item.name })))
     if (!silent) setLoading(false)
-  }, [canReviewAllRequests])
+  }, [canReviewAllRequests, selfService])
 
   useEffect(() => {
     void loadWorkspace()
@@ -511,7 +513,7 @@ export default function ArklineFinancialManagementPage({
     supabase,
     topic: 'finance:arkline-payment',
     onRefresh: () => loadWorkspace({ silent: true }),
-    paused: Boolean(accessLoading || showCreateModal || editingRequest || selectedRequest),
+    paused: Boolean((!selfService && accessLoading) || showCreateModal || editingRequest || selectedRequest),
     enabled: canView,
   })
 
@@ -1309,7 +1311,7 @@ export default function ArklineFinancialManagementPage({
         {error ? <p className={shellStyles.errorText}>{error}</p> : null}
         {success ? <p className={shellStyles.successText}>{success}</p> : null}
 
-        {loading || accessLoading ? (
+        {loading || (!selfService && accessLoading) ? (
           <div className={styles.emptyState}>Loading financial management...</div>
         ) : !canView ? (
           <div className={styles.emptyState}>Your account does not have Arkline financial management access yet.</div>
@@ -1455,24 +1457,26 @@ export default function ArklineFinancialManagementPage({
             {error ? <p className={shellStyles.errorText}>{error}</p> : null}
 
             <div className={styles.formGrid}>
-              <div className={styles.field}>
-                <label className={styles.label}>Payment Basis *</label>
-                <select
-                  className={styles.select}
-                  value={draft.payment_basis}
-                  onChange={(event) =>
-                    setDraft((prev) => ({
-                      ...prev,
-                      payment_basis: event.target.value,
-                      po_source_type: 'GARMENT',
-                      linked_po_id: '',
-                    }))
-                  }
-                >
-                  <option value="NON_PO_BASED">Non-PO Based</option>
-                  <option value="PO_BASED">PO Based</option>
-                </select>
-              </div>
+              {!hidePaymentBasisSelector ? (
+                <div className={styles.field}>
+                  <label className={styles.label}>Payment Basis *</label>
+                  <select
+                    className={styles.select}
+                    value={draft.payment_basis}
+                    onChange={(event) =>
+                      setDraft((prev) => ({
+                        ...prev,
+                        payment_basis: event.target.value,
+                        po_source_type: 'GARMENT',
+                        linked_po_id: '',
+                      }))
+                    }
+                  >
+                    <option value="NON_PO_BASED">Non-PO Based</option>
+                    <option value="PO_BASED">PO Based</option>
+                  </select>
+                </div>
+              ) : null}
 
               {draft.payment_basis === 'PO_BASED' ? (
                 <>

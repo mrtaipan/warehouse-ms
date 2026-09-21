@@ -388,7 +388,7 @@ export default function MyArklifeClient({ profile, leaveRows, giftRows, publicHo
         </aside>
 
         <main className={styles.mainPanel}>
-          <MyArklifeReimbursementClient profile={profile} headerActions={<MyArklifeMobPaymentClient />} />
+          <MyArklifeReimbursementClient profile={profile} headerActions={<MyArklifeMobPaymentClient profile={profile} />} />
         </main>
       </div>
 
