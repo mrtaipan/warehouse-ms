@@ -1719,6 +1719,7 @@ export default function QcDashboardPage() {
             id,
             brand_id,
             category_id,
+            qty,
             is_sample,
             model_name,
             variant_name,
@@ -3421,11 +3422,6 @@ export default function QcDashboardPage() {
     const sourceId = Number(summary.sampleSourceId || 0)
     const breakdowns = sampleBreakdownsByUnloadId.get(sourceId) || []
 
-    if (!breakdowns.length) {
-      setError('Resolve Sample in Inbound first before splitting QC result.')
-      return
-    }
-
     const sourceTaskRows = activeItems.filter((item) => isTemporarySampleTask(item) && Number(item.inbound_unload_id || item.inbound_unload?.id || 0) === sourceId)
     const taskRows = sourceTaskRows.length ? sourceTaskRows : summary.taskRows || []
 
@@ -3451,7 +3447,7 @@ export default function QcDashboardPage() {
 
     setSampleSplitSummary(summary)
     setSampleSplitDraftRows(rows)
-    setSampleSplitError('')
+    setSampleSplitError(breakdowns.length ? '' : 'No resolved sample model yet. Use Full Return Sample, or resolve Sample in Inbound before splitting by model.')
     setError('')
     setSuccess('')
   }
@@ -3647,11 +3643,6 @@ export default function QcDashboardPage() {
       return
     }
 
-    if (!selectedSampleSplitBreakdowns.length) {
-      setSampleSplitError('Resolve Sample in Inbound first before marking full return.')
-      return
-    }
-
     const sourceTasks = selectedSampleSplitTasks.filter((item) => Number(item.id || 0))
     if (!sourceTasks.length) {
       setSampleSplitError('No QC source found for this sample.')
@@ -3678,10 +3669,33 @@ export default function QcDashboardPage() {
       }
     }
 
-    const { error: updateError } = await supabase
-      .from('inbound_sample_model_breakdowns')
-      .update({ resolution_status: 'full_return' })
-      .eq('inbound_unload_id', sourceId)
+    const sourceTask = sourceTasks[0] || {}
+    const sourceUnload = sourceTask.inbound_unload || {}
+    const fullReturnQty =
+      Math.max(0, Number(sourceUnload.qty || 0)) ||
+      sourceTasks.reduce((sum, item) => sum + Number(item.qty_a || 0) + Number(item.qty_b || 0) + Number(item.qty_c || 0), 0)
+    const fullReturnPayload = {
+      inbound_unload_id: sourceId,
+      inbound_id: sourceTask.inbound_id || sourceUnload.inbound_id || null,
+      brand_id: sourceUnload.brand_id || sourceTask.product_model?.brand_id || null,
+      category_id: sourceUnload.category_id || sourceTask.product_model?.category_id || null,
+      product_model_id: null,
+      product_model_variant_id: null,
+      model_name: sourceTask.model_name || sourceUnload.model_name || 'TEMPORARY SAMPLE',
+      variant_name: sourceTask.model_color || sourceTask.variant_name || sourceUnload.variant_name || 'TEMPORARY',
+      photo_url: sourceTask.photo_url || '',
+      qty: fullReturnQty,
+      resolution_status: 'full_return',
+    }
+
+    const { error: updateError } = selectedSampleSplitBreakdowns.length
+      ? await supabase
+          .from('inbound_sample_model_breakdowns')
+          .update({ resolution_status: 'full_return' })
+          .eq('inbound_unload_id', sourceId)
+      : await supabase
+          .from('inbound_sample_model_breakdowns')
+          .insert(fullReturnPayload)
 
     if (updateError) {
       setSampleSplitError(updateError.message)
@@ -5056,10 +5070,10 @@ export default function QcDashboardPage() {
                 <button
                   type="button"
                   onClick={saveSampleFullReturnRows}
-                  disabled={savingSampleSplit || !supportsSampleSplit || !selectedSampleSplitBreakdowns.length}
+                  disabled={savingSampleSplit || !supportsSampleSplit}
                   style={{
                     ...styles.dangerButton,
-                    ...(savingSampleSplit || !supportsSampleSplit || !selectedSampleSplitBreakdowns.length
+                    ...(savingSampleSplit || !supportsSampleSplit
                       ? { opacity: 0.55, cursor: 'not-allowed' }
                       : {}),
                   }}
@@ -5069,10 +5083,10 @@ export default function QcDashboardPage() {
                 <button
                   type="button"
                   onClick={saveSampleSplitRows}
-                  disabled={savingSampleSplit || !supportsSampleSplit}
+                  disabled={savingSampleSplit || !supportsSampleSplit || !selectedSampleSplitBreakdowns.length}
                   style={{
                     ...styles.primaryButton,
-                    ...(savingSampleSplit || !supportsSampleSplit ? { opacity: 0.55, cursor: 'not-allowed' } : {}),
+                    ...(savingSampleSplit || !supportsSampleSplit || !selectedSampleSplitBreakdowns.length ? { opacity: 0.55, cursor: 'not-allowed' } : {}),
                   }}
                 >
                   {savingSampleSplit ? 'Saving...' : 'Save Split'}
