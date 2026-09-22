@@ -1480,7 +1480,10 @@ export default function QcConfirmationRejectionPage() {
     }
 
     qcItems
-      .filter((item) => item.inbound?.grn_number === grnFilter && !isTemporarySampleTask(item))
+      .filter((item) => {
+        const sampleSourceId = Number(item.inbound_unload_id || item.inbound_unload?.id || 0)
+        return item.inbound?.grn_number === grnFilter && !isTemporarySampleTask(item) && !fullReturnSampleSourceIds.has(sampleSourceId)
+      })
       .forEach((item) => {
         ;[
           { grade: 'B', qty: Number(item.qty_b || 0) },
@@ -1510,7 +1513,7 @@ export default function QcConfirmationRejectionPage() {
     qcItems
       .filter((item) => {
         const sampleSourceId = Number(item.inbound_unload_id || item.inbound_unload?.id || 0)
-        return item.inbound?.grn_number === grnFilter && isTemporarySampleTask(item) && fullReturnSampleSourceIds.has(sampleSourceId)
+        return item.inbound?.grn_number === grnFilter && isRegularSampleTask(item) && fullReturnSampleSourceIds.has(sampleSourceId)
       })
       .forEach((item) => {
         ;[
@@ -1540,7 +1543,10 @@ export default function QcConfirmationRejectionPage() {
       })
 
     qcSampleBreakdownRows
-      .filter((item) => item.qc_item?.inbound?.grn_number === grnFilter && item.qc_item?.status === 'done')
+      .filter((item) => {
+        const sampleSourceId = Number(item.qc_item?.inbound_unload_id || item.qc_item?.inbound_unload?.id || item.sample_breakdown?.inbound_unload_id || 0)
+        return item.qc_item?.inbound?.grn_number === grnFilter && item.qc_item?.status === 'done' && !fullReturnSampleSourceIds.has(sampleSourceId)
+      })
       .forEach((item) => {
         ;[
           { grade: 'B', qty: Number(item.qty_b || 0) },

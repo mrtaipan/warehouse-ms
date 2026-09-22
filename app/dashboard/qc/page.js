@@ -2355,7 +2355,7 @@ export default function QcDashboardPage() {
       const sampleSourceId = Number(item.inbound_unload_id || item.inbound_unload?.id || 0)
       const isSampleTask = qcMode === 'regular' && isRegularSampleTask(item)
       const isTemporarySample = qcMode === 'regular' && isTemporarySampleTask(item)
-      const isFullReturnSample = isTemporarySample && fullReturnSampleSourceIds.has(sampleSourceId)
+      const isFullReturnSample = isSampleTask && fullReturnSampleSourceIds.has(sampleSourceId)
 
       if (isTemporarySample && !isFullReturnSample) {
         const sourceTaskRows = activeItems.filter(
