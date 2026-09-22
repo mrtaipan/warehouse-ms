@@ -462,10 +462,21 @@ function shouldTrackTaskTime(task) {
   return !isRegularSampleTask(task)
 }
 
+function getTaskStartedAt(task) {
+  const startedAt = String(task?.started_at || '').trim()
+  if (startedAt && startedAt !== '0') {
+    return startedAt
+  }
+
+  const createdAt = String(task?.created_at || '').trim()
+  return createdAt && createdAt !== '0' ? createdAt : null
+}
+
 function getFinalStopwatchSeconds(task, fallbackSeconds, finishedAt = new Date().toISOString()) {
   const fallback = Math.max(0, Number(fallbackSeconds || 0))
   const baseSeconds = Math.max(0, Number(task?.stopwatch_seconds || 0))
-  const startedAtMs = task?.started_at ? new Date(task.started_at).getTime() : null
+  const startedAt = getTaskStartedAt(task)
+  const startedAtMs = startedAt ? new Date(startedAt).getTime() : null
   const finishedAtMs = finishedAt ? new Date(finishedAt).getTime() : Date.now()
 
   if (!startedAtMs || Number.isNaN(startedAtMs) || Number.isNaN(finishedAtMs)) {
@@ -492,6 +503,11 @@ function getTaskGradeInputs(task, gradeInputs) {
 
 function getCompletedQty(task) {
   return Number(task?.qty_a || 0) + Number(task?.qty_b || 0) + Number(task?.qty_c || 0)
+}
+
+function isTaskNumericallyComplete(task) {
+  const allocatedQty = Number(task?.allocated_qty || 0)
+  return allocatedQty > 0 && getCompletedQty(task) >= allocatedQty
 }
 
 function getLockedQty(task) {
@@ -845,7 +861,7 @@ export default function QcInspectionTaskPage() {
         return
       }
 
-    const normalizedRegularTasks = (regularTaskResult.data || []).map((item) => ({
+      const normalizedRegularTasks = (regularTaskResult.data || []).map((item) => ({
           ...normalizeRegularTask(item),
           source_type: 'regular',
         }))
@@ -853,11 +869,52 @@ export default function QcInspectionTaskPage() {
           ...item,
           source_type: 'arkline',
         }))
+      const loadedTasks = [...normalizedRegularTasks, ...normalizedArklineTasks].sort(
+        (a, b) => new Date(a.created_at || 0).getTime() - new Date(b.created_at || 0).getTime()
+      )
+      const completedActiveTasks = loadedTasks.filter(isTaskNumericallyComplete)
+      const repairedTaskKeys = new Set()
+
+      if (completedActiveTasks.length) {
+        const finishedAt = new Date().toISOString()
+        const repairResults = await Promise.all(
+          completedActiveTasks.map(async (task) => {
+            const completedQty = getCompletedQty(task)
+            const { error: repairError } = await supabase
+              .from(getTaskTableName(task))
+              .update({
+                status: 'done',
+                finished_at: task.finished_at || task.updated_at || finishedAt,
+                locked_qty: completedQty,
+                paused_at: null,
+                pause_reason: null,
+              })
+              .eq('id', task.id)
+              .eq('assigned_to', normalizedEmail)
+              .in('status', ['queued', 'in_progress', 'paused'])
+
+            return { task, error: repairError }
+          })
+        )
+
+        if (!isMounted) {
+          return
+        }
+
+        const repairError = repairResults.find((item) => item.error)?.error
+        if (repairError) {
+          setError(repairError.message || 'Failed to finish completed QC tasks.')
+          setLoading(false)
+          return
+        }
+
+        repairResults.forEach(({ task }) => {
+          repairedTaskKeys.add(`${task.source_type}:${task.id}`)
+        })
+      }
 
       setTasks(
-        [...normalizedRegularTasks, ...normalizedArklineTasks].sort(
-          (a, b) => new Date(a.created_at || 0).getTime() - new Date(b.created_at || 0).getTime()
-        )
+        loadedTasks.filter((task) => !repairedTaskKeys.has(`${task.source_type}:${task.id}`))
       )
       setLoading(false)
     }
@@ -1104,7 +1161,8 @@ export default function QcInspectionTaskPage() {
     }
 
     const baseSeconds = Number(activeTask.stopwatch_seconds || 0)
-    const startedAtMs = activeTask.started_at ? new Date(activeTask.started_at).getTime() : null
+    const startedAt = getTaskStartedAt(activeTask)
+    const startedAtMs = startedAt ? new Date(startedAt).getTime() : null
 
     if (!startedAtMs || activeTask.status !== 'in_progress') {
       return baseSeconds
@@ -1122,7 +1180,8 @@ export default function QcInspectionTaskPage() {
       return
     }
 
-    const startedAtMs = activeTask.started_at ? new Date(activeTask.started_at).getTime() : null
+    const startedAt = getTaskStartedAt(activeTask)
+    const startedAtMs = startedAt ? new Date(startedAt).getTime() : null
 
     if (activeTask.status !== 'in_progress' || !startedAtMs) {
       return
@@ -1341,7 +1400,7 @@ export default function QcInspectionTaskPage() {
 
       const { data: latestTaskRow, error: latestTaskError } = await supabase
         .from(getTaskTableName(task))
-        .select('qty_a, qty_b, qty_c, allocated_qty, locked_qty, stopwatch_seconds, started_at')
+        .select('qty_a, qty_b, qty_c, allocated_qty, locked_qty, stopwatch_seconds, started_at, created_at')
         .eq('id', task.id)
         .eq('assigned_to', normalizedEmail)
         .single()
@@ -1377,7 +1436,9 @@ export default function QcInspectionTaskPage() {
         ...task,
         stopwatch_seconds: latestTaskRow?.stopwatch_seconds ?? task.stopwatch_seconds,
         started_at: latestTaskRow?.started_at ?? task.started_at,
+        created_at: latestTaskRow?.created_at ?? task.created_at,
       }
+      const effectiveStartedAt = getTaskStartedAt(timerTask)
       const finalStopwatchSeconds = shouldTrackTime ? getFinalStopwatchSeconds(timerTask, runningSeconds, finishedAt) : 0
 
       if (isTaskComplete && shouldTrackTime) {
@@ -1402,6 +1463,7 @@ export default function QcInspectionTaskPage() {
           qty_b: qtyB,
           qty_c: qtyC,
           stopwatch_seconds: finalStopwatchSeconds,
+          started_at: shouldTrackTime ? effectiveStartedAt : null,
           finished_at: isTaskComplete ? finishedAt : null,
           locked_qty: nextLockedQty,
           paused_at: null,

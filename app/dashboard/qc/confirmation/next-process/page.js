@@ -1927,6 +1927,21 @@ export default function QcConfirmationNextProcessPage() {
     [matchesResultFilters, sourceRows]
   )
 
+  const filteredSourceTotals = useMemo(
+    () => filteredSourceRows.reduce(
+      (result, item) => {
+        result.source += Number(item.source_qty || 0)
+        result.confirmed += Number(item.confirmed_qty || 0)
+        result.shortage += Number(item.shortage_qty || 0)
+        return result
+      },
+      { source: 0, confirmed: 0, shortage: 0 }
+    ),
+    [filteredSourceRows]
+  )
+
+  const displayedSourceTotals = hasResultFilters ? filteredSourceTotals : sourceTotals
+
   const displayedModelCount = useMemo(
     () =>
       new Set(
@@ -2599,19 +2614,19 @@ export default function QcConfirmationNextProcessPage() {
             <div style={styles.metricGrid}>
               <div style={styles.metricBox}>
                 <span style={styles.grnLabel}>Initial</span>
-                <strong style={styles.metricValue}>{sourceTotals.source}</strong>
+                <strong style={styles.metricValue}>{displayedSourceTotals.source}</strong>
               </div>
               <div style={styles.metricBox}>
                 <span style={styles.grnLabel}>Verified</span>
-                <strong style={styles.metricValue}>{sourceTotals.confirmed}</strong>
+                <strong style={styles.metricValue}>{displayedSourceTotals.confirmed}</strong>
               </div>
               <div style={styles.metricBox}>
                 <span style={styles.grnLabel}>Pending</span>
-                <strong style={styles.metricValue}>{Math.max(0, sourceTotals.source - sourceTotals.confirmed - sourceTotals.shortage)}</strong>
+                <strong style={styles.metricValue}>{Math.max(0, displayedSourceTotals.source - displayedSourceTotals.confirmed - displayedSourceTotals.shortage)}</strong>
               </div>
               <div style={styles.metricBox}>
                 <span style={styles.grnLabel}>Total Koli</span>
-                <strong style={styles.metricValue}>{postedKoliRows.length}</strong>
+                <strong style={styles.metricValue}>{hasResultFilters ? filteredPostedKoliRows.length : postedKoliRows.length}</strong>
               </div>
             </div>
           </div>

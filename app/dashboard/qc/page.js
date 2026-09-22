@@ -4288,7 +4288,6 @@ export default function QcDashboardPage() {
           stopwatch_seconds: liveSeconds,
           pause_reason: 'COORDINATOR BREAK',
           paused_at: pausedAt,
-          started_at: null,
         })
         .eq('id', item.id)
 
@@ -4320,7 +4319,6 @@ export default function QcDashboardPage() {
           stopwatch_seconds: liveSeconds,
           pause_reason: 'COORDINATOR BREAK',
           paused_at: new Date().toISOString(),
-          started_at: null,
         }
       })
     setQcItems(pauseTaskInState)
