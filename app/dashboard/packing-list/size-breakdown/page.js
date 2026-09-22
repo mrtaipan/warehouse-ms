@@ -5770,6 +5770,12 @@ export default function PackingListSizeBreakdownPage() {
     const totalReturnQty = getPlRowsReturnQty(plRows)
     const receivingQty = Number(selectedCard.receiving_qty || 0)
     const remainingQty = receivingQty - totalQty - totalReturnQty
+    const isFullReturnOnly = receivingQty > 0 && totalQty === 0 && totalReturnQty === receivingQty
+    const shouldPersistSizeRow = (sizeRow) => {
+      if (isBlankSizeBreakdownRow(sizeRow)) return false
+      if (isFullReturnOnly && Number(sizeRow.qty || 0) <= 0) return false
+      return true
+    }
     if (totalQty + totalReturnQty > receivingQty) {
       setError('Breakdown Qty and PL Return Qty cannot be greater than PL Receiving Qty.')
       setSuccess('')
@@ -5786,7 +5792,7 @@ export default function PackingListSizeBreakdownPage() {
     const invalidRow = plRows.find((row) => {
       if (!String(row.pl_name || '').trim()) return true
       return row.sizeRows.some((sizeRow) => {
-        if (isBlankSizeBreakdownRow(sizeRow)) return false
+        if (!shouldPersistSizeRow(sizeRow)) return false
         return (
           !String(sizeRow.size_label || '').trim() ||
           !String(sizeRow.qty ?? '').trim() ||
@@ -5820,7 +5826,7 @@ export default function PackingListSizeBreakdownPage() {
     const invalidManualAllocation = plRows
       .flatMap((row) => row.sizeRows)
       .find((sizeRow) => {
-        if (isBlankSizeBreakdownRow(sizeRow)) return false
+        if (!shouldPersistSizeRow(sizeRow)) return false
         if (sizeRow.allocation_source !== 'MANUAL_OVERRIDE') return false
         const rowQty = Number(sizeRow.qty || 0)
         const mobTarget = Number(sizeRow.mob_target_qty)
@@ -5860,7 +5866,7 @@ export default function PackingListSizeBreakdownPage() {
     const modelVariantQty = getPlRowsBreakdownQty(normalizedRows)
 
     const payload = normalizedRows.flatMap((row) =>
-      row.sizeRows.filter((sizeRow) => !isBlankSizeBreakdownRow(sizeRow)).map((sizeRow) => {
+      row.sizeRows.filter(shouldPersistSizeRow).map((sizeRow) => {
         const checkerNames = normalizeCheckerNames(sizeRow.checker_names)
         const rowQty = Number(sizeRow.qty || 0)
         const defaultTargets = getDefaultAllocationTargets(rowQty, modelVariantQty)
@@ -5933,11 +5939,7 @@ export default function PackingListSizeBreakdownPage() {
 
     const existingRows = breakdownRows.filter((row) => {
       if (Number(row.inbound_id || 0) !== Number(selectedCard.inbound_id || 0)) return false
-      if (Number(row.product_model_id || 0) !== Number(selectedCard.product_model_id || 0)) return false
-      if (selectedCard.product_model_variant_id) {
-        return Number(row.product_model_variant_id || 0) === Number(selectedCard.product_model_variant_id || 0)
-      }
-      return !row.product_model_variant_id
+      return getPlVariantIdentityKey(row) === getPlVariantIdentityKey(selectedCard)
     })
     const incomingIds = new Set(payload.map((row) => Number(row.id || 0)).filter(Boolean))
     const staleRows = existingRows.filter((row) => !incomingIds.has(Number(row.id || 0)))
