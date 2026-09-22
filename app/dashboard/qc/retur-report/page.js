@@ -44,7 +44,19 @@ function ReturnReportShell({ activeMode, children }) {
 }
 
 async function loadArklineReturnData(supabase) {
-  const [detailResult, qcResult, reasonResult, batchResult, lineResult, receiptResult, correctionResult, poResult, poSizeResult] = await Promise.all([
+  const [
+    detailResult,
+    qcResult,
+    reasonResult,
+    batchResult,
+    lineResult,
+    receiptResult,
+    correctionResult,
+    storageBatchResult,
+    storageLineResult,
+    poResult,
+    poSizeResult,
+  ] = await Promise.all([
     supabase.from('arkline_qc_reject_details').select('*').order('created_at', { ascending: false }),
     supabase
       .from('arkline_qc')
@@ -60,11 +72,25 @@ async function loadArklineReturnData(supabase) {
       .from('arkline_qc_return_size_corrections')
       .select('id, return_batch_id, from_return_batch_line_id, from_size, to_size, qty, notes, created_by, created_at, updated_at')
       .order('created_at', { ascending: false }),
+    supabase.from('arkline_qc_rejection_storage_batches').select('*').order('created_at', { ascending: false }),
+    supabase.from('arkline_qc_rejection_storage_lines').select('*'),
     supabase.from('arkline_pos').select('po_id, supplier_name'),
     supabase.from('arkline_po_item_sizes').select('arkline_po_item_id, size, qty'),
   ])
 
-  const firstError = [detailResult, qcResult, reasonResult, batchResult, lineResult, receiptResult, correctionResult, poResult, poSizeResult].find(
+  const firstError = [
+    detailResult,
+    qcResult,
+    reasonResult,
+    batchResult,
+    lineResult,
+    receiptResult,
+    correctionResult,
+    storageBatchResult,
+    storageLineResult,
+    poResult,
+    poSizeResult,
+  ].find(
     (result) => result.error
   )?.error
   if (firstError) {
@@ -79,10 +105,20 @@ async function loadArklineReturnData(supabase) {
     const key = String(line.reject_detail_id)
     returnedByDetail.set(key, Number(returnedByDetail.get(key) || 0) + Number(line.qty || 0))
   })
+  const storedByDetail = new Map()
+  ;(storageLineResult.data || []).forEach((line) => {
+    const key = String(line.reject_detail_id)
+    storedByDetail.set(key, Number(storedByDetail.get(key) || 0) + Number(line.qty || 0))
+  })
 
   const eligibleRows = (detailResult.data || [])
     .map((detail) => {
-      const availableQty = Math.max(0, Number(detail.qty || 0) - Number(returnedByDetail.get(String(detail.id)) || 0))
+      const availableQty = Math.max(
+        0,
+        Number(detail.qty || 0) -
+          Number(returnedByDetail.get(String(detail.id)) || 0) -
+          Number(storedByDetail.get(String(detail.id)) || 0)
+      )
       const qc = qcById.get(String(detail.arkline_qc_id)) || {}
       const reason = reasonById.get(String(detail.reject_reason_id)) || {}
       const poId = detail.po_id || qc.po_id || ''
@@ -201,7 +237,39 @@ async function loadArklineReturnData(supabase) {
     ])).sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true })),
   }))
 
-  return { eligibleRows, batches }
+  const storageLinesByBatch = new Map()
+  ;(storageLineResult.data || []).forEach((line) => {
+    const reason = reasonById.get(String(line.reject_reason_id)) || {}
+    const normalized = {
+      id: line.id,
+      reasonId: line.reject_reason_id,
+      reasonName: reason.reason_name || 'Reject reason',
+      grade: line.grade,
+      size: String(line.size || 'No size').trim().toUpperCase(),
+      qty: Number(line.qty || 0),
+    }
+    const key = String(line.storage_batch_id)
+    storageLinesByBatch.set(key, [...(storageLinesByBatch.get(key) || []), normalized])
+  })
+
+  const storages = (storageBatchResult.data || []).map((batch) => ({
+    id: batch.id,
+    storageNumber: batch.storage_number,
+    poId: batch.po_id,
+    poItemId: batch.arkline_po_item_id,
+    skuInduk: batch.sku_induk,
+    modelName: batch.model_name_snapshot,
+    supplierName: batch.supplier_name_snapshot,
+    roundNumber: Number(batch.round_number || 1),
+    storageDate: batch.storage_date,
+    storedQty: Number(batch.stored_qty || 0),
+    status: batch.status,
+    notes: batch.notes || '',
+    createdBy: batch.created_by || '',
+    lines: storageLinesByBatch.get(String(batch.id)) || [],
+  }))
+
+  return { eligibleRows, batches, storages }
 }
 
 export default async function QcReturReportPage({ searchParams }) {
@@ -237,12 +305,13 @@ export default async function QcReturReportPage({ searchParams }) {
           {arklineError ? (
             <div className={reportStyles.card}>
               <p className={reportStyles.error}>Arkline return data could not be loaded: {arklineError.message}</p>
-              <p className={reportStyles.notice}>Run `supabase/arkline_qc_return_rework.sql` in Supabase before using this flow.</p>
+              <p className={reportStyles.notice}>Run `supabase/arkline_qc_return_rework.sql` and `supabase/arkline_qc_rejection_storage.sql` in Supabase before using this flow.</p>
             </div>
           ) : (
             <ArklineReturReportClient
               eligibleRows={arklineData?.eligibleRows || []}
               batches={arklineData?.batches || []}
+              storages={arklineData?.storages || []}
               userEmail={user.email || ''}
               canAdd={canAdd}
               canEdit={canEdit}

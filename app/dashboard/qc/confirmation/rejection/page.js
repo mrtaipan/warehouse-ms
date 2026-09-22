@@ -1103,6 +1103,7 @@ export default function QcConfirmationRejectionPage() {
   const [picName, setPicName] = useState('')
   const grnFilter = searchParams.get('grn') || ''
   const [qcItems, setQcItems] = useState([])
+  const [sampleBreakdownRows, setSampleBreakdownRows] = useState([])
   const [qcSampleBreakdownRows, setQcSampleBreakdownRows] = useState([])
   const [confirmRows, setConfirmRows] = useState([])
   const [returnRows, setReturnRows] = useState([])
@@ -1139,6 +1140,7 @@ export default function QcConfirmationRejectionPage() {
       { data: authData, error: authError },
       { data: qcData, error: qcError },
       { error: sourceGradeSupportError },
+      { data: sampleBreakdownData, error: sampleBreakdownError },
       { data: qcSampleData, error: qcSampleError },
       { data: confirmData, error: confirmError },
       { data: returnsData, error: returnsError },
@@ -1203,6 +1205,10 @@ export default function QcConfirmationRejectionPage() {
         .from('qc_confirm')
         .select('source_grade')
         .limit(1),
+      supabase
+        .from('inbound_sample_model_breakdowns')
+        .select('id, inbound_unload_id, resolution_status')
+        .order('created_at', { ascending: true }),
       supabase
         .from('qc_sample_breakdowns')
         .select(`
@@ -1274,9 +1280,9 @@ export default function QcConfirmationRejectionPage() {
         .order('koli_sequence', { ascending: true }),
     ])
 
-    if (authError || qcError || qcSampleError || confirmError || returnsError) {
+    if (authError || qcError || sampleBreakdownError || qcSampleError || confirmError || returnsError) {
       if (!silent) {
-        setError(authError?.message || qcError?.message || qcSampleError?.message || confirmError?.message || returnsError?.message || 'Failed to load confirmation rejection.')
+        setError(authError?.message || qcError?.message || sampleBreakdownError?.message || qcSampleError?.message || confirmError?.message || returnsError?.message || 'Failed to load confirmation rejection.')
         setLoading(false)
       }
       return
@@ -1294,6 +1300,7 @@ export default function QcConfirmationRejectionPage() {
     }
 
     setQcItems((qcData || []).map(normalizeQcItemRow))
+    setSampleBreakdownRows(sampleBreakdownData || [])
     setQcSampleBreakdownRows(qcSampleData || [])
     setConfirmRows((confirmData || []).map(normalizeConfirmRow))
     setReturnRows((returnsData || []).map(normalizeReturnRow))
@@ -1335,6 +1342,30 @@ export default function QcConfirmationRejectionPage() {
     () => qcItems.find((item) => item.inbound?.grn_number === grnFilter)?.inbound || null,
     [grnFilter, qcItems]
   )
+  const fullReturnSampleSourceIds = useMemo(() => {
+    const grouped = new Map()
+
+    sampleBreakdownRows.forEach((row) => {
+      const unloadId = Number(row.inbound_unload_id || 0)
+      if (!unloadId) return
+
+      const current = grouped.get(unloadId) || { total: 0, fullReturn: 0 }
+      current.total += 1
+      if (String(row.resolution_status || '').trim().toLowerCase() === 'full_return') {
+        current.fullReturn += 1
+      }
+      grouped.set(unloadId, current)
+    })
+
+    const result = new Set()
+    grouped.forEach((item, unloadId) => {
+      if (item.total > 0 && item.fullReturn === item.total) {
+        result.add(unloadId)
+      }
+    })
+
+    return result
+  }, [sampleBreakdownRows])
 
   const sourceRows = useMemo(() => {
     const grouped = new Map()
@@ -1349,13 +1380,13 @@ export default function QcConfirmationRejectionPage() {
 
     function getOrCreateAdjustmentRow(item) {
       const sourceGrade = String(item.grade || '').trim().toUpperCase()
-      if (!['B', 'C'].includes(sourceGrade)) {
-        return null
-      }
-
       const key = getSourceKey(item)
       const existing = grouped.get(key)
       if (existing) return existing
+
+      if (!['B', 'C'].includes(sourceGrade)) {
+        return null
+      }
 
       if (!item.is_adjustment) return null
 
@@ -1476,6 +1507,38 @@ export default function QcConfirmationRejectionPage() {
           })
       })
 
+    qcItems
+      .filter((item) => {
+        const sampleSourceId = Number(item.inbound_unload_id || item.inbound_unload?.id || 0)
+        return item.inbound?.grn_number === grnFilter && isTemporarySampleTask(item) && fullReturnSampleSourceIds.has(sampleSourceId)
+      })
+      .forEach((item) => {
+        ;[
+          { grade: 'A', qty: Number(item.qty_a || 0) },
+          { grade: 'B', qty: Number(item.qty_b || 0) },
+          { grade: 'C', qty: Number(item.qty_c || 0) },
+        ]
+          .filter((gradeRow) => gradeRow.qty > 0)
+          .forEach((gradeRow) => {
+            addSourceGrade({
+              inboundId: item.inbound_id,
+              brandId: getQcItemBrandId(item),
+              categoryId: getQcItemCategoryId(item),
+              brandName: getQcItemBrandLabel(item),
+              categoryName: getQcItemCategoryLabel(item),
+              modelName: item.model_name || 'TEMPORARY SAMPLE',
+              modelColor: item.model_color || item.variant_name || 'TEMPORARY',
+              photoUrl: item.photo_url,
+              productModelId: item.product_model_id || null,
+              productModelVariantId: item.product_model_variant_id || null,
+              sourceVariantCode: getSourceVariantCode(item),
+              grade: gradeRow.grade,
+              qty: gradeRow.qty,
+              picName: item.assigned_to || item.pic_name,
+            })
+          })
+      })
+
     qcSampleBreakdownRows
       .filter((item) => item.qc_item?.inbound?.grn_number === grnFilter && item.qc_item?.status === 'done')
       .forEach((item) => {
@@ -1541,7 +1604,7 @@ export default function QcConfirmationRejectionPage() {
       if (a.grade !== b.grade) return a.grade.localeCompare(b.grade)
       return getModelLabel(a).localeCompare(getModelLabel(b))
     })
-  }, [confirmRows, grnFilter, qcItems, qcSampleBreakdownRows, returnRows, selectedInbound?.id])
+  }, [confirmRows, fullReturnSampleSourceIds, grnFilter, qcItems, qcSampleBreakdownRows, returnRows, selectedInbound?.id])
 
   const totals = useMemo(
     () =>

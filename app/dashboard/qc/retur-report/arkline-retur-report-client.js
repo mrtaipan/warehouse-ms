@@ -159,7 +159,7 @@ function getCorrectableSizeLines(batch) {
   return Array.from(sizeMap.values()).sort((a, b) => String(a.size).localeCompare(String(b.size), undefined, { numeric: true }))
 }
 
-export default function ArklineReturReportClient({ eligibleRows, batches, userEmail, canAdd = false, canEdit = false }) {
+export default function ArklineReturReportClient({ eligibleRows, batches, storages = [], userEmail, canAdd = false, canEdit = false }) {
   const router = useRouter()
   const supabase = createClient()
   const [selectedIds, setSelectedIds] = useState([])
@@ -175,10 +175,14 @@ export default function ArklineReturReportClient({ eligibleRows, batches, userEm
   const [progressRejectReasonFilter, setProgressRejectReasonFilter] = useState('')
   const [progressStatusFilter, setProgressStatusFilter] = useState('')
   const [returnModalOpen, setReturnModalOpen] = useState(false)
+  const [storageModalOpen, setStorageModalOpen] = useState(false)
   const [receiptBatch, setReceiptBatch] = useState(null)
   const [returnDate, setReturnDate] = useState(todayValue())
   const [shippingMethod, setShippingMethod] = useState('')
   const [notes, setNotes] = useState('')
+  const [storageDate, setStorageDate] = useState(todayValue())
+  const [storageNumber, setStorageNumber] = useState('')
+  const [storageNotes, setStorageNotes] = useState('')
   const [returnQtyById, setReturnQtyById] = useState({})
   const [receiptDate, setReceiptDate] = useState(todayValue())
   const [receiptNotes, setReceiptNotes] = useState('')
@@ -453,6 +457,23 @@ export default function ArklineReturReportClient({ eligibleRows, batches, userEm
     setError('')
   }
 
+  function openStorageModal() {
+    if (!selectedRows.length) {
+      setError('Choose at least one Arkline reject row first.')
+      return
+    }
+    setError('')
+    setStorageModalOpen(true)
+  }
+
+  function closeStorageModal() {
+    setStorageModalOpen(false)
+    setStorageDate(todayValue())
+    setStorageNumber('')
+    setStorageNotes('')
+    setError('')
+  }
+
   function openReceiptModal(batch) {
     const initialQty = {}
     buildReceiptSummary(batch).sizeRows.forEach((sizeRow) => {
@@ -554,6 +575,72 @@ export default function ArklineReturReportClient({ eligibleRows, batches, userEm
     closeReturnModal()
     setActiveReturnTab('progress')
     setSaving(false)
+    router.refresh()
+  }
+
+  async function saveStorageBatch() {
+    const trimmedStorageNumber = storageNumber.trim()
+    if (!trimmedStorageNumber) {
+      setError('Storage number is required.')
+      return
+    }
+
+    const invalidRow = selectedRows.find((row) => {
+      const qty = Number(returnQtyById[row.id] ?? row.availableQty)
+      return qty <= 0 || qty > Number(row.availableQty || 0)
+    })
+
+    if (invalidRow) {
+      setError('Storage qty must be greater than zero and cannot exceed the available reject qty.')
+      return
+    }
+
+    const groupedRows = selectedRows.reduce((groups, row) => {
+      const key = `${row.poItemId || row.poId}-${row.qcCycleId || row.id}`
+      if (!groups.has(key)) groups.set(key, [])
+      groups.get(key).push(row)
+      return groups
+    }, new Map())
+
+    setSaving(true)
+    setError('')
+
+    for (const groupRows of groupedRows.values()) {
+      const first = groupRows[0]
+      const linePayload = groupRows.map((row) => ({
+        reject_detail_id: row.id,
+        reject_reason_id: row.reasonId,
+        grade: row.grade,
+        size: row.size,
+        qty: Number(returnQtyById[row.id] ?? row.availableQty),
+      }))
+      const { error: saveError } = await supabase.rpc('create_arkline_qc_rejection_storage_batch', {
+        p_storage_number: trimmedStorageNumber,
+        p_po_id: first.poId,
+        p_arkline_po_item_id: first.poItemId,
+        p_sku_induk: first.skuInduk,
+        p_model_name: first.modelName,
+        p_supplier_name: first.supplierName || '',
+        p_source_qc_cycle_id: first.qcCycleId,
+        p_round_number: Number(first.qcRoundNumber || 1),
+        p_storage_date: storageDate,
+        p_notes: storageNotes.trim(),
+        p_created_by: userEmail || '',
+        p_lines: linePayload,
+      })
+
+      if (saveError) {
+        setError(saveError.message)
+        setSaving(false)
+        return
+      }
+    }
+
+    setSelectedIds([])
+    setReturnQtyById({})
+    setSaving(false)
+    closeStorageModal()
+    setActiveReturnTab('storage')
     router.refresh()
   }
 
@@ -722,6 +809,16 @@ export default function ArklineReturReportClient({ eligibleRows, batches, userEm
               <span className={styles.subPageTabLabel}>Return Progress</span>
               <span className={styles.subPageTabUnderline} />
             </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeReturnTab === 'storage'}
+              className={`${styles.subPageTabLink} ${activeReturnTab === 'storage' ? styles.subPageTabLinkActive : ''}`.trim()}
+              onClick={() => setActiveReturnTab('storage')}
+            >
+              <span className={styles.subPageTabLabel}>Rejection Storage</span>
+              <span className={styles.subPageTabUnderline} />
+            </button>
           </div>
         </div>
 
@@ -733,9 +830,14 @@ export default function ArklineReturReportClient({ eligibleRows, batches, userEm
             <p className={styles.eyebrow}>Arkline</p>
             <h2 className={styles.sectionTitle}>Return Arrangement</h2>
           </div>
-          <button type="button" className={styles.primaryButton} onClick={openReturnModal} disabled={!canAdd || !selectedRows.length}>
-            Create Return Batch
-          </button>
+          <div className={styles.modalHeaderActions}>
+            <button type="button" className={styles.secondaryButton} onClick={openStorageModal} disabled={!canAdd || !selectedRows.length}>
+              Move to Rejection Storage
+            </button>
+            <button type="button" className={styles.primaryButton} onClick={openReturnModal} disabled={!canAdd || !selectedRows.length}>
+              Create Return Batch
+            </button>
+          </div>
         </div>
 
         <div className={styles.filterGrid}>
@@ -868,7 +970,7 @@ export default function ArklineReturReportClient({ eligibleRows, batches, userEm
           </div>
         </div>
 
-        {error && !returnModalOpen && !receiptBatch ? <p className={styles.error}>{error}</p> : null}
+        {error && !returnModalOpen && !storageModalOpen && !receiptBatch ? <p className={styles.error}>{error}</p> : null}
 
         {!filteredEligibleRows.length ? (
           <div className={styles.empty}>No Arkline reject qty matches the selected filters.</div>
@@ -1039,6 +1141,63 @@ export default function ArklineReturReportClient({ eligibleRows, batches, userEm
         )}
       </section>
       ) : null}
+
+      {activeReturnTab === 'storage' ? (
+      <section className={`${styles.card} ${styles.subPageCard}`.trim()}>
+        <div className={styles.sectionHeader}>
+          <div>
+            <p className={styles.eyebrow}>Arkline</p>
+            <h2 className={styles.sectionTitle}>Rejection Storage</h2>
+          </div>
+        </div>
+
+        {!storages.length ? (
+          <div className={styles.empty}>No Arkline rejection storage batch has been created.</div>
+        ) : (
+          <div className={styles.batchList}>
+            {storages.map((storage) => (
+              <article key={storage.id} className={styles.batchCard}>
+                <div className={styles.batchHeader}>
+                  <div className={styles.batchTitle}>
+                    <strong>{storage.storageNumber}</strong>
+                    <span className={`${styles.badge} ${styles.badgeCompleted}`.trim()}>{storage.status || 'STORED'}</span>
+                  </div>
+                </div>
+                <div className={styles.batchMeta}>
+                  <div className={styles.metric}><span>PO</span><strong>{storage.poId}</strong></div>
+                  <div className={styles.metric}><span>Product</span><strong>{storage.modelName}</strong></div>
+                  <div className={styles.metric}><span>Stored Qty</span><strong>{storage.storedQty}</strong></div>
+                  <div className={styles.metric}><span>Date</span><strong>{formatDate(storage.storageDate)}</strong></div>
+                </div>
+                {storage.notes ? <p className={styles.notice}>{storage.notes}</p> : null}
+                <div className={styles.tableWrap}>
+                  <table className={styles.table}>
+                    <thead>
+                      <tr>
+                        <th>Grade</th>
+                        <th>Size</th>
+                        <th>Reject Reason</th>
+                        <th className={styles.centerNumberCell}>Qty</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {storage.lines.map((line) => (
+                        <tr key={line.id}>
+                          <td>{line.grade}</td>
+                          <td>{line.size}</td>
+                          <td>{line.reasonName}</td>
+                          <td className={styles.centerNumberCell}>{line.qty}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </article>
+            ))}
+          </div>
+        )}
+      </section>
+      ) : null}
         </div>
       </div>
 
@@ -1113,6 +1272,88 @@ export default function ArklineReturReportClient({ eligibleRows, batches, userEm
             <div className={styles.modalActions}>
               <button type="button" className={styles.secondaryButton} onClick={closeReturnModal} disabled={saving}>Cancel</button>
               <button type="button" className={styles.primaryButton} onClick={saveReturnBatch} disabled={saving}>{saving ? 'Saving...' : 'Save Return Batch'}</button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {storageModalOpen ? (
+        <div className={styles.overlay} role="presentation">
+          <div className={styles.modal} role="dialog" aria-modal="true" aria-labelledby="create-storage-title">
+            <div className={styles.modalHeader}>
+              <div>
+                <h2 id="create-storage-title">Move to Rejection Storage</h2>
+                <p>{selectedRows.length} reject line(s) selected. Multiple PO products will be split into separate storage batches.</p>
+              </div>
+              <button type="button" className={styles.closeButton} onClick={closeStorageModal} aria-label="Close">X</button>
+            </div>
+            <div className={styles.formGrid}>
+              <div className={styles.field}>
+                <label htmlFor="storage-number">Storage Number</label>
+                <input
+                  id="storage-number"
+                  className={styles.input}
+                  value={storageNumber}
+                  onChange={(event) => setStorageNumber(event.target.value.toUpperCase())}
+                  placeholder="Storage number"
+                />
+              </div>
+              <div className={styles.field}>
+                <label htmlFor="storage-date">Storage Date</label>
+                <input id="storage-date" className={styles.input} type="date" value={storageDate} onChange={(event) => setStorageDate(event.target.value)} />
+              </div>
+              <div className={`${styles.field} ${styles.fieldFull}`}>
+                <label htmlFor="storage-notes">Notes</label>
+                <textarea id="storage-notes" className={styles.textarea} value={storageNotes} onChange={(event) => setStorageNotes(event.target.value)} />
+              </div>
+            </div>
+            <div className={styles.lineList}>
+              {selectedRows.map((row) => (
+                <div key={row.id} className={styles.lineRow}>
+                  <div className={styles.lineName}>
+                    <strong>{row.reasonName}</strong>
+                    Grade {row.grade} / Size {row.size} / Available {row.availableQty}
+                  </div>
+                  <span className={`${styles.badge} ${styles.lineBadge} ${row.isRepairable ? styles.badgeRepairable : ''}`}>
+                    {row.isRepairable ? 'Repairable' : 'Non-repairable'}
+                  </span>
+                  <input
+                    className={styles.input}
+                    type="number"
+                    min="1"
+                    max={row.availableQty}
+                    value={returnQtyById[row.id] ?? row.availableQty}
+                    onChange={(event) => setReturnQtyById((current) => ({ ...current, [row.id]: event.target.value }))}
+                    aria-label={`Storage qty for ${row.reasonName}`}
+                  />
+                </div>
+              ))}
+            </div>
+            <div className={styles.modalSummaryBox}>
+              <div className={styles.modalSummaryTotal}>
+                Total qty to storage: <strong>{selectedQty}</strong>
+              </div>
+              <div className={styles.modalSummaryGroup}>
+                <span>Per size</span>
+                <div className={styles.sizeChipRow}>
+                  {selectedSummary.sizes.length ? selectedSummary.sizes.map((item) => (
+                    <span key={item.size} className={styles.sizeChip}>{item.size}: <strong>{item.qty}</strong></span>
+                  )) : <span className={styles.sizeChip}>No selected qty</span>}
+                </div>
+              </div>
+              <div className={styles.modalSummaryGroup}>
+                <span>Per grade</span>
+                <div className={styles.sizeChipRow}>
+                  {selectedSummary.grades.length ? selectedSummary.grades.map((item) => (
+                    <span key={item.grade} className={styles.sizeChip}>Grade {item.grade}: <strong>{item.qty}</strong></span>
+                  )) : <span className={styles.sizeChip}>No selected qty</span>}
+                </div>
+              </div>
+            </div>
+            {error ? <p className={styles.error}>{error}</p> : null}
+            <div className={styles.modalActions}>
+              <button type="button" className={styles.secondaryButton} onClick={closeStorageModal} disabled={saving}>Cancel</button>
+              <button type="button" className={styles.primaryButton} onClick={saveStorageBatch} disabled={saving}>{saving ? 'Saving...' : 'Save Storage Batch'}</button>
             </div>
           </div>
         </div>

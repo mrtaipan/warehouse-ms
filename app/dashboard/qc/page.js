@@ -695,6 +695,20 @@ const styles = {
     fontWeight: '750',
     cursor: 'pointer',
   },
+  statusPill: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: '30px',
+    padding: '0 12px',
+    border: '1px solid #fecaca',
+    borderRadius: '999px',
+    background: '#fef2f2',
+    color: '#991b1b',
+    fontSize: '12px',
+    fontWeight: '800',
+    whiteSpace: 'nowrap',
+  },
   dangerButton: {
     height: '40px',
     padding: '0 15px',
@@ -1898,7 +1912,8 @@ export default function QcDashboardPage() {
           model_name,
           variant_name,
           photo_url,
-          qty
+          qty,
+          resolution_status
         `)
         .order('created_at', { ascending: true }),
       supabase
@@ -2236,6 +2251,30 @@ export default function QcDashboardPage() {
 
     return grouped
   }, [sampleBreakdownRows])
+  const fullReturnSampleSourceIds = useMemo(() => {
+    const grouped = new Map()
+
+    sampleBreakdownRows.forEach((row) => {
+      const unloadId = Number(row.inbound_unload_id || 0)
+      if (!unloadId) return
+
+      const current = grouped.get(unloadId) || { total: 0, fullReturn: 0 }
+      current.total += 1
+      if (String(row.resolution_status || '').trim().toLowerCase() === 'full_return') {
+        current.fullReturn += 1
+      }
+      grouped.set(unloadId, current)
+    })
+
+    const result = new Set()
+    grouped.forEach((item, unloadId) => {
+      if (item.total > 0 && item.fullReturn === item.total) {
+        result.add(unloadId)
+      }
+    })
+
+    return result
+  }, [sampleBreakdownRows])
   const qcSampleSplitsByQcItemId = useMemo(() => {
     const grouped = new Map()
 
@@ -2315,8 +2354,9 @@ export default function QcDashboardPage() {
       const sampleSourceId = Number(item.inbound_unload_id || item.inbound_unload?.id || 0)
       const isSampleTask = qcMode === 'regular' && isRegularSampleTask(item)
       const isTemporarySample = qcMode === 'regular' && isTemporarySampleTask(item)
+      const isFullReturnSample = isTemporarySample && fullReturnSampleSourceIds.has(sampleSourceId)
 
-      if (isTemporarySample) {
+      if (isTemporarySample && !isFullReturnSample) {
         const sourceTaskRows = activeItems.filter(
           (candidate) =>
             isTemporarySampleTask(candidate) &&
@@ -2447,7 +2487,8 @@ export default function QcDashboardPage() {
           taskRows: [],
           hasRejectDetails: false,
           isSampleSummary: isSampleTask && shouldSeparateSampleSummary,
-          isTemporarySampleSummary: isTemporarySample && shouldSeparateSampleSummary,
+          isTemporarySampleSummary: isTemporarySample && !isFullReturnSample && shouldSeparateSampleSummary,
+          isFullReturnSampleSummary: isFullReturnSample,
           sampleSourceId: isSampleTask && shouldSeparateSampleSummary ? sampleSourceId : null,
         }
 
@@ -2686,6 +2727,7 @@ export default function QcDashboardPage() {
     dateTo,
     filteredAdjustmentRows,
     filteredReturnAdjustmentRows,
+    fullReturnSampleSourceIds,
     hasInvalidDateRange,
     qcConfirmRows,
     qcMode,
@@ -3568,10 +3610,89 @@ export default function QcDashboardPage() {
       }
     }
 
+    const sourceId = Number(sampleSplitSummary.sampleSourceId || 0)
+    if (sourceId) {
+      const { error: statusError } = await supabase
+        .from('inbound_sample_model_breakdowns')
+        .update({ resolution_status: 'split' })
+        .eq('inbound_unload_id', sourceId)
+
+      if (statusError) {
+        setSampleSplitError(statusError.message)
+        setSavingSampleSplit(false)
+        return
+      }
+    }
+
     await loadDashboard(true)
     setSavingSampleSplit(false)
     closeSampleSplitModal()
     setSuccess('Sample QC split saved.')
+  }
+
+  async function saveSampleFullReturnRows() {
+    if (!sampleSplitSummary) return
+
+    setSampleSplitError('')
+    setSuccess('')
+
+    if (!supportsSampleSplit) {
+      setSampleSplitError('Run `supabase/inbound_sample_breakdowns.sql` first before resolving sample QC.')
+      return
+    }
+
+    const sourceId = Number(sampleSplitSummary.sampleSourceId || 0)
+    if (!sourceId) {
+      setSampleSplitError('No sample source found.')
+      return
+    }
+
+    if (!selectedSampleSplitBreakdowns.length) {
+      setSampleSplitError('Resolve Sample in Inbound first before marking full return.')
+      return
+    }
+
+    const sourceTasks = selectedSampleSplitTasks.filter((item) => Number(item.id || 0))
+    if (!sourceTasks.length) {
+      setSampleSplitError('No QC source found for this sample.')
+      return
+    }
+
+    const deleteIds = sourceTasks
+      .flatMap((task) => qcSampleSplitsByQcItemId.get(Number(task.id || 0)) || [])
+      .map((row) => row.id)
+      .filter(Boolean)
+
+    setSavingSampleSplit(true)
+
+    if (deleteIds.length) {
+      const { error: deleteError } = await supabase
+        .from('qc_sample_breakdowns')
+        .delete()
+        .in('id', deleteIds)
+
+      if (deleteError) {
+        setSampleSplitError(deleteError.message)
+        setSavingSampleSplit(false)
+        return
+      }
+    }
+
+    const { error: updateError } = await supabase
+      .from('inbound_sample_model_breakdowns')
+      .update({ resolution_status: 'full_return' })
+      .eq('inbound_unload_id', sourceId)
+
+    if (updateError) {
+      setSampleSplitError(updateError.message)
+      setSavingSampleSplit(false)
+      return
+    }
+
+    await loadDashboard(true)
+    setSavingSampleSplit(false)
+    closeSampleSplitModal()
+    setSuccess('Sample marked as full return.')
   }
 
   function openRejectDetailModal(summary) {
@@ -4740,6 +4861,8 @@ export default function QcDashboardPage() {
                           >
                             Split
                           </button>
+                        ) : item.isFullReturnSampleSummary ? (
+                          <span style={styles.statusPill}>Full Return</span>
                         ) : (
                           '-'
                         )}
@@ -4929,6 +5052,19 @@ export default function QcDashboardPage() {
               <div style={styles.buttonRow}>
                 <button type="button" onClick={closeSampleSplitModal} style={styles.secondaryButton}>
                   Close
+                </button>
+                <button
+                  type="button"
+                  onClick={saveSampleFullReturnRows}
+                  disabled={savingSampleSplit || !supportsSampleSplit || !selectedSampleSplitBreakdowns.length}
+                  style={{
+                    ...styles.dangerButton,
+                    ...(savingSampleSplit || !supportsSampleSplit || !selectedSampleSplitBreakdowns.length
+                      ? { opacity: 0.55, cursor: 'not-allowed' }
+                      : {}),
+                  }}
+                >
+                  Full Return Sample
                 </button>
                 <button
                   type="button"
