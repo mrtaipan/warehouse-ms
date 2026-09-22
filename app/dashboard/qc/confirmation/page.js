@@ -65,8 +65,14 @@ function isTemporarySampleTask(item) {
   return !hasProductIdentityForSampleTask(item)
 }
 
-function buildVerificationRows(inboundRows = [], qcRows = [], qcSampleRows = []) {
+function buildVerificationRows(inboundRows = [], qcRows = [], qcSampleRows = [], sampleBreakdownRows = []) {
   const rowsByInbound = new Map()
+  const fullReturnSampleSourceIds = new Set(
+    sampleBreakdownRows
+      .filter((row) => String(row.resolution_status || '').trim().toLowerCase() === 'full_return')
+      .map((row) => Number(row.inbound_unload_id || 0))
+      .filter(Boolean)
+  )
 
   inboundRows.forEach((inbound) => {
     rowsByInbound.set(String(inbound.id), {
@@ -80,12 +86,18 @@ function buildVerificationRows(inboundRows = [], qcRows = [], qcSampleRows = [])
   })
 
   qcRows.forEach((item) => {
-    if (isTemporarySampleTask(item)) {
+    const sampleSourceId = Number(item.inbound_unload_id || item.inbound_unload?.id || 0)
+    const row = rowsByInbound.get(String(item.inbound_id || ''))
+    if (!row) return
+
+    if (isRegularSampleTask(item) && fullReturnSampleSourceIds.has(sampleSourceId)) {
+      row.rejectionSourceQty += Number(item.qty_a || 0) + Number(item.qty_b || 0) + Number(item.qty_c || 0)
       return
     }
 
-    const row = rowsByInbound.get(String(item.inbound_id || ''))
-    if (!row) return
+    if (isTemporarySampleTask(item)) {
+      return
+    }
 
     row.passingSourceQty += Number(item.qty_a || 0)
     row.rejectionSourceQty += Number(item.qty_b || 0) + Number(item.qty_c || 0)
@@ -99,6 +111,11 @@ function buildVerificationRows(inboundRows = [], qcRows = [], qcSampleRows = [])
     const inboundId = item.sample_breakdown?.inbound_id || item.qc_item?.inbound_id
     const row = rowsByInbound.get(String(inboundId || ''))
     if (!row) return
+
+    const sampleSourceId = Number(item.sample_breakdown?.inbound_unload_id || item.qc_item?.inbound_unload_id || 0)
+    if (fullReturnSampleSourceIds.has(sampleSourceId)) {
+      return
+    }
 
     row.passingSourceQty += Number(item.qty_a || 0)
     row.rejectionSourceQty += Number(item.qty_b || 0) + Number(item.qty_c || 0)
@@ -151,11 +168,13 @@ export default async function QcConfirmationPage({ searchParams }) {
   const inboundIds = (inboundRows || []).map((row) => row.id).filter(Boolean)
   let qcRows = []
   let qcSampleRows = []
+  let sampleBreakdownRows = []
   let qcError = null
   let qcSampleError = null
+  let sampleBreakdownError = null
 
   if (inboundIds.length) {
-    const [qcResult, qcSampleResult] = await Promise.all([
+    const [qcResult, qcSampleResult, sampleBreakdownResult] = await Promise.all([
       supabase
         .from('qc_items')
         .select(`
@@ -190,20 +209,27 @@ export default async function QcConfirmationPage({ searchParams }) {
           ),
           sample_breakdown:sample_breakdown_id!inner (
             id,
-            inbound_id
+            inbound_id,
+            inbound_unload_id
           )
         `)
         .in('sample_breakdown.inbound_id', inboundIds),
+      supabase
+        .from('inbound_sample_model_breakdowns')
+        .select('id, inbound_unload_id, inbound_id, resolution_status')
+        .in('inbound_id', inboundIds),
     ])
 
     qcRows = qcResult.data || []
     qcSampleRows = qcSampleResult.data || []
+    sampleBreakdownRows = sampleBreakdownResult.data || []
     qcError = qcResult.error
     qcSampleError = qcSampleResult.error
+    sampleBreakdownError = sampleBreakdownResult.error
   }
 
-  const error = supplierError?.message || inboundError?.message || qcError?.message || qcSampleError?.message || ''
-  const rows = error ? [] : buildVerificationRows(inboundRows || [], qcRows, qcSampleRows)
+  const error = supplierError?.message || inboundError?.message || qcError?.message || qcSampleError?.message || sampleBreakdownError?.message || ''
+  const rows = error ? [] : buildVerificationRows(inboundRows || [], qcRows, qcSampleRows, sampleBreakdownRows)
 
   return (
     <section style={styles.wrapper}>
