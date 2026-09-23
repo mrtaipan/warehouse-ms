@@ -532,6 +532,25 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
     [trendChart.labels, hoveredTrendKey]
   )
 
+  function getLatestSessionForLiveRun(liveRunId) {
+    return sessions
+      .filter((item) => String(item.live_run_id) === String(liveRunId))
+      .sort((left, right) => {
+        if (right.checkpoint_no !== left.checkpoint_no) return right.checkpoint_no - left.checkpoint_no
+        return String(right.created_at || '').localeCompare(String(left.created_at || ''))
+      })[0] || null
+  }
+
+  function getDraftPatchForLiveRun(liveRunId) {
+    const latestSession = getLatestSessionForLiveRun(liveRunId)
+    if (!latestSession?.end_time) return {}
+
+    return {
+      session_date: latestSession.session_date || getTodayDateValue(),
+      start_time: latestSession.end_time.slice(0, 5),
+    }
+  }
+
   async function handleSubmit(event) {
     event.preventDefault()
     setError('')
@@ -916,6 +935,7 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
                           ...prev,
                           live_mode: event.target.checked ? 'CONTINUE' : 'NEW',
                           live_run_id: event.target.checked ? currentLiveRuns[0]?.id || '' : '',
+                          ...(event.target.checked ? getDraftPatchForLiveRun(currentLiveRuns[0]?.id || '') : {}),
                         }))
                       }
                     />
@@ -925,7 +945,11 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
                     <select
                       className={styles.select}
                       value={draft.live_run_id || ''}
-                      onChange={(event) => setDraft((prev) => ({ ...prev, live_run_id: event.target.value }))}
+                      onChange={(event) => setDraft((prev) => ({
+                        ...prev,
+                        live_run_id: event.target.value,
+                        ...getDraftPatchForLiveRun(event.target.value),
+                      }))}
                       disabled={!currentLiveRuns.length}
                     >
                       <option value="">Choose active live</option>

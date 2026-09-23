@@ -40,6 +40,25 @@ function BreakdownIcon() {
   )
 }
 
+function StatusLegend() {
+  return (
+    <div style={styles.statusLegend} aria-label="Packing List status color legend">
+      <span style={styles.legendItem}>
+        <span style={{ ...styles.legendSwatch, background: '#ecfdf5', borderColor: '#86efac' }} />
+        Completed
+      </span>
+      <span style={styles.legendItem}>
+        <span style={{ ...styles.legendSwatch, background: '#fff7ed', borderColor: '#fdba74' }} />
+        In Review
+      </span>
+      <span style={styles.legendItem}>
+        <span style={{ ...styles.legendSwatch, background: '#fef2f2', borderColor: '#fca5a5' }} />
+        Fully Returned
+      </span>
+    </div>
+  )
+}
+
 function buildOverviewRows(confirmRows = [], validationRows = [], breakdownRows = [], returnRows = [], packingRows = []) {
   const validationMap = new Map()
   const receivedQtyByInbound = new Map()
@@ -175,12 +194,12 @@ export default async function PackingListOverviewPage() {
         )
       `)
       .order('created_at', { ascending: false })
-      .limit(500),
+      .limit(5000),
     supabase
       .from('pl_receiving')
       .select('id, inbound_id, source_koli_sequence, received_qty, validated_at')
       .order('validated_at', { ascending: false })
-      .limit(500),
+      .limit(5000),
     supabase
       .from('pl_size_breakdown')
       .select('id, inbound_id, qty')
@@ -237,6 +256,8 @@ export default async function PackingListOverviewPage() {
         </div>
       ) : (
         <>
+          <StatusLegend />
+
           {rows.length ? (
             <div style={styles.tableWrap}>
               <table style={styles.table}>
@@ -253,12 +274,15 @@ export default async function PackingListOverviewPage() {
                 <tbody>
                   {rows.map((row) => {
                     const isBreakdownComplete = row.breakdown_remaining_qty === 0 && row.pending_koli === 0
+                    const isFullyReturned = isBreakdownComplete && row.breakdown_qty === 0 && row.pl_return_qty > 0
                     const isCompleted = isBreakdownComplete && row.storing_remaining_qty === 0
                     return (
                       <tr
                         key={row.inbound_id}
                         style={
-                          isCompleted
+                          isFullyReturned
+                            ? { ...styles.bodyRow, ...styles.returnedRow }
+                            : isCompleted
                             ? { ...styles.bodyRow, ...styles.completedRow }
                             : isBreakdownComplete
                               ? { ...styles.bodyRow, ...styles.readyRow }
@@ -444,6 +468,32 @@ const styles = {
   },
   readyRow: {
     background: '#fff7ed',
+  },
+  returnedRow: {
+    background: '#fef2f2',
+  },
+  statusLegend: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '10px',
+    flexWrap: 'wrap',
+    marginTop: '-4px',
+  },
+  legendItem: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '6px',
+    color: '#475569',
+    fontSize: '12px',
+    fontWeight: '750',
+    lineHeight: 1.3,
+  },
+  legendSwatch: {
+    width: '18px',
+    height: '10px',
+    border: '1px solid',
+    borderRadius: '999px',
+    flex: '0 0 auto',
   },
   th: {
     padding: '12px 14px',

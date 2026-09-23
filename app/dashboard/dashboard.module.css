@@ -1127,6 +1127,27 @@
   height: 18px;
 }
 
+.grnSummaryToggle {
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid #dbe4ef;
+  border-radius: 16px;
+  background: #ffffff;
+  color: #0f172a;
+  padding: 0 12px;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.grnSummaryToggle input {
+  width: 16px;
+  height: 16px;
+  accent-color: #111827;
+}
+
 .grnSummaryMeta {
   display: flex;
   flex-direction: column;
@@ -1286,6 +1307,36 @@
   color: #475569;
   font-size: 13px;
   line-height: 1.4;
+}
+
+.grnSummaryCategoryTree {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 2px 0 4px;
+  padding-left: 2px;
+}
+
+.grnSummaryCategoryTree p {
+  margin: 0;
+  color: #334155;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.grnSummaryTreeDepth0 {
+  color: #0f172a !important;
+  font-weight: 800;
+}
+
+.grnSummaryTreeDepth1 {
+  padding-left: 16px;
+  font-weight: 700;
+}
+
+.grnSummaryTreeDepth2 {
+  padding-left: 34px;
+  color: #475569 !important;
 }
 
 .grnSummaryEmpty,

@@ -788,8 +788,8 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
     releaseStatus: 'all',
   })
   const [sortConfig, setSortConfig] = useState({
-    key: 'brand',
-    direction: 'asc',
+    key: 'grn',
+    direction: 'desc',
   })
   const [selectedProductKeys, setSelectedProductKeys] = useState([])
   const [bulkWorking, setBulkWorking] = useState(false)
@@ -1775,6 +1775,12 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
       viewMode,
       releaseStatus: viewMode === 'model' && prev.type === 'all' ? 'all' : prev.releaseStatus,
     }))
+    if (viewMode === 'grn') {
+      setSortConfig({
+        key: 'grn',
+        direction: 'desc',
+      })
+    }
     setSelectedProductKeys([])
     setCurrentPage(1)
   }

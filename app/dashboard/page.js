@@ -231,8 +231,74 @@ function buildGradeBreakdownRows(rows = [], fallback = '') {
   return Array.from(grouped.values()).sort((left, right) => left.label.localeCompare(right.label))
 }
 
-function buildGrnSummaryCopyText(selectedInbound, summary) {
+function splitCategoryPath(value = '') {
+  return String(value || '')
+    .split('>')
+    .map((part) => cleanSummaryText(part))
+    .filter(Boolean)
+}
+
+function formatCategorySummaryLabel(value = '') {
+  const text = cleanSummaryText(value)
+  return text ? toProperCase(text) : ''
+}
+
+function getGradeACategorySegments(row = {}, fallback = '') {
+  const directSegments = [row.category_root, row.sub_category, row.item_type]
+    .map((part) => cleanSummaryText(part))
+    .filter(Boolean)
+
+  if (directSegments.length) {
+    return directSegments.slice(0, 3).map(formatCategorySummaryLabel).filter(Boolean)
+  }
+
+  const category = row.product_model?.categories || row.categories || {}
+  const directCategoryPath = Array.isArray(row.category_path) ? row.category_path.join(' > ') : row.category_path
+  const categorySegments = splitCategoryPath(
+    category.full_name || category.category_name || row.full_name || row.category_name || directCategoryPath
+  )
+
+  if (categorySegments.length) {
+    return categorySegments.slice(0, 3).map(formatCategorySummaryLabel).filter(Boolean)
+  }
+
+  return [formatCategorySummaryLabel(fallback || getGradeBreakdownLabel(row, fallback) || 'Uncategorized')]
+}
+
+function getGradeASimpleSummaryLabel(row = {}, fallback = '') {
+  const [rootLabel = '', subLabel = '', itemTypeLabel = ''] = getGradeACategorySegments(row, fallback)
+  const parts = dedupeSummaryParts([itemTypeLabel, subLabel])
+
+  return parts.join(' ') || subLabel || itemTypeLabel || rootLabel || getGradeBreakdownLabel(row, fallback)
+}
+
+function buildGradeASimpleSummaryLines(rows = [], fallback = '') {
+  const grouped = new Map()
+
+  ;(rows || []).forEach((row) => {
+    const qty = Number(row.qty || 0)
+    if (qty <= 0) return
+
+    const label = getGradeASimpleSummaryLabel(row, fallback)
+    const key = label.toLowerCase()
+    const current = grouped.get(key) || { label, qty: 0 }
+    current.qty += qty
+    grouped.set(key, current)
+  })
+
+  return Array.from(grouped.values())
+    .sort((left, right) => left.label.localeCompare(right.label))
+    .map((item) => ({
+      depth: 0,
+      label: item.label,
+      qty: item.qty,
+      text: `${item.label} = ${formatNumber(item.qty)} pcs.`,
+    }))
+}
+
+function buildGrnSummaryCopyText(selectedInbound, summary, options = {}) {
   if (!selectedInbound || !summary) return ''
+  const useGradeACategorySummary = Boolean(options.useGradeACategorySummary)
 
   const lines = [
     `${selectedInbound.grn_number} - ${summary.supplierName}`,
@@ -240,7 +306,11 @@ function buildGrnSummaryCopyText(selectedInbound, summary) {
     `*Grade A:* ${formatNumber(summary.displayGradeAQty)} pcs.`,
   ]
 
-  if ((summary.gradeABreakdownRows || []).length > 1) {
+  if (useGradeACategorySummary && (summary.gradeACategorySummaryLines || []).length) {
+    summary.gradeACategorySummaryLines.forEach((item) => {
+      lines.push(`${'\t'.repeat(Number(item.depth || 0))}${item.label || item.text} = ${formatNumber(item.qty)} pcs.`)
+    })
+  } else if ((summary.gradeABreakdownRows || []).length > 1) {
     summary.gradeABreakdownRows.forEach((item) => {
       lines.push(`\t- ${item.label}: ${formatNumber(item.qty)} pcs.`)
     })
@@ -440,7 +510,17 @@ async function loadAdminGrnSummary(supabase, selectedGrn = '') {
       .limit(5000),
     supabase
       .from('pl_size_breakdown')
-      .select('*')
+      .select(`
+        *,
+        product_model:product_model_id (
+          id,
+          categories:dir_categories!category_id (
+            id,
+            category_name,
+            full_name
+          )
+        )
+      `)
       .eq('inbound_id', selectedInbound.id)
       .limit(5000),
     supabase
@@ -492,6 +572,7 @@ async function loadAdminGrnSummary(supabase, selectedGrn = '') {
   const fallbackItemName = cleanSummaryText((unloadRows || [])[0]?.model_name)
   const productSummary = itemName || fallbackItemName
   const gradeABreakdownRows = buildGradeBreakdownRows(plBreakdownRows, productSummary)
+  const gradeACategorySummaryLines = buildGradeASimpleSummaryLines(plBreakdownRows, productSummary)
 
   return {
     grnOptions,
@@ -519,13 +600,21 @@ async function loadAdminGrnSummary(supabase, selectedGrn = '') {
       supplierName,
       productSummary,
       gradeABreakdownRows,
+      gradeACategorySummaryLines,
     },
     error: '',
   }
 }
 
-function AdminGrnSummaryCard({ grnOptions = [], selectedGrn = '', selectedInbound = null, summary = null, error = '' }) {
-  const copyText = buildGrnSummaryCopyText(selectedInbound, summary)
+function AdminGrnSummaryCard({
+  grnOptions = [],
+  selectedGrn = '',
+  selectedInbound = null,
+  summary = null,
+  error = '',
+  useGradeACategorySummary = false,
+}) {
+  const copyText = buildGrnSummaryCopyText(selectedInbound, summary, { useGradeACategorySummary })
 
   return (
     <section className={styles.sectionCard}>
@@ -545,6 +634,15 @@ function AdminGrnSummaryCard({ grnOptions = [], selectedGrn = '', selectedInboun
                 <option key={item.id} value={item.grn_number} />
               ))}
             </datalist>
+          </label>
+          <label className={styles.grnSummaryToggle}>
+            <input
+              type="checkbox"
+              name="gradeASummary"
+              value="category"
+              defaultChecked={useGradeACategorySummary}
+            />
+            <span>Summary</span>
           </label>
           <button type="submit" className={styles.grnSummaryIconButton} aria-label="Show summary" title="Show summary">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -613,7 +711,18 @@ function AdminGrnSummaryCard({ grnOptions = [], selectedGrn = '', selectedInboun
             <div className={styles.grnSummaryNarrative}>
               {summary.productSummary ? <p>{withEndingPeriod(summary.productSummary)}</p> : null}
               <p className={styles.grnSummaryStrongLine}>Grade A: {formatNumber(summary.displayGradeAQty)} pcs.</p>
-              {(summary.gradeABreakdownRows || []).length > 1 ? (
+              {useGradeACategorySummary && (summary.gradeACategorySummaryLines || []).length ? (
+                <div className={styles.grnSummaryCategoryTree}>
+                  {summary.gradeACategorySummaryLines.map((item, index) => (
+                    <p
+                      key={`${item.depth}-${item.text}-${index}`}
+                      className={styles[`grnSummaryTreeDepth${Math.min(Number(item.depth || 0), 2)}`]}
+                    >
+                      {item.label || item.text} = {formatNumber(item.qty)} pcs.
+                    </p>
+                  ))}
+                </div>
+              ) : (summary.gradeABreakdownRows || []).length > 1 ? (
                 <div className={styles.grnSummarySubLines}>
                   {summary.gradeABreakdownRows.map((item) => (
                     <p key={item.label}>- {item.label}: {formatNumber(item.qty)} pcs.</p>
@@ -668,6 +777,7 @@ export default async function DashboardPage({ searchParams }) {
   const todayDate = getTodayDateString()
   const params = await searchParams
   const selectedGrn = String(params?.grn || '').trim()
+  const useGradeACategorySummary = String(params?.gradeASummary || '').trim().toLowerCase() === 'category'
   const showOperationsCalendarButton = canAccessOperationsCalendar(role, permissions, isAdmin)
   const showDeliveryReportButton = hasPermission(permissions, 'delivery_report.view', isAdmin)
   const showPenaltyPointsButton = hasPermission(permissions, 'hrga.penalty_points.view', isAdmin)
@@ -916,6 +1026,7 @@ export default async function DashboardPage({ searchParams }) {
             selectedInbound={adminGrnSummary?.selectedInbound || null}
             summary={adminGrnSummary?.summary || null}
             error={adminGrnSummary?.error || ''}
+            useGradeACategorySummary={useGradeACategorySummary}
           />
         </div>
       </div>

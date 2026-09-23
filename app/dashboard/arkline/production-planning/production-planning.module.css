@@ -320,6 +320,35 @@
   gap: 8px;
 }
 
+.temporaryPoOption {
+  width: fit-content;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 2px;
+  color: #334155;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.temporaryPoOption input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: #0f172a;
+  cursor: pointer;
+}
+
+.temporaryPoOptionDisabled {
+  color: #94a3b8;
+  cursor: not-allowed;
+}
+
+.temporaryPoOptionDisabled input {
+  cursor: not-allowed;
+}
+
 .comboBox {
   position: relative;
 }

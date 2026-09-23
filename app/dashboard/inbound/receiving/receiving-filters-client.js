@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { createClient } from '@/utils/supabase/browser'
+import { attachInboundOverviewStatuses, fetchInboundOverviewStatusMap, INBOUND_OVERVIEW_STATUS } from '@/utils/inbound-overview-status'
 
 const PAGE_SIZE = 25
 const supabase = createClient()
@@ -116,6 +117,32 @@ function ActionIcon({ kind }) {
   )
 }
 
+function StatusLegend() {
+  return (
+    <div style={styles.statusLegend} aria-label="Inbound status color legend">
+      <span style={styles.legendItem}>
+        <span style={{ ...styles.legendSwatch, background: '#ecfdf5', borderColor: '#86efac' }} />
+        Completed
+      </span>
+      <span style={styles.legendItem}>
+        <span style={{ ...styles.legendSwatch, background: '#fff7ed', borderColor: '#fdba74' }} />
+        In Review
+      </span>
+      <span style={styles.legendItem}>
+        <span style={{ ...styles.legendSwatch, background: '#fef2f2', borderColor: '#fca5a5' }} />
+        Fully Returned
+      </span>
+    </div>
+  )
+}
+
+function getOverviewStatusStyle(status) {
+  if (status === INBOUND_OVERVIEW_STATUS.COMPLETE) return styles.completedRow
+  if (status === INBOUND_OVERVIEW_STATUS.READY) return styles.readyRow
+  if (status === INBOUND_OVERVIEW_STATUS.FULL_RETURN) return styles.fullReturnRow
+  return null
+}
+
 export default function ReceivingFiltersClient({
   suppliers = [],
   initialOrders = [],
@@ -197,7 +224,19 @@ export default function ReceivingFiltersClient({
       setOrders([])
       setTotalItems(0)
     } else {
-      setOrders(data || [])
+      let nextOrders = data || []
+      try {
+        const statusMap = await fetchInboundOverviewStatusMap(supabase, nextOrders.map((order) => order.id))
+        nextOrders = attachInboundOverviewStatuses(nextOrders, statusMap)
+      } catch {
+        nextOrders = data || []
+      }
+
+      if (requestId !== requestIdRef.current) {
+        return
+      }
+
+      setOrders(nextOrders)
       setTotalItems(count || 0)
       syncOverviewUrl({ ...effectiveFilters, page: nextPage })
     }
@@ -293,6 +332,8 @@ export default function ReceivingFiltersClient({
         </button>
       </div>
 
+      <StatusLegend />
+
       {error ? (
         <div style={styles.emptyBox}>
           <p style={styles.errorText}>Error: {error}</p>
@@ -339,8 +380,10 @@ export default function ReceivingFiltersClient({
                     const sortingTitle = shouldOpenUnloadInput || !canViewUnload ? 'Inbound Intake Input' : 'Sorting'
                     const canOpenUnload = canViewUnload || canAddUnload || canEditUnload
 
+                    const statusStyle = getOverviewStatusStyle(order.overview_status)
+
                     return (
-                    <tr key={order.id} style={styles.bodyRow}>
+                    <tr key={order.id} style={statusStyle ? { ...styles.bodyRow, ...statusStyle } : styles.bodyRow}>
                       <td style={{ ...td, whiteSpace: 'nowrap' }}>
                         <div style={styles.actionGroup}>
                           {canOpenReceiving ? (
@@ -544,6 +587,29 @@ const styles = {
     fontSize: '13px',
     whiteSpace: 'nowrap',
   },
+  statusLegend: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '10px',
+    flexWrap: 'wrap',
+    marginTop: '-4px',
+  },
+  legendItem: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '6px',
+    color: '#475569',
+    fontSize: '12px',
+    fontWeight: '750',
+    lineHeight: 1.3,
+  },
+  legendSwatch: {
+    width: '18px',
+    height: '10px',
+    border: '1px solid',
+    borderRadius: '999px',
+    flex: '0 0 auto',
+  },
   emptyBox: {
     background: '#fff',
     border: '1px solid #e2e8f0',
@@ -566,6 +632,15 @@ const styles = {
   },
   bodyRow: {
     borderTop: '1px solid #f1f5f9',
+  },
+  completedRow: {
+    background: '#ecfdf5',
+  },
+  readyRow: {
+    background: '#fff7ed',
+  },
+  fullReturnRow: {
+    background: '#fef2f2',
   },
   actionGroup: {
     display: 'flex',

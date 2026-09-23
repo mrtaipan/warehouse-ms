@@ -608,23 +608,29 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
     return cases.filter((row) => cleanUpper(row.created_by) === caseListAccess.name)
   }, [caseListAccess.isAdmin, caseListAccess.name, caseListAccess.ready, cases, lockedGroup])
 
-  const visibleCases = useMemo(() => {
-    const keyword = filters.search.trim().toLowerCase()
+  const summaryCases = useMemo(() => {
     return accessibleCases.filter((row) => {
       const submissionDate = dateOnly(row.tanggal_pengajuan)
       if (filters.from && submissionDate && submissionDate < filters.from) return false
       if (filters.to && submissionDate && submissionDate > filters.to) return false
       if (filters.group && row.group_order !== filters.group) return false
       if (filters.courier && row.courier_name !== filters.courier) return false
+      return true
+    })
+  }, [accessibleCases, filters.courier, filters.from, filters.group, filters.to])
+
+  const visibleCases = useMemo(() => {
+    const keyword = filters.search.trim().toLowerCase()
+    return summaryCases.filter((row) => {
       if (filters.warningOnly && getCaseWarningMeta(row, today).rank <= 0) return false
       if (!keyword) return true
       return [row.kode_kejadian, row.order_id, row.no_resi_pengiriman, row.nama_customer].some((value) => String(value || '').toLowerCase().includes(keyword))
     })
-  }, [accessibleCases, filters.courier, filters.from, filters.group, filters.search, filters.to, filters.warningOnly, today])
+  }, [filters.search, filters.warningOnly, summaryCases, today])
 
   const casesWithWarningMeta = useMemo(() => {
-    return accessibleCases.map((row) => ({ meta: getCaseWarningMeta(row, today), row }))
-  }, [accessibleCases, today])
+    return summaryCases.map((row) => ({ meta: getCaseWarningMeta(row, today), row }))
+  }, [summaryCases, today])
 
   const caseListStats = useMemo(() => {
     const visibleWithWarningMeta = visibleCases.map((row) => ({ meta: getCaseWarningMeta(row, today), row }))
@@ -640,10 +646,10 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
   const stats = useMemo(() => {
     const warning = casesWithWarningMeta.filter(({ meta }) => meta.rank === 1).length
     const overdue = casesWithWarningMeta.filter(({ meta }) => meta.rank === 2).length
-    const internal = countByValue(accessibleCases, 'internal_external', 'Internal')
-    const external = countByValue(accessibleCases, 'internal_external', 'External')
+    const internal = countByValue(summaryCases, 'internal_external', 'Internal')
+    const external = countByValue(summaryCases, 'internal_external', 'External')
     return { external, internal, overdue, warning }
-  }, [accessibleCases, casesWithWarningMeta])
+  }, [casesWithWarningMeta, summaryCases])
 
   const warningRows = useMemo(() => {
     return casesWithWarningMeta
@@ -656,24 +662,24 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
   }, [casesWithWarningMeta])
 
   const quickInsights = useMemo(() => {
-    if (!accessibleCases.length) {
+    if (!summaryCases.length) {
       return [
         {
-          detail: 'Insights will appear after real case data is loaded.',
+          detail: 'Insights will appear after case data is available in the selected period.',
           title: 'No data yet',
         },
       ]
     }
 
-    const statusBreakdown = getTopCounts(accessibleCases, 'status_barang', 4)
-    const topCreator = getTopCounts(accessibleCases, 'created_by', 3)
-    const topGroups = getTopCounts(accessibleCases, 'group_order', 3)
-    const topReasons = getTopCounts(accessibleCases, 'retur_reason', 3)
-    const topActions = getTopCounts(accessibleCases, 'retur_action', 3)
-    const totalLoss = accessibleCases.reduce((sum, row) => sum + safeNumber(row.nilai_refund_kompensasi), 0)
-    const outboundCost = accessibleCases.reduce((sum, row) => sum + safeNumber(row.ongkir_keluar), 0)
-    const inboundCost = accessibleCases.reduce((sum, row) => sum + safeNumber(row.ongkir_masuk), 0)
-    const attentionCase = warningRows[0]?.row || accessibleCases.find((row) => ACTIVE_RETURN_STATUSES.has(row.status_barang)) || accessibleCases[0]
+    const statusBreakdown = getTopCounts(summaryCases, 'status_barang', 4)
+    const topCreator = getTopCounts(summaryCases, 'created_by', 3)
+    const topGroups = getTopCounts(summaryCases, 'group_order', 3)
+    const topReasons = getTopCounts(summaryCases, 'retur_reason', 3)
+    const topActions = getTopCounts(summaryCases, 'retur_action', 3)
+    const totalLoss = summaryCases.reduce((sum, row) => sum + safeNumber(row.nilai_refund_kompensasi), 0)
+    const outboundCost = summaryCases.reduce((sum, row) => sum + safeNumber(row.ongkir_keluar), 0)
+    const inboundCost = summaryCases.reduce((sum, row) => sum + safeNumber(row.ongkir_masuk), 0)
+    const attentionCase = warningRows[0]?.row || summaryCases.find((row) => ACTIVE_RETURN_STATUSES.has(row.status_barang)) || summaryCases[0]
 
     return [
       {
@@ -707,7 +713,7 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
         title: 'Nominal Summary',
       },
     ]
-  }, [accessibleCases, warningRows])
+  }, [summaryCases, warningRows])
 
   const accessibleIssues = useMemo(() => {
     if (!caseListAccess.ready) return []
@@ -1475,7 +1481,7 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
               <button className={styles.primaryButton} onClick={loadCases}>Apply Summary</button>
             </div>
             <div className={styles.resolutionMetricGrid}>
-              <div className={styles.resolutionMetricCard}><span>CASES</span><strong>{cases.length}</strong><p>Total cases in the selected date range.</p></div>
+              <div className={styles.resolutionMetricCard}><span>CASES</span><strong>{summaryCases.length}</strong><p>Total cases in the selected date range.</p></div>
               <div className={styles.resolutionMetricCard}><span>WARNING H-1</span><strong>{stats.warning}</strong><p>Cases approaching the return deadline.</p></div>
               <div className={styles.resolutionMetricCard}><span>OVERDUE</span><strong>{stats.overdue}</strong><p>Cases past the return deadline and still active.</p></div>
               <div className={styles.resolutionMetricCard}><span>INTERNAL / EXTERNAL</span><strong>{stats.internal} / {stats.external}</strong><p>Case type split for the active period.</p></div>

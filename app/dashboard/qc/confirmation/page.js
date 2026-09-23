@@ -1,5 +1,6 @@
 import Link from 'next/link'
 import { createClient } from '@/utils/supabase/server'
+import { fetchInboundOverviewStatusMap, INBOUND_OVERVIEW_STATUS } from '@/utils/inbound-overview-status'
 import GradingVerificationFiltersClient from './grading-verification-filters-client'
 
 function getSingleValue(value) {
@@ -65,6 +66,92 @@ function isTemporarySampleTask(item) {
   return !hasProductIdentityForSampleTask(item)
 }
 
+function StatusLegend() {
+  return (
+    <div style={styles.statusLegend} aria-label="Grading Verification status color legend">
+      <span style={styles.legendItem}>
+        <span style={{ ...styles.legendSwatch, background: '#ecfdf5', borderColor: '#86efac' }} />
+        Completed
+      </span>
+      <span style={styles.legendItem}>
+        <span style={{ ...styles.legendSwatch, background: '#fff7ed', borderColor: '#fdba74' }} />
+        In Review
+      </span>
+      <span style={styles.legendItem}>
+        <span style={{ ...styles.legendSwatch, background: '#fef2f2', borderColor: '#fca5a5' }} />
+        Fully Returned
+      </span>
+    </div>
+  )
+}
+
+function getOverviewStatusStyle(status) {
+  if (status === INBOUND_OVERVIEW_STATUS.COMPLETE) return styles.completedRow
+  if (status === INBOUND_OVERVIEW_STATUS.READY) return styles.readyRow
+  if (status === INBOUND_OVERVIEW_STATUS.FULL_RETURN) return styles.fullReturnRow
+  return null
+}
+
+function isQcReturnPhase(value) {
+  return String(value || '').trim().toLowerCase() === 'qc'
+}
+
+function isTransferFromRejectedGrade(item) {
+  const adjustmentType = String(item?.adjustment_type || '').trim().toUpperCase()
+  const sourceGrade = String(item?.source_grade || '').trim().toUpperCase()
+
+  return adjustmentType === 'TRANSFER' && ['B', 'C'].includes(sourceGrade)
+}
+
+function addProcessedQty(map, inboundId, qty) {
+  const safeInboundId = Number(inboundId || 0)
+  const safeQty = Number(qty || 0)
+  if (!safeInboundId || !Number.isFinite(safeQty) || safeQty <= 0) return
+
+  map.set(safeInboundId, (map.get(safeInboundId) || 0) + safeQty)
+}
+
+function buildVerificationProcessedMaps(confirmRows = [], returnRows = []) {
+  const passingPostedByInbound = new Map()
+  const rejectionProcessedByInbound = new Map()
+
+  confirmRows.forEach((item) => {
+    const grade = String(item.grade || '').trim().toUpperCase()
+    if (grade === 'A') {
+      addProcessedQty(passingPostedByInbound, item.inbound_id, item.qty)
+    }
+
+    if (isTransferFromRejectedGrade(item)) {
+      addProcessedQty(rejectionProcessedByInbound, item.inbound_id, item.qty)
+    }
+  })
+
+  returnRows
+    .filter((item) => isQcReturnPhase(item.source_phase))
+    .forEach((item) => addProcessedQty(rejectionProcessedByInbound, item.inbound_id, item.qty))
+
+  return { passingPostedByInbound, rejectionProcessedByInbound }
+}
+
+function getVerificationStatus(row, overviewStatus) {
+  const passingSourceQty = Number(row.passingSourceQty || 0)
+  const rejectionSourceQty = Number(row.rejectionSourceQty || 0)
+  const passingPostedQty = Number(row.passingPostedQty || 0)
+  const rejectionProcessedQty = Number(row.rejectionProcessedQty || 0)
+  const passingRemainingQty = Math.max(0, passingSourceQty - passingPostedQty)
+  const rejectionRemainingQty = Math.max(0, rejectionSourceQty - rejectionProcessedQty)
+
+  if (passingSourceQty + rejectionSourceQty > 0 && passingRemainingQty + rejectionRemainingQty === 0) {
+    return INBOUND_OVERVIEW_STATUS.COMPLETE
+  }
+
+  if (passingPostedQty + rejectionProcessedQty > 0) {
+    return INBOUND_OVERVIEW_STATUS.READY
+  }
+
+  return overviewStatus
+}
+
 function buildVerificationRows(inboundRows = [], qcRows = [], qcSampleRows = [], sampleBreakdownRows = []) {
   const rowsByInbound = new Map()
   const fullReturnSampleSourceIds = new Set(
@@ -82,6 +169,7 @@ function buildVerificationRows(inboundRows = [], qcRows = [], qcSampleRows = [],
       itemName: inbound.item_name || '-',
       passingSourceQty: 0,
       rejectionSourceQty: 0,
+      overviewStatus: '',
     })
   })
 
@@ -169,12 +257,16 @@ export default async function QcConfirmationPage({ searchParams }) {
   let qcRows = []
   let qcSampleRows = []
   let sampleBreakdownRows = []
+  let confirmRows = []
+  let returnRows = []
   let qcError = null
   let qcSampleError = null
   let sampleBreakdownError = null
+  let confirmError = null
+  let returnError = null
 
   if (inboundIds.length) {
-    const [qcResult, qcSampleResult, sampleBreakdownResult] = await Promise.all([
+    const [qcResult, qcSampleResult, sampleBreakdownResult, confirmResult, returnResult] = await Promise.all([
       supabase
         .from('qc_items')
         .select(`
@@ -218,18 +310,58 @@ export default async function QcConfirmationPage({ searchParams }) {
         .from('inbound_sample_model_breakdowns')
         .select('id, inbound_unload_id, inbound_id, resolution_status')
         .in('inbound_id', inboundIds),
+      supabase
+        .from('qc_confirm')
+        .select('inbound_id, qty, grade, source_grade, adjustment_type')
+        .in('inbound_id', inboundIds),
+      supabase
+        .from('warehouse_returns')
+        .select('inbound_id, qty, source_phase')
+        .in('inbound_id', inboundIds),
     ])
 
     qcRows = qcResult.data || []
     qcSampleRows = qcSampleResult.data || []
     sampleBreakdownRows = sampleBreakdownResult.data || []
+    confirmRows = confirmResult.data || []
+    returnRows = returnResult.data || []
     qcError = qcResult.error
     qcSampleError = qcSampleResult.error
     sampleBreakdownError = sampleBreakdownResult.error
+    confirmError = confirmResult.error
+    returnError = returnResult.error
   }
 
-  const error = supplierError?.message || inboundError?.message || qcError?.message || qcSampleError?.message || sampleBreakdownError?.message || ''
-  const rows = error ? [] : buildVerificationRows(inboundRows || [], qcRows, qcSampleRows, sampleBreakdownRows)
+  const error = supplierError?.message || inboundError?.message || qcError?.message || qcSampleError?.message || sampleBreakdownError?.message || confirmError?.message || returnError?.message || ''
+  let overviewStatusMap = new Map()
+  let statusError = null
+
+  if (!error && inboundIds.length) {
+    try {
+      overviewStatusMap = await fetchInboundOverviewStatusMap(supabase, inboundIds)
+    } catch (statusMapError) {
+      statusError = statusMapError
+    }
+  }
+
+  const finalError = error || statusError?.message || ''
+  const { passingPostedByInbound, rejectionProcessedByInbound } = buildVerificationProcessedMaps(confirmRows, returnRows)
+  const rows = finalError
+    ? []
+    : buildVerificationRows(inboundRows || [], qcRows, qcSampleRows, sampleBreakdownRows).map((row) => {
+        const inboundId = Number(row.inboundId || 0)
+        const overviewStatus = overviewStatusMap.get(inboundId) || ''
+        const enrichedRow = {
+          ...row,
+          passingPostedQty: passingPostedByInbound.get(inboundId) || 0,
+          rejectionProcessedQty: rejectionProcessedByInbound.get(inboundId) || 0,
+        }
+
+        return {
+          ...enrichedRow,
+          overviewStatus: getVerificationStatus(enrichedRow, overviewStatus),
+        }
+      })
 
   return (
     <section style={styles.wrapper}>
@@ -246,9 +378,11 @@ export default async function QcConfirmationPage({ searchParams }) {
         initialFilters={{ search, supplierId, month }}
       />
 
-      {error ? (
+      <StatusLegend />
+
+      {finalError ? (
         <div style={styles.emptyBox}>
-          <p style={styles.errorText}>Error: {error}</p>
+          <p style={styles.errorText}>Error: {finalError}</p>
         </div>
       ) : rows.length ? (
         <div style={styles.tableWrap}>
@@ -265,7 +399,7 @@ export default async function QcConfirmationPage({ searchParams }) {
               {rows.map((row) => {
                 const grnParam = encodeURIComponent(row.grnNumber || '')
                 return (
-                  <tr key={row.inboundId} style={styles.bodyRow}>
+                  <tr key={row.inboundId} style={{ ...styles.bodyRow, ...(getOverviewStatusStyle(row.overviewStatus) || {}) }}>
                     <td style={td}>
                       <strong>{row.grnNumber}</strong>
                     </td>
@@ -380,6 +514,38 @@ const styles = {
   },
   bodyRow: {
     borderTop: '1px solid #f1f5f9',
+  },
+  completedRow: {
+    background: '#ecfdf5',
+  },
+  readyRow: {
+    background: '#fff7ed',
+  },
+  fullReturnRow: {
+    background: '#fef2f2',
+  },
+  statusLegend: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '10px',
+    flexWrap: 'wrap',
+    marginTop: '-4px',
+  },
+  legendItem: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '6px',
+    color: '#475569',
+    fontSize: '12px',
+    fontWeight: '750',
+    lineHeight: 1.3,
+  },
+  legendSwatch: {
+    width: '18px',
+    height: '10px',
+    border: '1px solid',
+    borderRadius: '999px',
+    flex: '0 0 auto',
   },
   actionGroup: {
     display: 'flex',

@@ -129,6 +129,16 @@ const styles = {
     gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))',
     gap: '16px',
   },
+  regularContextText: {
+    margin: '-10px 0 -10px',
+    color: '#111827',
+    fontSize: '14px',
+    fontWeight: '500',
+    lineHeight: 1.45,
+  },
+  regularContextStrong: {
+    fontWeight: '850',
+  },
   modeRow: {
     display: 'inline-flex',
     alignSelf: 'flex-start',
@@ -1713,7 +1723,11 @@ export default function QcDashboardPage() {
           *,
           inbound:inbound_id (
             id,
-            grn_number
+            grn_number,
+            item_name,
+            suppliers:dir_suppliers!supplier_id (
+              supplier_name
+            )
           ),
           inbound_unload:inbound_unload_id (
             id,
@@ -2131,6 +2145,19 @@ export default function QcDashboardPage() {
     () => qcItems.filter((item) => matchesRegularFilterValues(item)),
     [matchesRegularFilterValues, qcItems]
   )
+
+  const selectedRegularInboundInfo = useMemo(() => {
+    if (qcMode !== 'regular' || !grnFilter) return null
+
+    const row = qcItems.find((item) => item.inbound?.grn_number === grnFilter)
+    if (!row?.inbound) return null
+
+    return {
+      grnNumber: row.inbound.grn_number || grnFilter,
+      itemName: row.inbound.item_name || '-',
+      supplierName: row.inbound.suppliers?.supplier_name || '-',
+    }
+  }, [grnFilter, qcItems, qcMode])
 
   const filteredArklineItems = useMemo(
     () => arklineModeItems.filter((item) => matchesArklineFilterValues(item)),
@@ -4803,6 +4830,15 @@ export default function QcDashboardPage() {
         {qcMode === 'regular' && !grnFilter ? <p style={styles.emptyText}>Choose a GRN Number first to see QC result summary for that GRN.</p> : null}
         {(qcMode !== 'regular' || grnFilter) ? (
         <>
+        {qcMode === 'regular' && selectedRegularInboundInfo ? (
+          <p style={styles.regularContextText}>
+            <strong style={styles.regularContextStrong}>{selectedRegularInboundInfo.grnNumber}</strong>
+            {' - '}
+            <strong style={styles.regularContextStrong}>{selectedRegularInboundInfo.supplierName}</strong>
+            {' : '}
+            {selectedRegularInboundInfo.itemName}
+          </p>
+        ) : null}
         <div style={styles.grid}>
           <div style={styles.summaryCard}>
             <span style={styles.summaryLabel}>Total Grade A</span>

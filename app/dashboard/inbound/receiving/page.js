@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation'
 import { createClient } from '@/utils/supabase/server'
 import { hasAnyPermission, hasPermission } from '@/utils/permissions'
 import { loadAccessContext } from '@/utils/access-control'
+import { attachInboundOverviewStatuses, fetchInboundOverviewStatusMap } from '@/utils/inbound-overview-status'
 import ReceivingFiltersClient from './receiving-filters-client'
 
 const PAGE_SIZE = 25
@@ -158,6 +159,16 @@ export default async function InboundReceivingPage({ searchParams }) {
   }
 
   const safeCurrentPage = Math.min(currentPage, totalPages)
+  let ordersWithStatus = orders || []
+
+  if (ordersWithStatus.length && !error) {
+    try {
+      const statusMap = await fetchInboundOverviewStatusMap(supabase, ordersWithStatus.map((order) => order.id))
+      ordersWithStatus = attachInboundOverviewStatuses(ordersWithStatus, statusMap)
+    } catch {
+      ordersWithStatus = orders || []
+    }
+  }
 
   return (
     <section style={styles.panel}>
@@ -178,7 +189,7 @@ export default async function InboundReceivingPage({ searchParams }) {
       <ReceivingFiltersClient
         key={`${supplierId}-${month}-${search}-${showAll ? 'all' : 'recent'}`}
         suppliers={suppliers || []}
-        initialOrders={orders || []}
+        initialOrders={ordersWithStatus}
         initialTotalItems={totalItems}
         initialFilters={{ supplierId, month, search, page: safeCurrentPage, showAll }}
         initialError={supplierError?.message || error?.message || ''}

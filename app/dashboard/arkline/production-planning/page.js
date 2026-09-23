@@ -7,10 +7,11 @@ import {
   buildArklinePoId,
   buildArklinePoPrefix,
   extractArklinePoNumberInfo as extractPoNumberInfo,
+  getArklineIssueDateCode,
   getArklinePoPrefix as getPoPrefix,
   getArklinePoSuffix as getPoSuffix,
   getNextArklinePoSequence,
-  isTemporaryArklinePo as isEditablePoSuffix,
+  isTemporaryArklinePo as isTemporaryPoId,
   normalizeArklinePoSuffix,
   normalizeArklineSupplierInitial,
 } from '@/utils/arkline-po-number'
@@ -325,7 +326,10 @@ function buildPoNumberRegistry(garmentRows = [], materialRows = []) {
     .filter(Boolean)
 }
 
-function buildNextGarmentPoId(registry = [], { includePpn = true, method = 'FOB', supplierInitial = '', suffix = TEMPORARY_PO_SUFFIX } = {}) {
+function buildNextGarmentPoId(
+  registry = [],
+  { includePpn = true, method = 'FOB', supplierInitial = '', suffix = TEMPORARY_PO_SUFFIX } = {}
+) {
   return buildArklinePoId({
     sequence: getNextArklinePoSequence(registry),
     includePpn,
@@ -821,7 +825,6 @@ export default function ArklineProductionPlanningPage() {
   const [isPlanningDirty, setIsPlanningDirty] = useState(false)
   const [showLeaveConfirm, setShowLeaveConfirm] = useState(false)
   const [pendingNavigationHref, setPendingNavigationHref] = useState('')
-  const [isEditingExistingPoSuffix, setIsEditingExistingPoSuffix] = useState(false)
   const [showExistingPoPicker, setShowExistingPoPicker] = useState(false)
   const [showSupplierModal, setShowSupplierModal] = useState(false)
   const [savingSupplier, setSavingSupplier] = useState(false)
@@ -914,8 +917,6 @@ export default function ArklineProductionPlanningPage() {
       }),
     [header.includePpn, method, nextPoSequence, selectedSupplierInitial]
   )
-  const currentPoPrefix = mode === 'new' ? nextPoPrefix : getPoPrefix(header.poId)
-  const currentPoSuffix = mode === 'new' ? getPoSuffix(header.poId) : ''
   const filteredExistingPos = useMemo(
     () => existingPos.filter((item) => String(item.method || '').trim().toUpperCase() === method),
     [existingPos, method]
@@ -999,7 +1000,8 @@ export default function ArklineProductionPlanningPage() {
       : isPlanningDirty
   const canPrintPurchaseOrder = Boolean(currentPoDbId && header.poId && !hasUnsavedSavedPoChanges && !saving && !loading)
 
-  const isTemporaryPo = isEditablePoSuffix(header.poId)
+  const isTemporaryPo = isTemporaryPoId(header.poId)
+  const canToggleTemporaryPo = mode === 'new' || (mode === 'existing' && isTemporaryPoId(selectedExistingPoId))
 
   useEffect(() => {
     if (!isPlanningDirty) {
@@ -1070,7 +1072,6 @@ export default function ArklineProductionPlanningPage() {
     setMode(nextMode)
     setMethod('FOB')
     setSelectedExistingPoId('')
-    setIsEditingExistingPoSuffix(false)
     setShowExistingPoPicker(nextMode === 'existing')
     setCurrentPoDbId(null)
     setLoadedPlanningSnapshot(null)
@@ -1112,18 +1113,21 @@ export default function ArklineProductionPlanningPage() {
     setLineError('')
   }
 
+  function handleTemporaryPoChange(event) {
+    if (!canToggleTemporaryPo) return
+
+    const nextSuffix = event.target.checked ? TEMPORARY_PO_SUFFIX : getArklineIssueDateCode()
+    setHeader((prev) => ({
+      ...prev,
+      poId: `${(mode === 'new' ? nextPoPrefix : getPoPrefix(prev.poId)) || nextPoPrefix}${nextSuffix}`,
+    }))
+    setIsPlanningDirty(true)
+    setError('')
+    setSuccess('')
+  }
+
   function handleHeaderChange(event) {
     const { name, value, type, checked } = event.target
-
-    if (name === 'poSuffix') {
-      setHeader((prev) => ({
-        ...prev,
-        poId: `${(mode === 'new' ? nextPoPrefix : getPoPrefix(prev.poId)) || nextPoPrefix}${value.toUpperCase()}`,
-      }))
-      setIsPlanningDirty(true)
-      setError('')
-      return
-    }
 
     if (name === 'supplierId') {
       const selected = suppliers.find((item) => item.id === value)
@@ -1515,7 +1519,6 @@ export default function ArklineProductionPlanningPage() {
       setMethod(String(bundle.po.method || 'FOB').trim().toUpperCase())
       setSelectedExistingPoId(normalizedHeader.poId)
       setShowExistingPoPicker(false)
-      setIsEditingExistingPoSuffix(false)
       setCurrentPoDbId(bundle.po.id)
       setLoadedPlanningSnapshot(createPoRevisionSnapshotFromBundle(bundle))
       setHeader(normalizedHeader)
@@ -1558,10 +1561,6 @@ export default function ArklineProductionPlanningPage() {
         throw new Error('PO ID is required.')
       }
 
-      if (mode === 'new' && !resolvedPoSuffix) {
-        throw new Error('Isi bagian nomor PO setelah prefix otomatis.')
-      }
-
       if (!header.supplierId) {
         throw new Error('Choose a supplier first.')
       }
@@ -1582,7 +1581,7 @@ export default function ArklineProductionPlanningPage() {
         throw new Error('Add at least one product line before saving.')
       }
 
-      if (!isEditablePoSuffix(resolvedPoId)) {
+      if (!isTemporaryPoId(resolvedPoId)) {
         const missingQtyLine = poItems.find((item) => getLineTotalQty(item) <= 0)
         if (missingQtyLine) {
           throw new Error('Enter qty by size for all product lines before saving final PO.')
@@ -1595,6 +1594,8 @@ export default function ArklineProductionPlanningPage() {
       }
 
       const shouldRecordRevision = Boolean(currentPoDbId && selectedExistingPoId)
+      const isFinalizingTemporaryPo =
+        mode === 'existing' && isTemporaryPoId(selectedExistingPoId) && !isTemporaryPoId(resolvedPoId)
       let beforeRevisionSnapshot = null
       let revisionWarning = ''
 
@@ -1619,6 +1620,9 @@ export default function ArklineProductionPlanningPage() {
         status: header.status || 'Draft',
         notes: header.notes.trim() || null,
         updated_by: userEmail,
+      }
+      if (isFinalizingTemporaryPo) {
+        headerPayload.created_at = new Date().toISOString()
       }
       const headerPayloadWithoutPpn = { ...headerPayload }
       delete headerPayloadWithoutPpn.include_ppn
@@ -1847,15 +1851,8 @@ export default function ArklineProductionPlanningPage() {
     setSuccess('')
   }
 
-  function handleEnableExistingPoSuffixEdit() {
-    if (!selectedExistingPoId) return
-    setIsEditingExistingPoSuffix(true)
-    setIsPlanningDirty(true)
-  }
-
   function handleChangeExistingPoSelection() {
     setShowExistingPoPicker(true)
-    setIsEditingExistingPoSuffix(false)
     setSelectedExistingPoId('')
     setCurrentPoDbId(null)
     setLoadedPlanningSnapshot(null)
@@ -1993,33 +1990,10 @@ export default function ArklineProductionPlanningPage() {
             </div>
 
             <div className={styles.field}>
-              <div className={styles.labelRow}>
-                <label className={styles.label}>
-                  PO ID <span className={styles.requiredMark}>*</span>
-                </label>
-                {mode === 'existing' && selectedExistingPoId && !showExistingPoPicker && isEditablePoSuffix(header.poId) ? (
-                  <button
-                    type="button"
-                    className={`${styles.iconButton} ${isEditingExistingPoSuffix ? styles.iconButtonActive : ''}`.trim()}
-                    onClick={handleEnableExistingPoSuffixEdit}
-                    aria-label="Edit PO suffix"
-                    title="Edit PO suffix"
-                  >
-                    ✎
-                  </button>
-                ) : null}
-              </div>
-              {mode === 'new' ? (
-                <div className={styles.inlineFieldRow}>
-                  <input className={styles.inputReadonly} value={currentPoPrefix} readOnly />
-                  <input
-                    className={styles.input}
-                    name="poSuffix"
-                    value={currentPoSuffix}
-                    onChange={handleHeaderChange}
-                  />
-                </div>
-              ) : showExistingPoPicker || !selectedExistingPoId || (!isEditablePoSuffix(header.poId) && !isEditingExistingPoSuffix) ? (
+              <label className={styles.label}>
+                PO ID <span className={styles.requiredMark}>*</span>
+              </label>
+              {mode === 'existing' && (showExistingPoPicker || !selectedExistingPoId) ? (
                 <select
                   className={styles.select}
                   value={selectedExistingPoId}
@@ -2037,21 +2011,25 @@ export default function ArklineProductionPlanningPage() {
                 </select>
               ) : (
                 <div className={styles.poIdExistingWrap}>
-                  <div className={styles.inlineFieldRow}>
-                    <input className={styles.inputReadonly} value={getPoPrefix(header.poId)} readOnly />
-                    <input
-                      className={styles.input}
-                      name="poSuffix"
-                      value={getPoSuffix(header.poId)}
-                      onChange={handleHeaderChange}
-                      disabled={!isEditingExistingPoSuffix}
-                    />
-                  </div>
-                  <button type="button" className={styles.ghostButton} onClick={handleChangeExistingPoSelection}>
-                    Change PO
-                  </button>
+                  <input className={styles.inputReadonly} value={header.poId} readOnly />
+                  {mode === 'existing' ? (
+                    <button type="button" className={styles.ghostButton} onClick={handleChangeExistingPoSelection}>
+                      Change PO
+                    </button>
+                  ) : null}
                 </div>
               )}
+              <label
+                className={`${styles.temporaryPoOption} ${!canToggleTemporaryPo || isExistingModeLocked ? styles.temporaryPoOptionDisabled : ''}`.trim()}
+              >
+                <input
+                  type="checkbox"
+                  checked={isTemporaryPo}
+                  onChange={handleTemporaryPoChange}
+                  disabled={!canToggleTemporaryPo || isExistingModeLocked}
+                />
+                <span>Temporary PO</span>
+              </label>
             </div>
 
             <div className={styles.field}>

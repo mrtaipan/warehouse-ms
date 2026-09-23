@@ -641,11 +641,11 @@ async function loadMaterialProgressRows() {
   ] = await Promise.all([
     supabase
       .from('arkline_po_material_ordered')
-      .select('id, material_po_number, supplier_name_snapshot, garment_po_number, request_delivery_date, status, notes, created_at')
+      .select('id, material_po_number, supplier_name_snapshot, garment_po_number, request_delivery_date, status, notes, include_ppn, created_at')
       .order('created_at', { ascending: false }),
     supabase
       .from('arkline_po_material_ordered_items')
-      .select('id, material_po_ordered_id, material_po_number, material_name_snapshot, size_variant, color_variant, unit, qty, notes, source_po_id'),
+      .select('id, material_po_ordered_id, material_po_number, material_name_snapshot, size_variant, color_variant, unit, qty, price, amount, notes, source_po_id'),
     supabase
       .from('arkline_po_material_logs')
       .select(
@@ -664,8 +664,51 @@ async function loadMaterialProgressRows() {
     return accumulator
   }, {})
 
+  const headerByMaterialPoNumber = (headerData || []).reduce((accumulator, row) => {
+    const materialPoNumber = String(row?.material_po_number || '').trim().toUpperCase()
+    if (materialPoNumber) accumulator[materialPoNumber] = row
+    return accumulator
+  }, {})
+
+  const sourcePoByMaterialPoNumber = (itemData || []).reduce((accumulator, row) => {
+    const materialPoNumber = String(row?.material_po_number || '').trim().toUpperCase()
+    const sourcePoId = String(row?.source_po_id || '').trim().toUpperCase()
+    if (materialPoNumber && sourcePoId && !accumulator[materialPoNumber]) {
+      accumulator[materialPoNumber] = sourcePoId
+    }
+    return accumulator
+  }, {})
+
+  const orderedItemByMaterialKey = (itemData || []).reduce((accumulator, row) => {
+    const materialPoNumber = String(row?.material_po_number || '').trim().toUpperCase()
+    const materialName = String(row?.material_name_snapshot || '').trim().toUpperCase()
+    const sizeVariant = String(row?.size_variant || '').trim().toUpperCase()
+    const colorVariant = String(row?.color_variant || '').trim().toUpperCase()
+    const key = [materialPoNumber, materialName, sizeVariant, colorVariant].join('::')
+    if (materialPoNumber && !accumulator[key]) accumulator[key] = row
+    return accumulator
+  }, {})
+
+  const getMaterialLinePrice = (row, fallbackRow = null) => {
+    const qty = Number(row?.qty || fallbackRow?.qty || 0)
+    const directPrice = parseNumberValue(row?.price ?? fallbackRow?.price)
+    const amount = parseNumberValue(row?.amount ?? fallbackRow?.amount)
+    if (directPrice > 0) return directPrice
+    if (amount > 0 && qty > 0) return amount / qty
+    return 0
+  }
+
+  const getMaterialLineAmount = (row, fallbackRow = null) => {
+    const qty = Number(row?.qty || fallbackRow?.qty || 0)
+    const amount = parseNumberValue(row?.amount ?? fallbackRow?.amount)
+    if (amount > 0) return amount
+    return qty * getMaterialLinePrice(row, fallbackRow)
+  }
+
   const orderedRows = (itemData || []).map((row) => {
-    const header = headerById[String(row?.material_po_ordered_id || '').trim()] || null
+    const materialPoNumber = String(row?.material_po_number || '').trim().toUpperCase()
+    const header =
+      headerById[String(row?.material_po_ordered_id || '').trim()] || headerByMaterialPoNumber[materialPoNumber] || null
     return {
       id: `ordered:${row.id}`,
       status: 'Ordered',
@@ -675,6 +718,9 @@ async function loadMaterialProgressRows() {
       variant: [String(row?.size_variant || '').trim().toUpperCase(), String(row?.color_variant || '').trim().toUpperCase()].filter(Boolean).join(' / ') || '-',
       unit: String(row?.unit || '').trim().toUpperCase() || '-',
       qty: Number(row?.qty || 0),
+      price: getMaterialLinePrice(row),
+      amount: getMaterialLineAmount(row),
+      includePpn: normalizeBoolean(header?.include_ppn, true),
       date: String(header?.request_delivery_date || header?.created_at || '').slice(0, 10),
       notes: String(row?.notes || header?.notes || '').trim(),
       garmentPoNumber: String(row?.source_po_id || header?.garment_po_number || '').trim().toUpperCase(),
@@ -682,7 +728,16 @@ async function loadMaterialProgressRows() {
   })
 
   const logRows = (logData || []).map((row) => {
-    const header = headerById[String(row?.material_po_ordered_id || '').trim()] || null
+    const materialPoNumber = String(row?.material_po_number || '').trim().toUpperCase()
+    const materialName = String(row?.material_name_snapshot || '').trim().toUpperCase()
+    const sizeVariant = String(row?.size_variant || '').trim().toUpperCase()
+    const colorVariant = String(row?.color_variant || '').trim().toUpperCase()
+    const header =
+      headerById[String(row?.material_po_ordered_id || '').trim()] || headerByMaterialPoNumber[materialPoNumber] || null
+    const orderedItem =
+      orderedItemByMaterialKey[[materialPoNumber, materialName, sizeVariant, colorVariant].join('::')] ||
+      (itemData || []).find((item) => String(item?.material_po_number || '').trim().toUpperCase() === materialPoNumber) ||
+      null
     return {
       id: `${String(row?.log_type || '').trim().toLowerCase()}:${row.id}`,
       status: normalizeMaterialLogStatus(row?.log_type),
@@ -692,9 +747,12 @@ async function loadMaterialProgressRows() {
       variant: [String(row?.size_variant || '').trim().toUpperCase(), String(row?.color_variant || '').trim().toUpperCase()].filter(Boolean).join(' / ') || '-',
       unit: String(row?.unit || '').trim().toUpperCase() || '-',
       qty: Number(row?.qty || 0),
+      price: getMaterialLinePrice(row, orderedItem),
+      amount: getMaterialLineAmount(row, orderedItem),
+      includePpn: normalizeBoolean(header?.include_ppn, true),
       date: String(row?.event_date || row?.created_at || '').slice(0, 10),
       notes: String(row?.notes || '').trim(),
-      garmentPoNumber: String(header?.garment_po_number || '').trim().toUpperCase(),
+      garmentPoNumber: String(header?.garment_po_number || sourcePoByMaterialPoNumber[materialPoNumber] || '').trim().toUpperCase(),
     }
   })
 
@@ -1213,9 +1271,7 @@ function compareReturnReasonRows(left, right) {
   if (leftUnidentified !== rightUnidentified) return leftUnidentified ? 1 : -1
   const reasonCompare = String(left.reason || '').localeCompare(String(right.reason || ''))
   if (reasonCompare) return reasonCompare
-  const gradeCompare = String(left.grade || '').localeCompare(String(right.grade || ''))
-  if (gradeCompare) return gradeCompare
-  return String(left.size || '').localeCompare(String(right.size || ''), undefined, { numeric: true })
+  return String(left.grade || '').localeCompare(String(right.grade || ''))
 }
 
 function groupRejectDetailRows(rows = []) {
@@ -1466,10 +1522,9 @@ function buildReturnReasonSummary(rows = [], qcSummary = {}) {
     (rows || []).reduce((grouped, row) => {
       const reason = String(row?.reasonName || row?.reason?.reason_name || 'Belum dikategorikan').trim() || 'Belum dikategorikan'
       const grade = String(row?.grade || '-').trim().toUpperCase() || '-'
-      const size = String(row?.size || '-').trim().toUpperCase() || '-'
       const qty = Number(row?.qty || 0)
-      const key = `${reason}::${grade}::${size}`
-      const current = grouped.get(key) || { key, reason, grade, size, qty: 0 }
+      const key = `${reason}::${grade}`
+      const current = grouped.get(key) || { key, reason, grade, qty: 0 }
       current.qty += qty
       identifiedQty += qty
       grouped.set(key, current)
@@ -1480,10 +1535,9 @@ function buildReturnReasonSummary(rows = [], qcSummary = {}) {
   const unidentifiedQty = Math.max(Number(qcSummary.b || 0) + Number(qcSummary.c || 0) - identifiedQty, 0)
   if (unidentifiedQty > 0) {
     summaryRows.push({
-      key: `uncategorized::B/C::ALL::${unidentifiedQty}`,
+      key: `uncategorized::B/C::${unidentifiedQty}`,
       reason: 'Belum dikategorikan',
       grade: 'B/C',
-      size: 'ALL',
       qty: unidentifiedQty,
     })
   }
@@ -1770,6 +1824,7 @@ export default function ArklineProgressOverviewPage() {
   const searchParams = useSearchParams()
   const isExternalView = role === 'external'
   const canOpenKanbanDetail = isExternalView || role === 'admin' || access.progressKanbanAdd || access.progressKanbanEdit
+  const canOpenMaterialProgressDetail = isExternalView || role === 'admin' || access.progressOverview || access.progressKanbanAdd || access.progressKanbanEdit
   const requestedPoId = String(searchParams.get('po') || '').trim().toUpperCase()
   const [view, setView] = useState('')
   const [monthDate, setMonthDate] = useState(() => new Date())
@@ -2068,13 +2123,55 @@ export default function ArklineProgressOverviewPage() {
   }, [materialRows, productFilter])
 
   const materialBoardItemsByStatus = useMemo(
-    () =>
-      MATERIAL_BOARD_STATUSES.reduce((accumulator, status) => {
-        accumulator[status] = filteredMaterialRows
-          .filter((item) => item.status === status)
-          .sort((left, right) => String(right.date || '').localeCompare(String(left.date || '')) || String(left.poNumber || '').localeCompare(String(right.poNumber || '')))
+    () => {
+      const statusRank = { Ordered: 0, Received: 1, Sent: 2 }
+      const rowsByPoNumber = filteredMaterialRows.reduce((accumulator, row) => {
+        const poNumber = String(row?.poNumber || '').trim().toUpperCase() || 'NO PO'
+        if (!accumulator[poNumber]) accumulator[poNumber] = []
+        accumulator[poNumber].push(row)
         return accumulator
-      }, {}),
+      }, {})
+
+      const boardItems = MATERIAL_BOARD_STATUSES.reduce((accumulator, status) => {
+        accumulator[status] = []
+        return accumulator
+      }, {})
+
+      Object.entries(rowsByPoNumber).forEach(([poNumber, rows]) => {
+        const currentStatus = rows.reduce(
+          (highest, row) => (statusRank[row?.status] > statusRank[highest] ? row.status : highest),
+          'Ordered'
+        )
+        const orderedRows = rows.filter((row) => row?.status === 'Ordered')
+        const summaryRows = orderedRows.length ? orderedRows : rows.filter((row) => row?.status === currentStatus)
+        const names = Array.from(new Set(summaryRows.map((row) => String(row?.materialName || '').trim().toUpperCase()).filter(Boolean)))
+        const variants = Array.from(new Set(summaryRows.map((row) => String(row?.variant || '').trim().toUpperCase()).filter((variant) => variant && variant !== '-')))
+        const firstRow = summaryRows[0] || rows[0] || {}
+        const totalQty = summaryRows.reduce((sum, row) => sum + Number(row?.qty || 0), 0)
+        const totalAmount = summaryRows.reduce((sum, row) => sum + Number(row?.amount || 0), 0)
+        const latestDate = rows.map((row) => String(row?.date || '')).filter(Boolean).sort().at(-1) || ''
+
+        boardItems[currentStatus].push({
+          ...firstRow,
+          id: `material-po:${poNumber}`,
+          poNumber,
+          status: currentStatus,
+          materialName: names.length > 1 ? `${names.length} MATERIAL LINES` : names[0] || 'NO MATERIAL',
+          variant: variants.length > 1 ? `${variants.length} VARIANTS` : variants[0] || '-',
+          qty: totalQty,
+          amount: totalAmount,
+          date: latestDate || firstRow.date || '',
+        })
+      })
+
+      MATERIAL_BOARD_STATUSES.forEach((status) => {
+        boardItems[status].sort(
+          (left, right) => String(right.date || '').localeCompare(String(left.date || '')) || String(left.poNumber || '').localeCompare(String(right.poNumber || ''), undefined, { numeric: true })
+        )
+      })
+
+      return boardItems
+    },
     [filteredMaterialRows]
   )
 
@@ -2271,6 +2368,89 @@ export default function ArklineProgressOverviewPage() {
     })
   }
 
+  function getMaterialProgressPo(item) {
+    const materialPoNumber = String(item?.poNumber || '').trim().toUpperCase() || '-'
+    const materialLines = materialRows.filter(
+      (row) => String(row?.poNumber || '').trim().toUpperCase() === materialPoNumber && row?.status === 'Ordered'
+    )
+    const detailLines = materialLines.length ? materialLines : [item]
+    const includePpn = detailLines.every((row) => row?.includePpn !== false)
+    const productEntries = detailLines.map((line, index) => {
+      const linePoNumber = String(line?.poNumber || materialPoNumber).trim().toUpperCase()
+      const lineMaterialName = String(line?.materialName || '').trim().toUpperCase() || 'NO MATERIAL'
+      const lineVariant = String(line?.variant || '-').trim().toUpperCase() || '-'
+      const lineQty = Number(line?.qty || 0)
+      const linePrice = Number(line?.price || 0)
+      const receivedQty = materialRows
+        .filter(
+          (row) =>
+            String(row?.poNumber || '').trim().toUpperCase() === linePoNumber &&
+            row?.status === 'Received' &&
+            String(row?.materialName || '').trim().toUpperCase() === lineMaterialName &&
+            String(row?.variant || '-').trim().toUpperCase() === lineVariant
+        )
+        .reduce((sum, row) => sum + Number(row?.qty || 0), 0)
+      const lineStatus = lineQty > 0 && receivedQty >= lineQty ? 'Completed' : receivedQty > 0 ? 'On Progress' : 'Initiated'
+
+      return {
+        id: `material-progress-line:${line?.id || materialPoNumber || index}`,
+        sku: lineVariant || 'MATERIAL',
+        productName: lineMaterialName,
+        category: 'MATERIAL',
+        qty: lineQty,
+        actualQty: receivedQty,
+        shortQty: 0,
+        openReturnQty: 0,
+        hasOpenReturn: false,
+        remainingQty: Math.max(lineQty - receivedQty, 0),
+        price: linePrice,
+        hpp: 0,
+        updatedDeliveryDate: '',
+        status: lineStatus,
+        notes: String(line?.notes || '').trim(),
+        sizeBreakdown: [],
+      }
+    })
+    const totalQty = productEntries.reduce((sum, line) => sum + Number(line.qty || 0), 0)
+    const netAmount = detailLines.reduce((sum, line) => sum + Number(line?.amount || Number(line?.qty || 0) * Number(line?.price || 0)), 0)
+
+    return {
+      id: `material-progress:${item?.id || item?.poNumber || 'detail'}`,
+      isMaterialPo: true,
+      poId: materialPoNumber,
+      supplier: String(item?.supplier || '').trim().toUpperCase(),
+      method: 'MATERIAL',
+      status: normalizeBoardStatus(item?.status),
+      includePpn,
+      createdAt: item?.date || '',
+      startDate: item?.date || '',
+      targetDate: '',
+      updatedDate: '',
+      displayDate: item?.date || '',
+      completionDate: '',
+      notes: String(item?.notes || '').trim(),
+      subtitle: String(item?.notes || '').trim(),
+      productNames: productEntries.map((line) => line.productName),
+      productEntries,
+      totalQty,
+      financeDueValue: applyPpnToAmount(netAmount, includePpn),
+      financePaidValue: 0,
+      financeOutstandingValue: 0,
+      payments: [],
+      documentHistory: {
+        receipts: [],
+        signedPoFiles: [],
+      },
+    }
+  }
+
+  function openMaterialProgressDetail(item) {
+    if (!canOpenMaterialProgressDetail) return
+    const targetPo = getMaterialProgressPo(item)
+    if (!targetPo) return
+    void openPoDetail(targetPo)
+  }
+
   useEffect(() => {
     if (!requestedPoId || loading || !canOpenKanbanDetail || openedPoParam === requestedPoId) return
 
@@ -2426,6 +2606,7 @@ export default function ArklineProgressOverviewPage() {
     })
     setSelectedProductDetail({
       ...entry,
+      isMaterialProduct: Boolean(selectedPoDetail.isMaterialPo),
       poId: selectedPoDetail.poId,
       supplier: selectedPoDetail.supplier,
       method: selectedPoDetail.method,
@@ -2717,6 +2898,7 @@ export default function ArklineProgressOverviewPage() {
 
       const nextProductDetail = {
         ...entry,
+        isMaterialProduct: Boolean(selectedPoDetail.isMaterialPo),
         poId: selectedPoDetail.poId,
         supplier: selectedPoDetail.supplier,
         method: selectedPoDetail.method,
@@ -4269,7 +4451,8 @@ export default function ArklineProgressOverviewPage() {
             doc.setFont('helvetica', 'normal')
             doc.setFontSize(8.5)
             doc.setTextColor(51, 65, 85)
-            const label = `${row.reason} - Grade ${row.grade} - Size ${row.size} - Qty ${formatNumber(row.qty)}`
+            const gradeLabel = row.grade === 'B/C' ? row.grade : `Grade ${row.grade}`
+            const label = `${gradeLabel} • ${row.reason} • Qty ${formatNumber(row.qty)}`
             const lineCount = drawText(label, margin + 3, cursorY, { maxWidth: pageWidth - margin * 2 - 6 })
             cursorY += Math.max(5, lineCount * 4.5)
           })
@@ -4291,7 +4474,8 @@ export default function ArklineProgressOverviewPage() {
             doc.setFont('helvetica', 'normal')
             doc.setFontSize(8.5)
             doc.setTextColor(51, 65, 85)
-            const label = `${row.reason} - Grade ${row.grade} - Size ${row.size} - Qty ${formatNumber(row.qty)}`
+            const gradeLabel = row.grade === 'B/C' ? row.grade : `Grade ${row.grade}`
+            const label = `${gradeLabel} • ${row.reason} • Qty ${formatNumber(row.qty)}`
             const lineCount = drawText(label, margin + 3, cursorY, { maxWidth: pageWidth - margin * 2 - 6 })
             cursorY += Math.max(5, lineCount * 4.5)
           })
@@ -4429,8 +4613,8 @@ export default function ArklineProgressOverviewPage() {
                 {access.progressKanban ? (
                 <button
                   type="button"
-                  aria-label="Kanban view"
-                  data-view-label="Kanban View"
+                  aria-label="Production progress"
+                  data-view-label="Production Progress"
                   className={`${styles.segmentButton} ${view === 'kanban' ? styles.segmentButtonActive : ''}`.trim()}
                   onClick={() => setView('kanban')}
                 >
@@ -4696,8 +4880,8 @@ export default function ArklineProgressOverviewPage() {
               )}
             </div>
           </div>
-        ) : view === 'materials' ? (
-          <div className={styles.boardGrid}>
+          ) : view === 'materials' ? (
+            <div className={styles.boardGrid}>
             {MATERIAL_BOARD_STATUSES.map((status) => (
               <section key={status} className={`${styles.boardColumn} ${styles[`boardColumn${status}`] || ''}`.trim()}>
                 <div className={styles.boardColumnHead}>
@@ -4709,8 +4893,27 @@ export default function ArklineProgressOverviewPage() {
                 </div>
                 <div className={styles.boardDropzone}>
                   {(materialBoardItemsByStatus[status] || []).length ? (
-                    materialBoardItemsByStatus[status].map((item) => (
-                      <article key={item.id} className={`${styles.boardCard} ${styles.boardCardStatic}`.trim()}>
+                    materialBoardItemsByStatus[status].map((item) => {
+                      const materialDetailTarget = getMaterialProgressPo(item)
+                      const canOpenMaterialDetail = canOpenMaterialProgressDetail
+                      return (
+                      <article
+                        key={item.id}
+                        className={`${styles.boardCard} ${!canOpenMaterialDetail ? styles.boardCardStatic : ''}`.trim()}
+                        role={canOpenMaterialDetail ? 'button' : undefined}
+                        tabIndex={canOpenMaterialDetail ? 0 : undefined}
+                        onClick={canOpenMaterialDetail ? () => openMaterialProgressDetail(item) : undefined}
+                        onKeyDown={
+                          canOpenMaterialDetail
+                            ? (event) => {
+                                if (event.key === 'Enter' || event.key === ' ') {
+                                  event.preventDefault()
+                                  openMaterialProgressDetail(item)
+                                }
+                              }
+                            : undefined
+                        }
+                      >
                         <div className={styles.boardCardTop}>
                           <div className={styles.boardCardIdentity}>
                             <strong className={styles.poLinkButton}>{item.poNumber || '-'}</strong>
@@ -4727,7 +4930,8 @@ export default function ArklineProgressOverviewPage() {
                           <span className={styles.boardQty}>{item.date || '-'}</span>
                         </div>
                       </article>
-                    ))
+                      )
+                    })
                   ) : (
                     <div className={styles.emptyColumn}>No material in this column.</div>
                   )}
@@ -5150,13 +5354,15 @@ export default function ArklineProgressOverviewPage() {
                     ) : null}
                   </span>
                 </h3>
-                <div className={styles.productDetailSubmetaRow}>
-                  <p className={styles.productDetailSubmeta}>HPP {formatNumber(selectedProductDetail.financeSummary?.hpp || 0)}</p>
-                  <button type="button" className={styles.productDetailInlineButton} onClick={openHppEditor} aria-label="Edit HPP">
-                    <EditIcon />
-                    <span>Edit</span>
-                  </button>
-                </div>
+                {!selectedProductDetail.isMaterialProduct ? (
+                  <div className={styles.productDetailSubmetaRow}>
+                    <p className={styles.productDetailSubmeta}>HPP {formatNumber(selectedProductDetail.financeSummary?.hpp || 0)}</p>
+                    <button type="button" className={styles.productDetailInlineButton} onClick={openHppEditor} aria-label="Edit HPP">
+                      <EditIcon />
+                      <span>Edit</span>
+                    </button>
+                  </div>
+                ) : null}
               </div>
               <div className={styles.productHeaderActions}>
                 <button type="button" className={styles.iconButton} onClick={() => setSelectedProductDetail(null)} aria-label="Close product detail">
@@ -5257,6 +5463,7 @@ export default function ArklineProgressOverviewPage() {
                 ) : null}
               </div>
 
+              {!selectedProductDetail.isMaterialProduct ? (
               <div className={styles.productDetailSection}>
                 <div className={styles.productDetailSectionHead}>
                   <div className={styles.productSectionHeadLeft}>
@@ -5329,6 +5536,7 @@ export default function ArklineProgressOverviewPage() {
                   </div>
                 ) : null}
               </div>
+              ) : null}
 
               <div className={styles.productDetailSection}>
                 <div className={styles.productDetailSectionHead}>
@@ -5404,6 +5612,7 @@ export default function ArklineProgressOverviewPage() {
                 ) : null}
               </div>
 
+              {!selectedProductDetail.isMaterialProduct ? (
               <div className={styles.productDetailSection}>
                 <div className={styles.productDetailSectionHead}>
                   <div className={styles.productSectionHeadLeft}>
@@ -5531,7 +5740,9 @@ export default function ArklineProgressOverviewPage() {
                 </div>
                 ) : null}
               </div>
+              ) : null}
 
+              {!selectedProductDetail.isMaterialProduct ? (
               <div className={styles.productDetailSection}>
                 <div className={styles.productDetailSectionHead}>
                   <div className={styles.productSectionHeadLeft}>
@@ -5665,8 +5876,9 @@ export default function ArklineProgressOverviewPage() {
                                               {latestRejectSummary.map((row) => (
                                                 <div key={row.key} className={styles.productDetailRow}>
                                                   <div>
-                                                    <strong>{row.reason}</strong>
-                                                    <span>Grade {row.grade} / Size {row.size}</span>
+                                                    <strong>
+                                                      {row.grade === 'B/C' ? row.grade : `Grade ${row.grade}`} • {row.reason}
+                                                    </strong>
                                                   </div>
                                                   <div className={styles.productDetailRowMeta}>
                                                     <strong>{formatNumber(row.qty)}</strong>
@@ -5693,6 +5905,7 @@ export default function ArklineProgressOverviewPage() {
                   </div>
                 ) : null}
               </div>
+              ) : null}
             </div>
               )
             })()}
