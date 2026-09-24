@@ -298,6 +298,7 @@ from (
     ('packing_staff', 'storage.restock_submit.edit'),
     ('qc_coordinator', 'dashboard.home.view'),
     ('qc_coordinator', 'myarklife.view'),
+    ('qc_coordinator', 'storage.location.view'),
     ('qc_coordinator', 'qc.summary.view'),
     ('qc_coordinator', 'qc.receiving.view'),
     ('qc_coordinator', 'qc.receiving.add'),

@@ -354,6 +354,7 @@ const DEFAULT_ROLE_BUNDLES = {
     'dashboard.home.view',
     'myarklife.view',
     'dashboard.operations_calendar.view',
+    'storage.location.view',
     'qc.summary.view',
     'qc.receiving.view',
     'qc.receiving.add',
@@ -911,6 +912,7 @@ export function getStorageFeatureAccess(role, permissions = [], isAdmin = false)
     }
   }
 
+  const resolvedRole = String(role || '').trim().toLowerCase()
   const location = hasPermission(permissions, 'storage.location.view', isAdmin)
   const locationAdd = hasPermission(permissions, 'storage.location.add', isAdmin)
   const locationEdit = hasPermission(permissions, 'storage.location.edit', isAdmin)
@@ -923,7 +925,7 @@ export function getStorageFeatureAccess(role, permissions = [], isAdmin = false)
   const restockInstruction = hasPermission(permissions, 'storage.restock_instruction.view', isAdmin)
   const restockSubmit = hasPermission(permissions, 'storage.restock_submit.view', isAdmin)
   let restockPicker = hasPermission(permissions, 'storage.restock_picker.view', isAdmin)
-  if (role === 'packing_staff' || role === 'packing_coordinator') {
+  if (resolvedRole === 'packing_staff' || resolvedRole === 'packing_coordinator') {
     restockPicker = false
   }
   const menu = location || queue || pickHistory || productDirectory
@@ -943,8 +945,8 @@ export function getStorageFeatureAccess(role, permissions = [], isAdmin = false)
     productDirectory,
     productDirectoryAdd,
     productDirectoryEdit,
-    warehouseMap: menu,
-    brandLookup: menu,
+    warehouseMap: menu && resolvedRole !== 'qc_coordinator',
+    brandLookup: menu && resolvedRole !== 'qc_coordinator',
     restockInstruction,
     restockSubmit,
     restockPicker,
