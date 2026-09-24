@@ -235,6 +235,9 @@ const styles = {
     fontVariantNumeric: 'tabular-nums',
     wordBreak: 'break-word',
   },
+  pendingAttentionValue: {
+    color: '#b45309',
+  },
   eyebrow: {
     margin: 0,
     color: '#64748b',
@@ -1276,10 +1279,28 @@ function isSurplusAdjustment(item) {
 function getSourcePendingQty(item) {
   return Math.max(
     0,
-    Number(item?.source_qty || 0) -
-      Number(item?.confirmed_qty || 0) -
-      Number(item?.shortage_qty || 0)
+    getSourcePendingBalance(item)
   )
+}
+
+function getSourcePendingBalance(item) {
+  return Number(item?.source_qty || 0) -
+    Number(item?.confirmed_qty || 0) -
+    Number(item?.shortage_qty || 0)
+}
+
+function formatPendingBalance(value) {
+  const numericValue = Number(value || 0)
+
+  if (numericValue < 0) {
+    return `+${formatNumber(Math.abs(numericValue))}`
+  }
+
+  return formatNumber(numericValue)
+}
+
+function getPendingBalanceStyle(value) {
+  return Number(value || 0) < 0 ? styles.pendingAttentionValue : null
 }
 
 function normalizeEmail(value) {
@@ -1941,6 +1962,7 @@ export default function QcConfirmationNextProcessPage() {
   )
 
   const displayedSourceTotals = hasResultFilters ? filteredSourceTotals : sourceTotals
+  const displayedPendingBalance = displayedSourceTotals.source - displayedSourceTotals.confirmed - displayedSourceTotals.shortage
 
   const displayedModelCount = useMemo(
     () =>
@@ -2622,7 +2644,9 @@ export default function QcConfirmationNextProcessPage() {
               </div>
               <div style={styles.metricBox}>
                 <span style={styles.grnLabel}>Pending</span>
-                <strong style={styles.metricValue}>{Math.max(0, displayedSourceTotals.source - displayedSourceTotals.confirmed - displayedSourceTotals.shortage)}</strong>
+                <strong style={{ ...styles.metricValue, ...(getPendingBalanceStyle(displayedPendingBalance) || {}) }}>
+                  {formatPendingBalance(displayedPendingBalance)}
+                </strong>
               </div>
               <div style={styles.metricBox}>
                 <span style={styles.grnLabel}>Total Koli</span>
@@ -2854,31 +2878,37 @@ export default function QcConfirmationNextProcessPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredSourceRows.map((row) => (
-                      <tr key={row.key}>
-                        <td style={styles.td}>{row.brand_name}</td>
-                        <td style={styles.td}>
-                          {row.photo_url ? (
-                            <button
-                              type="button"
-                              onClick={() => setPreviewPhotoUrl(row.photo_url)}
-                              style={styles.photoButton}
-                              aria-label={`Preview ${getModelLabel(row)} photo`}
-                              title="Preview photo"
-                            >
-                              <img src={row.photo_url} alt={getModelLabel(row)} style={styles.photoThumb} />
-                            </button>
-                          ) : (
-                            <div style={styles.photoEmpty}>NO</div>
-                          )}
-                        </td>
-                        <td style={styles.td}>{row.category_name}</td>
-                        <td style={styles.td}>{getModelDashLabel(row)}</td>
-                        <td style={{ ...styles.td, ...styles.koliCenterCell }}>{formatNumber(row.source_qty)}</td>
-                        <td style={{ ...styles.td, ...styles.koliCenterCell }}>{formatNumber(row.confirmed_qty)}</td>
-                        <td style={{ ...styles.td, ...styles.koliCenterCell }}>{formatNumber(getSourcePendingQty(row))}</td>
-                      </tr>
-                    ))}
+                    {filteredSourceRows.map((row) => {
+                      const pendingBalance = getSourcePendingBalance(row)
+
+                      return (
+                        <tr key={row.key}>
+                          <td style={styles.td}>{row.brand_name}</td>
+                          <td style={styles.td}>
+                            {row.photo_url ? (
+                              <button
+                                type="button"
+                                onClick={() => setPreviewPhotoUrl(row.photo_url)}
+                                style={styles.photoButton}
+                                aria-label={`Preview ${getModelLabel(row)} photo`}
+                                title="Preview photo"
+                              >
+                                <img src={row.photo_url} alt={getModelLabel(row)} style={styles.photoThumb} />
+                              </button>
+                            ) : (
+                              <div style={styles.photoEmpty}>NO</div>
+                            )}
+                          </td>
+                          <td style={styles.td}>{row.category_name}</td>
+                          <td style={styles.td}>{getModelDashLabel(row)}</td>
+                          <td style={{ ...styles.td, ...styles.koliCenterCell }}>{formatNumber(row.source_qty)}</td>
+                          <td style={{ ...styles.td, ...styles.koliCenterCell }}>{formatNumber(row.confirmed_qty)}</td>
+                          <td style={{ ...styles.td, ...styles.koliCenterCell, ...(getPendingBalanceStyle(pendingBalance) || {}) }}>
+                            {formatPendingBalance(pendingBalance)}
+                          </td>
+                        </tr>
+                      )
+                    })}
                   </tbody>
                 </table>
               </div>

@@ -5014,6 +5014,11 @@ export default function UnloadPage() {
             .eq('brand_id', targetModel.brand_id)
             .eq('category_id', targetModel.category_id)
             .eq('model_name', previousModelName),
+          supabase
+            .from('inbound_sample_model_breakdowns')
+            .update({ model_name: updatedModel.model_name })
+            .eq('inbound_id', selectedInbound.id)
+            .eq('product_model_id', targetModel.id),
         ]
 
         const snapshotResults = await Promise.all(snapshotUpdates)
@@ -5248,6 +5253,19 @@ export default function UnloadPage() {
             supabase
               .from('inbound_unload')
               .update(unloadSnapshotPatch)
+              .eq('inbound_id', selectedInbound.id)
+              .eq('product_model_variant_id', sourceVariant.id)
+          )
+          snapshotUpdates.push(
+            supabase
+              .from('inbound_sample_model_breakdowns')
+              .update({
+                product_model_id: targetModel.id,
+                product_model_variant_id: updatedVariant.id,
+                model_name: targetModel.model_name,
+                variant_name: movedVariantName,
+                photo_url: updatedVariant.variant_photo_url || null,
+              })
               .eq('inbound_id', selectedInbound.id)
               .eq('product_model_variant_id', sourceVariant.id)
           )
@@ -5529,6 +5547,17 @@ export default function UnloadPage() {
                 .eq('variant_code', previousVariantCode)
             )
           }
+
+          snapshotUpdates.push(
+            supabase
+              .from('inbound_sample_model_breakdowns')
+              .update({
+                variant_name: getVariantDisplayName(updatedVariant),
+                photo_url: updatedVariant.variant_photo_url || null,
+              })
+              .eq('inbound_id', selectedInbound.id)
+              .eq('product_model_variant_id', updatedVariant.id)
+          )
 
           if (supportsUnloadVariant) {
             snapshotUpdates.push(

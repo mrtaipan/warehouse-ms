@@ -774,7 +774,7 @@
 .waybillApp .databaseFilter button { min-height: 48px; font-size: 15px; }
 .waybillApp .formActions .primaryButton,
 .waybillApp .databaseFilter .primaryButton { background: linear-gradient(135deg, #34d399, #059669); color: #ffffff; box-shadow: 0 14px 26px rgba(5,150,105,.18); }
-.waybillApp .databaseFilter { display: grid; grid-template-columns: 150px 150px 170px minmax(260px,1fr) auto auto auto; gap: 12px; align-items: end; }
+.waybillApp .databaseFilter { display: grid; grid-template-columns: 150px 150px 170px minmax(260px,1fr) auto; gap: 12px; align-items: end; }
 .waybillApp .databaseFilter label { min-width: 0; }
 .waybillApp .databaseFilter .searchField { min-width: 0; }
 .waybillApp .inlineCheck { align-self: end; }
@@ -792,6 +792,11 @@
 .waybillApp .tableWrap td:nth-child(6),
 .waybillApp .tableWrap td:nth-child(7) { max-width: 240px; }
 .waybillApp .casePill { width: fit-content; min-width: 0; }
+.waybillApp .rowActions { justify-content: center; }
+.waybillApp .rowActions button { min-width: 42px; min-height: 38px; padding: 0 10px; font-size: 16px; }
+.waybillApp .modalCard:has(.waybillEditBody) { width: min(860px, calc(100vw - 48px)); }
+.waybillEditBody .resiPreview { margin-bottom: 18px; }
+.waybillEditBody input:disabled { background: #f8fafc; color: #64748b; cursor: not-allowed; }
 .resiPreview{margin-bottom:16px;text-align:center}.resiPreview>span{justify-content:center}.barcodeCanvas{display:block;max-width:100%;height:auto;margin:8px auto}.printArea{display:none}
 
 .modalBackdrop{position:fixed;z-index:1000;inset:0;display:flex;align-items:center;justify-content:center;padding:20px;background:rgba(15,23,42,.44);backdrop-filter:blur(7px)}.modalCard{position:relative;width:min(480px,100%);max-height:88vh;overflow:auto;padding:22px;border-radius:24px;background:#fff;box-shadow:0 28px 80px rgba(15,23,42,.25)}.modalCloseButton{position:absolute;top:14px;right:14px;display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;border:0;border-radius:999px;background:#f1f5f9;color:#0f172a;font-size:22px;font-weight:900;line-height:1}.modalCloseButton:hover{background:#e2e8f0}.modalCard h2{margin:0;padding-right:42px;font-size:20px;font-weight:900}.modalCard>p{white-space:pre-line;margin:8px 42px 16px 0;color:#64748b;font-size:13px;line-height:1.55}.modalActions{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:20px}.modalField{margin-top:14px}.searchFound{color:#047857!important;font-weight:750}

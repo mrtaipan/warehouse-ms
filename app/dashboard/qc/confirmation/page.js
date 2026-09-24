@@ -141,6 +141,10 @@ function getVerificationStatus(row, overviewStatus) {
   const passingRemainingQty = Math.max(0, passingSourceQty - passingPostedQty)
   const rejectionRemainingQty = Math.max(0, rejectionSourceQty - rejectionProcessedQty)
 
+  if (overviewStatus === INBOUND_OVERVIEW_STATUS.FULL_RETURN) {
+    return INBOUND_OVERVIEW_STATUS.FULL_RETURN
+  }
+
   if (passingSourceQty + rejectionSourceQty > 0 && passingRemainingQty + rejectionRemainingQty === 0) {
     return INBOUND_OVERVIEW_STATUS.COMPLETE
   }
