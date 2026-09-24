@@ -107,6 +107,22 @@ function getCategoryLookupCode(value = '') {
   return skuCategoryMatch?.[1] || normalizedValue
 }
 
+function isActiveCategory(item = {}) {
+  return item.is_active !== false && normalizeFilterValue(item.is_active) !== 'FALSE'
+}
+
+function getCategoryCodeToken(item = {}) {
+  return normalizeFilterValue(item.full_code || item.category_code).replace(/[^A-Z0-9]/g, '')
+}
+
+function isRootCategory(item = {}, categoryById = new Map()) {
+  const parentId = Number(item.parent_id || 0)
+  const level = Number(item.level || 0)
+  const codeToken = getCategoryCodeToken(item)
+
+  return !parentId || !categoryById.has(parentId) || level === 1 || codeToken.length <= 2
+}
+
 function getStorageCategoryPath(entry = {}, categoryById = new Map()) {
   return getCategoryPath(entry.category || categoryById.get(Number(entry.category_id || 0)), categoryById)
 }
@@ -1014,22 +1030,26 @@ export default function StorageOverviewPage() {
     [categoryRows]
   )
   const categoryOptions = useMemo(
-    () =>
-      (categoryRows || [])
-        .filter((item) => item.is_active !== false && (!item.parent_id || Number(item.level || 0) === 1))
+    () => {
+      const activeRows = (categoryRows || []).filter(isActiveCategory)
+      const rootRows = activeRows.filter((item) => isRootCategory(item, categoryById))
+      const optionRows = rootRows.length > 0 ? rootRows : activeRows
+
+      return optionRows
         .map((item) => ({
           id: String(item.id),
           label: getCategoryDisplayName(item),
         }))
-        .sort((left, right) => naturalSort.compare(left.label, right.label)),
-    [categoryRows]
+        .sort((left, right) => naturalSort.compare(left.label, right.label))
+    },
+    [categoryById, categoryRows]
   )
   const subCategoryOptions = useMemo(() => {
     if (!categoryForm.categoryId) return []
 
     return (categoryRows || [])
       .filter((item) => (
-        item.is_active !== false &&
+        isActiveCategory(item) &&
         String(item.parent_id || '') === categoryForm.categoryId
       ))
       .map((item) => ({
@@ -1043,7 +1063,7 @@ export default function StorageOverviewPage() {
 
     return (categoryRows || [])
       .filter((item) => (
-        item.is_active !== false &&
+        isActiveCategory(item) &&
         String(item.parent_id || '') === categoryForm.subCategoryId
       ))
       .map((item) => ({
@@ -1057,7 +1077,7 @@ export default function StorageOverviewPage() {
 
     return (categoryRows || [])
       .filter((item) => (
-        item.is_active !== false &&
+        isActiveCategory(item) &&
         String(item.parent_id || '') === rejectForm.categoryId
       ))
       .map((item) => ({
@@ -1071,7 +1091,7 @@ export default function StorageOverviewPage() {
 
     return (categoryRows || [])
       .filter((item) => (
-        item.is_active !== false &&
+        isActiveCategory(item) &&
         String(item.parent_id || '') === rejectForm.subCategoryId
       ))
       .map((item) => ({
@@ -2212,7 +2232,9 @@ export default function StorageOverviewPage() {
 
     setRejectForm((prev) => ({
       ...prev,
-      [name]: name === 'grade' ? normalizeFilterValue(value) : value,
+      [name]: name === 'grade' || name === 'productName' || name === 'size'
+        ? normalizeFilterValue(value)
+        : value,
     }))
   }
 
