@@ -3637,7 +3637,7 @@ export default function QcDashboardPage() {
     if (sourceId) {
       const { error: statusError } = await supabase
         .from('inbound_sample_model_breakdowns')
-        .update({ resolution_status: 'split' })
+        .update({ resolution_status: 'split_done' })
         .eq('inbound_unload_id', sourceId)
 
       if (statusError) {

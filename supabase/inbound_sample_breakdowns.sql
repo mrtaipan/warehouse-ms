@@ -74,7 +74,7 @@ create table if not exists public.inbound_sample_model_breakdowns (
   variant_name text null,
   photo_url text null,
   qty integer not null default 0 check (qty >= 0),
-  resolution_status text not null default 'split',
+  resolution_status text not null default 'pending_split',
   created_by text null,
   updated_by text null,
   created_at timestamp with time zone not null default now(),
@@ -82,13 +82,13 @@ create table if not exists public.inbound_sample_model_breakdowns (
 );
 
 alter table public.inbound_sample_model_breakdowns
-  add column if not exists resolution_status text not null default 'split';
+  add column if not exists resolution_status text not null default 'pending_split';
 
 do $$
 begin
   alter table public.inbound_sample_model_breakdowns
     add constraint inbound_sample_model_breakdowns_resolution_status_check
-    check (resolution_status in ('split', 'full_return'));
+    check (resolution_status in ('pending_split', 'split_done', 'full_return'));
 exception
   when duplicate_object then null;
 end $$;
