@@ -11,6 +11,9 @@ import styles from './delivery-report.module.css'
 
 const PACKING_TEAMS = ['TIM 1', 'TIM 2', 'TIM 3', 'INSTANT PACKER']
 const DELIVERY_GROUPS = ['MOB', 'ARKLINE', 'OI']
+const BARCODE_UPLOAD_LOOKUP_COLUMNS = 'barcode,courier,is_packed,is_delivered'
+const BARCODE_SEARCH_COLUMNS = 'barcode,courier,is_packed,is_delivered,timestamp_packing,timestamp_delivery,packing_team,group_order'
+const MANUAL_WAYBILL_LOOKUP_COLUMNS = 'resi_manual,nama_courier,layanan_courier,nama,no_hp,alamat,barang'
 
 const GROUP_STYLE_MAP = {
   ARKLINE: {
@@ -33,6 +36,10 @@ const GROUP_STYLE_MAP = {
 function normalizeLockedGroup(value) {
   const normalized = String(value || '').trim().toUpperCase()
   return DELIVERY_GROUPS.includes(normalized) ? normalized : ''
+}
+
+function cleanText(value) {
+  return String(value || '').trim()
 }
 
 function beep(frequency, duration = 80) {
@@ -150,6 +157,20 @@ export default function BarcodeScanner({ lockedGroup: lockedGroupProp = '' }) {
     return displayName
   }
 
+  async function loadManualWaybillMap(barcodes) {
+    const uniqueBarcodes = [...new Set(barcodes.map((item) => cleanText(item).toUpperCase()).filter(Boolean))]
+    if (!uniqueBarcodes.length) return new Map()
+
+    const { data, error } = await deliverySupabase
+      .from('delivery_resi_manual')
+      .select(MANUAL_WAYBILL_LOOKUP_COLUMNS)
+      .in('resi_manual', uniqueBarcodes)
+
+    if (error) throw error
+
+    return new Map((data || []).map((row) => [cleanText(row.resi_manual).toUpperCase(), row]))
+  }
+
   async function uploadRows() {
     if (!rows.length) {
       setStatus({ type: 'error', message: 'No data to upload.' })
@@ -161,10 +182,11 @@ export default function BarcodeScanner({ lockedGroup: lockedGroupProp = '' }) {
     const rejected = []
     try {
       const actorName = await getActorDisplayName()
+      const manualWaybillMap = await loadManualWaybillMap(rows.map((row) => row.barcode))
       for (const row of rows) {
         const { data: existing, error: readError } = await deliverySupabase
           .from('delivery_barcode')
-          .select('*')
+          .select(BARCODE_UPLOAD_LOOKUP_COLUMNS)
           .eq('barcode', row.barcode)
           .maybeSingle()
         if (readError) {
@@ -176,6 +198,8 @@ export default function BarcodeScanner({ lockedGroup: lockedGroupProp = '' }) {
           rejected.push(row.barcode)
           continue
         }
+        const manualWaybill = manualWaybillMap.get(row.barcode)
+        const resolvedCourier = existing?.courier || row.courier || cleanText(manualWaybill?.nama_courier)
         const payload = row.phase === 'PACKING'
           ? {
               barcode: row.barcode,
@@ -183,8 +207,8 @@ export default function BarcodeScanner({ lockedGroup: lockedGroupProp = '' }) {
               packing_team: row.info,
               packing_scanned_by: actorName,
               is_packed: true,
-              courier: existing?.courier || row.courier,
-              is_defined: Boolean(existing?.courier || row.courier),
+              courier: resolvedCourier || null,
+              is_defined: Boolean(resolvedCourier),
             }
           : {
               barcode: row.barcode,
@@ -192,8 +216,8 @@ export default function BarcodeScanner({ lockedGroup: lockedGroupProp = '' }) {
               group_order: row.group,
               delivery_scanned_by: actorName,
               is_delivered: true,
-              courier: existing?.courier || row.courier,
-              is_defined: Boolean(existing?.courier || row.courier),
+              courier: resolvedCourier || null,
+              is_defined: Boolean(resolvedCourier),
             }
         const query = existing
           ? deliverySupabase.from('delivery_barcode').update(payload).eq('barcode', row.barcode)
@@ -240,12 +264,34 @@ export default function BarcodeScanner({ lockedGroup: lockedGroupProp = '' }) {
       return
     }
     setBusy(true)
-    const { data, error } = await deliverySupabase.from('delivery_barcode').select('*').eq('barcode', normalized).maybeSingle()
-    setBusy(false)
+    const { data, error } = await deliverySupabase.from('delivery_barcode').select(BARCODE_SEARCH_COLUMNS).eq('barcode', normalized).maybeSingle()
     if (error || !data) {
-      setSearchResult({ found: false, text: error ? error.message : 'Barcode was not found in the database.' })
+      if (error) {
+        setBusy(false)
+        setSearchResult({ found: false, text: error.message })
+        return
+      }
+      const { data: manualRows, error: manualError } = await deliverySupabase
+        .from('delivery_resi_manual')
+        .select(MANUAL_WAYBILL_LOOKUP_COLUMNS)
+        .eq('resi_manual', normalized)
+        .limit(1)
+      const manualWaybill = (manualRows || [])[0]
+      setBusy(false)
+      if (manualWaybill) {
+        const manualLines = [
+          `Courier: ${manualWaybill.nama_courier || '-'}${manualWaybill.layanan_courier ? ` • ${manualWaybill.layanan_courier}` : ''}`,
+          `Recipient: ${manualWaybill.nama || '-'}`,
+          `Phone: ${manualWaybill.no_hp || '-'}`,
+          `Item: ${manualWaybill.barang || '-'}`,
+        ]
+        setSearchResult({ found: true, text: `Manual waybill found: ${manualWaybill.resi_manual}\n\n${manualLines.join('\n')}` })
+        return
+      }
+      setSearchResult({ found: false, text: manualError ? manualError.message : 'Barcode was not found in the database.' })
       return
     }
+    setBusy(false)
     const lines = [
       data.timestamp_packing
         ? `Packed at ${formatDate(data.timestamp_packing, { time: true, short: true })}${data.packing_team ? ` by ${data.packing_team}` : ''}`

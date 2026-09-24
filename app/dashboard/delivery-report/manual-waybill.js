@@ -59,6 +59,11 @@ function formatMoney(value) {
   }).format(Number(value) || 0)
 }
 
+function getManualWaybillIteration(value) {
+  const match = String(value || '').trim().toUpperCase().match(/-(\d+)(?:-[A-Z0-9&\s/]+)?$/)
+  return match ? Number(match[1]) || 0 : 0
+}
+
 function getStoredGroup(row) {
   const fromNote = String(row?.keterangan || '').split(' • ')[0]
   return GROUPS.includes(cleanUpper(row?.group_order)) ? cleanUpper(row.group_order) : GROUPS.includes(cleanUpper(fromNote)) ? cleanUpper(fromNote) : '-'
@@ -120,7 +125,7 @@ export default function ManualWaybill({ lockedGroup: lockedGroupProp = '' }) {
   const calculateNextResi = useCallback(async () => {
     const prefix = manualWaybillPrefix(form.group_order)
     const { data } = await deliverySupabase.from('delivery_resi_manual').select('resi_manual').like('resi_manual', `${prefix}%`)
-    const max = Math.max(0, ...(data || []).map((row) => Number(String(row.resi_manual).split('-').pop()) || 0))
+    const max = Math.max(0, ...(data || []).map((row) => getManualWaybillIteration(row.resi_manual)))
     setNextResi(`${prefix}${max + 1}`)
   }, [form.group_order])
 
