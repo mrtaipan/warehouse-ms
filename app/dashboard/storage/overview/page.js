@@ -726,6 +726,8 @@ const EMPTY_STORAGE_ACCESS = {
   productDirectory: false,
   productDirectoryAdd: false,
   productDirectoryEdit: false,
+  rejectStorageAdd: false,
+  rejectStorageEdit: false,
   warehouseMap: false,
   brandLookup: false,
   categoryManage: false,
@@ -748,8 +750,20 @@ async function fetchCurrentStorageAccess() {
     ? { data: [] }
     : await getRolePermissionCodes(supabase, role)
 
+  const storageFeatureAccess = getStorageFeatureAccess(role, rolePermissions || [], isAdmin)
+  const rejectStorageManage = Boolean(
+    isAdmin ||
+      role === 'admin' ||
+      role === 'qc_coordinator' ||
+      role === 'storage_coordinator' ||
+      storageFeatureAccess.locationAdd ||
+      storageFeatureAccess.locationEdit
+  )
+
   return {
-    ...getStorageFeatureAccess(role, rolePermissions || [], isAdmin),
+    ...storageFeatureAccess,
+    rejectStorageAdd: rejectStorageManage,
+    rejectStorageEdit: rejectStorageManage,
     categoryManage: Boolean(
       isAdmin ||
         role === 'admin' ||
@@ -1102,8 +1116,8 @@ export default function StorageOverviewPage() {
   const canManageProductDirectory = Boolean(storageAccess.productDirectoryAdd || storageAccess.productDirectoryEdit)
   const canShowStorageLocationActions = canEditStorageItem || canTakeStorageItem || canMoveStorageItem
   const canViewRejectStorage = Boolean(storageAccess.location)
-  const canAddRejectStorage = Boolean(storageAccess.locationAdd)
-  const canEditRejectStorage = Boolean(storageAccess.locationEdit || storageAccess.locationAdd)
+  const canAddRejectStorage = Boolean(storageAccess.rejectStorageAdd || storageAccess.locationAdd)
+  const canEditRejectStorage = Boolean(storageAccess.rejectStorageEdit || storageAccess.locationEdit || storageAccess.locationAdd)
   const storageTabItems = useMemo(
     () => [
       storageAccess.location ? ['stock', 'Storage Location'] : null,
@@ -4233,13 +4247,16 @@ export default function StorageOverviewPage() {
                             </button>
                           ))}
                         </div>
+                        <strong style={styles.rejectKoliNumberBadge}>
+                          {rejectForm.koliMode === 'existing' ? rejectForm.koliNumber || '-' : nextRejectKoliNumber}
+                        </strong>
                       </div>
                       {rejectForm.koliMode === 'existing' ? (
                         <select
                           name="koliNumber"
                           value={rejectForm.koliNumber}
                           onChange={handleRejectFormChange}
-                          style={draftRejectKoliOptions.length === 0 ? { ...styles.select, ...styles.controlDisabled } : styles.select}
+                          style={draftRejectKoliOptions.length === 0 ? { ...styles.select, ...styles.rejectKoliSelect, ...styles.controlDisabled } : { ...styles.select, ...styles.rejectKoliSelect }}
                           disabled={draftRejectKoliOptions.length === 0}
                           required
                         >
@@ -4250,9 +4267,7 @@ export default function StorageOverviewPage() {
                             </option>
                           ))}
                         </select>
-                      ) : (
-                        <strong style={styles.selectedLocationValue}>{nextRejectKoliNumber}</strong>
-                      )}
+                      ) : null}
                     </div>
                   )}
                 </div>
@@ -5547,20 +5562,21 @@ const styles = {
     gridColumn: '1 / -1',
   },
   rejectKoliPanel: {
+    width: 'min(100%, 380px)',
     border: '1px solid #dbeafe',
     background: '#eff6ff',
     borderRadius: '12px',
-    padding: '12px 14px',
+    padding: '10px',
     display: 'flex',
     flexDirection: 'column',
-    gap: '8px',
+    gap: '10px',
   },
   rejectKoliPanelHeader: {
     display: 'flex',
     alignItems: 'center',
-    justifyContent: 'flex-start',
-    gap: '10px',
-    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+    gap: '12px',
+    flexWrap: 'nowrap',
   },
   rejectKoliToggleGroup: {
     display: 'inline-grid',
@@ -5587,6 +5603,20 @@ const styles = {
     border: '1px solid #111827',
     background: '#111827',
     color: '#fff',
+  },
+  rejectKoliNumberBadge: {
+    minWidth: '104px',
+    color: '#111827',
+    fontSize: '26px',
+    fontWeight: '900',
+    lineHeight: 1,
+    letterSpacing: 0,
+    textAlign: 'right',
+    whiteSpace: 'nowrap',
+  },
+  rejectKoliSelect: {
+    height: '40px',
+    fontSize: '13px',
   },
   storageTabs: {
     display: 'flex',
