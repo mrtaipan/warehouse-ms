@@ -719,6 +719,44 @@ const styles = {
     fontWeight: '800',
     whiteSpace: 'nowrap',
   },
+  repairFlowPill: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: '6px',
+    minHeight: '28px',
+    padding: '0 10px',
+    borderWidth: '1px',
+    borderStyle: 'solid',
+    borderColor: '#cbd5e1',
+    borderRadius: '999px',
+    background: '#f8fafc',
+    color: '#475569',
+    fontSize: '11px',
+    fontWeight: '850',
+    whiteSpace: 'nowrap',
+  },
+  repairFlowPillDone: {
+    borderColor: '#86efac',
+    background: '#ecfdf5',
+    color: '#166534',
+  },
+  repairFlowPillPartial: {
+    borderColor: '#fdba74',
+    background: '#fff7ed',
+    color: '#9a3412',
+  },
+  repairFlowPillAvailable: {
+    borderColor: '#cbd5e1',
+    background: '#f8fafc',
+    color: '#475569',
+  },
+  repairFlowMeta: {
+    color: 'inherit',
+    fontSize: '10px',
+    fontWeight: '750',
+    opacity: 0.82,
+  },
   dangerButton: {
     height: '40px',
     padding: '0 15px',
@@ -1487,12 +1525,34 @@ function getRejectReasonSizeKey(row) {
   return `${reasonId}|||${size}`
 }
 
-function buildReadOnlyRejectReasonSummaryRows(rows = [], reasonNameById = new Map(), repairableById = new Map(), taskById = new Map()) {
+function getRepairFlowStatus(totalQty, sentQty) {
+  const total = Number(totalQty || 0)
+  const sent = Number(sentQty || 0)
+
+  if (total > 0 && sent >= total) return 'done'
+  if (sent > 0) return 'partial'
+  return 'available'
+}
+
+function getRepairFlowLabel(status) {
+  if (status === 'done') return '✓ Sent'
+  if (status === 'partial') return 'Partial'
+  return 'Available'
+}
+
+function buildReadOnlyRejectReasonSummaryRows(
+  rows = [],
+  reasonNameById = new Map(),
+  repairableById = new Map(),
+  taskById = new Map(),
+  returnedQtyByRejectDetailId = new Map()
+) {
   const grouped = new Map()
 
   rows.forEach((row) => {
     const qty = Number(row?.qty || 0)
     if (qty <= 0) return
+    const returnedQty = Math.min(qty, Number(returnedQtyByRejectDetailId.get(String(row?.id || '')) || 0))
 
     const reasonId = String(row?.rejectReasonId || row?.reject_reason_id || '').trim()
     const reason = getRejectReasonDisplayName(row, reasonNameById)
@@ -1505,12 +1565,14 @@ function buildReadOnlyRejectReasonSummaryRows(rows = [], reasonNameById = new Ma
       qtyB: 0,
       qtyC: 0,
       totalQty: 0,
+      returnedQty: 0,
       sizes: new Map(),
     }
     const grade = String(row?.grade || '').trim().toUpperCase()
     if (grade === 'B') current.qtyB += qty
     if (grade === 'C') current.qtyC += qty
     current.totalQty += qty
+    current.returnedQty += returnedQty
 
     const size = String(row?.size || '-').trim().toUpperCase() || '-'
     const sizeRow = current.sizes.get(size) || {
@@ -1518,11 +1580,13 @@ function buildReadOnlyRejectReasonSummaryRows(rows = [], reasonNameById = new Ma
       qtyB: 0,
       qtyC: 0,
       totalQty: 0,
+      returnedQty: 0,
       dates: new Set(),
     }
     if (grade === 'B') sizeRow.qtyB += qty
     if (grade === 'C') sizeRow.qtyC += qty
     sizeRow.totalQty += qty
+    sizeRow.returnedQty += returnedQty
     const dateValue = getRejectDetailDateValue(row, taskById)
     if (dateValue) sizeRow.dates.add(dateValue)
     current.sizes.set(size, sizeRow)
@@ -1532,7 +1596,15 @@ function buildReadOnlyRejectReasonSummaryRows(rows = [], reasonNameById = new Ma
   return Array.from(grouped.values())
     .map((row) => ({
       ...row,
-      sizes: Array.from(row.sizes.values()).sort((a, b) => compareApparelSize(a.size, b.size)),
+      availableQty: Math.max(0, Number(row.totalQty || 0) - Number(row.returnedQty || 0)),
+      repairStatus: getRepairFlowStatus(row.totalQty, row.returnedQty),
+      sizes: Array.from(row.sizes.values())
+        .map((sizeRow) => ({
+          ...sizeRow,
+          availableQty: Math.max(0, Number(sizeRow.totalQty || 0) - Number(sizeRow.returnedQty || 0)),
+          repairStatus: getRepairFlowStatus(sizeRow.totalQty, sizeRow.returnedQty),
+        }))
+        .sort((a, b) => compareApparelSize(a.size, b.size)),
     }))
     .sort((a, b) => {
       const totalCompare = Number(b.totalQty || 0) - Number(a.totalQty || 0)
@@ -1652,6 +1724,7 @@ export default function QcDashboardPage() {
   const [arklineRejectReasons, setArklineRejectReasons] = useState([])
   const [arklineRejectDetails, setArklineRejectDetails] = useState([])
   const [arklineRejectAdjustments, setArklineRejectAdjustments] = useState([])
+  const [arklineReturnBatchLines, setArklineReturnBatchLines] = useState([])
   const [arklinePoItemSizes, setArklinePoItemSizes] = useState([])
   const [sampleBreakdownRows, setSampleBreakdownRows] = useState([])
   const [qcSampleBreakdownRows, setQcSampleBreakdownRows] = useState([])
@@ -1713,6 +1786,7 @@ export default function QcDashboardPage() {
       { data: rejectReasonRows, error: rejectReasonError },
       { data: rejectDetailRows, error: rejectDetailError },
       { data: rejectAdjustmentRows, error: rejectAdjustmentError },
+      { data: returnBatchLineRows, error: returnBatchLineError },
       { data: poItemSizeRows, error: poItemSizeError },
       { data: sampleBreakdownData, error: sampleBreakdownError },
       { data: qcSampleBreakdownData, error: qcSampleBreakdownError },
@@ -1911,6 +1985,10 @@ export default function QcDashboardPage() {
         .select('*')
         .order('created_at', { ascending: false }),
       supabase
+        .from('arkline_qc_return_batch_lines')
+        .select('id, return_batch_id, reject_detail_id, reject_reason_id, grade, size, qty')
+        .order('created_at', { ascending: false }),
+      supabase
         .from('arkline_po_item_sizes')
         .select('arkline_po_item_id, size, qty')
         .order('size', { ascending: true }),
@@ -1968,6 +2046,7 @@ export default function QcDashboardPage() {
       rejectReasonError ||
       rejectDetailError ||
       rejectAdjustmentError ||
+      returnBatchLineError ||
       poItemSizeError
     ) {
       setError(
@@ -1981,6 +2060,7 @@ export default function QcDashboardPage() {
           rejectReasonError?.message ||
           rejectDetailError?.message ||
           rejectAdjustmentError?.message ||
+          returnBatchLineError?.message ||
           poItemSizeError?.message ||
           'Failed to load QC dashboard.'
       )
@@ -2007,6 +2087,7 @@ export default function QcDashboardPage() {
     setArklineRejectReasons(rejectReasonRows || [])
     setArklineRejectDetails(rejectDetailRows || [])
     setArklineRejectAdjustments(rejectAdjustmentRows || [])
+    setArklineReturnBatchLines(returnBatchLineRows || [])
     setArklinePoItemSizes(poItemSizeRows || [])
     setSupportsSampleSplit(!sampleBreakdownError && !qcSampleBreakdownError)
     setSampleBreakdownRows(sampleBreakdownError ? [] : sampleBreakdownData || [])
@@ -2984,15 +3065,35 @@ export default function QcDashboardPage() {
 
     return [...selectedRejectSortedExistingDetails, ...missingRows]
   }, [selectedRejectAdjustedBaseSummary.qtyB, selectedRejectAdjustedBaseSummary.qtyC, selectedRejectSortedExistingDetails, selectedRejectTaskRows])
+  const selectedRejectReturnedQtyByDetailId = useMemo(() => {
+    const selectedDetailIds = new Set(selectedRejectSortedExistingDetails.map((item) => String(item.id || '')).filter(Boolean))
+    const result = new Map()
+
+    arklineReturnBatchLines.forEach((item) => {
+      const detailId = String(item.reject_detail_id || '')
+      if (!detailId || !selectedDetailIds.has(detailId)) return
+
+      result.set(detailId, Number(result.get(detailId) || 0) + Number(item.qty || 0))
+    })
+
+    return result
+  }, [arklineReturnBatchLines, selectedRejectSortedExistingDetails])
   const readOnlyRejectReasonSummaryRows = useMemo(
     () =>
       buildReadOnlyRejectReasonSummaryRows(
         readOnlyRejectReasonSourceRows,
         selectedRejectReasonNameById,
         selectedRejectReasonRepairableById,
-        selectedRejectTaskById
+        selectedRejectTaskById,
+        selectedRejectReturnedQtyByDetailId
       ),
-    [readOnlyRejectReasonSourceRows, selectedRejectReasonNameById, selectedRejectReasonRepairableById, selectedRejectTaskById]
+    [
+      readOnlyRejectReasonSourceRows,
+      selectedRejectReasonNameById,
+      selectedRejectReasonRepairableById,
+      selectedRejectTaskById,
+      selectedRejectReturnedQtyByDetailId,
+    ]
   )
   const repairableRejectReasonSummaryRows = useMemo(
     () => readOnlyRejectReasonSummaryRows.filter((item) => item.isRepairable),
@@ -4148,8 +4249,29 @@ export default function QcDashboardPage() {
     }
   }
 
+  function getRepairFlowPillStyle(status) {
+    return {
+      ...styles.repairFlowPill,
+      ...(status === 'done' ? styles.repairFlowPillDone : {}),
+      ...(status === 'partial' ? styles.repairFlowPillPartial : {}),
+      ...(status === 'available' ? styles.repairFlowPillAvailable : {}),
+    }
+  }
+
+  function renderRepairFlowStatus(totalQty, sentQty, status) {
+    return (
+      <span style={getRepairFlowPillStyle(status)}>
+        <span>{getRepairFlowLabel(status)}</span>
+        <span style={styles.repairFlowMeta}>
+          {formatNumber(sentQty)} / {formatNumber(totalQty)}
+        </span>
+      </span>
+    )
+  }
+
   function renderReadOnlyRejectSummarySectionRows(title, rows, tone = 'neutral') {
     const totalQty = rows.reduce((sum, item) => sum + Number(item.totalQty || 0), 0)
+    const sentQty = rows.reduce((sum, item) => sum + Number(item.returnedQty || 0), 0)
     const sectionStyle = {
       ...styles.rejectSummarySectionRow,
       ...(tone === 'repairable' ? styles.rejectSummarySectionRowRepairable : {}),
@@ -4159,10 +4281,12 @@ export default function QcDashboardPage() {
     return (
       <>
         <tr>
-          <td style={sectionStyle} colSpan={5}>
+          <td style={sectionStyle} colSpan={7}>
             <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
               <span>{title}</span>
-              <span>{formatNumber(totalQty)} qty</span>
+              <span>
+                {formatNumber(sentQty)} / {formatNumber(totalQty)} sent
+              </span>
             </span>
           </td>
         </tr>
@@ -4176,6 +4300,10 @@ export default function QcDashboardPage() {
                   <td style={{ ...styles.td, ...styles.tdCenter }}>{formatNumber(item.qtyB)}</td>
                   <td style={{ ...styles.td, ...styles.tdCenter }}>{formatNumber(item.qtyC)}</td>
                   <td style={{ ...styles.td, ...styles.tdCenter }}>{formatNumber(item.totalQty)}</td>
+                  <td style={{ ...styles.td, ...styles.tdCenter }}>{formatNumber(item.returnedQty)}</td>
+                  <td style={{ ...styles.td, ...styles.tdCenter }}>
+                    {renderRepairFlowStatus(item.totalQty, item.returnedQty, item.repairStatus)}
+                  </td>
                   <td style={{ ...styles.td, ...styles.tdCenter }}>
                     <button
                       type="button"
@@ -4190,7 +4318,7 @@ export default function QcDashboardPage() {
                 </tr>
                 {expanded ? (
                   <tr>
-                    <td style={styles.rejectSummaryDetailPanel} colSpan={5}>
+                    <td style={styles.rejectSummaryDetailPanel} colSpan={7}>
                       <table style={styles.table}>
                         <thead>
                           <tr>
@@ -4198,6 +4326,9 @@ export default function QcDashboardPage() {
                             <th style={{ ...styles.th, ...styles.thCenter }}>Grade B</th>
                             <th style={{ ...styles.th, ...styles.thCenter }}>Grade C</th>
                             <th style={{ ...styles.th, ...styles.thCenter }}>Total Qty</th>
+                            <th style={{ ...styles.th, ...styles.thCenter }}>Sent</th>
+                            <th style={{ ...styles.th, ...styles.thCenter }}>Available</th>
+                            <th style={{ ...styles.th, ...styles.thCenter }}>Status</th>
                             <th style={styles.th}>QC Source Date</th>
                           </tr>
                         </thead>
@@ -4208,6 +4339,11 @@ export default function QcDashboardPage() {
                               <td style={{ ...styles.td, ...styles.tdCenter }}>{formatNumber(sizeRow.qtyB)}</td>
                               <td style={{ ...styles.td, ...styles.tdCenter }}>{formatNumber(sizeRow.qtyC)}</td>
                               <td style={{ ...styles.td, ...styles.tdCenter }}>{formatNumber(sizeRow.totalQty)}</td>
+                              <td style={{ ...styles.td, ...styles.tdCenter }}>{formatNumber(sizeRow.returnedQty)}</td>
+                              <td style={{ ...styles.td, ...styles.tdCenter }}>{formatNumber(sizeRow.availableQty)}</td>
+                              <td style={{ ...styles.td, ...styles.tdCenter }}>
+                                {renderRepairFlowStatus(sizeRow.totalQty, sizeRow.returnedQty, sizeRow.repairStatus)}
+                              </td>
                               <td style={styles.td}>{Array.from(sizeRow.dates || []).sort().join(', ') || '-'}</td>
                             </tr>
                           ))}
@@ -4221,7 +4357,7 @@ export default function QcDashboardPage() {
           })
         ) : (
           <tr>
-            <td style={styles.td} colSpan={5}>
+            <td style={styles.td} colSpan={7}>
               No {title.toLowerCase()} reject summary.
             </td>
           </tr>
@@ -4241,6 +4377,8 @@ export default function QcDashboardPage() {
                 <th style={{ ...styles.th, ...styles.thCenter }}>Grade B</th>
                 <th style={{ ...styles.th, ...styles.thCenter }}>Grade C</th>
                 <th style={{ ...styles.th, ...styles.thCenter }}>Total Qty</th>
+                <th style={{ ...styles.th, ...styles.thCenter }}>Sent to Re-QC</th>
+                <th style={{ ...styles.th, ...styles.thCenter }}>Status</th>
                 <th style={{ ...styles.th, ...styles.thCenter }}>Detail</th>
               </tr>
             </thead>

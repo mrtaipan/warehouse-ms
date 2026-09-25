@@ -59,6 +59,57 @@ function StatusLegend() {
   )
 }
 
+const RELATED_PAGE_SIZE = 1000
+
+async function fetchAllInboundRows(supabase, tableName, selectColumns, inboundIds, customizeQuery = (query) => query) {
+  if (!inboundIds.length) {
+    return { data: [], error: null }
+  }
+
+  const rows = []
+  let from = 0
+
+  while (true) {
+    const to = from + RELATED_PAGE_SIZE - 1
+    const baseQuery = supabase
+      .from(tableName)
+      .select(selectColumns)
+      .in('inbound_id', inboundIds)
+
+    const { data, error } = await customizeQuery(baseQuery).range(from, to)
+
+    if (error) {
+      return { data: rows, error }
+    }
+
+    rows.push(...(data || []))
+
+    if (!data || data.length < RELATED_PAGE_SIZE) {
+      break
+    }
+
+    from += RELATED_PAGE_SIZE
+  }
+
+  return { data: rows, error: null }
+}
+
+function isBreakdownComplete(row) {
+  return row.breakdown_remaining_qty === 0 && row.pending_koli === 0
+}
+
+function isFullyReturned(row) {
+  return isBreakdownComplete(row) && row.breakdown_qty === 0 && row.pl_return_qty > 0
+}
+
+function isCompleted(row) {
+  return isBreakdownComplete(row) && row.storing_remaining_qty === 0
+}
+
+function needsPackingListWork(row) {
+  return !isFullyReturned(row) && !isCompleted(row)
+}
+
 function buildOverviewRows(confirmRows = [], validationRows = [], breakdownRows = [], returnRows = [], packingRows = []) {
   const validationMap = new Map()
   const receivedQtyByInbound = new Map()
@@ -201,28 +252,22 @@ export default async function PackingListOverviewPage() {
     { data: packingRows, error: packingError },
   ] = hasInboundRows
     ? await Promise.all([
-        supabase
-          .from('pl_receiving')
-          .select('id, inbound_id, source_koli_sequence, received_qty, validated_at')
-          .in('inbound_id', inboundIds)
-          .order('validated_at', { ascending: false })
-          .limit(20000),
-        supabase
-          .from('pl_size_breakdown')
-          .select('id, inbound_id, qty')
-          .in('inbound_id', inboundIds)
-          .limit(20000),
-        supabase
-          .from('warehouse_returns')
-          .select('id, inbound_id, qty')
-          .in('source_phase', ['Packing List', 'packing_list'])
-          .in('inbound_id', inboundIds)
-          .limit(20000),
-        supabase
-          .from('pl_packing_items')
-          .select('id, inbound_id, qty')
-          .in('inbound_id', inboundIds)
-          .limit(20000),
+        fetchAllInboundRows(
+          supabase,
+          'pl_receiving',
+          'id, inbound_id, source_koli_sequence, received_qty, validated_at',
+          inboundIds,
+          (query) => query.order('validated_at', { ascending: false })
+        ),
+        fetchAllInboundRows(supabase, 'pl_size_breakdown', 'id, inbound_id, qty', inboundIds),
+        fetchAllInboundRows(
+          supabase,
+          'warehouse_returns',
+          'id, inbound_id, qty',
+          inboundIds,
+          (query) => query.in('source_phase', ['Packing List', 'packing_list'])
+        ),
+        fetchAllInboundRows(supabase, 'pl_packing_items', 'id, inbound_id, qty', inboundIds),
       ])
     : [
         { data: [], error: null },
@@ -233,6 +278,7 @@ export default async function PackingListOverviewPage() {
 
   const allRows = buildOverviewRows(confirmRows || [], validationRows || [], breakdownRows || [], returnRows || [], packingRows || [])
   const rows = allRows.slice(0, 25)
+  const readyRows = allRows.filter(needsPackingListWork)
   const totalPending = allRows.reduce((sum, row) => sum + row.pending_koli, 0)
   const totalPendingQty = allRows.reduce((sum, row) => sum + row.pending_qty, 0)
 
@@ -248,7 +294,7 @@ export default async function PackingListOverviewPage() {
         <div style={styles.summaryGrid} className={responsiveStyles.summaryGrid}>
           <div style={styles.summaryCard} className={responsiveStyles.summaryCard}>
             <span style={styles.summaryLabel}>GRN Ready</span>
-            <strong style={styles.summaryValue}>{allRows.length}</strong>
+            <strong style={styles.summaryValue}>{readyRows.length}</strong>
           </div>
           <div style={styles.summaryCard} className={responsiveStyles.summaryCard}>
             <span style={styles.summaryLabel}>Total Pending Koli</span>
@@ -289,18 +335,18 @@ export default async function PackingListOverviewPage() {
                 </thead>
                 <tbody>
                   {rows.map((row) => {
-                    const isBreakdownComplete = row.breakdown_remaining_qty === 0 && row.pending_koli === 0
-                    const isFullyReturned = isBreakdownComplete && row.breakdown_qty === 0 && row.pl_return_qty > 0
-                    const isCompleted = isBreakdownComplete && row.storing_remaining_qty === 0
+                    const rowIsBreakdownComplete = isBreakdownComplete(row)
+                    const rowIsFullyReturned = isFullyReturned(row)
+                    const rowIsCompleted = isCompleted(row)
                     return (
                       <tr
                         key={row.inbound_id}
                         style={
-                          isFullyReturned
+                          rowIsFullyReturned
                             ? { ...styles.bodyRow, ...styles.returnedRow }
-                            : isCompleted
+                            : rowIsCompleted
                             ? { ...styles.bodyRow, ...styles.completedRow }
-                            : isBreakdownComplete
+                            : rowIsBreakdownComplete
                               ? { ...styles.bodyRow, ...styles.readyRow }
                               : styles.bodyRow
                         }
