@@ -59,6 +59,11 @@ function isSchemaColumnError(error) {
   )
 }
 
+function getRejectStorageSchemaMessage(error) {
+  const detail = String(error?.message || error?.details || '').trim()
+  return `Reject Storage schema is not fully updated. Please run supabase/warehouse_reject_storage.sql again.${detail ? ` Detail: ${detail}` : ''}`
+}
+
 function splitSkuItemName(value) {
   const text = String(value || '').trim()
   const separatorIndex = text.indexOf('|')
@@ -2443,7 +2448,7 @@ export default function StorageOverviewPage() {
     } catch (submitError) {
       setRejectModalError(
         isSchemaColumnError(submitError)
-          ? 'Reject Storage table is not ready yet. Please run the reject storage SQL first.'
+          ? getRejectStorageSchemaMessage(submitError)
           : submitError.message || 'Failed to save reject koli.'
       )
     } finally {
@@ -2489,7 +2494,7 @@ export default function StorageOverviewPage() {
     } catch (postError) {
       setError(
         isSchemaColumnError(postError)
-          ? 'Reject Storage table is not ready yet. Please run the reject storage SQL first.'
+          ? getRejectStorageSchemaMessage(postError)
           : postError.message || 'Failed to post reject koli.'
       )
     } finally {
