@@ -1559,6 +1559,24 @@ const styles = {
     flexDirection: 'column',
     gap: '14px',
   },
+  printOptionPanel: {
+    padding: '12px',
+    borderWidth: '1px',
+    borderStyle: 'solid',
+    borderColor: '#e2e8f0',
+    borderRadius: '14px',
+    background: '#f8fafc',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '10px',
+  },
+  printOptionRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '10px',
+    flexWrap: 'nowrap',
+    overflowX: 'auto',
+  },
   printChoiceGrid: {
     display: 'grid',
     gridTemplateColumns: '1fr 1fr',
@@ -2671,6 +2689,7 @@ function drawPdfProductTable(doc, config) {
     onPageBreak,
     picKey = 'data_pic',
     picLabel = 'PIC Data',
+    showPic = true,
   } = config
   const pageHeight = doc.internal.pageSize.getHeight()
   const pageBottom = pageHeight - margin - 7
@@ -2678,9 +2697,9 @@ function drawPdfProductTable(doc, config) {
     { key: 'pl_id', label: 'PL ID', width: 15, merged: true, align: 'center' },
     { key: 'item_name', label: 'Brand / Model / Variant / Detail', width: 68, merged: true },
     { key: 'size_label', label: 'Size', width: 15, align: 'center' },
-    { key: 'qty', label: 'Qty', width: 12, align: 'center' },
+    { key: 'qty', label: 'Qty', width: showPic ? 12 : 46, align: showPic ? 'center' : 'left' },
     { key: 'total_qty', label: 'Total', width: 14, merged: true, align: 'center', accent: true },
-    { key: picKey, label: picLabel, width: 34, align: 'center', fontSize: 5.4, picCell: true },
+    ...(showPic ? [{ key: picKey, label: picLabel, width: 34, align: 'center', fontSize: 5.4, picCell: true }] : []),
     { key: 'photo_url', label: 'Photo', width: 32, merged: true, image: true },
   ]
   const tableWidth = columns.reduce((sum, column) => sum + column.width, 0)
@@ -2768,6 +2787,7 @@ function drawPdfProductTable(doc, config) {
     )
   }
   const getDetailRowHeight = (row) => {
+    if (!showPic) return 8.5
     const picWidth = Number(picColumn?.width || 34) - 4
     const picFontSize = Number(picColumn?.fontSize || 5.4)
     const picLines = getPdfPicCellLines(doc, row[picKey], picWidth, picFontSize)
@@ -3461,6 +3481,7 @@ export default function PackingListSizeBreakdownPage() {
   const [printType, setPrintType] = useState('packing_list')
   const [printRange, setPrintRange] = useState('all')
   const [printSectionKey, setPrintSectionKey] = useState('')
+  const [printPicMode, setPrintPicMode] = useState('with_pic')
   const [selectedKoliPrintKeys, setSelectedKoliPrintKeys] = useState([])
   const [modelFilters, setModelFilters] = useState({
     brand: '',
@@ -5130,10 +5151,24 @@ export default function PackingListSizeBreakdownPage() {
   }
 
   function buildPrintSections() {
+    const printableCards = (sectionCards = []) => sectionCards.filter((card) => {
+      const receivingQty = Number(card.receiving_qty || 0)
+      if (receivingQty <= 0) return true
+
+      const rows = buildRowsForCard(card)
+      const breakdownQty = getPlRowsBreakdownQty(rows)
+      const returnQty = getPlRowsReturnQty(rows)
+      const isFullyReturned = breakdownQty === 0 && returnQty >= receivingQty
+
+      return !isFullyReturned
+    })
+
     if (pageMode === 'multipage') {
       return visibleMultipageGroups
         .map((group) => {
-          const sectionCards = group.cards.filter((card) => matchesModelFilter(card, effectiveModelFilters))
+          const sectionCards = printableCards(
+            group.cards.filter((card) => matchesModelFilter(card, effectiveModelFilters))
+          )
           return {
             key: group.key,
             title: group.print_label,
@@ -5153,7 +5188,7 @@ export default function PackingListSizeBreakdownPage() {
         grn_number: initialGrn || '-',
         brand_name: modelFilters.brand || (displayCards.length === 1 ? displayCards[0]?.brand_name : 'ALL'),
         category_path_label: modelFilters.categoryPath || (displayCards.length === 1 ? getCategoryPathLabel(displayCards[0]) : 'ALL'),
-        cards: displayCards,
+        cards: printableCards(displayCards),
       },
     ]
   }
@@ -5362,6 +5397,7 @@ export default function PackingListSizeBreakdownPage() {
   async function handlePrintPdf(options = {}) {
     if (printingPdf) return
 
+    const showPrintPic = options.picMode !== 'without_pic'
     const sections = buildPrintSections().filter((section) => !options.sectionKey || section.key === options.sectionKey)
     if (!sections.length || !sections.some((section) => section.cards.length)) {
       setError('No Packing List data to print.')
@@ -5661,6 +5697,7 @@ export default function PackingListSizeBreakdownPage() {
               onPageBreak: drawContinuationHeader,
               picKey: 'packing_pic',
               picLabel: 'PIC Koli',
+              showPic: showPrintPic,
             })
           }
           groups.forEach((group) => {
@@ -5672,6 +5709,7 @@ export default function PackingListSizeBreakdownPage() {
               onPageBreak: drawContinuationHeader,
               picKey: 'packing_pic',
               picLabel: 'PIC Koli',
+              showPic: showPrintPic,
             })
           })
           drawPhotoDetails()
@@ -5691,6 +5729,7 @@ export default function PackingListSizeBreakdownPage() {
                 onPageBreak: drawContinuationHeader,
                 picKey: 'data_pic',
                 picLabel: 'PIC Data',
+                showPic: showPrintPic,
               })
             }
             if (ownRows.length) {
@@ -5702,6 +5741,7 @@ export default function PackingListSizeBreakdownPage() {
                 onPageBreak: drawContinuationHeader,
                 picKey: 'data_pic',
                 picLabel: 'PIC Data',
+                showPic: showPrintPic,
               })
             }
           } else {
@@ -5713,6 +5753,7 @@ export default function PackingListSizeBreakdownPage() {
               onPageBreak: drawContinuationHeader,
               picKey: 'data_pic',
               picLabel: 'PIC Data',
+              showPic: showPrintPic,
             })
           }
           drawPhotoDetails()
@@ -6425,6 +6466,7 @@ export default function PackingListSizeBreakdownPage() {
     if (!canPrintPackingListFromView) return
     await handlePrintPdf({
       sectionKey: pageMode === 'multipage' && printRange === 'certain' ? printSectionKey : '',
+      picMode: printPicMode,
     })
     setPrintModalOpen(false)
   }
@@ -7526,50 +7568,76 @@ export default function PackingListSizeBreakdownPage() {
 
               {printType === 'packing_list' ? (
                 <>
-                  {pageMode === 'multipage' ? (
-                    <div style={styles.segmentedToggle} role="tablist" aria-label="Packing List print range">
-                      <button
-                        type="button"
-                        onClick={() => setPrintRange('all')}
-                        style={{
-                          ...styles.segmentedButton,
-                          ...(printRange === 'all' ? styles.segmentedButtonActive : {}),
-                        }}
-                      >
-                        Print All
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setPrintRange('certain')
-                          setPrintSectionKey((current) => current || printableSectionOptions[0]?.key || '')
-                        }}
-                        style={{
-                          ...styles.segmentedButton,
-                          ...(printRange === 'certain' ? styles.segmentedButtonActive : {}),
-                        }}
-                      >
-                        Print Certain Packing List
-                      </button>
+                  <div style={styles.printOptionPanel}>
+                    <div style={styles.printOptionRow}>
+                      <div style={styles.segmentedToggle} role="tablist" aria-label="Packing List PIC visibility">
+                        <button
+                          type="button"
+                          onClick={() => setPrintPicMode('with_pic')}
+                          style={{
+                            ...styles.segmentedButton,
+                            ...(printPicMode === 'with_pic' ? styles.segmentedButtonActive : {}),
+                          }}
+                        >
+                          With PIC
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setPrintPicMode('without_pic')}
+                          style={{
+                            ...styles.segmentedButton,
+                            ...(printPicMode === 'without_pic' ? styles.segmentedButtonActive : {}),
+                          }}
+                        >
+                          Without PIC
+                        </button>
+                      </div>
+                      {pageMode === 'multipage' ? (
+                        <div style={styles.segmentedToggle} role="tablist" aria-label="Packing List print range">
+                          <button
+                            type="button"
+                            onClick={() => setPrintRange('all')}
+                            style={{
+                              ...styles.segmentedButton,
+                              ...(printRange === 'all' ? styles.segmentedButtonActive : {}),
+                            }}
+                          >
+                            Print All
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setPrintRange('certain')
+                              setPrintSectionKey((current) => current || printableSectionOptions[0]?.key || '')
+                            }}
+                            style={{
+                              ...styles.segmentedButton,
+                              ...(printRange === 'certain' ? styles.segmentedButtonActive : {}),
+                            }}
+                          >
+                            Print Certain PL
+                          </button>
+                        </div>
+                      ) : null}
                     </div>
-                  ) : null}
-                  {pageMode === 'multipage' && printRange === 'certain' ? (
-                    <label style={styles.field}>
-                      <span style={styles.label}>Packing List Page</span>
-                      <select
-                        value={printSectionKey || printableSectionOptions[0]?.key || ''}
-                        onChange={(event) => setPrintSectionKey(event.target.value)}
-                        style={styles.input}
-                        disabled={!printableSectionOptions.length}
-                      >
-                        {printableSectionOptions.map((section) => (
-                          <option key={section.key} value={section.key}>
-                            {section.label}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                  ) : null}
+                    {pageMode === 'multipage' && printRange === 'certain' ? (
+                      <label style={styles.field}>
+                        <span style={styles.label}>Packing List Page</span>
+                        <select
+                          value={printSectionKey || printableSectionOptions[0]?.key || ''}
+                          onChange={(event) => setPrintSectionKey(event.target.value)}
+                          style={styles.input}
+                          disabled={!printableSectionOptions.length}
+                        >
+                          {printableSectionOptions.map((section) => (
+                            <option key={section.key} value={section.key}>
+                              {section.label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    ) : null}
+                  </div>
                   {!hasFilteredPrintData ? <p style={styles.errorText}>No Packing List data matches the current filters.</p> : null}
                 </>
               ) : (
