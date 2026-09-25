@@ -7,7 +7,7 @@ create table if not exists public.warehouse_reject_storage (
   size text not null,
   category_id bigint not null references public.dir_categories(id),
   sub_category_id bigint not null references public.dir_categories(id),
-  item_type_id bigint not null references public.dir_categories(id),
+  item_type_id bigint null references public.dir_categories(id),
   qty integer not null,
   grade text not null,
   reject_note text not null,
@@ -22,6 +22,9 @@ create table if not exists public.warehouse_reject_storage (
 
 alter table public.warehouse_reject_storage
   alter column koli_number set default ('R-' || lpad(nextval('public.warehouse_reject_storage_koli_seq')::text, 3, '0'));
+
+alter table public.warehouse_reject_storage
+  alter column item_type_id drop not null;
 
 alter table public.warehouse_reject_storage
   drop constraint if exists warehouse_reject_storage_koli_number_key;

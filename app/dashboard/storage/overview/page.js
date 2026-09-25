@@ -1,7 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { createClient } from '@/utils/supabase/browser'
 import { ADMIN_EMAIL, getRoleLockedGroup, getStorageFeatureAccess, resolveRole } from '@/utils/permissions'
@@ -34,6 +34,19 @@ const letterSizeRanks = new Map(
 
 function normalizeFilterValue(value) {
   return String(value || '').trim().toUpperCase()
+}
+
+function uppercaseInputValue(value) {
+  return String(value || '').toUpperCase()
+}
+
+function escapeHtml(value = '') {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
 }
 
 function isSchemaColumnError(error) {
@@ -125,6 +138,16 @@ function isRootCategory(item = {}, categoryById = new Map()) {
 
 function getStorageCategoryPath(entry = {}, categoryById = new Map()) {
   return getCategoryPath(entry.category || categoryById.get(Number(entry.category_id || 0)), categoryById)
+}
+
+function getRejectCategoryLabel(entry = {}, categoryById = new Map()) {
+  const subCategory = categoryById.get(Number(entry.sub_category_id || 0))
+  const itemType = categoryById.get(Number(entry.item_type_id || 0))
+
+  return [getCategoryDisplayName(itemType), getCategoryDisplayName(subCategory)]
+    .filter((value) => value && value !== '-')
+    .join(' ')
+    .trim() || '-'
 }
 
 function createEmptyRejectForm() {
@@ -851,6 +874,8 @@ export default function StorageOverviewPage() {
   const [queuePage, setQueuePage] = useState(1)
   const [rejectPage, setRejectPage] = useState(1)
   const [selectedCategoryRowIds, setSelectedCategoryRowIds] = useState([])
+  const [selectedRejectKoliNumbers, setSelectedRejectKoliNumbers] = useState([])
+  const [expandedRejectKoliNumbers, setExpandedRejectKoliNumbers] = useState([])
   const [productSearch, setProductSearch] = useState(initialProductSearch)
   const [brandLookupMode, setBrandLookupMode] = useState('brand')
   const [brandLookupSearch, setBrandLookupSearch] = useState('')
@@ -1138,6 +1163,7 @@ export default function StorageOverviewPage() {
   const canViewRejectStorage = Boolean(storageAccess.location)
   const canAddRejectStorage = Boolean(storageAccess.rejectStorageAdd || storageAccess.locationAdd)
   const canEditRejectStorage = Boolean(storageAccess.rejectStorageEdit || storageAccess.locationEdit || storageAccess.locationAdd)
+  const rejectToolbarButtonCount = (canAddRejectStorage ? 1 : 0) + (canEditRejectStorage ? 1 : 0) + 2
   const storageTabItems = useMemo(
     () => [
       storageAccess.location ? ['stock', 'Storage Location'] : null,
@@ -1805,6 +1831,51 @@ export default function StorageOverviewPage() {
         .some((value) => value.includes(normalizedProductSearch))
     })
     .sort((left, right) => new Date(right.created_at || 0).getTime() - new Date(left.created_at || 0).getTime())
+  const rejectKoliGroups = useMemo(() => {
+    const groupedRows = new Map()
+
+    filteredRejectRows.forEach((entry) => {
+      const koliNumber = normalizeFilterValue(entry.koli_number) || '-'
+      const current = groupedRows.get(koliNumber) || []
+      current.push(entry)
+      groupedRows.set(koliNumber, current)
+    })
+
+    return Array.from(groupedRows.entries())
+      .map(([koliNumber, rows]) => {
+        const sortedRows = [...rows].sort((left, right) => new Date(right.created_at || 0).getTime() - new Date(left.created_at || 0).getTime())
+        const statusSet = new Set(sortedRows.map((entry) => normalizeRejectStatus(entry.status)))
+        const status = statusSet.size === 1 ? Array.from(statusSet)[0] : 'MIXED'
+        const latestRow = sortedRows[0] || {}
+
+        return {
+          koliNumber,
+          rows: sortedRows,
+          totalQty: sortedRows.reduce((sum, entry) => sum + Number(entry.qty || 0), 0),
+          status,
+          createdAt: latestRow.created_at || '',
+          createdBy: latestRow.created_by || '',
+        }
+      })
+      .sort((left, right) => new Date(right.createdAt || 0).getTime() - new Date(left.createdAt || 0).getTime() || naturalSort.compare(left.koliNumber, right.koliNumber))
+  }, [filteredRejectRows])
+  const selectedRejectKoliSet = useMemo(
+    () => new Set(selectedRejectKoliNumbers.map((value) => normalizeFilterValue(value)).filter(Boolean)),
+    [selectedRejectKoliNumbers]
+  )
+  const expandedRejectKoliSet = useMemo(
+    () => new Set(expandedRejectKoliNumbers.map((value) => normalizeFilterValue(value)).filter(Boolean)),
+    [expandedRejectKoliNumbers]
+  )
+  const selectedRejectKoliGroups = rejectKoliGroups.filter((group) => selectedRejectKoliSet.has(group.koliNumber))
+  const totalRejectQty = rejectKoliGroups.reduce((sum, group) => sum + Number(group.totalQty || 0), 0)
+  const canPostSelectedRejectKoli =
+    canEditRejectStorage &&
+    selectedRejectKoliGroups.length > 0 &&
+    selectedRejectKoliGroups.every((group) => group.status === 'DRAFT')
+  const canPrintSelectedRejectKoli =
+    selectedRejectKoliGroups.length > 0 &&
+    selectedRejectKoliGroups.every((group) => group.status === 'POSTED')
   const draftRejectKoliOptions = Array.from(
     new Set(
       rejectStorageRows
@@ -1849,11 +1920,15 @@ export default function StorageOverviewPage() {
   const queuePageStartIndex = (safeQueuePage - 1) * QUEUE_PAGE_SIZE
   const queuePageEndIndex = Math.min(queuePageStartIndex + QUEUE_PAGE_SIZE, filteredQueueRows.length)
   const visibleQueueRows = filteredQueueRows.slice(queuePageStartIndex, queuePageStartIndex + QUEUE_PAGE_SIZE)
-  const totalRejectPages = Math.max(1, Math.ceil(filteredRejectRows.length / REJECT_PAGE_SIZE))
+  const totalRejectPages = Math.max(1, Math.ceil(rejectKoliGroups.length / REJECT_PAGE_SIZE))
   const safeRejectPage = Math.min(rejectPage, totalRejectPages)
   const rejectPageStartIndex = (safeRejectPage - 1) * REJECT_PAGE_SIZE
-  const rejectPageEndIndex = Math.min(rejectPageStartIndex + REJECT_PAGE_SIZE, filteredRejectRows.length)
-  const visibleRejectRows = filteredRejectRows.slice(rejectPageStartIndex, rejectPageStartIndex + REJECT_PAGE_SIZE)
+  const rejectPageEndIndex = Math.min(rejectPageStartIndex + REJECT_PAGE_SIZE, rejectKoliGroups.length)
+  const visibleRejectGroups = rejectKoliGroups.slice(rejectPageStartIndex, rejectPageStartIndex + REJECT_PAGE_SIZE)
+  const visibleRejectKoliNumbers = visibleRejectGroups.map((group) => group.koliNumber)
+  const allVisibleRejectKoliSelected =
+    visibleRejectKoliNumbers.length > 0 &&
+    visibleRejectKoliNumbers.every((koliNumber) => selectedRejectKoliSet.has(koliNumber))
   const visibleHistoryRows = filteredHistoryRows.slice(0, 25)
   const filteredQty = filteredRows.reduce((sum, entry) => sum + Number(entry.qty || 0), 0)
 
@@ -2031,6 +2106,56 @@ export default function StorageOverviewPage() {
   function clearRejectFilters() {
     setProductSearch('')
     setRejectPage(1)
+  }
+
+  function toggleRejectKoliSelection(koliNumber, checked) {
+    const normalizedKoliNumber = normalizeFilterValue(koliNumber)
+    if (!normalizedKoliNumber) return
+
+    setSelectedRejectKoliNumbers((current) => {
+      const currentSet = new Set(current.map((value) => normalizeFilterValue(value)).filter(Boolean))
+
+      if (checked) {
+        currentSet.add(normalizedKoliNumber)
+      } else {
+        currentSet.delete(normalizedKoliNumber)
+      }
+
+      return Array.from(currentSet)
+    })
+  }
+
+  function toggleVisibleRejectKoliSelection(checked) {
+    setSelectedRejectKoliNumbers((current) => {
+      const currentSet = new Set(current.map((value) => normalizeFilterValue(value)).filter(Boolean))
+
+      visibleRejectKoliNumbers.forEach((koliNumber) => {
+        if (checked) {
+          currentSet.add(koliNumber)
+        } else {
+          currentSet.delete(koliNumber)
+        }
+      })
+
+      return Array.from(currentSet)
+    })
+  }
+
+  function toggleRejectKoliExpanded(koliNumber) {
+    const normalizedKoliNumber = normalizeFilterValue(koliNumber)
+    if (!normalizedKoliNumber) return
+
+    setExpandedRejectKoliNumbers((current) => {
+      const currentSet = new Set(current.map((value) => normalizeFilterValue(value)).filter(Boolean))
+
+      if (currentSet.has(normalizedKoliNumber)) {
+        currentSet.delete(normalizedKoliNumber)
+      } else {
+        currentSet.add(normalizedKoliNumber)
+      }
+
+      return Array.from(currentSet)
+    })
   }
 
   function clearFilters() {
@@ -2232,9 +2357,11 @@ export default function StorageOverviewPage() {
 
     setRejectForm((prev) => ({
       ...prev,
-      [name]: name === 'grade' || name === 'productName' || name === 'size'
+      [name]: name === 'grade'
         ? normalizeFilterValue(value)
-        : value,
+        : name === 'productName' || name === 'size'
+          ? uppercaseInputValue(value)
+          : value,
     }))
   }
 
@@ -2252,9 +2379,10 @@ export default function StorageOverviewPage() {
     const grade = normalizeFilterValue(rejectForm.grade)
     const shouldUseExistingKoli = !rejectModalEntry && rejectForm.koliMode === 'existing'
     const existingKoliNumber = normalizeFilterValue(rejectForm.koliNumber)
+    const itemTypeRequired = rejectItemTypeOptions.length > 0
 
-    if (!productName || !size || !rejectForm.categoryId || !rejectForm.subCategoryId || !rejectForm.itemTypeId || !qty || qty <= 0 || !REJECT_GRADES.includes(grade)) {
-      setRejectModalError('Please complete product, size, category, sub category, item type, qty, and grade.')
+    if (!productName || !size || !rejectForm.categoryId || !rejectForm.subCategoryId || (itemTypeRequired && !rejectForm.itemTypeId) || !qty || qty <= 0 || !REJECT_GRADES.includes(grade)) {
+      setRejectModalError(`Please complete product, size, category, sub category${itemTypeRequired ? ', item type' : ''}, qty, and grade.`)
       return
     }
 
@@ -2273,7 +2401,7 @@ export default function StorageOverviewPage() {
         size: size.toUpperCase(),
         category_id: Number(rejectForm.categoryId),
         sub_category_id: Number(rejectForm.subCategoryId),
-        item_type_id: Number(rejectForm.itemTypeId),
+        item_type_id: rejectForm.itemTypeId ? Number(rejectForm.itemTypeId) : null,
         qty,
         grade,
         reject_note: String(rejectForm.rejectNote || '').trim(),
@@ -2323,8 +2451,12 @@ export default function StorageOverviewPage() {
     }
   }
 
-  async function handleRejectPost(row) {
-    if (!canEditRejectStorage || !row?.id || normalizeRejectStatus(row.status) !== 'DRAFT') return
+  async function handleRejectPost(koliNumbers) {
+    const targetKoliNumbers = (Array.isArray(koliNumbers) ? koliNumbers : [koliNumbers])
+      .map((value) => normalizeFilterValue(value?.koliNumber || value?.koli_number || value))
+      .filter(Boolean)
+
+    if (!canEditRejectStorage || targetKoliNumbers.length === 0) return
 
     setSavingReject(true)
     setError('')
@@ -2342,7 +2474,7 @@ export default function StorageOverviewPage() {
           updated_at: postedAt,
           updated_by: currentEmail,
         })
-        .eq('koli_number', row.koli_number)
+        .in('koli_number', targetKoliNumbers)
         .eq('status', 'DRAFT')
         .select(REJECT_STORAGE_SELECT_COLUMNS)
 
@@ -2352,7 +2484,8 @@ export default function StorageOverviewPage() {
 
       const updatedRowsById = new Map((data || []).map((entry) => [String(entry.id), entry]))
       setRejectStorageRows((currentRows) => currentRows.map((entry) => updatedRowsById.get(String(entry.id)) || entry))
-      setSuccess(`${row.koli_number || 'Reject koli'} posted successfully.`)
+      setSelectedRejectKoliNumbers([])
+      setSuccess(`${targetKoliNumbers.length} reject koli posted successfully.`)
     } catch (postError) {
       setError(
         isSchemaColumnError(postError)
@@ -2362,6 +2495,97 @@ export default function StorageOverviewPage() {
     } finally {
       setSavingReject(false)
     }
+  }
+
+  function handleSelectedRejectPost() {
+    if (!canPostSelectedRejectKoli || savingReject) return
+
+    handleRejectPost(selectedRejectKoliGroups.map((group) => group.koliNumber))
+  }
+
+  function handleRejectPrintSelected() {
+    if (!canPrintSelectedRejectKoli || typeof window === 'undefined') return
+
+    const printedAt = new Date().toLocaleString('en-GB')
+    const sections = selectedRejectKoliGroups.map((group) => {
+      const rows = group.rows.map((entry) => {
+        const categoryLabel = getRejectCategoryLabel(entry, categoryById)
+
+        return `
+          <tr>
+            <td>${escapeHtml(entry.product_name || '-')}</td>
+            <td>${escapeHtml(entry.size || '-')}</td>
+            <td>${escapeHtml(categoryLabel || '-')}</td>
+            <td>${escapeHtml(entry.grade || '-')}</td>
+            <td class="number">${Number(entry.qty || 0)}</td>
+            <td>${escapeHtml(entry.reject_note || '-')}</td>
+          </tr>
+        `
+      }).join('')
+
+      return `
+        <section class="koli">
+          <header>
+            <div>
+              <span>Reject Koli</span>
+              <h1>${escapeHtml(group.koliNumber)}</h1>
+            </div>
+            <strong>${group.totalQty} pcs</strong>
+          </header>
+          <table>
+            <thead>
+              <tr>
+                <th class="product">Product</th>
+                <th>Size</th>
+                <th>Category</th>
+                <th>Grade</th>
+                <th>Qty</th>
+                <th>Reject Note</th>
+              </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </section>
+      `
+    }).join('')
+
+    const printWindow = window.open('', '_blank', 'width=900,height=700')
+    if (!printWindow) {
+      setError('Print window was blocked by the browser.')
+      return
+    }
+
+    printWindow.document.write(`
+      <!doctype html>
+      <html>
+        <head>
+          <title>Reject Storage Print</title>
+          <style>
+            * { box-sizing: border-box; }
+            body { margin: 24px; color: #111827; font-family: Arial, sans-serif; }
+            .print-meta { margin-bottom: 18px; color: #64748b; font-size: 12px; font-weight: 700; }
+            .koli { page-break-after: always; border: 1px solid #dbe4ef; border-radius: 12px; padding: 18px; }
+            .koli:last-child { page-break-after: auto; }
+            header { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; margin-bottom: 16px; }
+            span { display: block; color: #64748b; font-size: 11px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+            h1 { margin: 4px 0 0; font-size: 34px; line-height: 1; }
+            strong { font-size: 24px; }
+            table { width: 100%; border-collapse: collapse; }
+            th, td { padding: 10px; border-bottom: 1px solid #e5e7eb; text-align: left; vertical-align: top; font-size: 12px; }
+            th { background: #f8fafc; font-weight: 800; }
+            .product { width: 42%; }
+            .number { text-align: right; font-weight: 800; }
+          </style>
+        </head>
+        <body>
+          <div class="print-meta">Printed ${escapeHtml(printedAt)}</div>
+          ${sections}
+        </body>
+      </html>
+    `)
+    printWindow.document.close()
+    printWindow.focus()
+    printWindow.print()
   }
 
   function openRegisterModal() {
@@ -3439,15 +3663,11 @@ export default function StorageOverviewPage() {
                 : styles.stockSearchToolbar
               : {}),
             ...(visibleListMode === 'reject-storage'
-              ? canAddRejectStorage
-                ? styles.rejectSearchToolbarWithActions
-                : styles.rejectSearchToolbar
+              ? { gridTemplateColumns: `minmax(320px, 1fr) repeat(${rejectToolbarButtonCount}, 44px)` }
               : {}),
             ...(isCompactLayout
               ? visibleListMode === 'reject-storage'
-                ? canAddRejectStorage
-                  ? styles.rejectSearchToolbarCompactWithActions
-                  : styles.rejectSearchToolbarCompact
+                ? { gridTemplateColumns: `minmax(0, 1fr) repeat(${rejectToolbarButtonCount}, 44px)` }
                 : styles.searchToolbarCompact
               : {}),
           }}
@@ -3549,6 +3769,40 @@ export default function StorageOverviewPage() {
                 <svg viewBox="0 0 24 24" style={styles.resetIcon} aria-hidden="true">
                   <path d="M12 5v14" />
                   <path d="M5 12h14" />
+                </svg>
+              </button>
+            </div>
+          ) : null}
+          {visibleListMode === 'reject-storage' && canEditRejectStorage ? (
+            <div style={styles.rejectToolbarActionField}>
+              <button
+                type="button"
+                onClick={handleSelectedRejectPost}
+                style={canPostSelectedRejectKoli && !savingReject ? styles.iconAddButton : { ...styles.iconAddButton, ...styles.iconToolbarButtonDisabled }}
+                title="Post Selected Reject Koli"
+                aria-label="Post Selected Reject Koli"
+                disabled={!canPostSelectedRejectKoli || savingReject}
+              >
+                <svg viewBox="0 0 24 24" style={styles.resetIcon} aria-hidden="true">
+                  <path d="M20 6 9 17l-5-5" />
+                </svg>
+              </button>
+            </div>
+          ) : null}
+          {visibleListMode === 'reject-storage' ? (
+            <div style={styles.rejectToolbarActionField}>
+              <button
+                type="button"
+                onClick={handleRejectPrintSelected}
+                style={canPrintSelectedRejectKoli ? styles.iconResetButton : styles.iconResetButtonDisabled}
+                title="Print Selected Reject Koli"
+                aria-label="Print Selected Reject Koli"
+                disabled={!canPrintSelectedRejectKoli}
+              >
+                <svg viewBox="0 0 24 24" style={styles.resetIcon} aria-hidden="true">
+                  <path d="M6 9V2h12v7" />
+                  <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2" />
+                  <path d="M6 14h12v8H6z" />
                 </svg>
               </button>
             </div>
@@ -3880,9 +4134,12 @@ export default function StorageOverviewPage() {
           </div>
         ) : visibleListMode === 'reject-storage' ? (
           <div style={styles.rejectFooterToolbar}>
-            <p style={{ ...styles.summary, ...styles.rejectSummary }}>
-              Showing {filteredRejectRows.length ? rejectPageStartIndex + 1 : 0}-{rejectPageEndIndex} of {filteredRejectRows.length} reject
-            </p>
+            <div style={styles.rejectFooterSummary}>
+              <p style={{ ...styles.summary, ...styles.rejectSummary }}>
+                Showing {rejectKoliGroups.length ? rejectPageStartIndex + 1 : 0}-{rejectPageEndIndex} of {rejectKoliGroups.length} Koli
+              </p>
+              <span style={styles.rejectQtySummary}>Total Qty Reject: {totalRejectQty}</span>
+            </div>
             <div style={styles.paginationControls}>
               <button
                 type="button"
@@ -4077,7 +4334,7 @@ export default function StorageOverviewPage() {
           </div>
         ) : null}
 
-        {visibleListMode === 'reject-storage' ? filteredRejectRows.length === 0 ? (
+        {visibleListMode === 'reject-storage' ? rejectKoliGroups.length === 0 ? (
           <div style={styles.emptyState}>
             <p style={{ margin: 0 }}>No reject koli found.</p>
           </div>
@@ -4086,85 +4343,120 @@ export default function StorageOverviewPage() {
             <table style={styles.table}>
               <thead>
                 <tr>
+                  <th style={{ ...styles.th, ...styles.selectTh }}>
+                    <input
+                      type="checkbox"
+                      checked={allVisibleRejectKoliSelected}
+                      onChange={(event) => toggleVisibleRejectKoliSelection(event.target.checked)}
+                      style={styles.rowCheckbox}
+                      aria-label="Select visible reject koli"
+                    />
+                  </th>
                   <th style={styles.th}>Koli Number</th>
-                  <th style={styles.th}>Product</th>
-                  <th style={styles.th}>Size</th>
-                  <th style={styles.th}>Category</th>
-                  <th style={styles.th}>Qty</th>
-                  <th style={styles.th}>Grade</th>
-                  <th style={styles.th}>Reject Note</th>
+                  <th style={styles.th}>Items</th>
+                  <th style={styles.th}>Total Qty</th>
                   <th style={styles.th}>Status</th>
                   <th style={styles.th}>Created</th>
-                  {canEditRejectStorage ? <th style={{ ...styles.th, ...styles.actionTh }}>Action</th> : null}
                 </tr>
               </thead>
               <tbody>
-                {visibleRejectRows.map((entry) => {
-                  const status = normalizeRejectStatus(entry.status)
-                  const isDraft = status === 'DRAFT'
-                  const category = categoryById.get(Number(entry.category_id || 0))
-                  const subCategory = categoryById.get(Number(entry.sub_category_id || 0))
-                  const itemType = categoryById.get(Number(entry.item_type_id || 0))
+                {visibleRejectGroups.map((group) => {
+                  const isExpanded = expandedRejectKoliSet.has(group.koliNumber)
+                  const isSelected = selectedRejectKoliSet.has(group.koliNumber)
+                  const isDraft = group.status === 'DRAFT'
+                  const isPosted = group.status === 'POSTED'
+                  const statusStyle = isPosted ? styles.rejectStatusPosted : isDraft ? styles.rejectStatusDraft : styles.rejectStatusMixed
 
                   return (
-                    <tr key={entry.id}>
-                      <td style={styles.td}>{entry.koli_number || '-'}</td>
-                      <td style={styles.td}>{entry.product_name || '-'}</td>
-                      <td style={styles.td}>{entry.size || '-'}</td>
-                      <td style={styles.td}>
-                        <div style={styles.cellStack}>
-                          <span>{getCategoryDisplayName(itemType)}</span>
-                          <span style={styles.cellMeta}>
-                            {[getCategoryDisplayName(category), getCategoryDisplayName(subCategory)].filter((value) => value && value !== '-').join(' / ') || '-'}
-                          </span>
-                        </div>
-                      </td>
-                      <td style={styles.td}>{entry.qty}</td>
-                      <td style={styles.td}>{entry.grade || '-'}</td>
-                      <td style={styles.td}>{entry.reject_note || '-'}</td>
-                      <td style={styles.td}>
-                        <span style={isDraft ? styles.rejectStatusDraft : styles.rejectStatusPosted}>
-                          {status}
-                        </span>
-                      </td>
-                      <td style={styles.td}>
-                        <div style={styles.cellStack}>
-                          <span>{formatDateTime(entry.created_at)}</span>
-                          <span style={styles.cellMeta}>{getDisplayNameByEmail(entry.created_by)}</span>
-                        </div>
-                      </td>
-                      {canEditRejectStorage ? (
-                        <td style={{ ...styles.td, ...styles.actionTd }}>
-                          <div style={styles.actionGroup}>
-                            <button
-                              type="button"
-                              onClick={() => openRejectModal(entry)}
-                              style={isDraft ? styles.tableIconButton : { ...styles.tableIconButton, ...styles.tableIconButtonDisabled }}
-                              disabled={!isDraft}
-                              title={isDraft ? 'Edit reject koli' : 'Posted koli cannot be edited'}
-                              aria-label="Edit reject koli"
-                            >
-                              <svg viewBox="0 0 24 24" style={styles.tableActionIcon} aria-hidden="true">
-                                <path d="M12 20h9" />
-                                <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5Z" />
-                              </svg>
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleRejectPost(entry)}
-                              style={isDraft ? { ...styles.tableIconButton, ...styles.tableIconButtonDark } : { ...styles.tableIconButton, ...styles.tableIconButtonDisabled }}
-                              disabled={!isDraft || savingReject}
-                              title={isDraft ? 'Post reject koli' : 'Reject koli already posted'}
-                              aria-label="Post reject koli"
-                            >
-                              <svg viewBox="0 0 24 24" style={styles.tableActionIcon} aria-hidden="true">
-                                <path d="M20 6 9 17l-5-5" />
-                              </svg>
-                            </button>
+                    <Fragment key={group.koliNumber}>
+                      <tr style={styles.rejectKoliGroupRow}>
+                        <td style={styles.td}>
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={(event) => toggleRejectKoliSelection(group.koliNumber, event.target.checked)}
+                            style={styles.rowCheckbox}
+                            aria-label={`Select ${group.koliNumber}`}
+                          />
+                        </td>
+                        <td style={styles.td}>
+                          <button
+                            type="button"
+                            onClick={() => toggleRejectKoliExpanded(group.koliNumber)}
+                            style={styles.rejectKoliExpandButton}
+                            aria-expanded={isExpanded}
+                          >
+                            <span style={styles.rejectKoliChevron}>{isExpanded ? 'v' : '>'}</span>
+                            <strong style={styles.rejectKoliNumberText}>{group.koliNumber}</strong>
+                          </button>
+                        </td>
+                        <td style={styles.td}>
+                          <span style={styles.cellMeta}>{group.rows.length} item(s)</span>
+                        </td>
+                        <td style={styles.td}>{group.totalQty}</td>
+                        <td style={styles.td}>
+                          <span style={statusStyle}>{group.status}</span>
+                        </td>
+                        <td style={styles.td}>
+                          <div style={styles.cellStack}>
+                            <span>{formatDateTime(group.createdAt)}</span>
+                            <span style={styles.cellMeta}>{getDisplayNameByEmail(group.createdBy)}</span>
                           </div>
                         </td>
+                      </tr>
+                      {isExpanded ? (
+                        <tr>
+                          <td style={styles.rejectKoliDetailCell} colSpan={6}>
+                            <table style={styles.rejectDetailTable}>
+                              <thead>
+                                <tr>
+                                  <th style={{ ...styles.rejectDetailTh, ...styles.rejectDetailProductTh }}>Product</th>
+                                  <th style={styles.rejectDetailTh}>Size</th>
+                                  <th style={styles.rejectDetailTh}>Category</th>
+                                  <th style={styles.rejectDetailTh}>Qty</th>
+                                  <th style={styles.rejectDetailTh}>Grade</th>
+                                  <th style={styles.rejectDetailTh}>Reject Note</th>
+                                  {canEditRejectStorage ? <th style={styles.rejectDetailTh}>Action</th> : null}
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {group.rows.map((entry) => {
+                                  const categoryLabel = getRejectCategoryLabel(entry, categoryById)
+
+                                  return (
+                                    <tr key={entry.id}>
+                                      <td style={{ ...styles.rejectDetailTd, ...styles.rejectDetailProductTd }}>{entry.product_name || '-'}</td>
+                                      <td style={styles.rejectDetailTd}>{entry.size || '-'}</td>
+                                      <td style={styles.rejectDetailTd}>{categoryLabel}</td>
+                                      <td style={styles.rejectDetailTd}>{entry.qty}</td>
+                                      <td style={styles.rejectDetailTd}>{entry.grade || '-'}</td>
+                                      <td style={styles.rejectDetailTd}>{entry.reject_note || '-'}</td>
+                                      {canEditRejectStorage ? (
+                                        <td style={styles.rejectDetailTd}>
+                                          <button
+                                            type="button"
+                                            onClick={() => openRejectModal(entry)}
+                                            style={isDraft ? styles.tableIconButton : { ...styles.tableIconButton, ...styles.tableIconButtonDisabled }}
+                                            disabled={!isDraft}
+                                            title={isDraft ? 'Edit reject item' : 'Posted koli cannot be edited'}
+                                            aria-label="Edit reject item"
+                                          >
+                                            <svg viewBox="0 0 24 24" style={styles.tableActionIcon} aria-hidden="true">
+                                              <path d="M12 20h9" />
+                                              <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5Z" />
+                                            </svg>
+                                          </button>
+                                        </td>
+                                      ) : null}
+                                    </tr>
+                                  )
+                                })}
+                              </tbody>
+                            </table>
+                          </td>
+                        </tr>
                       ) : null}
-                    </tr>
+                    </Fragment>
                   )
                 })}
               </tbody>
@@ -4402,9 +4694,8 @@ export default function StorageOverviewPage() {
                     onChange={handleRejectFormChange}
                     style={rejectItemTypeOptions.length === 0 ? { ...styles.select, ...styles.controlDisabled } : styles.select}
                     disabled={rejectItemTypeOptions.length === 0}
-                    required
                   >
-                    <option value="">Select item type</option>
+                    <option value="">{rejectItemTypeOptions.length === 0 ? 'No item type available' : 'Select item type'}</option>
                     {rejectItemTypeOptions.map((itemType) => (
                       <option key={itemType.id} value={itemType.id}>
                         {itemType.label}
@@ -6117,6 +6408,19 @@ const styles = {
     justifyContent: 'center',
     cursor: 'pointer',
   },
+  iconResetButtonDisabled: {
+    width: '44px',
+    height: '44px',
+    borderRadius: '10px',
+    border: '1px solid #dbe4ef',
+    background: '#f8fafc',
+    color: '#94a3b8',
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    cursor: 'not-allowed',
+    opacity: 0.75,
+  },
   iconAddButton: {
     width: '44px',
     height: '44px',
@@ -6139,6 +6443,16 @@ const styles = {
     alignItems: 'center',
     justifyContent: 'center',
     cursor: 'pointer',
+  },
+  iconToolbarButtonDisabled: {
+    borderTopColor: '#dbe4ef',
+    borderRightColor: '#dbe4ef',
+    borderBottomColor: '#dbe4ef',
+    borderLeftColor: '#dbe4ef',
+    background: '#f8fafc',
+    color: '#94a3b8',
+    cursor: 'not-allowed',
+    opacity: 0.75,
   },
   resetIcon: {
     width: '18px',
@@ -6210,6 +6524,25 @@ const styles = {
   rejectSummary: {
     fontSize: '10px',
     lineHeight: 1.4,
+  },
+  rejectFooterSummary: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '10px',
+    flexWrap: 'wrap',
+    minWidth: 0,
+  },
+  rejectQtySummary: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    minHeight: '22px',
+    padding: '0 8px',
+    borderRadius: '999px',
+    background: '#eef2ff',
+    color: '#3730a3',
+    fontSize: '11px',
+    fontWeight: '800',
+    whiteSpace: 'nowrap',
   },
   rejectFooterToolbar: {
     display: 'grid',
@@ -6576,6 +6909,101 @@ const styles = {
     fontSize: '12px',
     fontWeight: '800',
     lineHeight: 1,
+  },
+  rejectStatusMixed: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    minWidth: '72px',
+    height: '26px',
+    padding: '0 10px',
+    borderRadius: '999px',
+    background: '#f1f5f9',
+    color: '#475569',
+    fontSize: '12px',
+    fontWeight: '800',
+    lineHeight: 1,
+  },
+  rejectKoliGroupRow: {
+    background: '#f8fafc',
+  },
+  rejectKoliExpandButton: {
+    borderTopWidth: 0,
+    borderRightWidth: 0,
+    borderBottomWidth: 0,
+    borderLeftWidth: 0,
+    borderTopStyle: 'solid',
+    borderRightStyle: 'solid',
+    borderBottomStyle: 'solid',
+    borderLeftStyle: 'solid',
+    borderTopColor: 'transparent',
+    borderRightColor: 'transparent',
+    borderBottomColor: 'transparent',
+    borderLeftColor: 'transparent',
+    background: 'transparent',
+    color: '#111827',
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '8px',
+    padding: 0,
+    cursor: 'pointer',
+    fontFamily: 'inherit',
+  },
+  rejectKoliChevron: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '20px',
+    height: '20px',
+    borderRadius: '999px',
+    background: '#e2e8f0',
+    color: '#334155',
+    fontSize: '12px',
+    fontWeight: '900',
+    lineHeight: 1,
+  },
+  rejectKoliNumberText: {
+    fontSize: '15px',
+    fontWeight: '900',
+    whiteSpace: 'nowrap',
+  },
+  rejectKoliDetailCell: {
+    padding: '0 12px 14px',
+    background: '#f8fafc',
+  },
+  rejectDetailTable: {
+    width: '100%',
+    borderCollapse: 'separate',
+    borderSpacing: 0,
+    border: '1px solid #e5e7eb',
+    borderRadius: '12px',
+    overflow: 'hidden',
+    background: '#fff',
+  },
+  rejectDetailTh: {
+    padding: '10px 12px',
+    background: '#f1f5f9',
+    color: '#334155',
+    fontSize: '11px',
+    fontWeight: '900',
+    textTransform: 'uppercase',
+    letterSpacing: 0,
+    textAlign: 'left',
+    borderBottom: '1px solid #e5e7eb',
+    whiteSpace: 'nowrap',
+  },
+  rejectDetailProductTh: {
+    width: '42%',
+  },
+  rejectDetailTd: {
+    padding: '10px 12px',
+    borderBottom: '1px solid #eef2f7',
+    color: '#111827',
+    fontSize: '13px',
+    verticalAlign: 'top',
+  },
+  rejectDetailProductTd: {
+    minWidth: '280px',
   },
   tableActionIcon: {
     width: '17px',

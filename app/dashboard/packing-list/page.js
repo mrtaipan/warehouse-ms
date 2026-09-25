@@ -172,48 +172,64 @@ export default async function PackingListOverviewPage() {
   const canManageReceiving = hasPermission(permissions, 'packing.receiving.add', isAdmin) || hasPermission(permissions, 'packing.receiving.edit', isAdmin)
   const canManageSizeBreakdown = hasPermission(permissions, 'packing.size_breakdown.edit', isAdmin)
 
+  const { data: confirmRows, error: confirmError } = await supabase
+    .from('qc_confirm')
+    .select(`
+      id,
+      inbound_id,
+      qty,
+      koli_sequence,
+      inbound:inbound_id (
+        id,
+        grn_number,
+        inbound_date,
+        item_name
+      )
+    `)
+    .order('created_at', { ascending: false })
+    .limit(5000)
+
+  const inboundIds = Array.from(
+    new Set((confirmRows || []).map((row) => Number(row.inbound_id || row.inbound?.id || 0)).filter(Boolean))
+  )
+  const hasInboundRows = inboundIds.length > 0
+
   const [
-    { data: confirmRows, error: confirmError },
     { data: validationRows, error: validationError },
     { data: breakdownRows, error: breakdownError },
     { data: returnRows, error: returnError },
     { data: packingRows, error: packingError },
-  ] = await Promise.all([
-    supabase
-      .from('qc_confirm')
-      .select(`
-        id,
-        inbound_id,
-        qty,
-        koli_sequence,
-        inbound:inbound_id (
-          id,
-          grn_number,
-          inbound_date,
-          item_name
-        )
-      `)
-      .order('created_at', { ascending: false })
-      .limit(5000),
-    supabase
-      .from('pl_receiving')
-      .select('id, inbound_id, source_koli_sequence, received_qty, validated_at')
-      .order('validated_at', { ascending: false })
-      .limit(5000),
-    supabase
-      .from('pl_size_breakdown')
-      .select('id, inbound_id, qty')
-      .limit(5000),
-    supabase
-      .from('warehouse_returns')
-      .select('id, inbound_id, qty')
-      .in('source_phase', ['Packing List', 'packing_list'])
-      .limit(5000),
-    supabase
-      .from('pl_packing_items')
-      .select('id, inbound_id, qty')
-      .limit(5000),
-  ])
+  ] = hasInboundRows
+    ? await Promise.all([
+        supabase
+          .from('pl_receiving')
+          .select('id, inbound_id, source_koli_sequence, received_qty, validated_at')
+          .in('inbound_id', inboundIds)
+          .order('validated_at', { ascending: false })
+          .limit(20000),
+        supabase
+          .from('pl_size_breakdown')
+          .select('id, inbound_id, qty')
+          .in('inbound_id', inboundIds)
+          .limit(20000),
+        supabase
+          .from('warehouse_returns')
+          .select('id, inbound_id, qty')
+          .in('source_phase', ['Packing List', 'packing_list'])
+          .in('inbound_id', inboundIds)
+          .limit(20000),
+        supabase
+          .from('pl_packing_items')
+          .select('id, inbound_id, qty')
+          .in('inbound_id', inboundIds)
+          .limit(20000),
+      ])
+    : [
+        { data: [], error: null },
+        { data: [], error: null },
+        { data: [], error: null },
+        { data: [], error: null },
+      ]
 
   const allRows = buildOverviewRows(confirmRows || [], validationRows || [], breakdownRows || [], returnRows || [], packingRows || [])
   const rows = allRows.slice(0, 25)
