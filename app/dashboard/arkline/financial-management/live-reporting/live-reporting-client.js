@@ -243,6 +243,7 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
   const [monthFilter, setMonthFilter] = useState('all')
   const [yearFilter, setYearFilter] = useState('all')
   const [trendGroup, setTrendGroup] = useState('MONTH')
+  const [leaderboardChannel, setLeaderboardChannel] = useState('ALL')
   const [hoveredTrendKey, setHoveredTrendKey] = useState('')
   const [selectedRanking, setSelectedRanking] = useState(null)
   const [previewActiveLive, setPreviewActiveLive] = useState(false)
@@ -444,11 +445,6 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
     })
   }, [credits, monthFilter, yearFilter])
 
-  const totalNominal = useMemo(
-    () => filteredSessions.reduce((sum, item) => sum + Number(item.incremental_amount || 0), 0),
-    [filteredSessions]
-  )
-
   const personalSessions = useMemo(() => {
     const profileId = String(profile?.id || '').trim()
     return filteredSessions.filter((item) => {
@@ -457,9 +453,19 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
     })
   }, [filteredSessions, profile])
 
+  const leaderboardCredits = useMemo(() => {
+    if (leaderboardChannel === 'ALL') return filteredCredits
+    return filteredCredits.filter((item) => item.sales_channel === leaderboardChannel)
+  }, [filteredCredits, leaderboardChannel])
+
+  const leaderboardTotal = useMemo(
+    () => leaderboardCredits.reduce((sum, item) => sum + Number(item.credited_amount || 0), 0),
+    [leaderboardCredits]
+  )
+
   const ranking = useMemo(() => {
     return Array.from(
-      filteredCredits.reduce((map, item) => {
+      leaderboardCredits.reduce((map, item) => {
         const key = item.host_display_name || 'Unknown'
         map.set(key, (map.get(key) || 0) + Number(item.credited_amount || 0))
         return map
@@ -467,7 +473,32 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
     )
       .map(([name, amount]) => ({ name, amount }))
       .sort((left, right) => right.amount - left.amount)
-  }, [filteredCredits])
+  }, [leaderboardCredits])
+
+  const wearingProductRanking = useMemo(() => {
+    const productNames = new Map(products.map((item) => [String(item.sku || '').toUpperCase(), item.name]))
+    const productCounts = new Map()
+
+    filteredSessions.forEach((item) => {
+      const wornProducts = [
+        item.wearing_product_sku,
+        item.session_type === 'PAIRING' ? item.partner_wearing_product_sku : '',
+      ]
+
+      wornProducts.forEach((value) => {
+        const sku = String(value || '').trim().toUpperCase()
+        if (!sku) return
+        productCounts.set(sku, (productCounts.get(sku) || 0) + 1)
+      })
+    })
+
+    return Array.from(productCounts.entries())
+      .map(([sku, count]) => ({ sku, count, name: productNames.get(sku) || sku }))
+      .sort((left, right) => right.count - left.count || left.name.localeCompare(right.name))
+      .slice(0, 6)
+  }, [filteredSessions, products])
+
+  const maxWearingProductCount = wearingProductRanking[0]?.count || 0
 
   const currentLiveRuns = useMemo(
     () => {
@@ -769,12 +800,29 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
                   <h2 className={styles.sectionTitle}>Leaderboard</h2>
                   <div className={styles.totalPill}>
                     <span>Total Nominal</span>
-                    <strong>{formatCurrency(totalNominal)}</strong>
+                    <strong>{formatCurrency(leaderboardTotal)}</strong>
                   </div>
                 </div>
 
+                <div className={`${styles.segmentedControl} ${styles.leaderboardChannelFilter}`.trim()} aria-label="Leaderboard sales channel">
+                  {['ALL', 'TIKTOK', 'SHOPEE'].map((item) => (
+                    <button
+                      key={item}
+                      type="button"
+                      className={`${styles.segmentButton} ${leaderboardChannel === item ? styles.segmentButtonActive : ''}`.trim()}
+                      onClick={() => {
+                        setLeaderboardChannel(item)
+                        setSelectedRanking(null)
+                      }}
+                      aria-pressed={leaderboardChannel === item}
+                    >
+                      {item === 'ALL' ? 'All' : item === 'TIKTOK' ? 'TikTok' : 'Shopee'}
+                    </button>
+                  ))}
+                </div>
+
                 {!ranking.length ? (
-                  <div className={styles.emptyState}>No host live data found for the selected period.</div>
+                  <div className={styles.emptyState}>No host live data found for this channel and period.</div>
                 ) : (
                   <>
                     <div className={styles.podium} aria-label="Top three hosts">
@@ -813,6 +861,42 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
                       ))}
                     </div>
                   </>
+                )}
+              </section>
+              <section className={styles.wearingProductsPanel}>
+                <div className={styles.sectionHead}>
+                  <div>
+                    <h2 className={styles.sectionTitle}>Most Worn Products</h2>
+                    <p className={styles.chartSubtitle}>Host and partner wearing frequency</p>
+                  </div>
+                </div>
+
+                {!wearingProductRanking.length ? (
+                  <div className={styles.emptyState}>No wearing product data found for the selected period.</div>
+                ) : (
+                  <div className={styles.wearingProductChart} role="img" aria-label="Most worn products horizontal bar chart">
+                    {wearingProductRanking.map((item, index) => (
+                      <div
+                        key={item.sku}
+                        className={styles.wearingProductRow}
+                        title={`${item.name} (${item.sku}): ${item.count} wears`}
+                      >
+                        <span className={styles.wearingProductRank}>{String(index + 1).padStart(2, '0')}</span>
+                        <div className={styles.wearingProductData}>
+                          <div className={styles.wearingProductLabel}>
+                            <span>
+                              <strong>{item.name}</strong>
+                              {item.name !== item.sku ? <small>{item.sku}</small> : null}
+                            </span>
+                            <strong>{item.count}</strong>
+                          </div>
+                          <div className={styles.wearingProductTrack} aria-hidden="true">
+                            <span style={{ width: `${Math.max((item.count / maxWearingProductCount) * 100, 4)}%` }} />
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 )}
               </section>
               </div>
@@ -1120,7 +1204,7 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredCredits
+                  {leaderboardCredits
                     .filter((item) => item.host_display_name === selectedRanking)
                     .map((item) => (
                       <tr key={item.id}>

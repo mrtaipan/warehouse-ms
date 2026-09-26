@@ -114,14 +114,19 @@
 }
 
 .rankingPanel {
+  grid-area: ranking;
+  align-self: start;
   gap: 12px;
 }
 
 .reportingColumns {
   display: grid;
   grid-template-columns: minmax(0, 7fr) minmax(280px, 3fr);
+  grid-template-areas:
+    'trend ranking'
+    'wearing ranking';
   gap: 24px;
-  align-items: stretch;
+  align-items: start;
 }
 
 .reportingColumns > section {
@@ -148,6 +153,20 @@
   flex-direction: column;
   align-items: flex-start;
   gap: 10px;
+}
+
+.leaderboardChannelFilter {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  width: 100%;
+}
+
+.leaderboardChannelFilter .segmentButton {
+  min-width: 0;
+  min-height: 30px;
+  padding: 0 8px;
+  font-size: 11px;
+  font-weight: 700;
 }
 
 .totalPill {
@@ -332,9 +351,117 @@
   background: transparent;
 }
 
+.wearingProductsPanel {
+  grid-area: wearing;
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.reportingColumns > .wearingProductsPanel {
+  padding: 24px 0 0;
+  border: 0;
+  border-top: 1px solid #e2e8f0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.chartSubtitle {
+  margin: 6px 0 0;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.wearingProductChart {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.wearingProductRow {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+}
+
+.wearingProductRank {
+  color: #94a3b8;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.wearingProductData {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.wearingProductLabel {
+  display: flex;
+  min-width: 0;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  color: #0f172a;
+  font-size: 13px;
+}
+
+.wearingProductLabel > span {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.wearingProductLabel strong {
+  font-weight: 600;
+}
+
+.wearingProductLabel > span > strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wearingProductLabel small {
+  color: #64748b;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.wearingProductLabel > strong {
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+}
+
+.wearingProductTrack {
+  position: relative;
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #e8eef7;
+}
+
+.wearingProductTrack span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: #2563eb;
+  transition: width 180ms ease;
+}
+
 @media (max-width: 960px) {
   .reportingColumns {
     grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      'trend'
+      'ranking'
+      'wearing';
   }
 }
 
@@ -363,6 +490,10 @@
   .leaderboardAmount {
     grid-column: 2;
     text-align: left;
+  }
+
+  .wearingProductLabel {
+    gap: 8px;
   }
 }
 
@@ -633,6 +764,7 @@
 }
 
 .liveTrendPanel {
+  grid-area: trend;
   display: flex;
   min-width: 0;
   flex-direction: column;
