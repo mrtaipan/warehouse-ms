@@ -20,8 +20,31 @@ create table if not exists public.arkline_live_reporting_runs (
 alter table public.arkline_live_reporting_sessions
   add column if not exists live_run_id bigint references public.arkline_live_reporting_runs(id) on delete set null,
   add column if not exists checkpoint_no integer,
+  add column if not exists end_date date,
   add column if not exists previous_gross_amount numeric(18,2) not null default 0,
   add column if not exists incremental_amount numeric(18,2) not null default 0;
+
+update public.arkline_live_reporting_sessions
+set end_date = case
+  when end_time <= start_time then session_date + 1
+  else session_date
+end
+where end_date is null
+   or (end_date = session_date and end_time <= start_time);
+
+alter table public.arkline_live_reporting_sessions
+  alter column end_date set not null;
+
+alter table public.arkline_live_reporting_sessions
+  drop constraint if exists arkline_live_reporting_sessions_time_check;
+
+alter table public.arkline_live_reporting_sessions
+  add constraint arkline_live_reporting_sessions_time_check
+  check (
+    (end_date = session_date and end_time > start_time)
+    or
+    (end_date = session_date + 1 and end_time <= start_time)
+  );
 
 -- Existing entries were already treated as independent sessions. Preserve that behavior
 -- by using their stored gross amount as their incremental amount.
@@ -157,6 +180,9 @@ declare
   v_incremental_amount numeric(18,2);
   v_checkpoint_no integer;
   v_session_id bigint;
+  v_end_date date;
+  v_latest_end_at timestamp;
+  v_checkpoint_start_at timestamp;
 begin
   if auth.uid() is null then
     raise exception 'Authentication required';
@@ -185,6 +211,13 @@ begin
   if p_session_type = 'PAIRING' and p_partner_profile_id is null then
     raise exception 'Pairing requires a partner';
   end if;
+
+  v_end_date := case
+    when p_end_time <= p_start_time then p_session_date + 1
+    else p_session_date
+  end;
+
+  v_checkpoint_start_at := p_session_date + p_start_time;
 
   if p_start_new then
     update public.arkline_live_reporting_runs
@@ -227,6 +260,18 @@ begin
 
   if p_start_new then
     v_previous_amount := 0;
+  else
+    select session_row.end_date + session_row.end_time
+      into v_latest_end_at
+    from public.arkline_live_reporting_sessions session_row
+    where session_row.live_run_id = v_run_id
+    order by session_row.checkpoint_no desc nulls last, session_row.created_at desc
+    limit 1;
+
+    if v_latest_end_at is not null and v_checkpoint_start_at < v_latest_end_at then
+      raise exception 'Session start must be at or after the previous checkpoint end time (%)',
+        to_char(v_latest_end_at, 'DD Mon YYYY HH24:MI');
+    end if;
   end if;
 
   if p_gross_amount < v_previous_amount then
@@ -244,6 +289,7 @@ begin
     live_run_id,
     checkpoint_no,
     session_date,
+    end_date,
     start_time,
     end_time,
     session_type,
@@ -262,6 +308,7 @@ begin
     v_run_id,
     v_checkpoint_no,
     p_session_date,
+    v_end_date,
     p_start_time,
     p_end_time,
     p_session_type,
@@ -315,6 +362,7 @@ begin
     'session_id', v_session_id,
     'live_run_id', v_run_id,
     'checkpoint_no', v_checkpoint_no,
+    'end_date', v_end_date,
     'previous_gross_amount', v_previous_amount,
     'incremental_amount', v_incremental_amount
   );

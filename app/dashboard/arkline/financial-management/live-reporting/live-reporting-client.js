@@ -100,6 +100,15 @@ function formatDate(value) {
   }).format(date)
 }
 
+function formatSessionTimeRange(startDate, startTime, endDate, endTime) {
+  const start = String(startTime || '').slice(0, 5) || '-'
+  const end = String(endTime || '').slice(0, 5) || '-'
+  if (endDate && startDate && endDate !== startDate) {
+    return `${start} - ${formatDate(endDate)} ${end}`
+  }
+  return `${start} - ${end}`
+}
+
 function formatMonthLabel(year, month) {
   return new Intl.DateTimeFormat('en-GB', { month: 'long', year: 'numeric' }).format(new Date(Number(year), Number(month) - 1, 1))
 }
@@ -173,6 +182,7 @@ function normalizeSession(row) {
     checkpoint_no: Number(row?.checkpoint_no || 0),
     host_profile_id: row?.host_profile_id || '',
     session_date: row?.session_date || '',
+    end_date: row?.end_date || row?.session_date || '',
     start_time: row?.start_time || '',
     end_time: row?.end_time || '',
     session_type: row?.session_type || 'STANDALONE',
@@ -205,6 +215,7 @@ function normalizeCredit(row) {
     host_display_name: row?.host_profile?.display_name || row?.host_display_name_snapshot || '-',
     credited_amount: Number(row?.credited_amount || 0),
     session_date: row?.session?.session_date || '',
+    session_end_date: row?.session?.end_date || row?.session?.session_date || '',
     session_start_time: row?.session?.start_time || '',
     session_end_time: row?.session?.end_time || '',
     session_type: row?.session?.session_type || 'STANDALONE',
@@ -325,6 +336,7 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
             checkpoint_no,
             host_profile_id,
             session_date,
+            end_date,
             start_time,
             end_time,
             session_type,
@@ -353,6 +365,7 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
             host_profile:dir_user_profiles!arkline_live_reporting_credits_host_profile_id_fkey(display_name),
             session:arkline_live_reporting_sessions!arkline_live_reporting_credits_session_id_fkey(
               session_date,
+              end_date,
               start_time,
               end_time,
               session_type,
@@ -546,7 +559,7 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
     if (!latestSession?.end_time) return {}
 
     return {
-      session_date: latestSession.session_date || getTodayDateValue(),
+      session_date: latestSession.end_date || latestSession.session_date || getTodayDateValue(),
       start_time: latestSession.end_time.slice(0, 5),
     }
   }
@@ -846,7 +859,7 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
                           <div className={styles.sessionMain}>
                             <strong>{item.wearing_product_sku || 'No product'}</strong>
                             <span>
-                              {formatDate(item.session_date)} • {item.start_time?.slice(0, 5)} - {item.end_time?.slice(0, 5)}
+                              {formatDate(item.session_date)} • {formatSessionTimeRange(item.session_date, item.start_time, item.end_date, item.end_time)}
                             </span>
                             <span>
                               {item.session_type === 'PAIRING'
@@ -1113,7 +1126,7 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
                       <tr key={item.id}>
                         <td>{formatDate(item.session_date)}</td>
                         <td>
-                          {item.session_start_time?.slice(0, 5)} - {item.session_end_time?.slice(0, 5)}
+                          {formatSessionTimeRange(item.session_date, item.session_start_time, item.session_end_date, item.session_end_time)}
                         </td>
                         <td>{formatSalesChannel(item.sales_channel)}</td>
                         <td>{item.session_type === 'PAIRING' ? 'Pairing' : 'Standalone'}</td>
