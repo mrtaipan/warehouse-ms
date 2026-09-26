@@ -2,7 +2,8 @@
 
 import Image from 'next/image'
 import Link from 'next/link'
-import { useEffect, useMemo, useState } from 'react'
+import { Fragment, useEffect, useMemo, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { createClient } from '@/utils/supabase/browser'
 import { ADMIN_EMAIL } from '@/utils/permissions'
 import { getProfileByAuthenticatedUser } from '@/utils/user-profiles'
@@ -13,20 +14,24 @@ const naturalSort = new Intl.Collator(undefined, {
   numeric: true,
   sensitivity: 'base',
 })
-const PAGE_SIZE_OPTIONS = [25, 50, 100, 250]
+const PAGE_SIZE_OPTIONS = [10, 25, 50, 100, 250]
 const PACKING_ITEM_SELECT_COLUMNS = [
   'id',
   'inbound_id',
   'pl_size_breakdown_id',
+  'packing_group_key',
   'product_model_id',
   'product_model_variant_id',
   'storing_type',
+  'package_type',
   'brand_code',
   'source_variant_code',
   'pl_name',
   'model_name',
   'variant_name',
+  'size_label',
   'qty',
+  'koli_sequence',
   'storage_status',
   'created_at',
   'release_status',
@@ -39,7 +44,11 @@ const PACKING_ITEM_SELECT_COLUMNS = [
   'pl_photo_url',
   'photo_url',
   'variant_photo_url',
+  'packed_by',
 ].join(', ')
+const GROUP_TRANSFER_SELECT_COLUMNS = 'id, source_pl_packing_item_id, product_bundle_component_id, source_type, target_type, transfer_qty, source_qty_before, source_qty_after, created_by, created_at'
+const BUNDLE_SELECT_COLUMNS = 'id, bundle_code, bundle_name, bundle_unit_qty, storing_type, status, released_at, released_by, release_count, release_history, created_at'
+const BUNDLE_COMPONENT_SELECT_COLUMNS = 'id, bundle_id, source_pl_packing_item_id, source_type, grn_number, sku, product_name, size_label, allocated_qty, available_qty_snapshot, created_at'
 const BREAKDOWN_SELECT_COLUMNS = [
   'id',
   'inbound_id',
@@ -49,6 +58,7 @@ const BREAKDOWN_SELECT_COLUMNS = [
   'pl_name',
   'model_name',
   'variant_name',
+  'size_label',
   'category_id',
   'pl_detail_seq',
   'detail_order',
@@ -83,6 +93,7 @@ const RELEASE_STATE_SELECT_COLUMNS = [
 ].join(', ')
 const BRAND_SELECT_COLUMNS = 'id, brand_code, brand_name, is_active'
 const CATEGORY_SELECT_COLUMNS = 'id, parent_id, category_name, name, full_name, full_code'
+const APPAREL_SIZE_ORDER = ['XXXS', 'XXS', 'XS', 'S', 'M', 'L', 'XL', 'XXL', 'XXXL', 'XXXXL', '4XL', '5XL', '6XL']
 
 function normalize(value) {
   return String(value || '').trim()
@@ -96,8 +107,34 @@ function normalizeKey(value) {
   return normalizeUpper(value).replace(/\s+/g, ' ')
 }
 
+function normalizeCode(value) {
+  return normalizeUpper(value).replace(/[^A-Z0-9]/g, '')
+}
+
 function formatNumber(value) {
   return new Intl.NumberFormat('id-ID', { maximumFractionDigits: 0 }).format(Number(value || 0))
+}
+
+function compareSizeValues(left, right) {
+  const leftSize = normalizeUpper(left)
+  const rightSize = normalizeUpper(right)
+  const leftNumber = Number(leftSize)
+  const rightNumber = Number(rightSize)
+  const leftIsNumber = leftSize !== '' && Number.isFinite(leftNumber)
+  const rightIsNumber = rightSize !== '' && Number.isFinite(rightNumber)
+
+  if (leftIsNumber && rightIsNumber) return leftNumber - rightNumber
+  if (leftIsNumber !== rightIsNumber) return leftIsNumber ? -1 : 1
+
+  const leftIndex = APPAREL_SIZE_ORDER.indexOf(leftSize)
+  const rightIndex = APPAREL_SIZE_ORDER.indexOf(rightSize)
+  const leftHasIndex = leftIndex >= 0
+  const rightHasIndex = rightIndex >= 0
+
+  if (leftHasIndex && rightHasIndex) return leftIndex - rightIndex
+  if (leftHasIndex !== rightHasIndex) return leftHasIndex ? -1 : 1
+
+  return naturalSort.compare(leftSize, rightSize)
 }
 
 function formatDate(value) {
@@ -536,6 +573,20 @@ function getBrandLabel(row, model, brandById, brandByCode) {
   return normalize(row.brand_code) || 'Unbranded'
 }
 
+function getBrandCode(row, model, brandById, brandByCode) {
+  const brandFromModel = brandById.get(Number(model?.brand_id))
+  if (brandFromModel) {
+    return normalizeCode(brandFromModel.brand_code) || `BRD${brandFromModel.id}`
+  }
+
+  const brandFromCode = brandByCode.get(normalizeUpper(row.brand_code))
+  if (brandFromCode) {
+    return normalizeCode(brandFromCode.brand_code) || `BRD${brandFromCode.id}`
+  }
+
+  return normalizeCode(row.brand_code)
+}
+
 function getCategoryLabel(categoryId, categoryById) {
   const category = categoryById.get(Number(categoryId))
   if (!category) return 'Uncategorized'
@@ -546,6 +597,13 @@ function getCategoryLabel(categoryId, categoryById) {
     normalize(category.category_name) ||
     `Category ${category.id}`
   )
+}
+
+function getCategoryCode(categoryId, categoryById) {
+  const category = categoryById.get(Number(categoryId))
+  if (!category) return ''
+
+  return normalizeCode(category.full_code || category.category_code || category.category_id || category.category_name || category.name)
 }
 
 function getCategoryPath(category = {}, categoryById = new Map()) {
@@ -767,6 +825,9 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
   const [inboundRows, setInboundRows] = useState([])
   const [breakdownRows, setBreakdownRows] = useState([])
   const [warehouseStorageRows, setWarehouseStorageRows] = useState([])
+  const [groupTransferRows, setGroupTransferRows] = useState([])
+  const [bundleRows, setBundleRows] = useState([])
+  const [bundleComponentRows, setBundleComponentRows] = useState([])
   const [identityEvents, setIdentityEvents] = useState([])
   const [productModels, setProductModels] = useState([])
   const [productVariants, setProductVariants] = useState([])
@@ -792,25 +853,44 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
     direction: 'desc',
   })
   const [selectedProductKeys, setSelectedProductKeys] = useState([])
+  const [selectedProductItemsByKey, setSelectedProductItemsByKey] = useState({})
   const [bulkWorking, setBulkWorking] = useState(false)
   const [actionMessage, setActionMessage] = useState('')
   const [actionError, setActionError] = useState('')
   const [previewPhoto, setPreviewPhoto] = useState(null)
   const [openFilterMenu, setOpenFilterMenu] = useState('')
   const [filterSearches, setFilterSearches] = useState({})
-  const [pageSize, setPageSize] = useState(25)
+  const [pageSize, setPageSize] = useState(10)
   const [currentPage, setCurrentPage] = useState(1)
   const [sellingNameEditor, setSellingNameEditor] = useState(null)
   const [sellingNameDraft, setSellingNameDraft] = useState('')
   const [mergeEditor, setMergeEditor] = useState(null)
   const [mergeTargetVariantId, setMergeTargetVariantId] = useState('')
+  const [groupTransferEditor, setGroupTransferEditor] = useState(null)
+  const [groupTransferDrafts, setGroupTransferDrafts] = useState({})
+  const [transferHistoryOpen, setTransferHistoryOpen] = useState(false)
+  const [bundleEditor, setBundleEditor] = useState(null)
+  const [bundleDrafts, setBundleDrafts] = useState({})
+  const [bundleForm, setBundleForm] = useState({
+    mode: 'new',
+    code: '',
+    name: '',
+    unitQty: 0,
+    existingBundleId: '',
+  })
   const [confirmDialog, setConfirmDialog] = useState(null)
+  const [modalRoot, setModalRoot] = useState(null)
+
+  useEffect(() => {
+    setModalRoot(document.body)
+  }, [])
 
   useEffect(() => {
     if (!lockedProductGroup) return
     const timer = window.setTimeout(() => {
       setFilters((prev) => ({ ...prev, type: lockedProductGroup }))
       setSelectedProductKeys([])
+      setSelectedProductItemsByKey({})
       setCurrentPage(1)
     }, 0)
     return () => window.clearTimeout(timer)
@@ -836,6 +916,9 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
           nextInboundRows,
           nextBreakdownRows,
           nextWarehouseStorageRows,
+          nextGroupTransferRows,
+          nextBundleRows,
+          nextBundleComponentRows,
           nextIdentityEvents,
           nextProductModels,
           nextProductVariants,
@@ -847,6 +930,9 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
           fetchAllRows('inbound', 'id, grn_number, inbound_date, item_name, created_at', 'created_at'),
           fetchAllRows('pl_size_breakdown', BREAKDOWN_SELECT_COLUMNS, 'id'),
           fetchWarehouseStorageSkuTotals(),
+          fetchOptionalRows('product_group_transfer_events', GROUP_TRANSFER_SELECT_COLUMNS, 'created_at'),
+          fetchOptionalRows('product_bundles', BUNDLE_SELECT_COLUMNS, 'created_at'),
+          fetchOptionalRows('product_bundle_components', BUNDLE_COMPONENT_SELECT_COLUMNS, 'created_at'),
           fetchOptionalRows('product_variant_identity_events', IDENTITY_EVENT_SELECT_COLUMNS, 'created_at'),
           fetchAllRows('dir_product_models', PRODUCT_MODEL_SELECT_COLUMNS, 'id'),
           fetchAllRows('dir_product_model_variants', PRODUCT_VARIANT_SELECT_COLUMNS, 'id'),
@@ -859,6 +945,9 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
         setInboundRows(nextInboundRows)
         setBreakdownRows(nextBreakdownRows)
         setWarehouseStorageRows(nextWarehouseStorageRows)
+        setGroupTransferRows(nextGroupTransferRows)
+        setBundleRows(nextBundleRows)
+        setBundleComponentRows(nextBundleComponentRows)
         setIdentityEvents(nextIdentityEvents)
         setProductModels(nextProductModels)
         setProductVariants(nextProductVariants)
@@ -957,10 +1046,158 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
     }
   }, [brands, breakdownRows, categories, identityEvents, inboundRows, productModels, productVariantReleaseStates, productVariants, warehouseStorageRows])
 
-  const groupedProducts = useMemo(() => {
+  const effectivePackingRows = useMemo(() => {
+    const transfersBySourceId = new Map()
+    const bundleById = new Map((bundleRows || []).map((bundle) => [Number(bundle.id || 0), bundle]))
+    const bundleReservationsBySourceId = new Map()
+
+    ;(bundleComponentRows || []).forEach((component) => {
+      const sourceRowId = Number(component.source_pl_packing_item_id || 0)
+      const bundle = bundleById.get(Number(component.bundle_id || 0))
+      const sourceType = normalizeStoringType(component.source_type)
+      const allocatedQty = Number(component.allocated_qty || 0)
+      if (!sourceRowId || !sourceType || allocatedQty <= 0 || normalizeUpper(bundle?.status) === 'CANCELLED') return
+
+      const reservation = bundleReservationsBySourceId.get(sourceRowId) || {
+        byGroup: new Map(),
+        latestCreatedAt: '',
+      }
+      reservation.byGroup.set(
+        sourceType,
+        Number(reservation.byGroup.get(sourceType) || 0) + allocatedQty
+      )
+      if (!reservation.latestCreatedAt || new Date(bundle?.created_at || component.created_at || 0) > new Date(reservation.latestCreatedAt || 0)) {
+        reservation.latestCreatedAt = bundle?.created_at || component.created_at || ''
+      }
+      bundleReservationsBySourceId.set(sourceRowId, reservation)
+    })
+
+    ;(groupTransferRows || []).forEach((transfer) => {
+      const sourceRowId = Number(transfer.source_pl_packing_item_id || 0)
+      const sourceType = normalizeStoringType(transfer.source_type)
+      const targetType = normalizeStoringType(transfer.target_type)
+      const transferQty = Number(transfer.transfer_qty || 0)
+      if (!sourceRowId || !sourceType || !targetType || transferQty <= 0) return
+
+      const sourceTransfers = transfersBySourceId.get(sourceRowId) || []
+      sourceTransfers.push({ sourceType, targetType, transferQty })
+      transfersBySourceId.set(sourceRowId, sourceTransfers)
+    })
+
+    return packingRows.flatMap((row) => {
+      const baseType = getRowStoringType(row)
+      const sourceRowId = Number(row.id || 0)
+      const reservation = bundleReservationsBySourceId.get(sourceRowId)
+      const bundleReservedQty = Number(reservation?.byGroup.get(baseType) || 0)
+      const remainingBaseQty = Math.max(0, Number(row.qty || 0) - bundleReservedQty)
+      const isBundleConsumed = bundleReservedQty > 0 && remainingBaseQty <= 0
+      const shouldBundleRelease = isBundleConsumed && getReleaseState(row) !== 'released'
+      const bundleReleaseHistory = shouldBundleRelease && reservation?.latestCreatedAt
+        ? [{
+            release_count: Math.max(1, Number(row.release_count || 0) + 1),
+            released_at: reservation.latestCreatedAt,
+            released_by: 'Bundle',
+            qty: bundleReservedQty,
+            source: 'bundle',
+          }]
+        : normalizeReleaseHistory(row.release_history)
+      const sourceTransfers = transfersBySourceId.get(Number(row.id || 0)) || []
+      const qtyByGroup = new Map([
+        ['MOB', baseType === 'MOB' ? remainingBaseQty : 0],
+        ['OI', baseType === 'OI' ? remainingBaseQty : 0],
+      ])
+
+      sourceTransfers.forEach((transfer) => {
+        qtyByGroup.set(transfer.sourceType, Number(qtyByGroup.get(transfer.sourceType) || 0) - transfer.transferQty)
+        qtyByGroup.set(transfer.targetType, Number(qtyByGroup.get(transfer.targetType) || 0) + transfer.transferQty)
+      })
+
+      return ['MOB', 'OI']
+        .filter((group) => Number(qtyByGroup.get(group) || 0) > 0 || (isBundleConsumed && group === baseType))
+        .map((group) => {
+          const isTransferOverlay = group !== baseType
+          return {
+            ...row,
+            id: isTransferOverlay ? `transfer:${row.id}:${group}` : row.id,
+            sourceRowId,
+            storing_type: group,
+            qty: Number(qtyByGroup.get(group) || 0),
+            isTransferOverlay,
+            bundleReservedQty: group === baseType ? bundleReservedQty : 0,
+            bundleAutoReleased: group === baseType && shouldBundleRelease,
+            ...(shouldBundleRelease && group === baseType
+              ? {
+                  release_status: 'released',
+                  released_at: reservation.latestCreatedAt,
+                  released_by: 'Bundle',
+                  release_count: Math.max(1, Number(row.release_count || 0) + 1),
+                  release_history: bundleReleaseHistory,
+                }
+              : {}),
+            ...(isTransferOverlay
+              ? {
+                  release_status: 'draft',
+                  released_at: null,
+                  released_by: null,
+                  release_count: 0,
+                  release_history: [],
+                }
+              : {}),
+          }
+        })
+    })
+  }, [bundleComponentRows, bundleRows, groupTransferRows, packingRows])
+
+  const transferHistoryRows = (() => {
+    const packingRowById = new Map((packingRows || []).map((row) => [Number(row.id || 0), row]))
+    const bundleById = new Map((bundleRows || []).map((row) => [Number(row.id || 0), row]))
+    const bundleComponentById = new Map((bundleComponentRows || []).map((row) => [Number(row.id || 0), row]))
+
+    const packingTransferHistory = (groupTransferRows || [])
+      .map((transfer) => {
+        const sourceRowId = Number(transfer.source_pl_packing_item_id || 0)
+        const sourceRow = packingRowById.get(sourceRowId)
+        const rowSummary = sourceRow ? getTransferRowSummary(sourceRow) : null
+
+        return {
+          id: Number(transfer.id || 0),
+          date: transfer.created_at || '',
+          direction: `${normalizeStoringType(transfer.source_type) || '-'} → ${normalizeStoringType(transfer.target_type) || '-'}`,
+          grn: rowSummary?.grn || '-',
+          sku: rowSummary?.sku || '-',
+          productName: rowSummary?.productName || '-',
+          size: rowSummary?.size || '-',
+          qty: Number(transfer.transfer_qty || 0),
+          createdBy: normalize(transfer.created_by) || '-',
+        }
+      })
+
+    const bundleTransferHistory = (groupTransferRows || [])
+      .filter((transfer) => Number(transfer.product_bundle_component_id || 0) > 0)
+      .map((transfer) => {
+        const component = bundleComponentById.get(Number(transfer.product_bundle_component_id || 0))
+        const bundle = bundleById.get(Number(component?.bundle_id || 0))
+        return {
+          id: `bundle-transfer:${transfer.id}`,
+          date: transfer.created_at || '',
+          direction: `${normalizeStoringType(transfer.source_type) || '-'} → ${normalizeStoringType(transfer.target_type) || '-'}`,
+          grn: 'GRN Bundle',
+          sku: normalize(bundle?.bundle_code) || '-',
+          productName: normalize(bundle?.bundle_name) || '-',
+          size: normalize(component?.size_label) || '-',
+          qty: Number(transfer.transfer_qty || 0),
+          createdBy: normalize(transfer.created_by) || '-',
+        }
+      })
+
+    return [...packingTransferHistory, ...bundleTransferHistory]
+      .sort((left, right) => new Date(right.date || 0) - new Date(left.date || 0))
+  })()
+
+  const packingGroupedProducts = useMemo(() => {
     const groups = new Map()
 
-    packingRows.forEach((row) => {
+    effectivePackingRows.forEach((row) => {
       const storingType = getRowStoringType(row)
 
       if (filters.type !== 'all' && storingType !== normalizeUpper(filters.type)) {
@@ -994,7 +1231,21 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
       const modelReleaseSource = filters.viewMode === 'model'
         ? getModelTypeReleaseSource(releaseVariant, storingType, lookup, row)
         : null
-      const releaseSource = filters.viewMode === 'grn' ? row : modelReleaseSource
+      const autoBundleReleaseSource = row.bundleAutoReleased
+        ? {
+            ...(modelReleaseSource || {}),
+            release_status: 'released',
+            released_at: row.released_at || '',
+            released_by: 'Bundle',
+            release_count: Math.max(1, Number(row.release_count || 0)),
+            release_history: normalizeReleaseHistory(row.release_history),
+          }
+        : null
+      const releaseSource = filters.viewMode === 'grn' || row.isTransferOverlay
+        ? row
+        : modelReleaseSource && getReleaseState(modelReleaseSource) === 'released'
+          ? modelReleaseSource
+          : autoBundleReleaseSource || modelReleaseSource
       const releaseState = releaseSource ? getReleaseState(releaseSource) : ''
       const releaseCount = releaseSource ? getReleaseCount(releaseSource) : 0
       const releaseMeta = releaseSource ? getReleaseMeta(releaseSource) : { releasedAt: '', releasedBy: '' }
@@ -1071,6 +1322,7 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
           latestReleasedAt: '',
           latestReleasedBy: '',
           storageQty: filters.viewMode === 'model' ? getGroupedStorageQty(lookup, normalizedSku, filters.type) : 0,
+          bundleConsumedQty: 0,
           unreleasedQueuedQty: 0,
           earliestDate: '',
           latestDate: '',
@@ -1085,6 +1337,9 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
 
       const qty = Number(row.qty || 0)
       group.totalQty += qty
+      if (filters.viewMode === 'model') {
+        group.bundleConsumedQty += Number(row.bundleReservedQty || 0)
+      }
       if (
         filters.viewMode === 'model' &&
         releaseState === 'released' &&
@@ -1177,13 +1432,13 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
       detailItem.photoUrl = detailItem.photoUrl || photoUrl
       detailItem.plNames.add(plDisplayName)
       if (row.id) {
-        detailItem.rowIds.push(Number(row.id))
+        detailItem.rowIds.push(Number(row.sourceRowId || row.id))
         const splitAssignment = getSplitAssignmentForRow(row, breakdown, lookup)
         if (splitAssignment?.id) {
           detailItem.splitAssignmentIds.push(Number(splitAssignment.id))
         }
         if (batchReleaseState !== 'released') {
-          detailItem.draftRowIds.push(Number(row.id))
+          detailItem.draftRowIds.push(Number(row.sourceRowId || row.id))
         }
       }
       if (row.pl_size_breakdown_id) {
@@ -1236,7 +1491,8 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
         const groupReleaseState = filters.viewMode === 'model' && filters.type === 'all'
           ? getCombinedReleaseState(group.releaseStates)
           : getReleaseStateFromSet(group.releaseStates)
-        const modelCurrentQty = Number(group.storageQty || 0) + Number(group.unreleasedQueuedQty || 0)
+        const adjustedStorageQty = Math.max(0, Number(group.storageQty || 0) - Number(group.bundleConsumedQty || 0))
+        const modelCurrentQty = adjustedStorageQty + Number(group.unreleasedQueuedQty || 0)
         const shouldUseCurrentQty = filters.viewMode === 'model' && groupReleaseState === 'released'
         const nextTotalQty = shouldUseCurrentQty ? modelCurrentQty : group.totalQty
         const nextMobQty = shouldUseCurrentQty && filters.type === 'MOB' ? modelCurrentQty : group.mobQty
@@ -1244,6 +1500,7 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
 
         return {
         ...group,
+        storageQty: adjustedStorageQty,
         totalQty: nextTotalQty,
         mobQty: nextMobQty,
         oiQty: nextOiQty,
@@ -1297,7 +1554,273 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
 
         return (result * directionMultiplier) || naturalSort.compare(left.primaryGrn || left.productName, right.primaryGrn || right.productName)
       })
-  }, [filters, lookup, packingRows, sortConfig])
+  }, [effectivePackingRows, filters, lookup, sortConfig])
+
+  const bundleGroupedProducts = useMemo(() => {
+    const packingRowById = new Map((packingRows || []).map((row) => [Number(row.id || 0), row]))
+    const componentsByBundleId = new Map()
+    const getComponentGroupQty = (bundle, component, groupType) => {
+      const normalizedGroup = normalizeStoringType(groupType)
+      let quantity = normalizeStoringType(bundle?.storing_type) === normalizedGroup
+        ? Number(component.allocated_qty || 0)
+        : 0
+
+      ;(groupTransferRows || [])
+        .filter((transfer) => Number(transfer.product_bundle_component_id || 0) === Number(component.id || 0))
+        .forEach((transfer) => {
+          if (normalizeStoringType(transfer.source_type) === normalizedGroup) {
+            quantity -= Number(transfer.transfer_qty || 0)
+          }
+          if (normalizeStoringType(transfer.target_type) === normalizedGroup) {
+            quantity += Number(transfer.transfer_qty || 0)
+          }
+        })
+
+      return Math.max(0, quantity)
+    }
+
+    ;(bundleComponentRows || []).forEach((component) => {
+      const bundleId = Number(component.bundle_id || 0)
+      const components = componentsByBundleId.get(bundleId) || []
+      components.push(component)
+      componentsByBundleId.set(bundleId, components)
+    })
+
+    return (bundleRows || []).flatMap((bundle) => {
+      if (normalizeUpper(bundle.status) === 'CANCELLED') return []
+
+      const components = componentsByBundleId.get(Number(bundle.id || 0)) || []
+      if (!components.length) return []
+
+      const buckets = new Map()
+      const bundlePhotoUrls = new Set()
+      components.forEach((component) => {
+        const sourceRow = packingRowById.get(Number(component.source_pl_packing_item_id || 0))
+        const breakdown = lookup.breakdownById.get(Number(sourceRow?.pl_size_breakdown_id || 0))
+        const model = lookup.modelById.get(Number(sourceRow?.product_model_id || breakdown?.product_model_id || 0))
+        const categoryParts = getCategoryParts(model?.category_id || breakdown?.category_id, lookup.categoryById)
+        const brand = getBrandLabel(sourceRow || {}, model, lookup.brandById, lookup.brandByCode)
+        const brandCode = getBrandCode(sourceRow || {}, model, lookup.brandById, lookup.brandByCode)
+        const categoryCode = getCategoryCode(model?.category_id || breakdown?.category_id, lookup.categoryById)
+        const detailCategoryLabel = getDetailCategoryLabel(categoryParts)
+        const sourceVariant = lookup.variantById.get(Number(sourceRow?.product_model_variant_id || breakdown?.product_model_variant_id || 0))
+        const photoUrl = sourceRow ? getProductPhotoUrl(sourceRow, breakdown, model, sourceVariant) : ''
+        if (photoUrl) bundlePhotoUrls.add(photoUrl)
+        const size = normalize(component.size_label) || '-'
+        const sizeKey = normalizeKey(size)
+
+        ;['MOB', 'OI'].forEach((groupType) => {
+          const qty = getComponentGroupQty(bundle, component, groupType)
+          if (qty <= 0) return
+
+          const bucketKey = `${groupType}::${sizeKey}`
+          const bucket = buckets.get(bucketKey) || {
+            groupType,
+            size,
+            qty: 0,
+            brand,
+            brandCode,
+            categoryParts,
+            categoryCode,
+            detailCategoryLabel,
+            photoUrl,
+            componentRows: [],
+          }
+          bucket.qty += qty
+          bucket.componentRows.push({
+            bundleComponentId: Number(component.id || 0),
+            sourceGroup: groupType,
+            qty,
+            grn: 'GRN Bundle',
+            sku: normalize(bundle.bundle_code) || '-',
+            productName: normalize(bundle.bundle_name) || '-',
+            size,
+            photoUrl,
+          })
+          buckets.set(bucketKey, bucket)
+        })
+      })
+
+      const selectedTypes = filters.type === 'all' ? ['MOB', 'OI'] : [normalizeUpper(filters.type)]
+      const visibleBuckets = Array.from(buckets.values()).filter((bucket) => selectedTypes.includes(bucket.groupType))
+      if (!visibleBuckets.length) return []
+
+      const firstBucket = visibleBuckets[0]
+      const brand = firstBucket.brand || '-'
+      const categoryParts = firstBucket.categoryParts || { categoryRoot: '-', subCategory: '-', itemType: '-', categoryPathLabel: '-' }
+      const detailCategoryLabel = firstBucket.detailCategoryLabel || '-'
+      const bundleCode = normalize(bundle.bundle_code) || '-'
+      const bundleName = normalize(bundle.bundle_name) || '-'
+      const bundleStatus = normalizeUpper(bundle.status || 'draft').toLowerCase()
+      const shouldApplyReleaseStatus = filters.viewMode === 'grn' || filters.type !== 'all'
+
+      if (shouldApplyReleaseStatus && filters.releaseStatus !== 'all' && bundleStatus !== filters.releaseStatus) return []
+      if (filters.grn && filters.grn !== 'GRN Bundle') return []
+      if (filters.brand && brand !== filters.brand) return []
+      if (filters.category && categoryParts.categoryRoot !== filters.category) return []
+      if (filters.subCategory && categoryParts.subCategory !== filters.subCategory) return []
+      if (filters.itemType && categoryParts.itemType !== filters.itemType) return []
+
+      if (normalizeUpper(filters.search)) {
+        const searchable = [
+          'GRN Bundle',
+          bundleCode,
+          bundleName,
+          brand,
+          categoryParts.categoryRoot,
+          categoryParts.subCategory,
+          categoryParts.itemType,
+          detailCategoryLabel,
+        ].map(normalizeUpper).join(' ')
+        if (!searchable.includes(normalizeUpper(filters.search))) return []
+      }
+
+      const sizeBuckets = new Map()
+      visibleBuckets.forEach((bucket) => {
+        const sizeKey = normalizeKey(bucket.size)
+        const sizeBucket = sizeBuckets.get(sizeKey) || {
+          size: bucket.size,
+          qty: 0,
+          mobQty: 0,
+          oiQty: 0,
+          componentRows: [],
+        }
+        sizeBucket.qty += bucket.qty
+        if (bucket.groupType === 'MOB') sizeBucket.mobQty += bucket.qty
+        if (bucket.groupType === 'OI') sizeBucket.oiQty += bucket.qty
+        sizeBucket.componentRows.push(...bucket.componentRows)
+        sizeBuckets.set(sizeKey, sizeBucket)
+      })
+
+      const detailItemList = Array.from(sizeBuckets.values())
+        .sort((left, right) => compareSizeValues(left.size, right.size))
+        .map((sizeBucket) => ({
+          key: `bundle:${bundle.id}:${normalizeKey(sizeBucket.size)}:${filters.type}`,
+          grn: 'GRN Bundle',
+          baseGrn: 'GRN Bundle',
+          sku: bundleCode,
+          brand,
+          brandCode: firstBucket.brandCode || '',
+          productName: bundleName,
+          categoryLabel: detailCategoryLabel,
+          categoryCode: firstBucket.categoryCode || '',
+          bundlePrefix: `${firstBucket.brandCode || ''}${firstBucket.categoryCode || ''}B`,
+          photoUrl: firstBucket.photoUrl || '',
+          photoUrls: Array.from(bundlePhotoUrls).filter(Boolean),
+          type: filters.type === 'all' ? 'all' : normalizeUpper(filters.type),
+          productModelId: 0,
+          productModelVariantId: 0,
+          sourceProductModelVariantId: 0,
+          sourceMergedIntoVariantId: 0,
+          sourceVariantCode: bundleCode,
+          sellingName: bundleName,
+          variantName: bundleName,
+          variantNotes: '',
+          variantPhotoUrl: firstBucket.photoUrl || '',
+          qty: sizeBucket.qty,
+          mobQty: sizeBucket.mobQty,
+          oiQty: sizeBucket.oiQty,
+          rowIds: [],
+          breakdownIds: [],
+          bundleComponentIds: Array.from(new Set(sizeBucket.componentRows.map((row) => row.bundleComponentId))).filter(Boolean),
+          bundleComponentRows: sizeBucket.componentRows,
+          draftRowIds: [],
+          splitAssignmentIds: [],
+          plDetailSeqs: [],
+          detailOrders: [],
+          plNameList: [],
+          releaseState: bundleStatus,
+          releaseCount: Number(bundle.release_count || 0),
+          latestReleasedAt: bundle.released_at || '',
+          latestReleasedBy: bundle.released_by || '',
+          releaseHistory: normalizeReleaseHistory(bundle.release_history),
+          latestDate: bundle.created_at || '',
+          isBundle: true,
+          bundleId: Number(bundle.id || 0),
+        }))
+
+      const totalQty = detailItemList.reduce((sum, item) => sum + item.qty, 0)
+      const mobQty = detailItemList.reduce((sum, item) => sum + item.mobQty, 0)
+      const oiQty = detailItemList.reduce((sum, item) => sum + item.oiQty, 0)
+      const groupKey = `bundle:${bundle.id}:${filters.viewMode}:${filters.type}`
+
+      return [{
+        key: groupKey,
+        productName: bundleName,
+        productModelId: 0,
+        productModelVariantId: 0,
+        sku: bundleCode,
+        sourceVariantCode: bundleCode,
+        sellingName: bundleName,
+        variantName: bundleName,
+        brand,
+        category: categoryParts.categoryRoot,
+        subCategory: categoryParts.subCategory,
+        itemType: categoryParts.itemType,
+        categoryPathLabel: categoryParts.categoryPathLabel,
+        primaryGrn: 'GRN Bundle',
+        totalQty,
+        mobQty,
+        oiQty,
+        grns: new Set(['GRN Bundle']),
+        plDates: new Set(bundle.created_at ? [getDateValue(bundle.created_at)] : []),
+        products: new Set([bundleName]),
+        brands: new Set([brand]),
+        categories: new Set([detailCategoryLabel]),
+        categoryRoots: new Set([categoryParts.categoryRoot]),
+        subCategories: new Set(categoryParts.subCategory && categoryParts.subCategory !== '-' ? [categoryParts.subCategory] : []),
+        itemTypes: new Set(categoryParts.itemType && categoryParts.itemType !== '-' ? [categoryParts.itemType] : []),
+        detailItems: new Map(detailItemList.map((item) => [item.key, item])),
+        photoUrls: Array.from(bundlePhotoUrls).filter(Boolean),
+        releaseStates: new Set([bundleStatus]),
+        releaseCount: Number(bundle.release_count || 0),
+        releaseHistory: normalizeReleaseHistory(bundle.release_history),
+        latestReleasedAt: bundle.released_at || '',
+        latestReleasedBy: bundle.released_by || '',
+        releaseState: bundleStatus,
+        storageQty: 0,
+        unreleasedQueuedQty: 0,
+        earliestDate: bundle.created_at || '',
+        latestDate: bundle.created_at || '',
+        productList: [bundleName],
+        brandList: [brand],
+        categoryList: [detailCategoryLabel],
+        categoryRootList: [categoryParts.categoryRoot],
+        subCategoryList: categoryParts.subCategory && categoryParts.subCategory !== '-' ? [categoryParts.subCategory] : [],
+        itemTypeList: categoryParts.itemType && categoryParts.itemType !== '-' ? [categoryParts.itemType] : [],
+        detailItemList,
+        grnList: ['GRN Bundle'],
+        plDateList: bundle.created_at ? [getDateValue(bundle.created_at)] : [],
+        isBundle: true,
+        bundleId: Number(bundle.id || 0),
+      }]
+    })
+  }, [bundleComponentRows, groupTransferRows, bundleRows, filters, lookup, packingRows])
+
+  const groupedProducts = useMemo(() => {
+    const rows = [...packingGroupedProducts, ...bundleGroupedProducts]
+    const directionMultiplier = sortConfig.direction === 'asc' ? 1 : -1
+
+    return rows.sort((left, right) => {
+      let result = 0
+      if (sortConfig.key === 'qty') {
+        result = left.totalQty - right.totalQty
+      } else if (sortConfig.key === 'date') {
+        result = new Date(left.latestDate || 0).getTime() - new Date(right.latestDate || 0).getTime()
+      } else if (sortConfig.key === 'grn') {
+        result = naturalSort.compare(left.primaryGrn || left.grnList?.[0] || '', right.primaryGrn || right.grnList?.[0] || '')
+      } else if (sortConfig.key === 'category') {
+        result = naturalSort.compare(left.categoryList?.[0] || left.category, right.categoryList?.[0] || right.category)
+          || naturalSort.compare(left.subCategory, right.subCategory)
+      } else if (sortConfig.key === 'product') {
+        result = naturalSort.compare(left.productList?.[0] || left.productName, right.productList?.[0] || right.productName)
+      } else {
+        result = naturalSort.compare(left.brandList?.[0] || left.brand, right.brandList?.[0] || right.brand)
+      }
+
+      return (result * directionMultiplier) || naturalSort.compare(left.primaryGrn || left.productName, right.primaryGrn || right.productName)
+    })
+  }, [bundleGroupedProducts, packingGroupedProducts, sortConfig])
 
   const filterOptions = useMemo(() => {
     const optionSetsByIgnoredFilter = {
@@ -1349,7 +1872,7 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
       }
     }
 
-    packingRows.forEach((row) => {
+    effectivePackingRows.forEach((row) => {
       const storingType = getRowStoringType(row)
       const breakdown = lookup.breakdownById.get(Number(row.pl_size_breakdown_id))
       const modelId = Number(row.product_model_id || breakdown?.product_model_id || 0)
@@ -1373,7 +1896,7 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
       const modelReleaseSource = filters.viewMode === 'model'
         ? getModelTypeReleaseSource(releaseVariant, storingType, lookup, row)
         : null
-      const releaseSource = filters.viewMode === 'grn' ? row : modelReleaseSource
+      const releaseSource = filters.viewMode === 'grn' || row.isTransferOverlay ? row : modelReleaseSource
       const releaseState = releaseSource ? getReleaseState(releaseSource) : ''
       const shouldApplyReleaseStatus = filters.viewMode === 'grn' || filters.type !== 'all'
       const facet = {
@@ -1411,14 +1934,19 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
 
     const sortOptions = (items) => Array.from(items).sort((left, right) => naturalSort.compare(left, right))
 
+    const grnOptions = sortOptions(optionSetsByIgnoredFilter.grn)
+    if ((bundleRows || []).length && !grnOptions.includes('GRN Bundle')) {
+      grnOptions.push('GRN Bundle')
+    }
+
     return {
-      grns: sortOptions(optionSetsByIgnoredFilter.grn),
+      grns: grnOptions,
       brands: sortOptions(optionSetsByIgnoredFilter.brand),
       categories: sortOptions(optionSetsByIgnoredFilter.category),
       subCategories: sortOptions(optionSetsByIgnoredFilter.subCategory),
       itemTypes: sortOptions(optionSetsByIgnoredFilter.itemType),
     }
-  }, [filters, lookup, packingRows])
+  }, [bundleRows, effectivePackingRows, filters, lookup])
 
   const totalQty = groupedProducts.reduce((sum, row) => sum + row.totalQty, 0)
   const mobQty = groupedProducts.reduce((sum, row) => sum + row.mobQty, 0)
@@ -1430,7 +1958,7 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
   const safeCurrentPage = Math.min(currentPage, totalPages)
   const pageStartIndex = (safeCurrentPage - 1) * pageSize
   const visibleProducts = groupedProducts.slice(pageStartIndex, pageStartIndex + pageSize)
-  const selectableDetailItems = useMemo(() => {
+  const packingSelectableDetailItems = useMemo(() => {
     if (filters.type === 'all') {
       return []
     }
@@ -1438,7 +1966,7 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
     const items = new Map()
     const selectedType = normalizeUpper(filters.type)
 
-    packingRows.forEach((row) => {
+    effectivePackingRows.forEach((row) => {
       const storingType = getRowStoringType(row)
       if (storingType !== selectedType) return
 
@@ -1451,7 +1979,10 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
       const selectedVariant = getCanonicalVariant(assignedVariant, lookup.variantById)
       const selectedVariantId = Number(selectedVariant?.id || variantId || 0)
       const brand = getBrandLabel(row, model, lookup.brandById, lookup.brandByCode)
-      const categoryParts = getCategoryParts(model?.category_id || breakdown?.category_id, lookup.categoryById)
+      const brandCode = getBrandCode(row, model, lookup.brandById, lookup.brandByCode)
+      const categoryId = model?.category_id || breakdown?.category_id
+      const categoryParts = getCategoryParts(categoryId, lookup.categoryById)
+      const categoryCode = getCategoryCode(categoryId, lookup.categoryById)
       const detailCategoryLabel = getDetailCategoryLabel(categoryParts)
       const sourceSku = normalize(row.source_variant_code || breakdown?.source_variant_code || variant?.variant_code || variant?.variant_label) || '-'
       const selectedSku = getAssignedSkuForRow(row, breakdown, lookup, getSelectedSku(sourceSku, selectedVariant))
@@ -1474,8 +2005,11 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
           baseGrn: grnNumber,
           sku: selectedSku,
           brand,
+          brandCode,
           productName,
           categoryLabel: detailCategoryLabel,
+          categoryCode,
+          bundlePrefix: `${brandCode}${categoryCode}B`,
           photoUrl,
           type: storingType,
           productModelId: modelId,
@@ -1499,19 +2033,21 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
           releaseCount: 0,
           latestReleasedAt: '',
           latestReleasedBy: '',
+          isTransferOverlay: false,
         }
 
       detailItem.qty += Number(row.qty || 0)
+      detailItem.isTransferOverlay = detailItem.isTransferOverlay || Boolean(row.isTransferOverlay)
       detailItem.photoUrl = detailItem.photoUrl || photoUrl
       detailItem.plNames.add(plDisplayName)
       if (row.id) {
-        detailItem.rowIds.push(Number(row.id))
+        detailItem.rowIds.push(Number(row.sourceRowId || row.id))
         const splitAssignment = getSplitAssignmentForRow(row, breakdown, lookup)
         if (splitAssignment?.id) {
           detailItem.splitAssignmentIds.push(Number(splitAssignment.id))
         }
         if (batchReleaseState !== 'released') {
-          detailItem.draftRowIds.push(Number(row.id))
+          detailItem.draftRowIds.push(Number(row.sourceRowId || row.id))
         }
       }
       if (row.pl_size_breakdown_id) {
@@ -1545,14 +2081,33 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
       detailOrder: getMinFinite(item.detailOrders),
       releaseState: getReleaseStateFromSet(item.releaseStates),
     }))
-  }, [filters.type, lookup, packingRows])
+  }, [effectivePackingRows, filters.type, lookup])
+  const bundleSelectableDetailItems = useMemo(() => (
+    filters.viewMode === 'grn' && filters.type !== 'all'
+      ? bundleGroupedProducts.flatMap((row) => row.detailItemList || [])
+      : []
+  ), [bundleGroupedProducts, filters.type, filters.viewMode])
+  const selectableDetailItems = useMemo(
+    () => [...packingSelectableDetailItems, ...bundleSelectableDetailItems],
+    [bundleSelectableDetailItems, packingSelectableDetailItems]
+  )
   const selectableDetailItemByKey = useMemo(
     () => new Map(selectableDetailItems.map((item) => [item.key, item])),
     [selectableDetailItems]
   )
   const selectedDetailItems = useMemo(
-    () => selectedProductKeys.map((key) => selectableDetailItemByKey.get(key)).filter(Boolean),
-    [selectableDetailItemByKey, selectedProductKeys]
+    () => selectedProductKeys
+      .map((key) => selectableDetailItemByKey.get(key) || selectedProductItemsByKey[key])
+      .filter(Boolean),
+    [selectableDetailItemByKey, selectedProductItemsByKey, selectedProductKeys]
+  )
+  const selectedBundleDetailItems = useMemo(
+    () => selectedDetailItems.filter((item) => item.isBundle),
+    [selectedDetailItems]
+  )
+  const selectedPackingDetailItems = useMemo(
+    () => selectedDetailItems.filter((item) => !item.isBundle),
+    [selectedDetailItems]
   )
   const selectedRowIds = useMemo(
     () => Array.from(new Set(selectedDetailItems.flatMap((item) => item.rowIds || []))).filter(Boolean),
@@ -1560,11 +2115,17 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
   )
   const selectedReleaseRowIds = selectedRowIds
   const canSelectSkuRows = canManage && filters.viewMode === 'grn' && filters.type !== 'all'
+  const selectedHasTransferOverlay = selectedDetailItems.some((item) => item.isTransferOverlay)
+  const selectedHasMixedSources = selectedBundleDetailItems.length > 0 && selectedPackingDetailItems.length > 0
   const selectedNameItem = selectedDetailItems.length === 1 ? selectedDetailItems[0] : null
-  const editNameButtonDisabled = !canSelectSkuRows || selectedDetailItems.length !== 1 || bulkWorking || !Number(selectedNameItem?.productModelVariantId || 0)
+  const editNameButtonDisabled = !canSelectSkuRows || selectedHasTransferOverlay || selectedDetailItems.length !== 1 || bulkWorking || (!selectedNameItem?.isBundle && !Number(selectedNameItem?.productModelVariantId || 0))
   const splitEligibility = useMemo(() => {
     if (!canSelectSkuRows) {
       return { canSplit: false, reason: 'Choose MOB or OI before splitting a variant.' }
+    }
+
+    if (selectedHasTransferOverlay) {
+      return { canSplit: false, reason: 'Transferred rows can only be transferred again.' }
     }
 
     if (selectedDetailItems.length < 2) {
@@ -1627,7 +2188,7 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
       sourceVariantCode: sourceVariantCodes[0],
       sku: selectedSkus[0],
     }
-  }, [canSelectSkuRows, lookup.splitSourceVariantIds, productVariants, selectedDetailItems])
+  }, [canSelectSkuRows, lookup.splitSourceVariantIds, productVariants, selectedDetailItems, selectedHasTransferOverlay])
   const mergeOptions = useMemo(() => {
     const optionsByVariantId = new Map()
 
@@ -1670,6 +2231,10 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
       return { canMerge: false, reason: 'Choose MOB or OI before merging SKU.' }
     }
 
+    if (selectedHasTransferOverlay) {
+      return { canMerge: false, reason: 'Transferred rows can only be transferred again.' }
+    }
+
     if (selectedDetailItems.length < 2) {
       return { canMerge: false, reason: 'Select at least 2 SKU rows to merge.' }
     }
@@ -1693,14 +2258,59 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
       productModelId: productModelIds[0],
       variantIds: mergeOptions.map((item) => item.variantId),
     }
-  }, [canSelectSkuRows, mergeOptions, selectedDetailItems.length])
-  const releaseButtonDisabled = !canSelectSkuRows || selectedRowIds.length === 0 || bulkWorking
+  }, [canSelectSkuRows, mergeOptions, selectedDetailItems.length, selectedHasTransferOverlay])
+  const releaseButtonDisabled = !canSelectSkuRows || selectedHasTransferOverlay || selectedHasMixedSources || (selectedRowIds.length === 0 && selectedBundleDetailItems.length === 0) || bulkWorking
   const selectedReleasedDetailItems = selectedDetailItems.filter((item) => item.releaseState === 'released')
-  const canSetUnreleased = isAdminUser && canSelectSkuRows
-  const unreleaseButtonDisabled = !canSetUnreleased || selectedReleasedDetailItems.length === 0 || bulkWorking
+  const canSetUnreleased = isAdminUser && canSelectSkuRows && !selectedHasTransferOverlay
+  const unreleaseButtonDisabled = !canSetUnreleased || selectedHasMixedSources || selectedReleasedDetailItems.length === 0 || bulkWorking
   const splitButtonDisabled = !splitEligibility.canSplit || bulkWorking
   const mergeButtonDisabled = !mergeEligibility.canMerge || bulkWorking
+  const selectedTransferRows = useMemo(
+    () => effectivePackingRows
+      .filter((row) => selectedRowIds.includes(Number(row.sourceRowId || row.id || 0)))
+      .filter((row) => ['MOB', 'OI'].includes(getRowStoringType(row)))
+      .filter((row) => Number(row.qty || 0) > 0),
+    [effectivePackingRows, selectedRowIds]
+  )
+  const transferButtonDisabled = !canSelectSkuRows || selectedHasMixedSources || (selectedTransferRows.length === 0 && selectedBundleDetailItems.length === 0) || bulkWorking || !['MOB', 'OI'].includes(normalizeUpper(filters.type))
+  const bundleEligibility = useMemo(() => {
+    if (!canSelectSkuRows) {
+      return { canBundle: false, reason: 'Choose MOB or OI before creating a bundle.' }
+    }
+
+    if (selectedBundleDetailItems.length > 0) {
+      return { canBundle: false, reason: 'Existing bundles cannot be used to create another bundle.' }
+    }
+
+    if (selectedDetailItems.length < 2) {
+      return { canBundle: false, reason: 'Select at least 2 SKU rows from the same brand and category.' }
+    }
+
+    const brandCodes = Array.from(new Set(selectedDetailItems.map((item) => normalizeCode(item.brandCode)).filter(Boolean)))
+    const categoryCodes = Array.from(new Set(selectedDetailItems.map((item) => normalizeCode(item.categoryCode)).filter(Boolean)))
+
+    if (brandCodes.length !== 1) {
+      return { canBundle: false, reason: 'Bundle can only use products from the same brand.' }
+    }
+
+    if (categoryCodes.length !== 1) {
+      return { canBundle: false, reason: 'Bundle can only use products from the same category path.' }
+    }
+
+    const prefix = `${brandCodes[0]}${categoryCodes[0]}B`
+    if (!brandCodes[0] || !categoryCodes[0]) {
+      return { canBundle: false, reason: 'Selected products need brand and category codes first.' }
+    }
+
+    return { canBundle: true, reason: `Create bundle under ${prefix}.`, prefix }
+  }, [canSelectSkuRows, selectedBundleDetailItems.length, selectedDetailItems])
+  const bundleButtonDisabled = !bundleEligibility.canBundle || selectedBundleDetailItems.length > 0 || selectedTransferRows.length === 0 || bulkWorking || !['MOB', 'OI'].includes(normalizeUpper(filters.type))
   const selectedProductSection = embedded ? activeSection : 'directory'
+
+  function clearProductSelection() {
+    setSelectedProductKeys([])
+    setSelectedProductItemsByKey({})
+  }
 
   function handleFilterChange(event) {
     const { name, value, type, checked } = event.target
@@ -1709,7 +2319,6 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
       ...prev,
       [name]: type === 'checkbox' ? checked : value,
     }))
-    setSelectedProductKeys([])
     setCurrentPage(1)
   }
 
@@ -1723,7 +2332,6 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
         releaseStatus: prev.viewMode === 'model' && nextType === 'all' ? 'all' : prev.releaseStatus,
       }
     })
-    setSelectedProductKeys([])
     setCurrentPage(1)
   }
 
@@ -1735,7 +2343,6 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
         releaseStatus: nextReleaseStatus,
       }
     })
-    setSelectedProductKeys([])
     setCurrentPage(1)
   }
 
@@ -1749,7 +2356,6 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
     })
     setFilterSearches((prev) => ({ ...prev, [name]: '' }))
     setOpenFilterMenu('')
-    setSelectedProductKeys([])
     setCurrentPage(1)
   }
 
@@ -1761,7 +2367,6 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
       }))
       setFilterSearches((prev) => ({ ...prev, [name]: '' }))
       setOpenFilterMenu(name)
-      setSelectedProductKeys([])
       setCurrentPage(1)
       return
     }
@@ -1781,17 +2386,28 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
         direction: 'desc',
       })
     }
-    setSelectedProductKeys([])
     setCurrentPage(1)
   }
 
-  function toggleSelectedProduct(productKey) {
+  function toggleSelectedProduct(product) {
     if (!canManage) return
+    const productKey = product.key
+    const isSelected = selectedProductKeys.includes(productKey)
+
     setSelectedProductKeys((prev) =>
-      prev.includes(productKey)
+      isSelected
         ? prev.filter((key) => key !== productKey)
         : [...prev, productKey]
     )
+    setSelectedProductItemsByKey((prev) => {
+      const next = { ...prev }
+      if (isSelected) {
+        delete next[productKey]
+      } else {
+        next[productKey] = product
+      }
+      return next
+    })
     setActionError('')
     setActionMessage('')
   }
@@ -1799,6 +2415,21 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
   function openSelectedSellingNameEditor() {
     if (!canManage) return
     if (editNameButtonDisabled || !selectedNameItem) return
+
+    if (selectedNameItem.isBundle) {
+      setSellingNameEditor({
+        isBundle: true,
+        bundleId: Number(selectedNameItem.bundleId || 0),
+        sku: normalize(selectedNameItem.sku || selectedNameItem.sourceVariantCode) || '-',
+        plNames: 'GRN Bundle',
+        variantName: normalize(selectedNameItem.productName) || '-',
+        sellingName: normalize(selectedNameItem.productName) || '',
+      })
+      setSellingNameDraft(normalizeUpper(selectedNameItem.productName || ''))
+      setActionError('')
+      setActionMessage('')
+      return
+    }
 
     openSellingNameEditor(selectedNameItem)
   }
@@ -1827,6 +2458,690 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
 
     setMergeEditor(null)
     setMergeTargetVariantId('')
+  }
+
+  function getTransferTargetType(sourceType) {
+    const normalizedSourceType = normalizeStoringType(sourceType)
+    return normalizedSourceType === 'MOB' ? 'OI' : normalizedSourceType === 'OI' ? 'MOB' : ''
+  }
+
+  function getNextBundleCode(prefix = '') {
+    const normalizedPrefix = normalizeCode(prefix)
+    if (!normalizedPrefix) return ''
+
+    const nextNumber = (bundleRows || []).reduce((maxValue, row) => {
+      const code = normalizeCode(row.bundle_code)
+      if (!code.startsWith(normalizedPrefix)) return maxValue
+
+      const suffix = code.slice(normalizedPrefix.length)
+      const suffixNumber = Number(suffix)
+      return Number.isFinite(suffixNumber) ? Math.max(maxValue, suffixNumber) : maxValue
+    }, 0) + 1
+
+    return `${normalizedPrefix}${String(nextNumber).padStart(3, '0')}`
+  }
+
+  function getExistingBundleOptions(prefix = '', sourceType = '') {
+    const normalizedPrefix = normalizeCode(prefix)
+    const normalizedSourceType = normalizeStoringType(sourceType)
+
+    return (bundleRows || [])
+      .filter((row) => normalizeCode(row.bundle_code).startsWith(normalizedPrefix))
+      .filter((row) => normalizeStoringType(row.storing_type) === normalizedSourceType)
+      .filter((row) => normalizeUpper(row.status || 'draft') === 'DRAFT')
+      .sort((left, right) => naturalSort.compare(normalize(left.bundle_code), normalize(right.bundle_code)))
+  }
+
+  function getTransferRowSummary(row) {
+    const breakdown = lookup.breakdownById.get(Number(row.pl_size_breakdown_id || 0))
+    const modelId = Number(row.product_model_id || breakdown?.product_model_id || 0)
+    const variantId = Number(row.product_model_variant_id || breakdown?.product_model_variant_id || 0)
+    const model = lookup.modelById.get(modelId)
+    const variant = lookup.variantById.get(variantId)
+    const assignedVariant = getAssignedVariantForRow(row, breakdown, lookup, variant)
+    const selectedVariant = getCanonicalVariant(assignedVariant, lookup.variantById)
+    const sourceSku = normalize(row.source_variant_code || breakdown?.source_variant_code || variant?.variant_code || variant?.variant_label) || '-'
+    const selectedSku = getAssignedSkuForRow(row, breakdown, lookup, getSelectedSku(sourceSku, selectedVariant))
+    const inbound = lookup.inboundById.get(Number(row.inbound_id || 0))
+
+    return {
+      rowId: Number(row.sourceRowId || row.id || 0),
+      sourceGroup: getRowStoringType(row),
+      grn: normalize(inbound?.grn_number) || '-',
+      sku: selectedSku,
+      productName: getSelectedProductName(row, breakdown, model, variant, selectedVariant),
+      photoUrl: getResolvedProductPhotoUrl(row, breakdown, model, variant, selectedVariant),
+      size: normalize(row.size_label || breakdown?.size_label) || '-',
+      qty: Number(row.qty || 0),
+      storageStatus: normalize(row.storage_status),
+      releaseState: getReleaseState(row),
+    }
+  }
+
+  function openGroupTransferEditor() {
+    if (!canManage) return
+    if (transferButtonDisabled) {
+      setActionError('Choose MOB or OI, then select SKU rows to transfer.')
+      return
+    }
+
+    const sourceType = normalizeStoringType(filters.type)
+    const targetType = getTransferTargetType(sourceType)
+
+    if (selectedBundleDetailItems.length) {
+      const rows = selectedBundleDetailItems
+        .flatMap((item) => item.bundleComponentRows || [])
+        .filter((row) => row.sourceGroup === sourceType && Number(row.qty || 0) > 0)
+        .map((row) => ({
+          ...row,
+          rowId: 0,
+          sourceGroup: sourceType,
+          isBundle: true,
+        }))
+        .sort((left, right) =>
+          naturalSort.compare(left.sku, right.sku) ||
+          naturalSort.compare(left.size, right.size)
+        )
+
+      if (!sourceType || !targetType || rows.length === 0) {
+        setActionError('No transferable bundle rows found.')
+        return
+      }
+
+      const groupsByKey = new Map()
+      rows.forEach((row) => {
+        const groupKey = `${normalizeKey(row.grn)}::${normalizeKey(row.sku)}`
+        const group = groupsByKey.get(groupKey) || {
+          key: groupKey,
+          grn: row.grn,
+          sku: row.sku,
+          productName: row.productName,
+          photoUrl: row.photoUrl || '',
+          rowsBySize: new Map(),
+        }
+        group.photoUrl = group.photoUrl || row.photoUrl || ''
+        const size = row.size || '-'
+        const sizeKey = normalizeKey(size)
+        const sizeRow = group.rowsBySize.get(sizeKey) || {
+          key: `${groupKey}::${sizeKey}`,
+          size,
+          qty: 0,
+          sourceRows: [],
+        }
+        sizeRow.qty += Number(row.qty || 0)
+        sizeRow.sourceRows.push(row)
+        group.rowsBySize.set(sizeKey, sizeRow)
+        groupsByKey.set(groupKey, group)
+      })
+
+      const groups = Array.from(groupsByKey.values()).map((group) => ({
+        ...group,
+        rows: Array.from(group.rowsBySize.values()).sort((left, right) => compareSizeValues(left.size, right.size)),
+      }))
+
+      setGroupTransferEditor({
+        sourceType,
+        targetType,
+        groups,
+        hasStoredRows: false,
+        isBundle: true,
+      })
+      setGroupTransferDrafts(Object.fromEntries(
+        groups.flatMap((group) => group.rows.map((row) => [row.key, '']))
+      ))
+      setActionError('')
+      setActionMessage('')
+      return
+    }
+
+    const selectedIdSet = new Set(selectedRowIds.map(Number))
+    const rows = effectivePackingRows
+      .filter((row) => selectedIdSet.has(Number(row.sourceRowId || row.id || 0)))
+      .filter((row) => getRowStoringType(row) === sourceType)
+      .map(getTransferRowSummary)
+      .filter((row) => row.rowId && row.qty > 0)
+      .sort((left, right) =>
+        naturalSort.compare(left.grn, right.grn) ||
+        naturalSort.compare(left.sku, right.sku) ||
+        naturalSort.compare(left.size, right.size)
+      )
+
+    if (!sourceType || !targetType || rows.length === 0) {
+      setActionError('No transferable SKU rows found.')
+      return
+    }
+
+    const groupsByKey = new Map()
+    rows.forEach((row) => {
+      const groupKey = `${normalizeKey(row.grn)}::${normalizeKey(row.sku)}`
+      const group = groupsByKey.get(groupKey) || {
+        key: groupKey,
+        grn: row.grn,
+        sku: row.sku,
+        productName: row.productName,
+        photoUrl: row.photoUrl || '',
+        photoUrls: new Set(),
+        rowsBySize: new Map(),
+      }
+      group.photoUrl = group.photoUrl || row.photoUrl || ''
+      if (row.photoUrl) group.photoUrls.add(row.photoUrl)
+      const size = row.size || '-'
+      const sizeKey = normalizeKey(size)
+      const sizeRow = group.rowsBySize.get(sizeKey) || {
+        key: `${groupKey}::${sizeKey}`,
+        size,
+        qty: 0,
+        sourceRows: [],
+      }
+      sizeRow.qty += row.qty
+      sizeRow.sourceRows.push(row)
+      group.rowsBySize.set(sizeKey, sizeRow)
+      groupsByKey.set(groupKey, group)
+    })
+
+    const groups = Array.from(groupsByKey.values()).map((group) => ({
+      ...group,
+      photoUrls: Array.from(group.photoUrls || []).filter(Boolean),
+      rows: Array.from(group.rowsBySize.values()).sort((left, right) => compareSizeValues(left.size, right.size)),
+    }))
+
+    const hasStoredRows = rows.some((row) => normalizeUpper(row.storageStatus) === 'STORED')
+
+    setGroupTransferEditor({
+      sourceType,
+      targetType,
+      groups,
+      hasStoredRows,
+    })
+    setGroupTransferDrafts(Object.fromEntries(
+      groups.flatMap((group) => group.rows.map((row) => [row.key, '']))
+    ))
+    setActionError('')
+    setActionMessage('')
+  }
+
+  function closeGroupTransferEditor() {
+    if (bulkWorking) return
+
+    setGroupTransferEditor(null)
+    setGroupTransferDrafts({})
+  }
+
+  function setFullGroupTransferQty() {
+    if (!groupTransferEditor) return
+
+    setGroupTransferDrafts(Object.fromEntries(
+      groupTransferEditor.groups.flatMap((group) => group.rows.map((row) => [row.key, String(row.qty)]))
+    ))
+  }
+
+  function updateGroupTransferQty(rowKey, value) {
+    const cleanValue = String(value || '').replace(/[^\d]/g, '')
+    const row = groupTransferEditor?.groups
+      .flatMap((group) => group.rows)
+      .find((item) => item.key === rowKey)
+    const maxQty = Number(row?.qty || 0)
+    const nextQty = cleanValue ? Math.min(Number(cleanValue), maxQty) : ''
+
+    setGroupTransferDrafts((prev) => ({
+      ...prev,
+      [rowKey]: nextQty === '' ? '' : String(nextQty),
+    }))
+  }
+
+  async function saveGroupTransfer() {
+    if (!canManage || !groupTransferEditor || bulkWorking) return
+
+    const transferRows = groupTransferEditor.groups.flatMap((group) => group.rows.flatMap((sizeRow) => {
+      let remainingQty = Number(groupTransferDrafts[sizeRow.key] || 0)
+
+      return sizeRow.sourceRows.reduce((sourceTransfers, sourceRow) => {
+        if (remainingQty <= 0) return sourceTransfers
+
+        const transferQty = Math.min(remainingQty, Number(sourceRow.qty || 0))
+        if (transferQty > 0) {
+          sourceTransfers.push({ ...sourceRow, transferQty })
+          remainingQty -= transferQty
+        }
+
+        return sourceTransfers
+      }, [])
+    }))
+
+    if (transferRows.length === 0) {
+      setActionError('Enter a transfer quantity for at least one size row.')
+      return
+    }
+
+    const invalidRow = transferRows.find((row) => row.transferQty > row.qty)
+    if (invalidRow) {
+      setActionError(`Transfer quantity cannot be greater than available quantity for ${invalidRow.sku} / ${invalidRow.size}.`)
+      return
+    }
+
+    setBulkWorking(true)
+    setActionError('')
+    setActionMessage('')
+
+    try {
+      const actor = await getActorLabel()
+      const results = []
+
+      for (const row of transferRows) {
+        const { data, error: transferError } = row.isBundle
+          ? await supabase.rpc('transfer_product_bundle_component_group', {
+              p_product_bundle_component_id: row.bundleComponentId,
+              p_source_type: row.sourceGroup,
+              p_transfer_qty: row.transferQty,
+              p_target_type: groupTransferEditor.targetType,
+              p_actor: actor,
+            })
+          : await supabase.rpc('transfer_pl_packing_item_group', {
+              p_row_id: row.rowId,
+              p_source_type: row.sourceGroup,
+              p_transfer_qty: row.transferQty,
+              p_target_type: groupTransferEditor.targetType,
+              p_actor: actor,
+            })
+
+        if (transferError) throw transferError
+        results.push(data || {})
+      }
+
+      const nextTransferRows = results.map((result) => result.event).filter(Boolean)
+      setGroupTransferRows((currentRows) => [...currentRows, ...nextTransferRows])
+      setGroupTransferEditor(null)
+      setGroupTransferDrafts({})
+      clearProductSelection()
+      setGroupTransferRows((currentRows) => [...currentRows, ...nextTransferRows])
+      setActionMessage(`${formatNumber(transferRows.reduce((total, row) => total + row.transferQty, 0))} ${groupTransferEditor.isBundle ? 'bundle item(s)' : 'item(s)'} transferred from ${groupTransferEditor.sourceType} to ${groupTransferEditor.targetType}.`)
+    } catch (transferError) {
+      setActionError(getActionErrorMessage(transferError))
+    } finally {
+      setBulkWorking(false)
+    }
+  }
+
+  function openBundleEditor() {
+    if (!canManage) return
+    if (bundleButtonDisabled) {
+      setActionError(bundleEligibility.reason || 'Choose MOB or OI, then select SKU rows to bundle.')
+      return
+    }
+
+    const sourceType = normalizeStoringType(filters.type)
+    const selectedIdSet = new Set(selectedRowIds.map(Number))
+    const rows = effectivePackingRows
+      .filter((row) => selectedIdSet.has(Number(row.sourceRowId || row.id || 0)))
+      .filter((row) => getRowStoringType(row) === sourceType)
+      .map(getTransferRowSummary)
+      .filter((row) => row.rowId && row.qty > 0)
+      .sort((left, right) =>
+        naturalSort.compare(left.grn, right.grn) ||
+        naturalSort.compare(left.sku, right.sku) ||
+        compareSizeValues(left.size, right.size)
+      )
+
+    if (!sourceType || rows.length === 0) {
+      setActionError('No bundle source rows found.')
+      return
+    }
+
+    const groupsByKey = new Map()
+    rows.forEach((row) => {
+      const groupKey = `${normalizeKey(row.grn)}::${normalizeKey(row.sku)}`
+      const group = groupsByKey.get(groupKey) || {
+        key: groupKey,
+        grn: row.grn,
+        sku: row.sku,
+        productName: row.productName,
+        photoUrl: row.photoUrl || '',
+        rowsBySize: new Map(),
+      }
+      group.photoUrl = group.photoUrl || row.photoUrl || ''
+      const size = row.size || '-'
+      const sizeKey = normalizeKey(size)
+      const sizeRow = group.rowsBySize.get(sizeKey) || {
+        key: `${groupKey}::${sizeKey}`,
+        size,
+        qty: 0,
+        sourceRows: [],
+      }
+      sizeRow.qty += row.qty
+      sizeRow.sourceRows.push(row)
+      group.rowsBySize.set(sizeKey, sizeRow)
+      groupsByKey.set(groupKey, group)
+    })
+
+    const groups = Array.from(groupsByKey.values()).map((group) => ({
+      ...group,
+      rows: Array.from(group.rowsBySize.values()).sort((left, right) => compareSizeValues(left.size, right.size)),
+    }))
+
+    const suggestedCode = getNextBundleCode(bundleEligibility.prefix)
+    const existingBundleOptions = getExistingBundleOptions(bundleEligibility.prefix, sourceType)
+
+    setBundleEditor({
+      sourceType,
+      groups,
+      prefix: bundleEligibility.prefix,
+      existingBundleOptions,
+    })
+    setBundleDrafts(Object.fromEntries(
+      groups.flatMap((group) => group.rows.map((row) => [row.key, '']))
+    ))
+    setBundleForm({
+      mode: 'new',
+      code: suggestedCode,
+      name: '',
+      unitQty: 0,
+      existingBundleId: existingBundleOptions[0]?.id ? String(existingBundleOptions[0].id) : '',
+    })
+    setActionError('')
+    setActionMessage('')
+  }
+
+  function closeBundleEditor() {
+    if (bulkWorking) return
+
+    setBundleEditor(null)
+    setBundleDrafts({})
+  }
+
+  function setFullBundleQty() {
+    if (!bundleEditor) return
+
+    setBundleDrafts(Object.fromEntries(
+      bundleEditor.groups.flatMap((group) => group.rows.map((row) => [row.key, String(row.qty)]))
+    ))
+  }
+
+  function updateBundleQty(rowKey, value) {
+    const cleanValue = String(value || '').replace(/[^\d]/g, '')
+    const row = bundleEditor?.groups
+      .flatMap((group) => group.rows)
+      .find((item) => item.key === rowKey)
+    const maxQty = Number(row?.qty || 0)
+    const nextQty = cleanValue ? Math.min(Number(cleanValue), maxQty) : ''
+
+    setBundleDrafts((prev) => ({
+      ...prev,
+      [rowKey]: nextQty === '' ? '' : String(nextQty),
+    }))
+  }
+
+  function getBundleAllocationSizeTotals() {
+    if (!bundleEditor) return []
+
+    const totals = new Map()
+    const expectedContributors = new Map()
+    bundleEditor.groups.forEach((group) => {
+      const contributorKey = normalizeKey(group.sku) || normalizeKey(group.productName)
+      if (!expectedContributors.has(contributorKey)) {
+        expectedContributors.set(contributorKey, {
+          key: contributorKey,
+          label: normalize(group.sku) || normalize(group.productName) || '-',
+        })
+      }
+    })
+
+    bundleEditor.groups.forEach((group) => {
+      group.rows.forEach((sizeRow) => {
+        const size = normalize(sizeRow.size) || '-'
+        const sizeKey = normalizeKey(size)
+        const allocatedQty = Number(bundleDrafts[sizeRow.key] || 0)
+        const current = totals.get(sizeKey) || { size, allocatedQty: 0, contributors: new Map() }
+        current.allocatedQty += allocatedQty
+        const contributorKey = normalizeKey(group.sku) || normalizeKey(group.productName)
+        const contributor = current.contributors.get(contributorKey) || {
+          key: contributorKey,
+          label: normalize(group.sku) || normalize(group.productName) || '-',
+          availableQty: 0,
+          allocatedQty: 0,
+        }
+        contributor.availableQty += Number(sizeRow.qty || 0)
+        contributor.allocatedQty += allocatedQty
+        current.contributors.set(contributorKey, contributor)
+        totals.set(sizeKey, current)
+      })
+    })
+
+    return Array.from(totals.values())
+      .map((row) => ({
+        ...row,
+        expectedContributors: Array.from(expectedContributors.values()),
+        contributors: Array.from(row.contributors.values()),
+      }))
+      .sort((left, right) => compareSizeValues(left.size, right.size))
+  }
+
+  function getBundleMinimumQty() {
+    if (!bundleEditor) return 1
+
+    const contributors = new Set(
+      bundleEditor.groups
+        .map((group) => normalizeKey(group.sku) || normalizeKey(group.productName))
+        .filter(Boolean)
+    )
+
+    return Math.max(1, contributors.size)
+  }
+
+  function getBundleContributionIssues() {
+    return getBundleAllocationSizeTotals()
+      .filter((row) => row.allocatedQty > 0)
+      .map((row) => ({
+        size: row.size,
+        missingContributors: row.expectedContributors.filter((expectedContributor) => {
+          const contributor = row.contributors.find((item) => item.key === expectedContributor.key)
+          return !contributor || contributor.allocatedQty <= 0
+        }),
+      }))
+      .filter((row) => row.missingContributors.length > 0)
+  }
+
+  function getBundlePatternIssues(bundleUnitQty) {
+    const unitQty = Number(bundleUnitQty)
+    if (!Number.isInteger(unitQty) || unitQty <= 0) return []
+
+    const patternRows = []
+    const issues = []
+
+    getBundleAllocationSizeTotals()
+      .filter((row) => row.allocatedQty > 0)
+      .forEach((row) => {
+        const contributors = row.expectedContributors.map((expectedContributor) => {
+          const contributor = row.contributors.find((item) => item.key === expectedContributor.key)
+          return {
+            label: expectedContributor.label,
+            allocatedQty: Number(contributor?.allocatedQty || 0),
+          }
+        })
+        const hasMissingContribution = contributors.some((contributor) => contributor.allocatedQty <= 0)
+        if (hasMissingContribution) return
+
+        const bundleCount = row.allocatedQty / unitQty
+        if (!Number.isInteger(bundleCount) || bundleCount <= 0) return
+
+        const perBundleContributions = contributors.map((contributor) => ({
+          ...contributor,
+          perBundleQty: contributor.allocatedQty / bundleCount,
+        }))
+        const hasFractionalContribution = perBundleContributions.some(
+          (contributor) => !Number.isInteger(contributor.perBundleQty)
+        )
+
+        if (hasFractionalContribution) {
+          issues.push({
+            type: 'fractional',
+            size: row.size,
+            bundleCount,
+            contributors: perBundleContributions,
+          })
+          return
+        }
+
+        patternRows.push({
+          type: 'mismatch',
+          size: row.size,
+          bundleCount,
+          contributors: perBundleContributions,
+          patternKey: perBundleContributions.map((contributor) => contributor.perBundleQty).join(':'),
+        })
+      })
+
+    const baseline = patternRows[0]
+    if (!baseline) return issues
+
+    return [
+      ...issues,
+      ...patternRows
+        .filter((row) => row.patternKey !== baseline.patternKey)
+        .map((row) => ({
+          ...row,
+          expectedContributors: baseline.contributors,
+        })),
+    ]
+  }
+
+  async function saveBundle() {
+    if (!canManage || !bundleEditor || bulkWorking) return
+
+    const isExistingBundleMode = bundleForm.mode === 'existing'
+    const existingBundle = (bundleEditor.existingBundleOptions || []).find((row) => String(row.id) === String(bundleForm.existingBundleId))
+    const bundleCode = isExistingBundleMode ? normalizeUpper(existingBundle?.bundle_code) : normalizeUpper(bundleForm.code)
+    const bundleName = isExistingBundleMode ? normalize(existingBundle?.bundle_name) : normalize(bundleForm.name)
+    const bundleUnitQty = Number.parseInt(String(bundleForm.unitQty || ''), 10)
+
+    const minimumBundleQty = getBundleMinimumQty()
+    if (!Number.isInteger(bundleUnitQty) || bundleUnitQty < minimumBundleQty) {
+      setActionError(`Qty Per Bundle must be a whole number greater than or equal to ${minimumBundleQty}.`)
+      return
+    }
+
+    if (!bundleCode) {
+      setActionError(isExistingBundleMode ? 'Choose an existing bundle first.' : 'Bundle code is required.')
+      return
+    }
+
+    if (!bundleName) {
+      setActionError('Bundle name is required.')
+      return
+    }
+
+    if (!isExistingBundleMode && bundleEditor.prefix && !bundleCode.startsWith(normalizeCode(bundleEditor.prefix))) {
+      setActionError(`Bundle code must start with ${bundleEditor.prefix}.`)
+      return
+    }
+
+    const invalidAllocation = getBundleAllocationSizeTotals()
+      .find((row) => row.allocatedQty > 0 && row.allocatedQty % bundleUnitQty !== 0)
+
+    if (invalidAllocation) {
+      setActionError(`Total ${invalidAllocation.size} quantity must be divisible by ${bundleUnitQty} so it produces whole bundles.`)
+      return
+    }
+
+    const contributionIssue = getBundleContributionIssues()[0]
+    if (contributionIssue) {
+      setActionError(`Size ${contributionIssue.size} must include a contribution from: ${contributionIssue.missingContributors.map((contributor) => contributor.label).join(', ')}.`)
+      return
+    }
+
+    const patternIssue = getBundlePatternIssues(bundleUnitQty)[0]
+    if (patternIssue) {
+      if (patternIssue.type === 'fractional') {
+        setActionError(`Size ${patternIssue.size} cannot form whole per-bundle contributions across ${formatNumber(patternIssue.bundleCount)} bundle(s).`)
+      } else {
+        const expectedText = patternIssue.expectedContributors
+          .map((contributor) => `${contributor.label}: ${formatNumber(contributor.perBundleQty)}`)
+          .join(', ')
+        const currentText = patternIssue.contributors
+          .map((contributor) => `${contributor.label}: ${formatNumber(contributor.perBundleQty)}`)
+          .join(', ')
+        setActionError(`Size ${patternIssue.size} does not match the per-bundle contribution pattern. Expected ${expectedText}; current ${currentText}.`)
+      }
+      return
+    }
+
+    const componentRows = bundleEditor.groups.flatMap((group) => group.rows.flatMap((sizeRow) => {
+      let remainingQty = Number(bundleDrafts[sizeRow.key] || 0)
+
+      return sizeRow.sourceRows.reduce((components, sourceRow) => {
+        if (remainingQty <= 0) return components
+
+        const allocatedQty = Math.min(remainingQty, Number(sourceRow.qty || 0))
+        if (allocatedQty > 0) {
+          components.push({
+            ...sourceRow,
+            allocatedQty,
+            availableQtySnapshot: Number(sourceRow.qty || 0),
+          })
+          remainingQty -= allocatedQty
+        }
+
+        return components
+      }, [])
+    }))
+
+    if (componentRows.length === 0) {
+      setActionError('Enter a bundle quantity for at least one size row.')
+      return
+    }
+
+    setBulkWorking(true)
+    setActionError('')
+    setActionMessage('')
+
+    try {
+      const actor = await getActorLabel()
+      const componentPayload = componentRows.map((row) => ({
+        source_pl_packing_item_id: row.rowId,
+        source_type: row.sourceGroup,
+        grn_number: row.grn,
+        sku: row.sku,
+        product_name: row.productName,
+        size_label: row.size,
+        allocated_qty: row.allocatedQty,
+        available_qty_snapshot: row.availableQtySnapshot,
+      }))
+
+      const { data: bundleResult, error: bundleError } = isExistingBundleMode
+        ? await supabase.rpc('add_product_bundle_components', {
+            p_bundle_id: Number(existingBundle?.id || 0),
+            p_actor: actor,
+            p_components: componentPayload,
+          })
+        : await supabase.rpc('create_product_bundle', {
+            p_bundle_code: bundleCode,
+            p_bundle_name: bundleName,
+            p_storing_type: bundleEditor.sourceType,
+            p_bundle_unit_qty: bundleUnitQty,
+            p_actor: actor,
+            p_components: componentPayload,
+          })
+
+      if (bundleError) throw bundleError
+
+      const createdBundle = bundleResult?.bundle
+      if (createdBundle?.id && !isExistingBundleMode) {
+        setBundleRows((currentRows) => [...currentRows, createdBundle])
+      } else if (createdBundle?.id) {
+        setBundleRows((currentRows) => currentRows.map((row) => (Number(row.id) === Number(createdBundle.id) ? { ...row, ...createdBundle } : row)))
+      }
+      const refreshedBundleComponents = await fetchOptionalRows('product_bundle_components', BUNDLE_COMPONENT_SELECT_COLUMNS, 'created_at')
+      setBundleComponentRows(refreshedBundleComponents)
+      setBundleEditor(null)
+      setBundleDrafts({})
+      clearProductSelection()
+      const totalBundleCount = getBundleAllocationSizeTotals()
+        .reduce((sum, row) => sum + Math.floor(row.allocatedQty / bundleUnitQty), 0)
+      setActionMessage(`${bundleCode} bundle ${isExistingBundleMode ? 'updated' : 'draft created'} with ${formatNumber(totalBundleCount)} bundle(s).`)
+    } catch (bundleError) {
+      setActionError(getActionErrorMessage(bundleError))
+    } finally {
+      setBulkWorking(false)
+    }
   }
 
   function closeConfirmDialog() {
@@ -1878,11 +3193,14 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
     if (releaseButtonDisabled) return
 
     const variantCount = new Set(selectedDetailItems.map((item) => Number(item.productModelVariantId || 0)).filter(Boolean)).size
+    const bundleCount = selectedBundleDetailItems.length
 
     setConfirmDialog({
       action: 'release',
       title: 'Confirm Set Released',
-      message: `Mark ${selectedReleaseRowIds.length} PL row(s) and ${variantCount} SKU variant(s) as Released?`,
+      message: bundleCount
+        ? `Mark ${bundleCount} bundle(s) as Released?`
+        : `Mark ${selectedReleaseRowIds.length} PL row(s) and ${variantCount} SKU variant(s) as Released?`,
       confirmLabel: 'OK, Set Released',
       tone: 'danger',
     })
@@ -1897,11 +3215,14 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
         .map((item) => getVariantReleaseStateKey(item.productModelVariantId, item.type || filters.type))
         .filter(Boolean)
     ).size
+    const bundleCount = selectedReleasedDetailItems.filter((item) => item.isBundle).length
 
     setConfirmDialog({
       action: 'unrelease',
       title: 'Confirm Set Unreleased',
-      message: `Undo the latest release for ${releaseStateCount} selected SKU release state(s)? If a SKU was released more than once, only the newest release will be removed.`,
+      message: bundleCount
+        ? `Undo the latest release for ${bundleCount} selected bundle(s)? If a bundle was released more than once, only the newest release will be removed.`
+        : `Undo the latest release for ${releaseStateCount} selected SKU release state(s)? If a SKU was released more than once, only the newest release will be removed.`,
       confirmLabel: 'OK, Set Unreleased',
       tone: 'dark',
     })
@@ -1997,7 +3318,7 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
       }
       setMergeEditor(null)
       setMergeTargetVariantId('')
-      setSelectedProductKeys([])
+      clearProductSelection()
       setActionMessage(`${variantsToMerge.length} SKU variant(s) merged into ${targetOption.sku}.`)
     } catch (mergeError) {
       const updatedIds = updatedVariants.map((variant) => Number(variant.id)).filter(Boolean)
@@ -2055,6 +3376,14 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
       return `${message} Run the latest supabase/product_variant_merge_workflow.sql in Supabase so merge/split audit logs can be saved.`
     }
 
+    if (normalized.includes('transfer_pl_packing_item_group') || normalized.includes('transfer_product_bundle_component_group') || normalized.includes('product_group_transfer_events')) {
+      return `${message} Run supabase/product_group_transfer_workflow.sql in Supabase first.`
+    }
+
+    if (normalized.includes('create_product_bundle') || normalized.includes('add_product_bundle_components') || normalized.includes('product_bundles') || normalized.includes('product_bundle_components')) {
+      return `${message} Run supabase/product_bundle_workflow.sql in Supabase first.`
+    }
+
     if (
       normalized.includes('merged_into_variant_id') ||
       normalized.includes('product_variant_identity_events') ||
@@ -2107,7 +3436,7 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
 
   async function saveSellingName() {
     if (!canManage) return
-    if (!sellingNameEditor?.variantId || bulkWorking) return
+    if ((!sellingNameEditor?.variantId && !sellingNameEditor?.bundleId) || bulkWorking) return
 
     setBulkWorking(true)
     setActionError('')
@@ -2115,6 +3444,31 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
 
     try {
       const nextSellingName = normalizeUpper(sellingNameDraft)
+
+      if (sellingNameEditor.bundleId) {
+        const { data: updatedBundle, error: updateError } = await supabase
+          .from('product_bundles')
+          .update({
+            bundle_name: nextSellingName || 'BUNDLE',
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', sellingNameEditor.bundleId)
+          .select('*')
+          .single()
+
+        if (updateError) throw updateError
+
+        setBundleRows((prev) => prev.map((bundle) => (
+          Number(bundle.id) === Number(sellingNameEditor.bundleId)
+            ? { ...bundle, ...updatedBundle }
+            : bundle
+        )))
+        setSellingNameEditor(null)
+        setSellingNameDraft('')
+        setActionMessage('Bundle name updated.')
+        return
+      }
+
       const payload = {
         selling_name: nextSellingName || null,
         updated_at: new Date().toISOString(),
@@ -2143,7 +3497,7 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
 
   async function markSelectedReleased() {
     if (!canManage) return
-    if (selectedReleaseRowIds.length === 0 || bulkWorking) return
+    if ((selectedReleaseRowIds.length === 0 && selectedBundleDetailItems.length === 0) || bulkWorking) return
 
     setBulkWorking(true)
     setActionError('')
@@ -2152,6 +3506,44 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
     try {
       const actor = await getActorLabel()
       const releasedAt = new Date().toISOString()
+
+      if (selectedBundleDetailItems.length) {
+        const updatedBundles = await Promise.all(selectedBundleDetailItems.map(async (item) => {
+          const currentBundle = (bundleRows || []).find((bundle) => Number(bundle.id) === Number(item.bundleId)) || {}
+          const nextReleaseCount = getReleaseCount(currentBundle) + 1
+          const releaseEvent = {
+            release_count: nextReleaseCount,
+            released_at: releasedAt,
+            released_by: actor,
+            qty: Number(item.qty || 0),
+            source: 'manual',
+          }
+          const payload = {
+            status: 'released',
+            released_at: releasedAt,
+            released_by: actor,
+            release_count: nextReleaseCount,
+            release_history: appendVariantReleaseHistory(currentBundle, releaseEvent),
+            updated_at: releasedAt,
+          }
+          const { data: updatedBundle, error: updateError } = await supabase
+            .from('product_bundles')
+            .update(payload)
+            .eq('id', item.bundleId)
+            .select('*')
+            .single()
+
+          if (updateError) throw updateError
+          return updatedBundle || { ...currentBundle, ...payload }
+        }))
+
+        const updatedBundleById = new Map(updatedBundles.map((bundle) => [Number(bundle.id), bundle]))
+        setBundleRows((prev) => prev.map((bundle) => updatedBundleById.get(Number(bundle.id)) || bundle))
+        clearProductSelection()
+        setActionMessage(`${updatedBundles.length} bundle(s) marked as Released.`)
+        return
+      }
+
       const selectedIdSet = new Set(selectedReleaseRowIds.map(Number))
       const rowsToRelease = packingRows.filter((row) => selectedIdSet.has(Number(row.id)))
       const detailsByVariantType = new Map()
@@ -2273,7 +3665,7 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
       setPackingRows((prev) =>
         prev.map((row) => (payloadById.has(Number(row.id)) ? { ...row, ...payloadById.get(Number(row.id)) } : row))
       )
-      setSelectedProductKeys([])
+      clearProductSelection()
       setActionMessage(`${selectedReleaseRowIds.length} PL row(s) and ${releaseDetails.length} ${filters.type} SKU release state(s) marked as Released.`)
     } catch (updateError) {
       setActionError(getActionErrorMessage(updateError))
@@ -2292,6 +3684,39 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
 
     try {
       const updatedAt = new Date().toISOString()
+
+      if (selectedReleasedDetailItems.some((item) => item.isBundle)) {
+        const updatedBundles = await Promise.all(selectedReleasedDetailItems.map(async (item) => {
+          const currentBundle = (bundleRows || []).find((bundle) => Number(bundle.id) === Number(item.bundleId)) || {}
+          const { remainingHistory } = removeLatestReleaseHistoryEvent(currentBundle.release_history)
+          const remainingLatestEvent = getSortedReleaseHistory(remainingHistory)[0] || null
+          const nextReleaseCount = Math.max(0, getReleaseCount(currentBundle) - 1)
+          const payload = {
+            status: nextReleaseCount > 0 ? 'released' : 'draft',
+            released_at: nextReleaseCount > 0 ? remainingLatestEvent?.released_at || null : null,
+            released_by: nextReleaseCount > 0 ? remainingLatestEvent?.released_by || null : null,
+            release_count: nextReleaseCount,
+            release_history: nextReleaseCount > 0 ? remainingHistory : [],
+            updated_at: updatedAt,
+          }
+          const { data: updatedBundle, error: updateError } = await supabase
+            .from('product_bundles')
+            .update(payload)
+            .eq('id', item.bundleId)
+            .select('*')
+            .single()
+
+          if (updateError) throw updateError
+          return updatedBundle || { ...currentBundle, ...payload }
+        }))
+
+        const updatedBundleById = new Map(updatedBundles.map((bundle) => [Number(bundle.id), bundle]))
+        setBundleRows((prev) => prev.map((bundle) => updatedBundleById.get(Number(bundle.id)) || bundle))
+        clearProductSelection()
+        setActionMessage(`${updatedBundles.length} bundle(s) set to Unreleased.`)
+        return
+      }
+
       const detailsByVariantType = new Map()
       selectedReleasedDetailItems.forEach((item) => {
         const variantId = Number(item.productModelVariantId || 0)
@@ -2410,7 +3835,7 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
       setPackingRows((prev) =>
         prev.map((row) => (rowPayloadById.has(Number(row.id)) ? { ...row, ...rowPayloadById.get(Number(row.id)) } : row))
       )
-      setSelectedProductKeys([])
+      clearProductSelection()
       setActionMessage(`${releaseStatePayloads.length} SKU release state(s) moved back one release step.`)
     } catch (updateError) {
       setActionError(getActionErrorMessage(updateError))
@@ -2607,7 +4032,7 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
       if (nextIdentityEvent) {
         setIdentityEvents((prev) => [...prev, nextIdentityEvent])
       }
-      setSelectedProductKeys([])
+      clearProductSelection()
       setActionMessage(`${assignments.length} selected SKU row(s) split into new variants.`)
     } catch (splitError) {
       const insertedIds = insertedVariants.map((variant) => Number(variant.id)).filter(Boolean)
@@ -2671,21 +4096,61 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
     )
   }
 
-  function renderPhotoThumb(photoUrl, label) {
+  function renderPhotoThumb(photoUrl, label, size = 'small') {
+    const isLarge = size === 'large'
     if (!photoUrl) {
-      return <span style={styles.photoPlaceholder}>No</span>
+      return <span style={isLarge ? { ...styles.photoPlaceholder, ...styles.photoPlaceholderLarge } : styles.photoPlaceholder}>No</span>
     }
 
     return (
       <button
         type="button"
         onClick={() => setPreviewPhoto({ src: photoUrl, alt: label || 'Product photo' })}
-        style={styles.photoThumbButton}
+        style={isLarge ? { ...styles.photoThumbButton, ...styles.photoThumbButtonLarge } : styles.photoThumbButton}
         aria-label={`Preview ${label || 'product photo'}`}
         title="Preview photo"
       >
         <Image src={photoUrl} alt={label || 'Product photo'} width={34} height={34} unoptimized style={styles.photoThumbImage} />
       </button>
+    )
+  }
+
+  function renderPhotoCollage(photoUrls = [], label, size = 'small') {
+    const urls = Array.from(new Set((Array.isArray(photoUrls) ? photoUrls : [photoUrls]).filter(Boolean)))
+    const isLarge = size === 'large'
+
+    if (urls.length <= 1) {
+      return renderPhotoThumb(urls[0] || '', label, size)
+    }
+
+    return (
+      <div
+        style={{
+          ...styles.photoCollage,
+          ...(isLarge ? styles.photoCollageLarge : styles.photoCollageSmall),
+        }}
+        aria-label={`${label || 'Bundle'} photo collage`}
+      >
+        {urls.map((photoUrl, index) => (
+          <button
+            key={photoUrl}
+            type="button"
+            onClick={() => setPreviewPhoto({ src: photoUrl, alt: `${label || 'Bundle'} model ${index + 1}` })}
+            style={styles.photoCollageTile}
+            aria-label={`Preview ${label || 'bundle'} model ${index + 1}`}
+            title="Preview photo"
+          >
+            <Image
+              src={photoUrl}
+              alt={`${label || 'Bundle'} model ${index + 1}`}
+              width={isLarge ? 42 : 20}
+              height={isLarge ? 42 : 20}
+              unoptimized
+              style={styles.photoCollageImage}
+            />
+          </button>
+        ))}
+      </div>
     )
   }
 
@@ -2812,11 +4277,40 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
     })
     setOpenFilterMenu('')
     setFilterSearches({})
-    setSelectedProductKeys([])
+    clearProductSelection()
     setSortConfig({ key: 'brand', direction: 'asc' })
-    setPageSize(25)
+    setPageSize(10)
     setCurrentPage(1)
   }
+
+  const bundleMinimumQty = getBundleMinimumQty()
+  const bundleUnitQtyValue = Number.parseInt(String(bundleForm.unitQty || ''), 10)
+  const bundleUnitQtyIsValid = Number.isInteger(bundleUnitQtyValue) && bundleUnitQtyValue >= bundleMinimumQty
+  const bundleAllocationSummary = getBundleAllocationSizeTotals().map((row) => ({
+    ...row,
+    bundleCount: bundleUnitQtyIsValid ? Math.floor(row.allocatedQty / bundleUnitQtyValue) : 0,
+    isInvalid: row.allocatedQty > 0 && bundleUnitQtyIsValid && row.allocatedQty % bundleUnitQtyValue !== 0,
+  }))
+  const bundleInvalidRows = bundleAllocationSummary.filter((row) => row.isInvalid)
+  const bundleContributionIssues = getBundleContributionIssues()
+  const bundlePatternIssues = getBundlePatternIssues(bundleUnitQtyValue)
+  const bundleTotalCount = bundleAllocationSummary.reduce((sum, row) => sum + row.bundleCount, 0)
+  const bundleAllocatedTotal = bundleAllocationSummary.reduce((sum, row) => sum + row.allocatedQty, 0)
+  const bundleSaveDisabled = bulkWorking || !bundleUnitQtyIsValid || bundleInvalidRows.length > 0 || bundleContributionIssues.length > 0 || bundlePatternIssues.length > 0
+  const bundleInlineErrorMessage = !bundleUnitQtyIsValid
+    ? `Qty Per Bundle must be a whole number of at least ${bundleMinimumQty} (the number of selected models).`
+    : bundleInvalidRows.length > 0
+      ? `Total quantity for ${bundleInvalidRows.map((row) => row.size).join(', ')} must be divisible by ${bundleUnitQtyValue}; decimal bundle results are not allowed.`
+      : bundleContributionIssues.length > 0
+        ? bundleContributionIssues
+            .map((issue) => `${issue.size} needs contribution from: ${issue.missingContributors.map((contributor) => contributor.label).join(', ')}`)
+            .join(' · ')
+        : bundlePatternIssues.length > 0
+          ? bundlePatternIssues[0].type === 'fractional'
+            ? `${bundlePatternIssues[0].size} cannot form whole per-bundle contributions across ${formatNumber(bundlePatternIssues[0].bundleCount)} bundle(s).`
+            : `${bundlePatternIssues[0].size} does not match the per-bundle contribution pattern.`
+          : ''
+  const bundleActionErrorMessage = Array.from(new Set([bundleInlineErrorMessage, actionError].filter(Boolean))).join(' · ')
 
   return (
     <section style={embedded ? styles.embeddedPanel : styles.panel}>
@@ -2954,9 +4448,18 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
             {filters.viewMode === 'grn' ? (
               <div style={styles.bulkActionBar}>
                 <div style={styles.bulkButtonRow}>
-                  <div style={{ ...styles.inlineKpiCard, ...styles.inlineTotalKpiCard }}>
-                    <span style={{ ...styles.inlineKpiLabel, ...styles.inlineTotalKpiLabel }}>{activeQtyLabel}</span>
-                    <strong style={{ ...styles.inlineKpiValue, ...styles.inlineTotalKpiValue }}>{formatNumber(activeQtyValue)}</strong>
+                  <div style={styles.selectionKpiStack}>
+                    {selectedProductKeys.length > 0 ? (
+                      <div style={styles.selectionNotice} role="status" aria-live="polite">
+                        <span style={styles.selectionNoticeDot} aria-hidden="true" />
+                        <strong style={styles.selectionNoticeValue}>{formatNumber(selectedProductKeys.length)}</strong>
+                        <span>SKU selected</span>
+                      </div>
+                    ) : null}
+                    <div style={{ ...styles.inlineKpiCard, ...styles.inlineTotalKpiCard }}>
+                      <span style={{ ...styles.inlineKpiLabel, ...styles.inlineTotalKpiLabel }}>{activeQtyLabel}</span>
+                      <strong style={{ ...styles.inlineKpiValue, ...styles.inlineTotalKpiValue }}>{formatNumber(activeQtyValue)}</strong>
+                    </div>
                   </div>
                   {canManage ? (
                   <div style={styles.bulkActionCluster}>
@@ -2989,6 +4492,39 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
                     >
                       Merge SKU
                     </button>
+                    <button
+                      type="button"
+                      onClick={openBundleEditor}
+                      disabled={bundleButtonDisabled}
+                      style={bundleButtonDisabled ? { ...styles.secondaryBulkButton, ...styles.bulkButtonDisabled } : styles.secondaryBulkButton}
+                      title={bundleEligibility.reason}
+                    >
+                      Bundle
+                    </button>
+                    <div style={styles.transferActionWrap}>
+                      <button
+                        type="button"
+                        onClick={() => setTransferHistoryOpen(true)}
+                        style={styles.transferHistoryIconButton}
+                        title="View MOB/OI transfer history."
+                        aria-label="View MOB/OI transfer history"
+                      >
+                        <svg viewBox="0 0 24 24" style={styles.transferHistoryIcon} aria-hidden="true">
+                          <path d="M3 12a9 9 0 1 0 3-6.7" />
+                          <path d="M3 4v5h5" />
+                          <path d="M12 7v5l3 2" />
+                        </svg>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={openGroupTransferEditor}
+                        disabled={transferButtonDisabled}
+                        style={transferButtonDisabled ? { ...styles.secondaryBulkButton, ...styles.bulkButtonDisabled } : styles.secondaryBulkButton}
+                        title="Move selected queued quantities to the opposite product group. Stored quantities must be moved from Storage Location."
+                      >
+                        Transfer Group
+                      </button>
+                    </div>
                       </>
                     ) : null}
                     {canSetUnreleased ? (
@@ -3053,13 +4589,16 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
                   )}
                 </thead>
                 <tbody>
-                  {visibleProducts.map((row) => {
+                  {visibleProducts.map((row, rowIndex) => {
                     const grnValue = row.primaryGrn || row.grnList[0] || '-'
                     const detailGrnList = Array.from(
                       new Map((row.detailItemList || []).map((item) => [item.grn, item])).values()
                     )
                     const skuList = Array.from(new Set(row.detailItemList.map((item) => item.sku).filter(Boolean)))
-                    const rowPhotoUrl = row.detailItemList.find((item) => item.photoUrl)?.photoUrl || ''
+                    const rowPhotoUrls = Array.from(new Set(
+                      (row.detailItemList || []).flatMap((item) => item.photoUrls || (item.photoUrl ? [item.photoUrl] : []))
+                    ))
+                    const rowPhotoUrl = rowPhotoUrls[0] || ''
 
                     const detailRows = row.detailItemList.length ? row.detailItemList : [{
                         key: `${row.key}-empty`,
@@ -3069,31 +4608,40 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
                         brand: row.brand,
                         categoryLabel: getDetailCategoryLabel({ itemType: row.itemType, subCategory: row.subCategory }),
                         photoUrl: rowPhotoUrl,
+                        photoUrls: rowPhotoUrls,
                         productName: row.productName,
                         latestDate: row.latestDate,
                         qty: row.totalQty,
                       }]
 
                     return filters.viewMode === 'grn' ? (
-                      detailRows.map((item, index) => (
+                      detailRows.map((item, index) => {
+                        const separatorStyle = rowIndex > 0 && index === 0 ? styles.grnGroupSeparatorCell : null
+                        return (
                         <tr key={`${row.key}-${item.key}`}>
                           {index === 0 ? (
-                            <td rowSpan={detailRows.length} style={{ ...styles.td, ...styles.tdCenter, ...styles.middleCell }}>
-                              <Link href={getGrnLink(item.baseGrn, item.grn)} style={styles.grnLink}>
-                                {item.grn || grnValue}
-                              </Link>
+                            <td rowSpan={detailRows.length} style={{ ...styles.td, ...styles.tdCenter, ...styles.middleCell, ...separatorStyle }}>
+                              {item.isBundle ? (
+                                <span style={styles.grnLink}>{item.grn || grnValue}</span>
+                              ) : (
+                                <Link href={getGrnLink(item.baseGrn, item.grn)} style={styles.grnLink}>
+                                  {item.grn || grnValue}
+                                </Link>
+                              )}
                             </td>
                           ) : null}
-                          <td style={{ ...styles.td, ...styles.tdCenter }}>
-                            {renderPhotoThumb(item.photoUrl, item.productName)}
+                          <td style={{ ...styles.td, ...styles.tdCenter, ...separatorStyle }}>
+                            {item.isBundle
+                              ? renderPhotoCollage(item.photoUrls || [item.photoUrl], item.productName)
+                              : renderPhotoThumb(item.photoUrl, item.productName)}
                           </td>
-                          <td style={{ ...styles.td, ...styles.skuTd }}>
+                          <td style={{ ...styles.td, ...styles.skuTd, ...separatorStyle }}>
                             {canSelectSkuRows ? (
                               <label style={styles.skuCheckLabel}>
                                 <input
                                   type="checkbox"
                                   checked={selectedProductKeys.includes(item.key)}
-                                  onChange={() => toggleSelectedProduct(item.key)}
+                                  onChange={() => toggleSelectedProduct(item)}
                                   style={styles.rowCheckbox}
                                 />
                                 <span style={styles.skuText}>{item.sku}</span>
@@ -3102,28 +4650,31 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
                               <span style={styles.skuText}>{item.sku}</span>
                             )}
                           </td>
-                          <td style={styles.td}>{item.brand}</td>
-                          <td style={styles.td}>{item.categoryLabel}</td>
-                          <td style={styles.td}>
+                          <td style={{ ...styles.td, ...separatorStyle }}>{item.brand}</td>
+                          <td style={{ ...styles.td, ...separatorStyle }}>{item.categoryLabel}</td>
+                          <td style={{ ...styles.td, ...separatorStyle }}>
                             {renderProductName(item)}
                           </td>
-                          <td style={{ ...styles.td, ...styles.tdCenter }}>{formatDate(item.latestDate)}</td>
-                          <td style={{ ...styles.td, ...styles.tdCenter }}>
+                          <td style={{ ...styles.td, ...styles.tdCenter, ...separatorStyle }}>{formatDate(item.latestDate)}</td>
+                          <td style={{ ...styles.td, ...styles.tdCenter, ...separatorStyle }}>
                             {renderReleasePill(item.releaseState, item.releaseCount, item.latestReleasedAt, item.latestReleasedBy)}
                           </td>
-                          <td style={styles.tdNumber}>{formatNumber(item.qty)}</td>
+                          <td style={{ ...styles.tdNumber, ...separatorStyle }}>{formatNumber(item.qty)}</td>
                           {index === 0 ? (
-                            <td rowSpan={detailRows.length} style={{ ...styles.tdNumber, ...styles.middleCell }}>
+                            <td rowSpan={detailRows.length} style={{ ...styles.tdNumber, ...styles.middleCell, ...separatorStyle }}>
                               {formatNumber(row.totalQty)}
                             </td>
                           ) : null}
                         </tr>
-                      ))
+                        )
+                      })
                     ) : (
                       <tr key={row.key}>
                         <td style={styles.td}>{row.brand}</td>
                         <td style={{ ...styles.td, ...styles.tdCenter }}>
-                          {renderPhotoThumb(rowPhotoUrl, row.productList[0] || row.productName)}
+                          {row.isBundle
+                            ? renderPhotoCollage(row.photoUrls || rowPhotoUrls, row.productList[0] || row.productName)
+                            : renderPhotoThumb(rowPhotoUrl, row.productList[0] || row.productName)}
                         </td>
                         <td style={{ ...styles.td, ...styles.skuTd }}>
                           <div style={styles.compactList}>
@@ -3159,13 +4710,17 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
                           <div style={styles.grnList}>
                             {detailGrnList.length
                               ? detailGrnList.map((item) => (
-                                  <Link
-                                    key={item.grn}
-                                    href={getGrnLink(item.baseGrn, item.grn)}
-                                    style={styles.grnLink}
-                                  >
-                                    {item.grn}
-                                  </Link>
+                                  item.isBundle ? (
+                                    <span key={item.grn} style={styles.grnLink}>{item.grn}</span>
+                                  ) : (
+                                    <Link
+                                      key={item.grn}
+                                      href={getGrnLink(item.baseGrn, item.grn)}
+                                      style={styles.grnLink}
+                                    >
+                                      {item.grn}
+                                    </Link>
+                                  )
                                 ))
                               : '-'}
                           </div>
@@ -3222,13 +4777,15 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
         </>
       ) : null}
 
-      {sellingNameEditor && canManage ? (
-        <div style={styles.modalOverlay} role="dialog" aria-modal="true" aria-label="Edit Selling Name">
+      {modalRoot ? createPortal((
+        <>
+          {sellingNameEditor && canManage ? (
+            <div style={styles.modalOverlay} role="dialog" aria-modal="true" aria-label={sellingNameEditor.isBundle ? 'Edit Bundle Name' : 'Edit Selling Name'}>
           <div style={styles.nameModal}>
             <div style={styles.modalHeader}>
               <div>
                 <p style={styles.modalEyebrow}>Warehouse</p>
-                <h2 style={styles.modalTitle}>Edit Selling Name</h2>
+                <h2 style={styles.modalTitle}>{sellingNameEditor.isBundle ? 'Edit Bundle Name' : 'Edit Selling Name'}</h2>
               </div>
               <div style={styles.modalActionRow}>
                 <button
@@ -3245,38 +4802,40 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
               </div>
             </div>
             <p style={styles.modalHelperText}>
-              This name is used as the sales/display name. Historical PL names remain unchanged.
+              {sellingNameEditor.isBundle
+                ? 'This name is used as the bundle display name.'
+                : 'This name is used as the sales/display name. Historical PL names remain unchanged.'}
             </p>
             <div style={styles.nameMetaGrid}>
               <div style={styles.nameMetaCard}>
-                <span>SKU</span>
+                <span>{sellingNameEditor.isBundle ? 'Bundle Code' : 'SKU'}</span>
                 <strong>{sellingNameEditor.sku}</strong>
               </div>
               <div style={styles.nameMetaCard}>
-                <span>PL Names</span>
+                <span>{sellingNameEditor.isBundle ? 'Source' : 'PL Names'}</span>
                 <strong>{sellingNameEditor.plNames}</strong>
               </div>
               <div style={styles.nameMetaCard}>
-                <span>Variant Name</span>
+                <span>{sellingNameEditor.isBundle ? 'Current Name' : 'Variant Name'}</span>
                 <strong>{sellingNameEditor.variantName}</strong>
               </div>
             </div>
             <label style={styles.nameField}>
-              <span>Selling Name</span>
+              <span>{sellingNameEditor.isBundle ? 'Bundle Name' : 'Selling Name'}</span>
               <input
                 value={sellingNameDraft}
                 onChange={(event) => setSellingNameDraft(event.target.value.toUpperCase())}
                 style={styles.nameInput}
-                placeholder="Enter selling/display name"
+                placeholder={sellingNameEditor.isBundle ? 'Enter bundle name' : 'Enter selling/display name'}
                 autoFocus
               />
             </label>
           </div>
-        </div>
-      ) : null}
+            </div>
+          ) : null}
 
-      {mergeEditor && canManage ? (
-        <div style={styles.modalOverlay} role="dialog" aria-modal="true" aria-label="Merge SKU">
+          {mergeEditor && canManage ? (
+            <div style={styles.modalOverlay} role="dialog" aria-modal="true" aria-label="Merge SKU">
           <div style={styles.mergeModal}>
             <div style={styles.modalHeader}>
               <div>
@@ -3332,11 +4891,363 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
               ))}
             </div>
           </div>
-        </div>
-      ) : null}
+            </div>
+          ) : null}
 
-      {confirmDialog && canManage ? (
-        <div style={styles.modalOverlay} role="dialog" aria-modal="true" aria-label={confirmDialog.title}>
+          {bundleEditor && canManage ? (
+            <div style={styles.modalOverlay} role="dialog" aria-modal="true" aria-label="Bundle Builder">
+              <div style={styles.transferModal}>
+                <div style={styles.modalHeader}>
+                  <div>
+                    <h2 style={styles.modalTitle}>Bundle Builder</h2>
+                  </div>
+                  <div style={styles.modalActionRow}>
+                    {bundleActionErrorMessage ? (
+                      <span style={styles.bundleInlineError}>
+                        {bundleActionErrorMessage}
+                      </span>
+                    ) : null}
+                    <button type="button" onClick={setFullBundleQty} disabled={bulkWorking} style={styles.secondaryBulkButton}>
+                      Use All Available
+                    </button>
+                    <button
+                      type="button"
+                      onClick={saveBundle}
+                      disabled={bundleSaveDisabled}
+                      style={bundleSaveDisabled ? { ...styles.bulkButton, ...styles.bulkButtonDisabled } : styles.bulkButton}
+                    >
+                      {bulkWorking ? 'Saving...' : 'Save Bundle'}
+                    </button>
+                    <button type="button" onClick={closeBundleEditor} disabled={bulkWorking} style={styles.modalCloseButton}>
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+                <div style={styles.bundleFormGrid}>
+                  <label style={styles.nameField}>
+                    <span style={styles.bundleFieldLabelRow}>
+                      <span>Bundle Code</span>
+                      <span style={styles.bundleModeToggle} role="tablist" aria-label="Bundle code mode">
+                        {[
+                          ['new', 'New'],
+                          ['existing', 'Existing'],
+                        ].map(([value, label]) => (
+                          <button
+                            key={value}
+                            type="button"
+                            onClick={() => setBundleForm((prev) => {
+                              if (value === 'existing') {
+                                const selectedBundle = (bundleEditor.existingBundleOptions || []).find((row) => String(row.id) === String(prev.existingBundleId))
+                                  || bundleEditor.existingBundleOptions?.[0]
+                                return {
+                                  ...prev,
+                                  mode: value,
+                                  existingBundleId: selectedBundle?.id ? String(selectedBundle.id) : '',
+                                  unitQty: String(selectedBundle?.bundle_unit_qty || 1),
+                                }
+                              }
+
+                              return { ...prev, mode: value, unitQty: 0 }
+                            })}
+                            disabled={value === 'existing' && !(bundleEditor.existingBundleOptions || []).length}
+                            style={{
+                              ...styles.bundleModeButton,
+                              ...(bundleForm.mode === value ? styles.bundleModeButtonActive : {}),
+                              ...(value === 'existing' && !(bundleEditor.existingBundleOptions || []).length ? styles.bundleModeButtonDisabled : {}),
+                            }}
+                          >
+                            {label}
+                          </button>
+                        ))}
+                      </span>
+                    </span>
+                    <div style={styles.bundleCodeControl}>
+                      {bundleForm.mode === 'existing' ? (
+                        <select
+                          value={bundleForm.existingBundleId}
+                          onChange={(event) => setBundleForm((prev) => {
+                            const selectedBundle = (bundleEditor.existingBundleOptions || []).find((row) => String(row.id) === event.target.value)
+                            return {
+                              ...prev,
+                              existingBundleId: event.target.value,
+                              unitQty: String(selectedBundle?.bundle_unit_qty || 1),
+                            }
+                          })}
+                          style={styles.nameInput}
+                          disabled={!(bundleEditor.existingBundleOptions || []).length}
+                        >
+                          {(bundleEditor.existingBundleOptions || []).length ? (
+                            bundleEditor.existingBundleOptions.map((bundle) => (
+                              <option key={bundle.id} value={bundle.id}>
+                                {bundle.bundle_code} - {bundle.bundle_name}
+                              </option>
+                            ))
+                          ) : (
+                            <option value="">No draft bundle</option>
+                          )}
+                        </select>
+                      ) : (
+                        <input
+                          value={bundleForm.code}
+                          readOnly
+                          style={{ ...styles.nameInput, ...styles.readOnlyInput }}
+                          placeholder="Auto-generated"
+                        />
+                      )}
+                    </div>
+                  </label>
+                  <label style={bundleForm.mode === 'existing' ? { ...styles.nameField, ...styles.nameFieldMuted } : styles.nameField}>
+                    <span style={styles.bundleFieldLabelRow}>Bundle Name</span>
+                    <input
+                      value={bundleForm.mode === 'existing'
+                        ? normalize((bundleEditor.existingBundleOptions || []).find((row) => String(row.id) === String(bundleForm.existingBundleId))?.bundle_name)
+                        : bundleForm.name}
+                      onChange={(event) => setBundleForm((prev) => ({ ...prev, name: event.target.value.toUpperCase() }))}
+                      style={styles.nameInput}
+                      placeholder="Enter bundle name"
+                      disabled={bundleForm.mode === 'existing'}
+                    />
+                  </label>
+                  <label style={styles.nameField}>
+                    <span style={styles.bundleFieldLabelRow}>Qty Per Bundle</span>
+                    <input
+                      type="number"
+                      min={bundleMinimumQty}
+                      step="1"
+                      inputMode="numeric"
+                      value={bundleForm.unitQty ?? ''}
+                      onChange={(event) => setBundleForm((prev) => ({
+                        ...prev,
+                        unitQty: event.target.value.replace(/[^\d]/g, ''),
+                      }))}
+                      style={styles.nameInput}
+                      placeholder="e.g. 3"
+                      disabled={bulkWorking || bundleForm.mode === 'existing'}
+                    />
+                  </label>
+                </div>
+                <div style={styles.bundleSummary}>
+                  <div style={styles.bundleSummaryTotal}>
+                    <span style={styles.bundleSummaryTotalLabel}>Total Bundle</span>
+                    <strong style={styles.bundleSummaryTotalValue}>{formatNumber(bundleTotalCount)}</strong>
+                    <span style={styles.bundleSummaryTotalHint}>bundle(s) formed</span>
+                  </div>
+                  <div style={styles.bundleSummaryDetails}>
+                    <span style={styles.bundleSummaryDetailsLabel}>By size</span>
+                    <div style={styles.bundleSummaryDetail}>
+                      {bundleAllocatedTotal > 0 && bundleUnitQtyIsValid
+                        ? bundleAllocationSummary.filter((row) => row.allocatedQty > 0).map((row) => `${row.size}: ${formatNumber(row.bundleCount)}`).join(' · ')
+                        : 'Enter quantities per size to preview the bundle result.'}
+                    </div>
+                  </div>
+                </div>
+                <div style={styles.transferTableWrap}>
+                  <table style={styles.transferTable}>
+                    <colgroup>
+                      <col style={styles.transferMetaColumn} />
+                      <col style={styles.transferSizeColumn} />
+                      <col style={styles.transferQtyColumn} />
+                      <col style={styles.transferQtyColumn} />
+                    </colgroup>
+                    <thead>
+                      <tr>
+                        <th style={styles.transferEmptyTh} aria-hidden="true" />
+                        <th style={styles.th}>Size</th>
+                        <th style={styles.thNumber}>Avail. Qty</th>
+                        <th style={styles.thNumber}>Bundle Qty</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {bundleEditor.groups.map((group) => (
+                        <Fragment key={group.key}>
+                          <tr>
+                            <td colSpan={4} style={styles.transferGroupHeader}>
+                              <span style={styles.transferGroupMeta}>{group.grn}</span>
+                              <span style={styles.transferGroupMeta}>{group.sku}</span>
+                              <span style={{ ...styles.transferGroupMeta, ...styles.transferGroupProduct }}>{group.productName}</span>
+                            </td>
+                          </tr>
+                          {group.rows.map((row, index) => (
+                            <tr key={row.key}>
+                              {index === 0 ? (
+                                <td rowSpan={group.rows.length} style={styles.bundlePhotoCell}>
+                                  {renderPhotoCollage(group.photoUrls || [group.photoUrl], group.productName, 'large')}
+                                </td>
+                              ) : null}
+                              <td style={styles.td}>{row.size}</td>
+                              <td style={styles.tdNumber}>{formatNumber(row.qty)}</td>
+                              <td style={styles.tdNumber}>
+                                <input
+                                  type="number"
+                                  min="0"
+                                  max={row.qty}
+                                  value={bundleDrafts[row.key] ?? ''}
+                                  onChange={(event) => updateBundleQty(row.key, event.target.value)}
+                                  disabled={bulkWorking}
+                                  style={styles.transferQtyInput}
+                                  aria-label={`Bundle quantity for ${group.sku} size ${row.size}`}
+                                />
+                              </td>
+                            </tr>
+                          ))}
+                        </Fragment>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          ) : null}
+
+          {groupTransferEditor && canManage ? (
+            <div style={styles.modalOverlay} role="dialog" aria-modal="true" aria-label="Transfer Group">
+          <div style={styles.transferModal}>
+            <div style={styles.modalHeader}>
+              <div>
+                <p style={styles.modalEyebrow}>Warehouse</p>
+                <h2 style={styles.modalTitle}>Transfer Group</h2>
+              </div>
+              <div style={styles.modalActionRow}>
+                <button
+                  type="button"
+                  onClick={saveGroupTransfer}
+                  disabled={bulkWorking}
+                  style={bulkWorking ? { ...styles.bulkButton, ...styles.bulkButtonDisabled } : styles.bulkButton}
+                >
+                  {bulkWorking ? 'Saving...' : `Transfer to ${groupTransferEditor.targetType}`}
+                </button>
+                <button type="button" onClick={closeGroupTransferEditor} disabled={bulkWorking} style={styles.modalCloseButton}>
+                  Cancel
+                </button>
+              </div>
+            </div>
+            <p style={styles.modalHelperText}>
+              Move quantities from {groupTransferEditor.sourceType} to {groupTransferEditor.targetType}. Select a quantity per size, or transfer every available size at once.
+            </p>
+            <div style={styles.transferMetaRow}>
+              <span style={styles.transferGroupPill}>{groupTransferEditor.sourceType}</span>
+              <span style={styles.transferArrow}>→</span>
+              <span style={{ ...styles.transferGroupPill, ...styles.transferGroupPillTarget }}>{groupTransferEditor.targetType}</span>
+              <button type="button" onClick={setFullGroupTransferQty} disabled={bulkWorking} style={styles.secondaryBulkButton}>
+                Transfer All Available
+              </button>
+            </div>
+            <div style={styles.transferTableWrap}>
+              <table style={styles.transferTable}>
+                <colgroup>
+                  <col style={styles.transferMetaColumn} />
+                  <col style={styles.transferSizeColumn} />
+                  <col style={styles.transferQtyColumn} />
+                  <col style={styles.transferQtyColumn} />
+                </colgroup>
+                <thead>
+                  <tr>
+                    <th style={styles.transferEmptyTh} aria-hidden="true" />
+                    <th style={styles.th}>Size</th>
+                    <th style={styles.thNumber}>Avail. Qty</th>
+                    <th style={styles.thNumber}>Transfer Qty</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {groupTransferEditor.groups.map((group) => (
+                    <Fragment key={group.key}>
+                      <tr>
+                        <td colSpan={4} style={styles.transferGroupHeader}>
+                          <span style={styles.transferGroupMeta}>{group.grn}</span>
+                          <span style={styles.transferGroupMeta}>{group.sku}</span>
+                          <span style={{ ...styles.transferGroupMeta, ...styles.transferGroupProduct }}>{group.productName}</span>
+                        </td>
+                      </tr>
+                      {group.rows.map((row) => (
+                        <tr key={row.key}>
+                          <td style={styles.transferBlankCell} aria-hidden="true" />
+                          <td style={styles.td}>{row.size}</td>
+                          <td style={styles.tdNumber}>{formatNumber(row.qty)}</td>
+                          <td style={styles.tdNumber}>
+                            <input
+                              type="number"
+                              min="0"
+                              max={row.qty}
+                              value={groupTransferDrafts[row.key] ?? ''}
+                              onChange={(event) => updateGroupTransferQty(row.key, event.target.value)}
+                              disabled={bulkWorking}
+                              style={styles.transferQtyInput}
+                              aria-label={`Transfer quantity for ${group.sku} size ${row.size}`}
+                            />
+                          </td>
+                        </tr>
+                      ))}
+                    </Fragment>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <p style={styles.transferFootnote}>
+              The selected quantities will be recorded in the destination group. Warehouse storage locations are not changed by this action.
+            </p>
+          </div>
+            </div>
+          ) : null}
+
+          {transferHistoryOpen && canManage ? (
+            <div style={styles.modalOverlay} role="dialog" aria-modal="true" aria-label="Transfer History">
+              <div style={styles.historyModal}>
+                <div style={styles.modalHeader}>
+                  <div>
+                    <p style={styles.modalEyebrow}>Warehouse</p>
+                    <h2 style={styles.modalTitle}>Transfer History</h2>
+                  </div>
+                  <div style={styles.modalActionRow}>
+                    <button type="button" onClick={() => setTransferHistoryOpen(false)} style={styles.modalCloseButton}>
+                      Close
+                    </button>
+                  </div>
+                </div>
+                <p style={styles.modalHelperText}>
+                  Review recent quantity movements between MOB and OI. Packing List rows and warehouse locations are kept unchanged.
+                </p>
+                <div style={styles.historyTableWrap}>
+                  <table style={styles.historyTable}>
+                    <thead>
+                      <tr>
+                        <th style={styles.th}>Date</th>
+                        <th style={styles.th}>Direction</th>
+                        <th style={styles.th}>GRN</th>
+                        <th style={styles.th}>SKU</th>
+                        <th style={styles.th}>Product</th>
+                        <th style={styles.th}>Size</th>
+                        <th style={styles.thNumber}>Qty</th>
+                        <th style={styles.th}>By</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {transferHistoryRows.slice(0, 150).map((row) => (
+                        <tr key={row.id || `${row.date}-${row.sku}-${row.size}-${row.qty}`}>
+                          <td style={styles.td}>{formatDateTime(row.date)}</td>
+                          <td style={styles.td}>{row.direction}</td>
+                          <td style={styles.td}>{row.grn}</td>
+                          <td style={styles.td}>{row.sku}</td>
+                          <td style={styles.td}>{row.productName}</td>
+                          <td style={styles.td}>{row.size}</td>
+                          <td style={styles.tdNumber}>{formatNumber(row.qty)}</td>
+                          <td style={styles.td}>{row.createdBy}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {transferHistoryRows.length === 0 ? (
+                    <div style={styles.historyEmptyState}>No transfer history yet.</div>
+                  ) : null}
+                </div>
+                {transferHistoryRows.length > 150 ? (
+                  <p style={styles.transferFootnote}>Showing the latest 150 of {formatNumber(transferHistoryRows.length)} transfer record(s).</p>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
+
+          {confirmDialog && canManage ? (
+            <div style={styles.modalOverlay} role="dialog" aria-modal="true" aria-label={confirmDialog.title}>
           <div style={styles.confirmModal}>
             <div style={styles.confirmIconWrap}>
               <svg viewBox="0 0 24 24" style={styles.confirmIcon} aria-hidden="true">
@@ -3374,11 +5285,11 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
               </button>
             </div>
           </div>
-        </div>
-      ) : null}
+            </div>
+          ) : null}
 
-      {previewPhoto ? (
-        <div style={styles.previewOverlay} role="dialog" aria-modal="true" aria-label="Photo preview" onClick={() => setPreviewPhoto(null)}>
+          {previewPhoto ? (
+            <div style={styles.previewOverlay} role="dialog" aria-modal="true" aria-label="Photo preview" onClick={() => setPreviewPhoto(null)}>
           <div style={styles.previewWrap} onClick={(event) => event.stopPropagation()}>
             <button type="button" onClick={() => setPreviewPhoto(null)} style={styles.previewCloseButton}>
               X
@@ -3392,8 +5303,10 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
               style={styles.previewImage}
             />
           </div>
-        </div>
-      ) : null}
+            </div>
+          ) : null}
+        </>
+      ), modalRoot) : null}
     </section>
   )
 }
@@ -3888,6 +5801,46 @@ const styles = {
     gap: '2px',
     minWidth: 0,
   },
+  selectionKpiStack: {
+    minWidth: '116px',
+    position: 'relative',
+    display: 'inline-flex',
+    flex: '0 0 auto',
+  },
+  selectionNotice: {
+    position: 'absolute',
+    top: '-10px',
+    left: '8px',
+    zIndex: 1,
+    minHeight: '19px',
+    padding: '0 6px',
+    border: '1px solid #bfdbfe',
+    borderRadius: '999px',
+    background: '#eff6ff',
+    color: '#1e3a8a',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: '4px',
+    boxSizing: 'border-box',
+    fontSize: '9px',
+    fontWeight: '800',
+    lineHeight: 1,
+    whiteSpace: 'nowrap',
+    boxShadow: '0 4px 10px rgba(15, 23, 42, 0.10)',
+  },
+  selectionNoticeDot: {
+    width: '5px',
+    height: '5px',
+    borderRadius: '999px',
+    background: '#2563eb',
+    flex: '0 0 auto',
+  },
+  selectionNoticeValue: {
+    color: '#1d4ed8',
+    fontSize: '9px',
+    fontVariantNumeric: 'tabular-nums',
+  },
   inlineKpiCard: {
     minWidth: '116px',
     minHeight: '34px',
@@ -3948,7 +5901,7 @@ const styles = {
   },
   bulkActionCluster: {
     display: 'flex',
-    alignItems: 'center',
+    alignItems: 'flex-end',
     justifyContent: 'flex-end',
     gap: '8px',
     flexWrap: 'nowrap',
@@ -3990,6 +5943,39 @@ const styles = {
     cursor: 'pointer',
     flex: '0 0 auto',
     whiteSpace: 'nowrap',
+  },
+  transferActionWrap: {
+    position: 'relative',
+    display: 'inline-flex',
+    flex: '0 0 auto',
+    paddingTop: '8px',
+  },
+  transferHistoryIconButton: {
+    position: 'absolute',
+    top: '-7px',
+    right: '-7px',
+    width: '22px',
+    height: '22px',
+    borderRadius: '999px',
+    border: '1px solid #cbd5e1',
+    background: '#fff',
+    color: '#334155',
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 0,
+    cursor: 'pointer',
+    boxShadow: '0 6px 14px rgba(15, 23, 42, 0.12)',
+    zIndex: 1,
+  },
+  transferHistoryIcon: {
+    width: '13px',
+    height: '13px',
+    fill: 'none',
+    stroke: 'currentColor',
+    strokeWidth: 2,
+    strokeLinecap: 'round',
+    strokeLinejoin: 'round',
   },
   photoListComboWrap: {
     position: 'relative',
@@ -4270,6 +6256,9 @@ const styles = {
   tdCenter: {
     textAlign: 'center',
   },
+  grnGroupSeparatorCell: {
+    borderTop: '2px solid #cbd5e1',
+  },
   productName: {
     color: '#111827',
     fontWeight: '600',
@@ -4307,11 +6296,55 @@ const styles = {
     cursor: 'pointer',
     boxShadow: '0 6px 14px rgba(15, 23, 42, 0.08)',
   },
+  photoThumbButtonLarge: {
+    width: '86px',
+    height: '104px',
+    borderRadius: '10px',
+    boxShadow: '0 10px 22px rgba(15, 23, 42, 0.12)',
+  },
   photoThumbImage: {
     width: '100%',
     height: '100%',
     objectFit: 'cover',
     display: 'block',
+  },
+  photoCollage: {
+    display: 'inline-grid',
+    gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+    gap: '2px',
+    padding: '2px',
+    border: '1px solid #dbe4ef',
+    borderRadius: '8px',
+    background: '#fff',
+    overflow: 'hidden',
+    boxShadow: '0 6px 14px rgba(15, 23, 42, 0.08)',
+  },
+  photoCollageSmall: {
+    width: '40px',
+    minHeight: '40px',
+  },
+  photoCollageLarge: {
+    width: '86px',
+    minHeight: '104px',
+    borderRadius: '10px',
+    boxShadow: '0 10px 22px rgba(15, 23, 42, 0.12)',
+  },
+  photoCollageTile: {
+    width: '100%',
+    aspectRatio: '1',
+    minWidth: 0,
+    padding: 0,
+    border: '0',
+    borderRadius: '4px',
+    background: '#f8fafc',
+    overflow: 'hidden',
+    cursor: 'pointer',
+  },
+  photoCollageImage: {
+    display: 'block',
+    width: '100%',
+    height: '100%',
+    objectFit: 'cover',
   },
   photoPlaceholder: {
     width: '36px',
@@ -4326,6 +6359,12 @@ const styles = {
     fontSize: '9px',
     fontWeight: '800',
     textTransform: 'uppercase',
+  },
+  photoPlaceholderLarge: {
+    width: '86px',
+    height: '104px',
+    borderRadius: '10px',
+    fontSize: '11px',
   },
   draftPill: {
     display: 'inline-flex',
@@ -4490,12 +6529,14 @@ const styles = {
   modalOverlay: {
     position: 'fixed',
     inset: 0,
-    zIndex: 50,
+    zIndex: 100000,
+    isolation: 'isolate',
     display: 'flex',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     justifyContent: 'center',
-    padding: '20px',
-    background: 'rgba(15, 23, 42, 0.42)',
+    padding: '28px 20px',
+    background: 'rgba(15, 23, 42, 0.56)',
+    overflowY: 'auto',
   },
   photoModal: {
     width: 'min(920px, 100%)',
@@ -4533,6 +6574,245 @@ const styles = {
     background: '#fff',
     boxShadow: '0 28px 70px rgba(15, 23, 42, 0.24)',
     padding: '18px',
+  },
+  transferModal: {
+    width: 'min(1040px, 100%)',
+    maxHeight: 'calc(100vh - 56px)',
+    overflow: 'hidden',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '14px',
+    borderRadius: '18px',
+    border: '1px solid #dbe4ef',
+    background: '#fff',
+    boxShadow: '0 28px 70px rgba(15, 23, 42, 0.24)',
+    padding: '18px',
+    position: 'relative',
+    isolation: 'isolate',
+    zIndex: 1,
+  },
+  historyModal: {
+    width: 'min(1120px, 100%)',
+    maxHeight: 'calc(100vh - 56px)',
+    overflow: 'hidden',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '14px',
+    borderRadius: '18px',
+    border: '1px solid #dbe4ef',
+    background: '#fff',
+    boxShadow: '0 28px 70px rgba(15, 23, 42, 0.24)',
+    padding: '18px',
+    position: 'relative',
+    isolation: 'isolate',
+    zIndex: 1,
+  },
+  transferMetaRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    flexWrap: 'wrap',
+  },
+  transferGroupPill: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: '28px',
+    padding: '0 10px',
+    borderRadius: '999px',
+    background: '#eef2ff',
+    color: '#3730a3',
+    fontSize: '12px',
+    fontWeight: '900',
+  },
+  transferGroupPillTarget: {
+    background: '#ecfdf5',
+    color: '#047857',
+  },
+  transferArrow: {
+    color: '#64748b',
+    fontSize: '18px',
+    fontWeight: '800',
+  },
+  transferGroupHeader: {
+    padding: '11px 18px',
+    borderTop: '2px solid #cbd5e1',
+    borderBottom: '1px solid #e2e8f0',
+    background: '#f8fafc',
+    color: '#0f172a',
+    fontSize: '12px',
+    fontWeight: '900',
+    letterSpacing: '0.02em',
+    whiteSpace: 'normal',
+  },
+  transferGroupMeta: {
+    display: 'inline-flex',
+    marginRight: '24px',
+    marginBottom: '3px',
+    lineHeight: 1.35,
+  },
+  transferGroupProduct: {
+    color: '#475569',
+    fontWeight: '700',
+  },
+  bundleFormGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1.6fr) minmax(140px, 0.8fr)',
+    gap: '10px',
+  },
+  bundleSummary: {
+    display: 'grid',
+    gridTemplateColumns: 'minmax(150px, 0.8fr) minmax(0, 2fr)',
+    alignItems: 'stretch',
+    gap: '14px',
+    padding: '10px 12px',
+    border: '1px solid #dbe4ef',
+    borderRadius: '10px',
+    background: '#f8fafc',
+  },
+  bundleSummaryTotal: {
+    display: 'flex',
+    flexDirection: 'column',
+    justifyContent: 'center',
+    paddingRight: '14px',
+    borderRight: '1px solid #dbe4ef',
+    color: '#0f172a',
+  },
+  bundleSummaryTotalLabel: {
+    color: '#64748b',
+    fontSize: '11px',
+    fontWeight: '900',
+    letterSpacing: '0.04em',
+    textTransform: 'uppercase',
+  },
+  bundleSummaryTotalValue: {
+    marginTop: '1px',
+    color: '#0f172a',
+    fontSize: '28px',
+    lineHeight: 1,
+    fontWeight: '950',
+    fontVariantNumeric: 'tabular-nums',
+  },
+  bundleSummaryTotalHint: {
+    marginTop: '3px',
+    color: '#64748b',
+    fontSize: '11px',
+    fontWeight: '700',
+  },
+  bundleSummaryDetails: {
+    display: 'flex',
+    flexDirection: 'column',
+    justifyContent: 'center',
+    minWidth: 0,
+    gap: '4px',
+  },
+  bundleSummaryDetailsLabel: {
+    color: '#64748b',
+    fontSize: '11px',
+    fontWeight: '900',
+    letterSpacing: '0.04em',
+    textTransform: 'uppercase',
+  },
+  bundleSummaryDetail: {
+    color: '#64748b',
+    fontSize: '11px',
+    fontWeight: '700',
+    lineHeight: 1.35,
+  },
+  bundleSummaryWarning: {
+    gridColumn: '1 / -1',
+    color: '#b91c1c',
+    fontSize: '11px',
+    fontWeight: '800',
+    lineHeight: 1.35,
+  },
+  bundleInlineError: {
+    flex: '1 1 360px',
+    maxWidth: '420px',
+    color: '#b91c1c',
+    fontSize: '11px',
+    fontWeight: '800',
+    lineHeight: 1.3,
+    textAlign: 'right',
+  },
+  transferEmptyTh: {
+    padding: '9px 10px',
+    borderBottom: '1px solid #e2e8f0',
+    background: '#f8fafc',
+  },
+  transferMetaColumn: {
+    width: '58%',
+  },
+  transferSizeColumn: {
+    width: '10%',
+  },
+  transferQtyColumn: {
+    width: '16%',
+  },
+  transferBlankCell: {
+    padding: '9px 10px',
+    borderBottom: '1px solid #f1f5f9',
+    background: '#fff',
+  },
+  bundlePhotoCell: {
+    padding: '14px 12px',
+    borderBottom: '1px solid #f1f5f9',
+    background: '#fff',
+    textAlign: 'center',
+    verticalAlign: 'top',
+  },
+  transferTableWrap: {
+    minHeight: 0,
+    overflow: 'auto',
+    border: '1px solid #e2e8f0',
+    borderRadius: '12px',
+  },
+  transferTable: {
+    width: '100%',
+    minWidth: '640px',
+    borderCollapse: 'collapse',
+    tableLayout: 'fixed',
+  },
+  historyTableWrap: {
+    minHeight: 0,
+    overflow: 'auto',
+    border: '1px solid #e2e8f0',
+    borderRadius: '12px',
+  },
+  historyTable: {
+    width: '100%',
+    minWidth: '920px',
+    borderCollapse: 'collapse',
+  },
+  historyEmptyState: {
+    padding: '18px',
+    color: '#64748b',
+    fontSize: '13px',
+    fontWeight: '700',
+  },
+  transferSkuCell: {
+    whiteSpace: 'nowrap',
+    fontWeight: '800',
+  },
+  transferQtyInput: {
+    width: '72px',
+    height: '34px',
+    boxSizing: 'border-box',
+    borderRadius: '8px',
+    border: '1px solid #cbd5e1',
+    background: '#fff',
+    color: '#111827',
+    padding: '0 8px',
+    fontSize: '13px',
+    fontWeight: '700',
+    textAlign: 'center',
+  },
+  transferFootnote: {
+    margin: 0,
+    color: '#64748b',
+    fontSize: '11px',
+    lineHeight: 1.4,
+    fontWeight: '600',
   },
   modalHeader: {
     display: 'flex',
@@ -4590,6 +6870,49 @@ const styles = {
     fontSize: '12px',
     fontWeight: '800',
   },
+  nameFieldMuted: {
+    opacity: 0.78,
+  },
+  bundleFieldLabelRow: {
+    minHeight: '28px',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: '8px',
+  },
+  bundleCodeControl: {
+    display: 'block',
+  },
+  bundleModeToggle: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '2px',
+    padding: '2px',
+    borderRadius: '999px',
+    border: '1px solid #dbe4ef',
+    background: '#f8fafc',
+    flex: '0 0 auto',
+  },
+  bundleModeButton: {
+    minHeight: '24px',
+    padding: '0 8px',
+    borderRadius: '999px',
+    border: '1px solid transparent',
+    background: 'transparent',
+    color: '#64748b',
+    fontSize: '10px',
+    fontWeight: '900',
+    cursor: 'pointer',
+  },
+  bundleModeButtonActive: {
+    border: '1px solid #111827',
+    background: '#111827',
+    color: '#fff',
+  },
+  bundleModeButtonDisabled: {
+    opacity: 0.45,
+    cursor: 'not-allowed',
+  },
   nameInput: {
     width: '100%',
     minHeight: '46px',
@@ -4601,6 +6924,11 @@ const styles = {
     fontSize: '14px',
     fontWeight: '700',
     outline: 'none',
+  },
+  readOnlyInput: {
+    background: '#f8fafc',
+    color: '#475569',
+    cursor: 'default',
   },
   mergeOptionList: {
     display: 'flex',
@@ -4772,7 +7100,7 @@ const styles = {
   previewOverlay: {
     position: 'fixed',
     inset: 0,
-    zIndex: 60,
+    zIndex: 200000,
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
