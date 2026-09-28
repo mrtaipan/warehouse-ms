@@ -1692,7 +1692,8 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
         sizeBuckets.set(sizeKey, sizeBucket)
       })
 
-      const detailItemList = Array.from(sizeBuckets.values())
+      const bundleUnitQty = Math.max(1, Number(bundle.bundle_unit_qty || 1))
+      const sizeDetailItems = Array.from(sizeBuckets.values())
         .sort((left, right) => compareSizeValues(left.size, right.size))
         .map((sizeBucket) => ({
           key: `bundle:${bundle.id}:${normalizeKey(sizeBucket.size)}:${filters.type}`,
@@ -1717,9 +1718,9 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
           variantName: bundleName,
           variantNotes: '',
           variantPhotoUrl: firstBucket.photoUrl || '',
-          qty: sizeBucket.qty,
-          mobQty: sizeBucket.mobQty,
-          oiQty: sizeBucket.oiQty,
+          qty: Math.floor(sizeBucket.qty / bundleUnitQty),
+          mobQty: Math.floor(sizeBucket.mobQty / bundleUnitQty),
+          oiQty: Math.floor(sizeBucket.oiQty / bundleUnitQty),
           rowIds: [],
           breakdownIds: [],
           bundleComponentIds: Array.from(new Set(sizeBucket.componentRows.map((row) => row.bundleComponentId))).filter(Boolean),
@@ -1738,6 +1739,19 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
           isBundle: true,
           bundleId: Number(bundle.id || 0),
         }))
+
+      const detailItemList = sizeDetailItems.length ? [{
+        ...sizeDetailItems[0],
+        key: `bundle:${bundle.id}:${filters.type}`,
+        size: '-',
+        qty: sizeDetailItems.reduce((sum, item) => sum + item.qty, 0),
+        mobQty: sizeDetailItems.reduce((sum, item) => sum + item.mobQty, 0),
+        oiQty: sizeDetailItems.reduce((sum, item) => sum + item.oiQty, 0),
+        bundleComponentIds: Array.from(new Set(
+          sizeDetailItems.flatMap((item) => item.bundleComponentIds || [])
+        )).filter(Boolean),
+        bundleComponentRows: sizeDetailItems.flatMap((item) => item.bundleComponentRows || []),
+      }] : []
 
       const totalQty = detailItemList.reduce((sum, item) => sum + item.qty, 0)
       const mobQty = detailItemList.reduce((sum, item) => sum + item.mobQty, 0)
