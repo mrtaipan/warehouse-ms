@@ -21,7 +21,8 @@ const STORAGE_GROUP_FILTERS = ['ARKLINE', 'MOB', 'OI']
 const REJECT_GRADES = ['B', 'C']
 const REJECT_STORAGE_SELECT_COLUMNS = 'id, koli_number, product_name, size, category_id, sub_category_id, item_type_id, qty, grade, reject_note, status, posted_at, posted_by, created_by, created_at, updated_by, updated_at'
 const WAREHOUSE_STORAGE_BASE_SELECT_COLUMNS = 'id, rack_location_id, sku_id, item_name, size, qty, notes, created_at, updated_at'
-const WAREHOUSE_STORAGE_SELECT_COLUMNS = `${WAREHOUSE_STORAGE_BASE_SELECT_COLUMNS}, category_id`
+const WAREHOUSE_STORAGE_CATEGORY_SELECT_COLUMNS = `${WAREHOUSE_STORAGE_BASE_SELECT_COLUMNS}, category_id`
+const WAREHOUSE_STORAGE_SELECT_COLUMNS = `${WAREHOUSE_STORAGE_CATEGORY_SELECT_COLUMNS}, brand_code`
 const warehouseStorageCache = { rows: null, expiresAt: 0 }
 const staticStorageCache = new Map()
 const naturalSort = new Intl.Collator(undefined, {
@@ -34,6 +35,34 @@ const letterSizeRanks = new Map(
 
 function normalizeFilterValue(value) {
   return String(value || '').trim().toUpperCase()
+}
+
+function getSkuDirectoryIdentity(value, brandRows = [], categoryRows = []) {
+  const skuToken = normalizeFilterValue(value).replace(/[^A-Z0-9]/g, '')
+
+  if (skuToken.length < 8) {
+    return {
+      brandCode: '',
+      categoryId: null,
+    }
+  }
+
+  const brandCodeToken = skuToken.slice(0, 3)
+  const categoryCodeToken = skuToken.slice(3, 8)
+  const brand = brandRows.find(
+    (item) =>
+      normalizeFilterValue(item.brand_code) === brandCodeToken &&
+      item.is_active !== false &&
+      normalizeFilterValue(item.is_active) !== 'FALSE'
+  )
+  const category = categoryRows.find(
+    (item) => isActiveCategory(item) && getCategoryCodeToken(item) === categoryCodeToken
+  )
+
+  return {
+    brandCode: String(brand?.brand_code || '').trim().toUpperCase(),
+    categoryId: category?.id ? Number(category.id) : null,
+  }
 }
 
 function uppercaseInputValue(value) {
@@ -497,7 +526,15 @@ async function fetchAllWarehouseStorage({ force = false } = {}) {
       throw error
     }
 
-    return setWarehouseStorageCache(await loadRows(WAREHOUSE_STORAGE_BASE_SELECT_COLUMNS))
+    try {
+      return setWarehouseStorageCache(await loadRows(WAREHOUSE_STORAGE_CATEGORY_SELECT_COLUMNS))
+    } catch (categoryError) {
+      if (!isSchemaColumnError(categoryError)) {
+        throw categoryError
+      }
+
+      return setWarehouseStorageCache(await loadRows(WAREHOUSE_STORAGE_BASE_SELECT_COLUMNS))
+    }
   }
 }
 
@@ -940,6 +977,7 @@ export default function StorageOverviewPage() {
     categoryId: '',
     subCategoryId: '',
     itemTypeId: '',
+    uncategorized: false,
   })
 
   const refreshInventoryData = useCallback(async ({ showLoading = false, forceStorage = false } = {}) => {
@@ -1491,6 +1529,10 @@ export default function StorageOverviewPage() {
 
     return arklineProducts.find((product) => product.label === selectedLabel || product.sku === selectedLabel || product.sku === selectedSku) || null
   }, [arklineProducts, isRegisterArklineLocation, registerForm.itemName, registerForm.skuId])
+  const registerSkuIdentity = useMemo(
+    () => getSkuDirectoryIdentity(registerForm.skuId, brandRows, categoryRows),
+    [brandRows, categoryRows, registerForm.skuId]
+  )
 
   const moveSourceGroupCode = getLocationStorageGroup(moveModalEntry?.location)
   const moveEligibleRackLocations = scopedRackLocations.filter((item) => {
@@ -1733,6 +1775,10 @@ export default function StorageOverviewPage() {
       filters.itemTypeId &&
       itemTypeId !== String(filters.itemTypeId)
     ) {
+      return false
+    }
+
+    if (filters.uncategorized && categoryPath.length > 0) {
       return false
     }
 
@@ -1995,6 +2041,13 @@ export default function StorageOverviewPage() {
       setFilters((prev) => ({
         ...prev,
         [name]: checked,
+        ...(name === 'uncategorized' && checked
+          ? {
+              categoryId: '',
+              subCategoryId: '',
+              itemTypeId: '',
+            }
+          : {}),
       }))
       return
     }
@@ -2175,6 +2228,7 @@ export default function StorageOverviewPage() {
       categoryId: '',
       subCategoryId: '',
       itemTypeId: '',
+      uncategorized: false,
     })
     setProductSearch('')
     setQueueFilters({
@@ -3110,6 +3164,8 @@ export default function StorageOverviewPage() {
       rack_location_id: selectedRegisterLocation.id,
       sku_id: itemSku || null,
       item_name: parsedItem.itemName,
+      brand_code: registerSkuIdentity.brandCode || null,
+      category_id: registerSkuIdentity.categoryId,
       size: normalizeSizeValue(registerForm.size) || null,
       qty: nextQty,
       notes: registerForm.notes.trim() || null,
@@ -4034,7 +4090,8 @@ export default function StorageOverviewPage() {
               name="categoryId"
               value={filters.categoryId}
               onChange={handleFilterChange}
-              style={styles.select}
+              style={filters.uncategorized ? { ...styles.select, ...styles.controlDisabled } : styles.select}
+              disabled={filters.uncategorized}
             >
               <option value="">All categories</option>
               {stockCategoryOptions.map((option) => (
@@ -4051,8 +4108,8 @@ export default function StorageOverviewPage() {
               name="subCategoryId"
               value={filters.subCategoryId}
               onChange={handleFilterChange}
-              style={styles.select}
-              disabled={stockSubCategoryOptions.length === 0}
+              style={filters.uncategorized || stockSubCategoryOptions.length === 0 ? { ...styles.select, ...styles.controlDisabled } : styles.select}
+              disabled={filters.uncategorized || stockSubCategoryOptions.length === 0}
             >
               <option value="">All sub categories</option>
               {stockSubCategoryOptions.map((option) => (
@@ -4069,8 +4126,8 @@ export default function StorageOverviewPage() {
               name="itemTypeId"
               value={filters.itemTypeId}
               onChange={handleFilterChange}
-              style={styles.select}
-              disabled={stockItemTypeOptions.length === 0}
+              style={filters.uncategorized || stockItemTypeOptions.length === 0 ? { ...styles.select, ...styles.controlDisabled } : styles.select}
+              disabled={filters.uncategorized || stockItemTypeOptions.length === 0}
             >
               <option value="">All item types</option>
               {stockItemTypeOptions.map((option) => (
@@ -4079,6 +4136,24 @@ export default function StorageOverviewPage() {
                 </option>
               ))}
             </select>
+          </div>
+
+          <div style={styles.field}>
+            <label style={styles.label}>Category Status</label>
+            <label
+              style={filters.uncategorized
+                ? { ...styles.uncategorizedFilterControl, ...styles.uncategorizedFilterControlActive }
+                : styles.uncategorizedFilterControl}
+            >
+              <input
+                type="checkbox"
+                name="uncategorized"
+                checked={filters.uncategorized}
+                onChange={handleFilterChange}
+                style={styles.rowCheckbox}
+              />
+              <span>Uncategorized</span>
+            </label>
           </div>
 
         </div>
@@ -6199,6 +6274,28 @@ const styles = {
     flexDirection: 'column',
     gap: '8px',
     minWidth: 0,
+  },
+  uncategorizedFilterControl: {
+    width: '100%',
+    minWidth: 0,
+    height: '44px',
+    boxSizing: 'border-box',
+    padding: '0 12px',
+    border: '1px solid #d1d5db',
+    borderRadius: '10px',
+    background: '#fff',
+    color: '#334155',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    fontSize: '13px',
+    fontWeight: '700',
+    cursor: 'pointer',
+  },
+  uncategorizedFilterControlActive: {
+    border: '1px solid #111827',
+    background: '#f8fafc',
+    color: '#111827',
   },
   typeaheadWrap: {
     position: 'relative',

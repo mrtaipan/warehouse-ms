@@ -3465,6 +3465,7 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
         )))
         setSellingNameEditor(null)
         setSellingNameDraft('')
+        clearProductSelection()
         setActionMessage('Bundle name updated.')
         return
       }
@@ -3487,6 +3488,7 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
       )
       setSellingNameEditor(null)
       setSellingNameDraft('')
+      clearProductSelection()
       setActionMessage(nextSellingName ? 'Selling name updated.' : 'Selling name cleared.')
     } catch (updateError) {
       setActionError(getActionErrorMessage(updateError))
@@ -4278,7 +4280,7 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
     setOpenFilterMenu('')
     setFilterSearches({})
     clearProductSelection()
-    setSortConfig({ key: 'brand', direction: 'asc' })
+    setSortConfig({ key: 'grn', direction: 'desc' })
     setPageSize(10)
     setCurrentPage(1)
   }
