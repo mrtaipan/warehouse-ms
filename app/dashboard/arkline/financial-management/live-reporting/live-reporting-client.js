@@ -615,8 +615,8 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
       return
     }
 
-    if (!String(draft.amount || '').trim() || Number(normalizeDigits(draft.amount)) <= 0) {
-      setError('Nominal must be above zero.')
+    if (!String(draft.amount || '').trim() || Number(normalizeDigits(draft.amount)) < 0) {
+      setError('Nominal cannot be negative.')
       return
     }
 
@@ -1204,7 +1204,7 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
                   </tr>
                 </thead>
                 <tbody>
-                  {leaderboardCredits
+                  {filteredCredits
                     .filter((item) => item.host_display_name === selectedRanking)
                     .map((item) => (
                       <tr key={item.id}>

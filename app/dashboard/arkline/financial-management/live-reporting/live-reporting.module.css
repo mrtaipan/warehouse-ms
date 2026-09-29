@@ -121,7 +121,7 @@
 
 .reportingColumns {
   display: grid;
-  grid-template-columns: minmax(0, 7fr) minmax(280px, 3fr);
+  grid-template-columns: minmax(0, 5fr) minmax(340px, 3fr);
   grid-template-areas:
     'trend ranking'
     'wearing ranking';
@@ -156,15 +156,15 @@
 }
 
 .leaderboardChannelFilter {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  width: 100%;
+  width: fit-content;
+  max-width: 100%;
+  align-self: flex-start;
 }
 
 .leaderboardChannelFilter .segmentButton {
-  min-width: 0;
+  flex: 0 0 auto;
   min-height: 30px;
-  padding: 0 8px;
+  padding: 0 12px;
   font-size: 11px;
   font-weight: 700;
 }
@@ -179,6 +179,7 @@
   border: 1px solid #dbeafe;
   background: #eff6ff;
   color: #1e3a8a;
+  white-space: nowrap;
 }
 
 .totalPill span {
@@ -453,6 +454,14 @@
   border-radius: inherit;
   background: #2563eb;
   transition: width 180ms ease;
+}
+
+@media (min-width: 961px) {
+  .podiumAmount,
+  .leaderboardAmount {
+    overflow-wrap: normal;
+    white-space: nowrap;
+  }
 }
 
 @media (max-width: 960px) {

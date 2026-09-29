@@ -204,8 +204,8 @@ begin
     raise exception 'Invalid sales channel';
   end if;
 
-  if p_gross_amount is null or p_gross_amount <= 0 then
-    raise exception 'Gross amount must be above zero';
+  if p_gross_amount is null or p_gross_amount < 0 then
+    raise exception 'Gross amount cannot be negative';
   end if;
 
   if p_session_type = 'PAIRING' and p_partner_profile_id is null then
