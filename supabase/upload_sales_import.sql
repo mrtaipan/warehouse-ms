@@ -1,0 +1,715 @@
+create extension if not exists pgcrypto;
+
+create sequence if not exists public.upload_sales_import_batch_seq;
+
+create table if not exists public.upload_sales_import_batches (
+  id uuid primary key default gen_random_uuid(),
+  batch_number text not null default (
+    'SSU-' ||
+    to_char((now() at time zone 'Asia/Jakarta'), 'YYYYMMDD') ||
+    '-' ||
+    lpad(nextval('public.upload_sales_import_batch_seq'::regclass)::text, 4, '0')
+  ),
+  file_name text,
+  file_hash text,
+  source_channel text not null default 'jubelio',
+  status text not null default 'draft',
+  valid_statuses text[] not null default array['packaged', 'ship', 'shipped'],
+  uploaded_by text,
+  uploaded_at timestamp with time zone not null default now(),
+  posted_by text,
+  posted_at timestamp with time zone,
+  reversed_by text,
+  reversed_at timestamp with time zone,
+  total_csv_rows integer not null default 0,
+  order_count integer not null default 0,
+  total_order_lines integer not null default 0,
+  included_lines integer not null default 0,
+  excluded_lines integer not null default 0,
+  requested_qty integer not null default 0,
+  applied_qty integer not null default 0,
+  skipped_qty integer not null default 0,
+  duplicate_order_count integer not null default 0,
+  shortage_line_count integer not null default 0,
+  missing_sku_count integer not null default 0,
+  raw_retention_until timestamp with time zone not null default (now() + interval '7 days'),
+  raw_purged_at timestamp with time zone,
+  notes text,
+  created_at timestamp with time zone not null default now(),
+  updated_at timestamp with time zone not null default now(),
+  constraint upload_sales_import_batches_batch_number_key unique (batch_number),
+  constraint upload_sales_import_batches_file_hash_key unique (file_hash),
+  constraint upload_sales_import_batches_status_check
+    check (status in ('draft', 'posted', 'cancelled', 'reversed')),
+  constraint upload_sales_import_batches_qty_check
+    check (
+      total_csv_rows >= 0
+      and order_count >= 0
+      and total_order_lines >= 0
+      and included_lines >= 0
+      and excluded_lines >= 0
+      and requested_qty >= 0
+      and applied_qty >= 0
+      and skipped_qty >= 0
+      and duplicate_order_count >= 0
+      and shortage_line_count >= 0
+      and missing_sku_count >= 0
+    )
+);
+
+alter table public.upload_sales_import_batches
+  add column if not exists order_count integer not null default 0;
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conrelid = 'public.upload_sales_import_batches'::regclass
+      and conname = 'upload_sales_import_batches_order_count_check'
+  ) then
+    alter table public.upload_sales_import_batches
+      add constraint upload_sales_import_batches_order_count_check
+      check (order_count >= 0);
+  end if;
+end $$;
+
+update public.upload_sales_import_batches batches
+set order_count = coalesce(summary.order_count, 0)
+from (
+  select
+    batch_id,
+    count(distinct nullif(trim(order_number), ''))::integer as order_count
+  from public.upload_sales_import_lines
+  group by batch_id
+) summary
+where batches.id = summary.batch_id
+  and coalesce(batches.order_count, 0) = 0;
+
+create table if not exists public.upload_sales_import_lines (
+  id uuid primary key default gen_random_uuid(),
+  batch_id uuid not null references public.upload_sales_import_batches(id) on update cascade on delete cascade,
+  row_number integer not null,
+  order_number text,
+  order_status text,
+  sku_id text,
+  product_name text,
+  variation_raw text,
+  size text,
+  qty integer not null default 0,
+  included boolean not null default false,
+  exclusion_reason text,
+  available_qty_snapshot integer not null default 0,
+  applied_qty integer not null default 0,
+  skipped_qty integer not null default 0,
+  created_at timestamp with time zone not null default now(),
+  constraint upload_sales_import_lines_qty_check
+    check (
+      row_number > 0
+      and qty >= 0
+      and available_qty_snapshot >= 0
+      and applied_qty >= 0
+      and skipped_qty >= 0
+    )
+);
+
+create table if not exists public.upload_warehouse_storage_movements (
+  id uuid primary key default gen_random_uuid(),
+  source_type text not null,
+  source_batch_id uuid,
+  source_line_id uuid,
+  movement_type text not null,
+  warehouse_storage_id bigint,
+  rack_location_id bigint,
+  location_snapshot jsonb not null default '{}'::jsonb,
+  sku_id text,
+  item_name_snapshot text,
+  size text,
+  qty_before integer not null default 0,
+  qty_delta integer not null,
+  qty_after integer not null default 0,
+  storage_row_deleted boolean not null default false,
+  reference_number text,
+  created_by text,
+  created_at timestamp with time zone not null default now(),
+  notes text,
+  constraint upload_warehouse_storage_movements_type_check
+    check (movement_type in ('OUT', 'IN', 'REVERSE')),
+  constraint upload_warehouse_storage_movements_qty_check
+    check (qty_before >= 0 and qty_after >= 0 and qty_delta <> 0)
+);
+
+create index if not exists upload_sales_import_batches_status_idx
+  on public.upload_sales_import_batches (status, uploaded_at desc);
+
+create index if not exists upload_sales_import_batches_hash_idx
+  on public.upload_sales_import_batches (file_hash);
+
+create index if not exists upload_sales_import_lines_batch_idx
+  on public.upload_sales_import_lines (batch_id, row_number);
+
+create index if not exists upload_sales_import_lines_lookup_idx
+  on public.upload_sales_import_lines (batch_id, included, sku_id, size);
+
+create index if not exists upload_warehouse_storage_movements_batch_idx
+  on public.upload_warehouse_storage_movements (source_batch_id, created_at);
+
+create index if not exists upload_warehouse_storage_movements_storage_idx
+  on public.upload_warehouse_storage_movements (warehouse_storage_id, created_at desc);
+
+create or replace function public.set_upload_sales_import_updated_at()
+returns trigger
+language plpgsql
+security invoker
+set search_path = ''
+as $$
+begin
+  new.updated_at := now();
+  return new;
+end;
+$$;
+
+drop trigger if exists upload_sales_import_batches_set_updated_at
+  on public.upload_sales_import_batches;
+
+create trigger upload_sales_import_batches_set_updated_at
+before update on public.upload_sales_import_batches
+for each row
+execute function public.set_upload_sales_import_updated_at();
+
+create or replace function public.post_upload_sales_import_batch(
+  p_batch_id uuid,
+  p_actor_email text default null
+)
+returns jsonb
+language plpgsql
+security invoker
+set search_path = ''
+as $$
+declare
+  target_batch public.upload_sales_import_batches%rowtype;
+  import_line public.upload_sales_import_lines%rowtype;
+  storage_row record;
+  remaining_qty integer;
+  take_qty integer;
+  line_applied integer;
+  line_skipped integer;
+  total_applied integer := 0;
+  total_skipped integer := 0;
+  shortage_lines integer := 0;
+  actor_email text := nullif(trim(coalesce(p_actor_email, '')), '');
+  normalized_sku text;
+  normalized_size text;
+begin
+  select *
+    into target_batch
+  from public.upload_sales_import_batches
+  where id = p_batch_id
+  for update;
+
+  if target_batch.id is null then
+    raise exception 'Shelving sales import batch not found';
+  end if;
+
+  if target_batch.status <> 'draft' then
+    raise exception 'Only draft shelving import batches can be posted. Current status: %', target_batch.status;
+  end if;
+
+  for import_line in
+    select *
+    from public.upload_sales_import_lines
+    where batch_id = p_batch_id
+      and included = true
+      and qty > 0
+    order by row_number asc, id asc
+    for update
+  loop
+    remaining_qty := import_line.qty;
+    line_applied := 0;
+    normalized_sku := upper(regexp_replace(coalesce(import_line.sku_id, ''), '[^A-Z0-9]', '', 'g'));
+    normalized_size := upper(regexp_replace(coalesce(import_line.size, ''), '\s+', '', 'g'));
+
+    if normalized_sku = '' or normalized_size = '' then
+      update public.upload_sales_import_lines
+      set
+        applied_qty = 0,
+        skipped_qty = import_line.qty,
+        exclusion_reason = coalesce(nullif(exclusion_reason, ''), 'Missing SKU or size at posting')
+      where id = import_line.id;
+
+      total_skipped := total_skipped + import_line.qty;
+      shortage_lines := shortage_lines + 1;
+      continue;
+    end if;
+
+    for storage_row in
+      select
+        storage.id,
+        storage.rack_location_id,
+        storage.sku_id,
+        storage.item_name,
+        storage.size,
+        storage.qty,
+        storage.notes,
+        location.location_type,
+        location.location_id,
+        location.location_code,
+        location.sub_location,
+        location.location_name,
+        location.group_code,
+        jsonb_build_object(
+          'rack_location_id', location.id,
+          'location_type', location.location_type,
+          'location_id', location.location_id,
+          'location_code', location.location_code,
+          'sub_location', location.sub_location,
+          'location_name', location.location_name,
+          'group_code', location.group_code
+        ) as location_snapshot
+      from public.warehouse_storage storage
+      join public.dir_rack_locations location
+        on location.id = storage.rack_location_id
+      where upper(trim(coalesce(location.location_type, ''))) = 'SHELVING'
+        and coalesce(storage.qty, 0) > 0
+        and exists (
+          select 1
+          from regexp_split_to_table(concat_ws(' ', storage.sku_id, storage.item_name), '[[:space:]|,;/]+') as sku_token(raw_value)
+          where upper(regexp_replace(coalesce(sku_token.raw_value, ''), '[^A-Z0-9]', '', 'g')) = normalized_sku
+        )
+        and upper(regexp_replace(coalesce(storage.size, ''), '\s+', '', 'g')) = normalized_size
+      order by storage.created_at asc nulls first, storage.id asc
+      for update of storage
+    loop
+      exit when remaining_qty <= 0;
+
+      take_qty := least(remaining_qty, coalesce(storage_row.qty, 0));
+      if take_qty <= 0 then
+        continue;
+      end if;
+
+      insert into public.upload_warehouse_storage_movements (
+        source_type,
+        source_batch_id,
+        source_line_id,
+        movement_type,
+        warehouse_storage_id,
+        rack_location_id,
+        location_snapshot,
+        sku_id,
+        item_name_snapshot,
+        size,
+        qty_before,
+        qty_delta,
+        qty_after,
+        storage_row_deleted,
+        reference_number,
+        created_by,
+        notes
+      ) values (
+        'upload_sales_import',
+        p_batch_id,
+        import_line.id,
+        'OUT',
+        storage_row.id,
+        storage_row.rack_location_id,
+        coalesce(storage_row.location_snapshot, '{}'::jsonb),
+        storage_row.sku_id,
+        storage_row.item_name,
+        storage_row.size,
+        storage_row.qty,
+        -take_qty,
+        storage_row.qty - take_qty,
+        storage_row.qty = take_qty,
+        import_line.order_number,
+        actor_email,
+        'Daily shelving sales upload'
+      );
+
+      if storage_row.qty = take_qty then
+        delete from public.warehouse_storage
+        where id = storage_row.id;
+      else
+        update public.warehouse_storage
+        set
+          qty = storage_row.qty - take_qty,
+          updated_by = actor_email,
+          updated_at = now()
+        where id = storage_row.id;
+      end if;
+
+      remaining_qty := remaining_qty - take_qty;
+      line_applied := line_applied + take_qty;
+    end loop;
+
+    line_skipped := greatest(remaining_qty, 0);
+
+    update public.upload_sales_import_lines
+    set
+      applied_qty = line_applied,
+      skipped_qty = line_skipped,
+      available_qty_snapshot = greatest(coalesce(available_qty_snapshot, 0), line_applied),
+      exclusion_reason = case
+        when line_skipped > 0 then 'Insufficient shelving stock'
+        else exclusion_reason
+      end
+    where id = import_line.id;
+
+    total_applied := total_applied + line_applied;
+    total_skipped := total_skipped + line_skipped;
+
+    if line_skipped > 0 then
+      shortage_lines := shortage_lines + 1;
+    end if;
+  end loop;
+
+  update public.upload_sales_import_batches
+  set
+    status = 'posted',
+    posted_by = actor_email,
+    posted_at = now(),
+    applied_qty = total_applied,
+    skipped_qty = total_skipped,
+    shortage_line_count = shortage_lines
+  where id = p_batch_id;
+
+  return jsonb_build_object(
+    'batch_id', p_batch_id,
+    'status', 'posted',
+    'applied_qty', total_applied,
+    'skipped_qty', total_skipped,
+    'shortage_line_count', shortage_lines
+  );
+end;
+$$;
+
+create or replace function public.reverse_upload_sales_import_batch(
+  p_batch_id uuid,
+  p_actor_email text default null
+)
+returns jsonb
+language plpgsql
+security invoker
+set search_path = ''
+as $$
+declare
+  target_batch public.upload_sales_import_batches%rowtype;
+  movement_row public.upload_warehouse_storage_movements%rowtype;
+  storage_row public.warehouse_storage%rowtype;
+  restored_qty integer;
+  target_storage_id bigint;
+  actor_email text := nullif(trim(coalesce(p_actor_email, '')), '');
+  reversed_qty integer := 0;
+  restored_rows integer := 0;
+begin
+  select *
+    into target_batch
+  from public.upload_sales_import_batches
+  where id = p_batch_id
+  for update;
+
+  if target_batch.id is null then
+    raise exception 'Shelving sales import batch not found';
+  end if;
+
+  if target_batch.status <> 'posted' then
+    raise exception 'Only posted shelving import batches can be reversed. Current status: %', target_batch.status;
+  end if;
+
+  if exists (
+    select 1
+    from public.upload_warehouse_storage_movements
+    where source_batch_id = p_batch_id
+      and movement_type = 'REVERSE'
+  ) then
+    raise exception 'This shelving import batch has already been reversed';
+  end if;
+
+  for movement_row in
+    select *
+    from public.upload_warehouse_storage_movements
+    where source_batch_id = p_batch_id
+      and movement_type = 'OUT'
+    order by created_at desc, id desc
+  loop
+    restored_qty := abs(movement_row.qty_delta);
+    target_storage_id := movement_row.warehouse_storage_id;
+
+    select *
+      into storage_row
+    from public.warehouse_storage
+    where id = target_storage_id
+    for update;
+
+    if storage_row.id is null then
+      insert into public.warehouse_storage (
+        rack_location_id,
+        sku_id,
+        item_name,
+        size,
+        qty,
+        notes,
+        updated_by,
+        updated_at
+      ) values (
+        movement_row.rack_location_id,
+        movement_row.sku_id,
+        coalesce(movement_row.item_name_snapshot, movement_row.sku_id, 'Restored item'),
+        movement_row.size,
+        restored_qty,
+        'Restored from reversed shelving upload batch ' || target_batch.batch_number,
+        actor_email,
+        now()
+      )
+      returning * into storage_row;
+
+      target_storage_id := storage_row.id;
+      restored_rows := restored_rows + 1;
+
+      insert into public.upload_warehouse_storage_movements (
+        source_type,
+        source_batch_id,
+        source_line_id,
+        movement_type,
+        warehouse_storage_id,
+        rack_location_id,
+        location_snapshot,
+        sku_id,
+        item_name_snapshot,
+        size,
+        qty_before,
+        qty_delta,
+        qty_after,
+        storage_row_deleted,
+        reference_number,
+        created_by,
+        notes
+      ) values (
+        'upload_sales_import',
+        p_batch_id,
+        movement_row.source_line_id,
+        'REVERSE',
+        target_storage_id,
+        movement_row.rack_location_id,
+        coalesce(movement_row.location_snapshot, '{}'::jsonb),
+        movement_row.sku_id,
+        movement_row.item_name_snapshot,
+        movement_row.size,
+        0,
+        restored_qty,
+        restored_qty,
+        false,
+        movement_row.reference_number,
+        actor_email,
+        'Reverse daily shelving sales upload; recreated deleted storage row'
+      );
+    else
+      update public.warehouse_storage
+      set
+        qty = coalesce(storage_row.qty, 0) + restored_qty,
+        updated_by = actor_email,
+        updated_at = now()
+      where id = storage_row.id
+      returning * into storage_row;
+
+      insert into public.upload_warehouse_storage_movements (
+        source_type,
+        source_batch_id,
+        source_line_id,
+        movement_type,
+        warehouse_storage_id,
+        rack_location_id,
+        location_snapshot,
+        sku_id,
+        item_name_snapshot,
+        size,
+        qty_before,
+        qty_delta,
+        qty_after,
+        storage_row_deleted,
+        reference_number,
+        created_by,
+        notes
+      ) values (
+        'upload_sales_import',
+        p_batch_id,
+        movement_row.source_line_id,
+        'REVERSE',
+        storage_row.id,
+        movement_row.rack_location_id,
+        coalesce(movement_row.location_snapshot, '{}'::jsonb),
+        movement_row.sku_id,
+        movement_row.item_name_snapshot,
+        movement_row.size,
+        storage_row.qty - restored_qty,
+        restored_qty,
+        storage_row.qty,
+        false,
+        movement_row.reference_number,
+        actor_email,
+        'Reverse daily shelving sales upload'
+      );
+    end if;
+
+    reversed_qty := reversed_qty + restored_qty;
+  end loop;
+
+  update public.upload_sales_import_batches
+  set
+    status = 'reversed',
+    reversed_by = actor_email,
+    reversed_at = now()
+  where id = p_batch_id;
+
+  return jsonb_build_object(
+    'batch_id', p_batch_id,
+    'status', 'reversed',
+    'reversed_qty', reversed_qty,
+    'restored_rows', restored_rows
+  );
+end;
+$$;
+
+create or replace function public.delete_upload_sales_import_batch(
+  p_batch_id uuid,
+  p_actor_email text default null
+)
+returns jsonb
+language plpgsql
+security invoker
+set search_path = ''
+as $$
+declare
+  target_batch public.upload_sales_import_batches%rowtype;
+  deleted_line_count integer := 0;
+begin
+  select *
+    into target_batch
+  from public.upload_sales_import_batches
+  where id = p_batch_id
+  for update;
+
+  if target_batch.id is null then
+    raise exception 'Upload batch not found';
+  end if;
+
+  if target_batch.status <> 'draft' then
+    raise exception 'Only draft upload batches can be deleted. Reverse posted batches instead.';
+  end if;
+
+  delete from public.upload_sales_import_lines
+  where batch_id = p_batch_id;
+  get diagnostics deleted_line_count = row_count;
+
+  delete from public.upload_sales_import_batches
+  where id = p_batch_id;
+
+  return jsonb_build_object(
+    'batch_id', p_batch_id,
+    'status', 'deleted',
+    'deleted_lines', deleted_line_count,
+    'deleted_by', nullif(trim(coalesce(p_actor_email, '')), '')
+  );
+end;
+$$;
+
+create or replace function public.purge_upload_sales_import_raw_lines()
+returns jsonb
+language plpgsql
+security invoker
+set search_path = ''
+as $$
+declare
+  purged_line_count integer := 0;
+  purged_batch_count integer := 0;
+begin
+  with expired_batches as (
+    select id
+    from public.upload_sales_import_batches
+    where raw_retention_until < now()
+      and raw_purged_at is null
+      and status in ('posted', 'cancelled', 'reversed')
+  ),
+  deleted_lines as (
+    delete from public.upload_sales_import_lines lines
+    using expired_batches batches
+    where lines.batch_id = batches.id
+    returning lines.id
+  ),
+  updated_batches as (
+    update public.upload_sales_import_batches batches
+    set raw_purged_at = now()
+    from expired_batches expired
+    where batches.id = expired.id
+    returning batches.id
+  )
+  select
+    (select count(*) from deleted_lines),
+    (select count(*) from updated_batches)
+    into purged_line_count, purged_batch_count;
+
+  return jsonb_build_object(
+    'purged_lines', purged_line_count,
+    'purged_batches', purged_batch_count
+  );
+end;
+$$;
+
+alter table public.upload_sales_import_batches enable row level security;
+alter table public.upload_sales_import_lines enable row level security;
+alter table public.upload_warehouse_storage_movements enable row level security;
+
+grant select, insert, update, delete on public.upload_sales_import_batches to authenticated;
+grant select, insert, update, delete on public.upload_sales_import_lines to authenticated;
+grant select, insert, update, delete on public.upload_warehouse_storage_movements to authenticated;
+grant usage, select on sequence public.upload_sales_import_batch_seq to authenticated;
+grant execute on function public.post_upload_sales_import_batch(uuid, text) to authenticated;
+grant execute on function public.reverse_upload_sales_import_batch(uuid, text) to authenticated;
+grant execute on function public.delete_upload_sales_import_batch(uuid, text) to authenticated;
+grant execute on function public.purge_upload_sales_import_raw_lines() to authenticated;
+
+drop policy if exists upload_sales_import_batches_authenticated_all
+  on public.upload_sales_import_batches;
+create policy upload_sales_import_batches_authenticated_all
+on public.upload_sales_import_batches
+for all
+to authenticated
+using (true)
+with check (true);
+
+drop policy if exists upload_sales_import_lines_authenticated_all
+  on public.upload_sales_import_lines;
+create policy upload_sales_import_lines_authenticated_all
+on public.upload_sales_import_lines
+for all
+to authenticated
+using (true)
+with check (true);
+
+drop policy if exists upload_warehouse_storage_movements_authenticated_all
+  on public.upload_warehouse_storage_movements;
+create policy upload_warehouse_storage_movements_authenticated_all
+on public.upload_warehouse_storage_movements
+for all
+to authenticated
+using (true)
+with check (true);
+
+insert into public.dir_user_permissions (code, label, description)
+values
+  ('storage.shelving_upload.view', 'View Shelving Upload', 'View daily shelving sales upload batches.'),
+  ('storage.shelving_upload.add', 'Add Shelving Upload', 'Upload and preview daily shelving sales CSV files.'),
+  ('storage.shelving_upload.edit', 'Edit Shelving Upload', 'Post, reverse, and manage daily shelving sales upload batches.')
+on conflict (code) do update
+set
+  label = excluded.label,
+  description = excluded.description;
+
+insert into public.dir_user_roles (role, permission_code)
+values
+  ('warehouse_leader', 'storage.shelving_upload.view'),
+  ('warehouse_leader', 'storage.shelving_upload.add'),
+  ('warehouse_leader', 'storage.shelving_upload.edit'),
+  ('storage_coordinator', 'storage.shelving_upload.view'),
+  ('storage_coordinator', 'storage.shelving_upload.add'),
+  ('storage_coordinator', 'storage.shelving_upload.edit')
+on conflict do nothing;

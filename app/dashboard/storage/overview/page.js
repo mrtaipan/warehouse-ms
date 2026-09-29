@@ -9,6 +9,7 @@ import { getRolePermissionCodes } from '@/utils/role-permissions'
 import { getProfileByAuthenticatedUser } from '@/utils/user-profiles'
 import { useRealtimeRefresh } from '@/utils/supabase/use-realtime-refresh'
 import ProductDirectoryClient from '../daftar-barang/product-directory-client'
+import ShelvingUploadClient from '../shelving-upload-client'
 
 const supabase = createClient()
 const BATCH_SIZE = 1000
@@ -807,6 +808,9 @@ const EMPTY_STORAGE_ACCESS = {
   productDirectory: false,
   productDirectoryAdd: false,
   productDirectoryEdit: false,
+  shelvingUpload: false,
+  shelvingUploadAdd: false,
+  shelvingUploadEdit: false,
   rejectStorageAdd: false,
   rejectStorageEdit: false,
   warehouseMap: false,
@@ -869,7 +873,7 @@ async function getCurrentUserEmail() {
 export default function StorageOverviewPage() {
   const searchParams = useSearchParams()
   const initialMode = String(searchParams.get('mode') || '').trim().toLowerCase()
-  const initialListMode = ['history', 'queue', 'product-directory', 'reject-storage'].includes(initialMode) ? initialMode : 'stock'
+  const initialListMode = ['history', 'queue', 'temporary-sales', 'product-directory', 'reject-storage'].includes(initialMode) ? initialMode : 'stock'
   const initialRegisterOpen = searchParams.get('register') === '1'
   const initialProductSearch = String(searchParams.get('q') || searchParams.get('search') || '').trim().toUpperCase()
   const [rackLocations, setRackLocations] = useState([])
@@ -910,6 +914,7 @@ export default function StorageOverviewPage() {
   const [isMoveLocationCodeMenuOpen, setIsMoveLocationCodeMenuOpen] = useState(false)
   const [isRegisterArklineProductMenuOpen, setIsRegisterArklineProductMenuOpen] = useState(false)
   const [isBrandLookupOpen, setIsBrandLookupOpen] = useState(false)
+  const [isShelvingUploadModalOpen, setIsShelvingUploadModalOpen] = useState(false)
   const [isCompactLayout, setIsCompactLayout] = useState(false)
   const [activeListMode, setActiveListMode] = useState(initialListMode)
   const [stockPage, setStockPage] = useState(1)
@@ -926,6 +931,8 @@ export default function StorageOverviewPage() {
     group: '',
     grn: '',
   })
+  const [temporarySalesSearch, setTemporarySalesSearch] = useState('')
+  const [temporarySalesStatus, setTemporarySalesStatus] = useState('all')
   const [takeForm, setTakeForm] = useState({
     takeOutAll: false,
     qty: '',
@@ -1202,25 +1209,45 @@ export default function StorageOverviewPage() {
   const canCategorizeStorageItem = Boolean(storageAccess.categoryManage)
   const canStoreQueueItem = Boolean(storageAccess.queueEdit)
   const canManageProductDirectory = Boolean(storageAccess.productDirectoryAdd || storageAccess.productDirectoryEdit)
+  const canViewShelvingUpload = Boolean(storageAccess.shelvingUpload)
+  const canAddShelvingUpload = Boolean(storageAccess.shelvingUploadAdd)
+  const canManageShelvingUpload = Boolean(storageAccess.shelvingUploadEdit)
   const canShowStorageLocationActions = canEditStorageItem || canTakeStorageItem || canMoveStorageItem
   const canViewRejectStorage = Boolean(storageAccess.location)
   const canAddRejectStorage = Boolean(storageAccess.rejectStorageAdd || storageAccess.locationAdd)
   const canEditRejectStorage = Boolean(storageAccess.rejectStorageEdit || storageAccess.locationEdit || storageAccess.locationAdd)
   const rejectToolbarButtonCount = (canAddRejectStorage ? 1 : 0) + (canEditRejectStorage ? 1 : 0) + 2
+  const storageLocationTabItems = useMemo(
+    () => [
+      storageAccess.location ? ['stock', 'Current Stock'] : null,
+      storageAccess.queue ? ['queue', 'Storage Queue'] : null,
+      storageAccess.queue ? ['temporary-sales', 'Temporary Sales'] : null,
+      canViewRejectStorage ? ['reject-storage', 'Reject Storage'] : null,
+    ].filter(Boolean),
+    [canViewRejectStorage, storageAccess.location, storageAccess.queue]
+  )
   const storageTabItems = useMemo(
     () => [
-      storageAccess.location ? ['stock', 'Storage Location'] : null,
-      storageAccess.queue ? ['queue', 'Storage Queue'] : null,
-      canViewRejectStorage ? ['reject-storage', 'Reject Storage'] : null,
+      ...storageLocationTabItems,
       storageAccess.pickHistory ? ['history', 'Pick History'] : null,
       storageAccess.productDirectory ? ['product-directory', 'Product Directory'] : null,
     ].filter(Boolean),
-    [canViewRejectStorage, storageAccess.location, storageAccess.pickHistory, storageAccess.productDirectory, storageAccess.queue]
+    [storageAccess.pickHistory, storageAccess.productDirectory, storageLocationTabItems]
+  )
+  const storagePrimaryTabItems = useMemo(
+    () => [
+      storageLocationTabItems.length > 0 ? ['storage-location', 'Storage Location'] : null,
+      storageAccess.pickHistory ? ['history', 'Pick History'] : null,
+      storageAccess.productDirectory ? ['product-directory', 'Product Directory'] : null,
+    ].filter(Boolean),
+    [storageAccess.pickHistory, storageAccess.productDirectory, storageLocationTabItems.length]
   )
 
   const visibleListMode = storageTabItems.some(([mode]) => mode === activeListMode)
     ? activeListMode
     : storageTabItems[0]?.[0] || activeListMode
+  const isStorageLocationMode = storageLocationTabItems.some(([mode]) => mode === visibleListMode)
+  const visiblePrimaryTabMode = isStorageLocationMode ? 'storage-location' : visibleListMode
 
   const productScopedStorageRows = useMemo(() => {
     const normalizedProductSearch = normalizeFilterValue(productSearch)
@@ -3660,6 +3687,24 @@ export default function StorageOverviewPage() {
                 ) : null}
               </button>
             ) : null}
+            {canViewShelvingUpload ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setIsShelvingUploadModalOpen(true)
+                  refreshInventoryData({ showLoading: false, forceStorage: true })
+                }}
+                style={styles.iconActionButton}
+                title="Upload"
+                aria-label="Open Shelving Upload"
+              >
+                <svg viewBox="0 0 24 24" style={styles.actionIcon} aria-hidden="true">
+                  <path d="M12 16V4" />
+                  <path d="m7 9 5-5 5 5" />
+                  <path d="M5 20h14" />
+                </svg>
+              </button>
+            ) : null}
           </div>
           <p style={styles.subtitle}>Track stored items, inspect recent stock activity, and register new warehouse entries.</p>
         </div>
@@ -3682,29 +3727,84 @@ export default function StorageOverviewPage() {
 
       <div style={styles.card}>
         <div style={styles.storageTabs}>
-          <div style={styles.storageTabList}>
-            {storageTabItems.map(([mode, label]) => (
+          <div
+            style={isCompactLayout
+              ? { ...styles.storageTabList, ...styles.storageTabListCompact }
+              : styles.storageTabList}
+          >
+            {storagePrimaryTabItems.map(([mode, label]) => (
               <button
                 key={mode}
                 type="button"
                 onClick={() => {
-                  setActiveListMode(mode)
+                  setActiveListMode(
+                    mode === 'storage-location'
+                      ? (isStorageLocationMode ? visibleListMode : storageLocationTabItems[0]?.[0] || 'stock')
+                      : mode
+                  )
                   setStockPage(1)
                   setQueuePage(1)
                   setRejectPage(1)
                 }}
                 style={{
                   ...styles.storageTabButton,
-                  ...(visibleListMode === mode ? styles.storageTabButtonActive : {}),
+                  ...(isCompactLayout ? styles.storageTabButtonCompact : {}),
+                  ...(visiblePrimaryTabMode === mode ? styles.storageTabButtonActive : {}),
                 }}
               >
                 <span style={styles.storageTabLabel}>{label}</span>
-                {visibleListMode === mode ? <span style={styles.storageTabUnderline} /> : null}
+                {visiblePrimaryTabMode === mode ? <span style={styles.storageTabUnderline} /> : null}
               </button>
             ))}
           </div>
 
           <div style={styles.storageTabPanel}>
+        {isStorageLocationMode ? (
+          <div
+            style={styles.storageWorkspaceTabs}
+            aria-label="Storage Location views"
+          >
+            {storageLocationTabItems.map(([mode, label]) => {
+              const count = mode === 'queue'
+                ? queueGroups.length
+                : mode === 'temporary-sales'
+                  ? 0
+                  : mode === 'reject-storage'
+                    ? rejectKoliGroups.length
+                    : null
+
+              return (
+                <button
+                  key={mode}
+                  type="button"
+                  onClick={() => {
+                    setActiveListMode(mode)
+                    setStockPage(1)
+                    setQueuePage(1)
+                    setRejectPage(1)
+                  }}
+                  style={{
+                    ...styles.storageWorkspaceTabButton,
+                    ...(visibleListMode === mode ? styles.storageWorkspaceTabButtonActive : {}),
+                  }}
+                  aria-pressed={visibleListMode === mode}
+                >
+                  <span>{label}</span>
+                  {count !== null ? (
+                    <span
+                      style={{
+                        ...styles.storageWorkspaceTabBadge,
+                        ...(visibleListMode === mode ? styles.storageWorkspaceTabBadgeActive : {}),
+                      }}
+                    >
+                      {count}
+                    </span>
+                  ) : null}
+                </button>
+              )
+            })}
+          </div>
+        ) : null}
         {visibleListMode === 'product-directory' ? (
           <ProductDirectoryClient
             embedded
@@ -3714,12 +3814,102 @@ export default function StorageOverviewPage() {
           />
         ) : (
           <>
+        {visibleListMode === 'temporary-sales' ? (
+          <div style={styles.temporarySalesShell}>
+            <div style={styles.temporarySalesHeader}>
+              <div>
+                <p style={styles.temporarySalesEyebrow}>Physical staging</p>
+                <h2 style={styles.temporarySalesTitle}>Temporary Sales Area</h2>
+                <p style={styles.temporarySalesSubtitle}>Track items waiting to leave storage and items due to return within seven days.</p>
+              </div>
+              <span style={styles.temporarySalesActiveBadge}>0 active item</span>
+            </div>
+
+            <div
+              style={isCompactLayout
+                ? { ...styles.temporarySalesKpiGrid, ...styles.temporarySalesKpiGridCompact }
+                : styles.temporarySalesKpiGrid}
+            >
+              {[
+                ['Waiting Action', 0, styles.temporarySalesKpiWaiting],
+                ['In Temporary Area', 0, styles.temporarySalesKpiActive],
+                ['Due Soon', 0, styles.temporarySalesKpiDue],
+                ['Overdue', 0, styles.temporarySalesKpiOverdue],
+              ].map(([label, value, accentStyle]) => (
+                <div key={label} style={{ ...styles.temporarySalesKpiCard, ...accentStyle }}>
+                  <span style={styles.temporarySalesKpiLabel}>{label}</span>
+                  <strong style={styles.temporarySalesKpiValue}>{value}</strong>
+                </div>
+              ))}
+            </div>
+
+            <div
+              style={isCompactLayout
+                ? { ...styles.temporarySalesToolbar, ...styles.temporarySalesToolbarCompact }
+                : styles.temporarySalesToolbar}
+            >
+              <div style={styles.field}>
+                <label style={styles.label}>Item Search</label>
+                <input
+                  value={temporarySalesSearch}
+                  onChange={(event) => setTemporarySalesSearch(event.target.value.toUpperCase())}
+                  style={styles.input}
+                  placeholder="Search product, SKU, or source location"
+                />
+              </div>
+              <div style={styles.field}>
+                <label style={styles.label}>Status</label>
+                <div style={styles.temporarySalesStatusToggle} aria-label="Temporary sales status filter">
+                  {[
+                    ['all', 'All'],
+                    ['waiting', 'Waiting'],
+                    ['in-area', 'In Area'],
+                    ['due-soon', 'Due Soon'],
+                    ['overdue', 'Overdue'],
+                  ].map(([value, label]) => (
+                    <button
+                      key={value}
+                      type="button"
+                      onClick={() => setTemporarySalesStatus((current) => current === value && value !== 'all' ? 'all' : value)}
+                      style={{
+                        ...styles.temporarySalesStatusButton,
+                        ...(temporarySalesStatus === value ? styles.temporarySalesStatusButtonActive : {}),
+                      }}
+                      aria-pressed={temporarySalesStatus === value}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div style={isCompactLayout ? styles.temporarySalesResetCompact : styles.toolbarIconField}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTemporarySalesSearch('')
+                    setTemporarySalesStatus('all')
+                  }}
+                  style={styles.iconResetButton}
+                  title="Clear Temporary Sales Filters"
+                  aria-label="Clear Temporary Sales Filters"
+                >
+                  <svg viewBox="0 0 24 24" style={styles.resetIcon} aria-hidden="true">
+                    <path d="M3 12a9 9 0 0 1 15.4-6.4L21 8" />
+                    <path d="M21 3v5h-5" />
+                    <path d="M21 12a9 9 0 0 1-15.4 6.4L3 16" />
+                    <path d="M3 21v-5h5" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : (
         <div
           style={{
             ...styles.searchToolbar,
             ...(visibleListMode === 'queue' ? styles.queueSearchToolbar : {}),
             ...(visibleListMode === 'stock'
-              ? canRegisterStorageItem
+              ? canRegisterStorageItem || canTakeStorageItem
                 ? styles.stockSearchToolbarWithAction
                 : styles.stockSearchToolbar
               : {}),
@@ -3729,6 +3919,8 @@ export default function StorageOverviewPage() {
             ...(isCompactLayout
               ? visibleListMode === 'reject-storage'
                 ? { gridTemplateColumns: `minmax(0, 1fr) repeat(${rejectToolbarButtonCount}, 44px)` }
+                : visibleListMode === 'stock'
+                  ? styles.stockSearchToolbarCompact
                 : styles.searchToolbarCompact
               : {}),
           }}
@@ -3812,9 +4004,35 @@ export default function StorageOverviewPage() {
               <button
                 type="button"
                 onClick={openRegisterModal}
-                style={styles.registerInlineButton}
+                style={styles.iconAddButton}
+                title="Item Registration"
+                aria-label="Open Item Registration"
               >
-                Item Registration
+                <svg viewBox="0 0 24 24" style={styles.resetIcon} aria-hidden="true">
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16h16V8l-6-6Z" />
+                  <path d="M14 2v6h6" />
+                  <path d="M12 11v6" />
+                  <path d="M9 14h6" />
+                </svg>
+              </button>
+            </div>
+          ) : null}
+          {visibleListMode === 'stock' && canTakeStorageItem ? (
+            <div style={styles.toolbarActionField}>
+              <button
+                type="button"
+                onClick={() => setActiveListMode('temporary-sales')}
+                style={styles.iconChecklistButton}
+                title="Open Temporary Sales Checklist"
+                aria-label="Open Temporary Sales Checklist"
+              >
+                <svg viewBox="0 0 24 24" style={styles.resetIcon} aria-hidden="true">
+                  <path d="M8 3h8" />
+                  <path d="M9 3v3h6V3" />
+                  <path d="M6 5H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-1" />
+                  <path d="m7 12 2 2 4-4" />
+                  <path d="M7 17h8" />
+                </svg>
               </button>
             </div>
           ) : null}
@@ -3892,45 +4110,6 @@ export default function StorageOverviewPage() {
               </button>
             </div>
           ) : null}
-          {visibleListMode === 'stock' ? (
-            <div style={lockedStorageGroup ? { ...styles.toolbarGroupField, ...styles.toolbarGroupFieldLocked } : styles.toolbarGroupField}>
-              <label style={styles.groupFilterLabel}>Group</label>
-              <div style={lockedStorageGroup ? { ...styles.storageGroupToggleGrid, ...styles.storageGroupToggleGridLocked } : styles.storageGroupToggleGrid} aria-label="Storage group filter">
-                {(lockedStorageGroup ? [lockedStorageGroup] : STORAGE_GROUP_FILTERS).map((groupCode) => {
-                  const isActive = normalizeFilterValue(filters.groupCode) === groupCode
-
-                  return (
-                    <button
-                      key={groupCode}
-                      type="button"
-                      disabled={Boolean(lockedStorageGroup)}
-                      onClick={() =>
-                        handleFilterChange({
-                          target: { name: 'groupCode', value: groupCode, type: 'button' },
-                        })
-                      }
-                      style={{
-                        ...styles.storageGroupToggleButton,
-                        ...(lockedStorageGroup ? styles.storageGroupToggleButtonLocked : {}),
-                        ...(isActive ? styles.storageGroupToggleButtonActive : {}),
-                      }}
-                      aria-pressed={isActive}
-                    >
-                      {groupCode}
-                    </button>
-                  )
-                })}
-              </div>
-            </div>
-          ) : null}
-          {visibleListMode === 'stock' ? (
-            <div style={styles.toolbarQtyField}>
-              <span style={styles.filteredQtyCard}>
-                <span style={styles.filteredQtyLabel}>Qty of filtered</span>
-                <strong style={styles.filteredQtyValue}>{filteredQty}</strong>
-              </span>
-            </div>
-          ) : null}
           {visibleListMode === 'history' ? (
             <div style={styles.toolbarIconField}>
               <button
@@ -3953,13 +4132,14 @@ export default function StorageOverviewPage() {
             </div>
           ) : null}
         </div>
+        )}
 
         {visibleListMode === 'stock' ? (
           <>
         <div
           style={{
             ...styles.filtersGrid,
-            ...styles.palletFiltersGrid,
+            ...styles.stockFiltersGrid,
             ...(isCompactLayout ? styles.filtersGridCompact : {}),
           }}
         >
@@ -3988,6 +4168,24 @@ export default function StorageOverviewPage() {
                 </button>
               ))}
             </div>
+          </div>
+
+          <div style={styles.field}>
+            <label style={styles.label}>Group</label>
+            <select
+              name="groupCode"
+              value={filters.groupCode}
+              onChange={handleFilterChange}
+              style={lockedStorageGroup ? { ...styles.select, ...styles.controlDisabled } : styles.select}
+              disabled={Boolean(lockedStorageGroup)}
+            >
+              <option value="">All groups</option>
+              {(lockedStorageGroup ? [lockedStorageGroup] : STORAGE_GROUP_FILTERS).map((groupCode) => (
+                <option key={groupCode} value={groupCode}>
+                  {groupCode}
+                </option>
+              ))}
+            </select>
           </div>
 
           {filters.locationType === 'PALLET' ? (
@@ -4156,6 +4354,13 @@ export default function StorageOverviewPage() {
             </label>
           </div>
 
+          <div style={isCompactLayout ? styles.toolbarQtyField : { ...styles.toolbarQtyField, gridColumn: '5' }}>
+            <span style={styles.filteredQtyCard}>
+              <span style={styles.filteredQtyLabel}>Qty of filtered</span>
+              <strong style={styles.filteredQtyValue}>{filteredQty}</strong>
+            </span>
+          </div>
+
         </div>
 
             <div style={styles.filterFooter}>
@@ -4242,6 +4447,10 @@ export default function StorageOverviewPage() {
               </button>
             </div>
           </div>
+        ) : visibleListMode === 'temporary-sales' ? (
+          <div style={styles.historyToolbar}>
+            <p style={styles.summary}>Showing 0 temporary sales item record(s)</p>
+          </div>
         ) : (
           <div style={styles.historyToolbar}>
             <p style={styles.summary}>
@@ -4252,6 +4461,43 @@ export default function StorageOverviewPage() {
 
         {error ? <p style={styles.error}>{error}</p> : null}
         {success ? <p style={styles.success}>{success}</p> : null}
+
+        {visibleListMode === 'temporary-sales' ? (
+          <div style={styles.tableWrap}>
+            <table style={styles.temporarySalesTable}>
+              <thead>
+                <tr>
+                  <th style={styles.th}>Item</th>
+                  <th style={styles.th}>Size</th>
+                  <th style={styles.th}>Requested Qty</th>
+                  <th style={styles.th}>Source Location</th>
+                  <th style={styles.th}>Entered</th>
+                  <th style={styles.th}>Age</th>
+                  <th style={styles.th}>Status</th>
+                  <th style={{ ...styles.th, ...styles.actionTh }}>Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td colSpan={8} style={styles.temporarySalesEmptyCell}>
+                    <div style={styles.temporarySalesEmptyState}>
+                      <span style={styles.temporarySalesEmptyIcon} aria-hidden="true">
+                        <svg viewBox="0 0 24 24" style={styles.actionIcon}>
+                          <path d="M4 7h16" />
+                          <path d="M6 7v12h12V7" />
+                          <path d="M9 11h6" />
+                          <path d="M8 4h8l1 3H7l1-3Z" />
+                        </svg>
+                      </span>
+                      <strong>No temporary sales instructions yet</strong>
+                      <span>Items waiting for stockkeeping confirmation will appear here.</span>
+                    </div>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        ) : null}
 
         {visibleListMode === 'stock' ? filteredRows.length === 0 ? (
           <div style={styles.emptyState}>
@@ -5564,6 +5810,35 @@ export default function StorageOverviewPage() {
         </div>
       ) : null}
 
+      {isShelvingUploadModalOpen && canViewShelvingUpload ? (
+        <div style={styles.modalOverlay}>
+          <div style={{ ...styles.modalCardWide, ...styles.shelvingUploadModalCard }}>
+            <div style={styles.modalHeader}>
+              <div style={styles.modalTitleGroup}>
+                <p style={styles.modalEyebrow}>Storage</p>
+                <h2 style={styles.modalTitle}>Upload</h2>
+              </div>
+              <div style={styles.modalHeaderActions}>
+                <button
+                  type="button"
+                  onClick={() => setIsShelvingUploadModalOpen(false)}
+                  style={styles.modalCloseButton}
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+            <ShelvingUploadClient
+              showHeader={false}
+              storageRows={storageRows}
+              canUpload={canAddShelvingUpload}
+              canManage={canManageShelvingUpload}
+              onInventoryChanged={() => refreshInventoryData({ showLoading: false, forceStorage: true })}
+            />
+          </div>
+        </div>
+      ) : null}
+
       {editModalEntry && canEditStorageItem ? (
         <div style={styles.modalOverlay}>
           <div style={styles.modalCard}>
@@ -6029,6 +6304,12 @@ const styles = {
     maxWidth: '100%',
     overflowX: 'auto',
   },
+  storageTabListCompact: {
+    width: '100%',
+    display: 'grid',
+    gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+    overflowX: 'hidden',
+  },
   storageTabButton: {
     minHeight: '42px',
     minWidth: '138px',
@@ -6055,6 +6336,11 @@ const styles = {
     alignItems: 'center',
     flexShrink: 0,
   },
+  storageTabButtonCompact: {
+    width: '100%',
+    minWidth: 0,
+    padding: '0 6px',
+  },
   storageTabButtonActive: {
     borderTopWidth: '1px',
     borderRightWidth: '1px',
@@ -6062,7 +6348,7 @@ const styles = {
     borderTopColor: '#e2e8f0',
     borderRightColor: '#e2e8f0',
     borderLeftColor: '#e2e8f0',
-    background: 'rgba(248, 250, 252, 0.98)',
+    background: '#fff',
     color: '#111827',
   },
   storageTabLabel: {
@@ -6092,6 +6378,293 @@ const styles = {
     background: 'rgba(248, 250, 252, 0.98)',
     boxShadow: '0 16px 34px rgba(15, 23, 42, 0.05)',
   },
+  storageWorkspaceTabs: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '2px',
+    maxWidth: '100%',
+    marginTop: '-19px',
+    marginBottom: '2px',
+    marginLeft: '-18px',
+    padding: '5px 7px',
+    borderTopWidth: '1px',
+    borderRightWidth: '1px',
+    borderBottomWidth: '1px',
+    borderLeftWidth: '1px',
+    borderTopStyle: 'solid',
+    borderRightStyle: 'solid',
+    borderBottomStyle: 'solid',
+    borderLeftStyle: 'solid',
+    borderTopColor: '#e2e8f0',
+    borderRightColor: '#e2e8f0',
+    borderBottomColor: '#e2e8f0',
+    borderLeftColor: '#e2e8f0',
+    borderRadius: '0 18px 18px 18px',
+    background: '#fff',
+    overflowX: 'auto',
+    alignSelf: 'flex-start',
+    scrollbarWidth: 'none',
+    boxShadow: 'none',
+  },
+  storageWorkspaceTabButton: {
+    minHeight: '28px',
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: '6px',
+    padding: '0 10px',
+    borderTopWidth: 0,
+    borderRightWidth: 0,
+    borderBottomWidth: 0,
+    borderLeftWidth: 0,
+    borderTopStyle: 'solid',
+    borderRightStyle: 'solid',
+    borderBottomStyle: 'solid',
+    borderLeftStyle: 'solid',
+    borderTopColor: 'transparent',
+    borderRightColor: 'transparent',
+    borderBottomColor: 'transparent',
+    borderLeftColor: 'transparent',
+    borderRadius: '999px',
+    background: 'transparent',
+    color: '#64748b',
+    fontSize: '10px',
+    fontWeight: '800',
+    fontFamily: 'inherit',
+    whiteSpace: 'nowrap',
+    cursor: 'pointer',
+  },
+  storageWorkspaceTabButtonActive: {
+    background: '#111827',
+    color: '#fff',
+  },
+  storageWorkspaceTabBadge: {
+    minWidth: '16px',
+    height: '16px',
+    padding: '0 5px',
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: '999px',
+    background: '#e2e8f0',
+    color: '#475569',
+    fontSize: '9px',
+    fontWeight: '900',
+    fontVariantNumeric: 'tabular-nums',
+  },
+  storageWorkspaceTabBadgeActive: {
+    background: '#fff',
+    color: '#111827',
+  },
+  temporarySalesShell: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '14px',
+    minWidth: 0,
+    padding: '16px',
+    borderTopWidth: '1px',
+    borderRightWidth: '1px',
+    borderBottomWidth: '1px',
+    borderLeftWidth: '1px',
+    borderTopStyle: 'solid',
+    borderRightStyle: 'solid',
+    borderBottomStyle: 'solid',
+    borderLeftStyle: 'solid',
+    borderTopColor: '#dbe4ef',
+    borderRightColor: '#dbe4ef',
+    borderBottomColor: '#dbe4ef',
+    borderLeftColor: '#dbe4ef',
+    borderRadius: '14px',
+    background: '#fff',
+  },
+  temporarySalesHeader: {
+    display: 'flex',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: '14px',
+    flexWrap: 'wrap',
+  },
+  temporarySalesEyebrow: {
+    margin: '0 0 4px',
+    color: '#64748b',
+    fontSize: '10px',
+    fontWeight: '900',
+    textTransform: 'uppercase',
+  },
+  temporarySalesTitle: {
+    margin: 0,
+    color: '#0f172a',
+    fontSize: '20px',
+    fontWeight: '900',
+    lineHeight: 1.15,
+  },
+  temporarySalesSubtitle: {
+    margin: '6px 0 0',
+    maxWidth: '680px',
+    color: '#64748b',
+    fontSize: '12px',
+    lineHeight: 1.45,
+  },
+  temporarySalesActiveBadge: {
+    minHeight: '28px',
+    display: 'inline-flex',
+    alignItems: 'center',
+    padding: '0 10px',
+    borderRadius: '999px',
+    background: '#eef2ff',
+    color: '#3730a3',
+    fontSize: '11px',
+    fontWeight: '900',
+    whiteSpace: 'nowrap',
+  },
+  temporarySalesKpiGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 150px), 1fr))',
+    gap: '8px',
+  },
+  temporarySalesKpiGridCompact: {
+    gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+  },
+  temporarySalesKpiCard: {
+    minHeight: '72px',
+    display: 'flex',
+    flexDirection: 'column',
+    justifyContent: 'center',
+    gap: '4px',
+    padding: '10px 12px',
+    borderTopWidth: '1px',
+    borderRightWidth: '1px',
+    borderBottomWidth: '1px',
+    borderLeftWidth: '1px',
+    borderTopStyle: 'solid',
+    borderRightStyle: 'solid',
+    borderBottomStyle: 'solid',
+    borderLeftStyle: 'solid',
+    borderTopColor: '#e2e8f0',
+    borderRightColor: '#e2e8f0',
+    borderBottomColor: '#e2e8f0',
+    borderLeftColor: '#e2e8f0',
+    borderRadius: '10px',
+  },
+  temporarySalesKpiWaiting: {
+    background: '#f8fafc',
+  },
+  temporarySalesKpiActive: {
+    background: '#eff6ff',
+  },
+  temporarySalesKpiDue: {
+    background: '#fffbeb',
+  },
+  temporarySalesKpiOverdue: {
+    background: '#fff1f2',
+  },
+  temporarySalesKpiLabel: {
+    color: '#64748b',
+    fontSize: '10px',
+    fontWeight: '900',
+    textTransform: 'uppercase',
+  },
+  temporarySalesKpiValue: {
+    color: '#0f172a',
+    fontSize: '24px',
+    fontWeight: '900',
+    lineHeight: 1,
+    fontVariantNumeric: 'tabular-nums',
+  },
+  temporarySalesToolbar: {
+    display: 'grid',
+    gridTemplateColumns: 'minmax(260px, 1fr) minmax(380px, auto) 44px',
+    gap: '10px',
+    alignItems: 'end',
+  },
+  temporarySalesToolbarCompact: {
+    gridTemplateColumns: 'minmax(0, 1fr)',
+  },
+  temporarySalesResetCompact: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+  },
+  temporarySalesStatusToggle: {
+    minHeight: '44px',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '3px',
+    padding: '4px',
+    borderTopWidth: '1px',
+    borderRightWidth: '1px',
+    borderBottomWidth: '1px',
+    borderLeftWidth: '1px',
+    borderTopStyle: 'solid',
+    borderRightStyle: 'solid',
+    borderBottomStyle: 'solid',
+    borderLeftStyle: 'solid',
+    borderTopColor: '#dbe4ef',
+    borderRightColor: '#dbe4ef',
+    borderBottomColor: '#dbe4ef',
+    borderLeftColor: '#dbe4ef',
+    borderRadius: '10px',
+    background: '#f8fafc',
+    overflowX: 'auto',
+  },
+  temporarySalesStatusButton: {
+    minHeight: '34px',
+    padding: '0 10px',
+    borderTopWidth: 0,
+    borderRightWidth: 0,
+    borderBottomWidth: 0,
+    borderLeftWidth: 0,
+    borderTopStyle: 'solid',
+    borderRightStyle: 'solid',
+    borderBottomStyle: 'solid',
+    borderLeftStyle: 'solid',
+    borderTopColor: 'transparent',
+    borderRightColor: 'transparent',
+    borderBottomColor: 'transparent',
+    borderLeftColor: 'transparent',
+    borderRadius: '8px',
+    background: 'transparent',
+    color: '#64748b',
+    fontSize: '11px',
+    fontWeight: '800',
+    fontFamily: 'inherit',
+    whiteSpace: 'nowrap',
+    cursor: 'pointer',
+  },
+  temporarySalesStatusButtonActive: {
+    background: '#111827',
+    color: '#fff',
+  },
+  temporarySalesTable: {
+    width: '100%',
+    minWidth: '1040px',
+    borderCollapse: 'collapse',
+  },
+  temporarySalesEmptyCell: {
+    padding: '40px 20px',
+    textAlign: 'center',
+    background: '#fff',
+  },
+  temporarySalesEmptyState: {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: '6px',
+    color: '#0f172a',
+    fontSize: '13px',
+  },
+  temporarySalesEmptyIcon: {
+    width: '40px',
+    height: '40px',
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: '4px',
+    borderRadius: '10px',
+    background: '#f1f5f9',
+    color: '#475569',
+  },
   searchToolbar: {
     display: 'grid',
     gridTemplateColumns: 'minmax(260px, 1fr) auto auto minmax(76px, 84px) minmax(170px, 220px)',
@@ -6105,10 +6678,16 @@ const styles = {
     gridTemplateColumns: 'minmax(280px, 1fr) minmax(180px, 240px) minmax(200px, 280px) auto',
   },
   stockSearchToolbar: {
-    gridTemplateColumns: 'minmax(260px, 1fr) 44px minmax(76px, 84px) minmax(190px, 240px)',
+    gridTemplateColumns: 'minmax(0, 1fr) 44px',
   },
   stockSearchToolbarWithAction: {
-    gridTemplateColumns: 'minmax(260px, 1fr) minmax(128px, 170px) 44px minmax(76px, 84px) minmax(190px, 240px)',
+    gridTemplateColumns: 'minmax(0, 1fr) repeat(3, 44px)',
+  },
+  stockSearchToolbarCompact: {
+    gridTemplateColumns: 'minmax(0, 1fr) repeat(3, 44px)',
+  },
+  stockFiltersGrid: {
+    gridTemplateColumns: 'repeat(5, minmax(0, 1fr))',
   },
   rejectSearchToolbar: {
     gridTemplateColumns: 'minmax(320px, 1fr) 44px',
@@ -6210,7 +6789,7 @@ const styles = {
   },
   toolbarQtyField: {
     display: 'flex',
-    alignItems: 'flex-end',
+    alignItems: 'stretch',
     justifyContent: 'flex-end',
     minHeight: '44px',
     minWidth: 0,
@@ -6366,11 +6945,11 @@ const styles = {
     minWidth: 0,
   },
   filteredQtyCard: {
-    minHeight: '66px',
-    minWidth: '160px',
+    minHeight: '44px',
+    minWidth: '120px',
     width: '100%',
-    maxWidth: '220px',
-    padding: '10px 16px',
+    maxWidth: '150px',
+    padding: '7px 12px',
     borderRadius: '10px',
     border: '1px solid #dbe4ef',
     background: '#fff',
@@ -6390,7 +6969,7 @@ const styles = {
   },
   filteredQtyValue: {
     color: '#0f172a',
-    fontSize: '22px',
+    fontSize: '18px',
     lineHeight: 1,
     fontWeight: '900',
     fontVariantNumeric: 'tabular-nums',
@@ -6541,6 +7120,29 @@ const styles = {
     borderLeftColor: '#111827',
     background: '#111827',
     color: '#fff',
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    cursor: 'pointer',
+  },
+  iconChecklistButton: {
+    width: '44px',
+    height: '44px',
+    borderRadius: '10px',
+    borderTopWidth: '1px',
+    borderRightWidth: '1px',
+    borderBottomWidth: '1px',
+    borderLeftWidth: '1px',
+    borderTopStyle: 'solid',
+    borderRightStyle: 'solid',
+    borderBottomStyle: 'solid',
+    borderLeftStyle: 'solid',
+    borderTopColor: '#c7d2fe',
+    borderRightColor: '#c7d2fe',
+    borderBottomColor: '#c7d2fe',
+    borderLeftColor: '#c7d2fe',
+    background: '#eef2ff',
+    color: '#3730a3',
     display: 'inline-flex',
     alignItems: 'center',
     justifyContent: 'center',
@@ -7179,6 +7781,10 @@ const styles = {
     flexDirection: 'column',
     gap: '16px',
     boxShadow: '0 20px 50px rgba(0,0,0,0.15)',
+  },
+  shelvingUploadModalCard: {
+    maxWidth: '1180px',
+    padding: '20px',
   },
   modalHeader: {
     display: 'flex',

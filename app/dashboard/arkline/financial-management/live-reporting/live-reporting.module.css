@@ -948,6 +948,29 @@
   overflow: auto;
 }
 
+.detailTitleRow {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 4px;
+}
+
+.detailCreditPill {
+  flex: 0 0 auto;
+  padding: 7px 11px;
+}
+
+.detailFilterGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid #e2e8f0;
+  border-radius: 16px;
+  background: #f8fafc;
+}
+
 .detailTableWrap {
   overflow: auto;
   border-radius: 16px;
@@ -981,6 +1004,12 @@
 
 .detailTable tbody tr:last-child td {
   border-bottom: 0;
+}
+
+.detailEmptyCell {
+  padding: 28px !important;
+  color: #64748b !important;
+  text-align: center !important;
 }
 
 .emptyState {
@@ -1026,6 +1055,10 @@
   .liveRunControl {
     grid-template-columns: 1fr;
   }
+
+  .detailFilterGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 520px) {
@@ -1043,5 +1076,16 @@
     width: 100%;
     min-width: 0;
     font-size: 16px;
+  }
+
+  .detailTitleRow {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .detailFilterGrid {
+    grid-template-columns: 1fr;
+    padding: 12px;
   }
 }

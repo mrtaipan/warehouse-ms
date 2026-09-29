@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { createClient } from '@/utils/supabase/server'
+import { createAdminClient } from '@/utils/supabase/admin'
 import { canAccessOperationsCalendar, getAllowedMenus, getStorageFeatureAccess, hasPermission } from '@/utils/permissions'
 import { loadAccessContext } from '@/utils/access-control'
 import RestockShortcutButton from './restock-shortcut-client'
@@ -432,6 +433,23 @@ async function loadAdminGrnSummary(supabase, selectedGrn = '') {
   }
 
   let grnOptions = (inboundRows || []).filter((item) => item.grn_number)
+  const optionInboundIds = grnOptions.map((item) => item.id).filter(Boolean)
+
+  if (optionInboundIds.length) {
+    const { data: waitingReturnRows, error: waitingReturnError } = await supabase
+      .from('warehouse_returns')
+      .select('inbound_id, status')
+      .in('inbound_id', optionInboundIds)
+      .eq('status', 'waiting')
+
+    if (waitingReturnError) {
+      return { grnOptions: [], selectedGrn, selectedInbound: null, summary: null, error: waitingReturnError.message }
+    }
+
+    const waitingReturnInboundIds = new Set((waitingReturnRows || []).map((item) => String(item.inbound_id || '')))
+    grnOptions = grnOptions.filter((item) => waitingReturnInboundIds.has(String(item.id || '')))
+  }
+
   let selectedInbound = selectedGrn
     ? grnOptions.find((item) => item.grn_number === selectedGrn) || null
     : null
@@ -448,8 +466,21 @@ async function loadAdminGrnSummary(supabase, selectedGrn = '') {
     }
 
     if (exactInbound?.grn_number) {
-      selectedInbound = exactInbound
-      grnOptions = [exactInbound, ...grnOptions.filter((item) => item.id !== exactInbound.id)]
+      const { data: exactReturnRows, error: exactReturnError } = await supabase
+        .from('warehouse_returns')
+        .select('id')
+        .eq('inbound_id', exactInbound.id)
+        .eq('status', 'waiting')
+        .limit(1)
+
+      if (exactReturnError) {
+        return { grnOptions, selectedGrn, selectedInbound: null, summary: null, error: exactReturnError.message }
+      }
+
+      if (exactReturnRows?.length) {
+        selectedInbound = exactInbound
+        grnOptions = [exactInbound, ...grnOptions.filter((item) => item.id !== exactInbound.id)]
+      }
     }
   }
 
@@ -788,9 +819,16 @@ export default async function DashboardPage({ searchParams }) {
   const { data: currentPenaltyRows } = showPenaltyPointsButton
     ? await supabase.from('hrga_penalty_points_current').select('*')
     : { data: [] }
-  const { data: birthdayGiftRequestRows } = showBirthdayGiftRequestAnnouncements
-    ? await supabase.from('hrga_birthday_gift').select('*')
-    : { data: [] }
+  let birthdayGiftRequestRows = []
+  if (showBirthdayGiftRequestAnnouncements) {
+    try {
+      const adminSupabase = createAdminClient()
+      const { data } = await adminSupabase.from('hrga_birthday_gift').select('*')
+      birthdayGiftRequestRows = data || []
+    } catch {
+      birthdayGiftRequestRows = []
+    }
+  }
   const { data: broadcastRows, error: broadcastError } = await supabase
     .from('hrd_announcement')
     .select('id, title, message, start_date, end_date, is_active')

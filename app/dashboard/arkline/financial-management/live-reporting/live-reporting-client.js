@@ -71,6 +71,18 @@ function createDraft() {
   }
 }
 
+function createDetailFilters() {
+  return {
+    channel: 'ALL',
+    type: 'ALL',
+    partner: 'ALL',
+    date_from: '',
+    date_to: '',
+    time_from: '',
+    time_to: '',
+  }
+}
+
 function normalizeDigits(value) {
   return String(value || '').replace(/\D/g, '')
 }
@@ -87,6 +99,15 @@ function formatCurrency(value) {
     currency: 'IDR',
     maximumFractionDigits: 0,
   }).format(Number(value || 0))
+}
+
+function getPairingCounterpartName(item, selectedHostName) {
+  const selectedName = String(selectedHostName || '').trim().toLowerCase()
+  const sessionHostName = String(item?.host_display_name_snapshot || '').trim()
+  const sessionPartnerName = String(item?.partner_display_name_snapshot || '').trim()
+
+  if (sessionHostName.toLowerCase() === selectedName) return sessionPartnerName
+  return sessionHostName || sessionPartnerName
 }
 
 function formatDate(value) {
@@ -246,6 +267,7 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
   const [leaderboardChannel, setLeaderboardChannel] = useState('ALL')
   const [hoveredTrendKey, setHoveredTrendKey] = useState('')
   const [selectedRanking, setSelectedRanking] = useState(null)
+  const [detailFilters, setDetailFilters] = useState(createDetailFilters)
   const [previewActiveLive, setPreviewActiveLive] = useState(false)
 
   const canView = access.financialManagementLiveReportingView
@@ -474,6 +496,65 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
       .map(([name, amount]) => ({ name, amount }))
       .sort((left, right) => right.amount - left.amount)
   }, [leaderboardCredits])
+
+  const selectedHostCredits = useMemo(() => {
+    if (!selectedRanking) return []
+
+    return filteredCredits
+      .filter((item) => item.host_display_name === selectedRanking)
+      .sort((left, right) => {
+        const dateComparison = String(right.session_date || '').localeCompare(String(left.session_date || ''))
+        if (dateComparison !== 0) return dateComparison
+        return String(right.session_start_time || '').localeCompare(String(left.session_start_time || ''))
+      })
+  }, [filteredCredits, selectedRanking])
+
+  const detailPartnerOptions = useMemo(() => {
+    return Array.from(
+      new Set(
+        selectedHostCredits
+          .filter((item) => item.session_type === 'PAIRING')
+          .map((item) => getPairingCounterpartName(item, selectedRanking))
+          .filter(Boolean)
+      )
+    ).sort((left, right) => left.localeCompare(right))
+  }, [selectedHostCredits, selectedRanking])
+
+  const filteredSelectedHostCredits = useMemo(() => {
+    return selectedHostCredits.filter((item) => {
+      if (detailFilters.channel !== 'ALL' && item.sales_channel !== detailFilters.channel) return false
+      if (detailFilters.type !== 'ALL' && item.session_type !== detailFilters.type) return false
+
+      if (detailFilters.type === 'PAIRING' && detailFilters.partner !== 'ALL') {
+        const counterpartName = getPairingCounterpartName(item, selectedRanking)
+        if (counterpartName !== detailFilters.partner) return false
+      }
+
+      const sessionDate = String(item.session_date || '')
+      if (detailFilters.date_from && sessionDate < detailFilters.date_from) return false
+      if (detailFilters.date_to && sessionDate > detailFilters.date_to) return false
+
+      const sessionTime = String(item.session_start_time || '').slice(0, 5)
+      if (detailFilters.time_from && detailFilters.time_to && detailFilters.time_from > detailFilters.time_to) {
+        if (sessionTime < detailFilters.time_from && sessionTime > detailFilters.time_to) return false
+      } else {
+        if (detailFilters.time_from && sessionTime < detailFilters.time_from) return false
+        if (detailFilters.time_to && sessionTime > detailFilters.time_to) return false
+      }
+
+      return true
+    })
+  }, [selectedHostCredits, selectedRanking, detailFilters])
+
+  const filteredSelectedHostCreditTotal = useMemo(
+    () => filteredSelectedHostCredits.reduce((sum, item) => sum + Number(item.credited_amount || 0), 0),
+    [filteredSelectedHostCredits]
+  )
+
+  function openHostDetail(hostName) {
+    setDetailFilters(createDetailFilters())
+    setSelectedRanking(hostName)
+  }
 
   const wearingProductRanking = useMemo(() => {
     const productNames = new Map(products.map((item) => [String(item.sku || '').toUpperCase(), item.name]))
@@ -834,7 +915,7 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
                             type="button"
                             className={`${styles.podiumHost} ${index === 0 ? styles.podiumWinner : ''}`.trim()}
                             style={{ '--podium-height': `${[136, 104, 80][index]}px` }}
-                            onClick={() => setSelectedRanking(item.name)}
+                            onClick={() => openHostDetail(item.name)}
                             aria-label={`Rank ${index + 1}: ${item.name}, ${formatCurrency(item.amount)}. View detail`}
                             title={`View ${item.name}'s sessions`}
                           >
@@ -851,7 +932,7 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
                           key={item.name}
                           type="button"
                           className={styles.leaderboardRow}
-                          onClick={() => setSelectedRanking(item.name)}
+                          onClick={() => openHostDetail(item.name)}
                           title={`View ${item.name}'s sessions`}
                         >
                           <span className={styles.leaderboardRank}>{String(index + 4).padStart(2, '0')}</span>
@@ -1181,11 +1262,107 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
             <div className={styles.sectionHead}>
               <div>
                 <p className={styles.sectionEyebrow}>User Detail</p>
-                <h2 className={styles.sectionTitle}>{selectedRanking}</h2>
+                <div className={styles.detailTitleRow}>
+                  <h2 className={styles.sectionTitle}>{selectedRanking}</h2>
+                  <div className={`${styles.totalPill} ${styles.detailCreditPill}`.trim()}>
+                    <span>Total Credit</span>
+                    <strong>{formatCurrency(filteredSelectedHostCreditTotal)}</strong>
+                  </div>
+                </div>
               </div>
               <button type="button" className={styles.ghostButton} onClick={() => setSelectedRanking(null)}>
                 Close
               </button>
+            </div>
+
+            <div className={styles.detailFilterGrid}>
+              <div className={styles.field}>
+                <label className={styles.label}>Channel</label>
+                <select
+                  className={styles.select}
+                  value={detailFilters.channel}
+                  onChange={(event) => setDetailFilters((prev) => ({ ...prev, channel: event.target.value }))}
+                >
+                  <option value="ALL">All Channels</option>
+                  <option value="TIKTOK">TikTok</option>
+                  <option value="SHOPEE">Shopee</option>
+                </select>
+              </div>
+
+              <div className={styles.field}>
+                <label className={styles.label}>Type</label>
+                <select
+                  className={styles.select}
+                  value={detailFilters.type}
+                  onChange={(event) => setDetailFilters((prev) => ({
+                    ...prev,
+                    type: event.target.value,
+                    partner: event.target.value === 'PAIRING' ? prev.partner : 'ALL',
+                  }))}
+                >
+                  <option value="ALL">All Types</option>
+                  <option value="STANDALONE">Standalone</option>
+                  <option value="PAIRING">Pairing</option>
+                </select>
+              </div>
+
+              {detailFilters.type === 'PAIRING' ? (
+                <div className={styles.field}>
+                  <label className={styles.label}>Pairing With</label>
+                  <select
+                    className={styles.select}
+                    value={detailFilters.partner}
+                    onChange={(event) => setDetailFilters((prev) => ({ ...prev, partner: event.target.value }))}
+                  >
+                    <option value="ALL">All Partners</option>
+                    {detailPartnerOptions.map((partnerName) => (
+                      <option key={partnerName} value={partnerName}>{partnerName}</option>
+                    ))}
+                  </select>
+                </div>
+              ) : null}
+
+              <div className={styles.field}>
+                <label className={styles.label}>Date From</label>
+                <input
+                  type="date"
+                  className={styles.input}
+                  value={detailFilters.date_from}
+                  max={detailFilters.date_to || undefined}
+                  onChange={(event) => setDetailFilters((prev) => ({ ...prev, date_from: event.target.value }))}
+                />
+              </div>
+
+              <div className={styles.field}>
+                <label className={styles.label}>Date To</label>
+                <input
+                  type="date"
+                  className={styles.input}
+                  value={detailFilters.date_to}
+                  min={detailFilters.date_from || undefined}
+                  onChange={(event) => setDetailFilters((prev) => ({ ...prev, date_to: event.target.value }))}
+                />
+              </div>
+
+              <div className={styles.field}>
+                <label className={styles.label}>Time From</label>
+                <input
+                  type="time"
+                  className={styles.input}
+                  value={detailFilters.time_from}
+                  onChange={(event) => setDetailFilters((prev) => ({ ...prev, time_from: event.target.value }))}
+                />
+              </div>
+
+              <div className={styles.field}>
+                <label className={styles.label}>Time To</label>
+                <input
+                  type="time"
+                  className={styles.input}
+                  value={detailFilters.time_to}
+                  onChange={(event) => setDetailFilters((prev) => ({ ...prev, time_to: event.target.value }))}
+                />
+              </div>
             </div>
 
             <div className={styles.detailTableWrap}>
@@ -1204,23 +1381,26 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredCredits
-                    .filter((item) => item.host_display_name === selectedRanking)
-                    .map((item) => (
-                      <tr key={item.id}>
-                        <td>{formatDate(item.session_date)}</td>
-                        <td>
-                          {formatSessionTimeRange(item.session_date, item.session_start_time, item.session_end_date, item.session_end_time)}
-                        </td>
-                        <td>{formatSalesChannel(item.sales_channel)}</td>
-                        <td>{item.session_type === 'PAIRING' ? 'Pairing' : 'Standalone'}</td>
-                        <td>{item.host_display_name_snapshot || '-'}</td>
-                        <td>{item.partner_display_name_snapshot || '-'}</td>
-                        <td>{item.wearing_product_sku || '-'}</td>
-                        <td>{item.partner_wearing_product_sku || '-'}</td>
-                        <td>{formatCurrency(item.credited_amount)}</td>
-                      </tr>
-                    ))}
+                  {filteredSelectedHostCredits.map((item) => (
+                    <tr key={item.id}>
+                      <td>{formatDate(item.session_date)}</td>
+                      <td>
+                        {formatSessionTimeRange(item.session_date, item.session_start_time, item.session_end_date, item.session_end_time)}
+                      </td>
+                      <td>{formatSalesChannel(item.sales_channel)}</td>
+                      <td>{item.session_type === 'PAIRING' ? 'Pairing' : 'Standalone'}</td>
+                      <td>{item.host_display_name_snapshot || '-'}</td>
+                      <td>{item.partner_display_name_snapshot || '-'}</td>
+                      <td>{item.wearing_product_sku || '-'}</td>
+                      <td>{item.partner_wearing_product_sku || '-'}</td>
+                      <td>{formatCurrency(item.credited_amount)}</td>
+                    </tr>
+                  ))}
+                  {!filteredSelectedHostCredits.length ? (
+                    <tr>
+                      <td colSpan={9} className={styles.detailEmptyCell}>No sessions match the selected filters.</td>
+                    </tr>
+                  ) : null}
                 </tbody>
               </table>
             </div>

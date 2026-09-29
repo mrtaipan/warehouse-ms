@@ -159,6 +159,29 @@ function getCorrectableSizeLines(batch) {
   return Array.from(sizeMap.values()).sort((a, b) => String(a.size).localeCompare(String(b.size), undefined, { numeric: true }))
 }
 
+function getStorageGroupKey(storage) {
+  const storageNumber = String(storage.storageNumber || '').trim()
+  return storageNumber ? `storage:${storageNumber.toUpperCase()}` : `batch:${storage.id}`
+}
+
+function buildStorageSearchText(parts = []) {
+  return parts
+    .map((part) => String(part || '').trim().toLowerCase())
+    .filter(Boolean)
+    .join(' ')
+}
+
+function matchesStorageSearch(searchText, query) {
+  const tokens = String(query || '')
+    .trim()
+    .toLowerCase()
+    .split(/\s+/)
+    .filter(Boolean)
+
+  if (!tokens.length) return true
+  return tokens.every((token) => String(searchText || '').includes(token))
+}
+
 export default function ArklineReturReportClient({ eligibleRows, batches, storages = [], userEmail, canAdd = false, canEdit = false }) {
   const router = useRouter()
   const supabase = createClient()
@@ -174,6 +197,8 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
   const [progressProductFilter, setProgressProductFilter] = useState('')
   const [progressRejectReasonFilter, setProgressRejectReasonFilter] = useState('')
   const [progressStatusFilter, setProgressStatusFilter] = useState('')
+  const [storageSearch, setStorageSearch] = useState('')
+  const [collapsedStorageKeys, setCollapsedStorageKeys] = useState([])
   const [returnModalOpen, setReturnModalOpen] = useState(false)
   const [storageModalOpen, setStorageModalOpen] = useState(false)
   const [receiptBatch, setReceiptBatch] = useState(null)
@@ -341,6 +366,117 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
       }),
     [batches, progressPoFilter, progressProductFilter, progressRejectReasonFilter, progressStatusFilter]
   )
+  const groupedStorages = useMemo(() => {
+    const grouped = new Map()
+
+    storages.forEach((storage) => {
+      const key = getStorageGroupKey(storage)
+      const current = grouped.get(key) || {
+        key,
+        storageNumber: storage.storageNumber || 'No storage number',
+        storedQty: 0,
+        poIds: new Set(),
+        products: new Set(),
+        suppliers: new Set(),
+        dates: new Set(),
+        statuses: new Set(),
+        notes: [],
+        lines: [],
+      }
+
+      current.storedQty += Number(storage.storedQty || 0)
+      if (storage.poId) current.poIds.add(storage.poId)
+      if (storage.modelName) current.products.add(storage.modelName)
+      if (storage.supplierName) current.suppliers.add(storage.supplierName)
+      if (storage.storageDate) current.dates.add(String(storage.storageDate).slice(0, 10))
+      if (storage.status) current.statuses.add(storage.status)
+      if (storage.notes && !current.notes.includes(storage.notes)) current.notes.push(storage.notes)
+
+      ;(storage.lines || []).forEach((line) => {
+        const enrichedLine = {
+          ...line,
+          rowKey: `${storage.id}-${line.id}`,
+          poId: storage.poId,
+          modelName: storage.modelName,
+          supplierName: storage.supplierName,
+          storageDate: storage.storageDate,
+          storageNumber: storage.storageNumber,
+        }
+        current.lines.push({
+          ...enrichedLine,
+          searchText: buildStorageSearchText([
+            storage.storageNumber,
+            storage.poId,
+            storage.modelName,
+            storage.supplierName,
+            line.reasonName,
+            line.grade,
+            line.size,
+            line.qty,
+          ]),
+        })
+      })
+
+      grouped.set(key, current)
+    })
+
+    return Array.from(grouped.values())
+      .map((group) => {
+        const dates = Array.from(group.dates).sort()
+        const poIds = Array.from(group.poIds).sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true }))
+        const products = Array.from(group.products).sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true }))
+        const suppliers = Array.from(group.suppliers).sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true }))
+        const statuses = Array.from(group.statuses)
+        const status = statuses.length === 1 ? statuses[0] : statuses.length > 1 ? 'MIXED' : 'STORED'
+        const searchText = buildStorageSearchText([
+          group.storageNumber,
+          group.storedQty,
+          ...dates,
+          ...poIds,
+          ...products,
+          ...suppliers,
+          ...statuses,
+          ...group.notes,
+          ...group.lines.map((line) => line.searchText),
+        ])
+
+        return {
+          ...group,
+          dates,
+          poIds,
+          products,
+          suppliers,
+          status,
+          searchText,
+          lines: group.lines.sort((a, b) => {
+            const productCompare = String(a.modelName || '').localeCompare(String(b.modelName || ''), undefined, { numeric: true })
+            if (productCompare) return productCompare
+            const reasonCompare = String(a.reasonName || '').localeCompare(String(b.reasonName || ''), undefined, { numeric: true })
+            if (reasonCompare) return reasonCompare
+            return String(a.size || '').localeCompare(String(b.size || ''), undefined, { numeric: true })
+          }),
+        }
+      })
+      .sort((a, b) => {
+        const dateCompare = String(b.dates[b.dates.length - 1] || '').localeCompare(String(a.dates[a.dates.length - 1] || ''))
+        if (dateCompare) return dateCompare
+        return String(a.storageNumber || '').localeCompare(String(b.storageNumber || ''), undefined, { numeric: true })
+      })
+  }, [storages])
+  const filteredStorageGroups = useMemo(() => {
+    const query = storageSearch.trim()
+    if (!query) return groupedStorages
+
+    return groupedStorages
+      .filter((group) => matchesStorageSearch(group.searchText, query))
+      .map((group) => {
+        const matchingLines = group.lines.filter((line) => matchesStorageSearch(line.searchText, query))
+        return {
+          ...group,
+          displayLines: matchingLines.length ? matchingLines : group.lines,
+        }
+      })
+  }, [groupedStorages, storageSearch])
   const selectedSummary = useMemo(() => {
     const sizeMap = new Map()
     const gradeMap = new Map()
@@ -437,6 +573,13 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
       })
 
       return Array.from(new Set([...current, ...filteredIds]))
+    })
+  }
+
+  function toggleStorageGroup(key) {
+    setCollapsedStorageKeys((current) => {
+      if (current.includes(key)) return current.filter((item) => item !== key)
+      return [...current, key]
     })
   }
 
@@ -1151,29 +1294,72 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
           </div>
         </div>
 
+        <div className={styles.storageToolbar}>
+          <div className={`${styles.field} ${styles.storageSearchField}`.trim()}>
+            <label htmlFor="storage-search">Search storage, product, size, PO, or reject reason</label>
+            <input
+              id="storage-search"
+              className={styles.input}
+              value={storageSearch}
+              onChange={(event) => setStorageSearch(event.target.value)}
+              placeholder="Search product, size, storage no, PO..."
+            />
+          </div>
+          {storageSearch ? (
+            <button type="button" className={styles.secondaryButton} onClick={() => setStorageSearch('')}>
+              Clear
+            </button>
+          ) : null}
+        </div>
+
         {!storages.length ? (
           <div className={styles.empty}>No Arkline rejection storage batch has been created.</div>
+        ) : !filteredStorageGroups.length ? (
+          <div className={styles.empty}>No rejection storage matches this search.</div>
         ) : (
           <div className={styles.batchList}>
-            {storages.map((storage) => (
-              <article key={storage.id} className={styles.batchCard}>
+            {filteredStorageGroups.map((storage) => {
+              const isCollapsed = collapsedStorageKeys.includes(storage.key)
+              const displayLines = storage.displayLines || storage.lines
+              const lineBadgeLabel = storageSearch.trim() ? `${displayLines.length}/${storage.lines.length} line(s)` : `${storage.lines.length} line(s)`
+              const dateLabel =
+                storage.dates.length > 1
+                  ? `${formatDate(storage.dates[0])} - ${formatDate(storage.dates[storage.dates.length - 1])}`
+                  : formatDate(storage.dates[0])
+              return (
+              <article key={storage.key} className={styles.batchCard}>
                 <div className={styles.batchHeader}>
                   <div className={styles.batchTitle}>
                     <strong>{storage.storageNumber}</strong>
-                    <span className={`${styles.badge} ${styles.badgeCompleted}`.trim()}>{storage.status || 'STORED'}</span>
+                    <span className={`${styles.badge} ${storage.status === 'MIXED' ? styles.badgeWarning : styles.badgeCompleted}`.trim()}>
+                      {storage.status || 'STORED'}
+                    </span>
+                    <span className={styles.badge}>{lineBadgeLabel}</span>
                   </div>
+                  <button
+                    type="button"
+                    className={styles.batchToggleButton}
+                    onClick={() => toggleStorageGroup(storage.key)}
+                    aria-expanded={!isCollapsed}
+                    aria-label={`${isCollapsed ? 'Expand' : 'Collapse'} ${storage.storageNumber}`}
+                  >
+                    {isCollapsed ? '+' : '-'}
+                  </button>
                 </div>
                 <div className={styles.batchMeta}>
-                  <div className={styles.metric}><span>PO</span><strong>{storage.poId}</strong></div>
-                  <div className={styles.metric}><span>Product</span><strong>{storage.modelName}</strong></div>
+                  <div className={styles.metric}><span>PO</span><strong>{storage.poIds.length === 1 ? storage.poIds[0] : storage.poIds.length ? `${storage.poIds.length} PO` : '-'}</strong></div>
+                  <div className={styles.metric}><span>Product</span><strong>{storage.products.length === 1 ? storage.products[0] : storage.products.length ? `${storage.products.length} products` : '-'}</strong></div>
                   <div className={styles.metric}><span>Stored Qty</span><strong>{storage.storedQty}</strong></div>
-                  <div className={styles.metric}><span>Date</span><strong>{formatDate(storage.storageDate)}</strong></div>
+                  <div className={styles.metric}><span>Date</span><strong>{dateLabel}</strong></div>
+                  <div className={styles.metric}><span>Size</span><strong>{Array.from(new Set(displayLines.map((line) => line.size))).length} size(s)</strong></div>
                 </div>
-                {storage.notes ? <p className={styles.notice}>{storage.notes}</p> : null}
-                <div className={styles.tableWrap}>
+                {storage.notes.length ? <p className={styles.notice}>{storage.notes.join(' | ')}</p> : null}
+                {!isCollapsed ? <div className={styles.tableWrap}>
                   <table className={styles.table}>
                     <thead>
                       <tr>
+                        <th>PO</th>
+                        <th>Product</th>
                         <th>Grade</th>
                         <th>Size</th>
                         <th>Reject Reason</th>
@@ -1181,8 +1367,10 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
                       </tr>
                     </thead>
                     <tbody>
-                      {storage.lines.map((line) => (
-                        <tr key={line.id}>
+                      {displayLines.map((line) => (
+                        <tr key={line.rowKey}>
+                          <td>{line.poId}</td>
+                          <td>{line.modelName}</td>
                           <td>{line.grade}</td>
                           <td>{line.size}</td>
                           <td>{line.reasonName}</td>
@@ -1191,9 +1379,10 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
                       ))}
                     </tbody>
                   </table>
-                </div>
+                </div> : null}
               </article>
-            ))}
+              )
+            })}
           </div>
         )}
       </section>

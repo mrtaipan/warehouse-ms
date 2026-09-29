@@ -321,6 +321,7 @@ export default function ReceivingInputPage() {
       sample_qty: Number(draft.sample_qty || 0),
       unload_pic: displayName,
       koli_sequence: targetRow.row_no,
+      updated_at: new Date().toISOString(),
     }
 
     const result = targetRow.id

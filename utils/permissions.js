@@ -128,6 +128,7 @@ const BASE_PERMISSION_GROUPS = [
     label: 'Storage',
     items: [
       { key: 'location', label: 'Storage Location', description: 'Lihat stok per lokasi, registrasi item, edit detail, dan take out barang storage.', actions: ['view', 'add', 'edit'] },
+      { key: 'shelving_upload', label: 'Shelving Upload', description: 'Upload CSV penjualan harian untuk mengurangi stok shelving secara massal.', actions: ['view', 'add', 'edit'] },
       { key: 'queue', label: 'Storage Queue', description: 'Lihat queue dari Packing List dan proses Store ke lokasi storage.', actions: ['view', 'edit'] },
       { key: 'pick_history', label: 'Pick History', description: 'Lihat histori pengambilan barang dari storage.', actions: ['view'] },
       { key: 'product_directory', label: 'Product Directory', description: 'Lihat dan kelola direktori produk, release, split, merge, dan photo workflow.', actions: ['view', 'add', 'edit'] },
@@ -191,6 +192,9 @@ const STORAGE_ACCESS_CODES = [
   'storage.location.view',
   'storage.location.add',
   'storage.location.edit',
+  'storage.shelving_upload.view',
+  'storage.shelving_upload.add',
+  'storage.shelving_upload.edit',
   'storage.queue.view',
   'storage.queue.edit',
   'storage.pick_history.view',
@@ -208,7 +212,7 @@ const LEGACY_INBOUND_PERMISSION_MAP = {
   'inbound.qc.view': ['inbound.unload.view'],
 }
 const LEGACY_STORAGE_PERMISSION_MAP = {
-  'storage.overview.view': ['storage.location.view', 'storage.queue.view', 'storage.pick_history.view', 'storage.product_directory.view'],
+  'storage.overview.view': ['storage.location.view', 'storage.shelving_upload.view', 'storage.queue.view', 'storage.pick_history.view', 'storage.product_directory.view'],
   'storage.search.view': ['storage.location.view'],
   'storage.registry.view': ['storage.location.view', 'storage.queue.view'],
   'storage.registry.add': ['storage.location.add', 'storage.queue.edit'],
@@ -316,6 +320,9 @@ const DEFAULT_ROLE_BUNDLES = {
     'storage.queue.view',
     'storage.pick_history.view',
     'storage.product_directory.view',
+    'storage.shelving_upload.view',
+    'storage.shelving_upload.add',
+    'storage.shelving_upload.edit',
     'inbound.receiving.view',
     'inbound.unload.view',
     'packing.overview.view',
@@ -400,6 +407,9 @@ const DEFAULT_ROLE_BUNDLES = {
     'storage.location.view',
     'storage.location.add',
     'storage.location.edit',
+    'storage.shelving_upload.view',
+    'storage.shelving_upload.add',
+    'storage.shelving_upload.edit',
     'storage.queue.view',
     'storage.queue.edit',
     'storage.pick_history.view',
@@ -905,6 +915,9 @@ export function getStorageFeatureAccess(role, permissions = [], isAdmin = false)
       productDirectory: true,
       productDirectoryAdd: true,
       productDirectoryEdit: true,
+      shelvingUpload: true,
+      shelvingUploadAdd: true,
+      shelvingUploadEdit: true,
       warehouseMap: true,
       brandLookup: true,
       restockSubmit: true,
@@ -922,16 +935,19 @@ export function getStorageFeatureAccess(role, permissions = [], isAdmin = false)
   const productDirectory = hasPermission(permissions, 'storage.product_directory.view', isAdmin)
   const productDirectoryAdd = hasPermission(permissions, 'storage.product_directory.add', isAdmin)
   const productDirectoryEdit = hasPermission(permissions, 'storage.product_directory.edit', isAdmin)
+  const shelvingUpload = hasPermission(permissions, 'storage.shelving_upload.view', isAdmin)
+  const shelvingUploadAdd = hasPermission(permissions, 'storage.shelving_upload.add', isAdmin)
+  const shelvingUploadEdit = hasPermission(permissions, 'storage.shelving_upload.edit', isAdmin)
   const restockInstruction = hasPermission(permissions, 'storage.restock_instruction.view', isAdmin)
   const restockSubmit = hasPermission(permissions, 'storage.restock_submit.view', isAdmin)
   let restockPicker = hasPermission(permissions, 'storage.restock_picker.view', isAdmin)
   if (resolvedRole === 'packing_staff' || resolvedRole === 'packing_coordinator') {
     restockPicker = false
   }
-  const menu = location || queue || pickHistory || productDirectory
+  const menu = location || shelvingUpload || queue || pickHistory || productDirectory
 
   let menuHref = '/dashboard'
-  if (location || queue || pickHistory || productDirectory) menuHref = '/dashboard/storage/overview'
+  if (location || shelvingUpload || queue || pickHistory || productDirectory) menuHref = '/dashboard/storage/overview'
 
   return {
     menu,
@@ -945,6 +961,9 @@ export function getStorageFeatureAccess(role, permissions = [], isAdmin = false)
     productDirectory,
     productDirectoryAdd,
     productDirectoryEdit,
+    shelvingUpload,
+    shelvingUploadAdd,
+    shelvingUploadEdit,
     warehouseMap: menu && resolvedRole !== 'qc_coordinator',
     brandLookup: menu && resolvedRole !== 'qc_coordinator',
     restockInstruction,

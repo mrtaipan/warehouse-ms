@@ -3416,6 +3416,7 @@ export default function UnloadPage() {
         variant_name: resolvedVariantName,
         photo_url: getVariantPhotoForRow(row),
         total_qty: 0,
+        regular_qty: 0,
         sample_qty: 0,
         koli_sequences: new Set(),
         pic_names: new Set(),
@@ -3424,6 +3425,8 @@ export default function UnloadPage() {
       current.total_qty += Number(row.qty || 0)
       if (row.is_sample) {
         current.sample_qty += Number(row.qty || 0)
+      } else {
+        current.regular_qty += Number(row.qty || 0)
       }
       if (!row.is_sample && row.koli_sequence != null) {
         current.koli_sequences.add(Number(row.koli_sequence))
@@ -3498,12 +3501,34 @@ export default function UnloadPage() {
       }
     : null
   const nonKoliGroups = [...sampleBreakdownGroups, returnBreakdownGroup].filter(Boolean)
+  function getBreakdownEffectiveQty(row, fallbackQty = 0) {
+    const hasSplitQty = row && (
+      Object.prototype.hasOwnProperty.call(row, 'regular_qty') ||
+      Object.prototype.hasOwnProperty.call(row, 'sample_qty')
+    )
+
+    if (hasSplitQty) {
+      if (breakdownFilters.sampleMode === 'true') return Number(row.sample_qty || 0)
+      if (breakdownFilters.sampleMode === 'false') return Number(row.regular_qty || 0)
+    }
+
+    return Number(fallbackQty || row?.total_qty || row?.qty || 0)
+  }
+
+  const displayModelGroups = modelGroups.map((group) => ({
+    ...group,
+    total_qty: getBreakdownEffectiveQty(group, group.total_qty),
+  }))
+  const filterableKoliRows = [
+    ...koliGroups.flatMap((group) => group.items),
+    ...nonKoliGroups.flatMap((group) => group.items),
+  ].map((row) => ({
+    ...row,
+    total_qty: Number(row.qty || 0),
+  }))
   const breakdownFilterOptionRows = [
-    ...modelGroups,
-    ...returnRows.map((row) => ({
-      ...row,
-      total_qty: Number(row.qty || 0),
-    })),
+    ...displayModelGroups,
+    ...filterableKoliRows,
   ]
   const sortedBrandFilterOptions = [...new Map(
     breakdownFilterOptionRows
@@ -3531,7 +3556,7 @@ export default function UnloadPage() {
       .filter(Boolean)
   )]
     .sort((a, b) => a.localeCompare(b))
-  const filteredModelGroups = modelGroups.filter((group) => matchesBreakdownFilters(group, group.total_qty))
+  const filteredModelGroups = displayModelGroups.filter((group) => matchesBreakdownFilters(group, group.total_qty))
   const displayedModelCount = new Set(
     filteredModelGroups
       .map((group) => [group.brand_id || '', group.category_id || '', normalizeVariantLookupValue(group.model_name)].join('|'))
@@ -3654,10 +3679,20 @@ export default function UnloadPage() {
     }
 
     if (ignoredFilter !== 'sampleMode' && breakdownFilters.sampleMode) {
-      const rowIsSample = Boolean(row.is_sample)
+      const hasSplitQty = row && (
+        Object.prototype.hasOwnProperty.call(row, 'regular_qty') ||
+        Object.prototype.hasOwnProperty.call(row, 'sample_qty')
+      )
 
-      if (breakdownFilters.sampleMode === 'true' && !rowIsSample) return false
-      if (breakdownFilters.sampleMode === 'false' && rowIsSample) return false
+      if (hasSplitQty) {
+        if (breakdownFilters.sampleMode === 'true' && Number(row.sample_qty || 0) <= 0) return false
+        if (breakdownFilters.sampleMode === 'false' && Number(row.regular_qty || 0) <= 0) return false
+      } else {
+        const rowIsSample = Boolean(row.is_sample)
+
+        if (breakdownFilters.sampleMode === 'true' && !rowIsSample) return false
+        if (breakdownFilters.sampleMode === 'false' && rowIsSample) return false
+      }
     }
 
     if (ignoredFilter !== 'search' && breakdownFilters.search.trim()) {

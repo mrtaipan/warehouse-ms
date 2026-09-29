@@ -932,6 +932,7 @@ export default function EditReceivingPage() {
           sample_qty: Number(row.sample_qty || 0),
           unload_pic: row.unload_pic.trim() || null,
           koli_sequence: row.row_no,
+          updated_at: new Date().toISOString(),
         })
         .eq('id', row.id)
 
@@ -952,6 +953,7 @@ export default function EditReceivingPage() {
         sample_qty: Number(row.sample_qty || 0),
         unload_pic: row.unload_pic.trim() || null,
         koli_sequence: row.row_no,
+        updated_at: new Date().toISOString(),
       }))
 
       const { error: insertError } = await supabase.from('inbound_receiving').insert(payload)

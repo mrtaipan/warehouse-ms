@@ -1632,6 +1632,16 @@ function getVariantCode(row = {}) {
   return row?.sku_code || row?.sku || row?.source_variant_code || row?.variant_code || row?.variant_label || ''
 }
 
+function getCardCatalogPayload(card = {}) {
+  return {
+    product_model_id: card.product_model_id || card.catalogVariant?.product_model_id || null,
+    product_model_variant_id: card.product_model_variant_id || card.catalogVariant?.id || null,
+    source_variant_code: card.source_variant_code || card.variant_code || getVariantCode(card.catalogVariant) || null,
+    brand_id: card.brand_id || null,
+    category_id: card.category_id || null,
+  }
+}
+
 function normalizePhotoUrls(value, fallback = '') {
   let photos = []
   if (Array.isArray(value)) {
@@ -1946,6 +1956,7 @@ function createEmptyReturnRow(index = 0) {
     id: `return-${Date.now()}-${index}`,
     warehouse_return_id: null,
     size_label: 'RETURN',
+    koli_sequence: null,
     qty: '',
     return_reason: '',
   }
@@ -1961,6 +1972,7 @@ function createPlRow(card, sequence = null, order = 1) {
     pl_photo_url: '',
     pl_photo_urls: [],
     sizeRows: [createEmptySizeRow()],
+    lockedReturnRows: [],
     returnRows: [],
   }
 }
@@ -2100,13 +2112,12 @@ function matchesPlReturnCard(row = {}, card = {}) {
 
   const rowVariantCode = getNormalizedPlVariantCode(row)
   const cardVariantCode = getNormalizedPlVariantCode(card)
-  if (rowVariantCode || cardVariantCode) {
-    return Boolean(rowVariantCode && cardVariantCode && rowVariantCode === cardVariantCode)
-  }
+  if (rowVariantCode && cardVariantCode) return rowVariantCode === cardVariantCode
 
   const rowVariantId = Number(row.product_model_variant_id || 0)
   const cardVariantId = Number(card.product_model_variant_id || 0)
-  if (rowVariantId) return rowVariantId === cardVariantId
+  if (rowVariantId && cardVariantId) return rowVariantId === cardVariantId
+  if (rowVariantCode || rowVariantId) return false
 
   const rowModelId = Number(row.product_model_id || 0)
   const cardModelId = Number(card.product_model_id || 0)
@@ -2123,8 +2134,38 @@ function matchesPlReturnCard(row = {}, card = {}) {
   return normalize(row.model_name) === normalize(card.model_name) && normalize(row.variant_name) === normalize(card.catalogName)
 }
 
+function hasStrongPlReturnIdentity(row = {}) {
+  return Boolean(getNormalizedPlVariantCode(row) || Number(row.product_model_variant_id || 0))
+}
+
+function getPlReturnDedupeKey(row = {}) {
+  return [
+    Number(row.inbound_id || 0),
+    row.pl_detail_seq || 'base',
+    Number(row.brand_id || 0) || normalize(row.brand_name) || 'brand',
+    Number(row.category_id || 0) || normalize(row.category_name) || 'category',
+    normalize(row.model_name),
+    normalize(row.variant_name || row.catalogName),
+    Number(row.qty || 0),
+    normalize(row.return_reason),
+  ].join('::')
+}
+
+function dedupeLegacyPlReturnRows(rows = []) {
+  const strongKeys = new Set(rows.filter(hasStrongPlReturnIdentity).map(getPlReturnDedupeKey))
+  return rows.filter((row) => hasStrongPlReturnIdentity(row) || !strongKeys.has(getPlReturnDedupeKey(row)))
+}
+
 function getPlRowQty(plRow) {
   return (plRow?.sizeRows || []).reduce((sum, sizeRow) => sum + Number(sizeRow.qty || 0), 0)
+}
+
+function isPreparedPlReturnRow(row = {}) {
+  return Boolean(row.koli_sequence)
+}
+
+function getPlRowReturnRows(plRow = {}) {
+  return [...(plRow.lockedReturnRows || []), ...(plRow.returnRows || [])]
 }
 
 function getPlRowsBreakdownQty(rows = []) {
@@ -2133,7 +2174,7 @@ function getPlRowsBreakdownQty(rows = []) {
 
 function getPlRowsReturnQty(rows = []) {
   return rows.reduce(
-    (sum, row) => sum + (row.returnRows || []).reduce((returnSum, returnRow) => returnSum + Number(returnRow.qty || 0), 0),
+    (sum, row) => sum + getPlRowReturnRows(row).reduce((returnSum, returnRow) => returnSum + Number(returnRow.qty || 0), 0),
     0
   )
 }
@@ -3904,7 +3945,7 @@ export default function PackingListSizeBreakdownPage() {
     return rows.some((plRow) => {
       const sizes = [
         ...getAllocatedPlRowSizeSummary(plRow, modelTotalQty, qtyMode),
-        ...(qtyMode === 'all' ? getReturnSummary(plRow.returnRows) : []),
+        ...(qtyMode === 'all' ? getReturnSummary(getPlRowReturnRows(plRow)) : []),
       ]
       const totalQty = sizes.reduce((sum, size) => sum + Number(size.qty || 0), 0)
       return qtyMode === 'all' ? sizes.length > 0 : totalQty > 0
@@ -4025,6 +4066,7 @@ export default function PackingListSizeBreakdownPage() {
         pl_photo_url: row.pl_photo_url || row.variant_photo_url || card.photo_url || '',
         pl_photo_urls: normalizePhotoUrls(row.pl_photo_urls, row.pl_photo_url || row.variant_photo_url || ''),
         sizeRows: [],
+        lockedReturnRows: [],
         returnRows: [],
       }
 
@@ -4050,8 +4092,7 @@ export default function PackingListSizeBreakdownPage() {
       grouped.set(groupKey, current)
     })
 
-    sourceReturnRows
-      .filter((row) => matchesPlReturnCard(row, card))
+    dedupeLegacyPlReturnRows(sourceReturnRows.filter((row) => matchesPlReturnCard(row, card)))
       .forEach((row, index) => {
         const requestedGroupKey = row.pl_detail_seq ? `seq:${row.pl_detail_seq}` : ''
         const firstDetailGroupKey = Array.from(grouped.entries())
@@ -4072,10 +4113,12 @@ export default function PackingListSizeBreakdownPage() {
           pl_photo_url: card.photo_url || '',
           pl_photo_urls: [],
           sizeRows: [createEmptySizeRow()],
+          lockedReturnRows: [],
           returnRows: [],
         }
 
-      current.returnRows.push({
+      const returnRowsKey = isPreparedPlReturnRow(row) ? 'lockedReturnRows' : 'returnRows'
+      current[returnRowsKey].push({
         id: `saved-return-${row.id || index}`,
         warehouse_return_id: row.id || null,
         size_label: row.size_label || 'RETURN',
@@ -4692,25 +4735,37 @@ export default function PackingListSizeBreakdownPage() {
       data: { user },
     } = await supabase.auth.getUser()
     const createdByName = getUserDisplayName(user, packingStaffProfiles)
-    const returnEntries = returnCards.map((card) => ({
-      card,
-      payload: {
+    const returnEntries = returnCards.map((card) => {
+      const cardCatalogPayload = getCardCatalogPayload(card)
+      return {
+        card,
+        payload: {
         inbound_id: card.inbound_id,
         source_phase: PL_RETURN_SOURCE_PHASE,
         pl_detail_seq: null,
         koli_sequence: null,
-        product_model_id: card.product_model_id || null,
-        product_model_variant_id: card.product_model_variant_id || null,
-        source_variant_code: card.source_variant_code || card.variant_code || null,
-        brand_id: card.brand_id || null,
-        category_id: card.category_id || null,
+        product_model_id: cardCatalogPayload.product_model_id,
+        product_model_variant_id: cardCatalogPayload.product_model_variant_id,
+        source_variant_code: cardCatalogPayload.source_variant_code,
+        brand_id: cardCatalogPayload.brand_id,
+        category_id: cardCatalogPayload.category_id,
         model_name: card.model_name || null,
         variant_name: card.catalogName || null,
         qty: Number(card.receiving_qty || 0),
         return_reason: 'FULL RETURN',
         pic_name: createdByName || null,
       },
-    }))
+      }
+    })
+    const missingReturnIdentity = returnEntries.find(
+      ({ payload }) => !payload.product_model_variant_id && !payload.source_variant_code
+    )
+    if (missingReturnIdentity) {
+      setSaving(false)
+      setError('Cannot save PL return because this model is missing variant identity. Please re-open PL Receiving for this GRN first.')
+      setSuccess('')
+      return
+    }
     const existingFullReturnRows = plReturnRows.filter((row) => inboundIds.includes(Number(row.inbound_id || 0)))
     const usedReturnIds = new Set()
 
@@ -5905,13 +5960,13 @@ export default function PackingListSizeBreakdownPage() {
       detail_order: index + 1,
     }))
     const modelVariantQty = getPlRowsBreakdownQty(normalizedRows)
+    const selectedCardCatalogPayload = getCardCatalogPayload(selectedCard)
 
     const payload = normalizedRows.flatMap((row) =>
       row.sizeRows.filter(shouldPersistSizeRow).map((sizeRow) => {
         const checkerNames = normalizeCheckerNames(sizeRow.checker_names)
         const rowQty = Number(sizeRow.qty || 0)
         const defaultTargets = getDefaultAllocationTargets(rowQty, modelVariantQty)
-        const sourceVariantCode = selectedCard.source_variant_code || selectedCard.variant_code || null
         const manualReason = String(sizeRow.allocation_reason || '').trim()
         const manualMobTarget = Number(sizeRow.mob_target_qty)
         const manualOiTarget = Number(sizeRow.oi_target_qty)
@@ -5926,9 +5981,9 @@ export default function PackingListSizeBreakdownPage() {
         return {
           id: sizeRow.breakdown_row_id || null,
           inbound_id: selectedCard.inbound_id,
-          product_model_id: selectedCard.product_model_id,
-          product_model_variant_id: selectedCard.product_model_variant_id || null,
-          source_variant_code: sourceVariantCode,
+          product_model_id: selectedCardCatalogPayload.product_model_id,
+          product_model_variant_id: selectedCardCatalogPayload.product_model_variant_id,
+          source_variant_code: selectedCardCatalogPayload.source_variant_code,
           model_name: selectedCard.model_name || null,
           variant_name: selectedCard.catalogName || null,
           pl_detail_seq: row.pl_detail_seq,
@@ -5961,11 +6016,11 @@ export default function PackingListSizeBreakdownPage() {
         inbound_id: selectedCard.inbound_id,
         pl_detail_seq: row.pl_detail_seq,
         koli_sequence: returnRow.koli_sequence || null,
-        product_model_id: selectedCard.product_model_id || null,
-        product_model_variant_id: selectedCard.product_model_variant_id || null,
-        source_variant_code: selectedCard.source_variant_code || selectedCard.variant_code || null,
-        brand_id: selectedCard.brand_id || null,
-        category_id: selectedCard.category_id || null,
+        product_model_id: selectedCardCatalogPayload.product_model_id,
+        product_model_variant_id: selectedCardCatalogPayload.product_model_variant_id,
+        source_variant_code: selectedCardCatalogPayload.source_variant_code,
+        brand_id: selectedCardCatalogPayload.brand_id,
+        category_id: selectedCardCatalogPayload.category_id,
         model_name: selectedCard.model_name || null,
         variant_name: selectedCard.catalogName || null,
         qty: Number(returnRow.qty || 0),
@@ -5973,6 +6028,11 @@ export default function PackingListSizeBreakdownPage() {
         pic_name: createdByName || null,
       }))
     )
+    if (returnPayload.length && !selectedCardCatalogPayload.product_model_variant_id && !selectedCardCatalogPayload.source_variant_code) {
+      setError('Cannot save PL return because this model is missing variant identity. Please re-open PL Receiving for this GRN first.')
+      setSuccess('')
+      return
+    }
 
     setSaving(true)
     setError('')
@@ -5984,7 +6044,7 @@ export default function PackingListSizeBreakdownPage() {
     })
     const incomingIds = new Set(payload.map((row) => Number(row.id || 0)).filter(Boolean))
     const staleRows = existingRows.filter((row) => !incomingIds.has(Number(row.id || 0)))
-    const existingReturnRows = plReturnRows.filter((row) => matchesPlReturnCard(row, selectedCard))
+    const existingReturnRows = plReturnRows.filter((row) => matchesPlReturnCard(row, selectedCard) && !isPreparedPlReturnRow(row))
     const incomingReturnIds = new Set(returnPayload.map((row) => Number(row.id || 0)).filter(Boolean))
     const staleReturnRows = existingReturnRows.filter((row) => !incomingReturnIds.has(Number(row.id || 0)))
 
@@ -6141,7 +6201,7 @@ export default function PackingListSizeBreakdownPage() {
         const itemName = hasSavedBreakdown && savedPlName && !isDefaultVariantOnlyName ? savedPlName : modelVariantLabel
         const sizes = [
           ...getAllocatedPlRowSizeSummary(plRow, modelTotalQty, qtyMode),
-          ...(qtyMode === 'all' ? getReturnSummary(plRow.returnRows) : []),
+          ...(qtyMode === 'all' ? getReturnSummary(getPlRowReturnRows(plRow)) : []),
         ]
         const totalQty = sizes.reduce((sum, size) => sum + Number(size.qty || 0), 0)
 
@@ -7330,6 +7390,25 @@ export default function PackingListSizeBreakdownPage() {
                                     X
                                   </button>
                                 </div>
+                              </div>
+                            ))}
+                            {(plRow.lockedReturnRows || []).map((returnRow) => (
+                              <div key={returnRow.id} style={styles.sizeInputRow}>
+                                <div style={{ ...styles.readonlyBox, fontWeight: 950 }}>
+                                  {returnRow.koli_sequence ? `RETURN / KOLI ${returnRow.koli_sequence}` : 'RETURN'}
+                                </div>
+                                <input
+                                  type="number"
+                                  value={returnRow.qty}
+                                  readOnly
+                                  style={{ ...styles.input, ...styles.disabledButton }}
+                                />
+                                <input
+                                  value={returnRow.return_reason || ''}
+                                  readOnly
+                                  style={{ ...styles.input, ...styles.disabledButton }}
+                                />
+                                <div style={{ ...styles.readonlyBox, justifyContent: 'center' }}>LOCKED</div>
                               </div>
                             ))}
                             {(plRow.returnRows || []).map((returnRow) => (

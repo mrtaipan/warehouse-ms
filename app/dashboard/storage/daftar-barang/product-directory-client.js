@@ -47,7 +47,7 @@ const PACKING_ITEM_SELECT_COLUMNS = [
   'packed_by',
 ].join(', ')
 const GROUP_TRANSFER_SELECT_COLUMNS = 'id, source_pl_packing_item_id, product_bundle_component_id, source_type, target_type, transfer_qty, source_qty_before, source_qty_after, created_by, created_at'
-const BUNDLE_SELECT_COLUMNS = 'id, bundle_code, bundle_name, bundle_unit_qty, storing_type, status, released_at, released_by, release_count, release_history, created_at'
+const BUNDLE_SELECT_COLUMNS = 'id, bundle_code, bundle_name, bundle_unit_qty, storing_type, status, released_at, released_by, release_count, release_history, created_by, created_at'
 const BUNDLE_COMPONENT_SELECT_COLUMNS = 'id, bundle_id, source_pl_packing_item_id, source_type, grn_number, sku, product_name, size_label, allocated_qty, available_qty_snapshot, created_at'
 const BREAKDOWN_SELECT_COLUMNS = [
   'id',
@@ -109,6 +109,26 @@ function normalizeKey(value) {
 
 function normalizeCode(value) {
   return normalizeUpper(value).replace(/[^A-Z0-9]/g, '')
+}
+
+function getBundleComponentGroupQty(bundle, component, groupType, groupTransferRows = []) {
+  const normalizedGroup = normalizeStoringType(groupType)
+  let quantity = normalizeStoringType(bundle?.storing_type) === normalizedGroup
+    ? Number(component.allocated_qty || 0)
+    : 0
+
+  groupTransferRows
+    .filter((transfer) => Number(transfer.product_bundle_component_id || 0) === Number(component.id || 0))
+    .forEach((transfer) => {
+      if (normalizeStoringType(transfer.source_type) === normalizedGroup) {
+        quantity -= Number(transfer.transfer_qty || 0)
+      }
+      if (normalizeStoringType(transfer.target_type) === normalizedGroup) {
+        quantity += Number(transfer.transfer_qty || 0)
+      }
+    })
+
+  return Math.max(0, quantity)
 }
 
 function formatNumber(value) {
@@ -870,6 +890,7 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
   const [groupTransferDrafts, setGroupTransferDrafts] = useState({})
   const [transferHistoryOpen, setTransferHistoryOpen] = useState(false)
   const [bundleEditor, setBundleEditor] = useState(null)
+  const [bundleHistoryId, setBundleHistoryId] = useState(null)
   const [bundleDrafts, setBundleDrafts] = useState({})
   const [bundleForm, setBundleForm] = useState({
     mode: 'new',
@@ -1193,6 +1214,75 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
     return [...packingTransferHistory, ...bundleTransferHistory]
       .sort((left, right) => new Date(right.date || 0) - new Date(left.date || 0))
   })()
+
+  const bundleHistoryDetail = useMemo(() => {
+    const bundleId = Number(bundleHistoryId || 0)
+    if (!bundleId) return null
+
+    const bundle = (bundleRows || []).find((row) => Number(row.id || 0) === bundleId)
+    if (!bundle) return null
+
+    const components = (bundleComponentRows || []).filter((row) => Number(row.bundle_id || 0) === bundleId)
+    const packingRowById = new Map((packingRows || []).map((row) => [Number(row.id || 0), row]))
+    const bundleUnitQty = Math.max(1, Number(bundle.bundle_unit_qty || 1))
+    const sizeBuckets = new Map()
+
+    const componentDetails = components.map((component) => {
+      const sourceRow = packingRowById.get(Number(component.source_pl_packing_item_id || 0))
+      const breakdown = lookup.breakdownById.get(Number(sourceRow?.pl_size_breakdown_id || 0))
+      const model = lookup.modelById.get(Number(sourceRow?.product_model_id || breakdown?.product_model_id || 0))
+      const variant = lookup.variantById.get(Number(sourceRow?.product_model_variant_id || breakdown?.product_model_variant_id || 0))
+      const photoUrl = sourceRow ? getProductPhotoUrl(sourceRow, breakdown, model, variant) : ''
+      const size = normalize(component.size_label) || '-'
+      const mobQty = getBundleComponentGroupQty(bundle, component, 'MOB', groupTransferRows)
+      const oiQty = getBundleComponentGroupQty(bundle, component, 'OI', groupTransferRows)
+      const sizeKey = normalizeKey(size)
+      const sizeBucket = sizeBuckets.get(sizeKey) || {
+        size,
+        mobComponentQty: 0,
+        oiComponentQty: 0,
+      }
+      sizeBucket.mobComponentQty += mobQty
+      sizeBucket.oiComponentQty += oiQty
+      sizeBuckets.set(sizeKey, sizeBucket)
+
+      return {
+        ...component,
+        photoUrl,
+        mobQty,
+        oiQty,
+      }
+    })
+
+    const componentProducts = Array.from(
+      componentDetails.reduce((products, component) => {
+        const productKey = `${normalizeKey(component.sku)}::${normalizeKey(component.product_name)}`
+        if (!products.has(productKey)) {
+          products.set(productKey, component)
+        }
+        return products
+      }, new Map()).values()
+    )
+
+    const sizeBreakdown = Array.from(sizeBuckets.values())
+      .map((row) => ({
+        ...row,
+        mobQty: Math.floor(row.mobComponentQty / bundleUnitQty),
+        oiQty: Math.floor(row.oiComponentQty / bundleUnitQty),
+        totalQty: Math.floor((row.mobComponentQty + row.oiComponentQty) / bundleUnitQty),
+      }))
+      .sort((left, right) => compareSizeValues(left.size, right.size))
+
+    return {
+      bundle,
+      bundleUnitQty,
+      componentProducts,
+      sizeBreakdown,
+      totalQty: sizeBreakdown.reduce((sum, row) => sum + row.totalQty, 0),
+      mobQty: sizeBreakdown.reduce((sum, row) => sum + row.mobQty, 0),
+      oiQty: sizeBreakdown.reduce((sum, row) => sum + row.oiQty, 0),
+    }
+  }, [bundleComponentRows, bundleHistoryId, bundleRows, groupTransferRows, lookup, packingRows])
 
   const packingGroupedProducts = useMemo(() => {
     const groups = new Map()
@@ -1559,25 +1649,6 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
   const bundleGroupedProducts = useMemo(() => {
     const packingRowById = new Map((packingRows || []).map((row) => [Number(row.id || 0), row]))
     const componentsByBundleId = new Map()
-    const getComponentGroupQty = (bundle, component, groupType) => {
-      const normalizedGroup = normalizeStoringType(groupType)
-      let quantity = normalizeStoringType(bundle?.storing_type) === normalizedGroup
-        ? Number(component.allocated_qty || 0)
-        : 0
-
-      ;(groupTransferRows || [])
-        .filter((transfer) => Number(transfer.product_bundle_component_id || 0) === Number(component.id || 0))
-        .forEach((transfer) => {
-          if (normalizeStoringType(transfer.source_type) === normalizedGroup) {
-            quantity -= Number(transfer.transfer_qty || 0)
-          }
-          if (normalizeStoringType(transfer.target_type) === normalizedGroup) {
-            quantity += Number(transfer.transfer_qty || 0)
-          }
-        })
-
-      return Math.max(0, quantity)
-    }
 
     ;(bundleComponentRows || []).forEach((component) => {
       const bundleId = Number(component.bundle_id || 0)
@@ -1610,7 +1681,7 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
         const sizeKey = normalizeKey(size)
 
         ;['MOB', 'OI'].forEach((groupType) => {
-          const qty = getComponentGroupQty(bundle, component, groupType)
+          const qty = getBundleComponentGroupQty(bundle, component, groupType, groupTransferRows)
           if (qty <= 0) return
 
           const bucketKey = `${groupType}::${sizeKey}`
@@ -4653,17 +4724,48 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
                           </td>
                           <td style={{ ...styles.td, ...styles.skuTd, ...separatorStyle }}>
                             {canSelectSkuRows ? (
-                              <label style={styles.skuCheckLabel}>
-                                <input
-                                  type="checkbox"
-                                  checked={selectedProductKeys.includes(item.key)}
-                                  onChange={() => toggleSelectedProduct(item)}
-                                  style={styles.rowCheckbox}
-                                />
-                                <span style={styles.skuText}>{item.sku}</span>
-                              </label>
+                              item.isBundle ? (
+                                <div style={styles.skuCheckLabel}>
+                                  <input
+                                    type="checkbox"
+                                    checked={selectedProductKeys.includes(item.key)}
+                                    onChange={() => toggleSelectedProduct(item)}
+                                    style={styles.rowCheckbox}
+                                    aria-label={`Select ${item.sku}`}
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() => setBundleHistoryId(item.bundleId)}
+                                    style={styles.bundleSkuButton}
+                                    title="View bundle detail and history"
+                                  >
+                                    {item.sku}
+                                  </button>
+                                </div>
+                              ) : (
+                                <label style={styles.skuCheckLabel}>
+                                  <input
+                                    type="checkbox"
+                                    checked={selectedProductKeys.includes(item.key)}
+                                    onChange={() => toggleSelectedProduct(item)}
+                                    style={styles.rowCheckbox}
+                                  />
+                                  <span style={styles.skuText}>{item.sku}</span>
+                                </label>
+                              )
                             ) : (
-                              <span style={styles.skuText}>{item.sku}</span>
+                              item.isBundle ? (
+                                <button
+                                  type="button"
+                                  onClick={() => setBundleHistoryId(item.bundleId)}
+                                  style={styles.bundleSkuButton}
+                                  title="View bundle detail and history"
+                                >
+                                  {item.sku}
+                                </button>
+                              ) : (
+                                <span style={styles.skuText}>{item.sku}</span>
+                              )
                             )}
                           </td>
                           <td style={{ ...styles.td, ...separatorStyle }}>{item.brand}</td>
@@ -4695,7 +4797,19 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
                         <td style={{ ...styles.td, ...styles.skuTd }}>
                           <div style={styles.compactList}>
                             {skuList.slice(0, 4).map((sku) => (
-                              <span key={sku} style={styles.skuText}>{sku}</span>
+                              row.isBundle ? (
+                                <button
+                                  key={sku}
+                                  type="button"
+                                  onClick={() => setBundleHistoryId(row.bundleId)}
+                                  style={styles.bundleSkuButton}
+                                  title="View bundle detail and history"
+                                >
+                                  {sku}
+                                </button>
+                              ) : (
+                                <span key={sku} style={styles.skuText}>{sku}</span>
+                              )
                             ))}
                             {skuList.length > 4 ? (
                               <span style={styles.categoryMeta}>+{skuList.length - 4} more</span>
@@ -5202,6 +5316,124 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
               The selected quantities will be recorded in the destination group. Warehouse storage locations are not changed by this action.
             </p>
           </div>
+            </div>
+          ) : null}
+
+          {bundleHistoryDetail ? (
+            <div style={styles.modalOverlay} role="dialog" aria-modal="true" aria-label="Bundle Detail">
+              <div style={styles.historyModal}>
+                <div style={styles.modalHeader}>
+                  <div>
+                    <p style={styles.modalEyebrow}>Product Directory</p>
+                    <h2 style={styles.modalTitle}>Bundle Detail</h2>
+                  </div>
+                  <div style={styles.modalActionRow}>
+                    <button type="button" onClick={() => setBundleHistoryId(null)} style={styles.modalCloseButton}>
+                      Close
+                    </button>
+                  </div>
+                </div>
+
+                <div style={styles.bundleHistoryIdentity}>
+                  <strong style={styles.bundleHistoryCode}>{bundleHistoryDetail.bundle.bundle_code}</strong>
+                  <span style={styles.bundleHistoryName}>{bundleHistoryDetail.bundle.bundle_name}</span>
+                </div>
+
+                <div style={styles.bundleHistoryMetrics}>
+                  <div style={styles.bundleHistoryMetric}>
+                    <span style={styles.bundleHistoryMetricLabel}>Total Bundle</span>
+                    <strong style={styles.bundleHistoryMetricValue}>{formatNumber(bundleHistoryDetail.totalQty)}</strong>
+                  </div>
+                  <div style={styles.bundleHistoryMetric}>
+                    <span style={styles.bundleHistoryMetricLabel}>MOB Qty</span>
+                    <strong style={styles.bundleHistoryMetricValue}>{formatNumber(bundleHistoryDetail.mobQty)}</strong>
+                  </div>
+                  <div style={styles.bundleHistoryMetric}>
+                    <span style={styles.bundleHistoryMetricLabel}>OI Qty</span>
+                    <strong style={styles.bundleHistoryMetricValue}>{formatNumber(bundleHistoryDetail.oiQty)}</strong>
+                  </div>
+                  <div style={styles.bundleHistoryMetric}>
+                    <span style={styles.bundleHistoryMetricLabel}>Qty Per Bundle</span>
+                    <strong style={styles.bundleHistoryMetricValue}>{formatNumber(bundleHistoryDetail.bundleUnitQty)}</strong>
+                  </div>
+                  <div style={styles.bundleHistoryMetric}>
+                    <span style={styles.bundleHistoryMetricLabel}>Status</span>
+                    <div>
+                      {renderReleasePill(
+                        normalizeUpper(bundleHistoryDetail.bundle.status).toLowerCase(),
+                        bundleHistoryDetail.bundle.release_count,
+                        bundleHistoryDetail.bundle.released_at,
+                        bundleHistoryDetail.bundle.released_by,
+                        bundleHistoryDetail.bundle.release_history,
+                        `bundle-history-${bundleHistoryDetail.bundle.id}`
+                      )}
+                    </div>
+                  </div>
+                  <div style={styles.bundleHistoryMetric}>
+                    <span style={styles.bundleHistoryMetricLabel}>Created</span>
+                    <strong style={styles.bundleHistoryMetricText}>{formatDateTime(bundleHistoryDetail.bundle.created_at)}</strong>
+                    <small style={styles.bundleHistoryMetricNote}>{bundleHistoryDetail.bundle.created_by || '-'}</small>
+                  </div>
+                </div>
+
+                <div style={styles.bundleHistoryBody}>
+                  <div style={styles.bundleHistoryOverviewGrid}>
+                    <section style={{ ...styles.bundleHistorySection, ...styles.bundleHistoryPanel }}>
+                    <div style={styles.bundleHistorySectionHeader}>
+                      <h3 style={styles.bundleHistorySectionTitle}>Size Breakdown</h3>
+                      <span>{bundleHistoryDetail.sizeBreakdown.length} size(s)</span>
+                    </div>
+                    <div style={styles.historyTableWrap}>
+                      <table style={styles.bundleHistoryCompactTable}>
+                        <thead>
+                          <tr>
+                            <th style={styles.th}>Size</th>
+                            <th style={styles.thNumber}>Total Bundle</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {bundleHistoryDetail.sizeBreakdown.map((row) => (
+                            <tr key={row.size}>
+                              <td style={styles.td}>{row.size}</td>
+                              <td style={styles.tdNumber}>{formatNumber(row.totalQty)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    </section>
+
+                    <section style={{ ...styles.bundleHistorySection, ...styles.bundleHistoryPanel }}>
+                    <div style={styles.bundleHistorySectionHeader}>
+                      <h3 style={styles.bundleHistorySectionTitle}>Bundle Components</h3>
+                      <span>{bundleHistoryDetail.componentProducts.length} product(s)</span>
+                    </div>
+                    <div style={styles.historyTableWrap}>
+                      <table style={styles.bundleHistoryComponentsTable}>
+                        <thead>
+                          <tr>
+                            <th style={{ ...styles.th, ...styles.thCenter }}>Photo</th>
+                            <th style={styles.th}>SKU</th>
+                            <th style={styles.th}>Product Name</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {bundleHistoryDetail.componentProducts.map((component) => (
+                            <tr key={component.id}>
+                              <td style={{ ...styles.td, ...styles.tdCenter }}>
+                                {renderPhotoThumb(component.photoUrl, component.product_name)}
+                              </td>
+                              <td style={styles.td}>{component.sku || '-'}</td>
+                              <td style={styles.td}>{component.product_name || '-'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    </section>
+                  </div>
+                </div>
+              </div>
             </div>
           ) : null}
 
@@ -6259,6 +6491,23 @@ const styles = {
     fontWeight: '600',
     whiteSpace: 'nowrap',
   },
+  bundleSkuButton: {
+    display: 'inline-block',
+    minWidth: 0,
+    padding: 0,
+    border: 0,
+    background: 'transparent',
+    color: '#1d4ed8',
+    fontSize: '11px',
+    fontWeight: '800',
+    lineHeight: 1.35,
+    textAlign: 'left',
+    textDecoration: 'underline',
+    textDecorationColor: '#93c5fd',
+    textUnderlineOffset: '3px',
+    cursor: 'pointer',
+    whiteSpace: 'nowrap',
+  },
   tdNumber: {
     padding: '9px 10px',
     borderBottom: '1px solid #f1f5f9',
@@ -6622,6 +6871,120 @@ const styles = {
     position: 'relative',
     isolation: 'isolate',
     zIndex: 1,
+  },
+  bundleHistoryIdentity: {
+    display: 'flex',
+    alignItems: 'baseline',
+    gap: '10px',
+    flexWrap: 'wrap',
+    color: '#475569',
+    fontSize: '14px',
+  },
+  bundleHistoryCode: {
+    color: '#0f172a',
+    fontSize: '17px',
+    fontWeight: '900',
+  },
+  bundleHistoryName: {
+    color: '#475569',
+    fontSize: '14px',
+    fontWeight: '700',
+  },
+  bundleHistoryMetrics: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))',
+    gap: '8px',
+    padding: '10px',
+    border: '1px solid #dbe4ef',
+    borderRadius: '8px',
+    background: '#f8fafc',
+  },
+  bundleHistoryMetric: {
+    minWidth: 0,
+    minHeight: '70px',
+    display: 'flex',
+    flexDirection: 'column',
+    justifyContent: 'center',
+    gap: '3px',
+    padding: '10px 12px',
+    border: '1px solid #e2e8f0',
+    borderRadius: '8px',
+    background: '#fff',
+    color: '#0f172a',
+  },
+  bundleHistoryMetricLabel: {
+    color: '#64748b',
+    fontSize: '10px',
+    fontWeight: '900',
+    textTransform: 'uppercase',
+  },
+  bundleHistoryMetricValue: {
+    color: '#0f172a',
+    fontSize: '22px',
+    fontWeight: '900',
+    lineHeight: 1.05,
+    fontVariantNumeric: 'tabular-nums',
+  },
+  bundleHistoryMetricText: {
+    color: '#0f172a',
+    fontSize: '13px',
+    fontWeight: '800',
+    lineHeight: 1.35,
+  },
+  bundleHistoryMetricNote: {
+    color: '#64748b',
+    fontSize: '10px',
+    fontWeight: '700',
+  },
+  bundleHistoryBody: {
+    minHeight: 0,
+    overflowY: 'auto',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '18px',
+    paddingRight: '2px',
+  },
+  bundleHistoryOverviewGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(min(320px, 100%), 1fr))',
+    alignItems: 'start',
+    gap: '12px',
+  },
+  bundleHistorySection: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '8px',
+  },
+  bundleHistoryPanel: {
+    minWidth: 0,
+    padding: '12px',
+    border: '1px solid #dbe4ef',
+    borderRadius: '8px',
+    background: '#f8fafc',
+  },
+  bundleHistorySectionHeader: {
+    display: 'flex',
+    alignItems: 'baseline',
+    justifyContent: 'space-between',
+    gap: '12px',
+    color: '#64748b',
+    fontSize: '12px',
+  },
+  bundleHistorySectionTitle: {
+    margin: 0,
+    color: '#0f172a',
+    fontSize: '15px',
+    fontWeight: '900',
+  },
+  bundleHistoryCompactTable: {
+    width: '100%',
+    minWidth: '240px',
+    borderCollapse: 'collapse',
+  },
+  bundleHistoryComponentsTable: {
+    width: '100%',
+    minWidth: '460px',
+    borderCollapse: 'collapse',
   },
   transferMetaRow: {
     display: 'flex',
