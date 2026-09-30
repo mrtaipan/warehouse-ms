@@ -17,6 +17,22 @@ const PL_RETURN_SOURCE_PHASE = 'Packing List'
 const PL_RETURN_SOURCE_PHASES = [PL_RETURN_SOURCE_PHASE, 'packing_list']
 const SIZE_CHART_FIELDS = ['weight_value', 'length_value', 'width_value', 'width_afterpull', 'sleeve_length', 'thigh_width']
 
+async function fetchAllSupabaseRows(buildQuery, pageSize = 1000) {
+  const rows = []
+  let from = 0
+
+  while (true) {
+    const { data, error } = await buildQuery().range(from, from + pageSize - 1)
+    if (error) return { data: rows, error }
+
+    rows.push(...(data || []))
+    if (!data || data.length < pageSize) break
+    from += pageSize
+  }
+
+  return { data: rows, error: null }
+}
+
 const styles = {
   wrapper: {
     display: 'flex',
@@ -3619,7 +3635,9 @@ export default function PackingListSizeBreakdownPage() {
           .order('validated_at', { ascending: true }),
         supabase.from('pl_size_breakdown').select('*').order('detail_order', { ascending: true }).order('id', { ascending: true }),
         supabase.from('pl_general_photos').select('*').order('display_order', { ascending: true }).order('id', { ascending: true }),
-        supabase.from('pl_packing_items').select('*').order('koli_sequence', { ascending: true }).order('id', { ascending: true }),
+        fetchAllSupabaseRows(() =>
+          supabase.from('pl_packing_items').select('*').order('koli_sequence', { ascending: true }).order('id', { ascending: true })
+        ),
         supabase
           .from('warehouse_returns')
           .select('*')
