@@ -1534,8 +1534,8 @@ function getRepairFlowStatus(totalQty, sentQty) {
   return 'available'
 }
 
-function getRepairFlowLabel(status) {
-  if (status === 'done') return '✓ Sent'
+function getRepairFlowLabel(status, completeLabel = 'Sent') {
+  if (status === 'done') return `✓ ${completeLabel}`
   if (status === 'partial') return 'Partial'
   return 'Available'
 }
@@ -1545,18 +1545,20 @@ function buildReadOnlyRejectReasonSummaryRows(
   reasonNameById = new Map(),
   repairableById = new Map(),
   taskById = new Map(),
-  returnedQtyByRejectDetailId = new Map()
+  returnedQtyByRejectDetailId = new Map(),
+  storedQtyByRejectDetailId = new Map()
 ) {
   const grouped = new Map()
 
   rows.forEach((row) => {
     const qty = Number(row?.qty || 0)
     if (qty <= 0) return
-    const returnedQty = Math.min(qty, Number(returnedQtyByRejectDetailId.get(String(row?.id || '')) || 0))
 
     const reasonId = String(row?.rejectReasonId || row?.reject_reason_id || '').trim()
     const reason = getRejectReasonDisplayName(row, reasonNameById)
     const isRepairable = getRejectReasonRepairability(row, repairableById)
+    const flowQtyByRejectDetailId = isRepairable ? returnedQtyByRejectDetailId : storedQtyByRejectDetailId
+    const returnedQty = Math.min(qty, Number(flowQtyByRejectDetailId.get(String(row?.id || '')) || 0))
     const groupKey = `${isRepairable ? 'repairable' : 'unrepairable'}|||${reasonId || reason}`
     const current = grouped.get(groupKey) || {
       key: groupKey,
@@ -1725,6 +1727,7 @@ export default function QcDashboardPage() {
   const [arklineRejectDetails, setArklineRejectDetails] = useState([])
   const [arklineRejectAdjustments, setArklineRejectAdjustments] = useState([])
   const [arklineReturnBatchLines, setArklineReturnBatchLines] = useState([])
+  const [arklineRejectionStorageLines, setArklineRejectionStorageLines] = useState([])
   const [arklinePoItemSizes, setArklinePoItemSizes] = useState([])
   const [sampleBreakdownRows, setSampleBreakdownRows] = useState([])
   const [qcSampleBreakdownRows, setQcSampleBreakdownRows] = useState([])
@@ -1787,6 +1790,7 @@ export default function QcDashboardPage() {
       { data: rejectDetailRows, error: rejectDetailError },
       { data: rejectAdjustmentRows, error: rejectAdjustmentError },
       { data: returnBatchLineRows, error: returnBatchLineError },
+      { data: storageLineRows, error: storageLineError },
       { data: poItemSizeRows, error: poItemSizeError },
       { data: sampleBreakdownData, error: sampleBreakdownError },
       { data: qcSampleBreakdownData, error: qcSampleBreakdownError },
@@ -1989,6 +1993,10 @@ export default function QcDashboardPage() {
         .select('id, return_batch_id, reject_detail_id, reject_reason_id, grade, size, qty')
         .order('created_at', { ascending: false }),
       supabase
+        .from('arkline_qc_rejection_storage_lines')
+        .select('id, storage_batch_id, reject_detail_id, reject_reason_id, grade, size, qty')
+        .order('created_at', { ascending: false }),
+      supabase
         .from('arkline_po_item_sizes')
         .select('arkline_po_item_id, size, qty')
         .order('size', { ascending: true }),
@@ -2047,6 +2055,7 @@ export default function QcDashboardPage() {
       rejectDetailError ||
       rejectAdjustmentError ||
       returnBatchLineError ||
+      storageLineError ||
       poItemSizeError
     ) {
       setError(
@@ -2061,6 +2070,7 @@ export default function QcDashboardPage() {
           rejectDetailError?.message ||
           rejectAdjustmentError?.message ||
           returnBatchLineError?.message ||
+          storageLineError?.message ||
           poItemSizeError?.message ||
           'Failed to load QC dashboard.'
       )
@@ -2088,6 +2098,7 @@ export default function QcDashboardPage() {
     setArklineRejectDetails(rejectDetailRows || [])
     setArklineRejectAdjustments(rejectAdjustmentRows || [])
     setArklineReturnBatchLines(returnBatchLineRows || [])
+    setArklineRejectionStorageLines(storageLineRows || [])
     setArklinePoItemSizes(poItemSizeRows || [])
     setSupportsSampleSplit(!sampleBreakdownError && !qcSampleBreakdownError)
     setSampleBreakdownRows(sampleBreakdownError ? [] : sampleBreakdownData || [])
@@ -3078,6 +3089,19 @@ export default function QcDashboardPage() {
 
     return result
   }, [arklineReturnBatchLines, selectedRejectSortedExistingDetails])
+  const selectedRejectStoredQtyByDetailId = useMemo(() => {
+    const selectedDetailIds = new Set(selectedRejectSortedExistingDetails.map((item) => String(item.id || '')).filter(Boolean))
+    const result = new Map()
+
+    arklineRejectionStorageLines.forEach((item) => {
+      const detailId = String(item.reject_detail_id || '')
+      if (!detailId || !selectedDetailIds.has(detailId)) return
+
+      result.set(detailId, Number(result.get(detailId) || 0) + Number(item.qty || 0))
+    })
+
+    return result
+  }, [arklineRejectionStorageLines, selectedRejectSortedExistingDetails])
   const readOnlyRejectReasonSummaryRows = useMemo(
     () =>
       buildReadOnlyRejectReasonSummaryRows(
@@ -3085,7 +3109,8 @@ export default function QcDashboardPage() {
         selectedRejectReasonNameById,
         selectedRejectReasonRepairableById,
         selectedRejectTaskById,
-        selectedRejectReturnedQtyByDetailId
+        selectedRejectReturnedQtyByDetailId,
+        selectedRejectStoredQtyByDetailId
       ),
     [
       readOnlyRejectReasonSourceRows,
@@ -3093,6 +3118,7 @@ export default function QcDashboardPage() {
       selectedRejectReasonRepairableById,
       selectedRejectTaskById,
       selectedRejectReturnedQtyByDetailId,
+      selectedRejectStoredQtyByDetailId,
     ]
   )
   const repairableRejectReasonSummaryRows = useMemo(
@@ -4258,10 +4284,10 @@ export default function QcDashboardPage() {
     }
   }
 
-  function renderRepairFlowStatus(totalQty, sentQty, status) {
+  function renderRepairFlowStatus(totalQty, sentQty, status, completeLabel = 'Sent') {
     return (
       <span style={getRepairFlowPillStyle(status)}>
-        <span>{getRepairFlowLabel(status)}</span>
+        <span>{getRepairFlowLabel(status, completeLabel)}</span>
         <span style={styles.repairFlowMeta}>
           {formatNumber(sentQty)} / {formatNumber(totalQty)}
         </span>
@@ -4272,6 +4298,8 @@ export default function QcDashboardPage() {
   function renderReadOnlyRejectSummarySectionRows(title, rows, tone = 'neutral') {
     const totalQty = rows.reduce((sum, item) => sum + Number(item.totalQty || 0), 0)
     const sentQty = rows.reduce((sum, item) => sum + Number(item.returnedQty || 0), 0)
+    const flowLabel = tone === 'unrepairable' ? 'Stored' : 'Sent'
+    const flowLabelLower = flowLabel.toLowerCase()
     const sectionStyle = {
       ...styles.rejectSummarySectionRow,
       ...(tone === 'repairable' ? styles.rejectSummarySectionRowRepairable : {}),
@@ -4285,7 +4313,7 @@ export default function QcDashboardPage() {
             <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
               <span>{title}</span>
               <span>
-                {formatNumber(sentQty)} / {formatNumber(totalQty)} sent
+                {formatNumber(sentQty)} / {formatNumber(totalQty)} {flowLabelLower}
               </span>
             </span>
           </td>
@@ -4302,7 +4330,7 @@ export default function QcDashboardPage() {
                   <td style={{ ...styles.td, ...styles.tdCenter }}>{formatNumber(item.totalQty)}</td>
                   <td style={{ ...styles.td, ...styles.tdCenter }}>{formatNumber(item.returnedQty)}</td>
                   <td style={{ ...styles.td, ...styles.tdCenter }}>
-                    {renderRepairFlowStatus(item.totalQty, item.returnedQty, item.repairStatus)}
+                    {renderRepairFlowStatus(item.totalQty, item.returnedQty, item.repairStatus, flowLabel)}
                   </td>
                   <td style={{ ...styles.td, ...styles.tdCenter }}>
                     <button
@@ -4326,7 +4354,7 @@ export default function QcDashboardPage() {
                             <th style={{ ...styles.th, ...styles.thCenter }}>Grade B</th>
                             <th style={{ ...styles.th, ...styles.thCenter }}>Grade C</th>
                             <th style={{ ...styles.th, ...styles.thCenter }}>Total Qty</th>
-                            <th style={{ ...styles.th, ...styles.thCenter }}>Sent</th>
+                            <th style={{ ...styles.th, ...styles.thCenter }}>{flowLabel}</th>
                             <th style={{ ...styles.th, ...styles.thCenter }}>Available</th>
                             <th style={{ ...styles.th, ...styles.thCenter }}>Status</th>
                             <th style={styles.th}>QC Source Date</th>
@@ -4342,7 +4370,7 @@ export default function QcDashboardPage() {
                               <td style={{ ...styles.td, ...styles.tdCenter }}>{formatNumber(sizeRow.returnedQty)}</td>
                               <td style={{ ...styles.td, ...styles.tdCenter }}>{formatNumber(sizeRow.availableQty)}</td>
                               <td style={{ ...styles.td, ...styles.tdCenter }}>
-                                {renderRepairFlowStatus(sizeRow.totalQty, sizeRow.returnedQty, sizeRow.repairStatus)}
+                                {renderRepairFlowStatus(sizeRow.totalQty, sizeRow.returnedQty, sizeRow.repairStatus, flowLabel)}
                               </td>
                               <td style={styles.td}>{Array.from(sizeRow.dates || []).sort().join(', ') || '-'}</td>
                             </tr>
@@ -4377,7 +4405,7 @@ export default function QcDashboardPage() {
                 <th style={{ ...styles.th, ...styles.thCenter }}>Grade B</th>
                 <th style={{ ...styles.th, ...styles.thCenter }}>Grade C</th>
                 <th style={{ ...styles.th, ...styles.thCenter }}>Total Qty</th>
-                <th style={{ ...styles.th, ...styles.thCenter }}>Sent to Re-QC</th>
+                <th style={{ ...styles.th, ...styles.thCenter }}>Sent / Stored</th>
                 <th style={{ ...styles.th, ...styles.thCenter }}>Status</th>
                 <th style={{ ...styles.th, ...styles.thCenter }}>Detail</th>
               </tr>

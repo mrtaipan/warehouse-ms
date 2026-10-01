@@ -837,6 +837,41 @@
   .homeApp .dashboardBackButton{min-height:38px;padding:0 13px;font-size:12px}
   .homeApp .homeHero{margin-bottom:20px}.homeApp .eyebrow{padding:8px 14px;font-size:12px}.homeApp .homeHero h1{font-size:32px}.homeApp .homeHero p{font-size:14px}
   .homeApp .moduleGrid{grid-template-columns:1fr}.homeApp .moduleCard{min-height:180px;padding:20px 18px}.homeApp .moduleIcon{width:48px;height:48px;border-radius:16px;font-size:22px}.homeApp .moduleCardCopy strong{margin-top:18px;font-size:18px;white-space:normal}.homeApp .moduleCardCopy span{margin-top:8px;font-size:13px}.homeApp .moduleTag{margin-top:14px;padding:7px 10px;font-size:11px}
+  :global(html:has([data-delivery-summary])),
+  :global(body:has([data-delivery-summary])),
+  :global(html:has([data-delivery-scanner])),
+  :global(body:has([data-delivery-scanner])){height:auto;overflow:auto;overflow-x:auto}
+  :global(body:has([data-delivery-summary]) [data-dashboard-shell]),
+  :global(body:has([data-delivery-summary]) [data-dashboard-main]),
+  :global(body:has([data-delivery-scanner]) [data-dashboard-shell]),
+  :global(body:has([data-delivery-scanner]) [data-dashboard-main]){width:max-content;min-width:100%;height:auto;overflow:visible}
+  :global(body:has([data-delivery-summary]) [data-dashboard-main]),
+  :global(body:has([data-delivery-scanner]) [data-dashboard-main]){display:flex;justify-content:flex-start}
+  .deliveryApp.summaryApp{width:1500px;min-width:1500px;height:auto;min-height:100vh;zoom:.67;margin:0;border-radius:0;overflow:visible}
+  .deliveryApp.scannerApp{width:1480px;min-width:1480px;height:auto;min-height:100vh;zoom:.67;margin:0;border-radius:0;overflow:visible}
+  .summaryPage{min-width:1500px;padding:0}
+  .summaryWrap{width:min(3400px,calc(100% - 80px));padding:32px 20px 48px}
+  .summaryPage .filterBar{display:flex;width:fit-content;grid-template-columns:none}
+  .summaryPage .filterBar label{min-width:135px;width:auto}
+  .summaryPage .filterBar .darkButton{grid-column:auto}
+  .summaryPage .metricGrid{grid-template-columns:repeat(4,minmax(0,1fr))}
+  .summaryPage .summaryGrid{grid-template-columns:1fr 1fr}
+  .summaryPage .fullWidth{grid-column:1/-1}
+  .summaryPage .metricCard{min-height:0}
+  .summaryPage .pieCanvas{height:240px}
+  .summaryPage .barChart{height:330px}
+  .summaryPage .totalMetricMain{flex-wrap:nowrap}
+  .summaryPage .cardTitleRow{align-items:center}
+  .summaryPage .cardToolbar{justify-content:flex-end}
+  .scannerApp .modulePage{width:100%;min-height:149.2538vh;padding:28px 24px 40px}
+  .scannerApp .moduleHeader{align-items:center;flex-direction:row}
+  .scannerApp .moduleHeader h1{font-size:38px}
+  .scannerApp .moduleHeader p{font-size:16px}
+  .scannerApp .moduleHeaderActions{width:auto;justify-content:flex-end}
+  .scannerApp .scannerBoard{grid-template-columns:minmax(392px,.72fr) minmax(0,1.28fr);gap:18px;padding:18px;border-radius:28px}
+  .scannerApp .scannerStats{grid-template-columns:repeat(4,1fr)}
+  .scannerApp .scannerActions{grid-template-columns:1fr 1fr 1fr}
+  .scannerApp .scannerActions .uploadButton{grid-row:span 2;grid-column:auto;min-height:94px}
   .deliveryApp.waybillApp{width:100%;zoom:1;border-radius:0}.waybillApp .modulePage{min-height:100vh;padding:16px}.waybillApp .databaseFilter{grid-template-columns:1fr}.waybillApp .databaseFilter .searchField{grid-column:auto}
 }
 

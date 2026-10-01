@@ -937,7 +937,7 @@ async function getCurrentUserEmail() {
 export default function StorageOverviewPage() {
   const searchParams = useSearchParams()
   const initialMode = String(searchParams.get('mode') || '').trim().toLowerCase()
-  const initialListMode = ['history', 'queue', 'temporary-sales', 'putaway-queue', 'product-directory', 'reject-storage'].includes(initialMode) ? initialMode : 'stock'
+  const initialListMode = ['history', 'movement-history', 'queue', 'temporary-sales', 'putaway-queue', 'product-directory', 'reject-storage'].includes(initialMode) ? initialMode : 'stock'
   const initialRegisterOpen = searchParams.get('register') === '1'
   const initialProductSearch = String(searchParams.get('q') || searchParams.get('search') || '').trim().toUpperCase()
   const [rackLocations, setRackLocations] = useState([])
@@ -1014,6 +1014,8 @@ export default function StorageOverviewPage() {
   })
   const [temporarySalesSearch, setTemporarySalesSearch] = useState('')
   const [temporarySalesStatus, setTemporarySalesStatus] = useState('')
+  const [temporarySalesGroup, setTemporarySalesGroup] = useState('')
+  const [shelvingQueueGroup, setShelvingQueueGroup] = useState('')
   const [takeForm, setTakeForm] = useState({
     takeOutAll: false,
     qty: '',
@@ -1274,6 +1276,8 @@ export default function StorageOverviewPage() {
     const timer = window.setTimeout(() => {
       setFilters((current) => ({ ...current, groupCode: lockedStorageGroup }))
       setQueueFilters((current) => ({ ...current, group: lockedStorageGroup }))
+      setTemporarySalesGroup(lockedStorageGroup)
+      setShelvingQueueGroup(lockedStorageGroup)
     }, 0)
     return () => window.clearTimeout(timer)
   }, [lockedStorageGroup])
@@ -1320,6 +1324,7 @@ export default function StorageOverviewPage() {
     () => [
       ...storageLocationTabItems,
       storageAccess.pickHistory ? ['history', 'Pick History'] : null,
+      storageAccess.pickHistory ? ['movement-history', 'Movement History'] : null,
       storageAccess.productDirectory ? ['product-directory', 'Product Directory'] : null,
     ].filter(Boolean),
     [storageAccess.pickHistory, storageAccess.productDirectory, storageLocationTabItems]
@@ -1327,7 +1332,7 @@ export default function StorageOverviewPage() {
   const storagePrimaryTabItems = useMemo(
     () => [
       storageLocationTabItems.length > 0 ? ['storage-location', 'Storage Location'] : null,
-      storageAccess.pickHistory ? ['history', 'Pick History'] : null,
+      storageAccess.pickHistory ? ['storage-history', 'Storage History'] : null,
       storageAccess.productDirectory ? ['product-directory', 'Product Directory'] : null,
     ].filter(Boolean),
     [storageAccess.pickHistory, storageAccess.productDirectory, storageLocationTabItems.length]
@@ -1337,7 +1342,12 @@ export default function StorageOverviewPage() {
     ? activeListMode
     : storageTabItems[0]?.[0] || activeListMode
   const isStorageLocationMode = storageLocationTabItems.some(([mode]) => mode === visibleListMode)
-  const visiblePrimaryTabMode = isStorageLocationMode ? 'storage-location' : visibleListMode
+  const isStorageHistoryMode = ['history', 'movement-history'].includes(visibleListMode)
+  const visiblePrimaryTabMode = isStorageLocationMode
+    ? 'storage-location'
+    : isStorageHistoryMode
+      ? 'storage-history'
+      : visibleListMode
 
   const productScopedStorageRows = useMemo(() => {
     const normalizedProductSearch = normalizeFilterValue(productSearch)
@@ -1967,6 +1977,14 @@ export default function StorageOverviewPage() {
 
     return true
   })
+  const filteredMovementRows = storageMovementRows.filter((entry) => {
+    const normalizedProductSearch = normalizeFilterValue(productSearch)
+    if (!normalizedProductSearch) return true
+
+    return [entry.item_name, entry.sku_id, entry.size, entry.movement_type, entry.from_location_label, entry.to_location_label]
+      .map((value) => normalizeFilterValue(value))
+      .some((value) => value.includes(normalizedProductSearch))
+  })
   const searchFilteredQueueRows = queueGroups.filter((entry) => {
     const normalizedProductSearch = normalizeFilterValue(productSearch)
 
@@ -2034,6 +2052,7 @@ export default function StorageOverviewPage() {
 
     const normalizedSearch = normalizeFilterValue(temporarySalesSearch)
     const normalizedStatus = normalizeFilterValue(temporarySalesStatus)
+    const normalizedGroup = normalizeFilterValue(temporarySalesGroup)
     const dueAt = new Date(entry.due_at || 0).getTime()
     const isDueSoon = dueAt > Date.now() && dueAt <= Date.now() + 24 * 60 * 60 * 1000
     const isOverdue = dueAt > 0 && dueAt < Date.now() && normalizeFilterValue(entry.status) === 'IN_TEMPORARY_AREA'
@@ -2050,10 +2069,14 @@ export default function StorageOverviewPage() {
           : normalizeFilterValue(entry.status) === normalizedStatus
     )
 
-    return matchesSearch && matchesStatus
+    const matchesGroup = !normalizedGroup || normalizeFilterValue(entry.group_code) === normalizedGroup
+
+    return matchesSearch && matchesStatus && matchesGroup
   })
   const filteredPutawayRows = putawayQueueRows.filter((entry) => {
     if (normalizeFilterValue(entry.status) !== 'WAITING_PUTAWAY') return false
+    const normalizedGroup = normalizeFilterValue(shelvingQueueGroup)
+    if (normalizedGroup && normalizeFilterValue(entry.group_code) !== normalizedGroup) return false
     const normalizedSearch = normalizeFilterValue(productSearch)
     if (!normalizedSearch) return true
     return [entry.item_name, entry.sku_id, entry.size, entry.group_code, entry.source_location_label]
@@ -4603,6 +4626,8 @@ export default function StorageOverviewPage() {
                   setActiveListMode(
                     mode === 'storage-location'
                       ? (isStorageLocationMode ? visibleListMode : storageLocationTabItems[0]?.[0] || 'stock')
+                      : mode === 'storage-history'
+                        ? (isStorageHistoryMode ? visibleListMode : 'history')
                       : mode
                   )
                   setStockPage(1)
@@ -4668,6 +4693,30 @@ export default function StorageOverviewPage() {
             })}
           </div>
         ) : null}
+        {isStorageHistoryMode ? (
+          <div style={styles.storageWorkspaceTabs} aria-label="Storage History views">
+            {[
+              ['history', 'Pick History'],
+              ['movement-history', 'Movement History'],
+            ].map(([mode, label]) => (
+              <button
+                key={mode}
+                type="button"
+                onClick={() => {
+                  setActiveListMode(mode)
+                  setStockPage(1)
+                }}
+                style={{
+                  ...styles.storageWorkspaceTabButton,
+                  ...(visibleListMode === mode ? styles.storageWorkspaceTabButtonActive : {}),
+                }}
+                aria-pressed={visibleListMode === mode}
+              >
+                <span>{label}</span>
+              </button>
+            ))}
+          </div>
+        ) : null}
         {visibleListMode === 'product-directory' ? (
           <ProductDirectoryClient
             embedded
@@ -4711,6 +4760,32 @@ export default function StorageOverviewPage() {
                   placeholder="Search product, SKU, or source location"
                 />
               </div>
+              <div style={styles.field}>
+                <label style={styles.label}>Group</label>
+                <div style={styles.storageGroupToggleGrid} aria-label="Temporary sales group filter">
+                  {(lockedStorageGroup ? [lockedStorageGroup] : STORAGE_GROUP_FILTERS).map((groupCode) => {
+                    const shortLabel = groupCode === 'ARKLINE' ? 'ARK' : groupCode
+                    const isActive = normalizeFilterValue(temporarySalesGroup) === normalizeFilterValue(groupCode)
+
+                    return (
+                      <button
+                        key={groupCode}
+                        type="button"
+                        disabled={Boolean(lockedStorageGroup)}
+                        onClick={() => setTemporarySalesGroup((current) => normalizeFilterValue(current) === groupCode ? '' : groupCode)}
+                        style={{
+                          ...styles.storageGroupToggleButton,
+                          ...(isActive ? styles.storageGroupToggleButtonActive : {}),
+                          ...(lockedStorageGroup ? styles.storageGroupToggleButtonLocked : {}),
+                        }}
+                        aria-pressed={isActive}
+                      >
+                        {shortLabel}
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
                 <div style={styles.field}>
                   <label style={styles.label}>Status</label>
                   <div style={styles.temporarySalesStatusToggle} aria-label="Temporary sales status filter">
@@ -4741,6 +4816,7 @@ export default function StorageOverviewPage() {
                   onClick={() => {
                     setTemporarySalesSearch('')
                     setTemporarySalesStatus('')
+                    setTemporarySalesGroup('')
                   }}
                   style={styles.iconResetButton}
                   title="Clear Temporary Sales Filters"
@@ -4800,12 +4876,12 @@ export default function StorageOverviewPage() {
                     gap: '4px',
                   }
                 : visibleListMode === 'stock'
-                  ? styles.stockSearchToolbarCompact
-                : styles.searchToolbarCompact
+                  ? styles.mobileStockSearchToolbarCompact
+                  : styles.searchToolbarCompact
               : {}),
           }}
         >
-          <div style={styles.field}>
+          <div style={visibleListMode === 'stock' && isCompactLayout ? styles.mobileProductSearchField : styles.field}>
             <div style={styles.searchLabelRow}>
               <label style={styles.label}>{visibleListMode === 'reject-storage' ? 'Reject Search' : 'Product Search'}</label>
               {visibleListMode === 'stock' ? (
@@ -4833,8 +4909,36 @@ export default function StorageOverviewPage() {
               placeholder={visibleListMode === 'reject-storage' ? 'Search koli, product, size, grade, or note' : 'Search product, GRN, or SKU'}
             />
           </div>
+          {visibleListMode === 'putaway-queue' ? (
+            <div style={styles.field}>
+              <label style={styles.label}>Group</label>
+              <div style={styles.storageGroupToggleGrid} aria-label="Shelving queue group filter">
+                {(lockedStorageGroup ? [lockedStorageGroup] : STORAGE_GROUP_FILTERS).map((groupCode) => {
+                  const shortLabel = groupCode === 'ARKLINE' ? 'ARK' : groupCode
+                  const isActive = normalizeFilterValue(shelvingQueueGroup) === normalizeFilterValue(groupCode)
+
+                  return (
+                    <button
+                      key={groupCode}
+                      type="button"
+                      disabled={Boolean(lockedStorageGroup)}
+                      onClick={() => setShelvingQueueGroup((current) => normalizeFilterValue(current) === groupCode ? '' : groupCode)}
+                      style={{
+                        ...styles.storageGroupToggleButton,
+                        ...(isActive ? styles.storageGroupToggleButtonActive : {}),
+                        ...(lockedStorageGroup ? styles.storageGroupToggleButtonLocked : {}),
+                      }}
+                      aria-pressed={isActive}
+                    >
+                      {shortLabel}
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          ) : null}
           {visibleListMode === 'stock' ? (
-            <div style={styles.toolbarQtyField}>
+            <div style={isCompactLayout ? styles.mobileToolbarQtyField : styles.toolbarQtyField}>
               <span style={styles.filteredQtyCard}>
                 <span style={styles.filteredQtyLabel}>Qty of filtered</span>
                 <strong style={styles.filteredQtyValue}>{filteredQty}</strong>
@@ -5057,7 +5161,7 @@ export default function StorageOverviewPage() {
               </button>
             </div>
           ) : null}
-          {visibleListMode === 'history' ? (
+          {['history', 'movement-history'].includes(visibleListMode) ? (
             <div style={styles.toolbarIconField}>
               <button
                 type="button"
@@ -5393,6 +5497,14 @@ export default function StorageOverviewPage() {
                 Next
               </button>
             </div>
+          </div>
+        ) : visibleListMode === 'putaway-queue' ? (
+          <div style={styles.historyToolbar}>
+            <p style={styles.summary}>Showing {filteredPutawayRows.length} shelving queue item record(s)</p>
+          </div>
+        ) : visibleListMode === 'movement-history' ? (
+          <div style={styles.historyToolbar}>
+            <p style={styles.summary}>Showing {filteredMovementRows.length} storage movement record(s)</p>
           </div>
         ) : visibleListMode === 'temporary-sales' ? (
           <div style={styles.historyToolbar}>
@@ -5887,6 +5999,42 @@ export default function StorageOverviewPage() {
                         <span style={styles.cellMeta}>{formatDateTime(entry.completed_at || entry.created_at)}</span>
                       </div>
                     </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : null}
+        {visibleListMode === 'movement-history' ? filteredMovementRows.length === 0 ? (
+          <div style={styles.emptyState}>
+            <p style={{ margin: 0 }}>No storage movement history found for that product.</p>
+          </div>
+        ) : (
+          <div style={styles.tableWrap}>
+            <table style={styles.table}>
+              <thead>
+                <tr>
+                  <th style={styles.th}>Date</th>
+                  <th style={styles.th}>Movement</th>
+                  <th style={styles.th}>Item</th>
+                  <th style={styles.th}>Size</th>
+                  <th style={styles.th}>Qty</th>
+                  <th style={styles.th}>From</th>
+                  <th style={styles.th}>To</th>
+                  <th style={styles.th}>By</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredMovementRows.map((entry) => (
+                  <tr key={entry.id}>
+                    <td style={styles.td}>{formatDateTime(entry.created_at)}</td>
+                    <td style={styles.td}>{entry.movement_type || '-'}</td>
+                    <td style={styles.td}>{getStorageItemDisplayName(entry)}</td>
+                    <td style={styles.td}>{entry.size || '-'}</td>
+                    <td style={styles.td}>{entry.qty}</td>
+                    <td style={styles.td}>{entry.from_location_label || '-'}</td>
+                    <td style={styles.td}>{entry.to_location_label || '-'}</td>
+                    <td style={styles.td}>{getDisplayNameByEmail(entry.created_by)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -7834,7 +7982,7 @@ const styles = {
   },
   temporarySalesToolbar: {
     display: 'grid',
-    gridTemplateColumns: 'minmax(260px, 1fr) minmax(380px, auto) 44px 44px',
+    gridTemplateColumns: 'minmax(240px, 1fr) minmax(160px, 220px) minmax(360px, auto) 44px 44px',
     gap: '10px',
     alignItems: 'end',
   },
@@ -8046,6 +8194,20 @@ const styles = {
   },
   stockSearchToolbarCompact: {
     gridTemplateColumns: 'minmax(0, 1fr) minmax(120px, 150px) repeat(3, 44px)',
+  },
+  mobileStockSearchToolbarCompact: {
+    display: 'flex',
+    flexWrap: 'wrap',
+    gap: '6px',
+    alignItems: 'flex-end',
+  },
+  mobileProductSearchField: {
+    flex: '1 1 100%',
+    minWidth: 0,
+  },
+  mobileToolbarQtyField: {
+    flex: '1 1 120px',
+    minWidth: 0,
   },
   stockFiltersGrid: {
     gridTemplateColumns: 'repeat(5, minmax(0, 1fr))',

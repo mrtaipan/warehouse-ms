@@ -182,6 +182,77 @@ function matchesStorageSearch(searchText, query) {
   return tokens.every((token) => String(searchText || '').includes(token))
 }
 
+function getStorageProductKey(line) {
+  return String(line.modelName || 'No product').trim().toUpperCase()
+}
+
+function getStorageRejectLineKey(line) {
+  return [
+    String(line.poId || '').trim().toUpperCase(),
+    String(line.modelName || '').trim().toUpperCase(),
+    String(line.grade || '').trim().toUpperCase(),
+    String(line.size || '').trim().toUpperCase(),
+    String(line.reasonId || line.reasonName || '').trim().toUpperCase(),
+  ].join('|||')
+}
+
+function buildStorageProductGroups(lines = []) {
+  const productMap = new Map()
+
+  lines.forEach((line) => {
+    const productKey = getStorageProductKey(line)
+    const currentProduct = productMap.get(productKey) || {
+      key: `product:${productKey}`,
+      productName: line.modelName || 'No product',
+      qty: 0,
+      lines: new Map(),
+      searchTextParts: [],
+    }
+    const qty = Number(line.qty || 0)
+    const lineKey = getStorageRejectLineKey(line)
+    const currentLine = currentProduct.lines.get(lineKey) || {
+      ...line,
+      rowKey: lineKey,
+      qty: 0,
+      sourceLineCount: 0,
+      searchTextParts: [],
+    }
+
+    currentLine.qty += qty
+    currentLine.sourceLineCount += 1
+    currentLine.searchTextParts.push(line.searchText)
+    currentProduct.qty += qty
+    currentProduct.searchTextParts.push(line.searchText)
+    currentProduct.lines.set(lineKey, currentLine)
+    productMap.set(productKey, currentProduct)
+  })
+
+  return Array.from(productMap.values())
+    .map((product) => {
+      const linesList = Array.from(product.lines.values())
+        .map((line) => ({
+          ...line,
+          searchText: buildStorageSearchText(line.searchTextParts),
+        }))
+        .sort((a, b) => {
+          const poCompare = String(a.poId || '').localeCompare(String(b.poId || ''), undefined, { numeric: true })
+          if (poCompare) return poCompare
+          const gradeCompare = String(a.grade || '').localeCompare(String(b.grade || ''), undefined, { numeric: true })
+          if (gradeCompare) return gradeCompare
+          const sizeCompare = String(a.size || '').localeCompare(String(b.size || ''), undefined, { numeric: true })
+          if (sizeCompare) return sizeCompare
+          return String(a.reasonName || '').localeCompare(String(b.reasonName || ''), undefined, { numeric: true })
+        })
+
+      return {
+        ...product,
+        lines: linesList,
+        searchText: buildStorageSearchText([product.productName, product.qty, ...product.searchTextParts]),
+      }
+    })
+    .sort((a, b) => String(a.productName || '').localeCompare(String(b.productName || ''), undefined, { numeric: true }))
+}
+
 export default function ArklineReturReportClient({ eligibleRows, batches, storages = [], userEmail, canAdd = false, canEdit = false }) {
   const router = useRouter()
   const supabase = createClient()
@@ -199,6 +270,7 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
   const [progressStatusFilter, setProgressStatusFilter] = useState('')
   const [storageSearch, setStorageSearch] = useState('')
   const [collapsedStorageKeys, setCollapsedStorageKeys] = useState([])
+  const [collapsedStorageProductKeys, setCollapsedStorageProductKeys] = useState([])
   const [returnModalOpen, setReturnModalOpen] = useState(false)
   const [storageModalOpen, setStorageModalOpen] = useState(false)
   const [receiptBatch, setReceiptBatch] = useState(null)
@@ -388,7 +460,7 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
       if (storage.poId) current.poIds.add(storage.poId)
       if (storage.modelName) current.products.add(storage.modelName)
       if (storage.supplierName) current.suppliers.add(storage.supplierName)
-      if (storage.storageDate) current.dates.add(String(storage.storageDate).slice(0, 10))
+      if (storage.updatedAt || storage.storageDate) current.dates.add(String(storage.updatedAt || storage.storageDate).slice(0, 10))
       if (storage.status) current.statuses.add(storage.status)
       if (storage.notes && !current.notes.includes(storage.notes)) current.notes.push(storage.notes)
 
@@ -400,6 +472,7 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
           modelName: storage.modelName,
           supplierName: storage.supplierName,
           storageDate: storage.storageDate,
+          updatedAt: storage.updatedAt,
           storageNumber: storage.storageNumber,
         }
         current.lines.push({
@@ -409,6 +482,7 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
             storage.poId,
             storage.modelName,
             storage.supplierName,
+            storage.updatedAt,
             line.reasonName,
             line.grade,
             line.size,
@@ -457,6 +531,10 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
           }),
         }
       })
+      .map((group) => ({
+        ...group,
+        productGroups: buildStorageProductGroups(group.lines),
+      }))
       .sort((a, b) => {
         const dateCompare = String(b.dates[b.dates.length - 1] || '').localeCompare(String(a.dates[a.dates.length - 1] || ''))
         if (dateCompare) return dateCompare
@@ -470,10 +548,19 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
     return groupedStorages
       .filter((group) => matchesStorageSearch(group.searchText, query))
       .map((group) => {
-        const matchingLines = group.lines.filter((line) => matchesStorageSearch(line.searchText, query))
+        const matchingProductGroups = group.productGroups
+          .filter((product) => matchesStorageSearch(product.searchText, query))
+          .map((product) => {
+            const matchingLines = product.lines.filter((line) => matchesStorageSearch(line.searchText, query))
+            return {
+              ...product,
+              displayLines: matchingLines.length ? matchingLines : product.lines,
+            }
+          })
+
         return {
           ...group,
-          displayLines: matchingLines.length ? matchingLines : group.lines,
+          displayProductGroups: matchingProductGroups.length ? matchingProductGroups : group.productGroups,
         }
       })
   }, [groupedStorages, storageSearch])
@@ -578,6 +665,13 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
 
   function toggleStorageGroup(key) {
     setCollapsedStorageKeys((current) => {
+      if (current.includes(key)) return current.filter((item) => item !== key)
+      return [...current, key]
+    })
+  }
+
+  function toggleStorageProductGroup(key) {
+    setCollapsedStorageProductKeys((current) => {
       if (current.includes(key)) return current.filter((item) => item !== key)
       return [...current, key]
     })
@@ -1320,8 +1414,10 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
           <div className={styles.batchList}>
             {filteredStorageGroups.map((storage) => {
               const isCollapsed = collapsedStorageKeys.includes(storage.key)
-              const displayLines = storage.displayLines || storage.lines
-              const lineBadgeLabel = storageSearch.trim() ? `${displayLines.length}/${storage.lines.length} line(s)` : `${storage.lines.length} line(s)`
+              const displayProductGroups = storage.displayProductGroups || storage.productGroups
+              const visibleLineCount = displayProductGroups.reduce((sum, product) => sum + Number((product.displayLines || product.lines).length || 0), 0)
+              const totalLineCount = storage.productGroups.reduce((sum, product) => sum + Number(product.lines.length || 0), 0)
+              const lineBadgeLabel = storageSearch.trim() ? `${visibleLineCount}/${totalLineCount} row(s)` : `${totalLineCount} row(s)`
               const dateLabel =
                 storage.dates.length > 1
                   ? `${formatDate(storage.dates[0])} - ${formatDate(storage.dates[storage.dates.length - 1])}`
@@ -1347,39 +1443,69 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
                   </button>
                 </div>
                 <div className={styles.batchMeta}>
-                  <div className={styles.metric}><span>PO</span><strong>{storage.poIds.length === 1 ? storage.poIds[0] : storage.poIds.length ? `${storage.poIds.length} PO` : '-'}</strong></div>
-                  <div className={styles.metric}><span>Product</span><strong>{storage.products.length === 1 ? storage.products[0] : storage.products.length ? `${storage.products.length} products` : '-'}</strong></div>
                   <div className={styles.metric}><span>Stored Qty</span><strong>{storage.storedQty}</strong></div>
-                  <div className={styles.metric}><span>Date</span><strong>{dateLabel}</strong></div>
-                  <div className={styles.metric}><span>Size</span><strong>{Array.from(new Set(displayLines.map((line) => line.size))).length} size(s)</strong></div>
+                  <div className={styles.metric}><span>Updated Date</span><strong>{dateLabel}</strong></div>
+                  <div className={styles.metric}><span>Size</span><strong>{Array.from(new Set(displayProductGroups.flatMap((product) => (product.displayLines || product.lines).map((line) => line.size)))).length} size(s)</strong></div>
                 </div>
                 {storage.notes.length ? <p className={styles.notice}>{storage.notes.join(' | ')}</p> : null}
-                {!isCollapsed ? <div className={styles.tableWrap}>
-                  <table className={styles.table}>
-                    <thead>
-                      <tr>
-                        <th>PO</th>
-                        <th>Product</th>
-                        <th>Grade</th>
-                        <th>Size</th>
-                        <th>Reject Reason</th>
-                        <th className={styles.centerNumberCell}>Qty</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {displayLines.map((line) => (
-                        <tr key={line.rowKey}>
-                          <td>{line.poId}</td>
-                          <td>{line.modelName}</td>
-                          <td>{line.grade}</td>
-                          <td>{line.size}</td>
-                          <td>{line.reasonName}</td>
-                          <td className={styles.centerNumberCell}>{line.qty}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div> : null}
+                {!isCollapsed ? (
+                  <div className={styles.storageProductList}>
+                    {displayProductGroups.map((product) => {
+                      const productCollapseKey = `${storage.key}::${product.key}`
+                      const isProductCollapsed = collapsedStorageProductKeys.includes(productCollapseKey)
+                      const productLines = product.displayLines || product.lines
+                      const productQty = productLines.reduce((sum, line) => sum + Number(line.qty || 0), 0)
+                      return (
+                        <div key={productCollapseKey} className={styles.storageProductCard}>
+                          <button
+                            type="button"
+                            className={styles.storageProductHeader}
+                            onClick={() => toggleStorageProductGroup(productCollapseKey)}
+                            aria-expanded={!isProductCollapsed}
+                          >
+                            <span>
+                              <strong>{product.productName}</strong>
+                              <small>{productLines.length} reject row(s)</small>
+                            </span>
+                            <span>
+                              <strong>{productQty}</strong>
+                              <small>Qty</small>
+                            </span>
+                            <b>{isProductCollapsed ? '+' : '-'}</b>
+                          </button>
+                          {!isProductCollapsed ? (
+                            <div className={styles.tableWrap}>
+                              <table className={styles.table}>
+                                <thead>
+                                  <tr>
+                                    <th>PO</th>
+                                    <th>Product</th>
+                                    <th>Grade</th>
+                                    <th>Size</th>
+                                    <th>Reject Reason</th>
+                                    <th className={styles.centerNumberCell}>Qty</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {productLines.map((line) => (
+                                    <tr key={line.rowKey}>
+                                      <td>{line.poId}</td>
+                                      <td>{line.modelName}</td>
+                                      <td>{line.grade}</td>
+                                      <td>{line.size}</td>
+                                      <td>{line.reasonName}</td>
+                                      <td className={styles.centerNumberCell}>{line.qty}</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          ) : null}
+                        </div>
+                      )
+                    })}
+                  </div>
+                ) : null}
               </article>
               )
             })}

@@ -161,8 +161,8 @@
   width: 100%;
   min-width: 0;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  justify-content: flex-start;
+  gap: 14px;
   flex-wrap: wrap;
 }
 
@@ -1002,6 +1002,34 @@
   overflow: auto;
 }
 
+.detailCloseButton {
+  display: inline-grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  padding: 0;
+  border: 1px solid #fecaca;
+  border-radius: 8px;
+  background: #fff1f2;
+  color: #dc2626;
+  font-size: 25px;
+  font-weight: 500;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.detailCloseButton:hover {
+  border-color: #fca5a5;
+  background: #fee2e2;
+  color: #b91c1c;
+}
+
+.detailCloseButton:focus-visible {
+  outline: 2px solid #ef4444;
+  outline-offset: 3px;
+}
+
 .detailHeaderRow {
   display: grid;
   grid-template-columns: minmax(240px, 1fr) minmax(360px, 1.45fr) auto;
@@ -1033,6 +1061,17 @@
   gap: 12px;
 }
 
+.detailInlineFilters .field,
+.detailDateFilterRow .field {
+  min-width: 0;
+}
+
+.detailDateFilterRow .input,
+.detailInlineFilters .select {
+  width: 100%;
+  min-width: 0;
+}
+
 .detailInlineFilters {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
@@ -1050,6 +1089,7 @@
 }
 
 .detailTableWrap {
+  max-height: min(52vh, 520px);
   overflow: auto;
   border-radius: 16px;
   border: 1px solid #e2e8f0;
@@ -1072,6 +1112,9 @@
 }
 
 .detailTable th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
   background: #f8fafc;
   color: #64748b;
   font-size: 11px;
@@ -1164,15 +1207,23 @@
   .detailHeaderRow {
     grid-template-columns: 1fr;
     align-items: stretch;
+    position: relative;
   }
 
-  .detailHeaderRow > .ghostButton {
-    justify-self: start;
+  .detailIdentity {
+    padding-right: 44px;
+  }
+
+  .detailHeaderRow > .detailCloseButton {
+    position: absolute;
+    top: 0;
+    right: 0;
   }
 
   .detailInlineFilters,
   .detailDateFilterRow {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
   }
 
   .detailTitleRow {
@@ -1182,5 +1233,11 @@
 
   .detailDateFilterRow {
     margin-bottom: 14px;
+  }
+}
+
+@media (max-width: 380px) {
+  .detailDateFilterRow {
+    grid-template-columns: 1fr;
   }
 }

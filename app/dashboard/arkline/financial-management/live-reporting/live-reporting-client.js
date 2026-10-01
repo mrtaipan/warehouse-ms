@@ -1353,7 +1353,7 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
           <div className={`${shellStyles.modalCard} ${styles.detailModal}`.trim()} onClick={(event) => event.stopPropagation()}>
             <div className={styles.detailHeaderRow}>
               <div className={styles.detailIdentity}>
-                <p className={styles.sectionEyebrow}>User Detail</p>
+                <p className={styles.sectionEyebrow}>Host Detail</p>
                 <div className={styles.detailTitleRow}>
                   <h2 className={styles.sectionTitle}>{selectedRanking}</h2>
                   <div className={`${styles.totalPill} ${styles.detailCreditPill}`.trim()}>
@@ -1409,8 +1409,14 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
                   </div>
                 ) : null}
               </div>
-              <button type="button" className={styles.ghostButton} onClick={() => setSelectedRanking(null)}>
-                Close
+              <button
+                type="button"
+                className={styles.detailCloseButton}
+                onClick={() => setSelectedRanking(null)}
+                aria-label="Close host detail"
+                title="Close"
+              >
+                ×
               </button>
             </div>
 

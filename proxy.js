@@ -1,6 +1,6 @@
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse } from 'next/server'
-import { ADMIN_EMAIL, canAccessPath, getLandingPath } from '@/utils/permissions'
+import { ADMIN_EMAIL, canAccessPath, getLandingPath, resolveRole } from '@/utils/permissions'
 import { getProfileByAuthenticatedUser } from '@/utils/user-profiles'
 
 export async function proxy(request) {
@@ -32,18 +32,21 @@ export async function proxy(request) {
   const isMobilePath = pathname.startsWith('/mobile')
   const isTakeRequestsPath = pathname === '/take-requests'
   const isRestockRequestPath = pathname === '/restock-request'
-  const isAdmin = user?.email?.toLowerCase() === ADMIN_EMAIL
-  let role = isAdmin ? 'admin' : 'storage_staff'
+  const emailAdmin = user?.email?.toLowerCase() === ADMIN_EMAIL
+  let role = emailAdmin ? 'admin' : 'storage_staff'
 
   if (user) {
     const { data: profile } = await getProfileByAuthenticatedUser(supabase, user, 'role')
+    const profileRole = profile?.role ? resolveRole(profile.role, emailAdmin) : ''
 
-    role = isAdmin ? 'admin' : profile?.role || 'storage_staff'
+    role = profileRole === 'admin' ? 'admin' : profileRole || 'storage_staff'
   }
+
+  const isAdmin = emailAdmin || role === 'admin'
 
   let permissions = []
 
-  if (user) {
+  if (user && !isAdmin) {
     const { data: rolePermissions } = await supabase
       .from('dir_user_roles')
       .select('permission_code')

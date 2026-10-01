@@ -262,6 +262,7 @@ async function loadArklineReturnData(supabase) {
     supplierName: batch.supplier_name_snapshot,
     roundNumber: Number(batch.round_number || 1),
     storageDate: batch.storage_date,
+    updatedAt: batch.updated_at,
     storedQty: Number(batch.stored_qty || 0),
     status: batch.status,
     notes: batch.notes || '',
