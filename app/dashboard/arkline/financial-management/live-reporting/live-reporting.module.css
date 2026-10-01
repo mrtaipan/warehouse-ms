@@ -116,7 +116,8 @@
 .rankingPanel {
   grid-area: ranking;
   align-self: start;
-  gap: 12px;
+  gap: 8px;
+  padding-block: 20px;
 }
 
 .reportingColumns {
@@ -152,7 +153,17 @@
   min-width: 0;
   flex-direction: column;
   align-items: flex-start;
-  gap: 10px;
+  gap: 7px;
+}
+
+.leaderboardTitleRow {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
 }
 
 .leaderboardChannelFilter {
@@ -161,12 +172,38 @@
   align-self: flex-start;
 }
 
+.leaderboardMetricFilter {
+  width: fit-content;
+  max-width: 100%;
+  flex: 0 0 auto;
+  padding: 2px;
+  border-radius: 6px;
+  background: #f8fafc;
+  border-color: #dbe4f0;
+}
+
+.leaderboardMetricFilter .segmentButton,
 .leaderboardChannelFilter .segmentButton {
   flex: 0 0 auto;
   min-height: 30px;
   padding: 0 12px;
   font-size: 11px;
   font-weight: 700;
+}
+
+.leaderboardMetricFilter .segmentButton {
+  min-height: 26px;
+  border-radius: 4px;
+  padding: 0 10px;
+}
+
+.leaderboardMetricFilter .segmentButtonActive {
+  background: #2563eb;
+  box-shadow: none;
+}
+
+.leaderboardChannelFilter .segmentButton {
+  min-width: 52px;
 }
 
 .totalPill {
@@ -479,6 +516,11 @@
     padding: 16px;
   }
 
+  .leaderboardMetricFilter .segmentButton {
+    padding: 0 8px;
+    font-size: 10px;
+  }
+
   .podium {
     gap: 8px;
   }
@@ -722,6 +764,18 @@
   border: 1px solid #e2e8f0;
 }
 
+.segmentedControl.leaderboardMetricFilter {
+  padding: 2px;
+  border-radius: 6px;
+  background: #f8fafc;
+  border-color: #dbe4f0;
+}
+
+.reportingColumns > .rankingPanel {
+  gap: 8px;
+  padding-block: 20px;
+}
+
 .mobileSegment .segmentedControl {
   align-self: center;
 }
@@ -948,6 +1002,18 @@
   overflow: auto;
 }
 
+.detailHeaderRow {
+  display: grid;
+  grid-template-columns: minmax(240px, 1fr) minmax(360px, 1.45fr) auto;
+  align-items: end;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+
+.detailIdentity {
+  min-width: 0;
+}
+
 .detailTitleRow {
   display: flex;
   align-items: center;
@@ -961,14 +1027,26 @@
   padding: 7px 11px;
 }
 
-.detailFilterGrid {
+.detailInlineFilters,
+.detailDateFilterRow {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 12px;
-  padding: 16px;
-  border: 1px solid #e2e8f0;
-  border-radius: 16px;
-  background: #f8fafc;
+}
+
+.detailInlineFilters {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.detailDateFilterRow {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin-bottom: 16px;
+}
+
+.detailFilterLabel {
+  color: #64748b;
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1;
 }
 
 .detailTableWrap {
@@ -1056,8 +1134,13 @@
     grid-template-columns: 1fr;
   }
 
-  .detailFilterGrid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+  .detailHeaderRow {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .detailInlineFilters {
+    grid-column: 1 / -1;
+    grid-row: 2;
   }
 }
 
@@ -1078,14 +1161,26 @@
     font-size: 16px;
   }
 
+  .detailHeaderRow {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+
+  .detailHeaderRow > .ghostButton {
+    justify-self: start;
+  }
+
+  .detailInlineFilters,
+  .detailDateFilterRow {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .detailTitleRow {
-    align-items: flex-start;
-    flex-direction: column;
+    align-items: center;
     gap: 8px;
   }
 
-  .detailFilterGrid {
-    grid-template-columns: 1fr;
-    padding: 12px;
+  .detailDateFilterRow {
+    margin-bottom: 14px;
   }
 }

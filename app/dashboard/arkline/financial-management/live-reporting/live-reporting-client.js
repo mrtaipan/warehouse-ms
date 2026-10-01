@@ -101,11 +101,39 @@ function formatCurrency(value) {
   }).format(Number(value || 0))
 }
 
+function getSessionDurationMinutes(item) {
+  if (!item?.session_date || !item?.session_start_time || !item?.session_end_time) return 0
+
+  const start = new Date(`${item.session_date}T${String(item.session_start_time).slice(0, 5)}`)
+  const endDate = item.session_end_date || item.session_date
+  const end = new Date(`${endDate}T${String(item.session_end_time).slice(0, 5)}`)
+
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return 0
+
+  let duration = end.getTime() - start.getTime()
+  if (duration < 0) duration += 24 * 60 * 60 * 1000
+  return Math.max(0, Math.round(duration / 60000))
+}
+
+function formatDuration(minutes) {
+  const totalMinutes = Math.max(0, Math.round(Number(minutes || 0)))
+  const hours = Math.floor(totalMinutes / 60)
+  const remainder = totalMinutes % 60
+  if (!hours) return `${remainder}m`
+  if (!remainder) return `${hours}h`
+  return `${hours}h ${remainder}m`
+}
+
 function getPairingCounterpartName(item, selectedHostName) {
   const selectedName = String(selectedHostName || '').trim().toLowerCase()
+  const creditedHostId = String(item?.credited_host_profile_id || '').trim()
+  const sessionHostId = String(item?.session_host_profile_id || '').trim()
   const sessionHostName = String(item?.host_display_name_snapshot || '').trim()
   const sessionPartnerName = String(item?.partner_display_name_snapshot || '').trim()
 
+  if (creditedHostId && sessionHostId) {
+    return creditedHostId === sessionHostId ? sessionPartnerName : sessionHostName
+  }
   if (sessionHostName.toLowerCase() === selectedName) return sessionPartnerName
   return sessionHostName || sessionPartnerName
 }
@@ -233,8 +261,10 @@ function normalizeLiveRun(row) {
 function normalizeCredit(row) {
   return {
     id: row?.id || '',
+    credited_host_profile_id: row?.host_profile_id || '',
     host_display_name: row?.host_profile?.display_name || row?.host_display_name_snapshot || '-',
     credited_amount: Number(row?.credited_amount || 0),
+    session_host_profile_id: row?.session?.host_profile_id || '',
     session_date: row?.session?.session_date || '',
     session_end_date: row?.session?.end_date || row?.session?.session_date || '',
     session_start_time: row?.session?.start_time || '',
@@ -265,6 +295,7 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
   const [yearFilter, setYearFilter] = useState('all')
   const [trendGroup, setTrendGroup] = useState('MONTH')
   const [leaderboardChannel, setLeaderboardChannel] = useState('ALL')
+  const [leaderboardMetric, setLeaderboardMetric] = useState('GMV')
   const [hoveredTrendKey, setHoveredTrendKey] = useState('')
   const [selectedRanking, setSelectedRanking] = useState(null)
   const [detailFilters, setDetailFilters] = useState(createDetailFilters)
@@ -383,10 +414,12 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
         .select(
           `
             id,
+            host_profile_id,
             credited_amount,
             host_display_name_snapshot,
             host_profile:dir_user_profiles!arkline_live_reporting_credits_host_profile_id_fkey(display_name),
             session:arkline_live_reporting_sessions!arkline_live_reporting_credits_session_id_fkey(
+              host_profile_id,
               session_date,
               end_date,
               start_time,
@@ -480,22 +513,56 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
     return filteredCredits.filter((item) => item.sales_channel === leaderboardChannel)
   }, [filteredCredits, leaderboardChannel])
 
-  const leaderboardTotal = useMemo(
-    () => leaderboardCredits.reduce((sum, item) => sum + Number(item.credited_amount || 0), 0),
+  const leaderboardTotals = useMemo(
+    () => leaderboardCredits.reduce(
+      (totals, item) => {
+        totals.revenue += Number(item.credited_amount || 0)
+        totals.durationMinutes += getSessionDurationMinutes(item)
+        return totals
+      },
+      { revenue: 0, durationMinutes: 0 }
+    ),
     [leaderboardCredits]
   )
+
+  const leaderboardTotal = useMemo(() => {
+    if (leaderboardMetric === 'DURATION') return formatDuration(leaderboardTotals.durationMinutes)
+    if (leaderboardMetric === 'EFFICIENCY') {
+      const hours = leaderboardTotals.durationMinutes / 60
+      return formatCurrency(hours ? leaderboardTotals.revenue / hours : 0) + '/h'
+    }
+    return formatCurrency(leaderboardTotals.revenue)
+  }, [leaderboardMetric, leaderboardTotals])
 
   const ranking = useMemo(() => {
     return Array.from(
       leaderboardCredits.reduce((map, item) => {
         const key = item.host_display_name || 'Unknown'
-        map.set(key, (map.get(key) || 0) + Number(item.credited_amount || 0))
+        const current = map.get(key) || { name: key, revenue: 0, durationMinutes: 0 }
+        current.revenue += Number(item.credited_amount || 0)
+        current.durationMinutes += getSessionDurationMinutes(item)
+        map.set(key, current)
         return map
       }, new Map())
     )
-      .map(([name, amount]) => ({ name, amount }))
-      .sort((left, right) => right.amount - left.amount)
-  }, [leaderboardCredits])
+      .map(([, item]) => {
+        const hours = item.durationMinutes / 60
+        const value = leaderboardMetric === 'DURATION'
+          ? item.durationMinutes
+          : leaderboardMetric === 'EFFICIENCY'
+            ? (hours ? item.revenue / hours : 0)
+            : item.revenue
+
+        return { ...item, value }
+      })
+      .sort((left, right) => right.value - left.value || left.name.localeCompare(right.name))
+  }, [leaderboardCredits, leaderboardMetric])
+
+  function formatLeaderboardValue(item) {
+    if (leaderboardMetric === 'DURATION') return formatDuration(item.durationMinutes)
+    if (leaderboardMetric === 'EFFICIENCY') return `${formatCurrency(item.value)}/h`
+    return formatCurrency(item.value)
+  }
 
   const selectedHostCredits = useMemo(() => {
     if (!selectedRanking) return []
@@ -878,10 +945,35 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
               </section>
               <section className={`${styles.panelCard} ${styles.rankingPanel}`.trim()}>
                 <div className={styles.leaderboardHead}>
-                  <h2 className={styles.sectionTitle}>Leaderboard</h2>
+                  <div className={styles.leaderboardTitleRow}>
+                    <h2 className={styles.sectionTitle}>Leaderboard</h2>
+                    <div className={`${styles.segmentedControl} ${styles.leaderboardMetricFilter}`.trim()} aria-label="Leaderboard metric">
+                      {[
+                        { value: 'GMV', label: 'GMV' },
+                        { value: 'DURATION', label: 'Duration' },
+                        { value: 'EFFICIENCY', label: 'Efficiency' },
+                      ].map((item) => (
+                        <button
+                          key={item.value}
+                          type="button"
+                          className={`${styles.segmentButton} ${leaderboardMetric === item.value ? styles.segmentButtonActive : ''}`.trim()}
+                          onClick={() => setLeaderboardMetric(item.value)}
+                          aria-pressed={leaderboardMetric === item.value}
+                        >
+                          {item.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                   <div className={styles.totalPill}>
-                    <span>Total Nominal</span>
-                    <strong>{formatCurrency(leaderboardTotal)}</strong>
+                    <span>
+                      {leaderboardMetric === 'DURATION'
+                        ? 'Total Duration'
+                        : leaderboardMetric === 'EFFICIENCY'
+                          ? 'Live Efficiency'
+                          : 'Total GMV'}
+                    </span>
+                    <strong>{leaderboardTotal}</strong>
                   </div>
                 </div>
 
@@ -916,11 +1008,11 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
                             className={`${styles.podiumHost} ${index === 0 ? styles.podiumWinner : ''}`.trim()}
                             style={{ '--podium-height': `${[136, 104, 80][index]}px` }}
                             onClick={() => openHostDetail(item.name)}
-                            aria-label={`Rank ${index + 1}: ${item.name}, ${formatCurrency(item.amount)}. View detail`}
+                            aria-label={`Rank ${index + 1}: ${item.name}, ${formatLeaderboardValue(item)}. View detail`}
                             title={`View ${item.name}'s sessions`}
                           >
                             <strong className={styles.podiumName}>{item.name}</strong>
-                            <span className={styles.podiumAmount}>{formatCurrency(item.amount)}</span>
+                            <span className={styles.podiumAmount}>{formatLeaderboardValue(item)}</span>
                             <span className={styles.podiumStep}><span>{String(index + 1).padStart(2, '0')}</span></span>
                           </button>
                         )
@@ -937,7 +1029,7 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
                         >
                           <span className={styles.leaderboardRank}>{String(index + 4).padStart(2, '0')}</span>
                           <span className={styles.leaderboardName}>{item.name}</span>
-                          <strong className={styles.leaderboardAmount}>{formatCurrency(item.amount)}</strong>
+                          <strong className={styles.leaderboardAmount}>{formatLeaderboardValue(item)}</strong>
                         </button>
                       ))}
                     </div>
@@ -1259,8 +1351,8 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
       {selectedRanking ? (
         <div className={shellStyles.modalOverlay} onClick={() => setSelectedRanking(null)}>
           <div className={`${shellStyles.modalCard} ${styles.detailModal}`.trim()} onClick={(event) => event.stopPropagation()}>
-            <div className={styles.sectionHead}>
-              <div>
+            <div className={styles.detailHeaderRow}>
+              <div className={styles.detailIdentity}>
                 <p className={styles.sectionEyebrow}>User Detail</p>
                 <div className={styles.detailTitleRow}>
                   <h2 className={styles.sectionTitle}>{selectedRanking}</h2>
@@ -1270,60 +1362,61 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
                   </div>
                 </div>
               </div>
+              <div className={styles.detailInlineFilters}>
+                <div className={styles.field}>
+                  <label className={styles.detailFilterLabel}>Channel</label>
+                  <select
+                    className={styles.select}
+                    value={detailFilters.channel}
+                    onChange={(event) => setDetailFilters((prev) => ({ ...prev, channel: event.target.value }))}
+                  >
+                    <option value="ALL">All Channels</option>
+                    <option value="TIKTOK">TikTok</option>
+                    <option value="SHOPEE">Shopee</option>
+                  </select>
+                </div>
+
+                <div className={styles.field}>
+                  <label className={styles.detailFilterLabel}>Type</label>
+                  <select
+                    className={styles.select}
+                    value={detailFilters.type}
+                    onChange={(event) => setDetailFilters((prev) => ({
+                      ...prev,
+                      type: event.target.value,
+                      partner: event.target.value === 'PAIRING' ? prev.partner : 'ALL',
+                    }))}
+                  >
+                    <option value="ALL">All Types</option>
+                    <option value="STANDALONE">Standalone</option>
+                    <option value="PAIRING">Pairing</option>
+                  </select>
+                </div>
+
+                {detailFilters.type === 'PAIRING' ? (
+                  <div className={styles.field}>
+                    <label className={styles.detailFilterLabel}>Pairing With</label>
+                    <select
+                      className={styles.select}
+                      value={detailFilters.partner}
+                      onChange={(event) => setDetailFilters((prev) => ({ ...prev, partner: event.target.value }))}
+                    >
+                      <option value="ALL">All Partners</option>
+                      {detailPartnerOptions.map((partnerName) => (
+                        <option key={partnerName} value={partnerName}>{partnerName}</option>
+                      ))}
+                    </select>
+                  </div>
+                ) : null}
+              </div>
               <button type="button" className={styles.ghostButton} onClick={() => setSelectedRanking(null)}>
                 Close
               </button>
             </div>
 
-            <div className={styles.detailFilterGrid}>
+            <div className={styles.detailDateFilterRow}>
               <div className={styles.field}>
-                <label className={styles.label}>Channel</label>
-                <select
-                  className={styles.select}
-                  value={detailFilters.channel}
-                  onChange={(event) => setDetailFilters((prev) => ({ ...prev, channel: event.target.value }))}
-                >
-                  <option value="ALL">All Channels</option>
-                  <option value="TIKTOK">TikTok</option>
-                  <option value="SHOPEE">Shopee</option>
-                </select>
-              </div>
-
-              <div className={styles.field}>
-                <label className={styles.label}>Type</label>
-                <select
-                  className={styles.select}
-                  value={detailFilters.type}
-                  onChange={(event) => setDetailFilters((prev) => ({
-                    ...prev,
-                    type: event.target.value,
-                    partner: event.target.value === 'PAIRING' ? prev.partner : 'ALL',
-                  }))}
-                >
-                  <option value="ALL">All Types</option>
-                  <option value="STANDALONE">Standalone</option>
-                  <option value="PAIRING">Pairing</option>
-                </select>
-              </div>
-
-              {detailFilters.type === 'PAIRING' ? (
-                <div className={styles.field}>
-                  <label className={styles.label}>Pairing With</label>
-                  <select
-                    className={styles.select}
-                    value={detailFilters.partner}
-                    onChange={(event) => setDetailFilters((prev) => ({ ...prev, partner: event.target.value }))}
-                  >
-                    <option value="ALL">All Partners</option>
-                    {detailPartnerOptions.map((partnerName) => (
-                      <option key={partnerName} value={partnerName}>{partnerName}</option>
-                    ))}
-                  </select>
-                </div>
-              ) : null}
-
-              <div className={styles.field}>
-                <label className={styles.label}>Date From</label>
+                <label className={styles.detailFilterLabel}>Date From</label>
                 <input
                   type="date"
                   className={styles.input}
@@ -1334,7 +1427,7 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
               </div>
 
               <div className={styles.field}>
-                <label className={styles.label}>Date To</label>
+                <label className={styles.detailFilterLabel}>Date To</label>
                 <input
                   type="date"
                   className={styles.input}
@@ -1345,7 +1438,7 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
               </div>
 
               <div className={styles.field}>
-                <label className={styles.label}>Time From</label>
+                <label className={styles.detailFilterLabel}>Time From</label>
                 <input
                   type="time"
                   className={styles.input}
@@ -1355,7 +1448,7 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
               </div>
 
               <div className={styles.field}>
-                <label className={styles.label}>Time To</label>
+                <label className={styles.detailFilterLabel}>Time To</label>
                 <input
                   type="time"
                   className={styles.input}
