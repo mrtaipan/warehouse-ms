@@ -21,9 +21,13 @@ const STORAGE_STATIC_CACHE_TTL_MS = 5 * 60 * 1000
 const STORAGE_GROUP_FILTERS = ['ARKLINE', 'MOB', 'OI']
 const REJECT_GRADES = ['B', 'C']
 const REJECT_STORAGE_SELECT_COLUMNS = 'id, koli_number, product_name, size, category_id, sub_category_id, item_type_id, qty, grade, reject_note, status, posted_at, posted_by, created_by, created_at, updated_by, updated_at'
-const WAREHOUSE_STORAGE_BASE_SELECT_COLUMNS = 'id, rack_location_id, sku_id, item_name, size, qty, notes, created_at, updated_at'
+const TEMPORARY_SALES_SELECT_COLUMNS = 'id, source_warehouse_storage_id, source_pl_packing_item_id, source_variant_code, sku_id, item_name, size, group_code, source_location_label, qty_in_area, status, entered_at, due_at, created_by, created_at, updated_at'
+const STORAGE_MOVEMENT_SELECT_COLUMNS = 'id, warehouse_storage_id, temporary_sales_item_id, movement_type, qty, from_location_label, to_location_label, item_name, size, sku_id, created_by, created_at'
+const PUTAWAY_QUEUE_SELECT_COLUMNS = 'id, restock_request_id, source_storage_id, source_location_label, source_pl_packing_item_id, sku_id, source_variant_code, item_name, size, group_code, qty, target_rack_location_id, status, notes, created_at, created_by, stored_at, stored_by'
+const WAREHOUSE_STORAGE_BASE_SELECT_COLUMNS = 'id, rack_location_id, source_pl_packing_item_id, source_variant_code, sku_id, item_name, size, qty, notes, created_at, updated_at'
 const WAREHOUSE_STORAGE_CATEGORY_SELECT_COLUMNS = `${WAREHOUSE_STORAGE_BASE_SELECT_COLUMNS}, category_id`
 const WAREHOUSE_STORAGE_SELECT_COLUMNS = `${WAREHOUSE_STORAGE_CATEGORY_SELECT_COLUMNS}, brand_code`
+const WAREHOUSE_STORAGE_LEGACY_BASE_SELECT_COLUMNS = 'id, rack_location_id, sku_id, item_name, size, qty, notes, created_at, updated_at'
 const warehouseStorageCache = { rows: null, expiresAt: 0 }
 const staticStorageCache = new Map()
 const naturalSort = new Intl.Collator(undefined, {
@@ -534,7 +538,15 @@ async function fetchAllWarehouseStorage({ force = false } = {}) {
         throw categoryError
       }
 
-      return setWarehouseStorageCache(await loadRows(WAREHOUSE_STORAGE_BASE_SELECT_COLUMNS))
+      try {
+        return setWarehouseStorageCache(await loadRows(WAREHOUSE_STORAGE_BASE_SELECT_COLUMNS))
+      } catch (baseError) {
+        if (!isSchemaColumnError(baseError)) {
+          throw baseError
+        }
+
+        return setWarehouseStorageCache(await loadRows(WAREHOUSE_STORAGE_LEGACY_BASE_SELECT_COLUMNS))
+      }
     }
   }
 }
@@ -573,6 +585,41 @@ async function fetchAllRejectStorageRows() {
   }
 
   return rows
+}
+
+async function fetchTemporarySalesItems() {
+  const { data, error } = await supabase
+    .from('warehouse_temporary_sales_items')
+    .select(TEMPORARY_SALES_SELECT_COLUMNS)
+    .order('entered_at', { ascending: false })
+
+  if (error) {
+    if (isSchemaColumnError(error) || normalizeFilterValue(error?.message).includes('RELATION')) {
+      return []
+    }
+
+    throw error
+  }
+
+  return data || []
+}
+
+async function fetchStorageMovementHistory() {
+  const { data, error } = await supabase
+    .from('warehouse_storage_movements')
+    .select(STORAGE_MOVEMENT_SELECT_COLUMNS)
+    .order('created_at', { ascending: false })
+    .limit(500)
+
+  if (error) {
+    if (isSchemaColumnError(error) || normalizeFilterValue(error?.message).includes('RELATION')) {
+      return []
+    }
+
+    throw error
+  }
+
+  return data || []
 }
 
 async function fetchCategoryDirectory() {
@@ -618,6 +665,23 @@ async function fetchAllRestockHistory() {
     .limit(500)
 
   if (error) {
+    throw error
+  }
+
+  return data || []
+}
+
+async function fetchPutawayQueueRows() {
+  const { data, error } = await supabase
+    .from('warehouse_shelving_queue')
+    .select(PUTAWAY_QUEUE_SELECT_COLUMNS)
+    .order('created_at', { ascending: false })
+
+  if (error) {
+    if (isSchemaColumnError(error) || normalizeFilterValue(error?.message).includes('RELATION')) {
+      return []
+    }
+
     throw error
   }
 
@@ -873,7 +937,7 @@ async function getCurrentUserEmail() {
 export default function StorageOverviewPage() {
   const searchParams = useSearchParams()
   const initialMode = String(searchParams.get('mode') || '').trim().toLowerCase()
-  const initialListMode = ['history', 'queue', 'temporary-sales', 'product-directory', 'reject-storage'].includes(initialMode) ? initialMode : 'stock'
+  const initialListMode = ['history', 'queue', 'temporary-sales', 'putaway-queue', 'product-directory', 'reject-storage'].includes(initialMode) ? initialMode : 'stock'
   const initialRegisterOpen = searchParams.get('register') === '1'
   const initialProductSearch = String(searchParams.get('q') || searchParams.get('search') || '').trim().toUpperCase()
   const [rackLocations, setRackLocations] = useState([])
@@ -881,6 +945,9 @@ export default function StorageOverviewPage() {
   const [rejectStorageRows, setRejectStorageRows] = useState([])
   const [restockHistoryRows, setRestockHistoryRows] = useState([])
   const [storageQueueRows, setStorageQueueRows] = useState([])
+  const [temporarySalesRows, setTemporarySalesRows] = useState([])
+  const [putawayQueueRows, setPutawayQueueRows] = useState([])
+  const [storageMovementRows, setStorageMovementRows] = useState([])
   const [inboundRows, setInboundRows] = useState([])
   const [arklineProducts, setArklineProducts] = useState([])
   const [brandRows, setBrandRows] = useState([])
@@ -908,6 +975,17 @@ export default function StorageOverviewPage() {
   const [categoryModalEntries, setCategoryModalEntries] = useState([])
   const [rejectModalEntry, setRejectModalEntry] = useState(null)
   const [queueModalEntry, setQueueModalEntry] = useState(null)
+  const [queueModalEntries, setQueueModalEntries] = useState([])
+  const [temporaryStoreModalRows, setTemporaryStoreModalRows] = useState([])
+  const [temporaryStoreQtys, setTemporaryStoreQtys] = useState({})
+  const [temporaryStoreForm, setTemporaryStoreForm] = useState({ locationType: 'PALLET', locationId: '', locationCode: '', subLocation: '', notes: '' })
+  const [temporaryStoreError, setTemporaryStoreError] = useState('')
+  const [temporaryStoreConfirmOpen, setTemporaryStoreConfirmOpen] = useState(false)
+  const [storingTemporarySales, setStoringTemporarySales] = useState(false)
+  const [putawayModalEntry, setPutawayModalEntry] = useState(null)
+  const [putawayForm, setPutawayForm] = useState({ locationId: '', locationCode: '', subLocation: '', notes: '' })
+  const [putawayError, setPutawayError] = useState('')
+  const [storingPutaway, setStoringPutaway] = useState(false)
   const [isRejectModalOpen, setIsRejectModalOpen] = useState(false)
   const [isRegisterModalOpen, setIsRegisterModalOpen] = useState(initialRegisterOpen)
   const [isRegisterLocationCodeMenuOpen, setIsRegisterLocationCodeMenuOpen] = useState(false)
@@ -921,6 +999,9 @@ export default function StorageOverviewPage() {
   const [queuePage, setQueuePage] = useState(1)
   const [rejectPage, setRejectPage] = useState(1)
   const [selectedCategoryRowIds, setSelectedCategoryRowIds] = useState([])
+  const [selectedQueueKeys, setSelectedQueueKeys] = useState([])
+  const [selectedTemporarySourceIds, setSelectedTemporarySourceIds] = useState([])
+  const [selectedTemporarySalesIds, setSelectedTemporarySalesIds] = useState([])
   const [selectedRejectKoliNumbers, setSelectedRejectKoliNumbers] = useState([])
   const [expandedRejectKoliNumbers, setExpandedRejectKoliNumbers] = useState([])
   const [productSearch, setProductSearch] = useState(initialProductSearch)
@@ -932,7 +1013,7 @@ export default function StorageOverviewPage() {
     grn: '',
   })
   const [temporarySalesSearch, setTemporarySalesSearch] = useState('')
-  const [temporarySalesStatus, setTemporarySalesStatus] = useState('all')
+  const [temporarySalesStatus, setTemporarySalesStatus] = useState('')
   const [takeForm, setTakeForm] = useState({
     takeOutAll: false,
     qty: '',
@@ -993,12 +1074,15 @@ export default function StorageOverviewPage() {
     }
 
     try {
-      const [rackData, storageData, rejectRows, restockRows, queueRows, breakdownRows, variantRows, inboundData, arklineProductRows, brandData, categoryData, profileRows] = await Promise.all([
+      const [rackData, storageData, rejectRows, restockRows, queueRows, temporaryRows, movementRows, putawayRows, breakdownRows, variantRows, inboundData, arklineProductRows, brandData, categoryData, profileRows] = await Promise.all([
         fetchAllRackLocations(),
         fetchAllWarehouseStorage({ force: forceStorage }),
         fetchAllRejectStorageRows(),
         fetchAllRestockHistory(),
         fetchAllStorageQueueRows(),
+        fetchTemporarySalesItems(),
+        fetchStorageMovementHistory(),
+        fetchPutawayQueueRows(),
         fetchAllPlSizeBreakdownRows(),
         fetchAllProductVariantRows(),
         fetchInboundSummaries(),
@@ -1046,6 +1130,9 @@ export default function StorageOverviewPage() {
       setRejectStorageRows(rejectRows || [])
       setRestockHistoryRows(restockRows || [])
       setStorageQueueRows(normalizedQueueRows)
+      setTemporarySalesRows(temporaryRows || [])
+      setPutawayQueueRows(putawayRows || [])
+      setStorageMovementRows(movementRows || [])
       setInboundRows(inboundData || [])
       setArklineProducts(arklineProductRows || [])
       setBrandRows(brandData || [])
@@ -1207,6 +1294,7 @@ export default function StorageOverviewPage() {
   const canTakeStorageItem = Boolean(storageAccess.locationEdit)
   const canMoveStorageItem = Boolean(storageAccess.locationEdit)
   const canCategorizeStorageItem = Boolean(storageAccess.categoryManage)
+  const canSelectCurrentStockRows = canTakeStorageItem || canCategorizeStorageItem
   const canStoreQueueItem = Boolean(storageAccess.queueEdit)
   const canManageProductDirectory = Boolean(storageAccess.productDirectoryAdd || storageAccess.productDirectoryEdit)
   const canViewShelvingUpload = Boolean(storageAccess.shelvingUpload)
@@ -1217,11 +1305,13 @@ export default function StorageOverviewPage() {
   const canAddRejectStorage = Boolean(storageAccess.rejectStorageAdd || storageAccess.locationAdd)
   const canEditRejectStorage = Boolean(storageAccess.rejectStorageEdit || storageAccess.locationEdit || storageAccess.locationAdd)
   const rejectToolbarButtonCount = (canAddRejectStorage ? 1 : 0) + (canEditRejectStorage ? 1 : 0) + 2
+  const queueToolbarActionCount = (canStoreQueueItem ? 1 : 0) + (canTakeStorageItem ? 1 : 0)
   const storageLocationTabItems = useMemo(
     () => [
       storageAccess.location ? ['stock', 'Current Stock'] : null,
       storageAccess.queue ? ['queue', 'Storage Queue'] : null,
-      storageAccess.queue ? ['temporary-sales', 'Temporary Sales'] : null,
+      storageAccess.queue ? ['temporary-sales', 'Temp. Sales Area'] : null,
+      storageAccess.queue ? ['putaway-queue', 'Shelving Queue'] : null,
       canViewRejectStorage ? ['reject-storage', 'Reject Storage'] : null,
     ].filter(Boolean),
     [canViewRejectStorage, storageAccess.location, storageAccess.queue]
@@ -1662,6 +1752,54 @@ export default function StorageOverviewPage() {
   const selectedQueueLocation = queueSubLocationOptions.find(
     (item) => item.sub_location === queueForm.subLocation
   )
+  const temporaryStoreEligibleRackLocations = scopedRackLocations.filter(
+    (item) => item.location_type === temporaryStoreForm.locationType
+  )
+  const temporaryStoreLocationIdOptions = Array.from(
+    new Set(temporaryStoreEligibleRackLocations.map((item) => String(item.location_id || '')).filter(Boolean))
+  ).sort((left, right) => naturalSort.compare(left, right))
+  const temporaryStoreLocationCodeOptions = Array.from(
+    new Set(
+      temporaryStoreEligibleRackLocations
+        .filter((item) => String(item.location_id) === temporaryStoreForm.locationId)
+        .map((item) => item.location_code)
+        .filter(Boolean)
+    )
+  ).sort((left, right) => naturalSort.compare(String(left), String(right)))
+  const temporaryStoreSubLocationOptions = temporaryStoreEligibleRackLocations
+    .filter(
+      (item) =>
+        String(item.location_id) === temporaryStoreForm.locationId &&
+        item.location_code === temporaryStoreForm.locationCode
+    )
+    .sort((left, right) => naturalSort.compare(String(left.sub_location), String(right.sub_location)))
+  const selectedTemporaryStoreLocation = temporaryStoreSubLocationOptions.find(
+    (item) => item.sub_location === temporaryStoreForm.subLocation
+  )
+
+  const putawayStorageGroup = normalizeFilterValue(putawayModalEntry?.group_code)
+  const putawayEligibleRackLocations = scopedRackLocations.filter((item) => {
+    if (normalizeFilterValue(item.location_type) !== 'SHELVING') return false
+    return !putawayStorageGroup || getLocationStorageGroup(item) === putawayStorageGroup
+  })
+  const putawayLocationIdOptions = Array.from(new Set(
+    putawayEligibleRackLocations.map((item) => String(item.location_id || '')).filter(Boolean)
+  )).sort((left, right) => naturalSort.compare(left, right))
+  const putawayLocationCodeOptions = Array.from(new Set(
+    putawayEligibleRackLocations
+      .filter((item) => String(item.location_id) === putawayForm.locationId)
+      .map((item) => item.location_code)
+      .filter(Boolean)
+  )).sort((left, right) => naturalSort.compare(String(left), String(right)))
+  const putawaySubLocationOptions = putawayEligibleRackLocations
+    .filter((item) => (
+      String(item.location_id) === putawayForm.locationId &&
+      item.location_code === putawayForm.locationCode
+    ))
+    .sort((left, right) => naturalSort.compare(String(left.sub_location), String(right.sub_location)))
+  const selectedPutawayLocation = putawaySubLocationOptions.find(
+    (item) => item.sub_location === putawayForm.subLocation
+  )
 
   const inboundById = useMemo(
     () => new Map(inboundRows.map((row) => [Number(row.id), row])),
@@ -1882,6 +2020,68 @@ export default function StorageOverviewPage() {
 
     return true
   })
+  const filteredTemporarySalesRows = temporarySalesRows.filter((entry) => {
+    if (normalizeFilterValue(entry.status) === 'COMPLETED') {
+      return false
+    }
+
+    if (normalizeFilterValue(entry.status) === 'RETURNED') {
+      const returnedAt = new Date(entry.updated_at || entry.entered_at || 0).getTime()
+      if (!returnedAt || returnedAt < Date.now() - 24 * 60 * 60 * 1000) {
+        return false
+      }
+    }
+
+    const normalizedSearch = normalizeFilterValue(temporarySalesSearch)
+    const normalizedStatus = normalizeFilterValue(temporarySalesStatus)
+    const dueAt = new Date(entry.due_at || 0).getTime()
+    const isDueSoon = dueAt > Date.now() && dueAt <= Date.now() + 24 * 60 * 60 * 1000
+    const isOverdue = dueAt > 0 && dueAt < Date.now() && normalizeFilterValue(entry.status) === 'IN_TEMPORARY_AREA'
+    const matchesSearch = !normalizedSearch || [entry.item_name, entry.sku_id, entry.size, entry.group_code, entry.source_location_label]
+      .map((value) => normalizeFilterValue(value))
+      .some((value) => value.includes(normalizedSearch))
+    const matchesStatus = !normalizedStatus || (
+      normalizedStatus === 'IN-AREA'
+        ? normalizeFilterValue(entry.status) === 'IN_TEMPORARY_AREA'
+        : normalizedStatus === 'DUE-SOON'
+        ? isDueSoon
+        : normalizedStatus === 'OVERDUE'
+          ? isOverdue
+          : normalizeFilterValue(entry.status) === normalizedStatus
+    )
+
+    return matchesSearch && matchesStatus
+  })
+  const filteredPutawayRows = putawayQueueRows.filter((entry) => {
+    if (normalizeFilterValue(entry.status) !== 'WAITING_PUTAWAY') return false
+    const normalizedSearch = normalizeFilterValue(productSearch)
+    if (!normalizedSearch) return true
+    return [entry.item_name, entry.sku_id, entry.size, entry.group_code, entry.source_location_label]
+      .map((value) => normalizeFilterValue(value))
+      .some((value) => value.includes(normalizedSearch))
+  })
+  const temporarySalesStats = useMemo(() => {
+    const rows = temporarySalesRows
+    return {
+      waiting: rows.filter((row) => normalizeFilterValue(row.status) === 'WAITING').length,
+      inArea: rows.filter((row) => normalizeFilterValue(row.status) === 'IN_TEMPORARY_AREA').length,
+      dueSoon: rows.filter((row) => {
+        const dueAt = new Date(row.due_at || 0).getTime()
+        return dueAt > Date.now() && dueAt <= Date.now() + 24 * 60 * 60 * 1000
+      }).length,
+      overdue: rows.filter((row) => {
+        const dueAt = new Date(row.due_at || 0).getTime()
+        return dueAt > 0 && dueAt < Date.now() && normalizeFilterValue(row.status) === 'IN_TEMPORARY_AREA'
+      }).length,
+    }
+  }, [temporarySalesRows])
+  const selectableTemporarySalesRows = filteredTemporarySalesRows.filter(
+    (row) => normalizeFilterValue(row.status) === 'IN_TEMPORARY_AREA'
+  )
+  const selectableTemporarySalesIds = selectableTemporarySalesRows.map((row) => String(row.id))
+  const allVisibleTemporarySalesSelected =
+    selectableTemporarySalesIds.length > 0 &&
+    selectableTemporarySalesIds.every((id) => selectedTemporarySalesIds.includes(id))
   const filteredRejectRows = rejectStorageRows
     .filter((entry) => {
       const normalizedProductSearch = normalizeFilterValue(productSearch)
@@ -1980,6 +2180,15 @@ export default function StorageOverviewPage() {
   const stockPageStartIndex = (safeStockPage - 1) * STOCK_PAGE_SIZE
   const stockPageEndIndex = Math.min(stockPageStartIndex + STOCK_PAGE_SIZE, filteredRows.length)
   const visibleStockRows = filteredRows.slice(stockPageStartIndex, stockPageStartIndex + STOCK_PAGE_SIZE)
+  const selectedTemporarySourceIdSet = useMemo(
+    () => new Set(selectedTemporarySourceIds.map((id) => String(id))),
+    [selectedTemporarySourceIds]
+  )
+  const visibleTemporarySourceIds = visibleStockRows.map((entry) => String(entry.id))
+  const allVisibleTemporarySourcesSelected =
+    visibleTemporarySourceIds.length > 0 &&
+    visibleTemporarySourceIds.every((id) => selectedTemporarySourceIdSet.has(id))
+  const allVisibleCurrentStockRowsSelected = allVisibleTemporarySourcesSelected
   const selectedCategoryRowIdSet = useMemo(
     () => new Set(selectedCategoryRowIds.map((id) => String(id))),
     [selectedCategoryRowIds]
@@ -1998,6 +2207,15 @@ export default function StorageOverviewPage() {
   const queuePageStartIndex = (safeQueuePage - 1) * QUEUE_PAGE_SIZE
   const queuePageEndIndex = Math.min(queuePageStartIndex + QUEUE_PAGE_SIZE, filteredQueueRows.length)
   const visibleQueueRows = filteredQueueRows.slice(queuePageStartIndex, queuePageStartIndex + QUEUE_PAGE_SIZE)
+  const selectedQueueKeySet = useMemo(
+    () => new Set(selectedQueueKeys.map((key) => String(key))),
+    [selectedQueueKeys]
+  )
+  const selectedQueueEntries = queueGroups.filter((entry) => selectedQueueKeySet.has(String(entry.key)))
+  const visibleQueueKeys = visibleQueueRows.map((entry) => String(entry.key))
+  const allVisibleQueueSelected =
+    visibleQueueKeys.length > 0 &&
+    visibleQueueKeys.every((key) => selectedQueueKeySet.has(key))
   const totalRejectPages = Math.max(1, Math.ceil(rejectKoliGroups.length / REJECT_PAGE_SIZE))
   const safeRejectPage = Math.min(rejectPage, totalRejectPages)
   const rejectPageStartIndex = (safeRejectPage - 1) * REJECT_PAGE_SIZE
@@ -2186,6 +2404,260 @@ export default function StorageOverviewPage() {
       grn: '',
     })
     setQueuePage(1)
+  }
+
+  function toggleQueueSelection(queueKey, checked) {
+    const normalizedKey = String(queueKey || '').trim()
+    if (!normalizedKey) return
+
+    setSelectedQueueKeys((current) => {
+      const currentSet = new Set(current.map((value) => String(value)))
+
+      if (checked) {
+        currentSet.add(normalizedKey)
+      } else {
+        currentSet.delete(normalizedKey)
+      }
+
+      return Array.from(currentSet)
+    })
+  }
+
+  function toggleTemporarySourceSelection(id, checked) {
+    const normalizedId = String(id || '').trim()
+    if (!normalizedId) return
+
+    setSelectedTemporarySourceIds((current) => {
+      const next = new Set(current.map((value) => String(value)))
+      if (checked) next.add(normalizedId)
+      else next.delete(normalizedId)
+      return Array.from(next)
+    })
+    setSelectedCategoryRowIds((current) => {
+      const next = new Set(current.map((value) => String(value)))
+      if (checked) next.add(normalizedId)
+      else next.delete(normalizedId)
+      return Array.from(next)
+    })
+  }
+
+  function toggleVisibleTemporarySourceSelection(checked) {
+    setSelectedTemporarySourceIds((current) => {
+      const next = new Set(current.map((value) => String(value)))
+      visibleTemporarySourceIds.forEach((id) => (checked ? next.add(id) : next.delete(id)))
+      return Array.from(next)
+    })
+    setSelectedCategoryRowIds((current) => {
+      const next = new Set(current.map((value) => String(value)))
+      visibleTemporarySourceIds.forEach((id) => (checked ? next.add(id) : next.delete(id)))
+      return Array.from(next)
+    })
+  }
+
+  async function createTemporarySalesChecklist() {
+    if (!canTakeStorageItem) return
+
+    const stockEntries = storageRows.filter((entry) => selectedTemporarySourceIdSet.has(String(entry.id)))
+    const queueEntries = queueGroups.filter((entry) => selectedQueueKeySet.has(String(entry.key)))
+    const payload = [
+      ...stockEntries.map((entry) => ({
+        source_warehouse_storage_id: entry.id,
+        source_pl_packing_item_id: entry.source_pl_packing_item_id || null,
+        source_variant_code: entry.source_variant_code || entry.sku_id || null,
+        sku_id: entry.sku_id || null,
+        item_name: entry.item_name || 'Unknown item',
+        size: entry.size || null,
+        group_code: getLocationStorageGroup(entry.location) || null,
+        source_location_label: getLocationLabel(entry.location),
+        qty_in_area: Number(entry.qty || 0),
+        status: 'WAITING',
+        created_by: null,
+      })),
+      ...queueEntries.flatMap((entry) => (entry.items || []).map((item) => ({
+        source_warehouse_storage_id: null,
+        source_pl_packing_item_id: item.id || null,
+        source_variant_code: getQueueItemSku(item) || null,
+        sku_id: getQueueItemSku(item) || null,
+        item_name: getQueueItemName(item),
+        size: item.size_label || null,
+        group_code: normalizeFilterValue(entry.storing_type) || null,
+        source_location_label: `Storage Queue / ${getQueueKoliLabel(entry)}`,
+        qty_in_area: Number(item.qty || 0),
+        status: 'WAITING',
+        created_by: null,
+      }))),
+    ].filter((entry) => entry.qty_in_area > 0)
+
+    if (payload.length === 0) {
+      setError('Select at least one current stock row or storage queue koli first.')
+      return
+    }
+
+    const createdBy = await getCurrentUserEmail()
+    const { data, error: insertError } = await supabase
+      .from('warehouse_temporary_sales_items')
+      .insert(payload.map((entry) => ({ ...entry, created_by: createdBy })))
+      .select(TEMPORARY_SALES_SELECT_COLUMNS)
+
+    if (insertError) {
+      setError(insertError.message)
+      return
+    }
+
+    setTemporarySalesRows((current) => [...(data || []), ...current])
+    setSelectedTemporarySourceIds([])
+    setSelectedQueueKeys([])
+    setActiveListMode('temporary-sales')
+    setSuccess(`${payload.length} item row(s) added to Temporary Sales as Waiting.`)
+  }
+
+  async function handleTemporaryMoveOut(entry) {
+    if (!entry || normalizeFilterValue(entry.status) !== 'WAITING') return
+
+    const movedQty = Number(entry.qty_in_area || 0)
+    if (movedQty <= 0) return
+
+    setError('')
+    setSuccess('')
+    const createdBy = await getCurrentUserEmail()
+    const sourceStorage = storageEntries.find((row) => String(row.id) === String(entry.source_warehouse_storage_id))
+    const sourceLabel = sourceStorage?.location ? getLocationLabel(sourceStorage.location) : entry.source_location_label || 'Storage'
+
+    if (sourceStorage && Number(sourceStorage.qty || 0) < movedQty) {
+      setError('The available storage quantity is lower than the Temporary Sales quantity.')
+      return
+    }
+
+    if (sourceStorage) {
+      const remainingQty = Number(sourceStorage.qty || 0) - movedQty
+      const { error: storageError } = remainingQty === 0
+        ? await supabase.from('warehouse_storage').delete().eq('id', sourceStorage.id)
+        : await supabase.from('warehouse_storage').update({ qty: remainingQty, updated_by: createdBy }).eq('id', sourceStorage.id)
+
+      if (storageError) {
+        setError(storageError.message)
+        return
+      }
+
+      setStorageEntries((current) => remainingQty === 0
+        ? current.filter((row) => String(row.id) !== String(sourceStorage.id))
+        : current.map((row) => String(row.id) === String(sourceStorage.id) ? { ...row, qty: remainingQty } : row))
+    }
+
+    const { error: movementError } = await supabase.from('warehouse_storage_movements').insert({
+      warehouse_storage_id: sourceStorage?.id || null,
+      temporary_sales_item_id: entry.id,
+      movement_type: 'TEMPORARY_IN',
+      qty: movedQty,
+      from_location_label: sourceLabel,
+      to_location_label: 'Temporary Sales Area',
+      item_name: entry.item_name,
+      size: entry.size || null,
+      sku_id: entry.sku_id || null,
+      created_by: createdBy,
+    })
+
+    if (movementError) {
+      setError(movementError.message)
+      return
+    }
+
+    if (entry.source_pl_packing_item_id) {
+      const { error: queueStatusError } = await supabase
+        .from('pl_packing_items')
+        .update({ storage_status: 'released_without_stored' })
+        .eq('id', entry.source_pl_packing_item_id)
+
+      if (queueStatusError) {
+        setError(queueStatusError.message)
+        return
+      }
+
+      setStorageQueueRows((current) => current.filter((row) => String(row.id) !== String(entry.source_pl_packing_item_id)))
+    }
+
+    const { data: updatedRow, error: updateError } = await supabase
+      .from('warehouse_temporary_sales_items')
+      .update({
+        status: 'IN_TEMPORARY_AREA',
+        entered_at: new Date().toISOString(),
+        due_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', entry.id)
+      .select(TEMPORARY_SALES_SELECT_COLUMNS)
+      .single()
+
+    if (updateError) {
+      setError(updateError.message)
+      return
+    }
+
+    setTemporarySalesRows((current) => current.map((row) => String(row.id) === String(entry.id) ? updatedRow : row))
+    setStorageMovementRows((current) => [{
+      warehouse_storage_id: sourceStorage?.id || null,
+      temporary_sales_item_id: entry.id,
+      movement_type: 'TEMPORARY_IN',
+      qty: movedQty,
+      from_location_label: sourceLabel,
+      to_location_label: 'Temporary Sales Area',
+      item_name: entry.item_name,
+      size: entry.size || null,
+      sku_id: entry.sku_id || null,
+      created_by: createdBy,
+      id: `local-${Date.now()}`,
+      created_at: new Date().toISOString(),
+    }, ...current])
+    setSuccess('Item moved to Temporary Sales Area.')
+  }
+
+  async function handleTemporaryNotRequired(entry) {
+    if (!entry || normalizeFilterValue(entry.status) !== 'WAITING') return
+
+    const { data: updatedRow, error: updateError } = await supabase
+      .from('warehouse_temporary_sales_items')
+      .update({ status: 'NOT_REQUIRED', updated_at: new Date().toISOString() })
+      .eq('id', entry.id)
+      .select(TEMPORARY_SALES_SELECT_COLUMNS)
+      .single()
+
+    if (updateError) {
+      setError(updateError.message)
+      return
+    }
+
+    setTemporarySalesRows((current) => current.map((row) => String(row.id) === String(entry.id) ? updatedRow : row))
+    setSuccess('Item marked as Not Required. Storage quantity remains unchanged.')
+  }
+
+  function toggleTemporarySalesSelection(id, checked) {
+    const normalizedId = String(id || '').trim()
+    if (!normalizedId) return
+    const row = temporarySalesRows.find((entry) => String(entry.id) === normalizedId)
+    if (normalizeFilterValue(row?.status) !== 'IN_TEMPORARY_AREA') return
+
+    setSelectedTemporarySalesIds((current) => {
+      const next = new Set(current.map((value) => String(value)))
+      if (checked) next.add(normalizedId)
+      else next.delete(normalizedId)
+      return Array.from(next)
+    })
+  }
+
+  function toggleVisibleQueueSelection(checked) {
+    setSelectedQueueKeys((current) => {
+      const currentSet = new Set(current.map((value) => String(value)))
+
+      visibleQueueKeys.forEach((key) => {
+        if (checked) {
+          currentSet.add(key)
+        } else {
+          currentSet.delete(key)
+        }
+      })
+
+      return Array.from(currentSet)
+    })
   }
 
   function clearRejectFilters() {
@@ -2685,9 +3157,25 @@ export default function StorageOverviewPage() {
     setIsRegisterModalOpen(false)
   }
 
-  function openQueueModal(entry) {
+  function openSelectedQueueModal() {
     if (!canStoreQueueItem) return
-    setQueueModalEntry(entry)
+
+    if (selectedQueueEntries.length === 0) {
+      setError('Select at least one storage queue koli first.')
+      return
+    }
+
+    const selectedGroups = new Set(
+      selectedQueueEntries.map((entry) => normalizeFilterValue(entry.storing_type)).filter(Boolean)
+    )
+
+    if (selectedGroups.size > 1) {
+      setError('Select koli from one storage group at a time.')
+      return
+    }
+
+    setQueueModalEntry(selectedQueueEntries[0])
+    setQueueModalEntries(selectedQueueEntries)
     setQueueForm({
       locationType: 'PALLET',
       locationId: '',
@@ -2702,6 +3190,7 @@ export default function StorageOverviewPage() {
 
   function closeQueueModal() {
     setQueueModalEntry(null)
+    setQueueModalEntries([])
     setQueueModalError('')
     setQueueForm({
       locationType: 'PALLET',
@@ -2710,6 +3199,298 @@ export default function StorageOverviewPage() {
       subLocation: '',
       notes: '',
     })
+  }
+
+  function openPutawayModal(entry) {
+    if (!entry || !storageAccess.queueEdit) return
+    setPutawayModalEntry(entry)
+    setPutawayForm({ locationId: '', locationCode: '', subLocation: '', notes: entry.notes || '' })
+    setPutawayError('')
+    setError('')
+    setSuccess('')
+  }
+
+  function closePutawayModal() {
+    setPutawayModalEntry(null)
+    setPutawayForm({ locationId: '', locationCode: '', subLocation: '', notes: '' })
+    setPutawayError('')
+    setStoringPutaway(false)
+  }
+
+  function handlePutawayLocationChange(event) {
+    const { name, value } = event.target
+    setPutawayForm((current) => ({
+      ...current,
+      [name]: value,
+      ...(name === 'locationId' ? { locationCode: '', subLocation: '' } : {}),
+      ...(name === 'locationCode' ? { subLocation: '' } : {}),
+    }))
+  }
+
+  async function handlePutawaySubmit(event) {
+    event.preventDefault()
+    if (!putawayModalEntry || !selectedPutawayLocation || !storageAccess.queueEdit) return
+
+    setStoringPutaway(true)
+    setPutawayError('')
+
+    const storedBy = await getCurrentUserEmail()
+    const itemName = putawayModalEntry.item_name || '-'
+    const itemSize = normalizeSizeValue(putawayModalEntry.size) || null
+    const itemSku = putawayModalEntry.sku_id || putawayModalEntry.source_variant_code || null
+    const existingRow = storageEntries.find((row) => (
+      String(row.rack_location_id) === String(selectedPutawayLocation.id) &&
+      normalizeFilterValue(row.sku_id) === normalizeFilterValue(itemSku) &&
+      normalizeFilterValue(row.item_name) === normalizeFilterValue(itemName) &&
+      normalizeSizeValue(row.size) === normalizeSizeValue(itemSize)
+    ))
+
+    let storedRow = null
+    let storageError = null
+    if (existingRow) {
+      const result = await supabase
+        .from('warehouse_storage')
+        .update({
+          qty: Number(existingRow.qty || 0) + Number(putawayModalEntry.qty || 0),
+          updated_by: storedBy,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', existingRow.id)
+        .select(WAREHOUSE_STORAGE_SELECT_COLUMNS)
+        .single()
+      storedRow = result.data
+      storageError = result.error
+    } else {
+      const result = await supabase
+        .from('warehouse_storage')
+        .insert({
+          rack_location_id: selectedPutawayLocation.id,
+          source_pl_packing_item_id: putawayModalEntry.source_pl_packing_item_id || null,
+          source_variant_code: putawayModalEntry.source_variant_code || itemSku,
+          sku_id: itemSku,
+          item_name: itemName,
+          size: itemSize,
+          qty: Number(putawayModalEntry.qty || 0),
+          notes: putawayForm.notes.trim() || 'Stored from Restock Shelving Queue',
+          updated_by: storedBy,
+        })
+        .select(WAREHOUSE_STORAGE_SELECT_COLUMNS)
+        .single()
+      storedRow = result.data
+      storageError = result.error
+    }
+
+    if (storageError) {
+      setPutawayError(storageError.message)
+      setStoringPutaway(false)
+      return
+    }
+
+    const { error: movementError } = await supabase.from('warehouse_storage_movements').insert({
+      warehouse_storage_id: storedRow?.id || null,
+      movement_type: 'PUTAWAY_IN',
+      qty: Number(putawayModalEntry.qty || 0),
+      from_location_label: putawayModalEntry.source_location_label || 'Restock overage',
+      to_location_label: getLocationLabel(selectedPutawayLocation),
+      item_name: itemName,
+      size: itemSize,
+      sku_id: itemSku,
+      created_by: storedBy,
+    })
+
+    if (movementError) {
+      setPutawayError(movementError.message)
+      setStoringPutaway(false)
+      return
+    }
+
+    const { data: updatedPutaway, error: putawayUpdateError } = await supabase
+      .from('warehouse_shelving_queue')
+      .update({
+        status: 'STORED',
+        target_rack_location_id: selectedPutawayLocation.id,
+        stored_at: new Date().toISOString(),
+        stored_by: storedBy,
+        notes: putawayForm.notes.trim() || putawayModalEntry.notes || null,
+      })
+      .eq('id', putawayModalEntry.id)
+      .select(PUTAWAY_QUEUE_SELECT_COLUMNS)
+      .single()
+
+    if (putawayUpdateError) {
+      setPutawayError(putawayUpdateError.message)
+      setStoringPutaway(false)
+      return
+    }
+
+    setStorageEntries((currentRows) => mergeWarehouseStorageRows(currentRows, storedRow ? [storedRow] : []))
+    setPutawayQueueRows((currentRows) => currentRows.map((row) => (
+      String(row.id) === String(updatedPutaway.id) ? updatedPutaway : row
+    )))
+    setStorageMovementRows((currentRows) => [
+      {
+        id: `local-putaway-${Date.now()}`,
+        warehouse_storage_id: storedRow?.id || null,
+        movement_type: 'PUTAWAY_IN',
+        qty: Number(putawayModalEntry.qty || 0),
+        from_location_label: putawayModalEntry.source_location_label || 'Restock overage',
+        to_location_label: getLocationLabel(selectedPutawayLocation),
+        item_name: itemName,
+        size: itemSize,
+        sku_id: itemSku,
+        created_by: storedBy,
+        created_at: new Date().toISOString(),
+      },
+      ...currentRows,
+    ])
+    setSuccess('Putaway item stored successfully.')
+    setStoringPutaway(false)
+    closePutawayModal()
+  }
+
+  function openTemporaryStoreModal() {
+    if (!canStoreQueueItem || selectedTemporarySalesIds.length === 0) return
+
+    const rows = temporarySalesRows.filter((row) => selectedTemporarySalesIds.includes(String(row.id)))
+    setTemporaryStoreModalRows(rows)
+    setTemporaryStoreQtys(Object.fromEntries(rows.map((row) => [String(row.id), ''])))
+    setTemporaryStoreForm({ locationType: 'PALLET', locationId: '', locationCode: '', subLocation: '', notes: '' })
+    setTemporaryStoreError('')
+    setTemporaryStoreConfirmOpen(false)
+  }
+
+  function closeTemporaryStoreModal() {
+    setTemporaryStoreModalRows([])
+    setTemporaryStoreQtys({})
+    setTemporaryStoreError('')
+    setTemporaryStoreConfirmOpen(false)
+  }
+
+  function handleTemporaryStoreLocationChange(event) {
+    const { name, value } = event.target
+    setTemporaryStoreForm((current) => ({
+      ...current,
+      [name]: value,
+      ...(name === 'locationType' ? { locationId: '', locationCode: '', subLocation: '' } : {}),
+      ...(name === 'locationId' ? { locationCode: '', subLocation: '' } : {}),
+      ...(name === 'locationCode' ? { subLocation: '' } : {}),
+    }))
+  }
+
+  async function handleTemporaryStoreSubmit(event) {
+    event.preventDefault()
+    if (temporaryStoreModalRows.length === 0) return
+    if (!selectedTemporaryStoreLocation) {
+      setTemporaryStoreError('Please complete the destination location first.')
+      return
+    }
+
+    const entries = temporaryStoreModalRows.map((row) => ({
+      row,
+      qty: Number(temporaryStoreQtys[String(row.id)] || 0),
+    }))
+
+    if (entries.some(({ row, qty }) => qty <= 0 || qty > Number(row.qty_in_area || 0))) {
+      setTemporaryStoreError('Store quantity must be greater than 0 and cannot exceed the quantity in the temporary area.')
+      return
+    }
+
+    setTemporaryStoreConfirmOpen(true)
+  }
+
+  async function handleConfirmedTemporaryStore() {
+    if (!selectedTemporaryStoreLocation || temporaryStoreModalRows.length === 0) return
+
+    const entries = temporaryStoreModalRows.map((row) => ({
+      row,
+      qty: Number(temporaryStoreQtys[String(row.id)] || 0),
+    }))
+
+    if (entries.some(({ row, qty }) => qty <= 0 || qty > Number(row.qty_in_area || 0))) {
+      setTemporaryStoreError('Store quantity must be greater than 0 and cannot exceed the quantity in the temporary area.')
+      setTemporaryStoreConfirmOpen(false)
+      return
+    }
+
+    setStoringTemporarySales(true)
+    setTemporaryStoreError('')
+
+    const createdBy = await getCurrentUserEmail()
+    const destinationLabel = getLocationLabel(selectedTemporaryStoreLocation)
+    const storagePayload = entries.map(({ row, qty }) => ({
+      rack_location_id: selectedTemporaryStoreLocation.id,
+      sku_id: row.sku_id || null,
+      source_pl_packing_item_id: row.source_pl_packing_item_id || null,
+      source_variant_code: row.source_variant_code || row.sku_id || null,
+      item_name: row.item_name,
+      size: normalizeSizeValue(row.size) || null,
+      qty,
+      notes: temporaryStoreForm.notes.trim() || 'Returned from Temporary Sales Area',
+      updated_by: createdBy,
+    }))
+    const { data: insertedStorageRows, error: storageError } = await supabase
+      .from('warehouse_storage')
+      .insert(storagePayload)
+      .select(WAREHOUSE_STORAGE_SELECT_COLUMNS)
+
+    if (storageError) {
+      setTemporaryStoreError(storageError.message)
+      setStoringTemporarySales(false)
+      return
+    }
+
+    const movementPayload = entries.map(({ row, qty }, index) => ({
+      warehouse_storage_id: insertedStorageRows?.[index]?.id || null,
+      temporary_sales_item_id: row.id,
+      movement_type: 'TEMPORARY_RETURN',
+      qty,
+      from_location_label: 'Temporary Sales Area',
+      to_location_label: destinationLabel,
+      item_name: row.item_name,
+      size: row.size || null,
+      sku_id: row.sku_id || null,
+      created_by: createdBy,
+    }))
+    const { error: movementError } = await supabase.from('warehouse_storage_movements').insert(movementPayload)
+
+    if (movementError) {
+      const insertedIds = (insertedStorageRows || []).map((row) => row.id).filter(Boolean)
+      if (insertedIds.length) await supabase.from('warehouse_storage').delete().in('id', insertedIds)
+      setTemporaryStoreError(movementError.message)
+      setStoringTemporarySales(false)
+      return
+    }
+
+    const updatedRows = []
+    for (const { row, qty } of entries) {
+      const remainingQty = Math.max(0, Number(row.qty_in_area || 0) - qty)
+      const { data: updatedRow, error: updateError } = await supabase
+        .from('warehouse_temporary_sales_items')
+        .update({
+          qty_in_area: remainingQty,
+          status: remainingQty === 0 ? 'RETURNED' : 'IN_TEMPORARY_AREA',
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', row.id)
+        .select(TEMPORARY_SALES_SELECT_COLUMNS)
+        .single()
+
+      if (updateError) {
+        setTemporaryStoreError(updateError.message)
+        setStoringTemporarySales(false)
+        return
+      }
+
+      updatedRows.push(updatedRow)
+    }
+
+    setStorageEntries((current) => mergeWarehouseStorageRows(current, insertedStorageRows || []))
+    setTemporarySalesRows((current) => current.map((row) => updatedRows.find((next) => String(next.id) === String(row.id)) || row))
+    setStorageMovementRows((current) => [...movementPayload.map((row, index) => ({ ...row, id: `local-${Date.now()}-${index}`, created_at: new Date().toISOString() })), ...current])
+    setSelectedTemporarySalesIds((current) => current.filter((id) => !entries.some(({ row }) => String(row.id) === String(id))))
+    setSuccess('Temporary Sales items stored back successfully.')
+    setStoringTemporarySales(false)
+    closeTemporaryStoreModal()
   }
 
   function openTakeModal(entry) {
@@ -3229,7 +4010,13 @@ export default function StorageOverviewPage() {
 
     if (!canStoreQueueItem) return
 
-    if (!queueModalEntry) {
+    const queueEntries = queueModalEntries.length > 0
+      ? queueModalEntries
+      : queueModalEntry
+        ? [queueModalEntry]
+        : []
+
+    if (queueEntries.length === 0) {
       return
     }
 
@@ -3244,8 +4031,10 @@ export default function StorageOverviewPage() {
       return
     }
 
-    const queueItems = (queueModalEntry.items || []).filter((item) => Number(item.qty || 0) > 0)
-    const queueQty = Number(queueModalEntry.totalQty || 0)
+    const queueItems = queueEntries
+      .flatMap((entry) => entry.items || [])
+      .filter((item) => Number(item.qty || 0) > 0)
+    const queueQty = queueEntries.reduce((sum, entry) => sum + Number(entry.totalQty || 0), 0)
 
     if (!queueItems.length || queueQty <= 0) {
       setQueueModalError('Queue item quantity must be greater than 0.')
@@ -3256,13 +4045,19 @@ export default function StorageOverviewPage() {
     const storedBy = await getCurrentUserEmail()
     const inbound = inboundById.get(Number(queueModalEntry.inbound_id))
     const grnNumber = inbound?.grn_number || ''
+    const queueEntryByItemId = new Map(
+      queueEntries.flatMap((entry) => (entry.items || []).map((item) => [String(item.id), entry]))
+    )
     const storagePayload = queueItems.map((item) => {
       const itemSku = getQueueItemSku(item)
-      const sourceNote = `Stored from ${getQueueKoliLabel(queueModalEntry)}${itemSku ? ` / SKU ${itemSku}` : ''}`
+      const sourceEntry = queueEntryByItemId.get(String(item.id)) || queueEntries[0]
+      const sourceNote = `Stored from ${getQueueKoliLabel(sourceEntry)}${itemSku ? ` / SKU ${itemSku}` : ''}`
       const userNote = queueForm.notes.trim()
 
       return {
         rack_location_id: selectedQueueLocation.id,
+        source_pl_packing_item_id: sourceEntry.items?.find((sourceItem) => String(sourceItem.id) === String(item.id))?.id || item.id || null,
+        source_variant_code: itemSku || null,
         sku_id: itemSku || null,
         item_name: formatStoredQueueItemName(getQueueItemName(item), grnNumber),
         size: normalizeSizeValue(item.size_label) || null,
@@ -3305,7 +4100,8 @@ export default function StorageOverviewPage() {
     const storedQueueIds = new Set(queueItems.map((item) => String(item.id)))
     setStorageEntries((currentRows) => mergeWarehouseStorageRows(currentRows, insertedRows || []))
     setStorageQueueRows((currentRows) => currentRows.filter((row) => !storedQueueIds.has(String(row.id))))
-    setSuccess(`${getQueueKoliLabel(queueModalEntry)} stored successfully.`)
+    setSelectedQueueKeys((current) => current.filter((key) => !queueEntries.some((entry) => String(entry.key) === String(key))))
+    setSuccess(`${queueEntries.length} ${queueEntries.length === 1 ? 'koli' : 'koli'} stored successfully.`)
     setStoringQueue(false)
     closeQueueModal()
   }
@@ -3382,6 +4178,25 @@ export default function StorageOverviewPage() {
       }
     }
 
+    const updatedBy = await getCurrentUserEmail()
+    const { error: movementError } = await supabase.from('warehouse_storage_movements').insert({
+      warehouse_storage_id: takeModalEntry.id,
+      movement_type: 'TAKE_OUT',
+      qty: takeQty,
+      from_location_label: takeModalEntry.location ? getLocationLabel(takeModalEntry.location) : null,
+      to_location_label: 'Outbound',
+      item_name: takeModalEntry.item_name || null,
+      size: takeModalEntry.size || null,
+      sku_id: takeModalEntry.sku_id || null,
+      created_by: updatedBy,
+    })
+
+    if (movementError) {
+      setTakeModalError(movementError.message)
+      setTaking(false)
+      return
+    }
+
     setStorageEntries((currentRows) => {
       const nextRows =
         takeQty === currentQty
@@ -3394,6 +4209,19 @@ export default function StorageOverviewPage() {
 
       return setWarehouseStorageCache(nextRows)
     })
+    setStorageMovementRows((current) => [{
+      warehouse_storage_id: takeModalEntry.id,
+      movement_type: 'TAKE_OUT',
+      qty: takeQty,
+      from_location_label: takeModalEntry.location ? getLocationLabel(takeModalEntry.location) : null,
+      to_location_label: 'Outbound',
+      item_name: takeModalEntry.item_name || null,
+      size: takeModalEntry.size || null,
+      sku_id: takeModalEntry.sku_id || null,
+      created_by: updatedBy,
+      id: `local-${Date.now()}`,
+      created_at: new Date().toISOString(),
+    }, ...current])
     setSuccess('Storage quantity updated successfully.')
     setTaking(false)
     closeTakeModal()
@@ -3520,6 +4348,28 @@ export default function StorageOverviewPage() {
       return
     }
 
+    const { error: movementError } = await supabase.from('warehouse_storage_movements').insert({
+      warehouse_storage_id: moveModalEntry.id,
+      movement_type: 'MOVE',
+      qty: Number(moveModalEntry.qty || 0),
+      from_location_label: moveModalEntry.location ? getLocationLabel(moveModalEntry.location) : null,
+      to_location_label: getLocationLabel(selectedMoveLocation),
+      item_name: moveModalEntry.item_name || null,
+      size: moveModalEntry.size || null,
+      sku_id: moveModalEntry.sku_id || null,
+      created_by: updatedBy,
+    })
+
+    if (movementError) {
+      await supabase
+        .from('warehouse_storage')
+        .update({ rack_location_id: moveModalEntry.rack_location_id, updated_by: updatedBy, updated_at: new Date().toISOString() })
+        .eq('id', moveModalEntry.id)
+      setMoveModalError(movementError.message)
+      setMoving(false)
+      return
+    }
+
     setStorageEntries((currentRows) => {
       const nextRows = currentRows.map((row) => (
         String(row.id) === String(moveModalEntry.id)
@@ -3533,6 +4383,19 @@ export default function StorageOverviewPage() {
 
       return setWarehouseStorageCache(nextRows)
     })
+    setStorageMovementRows((current) => [{
+      warehouse_storage_id: moveModalEntry.id,
+      movement_type: 'MOVE',
+      qty: Number(moveModalEntry.qty || 0),
+      from_location_label: moveModalEntry.location ? getLocationLabel(moveModalEntry.location) : null,
+      to_location_label: getLocationLabel(selectedMoveLocation),
+      item_name: moveModalEntry.item_name || null,
+      size: moveModalEntry.size || null,
+      sku_id: moveModalEntry.sku_id || null,
+      created_by: updatedBy,
+      id: `local-${Date.now()}`,
+      created_at: new Date().toISOString(),
+    }, ...current])
     setSuccess('Storage item moved successfully.')
     setMoving(false)
     closeMoveModal()
@@ -3767,11 +4630,11 @@ export default function StorageOverviewPage() {
             {storageLocationTabItems.map(([mode, label]) => {
               const count = mode === 'queue'
                 ? queueGroups.length
-                : mode === 'temporary-sales'
-                  ? 0
-                  : mode === 'reject-storage'
-                    ? rejectKoliGroups.length
-                    : null
+                : mode === 'putaway-queue'
+                  ? filteredPutawayRows.length
+                : mode === 'reject-storage'
+                  ? rejectKoliGroups.length
+                  : null
 
               return (
                 <button
@@ -3816,25 +4679,16 @@ export default function StorageOverviewPage() {
           <>
         {visibleListMode === 'temporary-sales' ? (
           <div style={styles.temporarySalesShell}>
-            <div style={styles.temporarySalesHeader}>
-              <div>
-                <p style={styles.temporarySalesEyebrow}>Physical staging</p>
-                <h2 style={styles.temporarySalesTitle}>Temporary Sales Area</h2>
-                <p style={styles.temporarySalesSubtitle}>Track items waiting to leave storage and items due to return within seven days.</p>
-              </div>
-              <span style={styles.temporarySalesActiveBadge}>0 active item</span>
-            </div>
-
             <div
               style={isCompactLayout
                 ? { ...styles.temporarySalesKpiGrid, ...styles.temporarySalesKpiGridCompact }
                 : styles.temporarySalesKpiGrid}
             >
               {[
-                ['Waiting Action', 0, styles.temporarySalesKpiWaiting],
-                ['In Temporary Area', 0, styles.temporarySalesKpiActive],
-                ['Due Soon', 0, styles.temporarySalesKpiDue],
-                ['Overdue', 0, styles.temporarySalesKpiOverdue],
+                ['Waiting Action', temporarySalesStats.waiting, styles.temporarySalesKpiWaiting],
+                ['In Temporary Area', temporarySalesStats.inArea, styles.temporarySalesKpiActive],
+                ['Due Soon', temporarySalesStats.dueSoon, styles.temporarySalesKpiDue],
+                ['Overdue', temporarySalesStats.overdue, styles.temporarySalesKpiOverdue],
               ].map(([label, value, accentStyle]) => (
                 <div key={label} style={{ ...styles.temporarySalesKpiCard, ...accentStyle }}>
                   <span style={styles.temporarySalesKpiLabel}>{label}</span>
@@ -3857,20 +4711,19 @@ export default function StorageOverviewPage() {
                   placeholder="Search product, SKU, or source location"
                 />
               </div>
-              <div style={styles.field}>
-                <label style={styles.label}>Status</label>
-                <div style={styles.temporarySalesStatusToggle} aria-label="Temporary sales status filter">
-                  {[
-                    ['all', 'All'],
-                    ['waiting', 'Waiting'],
-                    ['in-area', 'In Area'],
-                    ['due-soon', 'Due Soon'],
-                    ['overdue', 'Overdue'],
-                  ].map(([value, label]) => (
+                <div style={styles.field}>
+                  <label style={styles.label}>Status</label>
+                  <div style={styles.temporarySalesStatusToggle} aria-label="Temporary sales status filter">
+                    {[
+                      ['waiting', 'Waiting'],
+                      ['in-area', 'In Area'],
+                      ['due-soon', 'Due Soon'],
+                      ['overdue', 'Overdue'],
+                    ].map(([value, label]) => (
                     <button
                       key={value}
                       type="button"
-                      onClick={() => setTemporarySalesStatus((current) => current === value && value !== 'all' ? 'all' : value)}
+                      onClick={() => setTemporarySalesStatus((current) => current === value ? '' : value)}
                       style={{
                         ...styles.temporarySalesStatusButton,
                         ...(temporarySalesStatus === value ? styles.temporarySalesStatusButtonActive : {}),
@@ -3887,7 +4740,7 @@ export default function StorageOverviewPage() {
                   type="button"
                   onClick={() => {
                     setTemporarySalesSearch('')
-                    setTemporarySalesStatus('all')
+                    setTemporarySalesStatus('')
                   }}
                   style={styles.iconResetButton}
                   title="Clear Temporary Sales Filters"
@@ -3901,13 +4754,35 @@ export default function StorageOverviewPage() {
                   </svg>
                 </button>
               </div>
+              <div style={styles.temporarySalesToolbarAction}>
+                <button
+                  type="button"
+                  onClick={openTemporaryStoreModal}
+                  style={{
+                    ...styles.iconAddButton,
+                    ...styles.iconActionButtonWithBadge,
+                    ...(selectedTemporarySalesIds.length === 0 ? styles.iconActionButtonDisabled : {}),
+                  }}
+                  title="Store selected temporary items"
+                  aria-label="Store selected temporary items"
+                  disabled={selectedTemporarySalesIds.length === 0}
+                >
+                  <span style={styles.storeEmoji} aria-hidden="true">🛒</span>
+                  {selectedTemporarySalesIds.length > 0 ? <span style={styles.actionBadge}>{selectedTemporarySalesIds.length}</span> : null}
+                </button>
+              </div>
             </div>
           </div>
         ) : (
         <div
           style={{
             ...styles.searchToolbar,
-            ...(visibleListMode === 'queue' ? styles.queueSearchToolbar : {}),
+            ...(visibleListMode === 'queue'
+              ? {
+                gridTemplateColumns: `minmax(280px, 1fr) repeat(${queueToolbarActionCount}, 44px) minmax(180px, 240px) minmax(200px, 280px) auto`,
+                gap: '4px',
+              }
+              : {}),
             ...(visibleListMode === 'stock'
               ? canRegisterStorageItem || canTakeStorageItem
                 ? styles.stockSearchToolbarWithAction
@@ -3919,6 +4794,11 @@ export default function StorageOverviewPage() {
             ...(isCompactLayout
               ? visibleListMode === 'reject-storage'
                 ? { gridTemplateColumns: `minmax(0, 1fr) repeat(${rejectToolbarButtonCount}, 44px)` }
+                : visibleListMode === 'queue'
+                  ? {
+                    gridTemplateColumns: `minmax(0, 1fr) repeat(${queueToolbarActionCount}, 44px) minmax(0, 1fr) minmax(0, 1fr) auto`,
+                    gap: '4px',
+                  }
                 : visibleListMode === 'stock'
                   ? styles.stockSearchToolbarCompact
                 : styles.searchToolbarCompact
@@ -3926,7 +4806,21 @@ export default function StorageOverviewPage() {
           }}
         >
           <div style={styles.field}>
-            <label style={styles.label}>{visibleListMode === 'reject-storage' ? 'Reject Search' : 'Product Search'}</label>
+            <div style={styles.searchLabelRow}>
+              <label style={styles.label}>{visibleListMode === 'reject-storage' ? 'Reject Search' : 'Product Search'}</label>
+              {visibleListMode === 'stock' ? (
+                <label style={styles.inlineUncategorizedControl}>
+                  <input
+                    type="checkbox"
+                    name="uncategorized"
+                    checked={filters.uncategorized}
+                    onChange={handleFilterChange}
+                    style={styles.rowCheckbox}
+                  />
+                  <span>Uncategorized</span>
+                </label>
+              ) : null}
+            </div>
             <input
               value={productSearch}
               onChange={(event) => {
@@ -3935,10 +4829,62 @@ export default function StorageOverviewPage() {
                 setQueuePage(1)
                 setRejectPage(1)
               }}
-              style={styles.input}
+              style={visibleListMode === 'queue' ? { ...styles.input, ...styles.compactFilterControl } : styles.input}
               placeholder={visibleListMode === 'reject-storage' ? 'Search koli, product, size, grade, or note' : 'Search product, GRN, or SKU'}
             />
           </div>
+          {visibleListMode === 'stock' ? (
+            <div style={styles.toolbarQtyField}>
+              <span style={styles.filteredQtyCard}>
+                <span style={styles.filteredQtyLabel}>Qty of filtered</span>
+                <strong style={styles.filteredQtyValue}>{filteredQty}</strong>
+              </span>
+            </div>
+          ) : null}
+          {visibleListMode === 'queue' && canStoreQueueItem ? (
+            <div style={styles.toolbarActionField}>
+              <button
+                type="button"
+                onClick={openSelectedQueueModal}
+                style={{
+                  ...styles.iconAddButton,
+                  ...styles.queueToolbarButton,
+                  ...styles.iconActionButtonWithBadge,
+                  ...(selectedQueueEntries.length === 0 ? styles.iconActionButtonDisabled : {}),
+                }}
+                title="Store selected queue koli"
+                aria-label="Store selected queue koli"
+                disabled={selectedQueueEntries.length === 0}
+              >
+                <span style={styles.storeEmoji} aria-hidden="true">🛒</span>
+                {selectedQueueEntries.length > 0 ? <span style={styles.actionBadge}>{selectedQueueEntries.length}</span> : null}
+              </button>
+            </div>
+          ) : null}
+          {visibleListMode === 'queue' && canTakeStorageItem ? (
+            <div style={styles.toolbarActionField}>
+              <button
+                type="button"
+                onClick={createTemporarySalesChecklist}
+                style={{
+                  ...styles.iconChecklistButton,
+                  ...styles.queueToolbarButton,
+                  ...(selectedQueueEntries.length === 0 ? styles.iconActionButtonDisabled : {}),
+                }}
+                title="Add selected queue items to Temporary Sales"
+                aria-label="Add selected queue items to Temporary Sales"
+                disabled={selectedQueueEntries.length === 0}
+              >
+                <svg viewBox="0 0 24 24" style={styles.resetIcon} aria-hidden="true">
+                  <path d="M8 3h8" />
+                  <path d="M9 3v3h6V3" />
+                  <path d="M6 5H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-1" />
+                  <path d="m7 12 2 2 4-4" />
+                  <path d="M7 17h8" />
+                </svg>
+              </button>
+            </div>
+          ) : null}
           {visibleListMode === 'queue' ? (
             <div style={styles.queueGroupField}>
               <label style={styles.label}>Group</label>
@@ -3976,7 +4922,7 @@ export default function StorageOverviewPage() {
                     handleQueueFilterChange('grn', '')
                   }
                 }}
-                style={styles.input}
+                style={{ ...styles.input, ...styles.compactFilterControl }}
                 list="queue-grn-options"
                 placeholder="Type or select a GRN"
               />
@@ -3989,7 +4935,7 @@ export default function StorageOverviewPage() {
           ) : null}
           {visibleListMode === 'queue' ? (
             <div style={styles.toolbarIconField}>
-              <button type="button" onClick={clearQueueFilters} style={styles.iconResetButton} title="Clear Queue Filters" aria-label="Clear Queue Filters">
+              <button type="button" onClick={clearQueueFilters} style={{ ...styles.iconResetButton, ...styles.queueToolbarButton }} title="Clear Queue Filters" aria-label="Clear Queue Filters">
                 <svg viewBox="0 0 24 24" style={styles.resetIcon} aria-hidden="true">
                   <path d="M3 12a9 9 0 0 1 15.4-6.4L21 8" />
                   <path d="M21 3v5h-5" />
@@ -4021,10 +4967,11 @@ export default function StorageOverviewPage() {
             <div style={styles.toolbarActionField}>
               <button
                 type="button"
-                onClick={() => setActiveListMode('temporary-sales')}
-                style={styles.iconChecklistButton}
-                title="Open Temporary Sales Checklist"
-                aria-label="Open Temporary Sales Checklist"
+                onClick={createTemporarySalesChecklist}
+                style={selectedTemporarySourceIds.length > 0 ? styles.iconChecklistButton : { ...styles.iconChecklistButton, ...styles.iconActionButtonDisabled }}
+                title="Add selected stock to Temporary Sales"
+                aria-label="Add selected stock to Temporary Sales"
+                disabled={selectedTemporarySourceIds.length === 0}
               >
                 <svg viewBox="0 0 24 24" style={styles.resetIcon} aria-hidden="true">
                   <path d="M8 3h8" />
@@ -4140,6 +5087,7 @@ export default function StorageOverviewPage() {
           style={{
             ...styles.filtersGrid,
             ...styles.stockFiltersGrid,
+            ...(filters.locationType ? {} : styles.stockFiltersGridAll),
             ...(isCompactLayout ? styles.filtersGridCompact : {}),
           }}
         >
@@ -4147,7 +5095,6 @@ export default function StorageOverviewPage() {
             <label style={styles.label}>Storage Type</label>
             <div style={styles.typeToggleGroup}>
               {[
-                ['', 'All'],
                 ['PALLET', 'Pallet'],
                 ['SHELVING', 'Shelving'],
               ].map(([option, label]) => (
@@ -4156,7 +5103,11 @@ export default function StorageOverviewPage() {
                   type="button"
                   onClick={() =>
                     handleFilterChange({
-                      target: { name: 'locationType', value: option, type: 'button' },
+                      target: {
+                        name: 'locationType',
+                        value: filters.locationType === option ? '' : option,
+                        type: 'button',
+                      },
                     })
                   }
                   style={{
@@ -4170,32 +5121,47 @@ export default function StorageOverviewPage() {
             </div>
           </div>
 
-          <div style={styles.field}>
+          <div style={{ ...styles.field, ...styles.compactFilterField }}>
             <label style={styles.label}>Group</label>
-            <select
-              name="groupCode"
-              value={filters.groupCode}
-              onChange={handleFilterChange}
-              style={lockedStorageGroup ? { ...styles.select, ...styles.controlDisabled } : styles.select}
-              disabled={Boolean(lockedStorageGroup)}
-            >
-              <option value="">All groups</option>
-              {(lockedStorageGroup ? [lockedStorageGroup] : STORAGE_GROUP_FILTERS).map((groupCode) => (
-                <option key={groupCode} value={groupCode}>
-                  {groupCode}
-                </option>
-              ))}
-            </select>
+            <div style={styles.storageGroupToggleGrid} aria-label="Current stock group filter">
+              {(lockedStorageGroup ? [lockedStorageGroup] : STORAGE_GROUP_FILTERS).map((groupCode) => {
+                const shortLabel = groupCode === 'ARKLINE' ? 'ARK' : groupCode
+                const isActive = normalizeFilterValue(filters.groupCode) === normalizeFilterValue(groupCode)
+
+                return (
+                  <button
+                    key={groupCode}
+                    type="button"
+                    disabled={Boolean(lockedStorageGroup)}
+                    onClick={() => handleFilterChange({
+                      target: {
+                        name: 'groupCode',
+                        value: groupCode,
+                        type: 'button',
+                      },
+                    })}
+                    style={{
+                      ...styles.storageGroupToggleButton,
+                      ...(isActive ? styles.storageGroupToggleButtonActive : {}),
+                      ...(lockedStorageGroup ? styles.storageGroupToggleButtonLocked : {}),
+                    }}
+                    aria-pressed={isActive}
+                  >
+                    {shortLabel}
+                  </button>
+                )
+              })}
+            </div>
           </div>
 
           {filters.locationType === 'PALLET' ? (
-            <div style={styles.field}>
+            <div style={{ ...styles.field, ...styles.compactFilterField }}>
               <label style={styles.label}>Warehouse Location</label>
               <select
                 name="locationId"
                 value={filters.locationId}
                 onChange={handleFilterChange}
-                style={styles.select}
+                style={{ ...styles.select, ...styles.compactFilterControl }}
               >
                 <option value="">All Warehouses</option>
                 {warehouseLocationOptions.map((option) => (
@@ -4208,14 +5174,14 @@ export default function StorageOverviewPage() {
           ) : null}
 
           {filters.locationType === 'PALLET' ? (
-            <div style={styles.field}>
+            <div style={{ ...styles.field, ...styles.compactFilterField }}>
               <label style={styles.label}>Pallet Number</label>
               <input
                 name="locationCode"
                 value={filters.locationCode}
                 onChange={handleFilterChange}
                 onClick={() => clearFilterOnFilledClick('locationCode')}
-                style={styles.input}
+                style={{ ...styles.input, ...styles.compactFilterControl }}
                 list="location-code-options"
                 placeholder="Type or select a pallet number"
               />
@@ -4226,13 +5192,13 @@ export default function StorageOverviewPage() {
               </datalist>
             </div>
           ) : filters.locationType === 'SHELVING' ? (
-            <div style={styles.field}>
+            <div style={{ ...styles.field, ...styles.compactFilterField }}>
               <label style={styles.label}>Shelving Location Name</label>
               <input
                 name="locationName"
                 value={filters.locationName}
                 onChange={handleFilterChange}
-                style={styles.input}
+                style={{ ...styles.input, ...styles.compactFilterControl }}
                 list="location-name-options"
                 placeholder="Type or select a shelving location name"
               />
@@ -4245,14 +5211,14 @@ export default function StorageOverviewPage() {
           ) : null}
 
           {filters.locationType === 'PALLET' ? (
-            <div style={styles.field}>
+            <div style={{ ...styles.field, ...styles.compactFilterField }}>
               <label style={styles.label}>Carton Number</label>
               <input
                 name="subLocation"
                 value={filters.subLocation}
                 onChange={handleFilterChange}
                 onClick={() => clearFilterOnFilledClick('subLocation')}
-                style={styles.input}
+                style={{ ...styles.input, ...styles.compactFilterControl }}
                 list="sub-location-options"
                 placeholder="Type or select a carton number"
               />
@@ -4264,14 +5230,14 @@ export default function StorageOverviewPage() {
             </div>
           ) : null}
 
-          <div style={styles.field}>
+          <div style={{ ...styles.field, ...styles.compactFilterField, ...styles.sizeFilterField }}>
             <label style={styles.label}>Size</label>
             <input
               name="size"
               value={filters.size}
               onChange={handleFilterChange}
               onClick={() => clearFilterOnFilledClick('size')}
-              style={styles.input}
+              style={{ ...styles.input, ...styles.compactFilterControl }}
               list="size-filter-options"
               placeholder="Type or select a size"
             />
@@ -4282,13 +5248,15 @@ export default function StorageOverviewPage() {
             </datalist>
           </div>
 
-          <div style={styles.field}>
+          <div style={{ ...styles.field, ...styles.compactFilterField }}>
             <label style={styles.label}>Category</label>
             <select
               name="categoryId"
               value={filters.categoryId}
               onChange={handleFilterChange}
-              style={filters.uncategorized ? { ...styles.select, ...styles.controlDisabled } : styles.select}
+              style={filters.uncategorized
+                ? { ...styles.select, ...styles.compactFilterControl, ...styles.controlDisabled }
+                : { ...styles.select, ...styles.compactFilterControl }}
               disabled={filters.uncategorized}
             >
               <option value="">All categories</option>
@@ -4300,13 +5268,15 @@ export default function StorageOverviewPage() {
             </select>
           </div>
 
-          <div style={styles.field}>
+          <div style={{ ...styles.field, ...styles.compactFilterField }}>
             <label style={styles.label}>Sub Category</label>
             <select
               name="subCategoryId"
               value={filters.subCategoryId}
               onChange={handleFilterChange}
-              style={filters.uncategorized || stockSubCategoryOptions.length === 0 ? { ...styles.select, ...styles.controlDisabled } : styles.select}
+              style={filters.uncategorized || stockSubCategoryOptions.length === 0
+                ? { ...styles.select, ...styles.compactFilterControl, ...styles.controlDisabled }
+                : { ...styles.select, ...styles.compactFilterControl }}
               disabled={filters.uncategorized || stockSubCategoryOptions.length === 0}
             >
               <option value="">All sub categories</option>
@@ -4318,13 +5288,15 @@ export default function StorageOverviewPage() {
             </select>
           </div>
 
-          <div style={styles.field}>
+          <div style={{ ...styles.field, ...styles.compactFilterField }}>
             <label style={styles.label}>Item Type</label>
             <select
               name="itemTypeId"
               value={filters.itemTypeId}
               onChange={handleFilterChange}
-              style={filters.uncategorized || stockItemTypeOptions.length === 0 ? { ...styles.select, ...styles.controlDisabled } : styles.select}
+              style={filters.uncategorized || stockItemTypeOptions.length === 0
+                ? { ...styles.select, ...styles.compactFilterControl, ...styles.controlDisabled }
+                : { ...styles.select, ...styles.compactFilterControl }}
               disabled={filters.uncategorized || stockItemTypeOptions.length === 0}
             >
               <option value="">All item types</option>
@@ -4334,31 +5306,6 @@ export default function StorageOverviewPage() {
                 </option>
               ))}
             </select>
-          </div>
-
-          <div style={styles.field}>
-            <label style={styles.label}>Category Status</label>
-            <label
-              style={filters.uncategorized
-                ? { ...styles.uncategorizedFilterControl, ...styles.uncategorizedFilterControlActive }
-                : styles.uncategorizedFilterControl}
-            >
-              <input
-                type="checkbox"
-                name="uncategorized"
-                checked={filters.uncategorized}
-                onChange={handleFilterChange}
-                style={styles.rowCheckbox}
-              />
-              <span>Uncategorized</span>
-            </label>
-          </div>
-
-          <div style={isCompactLayout ? styles.toolbarQtyField : { ...styles.toolbarQtyField, gridColumn: '5' }}>
-            <span style={styles.filteredQtyCard}>
-              <span style={styles.filteredQtyLabel}>Qty of filtered</span>
-              <strong style={styles.filteredQtyValue}>{filteredQty}</strong>
-            </span>
           </div>
 
         </div>
@@ -4391,7 +5338,7 @@ export default function StorageOverviewPage() {
             </div>
           </>
         ) : visibleListMode === 'queue' ? (
-          <div style={styles.historyToolbar}>
+          <div style={{ ...styles.historyToolbar, ...styles.queueFooterToolbar }}>
             <p style={styles.summary}>
               Showing {filteredQueueRows.length ? queuePageStartIndex + 1 : 0}-{queuePageEndIndex} of {filteredQueueRows.length} storage queue koli
             </p>
@@ -4449,7 +5396,7 @@ export default function StorageOverviewPage() {
           </div>
         ) : visibleListMode === 'temporary-sales' ? (
           <div style={styles.historyToolbar}>
-            <p style={styles.summary}>Showing 0 temporary sales item record(s)</p>
+            <p style={styles.summary}>Showing {filteredTemporarySalesRows.length} temporary sales item record(s)</p>
           </div>
         ) : (
           <div style={styles.historyToolbar}>
@@ -4463,39 +5410,99 @@ export default function StorageOverviewPage() {
         {success ? <p style={styles.success}>{success}</p> : null}
 
         {visibleListMode === 'temporary-sales' ? (
-          <div style={styles.tableWrap}>
-            <table style={styles.temporarySalesTable}>
+          <div style={styles.temporarySalesTables}>
+            <div style={styles.tableWrap}>
+              <table style={styles.temporarySalesTable}>
               <thead>
                 <tr>
-                  <th style={styles.th}>Item</th>
-                  <th style={styles.th}>Size</th>
-                  <th style={styles.th}>Requested Qty</th>
-                  <th style={styles.th}>Source Location</th>
-                  <th style={styles.th}>Entered</th>
-                  <th style={styles.th}>Age</th>
-                  <th style={styles.th}>Status</th>
-                  <th style={{ ...styles.th, ...styles.actionTh }}>Action</th>
+                  <th style={{ ...styles.th, ...styles.temporarySalesTh, ...styles.selectTh }}>
+                    <input
+                      type="checkbox"
+                      checked={allVisibleTemporarySalesSelected}
+                      onChange={(event) => setSelectedTemporarySalesIds(event.target.checked ? selectableTemporarySalesIds : [])}
+                      style={styles.rowCheckbox}
+                      aria-label="Select temporary sales items already in area"
+                    />
+                  </th>
+                  <th style={{ ...styles.th, ...styles.temporarySalesTh }}>Item</th>
+                  <th style={{ ...styles.th, ...styles.temporarySalesTh }}>Size</th>
+                  <th style={{ ...styles.th, ...styles.temporarySalesTh }}>Qty in Area</th>
+                  <th style={{ ...styles.th, ...styles.temporarySalesTh }}>Source Location</th>
+                  <th style={{ ...styles.th, ...styles.temporarySalesTh }}>Entered</th>
+                  <th style={{ ...styles.th, ...styles.temporarySalesTh }}>Age</th>
+                  <th style={{ ...styles.th, ...styles.temporarySalesTh }}>Status</th>
+                  <th style={{ ...styles.th, ...styles.temporarySalesTh, ...styles.actionTh }}>Action</th>
                 </tr>
               </thead>
               <tbody>
-                <tr>
-                  <td colSpan={8} style={styles.temporarySalesEmptyCell}>
-                    <div style={styles.temporarySalesEmptyState}>
-                      <span style={styles.temporarySalesEmptyIcon} aria-hidden="true">
-                        <svg viewBox="0 0 24 24" style={styles.actionIcon}>
-                          <path d="M4 7h16" />
-                          <path d="M6 7v12h12V7" />
-                          <path d="M9 11h6" />
-                          <path d="M8 4h8l1 3H7l1-3Z" />
-                        </svg>
-                      </span>
-                      <strong>No temporary sales instructions yet</strong>
-                      <span>Items waiting for stockkeeping confirmation will appear here.</span>
-                    </div>
-                  </td>
-                </tr>
+                {filteredTemporarySalesRows.length > 0 ? filteredTemporarySalesRows.map((entry) => (
+                  <tr key={entry.id}>
+                    <td style={{ ...styles.td, ...styles.selectCell }}>
+                      {normalizeFilterValue(entry.status) === 'IN_TEMPORARY_AREA' ? (
+                        <input
+                          type="checkbox"
+                          checked={selectedTemporarySalesIds.includes(String(entry.id))}
+                          onChange={(event) => toggleTemporarySalesSelection(entry.id, event.target.checked)}
+                          style={styles.rowCheckbox}
+                          aria-label={`Select ${entry.item_name || 'temporary sales item'}`}
+                        />
+                      ) : null}
+                    </td>
+                    <td style={styles.temporarySalesValueCell}>{entry.sku_id ? `${entry.sku_id} | ` : ''}{entry.item_name || '-'}</td>
+                    <td style={styles.temporarySalesValueCell}>{entry.size || '-'}</td>
+                    <td style={styles.temporarySalesValueCell}>{Number(entry.qty_in_area || 0)}</td>
+                    <td style={styles.temporarySalesValueCell}>{entry.source_location_label || '-'}</td>
+                    <td style={styles.temporarySalesValueCell}>{formatDateTime(entry.entered_at)}</td>
+                    <td style={styles.temporarySalesValueCell}>{formatDateTime(entry.due_at)}</td>
+                    <td style={styles.temporarySalesValueCell}>{String(entry.status || '-').replaceAll('_', ' ')}</td>
+                    <td style={{ ...styles.td, ...styles.actionTd }}>
+                      <div style={styles.temporarySalesActionGroup}>
+                        {normalizeFilterValue(entry.status) === 'WAITING' ? (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => handleTemporaryMoveOut(entry)}
+                              style={{ ...styles.tableIconButton, ...styles.temporaryMoveOutButton }}
+                              title="Move item out to Temporary Sales Area"
+                              aria-label="Move item out to Temporary Sales Area"
+                            >
+                              <span aria-hidden="true">↗</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleTemporaryNotRequired(entry)}
+                              style={{ ...styles.tableIconButton, ...styles.tableIconButtonDanger }}
+                              title="Mark as not required"
+                              aria-label="Mark as not required"
+                            >
+                              <span aria-hidden="true">×</span>
+                            </button>
+                          </>
+                        ) : null}
+                      </div>
+                    </td>
+                  </tr>
+                )) : (
+                  <tr>
+                    <td colSpan={9} style={styles.temporarySalesEmptyCell}>
+                      <div style={styles.temporarySalesEmptyState}>
+                        <span style={styles.temporarySalesEmptyIcon} aria-hidden="true">
+                          <svg viewBox="0 0 24 24" style={styles.actionIcon}>
+                            <path d="M4 7h16" />
+                            <path d="M6 7v12h12V7" />
+                            <path d="M9 11h6" />
+                            <path d="M8 4h8l1 3H7l1-3Z" />
+                          </svg>
+                        </span>
+                        <strong>No temporary sales items yet</strong>
+                        <span>Selected items moved for sales staging will appear here.</span>
+                      </div>
+                    </td>
+                  </tr>
+                )}
               </tbody>
-            </table>
+              </table>
+            </div>
           </div>
         ) : null}
 
@@ -4508,14 +5515,14 @@ export default function StorageOverviewPage() {
             <table style={styles.table}>
               <thead>
                 <tr>
-                  {canCategorizeStorageItem ? (
+                  {canSelectCurrentStockRows ? (
                     <th style={{ ...styles.th, ...styles.selectTh }}>
                       <input
                         type="checkbox"
-                        checked={allVisibleCategoryRowsSelected}
-                        onChange={(event) => toggleVisibleCategoryRows(event.target.checked)}
+                        checked={allVisibleCurrentStockRowsSelected}
+                        onChange={(event) => toggleVisibleTemporarySourceSelection(event.target.checked)}
                         style={styles.rowCheckbox}
-                        aria-label="Select visible storage rows"
+                        aria-label="Select visible current stock rows"
                       />
                     </th>
                   ) : null}
@@ -4529,12 +5536,12 @@ export default function StorageOverviewPage() {
               <tbody>
                 {visibleStockRows.map((entry) => (
                   <tr key={entry.id}>
-                    {canCategorizeStorageItem ? (
+                    {canSelectCurrentStockRows ? (
                       <td style={{ ...styles.td, ...styles.selectTd }}>
                         <input
                           type="checkbox"
-                          checked={selectedCategoryRowIdSet.has(String(entry.id))}
-                          onChange={() => toggleCategoryRowSelection(entry.id)}
+                          checked={selectedTemporarySourceIdSet.has(String(entry.id))}
+                          onChange={(event) => toggleTemporarySourceSelection(entry.id, event.target.checked)}
                           style={styles.rowCheckbox}
                           aria-label={`Select ${getStorageItemDisplayName(entry)}`}
                         />
@@ -4618,6 +5625,17 @@ export default function StorageOverviewPage() {
             <table style={styles.table}>
               <thead>
                 <tr>
+                  {canStoreQueueItem || canTakeStorageItem ? (
+                    <th style={{ ...styles.th, ...styles.selectTh }}>
+                      <input
+                        type="checkbox"
+                        checked={allVisibleQueueSelected}
+                        onChange={(event) => toggleVisibleQueueSelection(event.target.checked)}
+                        style={styles.rowCheckbox}
+                        aria-label="Select visible storage queue koli"
+                      />
+                    </th>
+                  ) : null}
                   <th style={styles.th}>GRN</th>
                   <th style={styles.th}>Koli</th>
                   <th style={styles.th}>SKU</th>
@@ -4625,7 +5643,6 @@ export default function StorageOverviewPage() {
                   <th style={styles.th}>Size</th>
                   <th style={styles.th}>Total Qty</th>
                   <th style={styles.th}>Type</th>
-                  {canStoreQueueItem ? <th style={{ ...styles.th, ...styles.actionTh }}>Action</th> : null}
                 </tr>
               </thead>
               <tbody>
@@ -4634,6 +5651,17 @@ export default function StorageOverviewPage() {
 
                   return (
                     <tr key={entry.key}>
+                      {canStoreQueueItem || canTakeStorageItem ? (
+                        <td style={{ ...styles.td, ...styles.selectTd }}>
+                          <input
+                            type="checkbox"
+                            checked={selectedQueueKeySet.has(String(entry.key))}
+                            onChange={(event) => toggleQueueSelection(entry.key, event.target.checked)}
+                            style={styles.rowCheckbox}
+                            aria-label={`Select ${getQueueKoliLabel(entry)}`}
+                          />
+                        </td>
+                      ) : null}
                       <td style={styles.td}>{inbound?.grn_number || '-'}</td>
                       <td style={styles.td}>{getQueueKoliLabel(entry)}</td>
                       <td style={styles.td}>{getSkuList(entry.items).join(', ') || '-'}</td>
@@ -4641,20 +5669,56 @@ export default function StorageOverviewPage() {
                       <td style={styles.td}>{getQueueGroupSizeLabel(entry.items)}</td>
                       <td style={styles.td}>{entry.totalQty}</td>
                       <td style={styles.td}>{entry.storing_type || '-'}</td>
-                      {canStoreQueueItem ? (
-                        <td style={{ ...styles.td, ...styles.actionTd }}>
-                          <button
-                            type="button"
-                            onClick={() => openQueueModal(entry)}
-                            style={styles.queueStoreButton}
-                          >
-                            Store
-                          </button>
-                        </td>
-                      ) : null}
                     </tr>
                   )
                 })}
+              </tbody>
+            </table>
+          </div>
+        ) : null}
+
+        {visibleListMode === 'putaway-queue' ? filteredPutawayRows.length === 0 ? (
+          <div style={styles.emptyState}>
+            <p style={{ margin: 0 }}>No items are waiting in the Shelving Queue.</p>
+          </div>
+        ) : (
+          <div style={styles.tableWrap}>
+            <table style={styles.table}>
+              <thead>
+                <tr>
+                  <th style={styles.th}>Item</th>
+                  <th style={styles.th}>SKU</th>
+                  <th style={styles.th}>Size</th>
+                  <th style={styles.th}>Group</th>
+                  <th style={styles.th}>Qty</th>
+                  <th style={styles.th}>Source Location</th>
+                  <th style={{ ...styles.th, ...styles.actionTh }}>Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredPutawayRows.map((entry) => (
+                  <tr key={entry.id}>
+                    <td style={styles.td}>{getStorageItemDisplayName(entry)}</td>
+                    <td style={styles.td}>{entry.sku_id || entry.source_variant_code || '-'}</td>
+                    <td style={styles.td}>{entry.size || '-'}</td>
+                    <td style={styles.td}>{entry.group_code || '-'}</td>
+                    <td style={styles.td}>{entry.qty}</td>
+                    <td style={styles.td}>{entry.source_location_label || 'Location is not found'}</td>
+                    <td style={{ ...styles.td, ...styles.actionTd }}>
+                      {storageAccess.queueEdit ? (
+                        <button
+                          type="button"
+                          onClick={() => openPutawayModal(entry)}
+                          style={{ ...styles.tableIconButton, ...styles.tableIconButtonDark }}
+                          title="Store to shelving"
+                          aria-label="Store to shelving"
+                        >
+                          <span aria-hidden="true">🛒</span>
+                        </button>
+                      ) : null}
+                    </td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>
@@ -5088,7 +6152,7 @@ export default function StorageOverviewPage() {
                 </div>
 
                 <div style={styles.field}>
-                  <label style={styles.label}>Warehouse Location</label>
+                  <label style={styles.label}>{registerForm.locationType === 'SHELVING' ? 'Aisle Number' : 'Warehouse Location'}</label>
                   <select
                     name="locationId"
                     value={registerForm.locationId}
@@ -5107,7 +6171,7 @@ export default function StorageOverviewPage() {
                 </div>
 
                 <div style={styles.field}>
-                  <label style={styles.label}>Pallet/Shelving Number</label>
+                  <label style={styles.label}>{registerForm.locationType === 'SHELVING' ? 'Rack Number' : 'Pallet Number'}</label>
                   <div style={styles.typeaheadWrap} onBlur={handleRegisterLocationCodeBlur}>
                     <input
                       name="locationCode"
@@ -5142,7 +6206,7 @@ export default function StorageOverviewPage() {
                 </div>
 
                 <div style={styles.field}>
-                  <label style={styles.label}>{isRegisterArklineLocation ? 'ARKLINE Level' : 'Carton Number'}</label>
+                  <label style={styles.label}>{isRegisterArklineLocation ? 'ARKLINE Level' : registerForm.locationType === 'SHELVING' ? 'Level' : 'Carton Number'}</label>
                   <select
                     name="subLocation"
                     value={isRegisterArklineLocation ? '' : registerForm.subLocation}
@@ -5367,6 +6431,85 @@ export default function StorageOverviewPage() {
         </div>
       ) : null}
 
+      {putawayModalEntry && storageAccess.queueEdit ? (
+        <div style={styles.modalOverlay}>
+          <div style={styles.modalCardWide}>
+            <div style={styles.modalHeader}>
+              <div style={styles.modalTitleGroup}>
+                <p style={styles.modalEyebrow}>Shelving</p>
+                <h2 style={styles.modalTitle}>Store Shelving Queue Item</h2>
+              </div>
+              <div style={styles.modalHeaderActions}>
+                <button type="button" onClick={closePutawayModal} style={styles.modalCancelButton}>Cancel</button>
+                <button type="submit" form="putaway-storage-form" style={styles.registerButton} disabled={storingPutaway}>
+                  {storingPutaway ? 'Saving...' : 'Store'}
+                </button>
+              </div>
+            </div>
+
+            <div style={styles.selectedLocationBox}>
+              <span style={styles.selectedLocationLabel}>Putaway Quantity</span>
+              <strong style={styles.selectedLocationValue}>{putawayModalEntry.qty} pcs</strong>
+              <span style={styles.cellMeta}>{getStorageItemDisplayName(putawayModalEntry)} / Size {putawayModalEntry.size || '-'}</span>
+            </div>
+
+            {putawayError ? <p style={styles.modalInlineError}>{putawayError}</p> : null}
+
+            <form id="putaway-storage-form" onSubmit={handlePutawaySubmit} style={styles.modalForm}>
+              <div style={styles.filtersGrid}>
+                <div style={styles.field}>
+                  <label style={styles.label}>Aisle Number</label>
+                  <select name="locationId" value={putawayForm.locationId} onChange={handlePutawayLocationChange} style={styles.select} required>
+                    <option value="">Select aisle</option>
+                    {putawayLocationIdOptions.map((option) => <option key={option} value={option}>{option}</option>)}
+                  </select>
+                </div>
+                <div style={styles.field}>
+                  <label style={styles.label}>Rack Number</label>
+                  <input
+                    name="locationCode"
+                    value={putawayForm.locationCode}
+                    onChange={handlePutawayLocationChange}
+                    style={!putawayForm.locationId ? { ...styles.input, ...styles.controlDisabled } : styles.input}
+                    disabled={!putawayForm.locationId}
+                    list="putaway-location-code-options"
+                    placeholder="Type or select rack"
+                    required
+                  />
+                  <datalist id="putaway-location-code-options">
+                    {putawayLocationCodeOptions.map((option) => <option key={option} value={option} />)}
+                  </datalist>
+                </div>
+                <div style={styles.field}>
+                  <label style={styles.label}>Level</label>
+                  <select
+                    name="subLocation"
+                    value={putawayForm.subLocation}
+                    onChange={handlePutawayLocationChange}
+                    style={!putawayForm.locationCode ? { ...styles.select, ...styles.controlDisabled } : styles.select}
+                    disabled={!putawayForm.locationCode}
+                    required
+                  >
+                    <option value="">Select level</option>
+                    {putawaySubLocationOptions.map((option) => <option key={option.id} value={option.sub_location}>{option.sub_location}</option>)}
+                  </select>
+                </div>
+              </div>
+              <div style={styles.selectedLocationBox}>
+                <span style={styles.selectedLocationLabel}>Selected Shelving Location</span>
+                <strong style={styles.selectedLocationValue}>
+                  {selectedPutawayLocation ? getLocationLabel(selectedPutawayLocation) : 'Choose a full shelving location first'}
+                </strong>
+              </div>
+              <div style={styles.field}>
+                <label style={styles.label}>Notes</label>
+                <textarea name="notes" value={putawayForm.notes} onChange={(event) => setPutawayForm((current) => ({ ...current, notes: event.target.value }))} style={styles.textarea} placeholder="Optional notes" />
+              </div>
+            </form>
+          </div>
+        </div>
+      ) : null}
+
       {queueModalEntry && canStoreQueueItem ? (
         <div style={styles.modalOverlay}>
           <div style={styles.modalCardWide}>
@@ -5387,11 +6530,19 @@ export default function StorageOverviewPage() {
 
             <div style={styles.selectedLocationBox}>
               <span style={styles.selectedLocationLabel}>
-                {inboundById.get(Number(queueModalEntry.inbound_id))?.grn_number || 'PL Item'} / {getQueueKoliLabel(queueModalEntry)}
+                {queueModalEntries.length > 1
+                  ? `${queueModalEntries.length} Koli Selected`
+                  : `${inboundById.get(Number(queueModalEntry.inbound_id))?.grn_number || 'PL Item'} / ${getQueueKoliLabel(queueModalEntry)}`}
               </span>
-              <strong style={styles.selectedLocationValue}>{getQueueGroupItemsLabel(queueModalEntry.items)}</strong>
+              <strong style={styles.selectedLocationValue}>
+                {queueModalEntries.length > 1
+                  ? `${queueModalEntries.reduce((sum, entry) => sum + Number(entry.items?.length || 0), 0)} item row(s)`
+                  : getQueueGroupItemsLabel(queueModalEntry.items)}
+              </strong>
               <span style={styles.cellMeta}>
-                SKU {getSkuList(queueModalEntry.items).join(', ') || '-'} / Size {getQueueGroupSizeLabel(queueModalEntry.items)} / Total Qty {queueModalEntry.totalQty} / {queueModalEntry.storing_type || '-'}
+                {queueModalEntries.length > 1
+                  ? `Total Qty ${queueModalEntries.reduce((sum, entry) => sum + Number(entry.totalQty || 0), 0)} / ${queueModalEntry.storing_type || '-'}`
+                  : `SKU ${getSkuList(queueModalEntry.items).join(', ') || '-'} / Size ${getQueueGroupSizeLabel(queueModalEntry.items)} / Total Qty ${queueModalEntry.totalQty} / ${queueModalEntry.storing_type || '-'}`}
               </span>
             </div>
 
@@ -5400,14 +6551,23 @@ export default function StorageOverviewPage() {
             <div style={styles.queueConfirmBox}>
               <div style={styles.rankingHeader}>
                 <span style={styles.selectedLocationLabel}>Confirm Koli Content</span>
-                <strong style={styles.rankingBadgeText}>{queueModalEntry.items.length} row(s)</strong>
+                <strong style={styles.rankingBadgeText}>
+                  {queueModalEntries.reduce((sum, entry) => sum + Number(entry.items?.length || 0), 0)} row(s)
+                </strong>
               </div>
               <div style={styles.queueConfirmList}>
-                {queueModalEntry.items.map((item) => (
-                  <div key={item.id} style={styles.queueConfirmRow}>
-                    <span style={styles.queueSkuText}>{getQueueItemSku(item) || '-'}</span>
-                    <strong style={styles.queueItemText}>{getQueueItemName(item)}</strong>
-                    <span style={styles.queueMetaText}>Size {item.size_label || '-'} / Qty {item.qty}</span>
+                {queueModalEntries.map((entry) => (
+                  <div key={entry.key} style={styles.queueConfirmGroup}>
+                    <span style={styles.selectedLocationLabel}>
+                      {inboundById.get(Number(entry.inbound_id))?.grn_number || 'PL Item'} / {getQueueKoliLabel(entry)}
+                    </span>
+                    {entry.items.map((item) => (
+                      <div key={item.id} style={styles.queueConfirmRow}>
+                        <span style={styles.queueSkuText}>{getQueueItemSku(item) || '-'}</span>
+                        <strong style={styles.queueItemText}>{getQueueItemName(item)}</strong>
+                        <span style={styles.queueMetaText}>Size {item.size_label || '-'} / Qty {item.qty}</span>
+                      </div>
+                    ))}
                   </div>
                 ))}
               </div>
@@ -5490,6 +6650,131 @@ export default function StorageOverviewPage() {
                 />
               </div>
             </form>
+          </div>
+        </div>
+      ) : null}
+
+      {temporaryStoreModalRows.length > 0 && canStoreQueueItem ? (
+        <div style={styles.modalOverlay}>
+          <div style={styles.modalCardWide}>
+            <div style={styles.modalHeader}>
+              <div style={styles.modalTitleGroup}>
+                <p style={styles.modalEyebrow}>Temporary Sales</p>
+                <h2 style={styles.modalTitle}>Store Back to Warehouse</h2>
+              </div>
+              <div style={styles.modalHeaderActions}>
+                <button type="button" onClick={closeTemporaryStoreModal} style={styles.modalCancelButton}>Cancel</button>
+                <button type="submit" form="temporary-sales-store-form" style={styles.registerButton} disabled={storingTemporarySales}>
+                  {storingTemporarySales ? 'Saving...' : 'Store'}
+                </button>
+              </div>
+            </div>
+
+            {temporaryStoreError ? <p style={styles.modalInlineError}>{temporaryStoreError}</p> : null}
+
+            <form id="temporary-sales-store-form" onSubmit={handleTemporaryStoreSubmit} style={styles.modalForm}>
+              <div style={styles.filtersGrid}>
+                <div style={styles.field}>
+                  <label style={styles.label}>Storage Type</label>
+                  <div style={styles.temporaryStoreTypeToggle} role="group" aria-label="Temporary return storage type">
+                    {['PALLET', 'SHELVING'].map((locationType) => (
+                      <button
+                        key={locationType}
+                        type="button"
+                        onClick={() => handleTemporaryStoreLocationChange({ target: { name: 'locationType', value: locationType } })}
+                        style={{
+                          ...styles.typeToggleButton,
+                          ...(temporaryStoreForm.locationType === locationType ? styles.typeToggleButtonActive : {}),
+                        }}
+                        aria-pressed={temporaryStoreForm.locationType === locationType}
+                      >
+                        {locationType === 'PALLET' ? 'Pallet' : 'Shelving'}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div style={styles.field}>
+                  <label style={styles.label}>{temporaryStoreForm.locationType === 'SHELVING' ? 'Aisle Number' : 'Warehouse Location'}</label>
+                  <select name="locationId" value={temporaryStoreForm.locationId} onChange={handleTemporaryStoreLocationChange} style={styles.select} required>
+                    <option value="">Select location id</option>
+                    {temporaryStoreLocationIdOptions.map((option) => <option key={option} value={option}>{option}</option>)}
+                  </select>
+                </div>
+                <div style={styles.field}>
+                  <label style={styles.label}>{temporaryStoreForm.locationType === 'SHELVING' ? 'Rack Number' : 'Pallet Number'}</label>
+                  <input
+                    name="locationCode"
+                    value={temporaryStoreForm.locationCode}
+                    onChange={handleTemporaryStoreLocationChange}
+                    style={!temporaryStoreForm.locationId ? { ...styles.input, ...styles.controlDisabled } : styles.input}
+                    disabled={!temporaryStoreForm.locationId}
+                    list="temporary-store-location-code-options"
+                    required
+                  />
+                  <datalist id="temporary-store-location-code-options">
+                    {temporaryStoreLocationCodeOptions.map((option) => <option key={option} value={option} />)}
+                  </datalist>
+                </div>
+                <div style={styles.field}>
+                  <label style={styles.label}>{temporaryStoreForm.locationType === 'SHELVING' ? 'Level' : 'Carton Number'}</label>
+                  <select
+                    name="subLocation"
+                    value={temporaryStoreForm.subLocation}
+                    onChange={handleTemporaryStoreLocationChange}
+                    style={!temporaryStoreForm.locationCode ? { ...styles.select, ...styles.controlDisabled } : styles.select}
+                    disabled={!temporaryStoreForm.locationCode}
+                    required
+                  >
+                    <option value="">Select sub location</option>
+                    {temporaryStoreSubLocationOptions.map((option) => <option key={option.id} value={option.sub_location}>{option.sub_location}</option>)}
+                  </select>
+                </div>
+              </div>
+
+              <div style={styles.queueConfirmList}>
+                {temporaryStoreModalRows.map((row) => (
+                  <div key={row.id} style={styles.queueConfirmRow}>
+                    <div style={styles.temporaryStoreItemSummary}>
+                      <strong style={styles.queueItemText}>{row.sku_id ? `${row.sku_id} | ` : ''}{row.item_name}</strong>
+                      <span style={styles.queueMetaText}>Size {row.size || '-'} / Available {row.qty_in_area}</span>
+                    </div>
+                    <input
+                      value={temporaryStoreQtys[String(row.id)] || ''}
+                      onChange={(event) => setTemporaryStoreQtys((current) => ({ ...current, [String(row.id)]: event.target.value }))}
+                      style={{ ...styles.input, ...styles.temporaryStoreQtyInput }}
+                      inputMode="numeric"
+                      min="1"
+                      max={Number(row.qty_in_area || 0)}
+                      placeholder="Qty"
+                      required
+                    />
+                  </div>
+                ))}
+              </div>
+
+              <div style={styles.field}>
+                <label style={styles.label}>Notes</label>
+                <textarea name="notes" value={temporaryStoreForm.notes} onChange={handleTemporaryStoreLocationChange} style={styles.textarea} placeholder="Optional notes" />
+              </div>
+            </form>
+          </div>
+        </div>
+      ) : null}
+
+      {temporaryStoreConfirmOpen && temporaryStoreModalRows.length > 0 ? (
+        <div style={{ ...styles.modalOverlay, zIndex: 70 }}>
+          <div style={styles.confirmationModalCard} role="dialog" aria-modal="true" aria-labelledby="temporary-store-confirmation-title">
+            <p style={styles.modalEyebrow}>Confirm Storage</p>
+            <h2 id="temporary-store-confirmation-title" style={styles.modalTitle}>Store Back to Warehouse?</h2>
+            <p style={styles.confirmationModalText}>
+              Store {temporaryStoreModalRows.reduce((sum, row) => sum + Number(temporaryStoreQtys[String(row.id)] || 0), 0)} total unit(s) to {selectedTemporaryStoreLocation ? getLocationLabel(selectedTemporaryStoreLocation) : 'the selected location'}?
+            </p>
+            <div style={styles.modalHeaderActions}>
+              <button type="button" onClick={() => setTemporaryStoreConfirmOpen(false)} style={styles.modalCancelButton}>Back</button>
+              <button type="button" onClick={handleConfirmedTemporaryStore} style={styles.registerButton} disabled={storingTemporarySales}>
+                {storingTemporarySales ? 'Saving...' : 'Confirm Store'}
+              </button>
+            </div>
           </div>
         </div>
       ) : null}
@@ -6030,6 +7315,11 @@ const styles = {
     strokeLinecap: 'round',
     strokeLinejoin: 'round',
   },
+  storeEmoji: {
+    display: 'block',
+    fontSize: '20px',
+    lineHeight: 1,
+  },
   registerButton: {
     display: 'inline-flex',
     alignItems: 'center',
@@ -6042,21 +7332,6 @@ const styles = {
     color: '#fff',
     fontSize: '14px',
     fontWeight: '700',
-    cursor: 'pointer',
-    whiteSpace: 'nowrap',
-  },
-  queueStoreButton: {
-    display: 'inline-flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    minHeight: '30px',
-    padding: '0 12px',
-    border: 'none',
-    borderRadius: '8px',
-    background: '#111827',
-    color: '#fff',
-    fontSize: '12px',
-    fontWeight: '800',
     cursor: 'pointer',
     whiteSpace: 'nowrap',
   },
@@ -6461,21 +7736,7 @@ const styles = {
     flexDirection: 'column',
     gap: '14px',
     minWidth: 0,
-    padding: '16px',
-    borderTopWidth: '1px',
-    borderRightWidth: '1px',
-    borderBottomWidth: '1px',
-    borderLeftWidth: '1px',
-    borderTopStyle: 'solid',
-    borderRightStyle: 'solid',
-    borderBottomStyle: 'solid',
-    borderLeftStyle: 'solid',
-    borderTopColor: '#dbe4ef',
-    borderRightColor: '#dbe4ef',
-    borderBottomColor: '#dbe4ef',
-    borderLeftColor: '#dbe4ef',
-    borderRadius: '14px',
-    background: '#fff',
+    padding: 0,
   },
   temporarySalesHeader: {
     display: 'flex',
@@ -6573,7 +7834,7 @@ const styles = {
   },
   temporarySalesToolbar: {
     display: 'grid',
-    gridTemplateColumns: 'minmax(260px, 1fr) minmax(380px, auto) 44px',
+    gridTemplateColumns: 'minmax(260px, 1fr) minmax(380px, auto) 44px 44px',
     gap: '10px',
     alignItems: 'end',
   },
@@ -6585,10 +7846,18 @@ const styles = {
     alignItems: 'center',
     justifyContent: 'flex-end',
   },
-  temporarySalesStatusToggle: {
-    minHeight: '44px',
+  temporarySalesToolbarAction: {
     display: 'flex',
     alignItems: 'center',
+    justifyContent: 'flex-end',
+  },
+  temporarySalesStatusToggle: {
+    minHeight: '44px',
+    width: 'fit-content',
+    maxWidth: '100%',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'flex-start',
     gap: '3px',
     padding: '4px',
     borderTopWidth: '1px',
@@ -6640,6 +7909,54 @@ const styles = {
     minWidth: '1040px',
     borderCollapse: 'collapse',
   },
+  temporarySalesValueCell: {
+    padding: '8px 10px',
+    borderBottom: '1px solid #f3f4f6',
+    fontSize: '12px',
+    lineHeight: 1.35,
+    textAlign: 'center',
+    verticalAlign: 'middle',
+  },
+  temporarySalesTh: {
+    textAlign: 'center',
+    verticalAlign: 'middle',
+  },
+  temporarySalesTables: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '20px',
+    minWidth: 0,
+  },
+  temporarySalesHistorySection: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '10px',
+    minWidth: 0,
+  },
+  temporarySalesHistoryHeader: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: '12px',
+    flexWrap: 'wrap',
+  },
+  temporarySalesHistoryTitle: {
+    margin: 0,
+    color: '#111827',
+    fontSize: '16px',
+    fontWeight: '800',
+  },
+  temporarySalesHistorySubtitle: {
+    margin: '4px 0 0',
+    color: '#64748b',
+    fontSize: '12px',
+  },
+  temporarySalesHistoryCount: {
+    color: '#64748b',
+    fontSize: '12px',
+    fontWeight: '800',
+    whiteSpace: 'nowrap',
+  },
   temporarySalesEmptyCell: {
     padding: '40px 20px',
     textAlign: 'center',
@@ -6653,6 +7970,41 @@ const styles = {
     gap: '6px',
     color: '#0f172a',
     fontSize: '13px',
+  },
+  temporaryStoreItemSummary: {
+    minWidth: 0,
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '4px',
+    flex: '1 1 auto',
+  },
+  temporaryStoreQtyInput: {
+    width: '112px',
+    flex: '0 0 112px',
+  },
+  temporaryStoreTypeToggle: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+    gap: '3px',
+    minHeight: '44px',
+    padding: '3px',
+    border: '1px solid #dbe4ef',
+    borderRadius: '10px',
+    background: '#f8fafc',
+  },
+  confirmationModalCard: {
+    width: 'min(440px, calc(100vw - 32px))',
+    padding: '24px',
+    border: '1px solid #dbe4ef',
+    borderRadius: '16px',
+    background: '#fff',
+    boxShadow: '0 20px 50px rgba(15, 23, 42, 0.18)',
+  },
+  confirmationModalText: {
+    margin: '12px 0 24px',
+    color: '#475569',
+    fontSize: '14px',
+    lineHeight: 1.5,
   },
   temporarySalesEmptyIcon: {
     width: '40px',
@@ -6677,17 +8029,31 @@ const styles = {
   queueSearchToolbar: {
     gridTemplateColumns: 'minmax(280px, 1fr) minmax(180px, 240px) minmax(200px, 280px) auto',
   },
+  queueSearchToolbarWithStore: {
+    gridTemplateColumns: 'minmax(280px, 1fr) 44px minmax(180px, 240px) minmax(200px, 280px) auto',
+  },
+  queueSearchToolbarCompact: {
+    gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr) auto',
+  },
+  queueSearchToolbarCompactWithStore: {
+    gridTemplateColumns: 'minmax(0, 1fr) 44px minmax(0, 1fr) minmax(0, 1fr) auto',
+  },
   stockSearchToolbar: {
-    gridTemplateColumns: 'minmax(0, 1fr) 44px',
+    gridTemplateColumns: 'minmax(0, 1fr) minmax(120px, 150px) 44px',
   },
   stockSearchToolbarWithAction: {
-    gridTemplateColumns: 'minmax(0, 1fr) repeat(3, 44px)',
+    gridTemplateColumns: 'minmax(0, 1fr) minmax(120px, 150px) repeat(3, 44px)',
   },
   stockSearchToolbarCompact: {
-    gridTemplateColumns: 'minmax(0, 1fr) repeat(3, 44px)',
+    gridTemplateColumns: 'minmax(0, 1fr) minmax(120px, 150px) repeat(3, 44px)',
   },
   stockFiltersGrid: {
     gridTemplateColumns: 'repeat(5, minmax(0, 1fr))',
+    gap: '6px',
+  },
+  stockFiltersGridAll: {
+    gridTemplateColumns: 'minmax(120px, 0.72fr) minmax(120px, 0.72fr) minmax(104px, 0.58fr) repeat(3, minmax(0, 1fr))',
+    columnGap: '6px',
   },
   rejectSearchToolbar: {
     gridTemplateColumns: 'minmax(320px, 1fr) 44px',
@@ -6704,21 +8070,21 @@ const styles = {
   queueGroupField: {
     display: 'flex',
     flexDirection: 'column',
-    gap: '8px',
+    gap: '6px',
     minWidth: 0,
   },
   queueGroupToggle: {
     display: 'inline-grid',
-    gridTemplateColumns: 'repeat(auto-fit, minmax(64px, 1fr))',
-    gap: '4px',
-    padding: '4px',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(58px, 1fr))',
+    gap: '3px',
+    padding: '2px',
     border: '1px solid #dbe4ef',
-    borderRadius: '12px',
+    borderRadius: '10px',
     background: '#fff',
   },
   queueGroupButton: {
-    minHeight: '36px',
-    padding: '0 10px',
+    minHeight: '30px',
+    padding: '0 8px',
     borderTopWidth: 0,
     borderRightWidth: 0,
     borderBottomWidth: 0,
@@ -6731,10 +8097,10 @@ const styles = {
     borderRightColor: 'transparent',
     borderBottomColor: 'transparent',
     borderLeftColor: 'transparent',
-    borderRadius: '9px',
+    borderRadius: '8px',
     background: 'transparent',
     color: '#64748b',
-    fontSize: '13px',
+    fontSize: '12px',
     fontWeight: '800',
     cursor: 'pointer',
     whiteSpace: 'nowrap',
@@ -6750,6 +8116,12 @@ const styles = {
     minHeight: '44px',
     minWidth: 0,
     marginRight: '-4px',
+  },
+  queueToolbarButton: {
+    width: '36px',
+    height: '36px',
+    minHeight: '36px',
+    borderRadius: '9px',
   },
   toolbarIconField: {
     display: 'flex',
@@ -6793,6 +8165,24 @@ const styles = {
     justifyContent: 'flex-end',
     minHeight: '44px',
     minWidth: 0,
+  },
+  searchLabelRow: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: '10px',
+    minWidth: 0,
+  },
+  inlineUncategorizedControl: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '5px',
+    minWidth: 0,
+    color: '#475569',
+    fontSize: '11px',
+    fontWeight: '800',
+    whiteSpace: 'nowrap',
+    cursor: 'pointer',
   },
   registerInlineButton: {
     height: '44px',
@@ -6853,6 +8243,17 @@ const styles = {
     flexDirection: 'column',
     gap: '8px',
     minWidth: 0,
+  },
+  compactFilterField: {
+    gap: '6px',
+    minWidth: 0,
+  },
+  compactFilterControl: {
+    height: '36px',
+    minHeight: '36px',
+    fontSize: '13px',
+    paddingLeft: '10px',
+    paddingRight: '10px',
   },
   uncategorizedFilterControl: {
     width: '100%',
@@ -6974,10 +8375,13 @@ const styles = {
     fontWeight: '900',
     fontVariantNumeric: 'tabular-nums',
   },
+  sizeFilterField: {
+    minWidth: 0,
+    gap: '6px',
+  },
   storageGroupToggleGrid: {
-    display: 'grid',
-    gridTemplateColumns: '1fr',
-    gridTemplateRows: 'repeat(3, 1fr)',
+    display: 'inline-grid',
+    gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
     gap: '3px',
     width: '100%',
     minWidth: 0,
@@ -7023,7 +8427,8 @@ const styles = {
     color: '#fff',
   },
   typeField: {
-    gap: '10px',
+    gap: '6px',
+    maxWidth: '190px',
   },
   checkboxFilter: {
     display: 'inline-flex',
@@ -7052,23 +8457,23 @@ const styles = {
     alignItems: 'center',
     alignSelf: 'flex-start',
     gap: '3px',
-    minHeight: '36px',
+    minHeight: '32px',
     width: '100%',
-    padding: '3px',
+    padding: '2px',
     border: '1px solid #dbe4ef',
     borderRadius: '999px',
     background: '#fff',
   },
   typeToggleButton: {
-    minHeight: '30px',
+    minHeight: '26px',
     minWidth: 0,
     flex: '1 1 0',
-    padding: '0 8px',
+    padding: '0 7px',
     border: 'none',
     borderRadius: '999px',
     background: 'transparent',
     color: '#64748b',
-    fontSize: '12px',
+    fontSize: '11px',
     fontWeight: '800',
     cursor: 'pointer',
     whiteSpace: 'nowrap',
@@ -7189,7 +8594,10 @@ const styles = {
     height: '44px',
     borderRadius: '10px',
     border: '1px solid #d1d5db',
-    padding: '0 12px',
+    paddingTop: 0,
+    paddingRight: '12px',
+    paddingBottom: 0,
+    paddingLeft: '12px',
     fontSize: '14px',
     background: '#fff',
   },
@@ -7291,6 +8699,9 @@ const styles = {
     gap: '12px',
     flexWrap: 'wrap',
     marginBottom: '-4px',
+  },
+  queueFooterToolbar: {
+    justifyContent: 'space-between',
   },
   historyRankingGrid: {
     display: 'grid',
@@ -7561,6 +8972,21 @@ const styles = {
     flexWrap: 'nowrap',
     minWidth: '128px',
   },
+  temporarySalesActionGroup: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: '8px',
+    minWidth: '88px',
+  },
+  temporaryMoveOutButton: {
+    borderColor: '#bbf7d0',
+    background: '#f0fdf4',
+    color: '#15803d',
+    fontSize: '20px',
+    fontWeight: '900',
+    lineHeight: 1,
+  },
   tableIconButton: {
     width: '34px',
     height: '34px',
@@ -7585,6 +9011,11 @@ const styles = {
     color: '#94a3b8',
     cursor: 'not-allowed',
     opacity: 0.75,
+  },
+  tableIconButtonDanger: {
+    border: '1px solid #fecaca',
+    background: '#fff1f2',
+    color: '#b91c1c',
   },
   rejectStatusDraft: {
     display: 'inline-flex',
@@ -7885,6 +9316,13 @@ const styles = {
     gap: '8px',
     maxHeight: '220px',
     overflowY: 'auto',
+  },
+  queueConfirmGroup: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '6px',
+    paddingBottom: '8px',
+    borderBottom: '1px solid #dbeafe',
   },
   queueConfirmRow: {
     display: 'grid',

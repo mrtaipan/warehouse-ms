@@ -118,6 +118,7 @@ create table if not exists public.upload_warehouse_storage_movements (
   source_type text not null,
   source_batch_id uuid,
   source_line_id uuid,
+  temporary_sales_item_id bigint,
   movement_type text not null,
   warehouse_storage_id bigint,
   rack_location_id bigint,
@@ -157,6 +158,12 @@ create index if not exists upload_warehouse_storage_movements_batch_idx
 create index if not exists upload_warehouse_storage_movements_storage_idx
   on public.upload_warehouse_storage_movements (warehouse_storage_id, created_at desc);
 
+alter table public.upload_warehouse_storage_movements
+  add column if not exists temporary_sales_item_id bigint;
+
+create index if not exists upload_warehouse_storage_movements_temporary_item_idx
+  on public.upload_warehouse_storage_movements (temporary_sales_item_id, created_at desc);
+
 create or replace function public.set_upload_sales_import_updated_at()
 returns trigger
 language plpgsql
@@ -190,6 +197,7 @@ declare
   target_batch public.upload_sales_import_batches%rowtype;
   import_line public.upload_sales_import_lines%rowtype;
   storage_row record;
+  temporary_sales_row record;
   remaining_qty integer;
   take_qty integer;
   line_applied integer;
@@ -240,6 +248,89 @@ begin
       total_skipped := total_skipped + import_line.qty;
       shortage_lines := shortage_lines + 1;
       continue;
+    end if;
+
+    -- Temporary Sales is the first source for a sales upload. Shelving is used
+    -- only for any remaining quantity after this loop.
+    if remaining_qty > 0 then
+      for temporary_sales_row in
+        select
+          temporary_item.id,
+          temporary_item.sku_id,
+          temporary_item.item_name,
+          temporary_item.size,
+          temporary_item.qty_in_area,
+          temporary_item.source_location_label,
+          temporary_item.entered_at
+        from public.warehouse_temporary_sales_items temporary_item
+        where temporary_item.status = 'IN_TEMPORARY_AREA'
+          and coalesce(temporary_item.qty_in_area, 0) > 0
+          and upper(regexp_replace(coalesce(temporary_item.sku_id, ''), '[^A-Z0-9]', '', 'g')) = normalized_sku
+          and upper(regexp_replace(coalesce(temporary_item.size, ''), '\s+', '', 'g')) = normalized_size
+          and upper(coalesce(temporary_item.source_location_label, '')) like 'SHELVING /%'
+        order by temporary_item.entered_at asc nulls first, temporary_item.id asc
+        for update of temporary_item
+      loop
+        exit when remaining_qty <= 0;
+
+        take_qty := least(remaining_qty, coalesce(temporary_sales_row.qty_in_area, 0));
+        if take_qty <= 0 then
+          continue;
+        end if;
+
+        insert into public.upload_warehouse_storage_movements (
+          source_type,
+          source_batch_id,
+          source_line_id,
+          temporary_sales_item_id,
+          movement_type,
+          warehouse_storage_id,
+          rack_location_id,
+          location_snapshot,
+          sku_id,
+          item_name_snapshot,
+          size,
+          qty_before,
+          qty_delta,
+          qty_after,
+          storage_row_deleted,
+          reference_number,
+          created_by,
+          notes
+        ) values (
+          'upload_sales_import',
+          p_batch_id,
+          import_line.id,
+          temporary_sales_row.id,
+          'OUT',
+          null,
+          null,
+          jsonb_build_object(
+            'source', 'Temporary Sales Area',
+            'source_location_label', temporary_sales_row.source_location_label
+          ),
+          temporary_sales_row.sku_id,
+          temporary_sales_row.item_name,
+          temporary_sales_row.size,
+          temporary_sales_row.qty_in_area,
+          -take_qty,
+          temporary_sales_row.qty_in_area - take_qty,
+          false,
+          import_line.order_number,
+          actor_email,
+          'Daily sales upload deducted Temporary Sales Area stock'
+        );
+
+        update public.warehouse_temporary_sales_items
+        set
+          qty_in_area = temporary_sales_row.qty_in_area - take_qty,
+          status = case when temporary_sales_row.qty_in_area = take_qty then 'COMPLETED' else 'IN_TEMPORARY_AREA' end,
+          updated_at = now()
+        where id = temporary_sales_row.id;
+
+        remaining_qty := remaining_qty - take_qty;
+        line_applied := line_applied + take_qty;
+      end loop;
     end if;
 
     for storage_row in
@@ -395,6 +486,7 @@ declare
   target_batch public.upload_sales_import_batches%rowtype;
   movement_row public.upload_warehouse_storage_movements%rowtype;
   storage_row public.warehouse_storage%rowtype;
+  temporary_sales_row public.warehouse_temporary_sales_items%rowtype;
   restored_qty integer;
   target_storage_id bigint;
   actor_email text := nullif(trim(coalesce(p_actor_email, '')), '');
@@ -432,6 +524,69 @@ begin
     order by created_at desc, id desc
   loop
     restored_qty := abs(movement_row.qty_delta);
+
+    if movement_row.temporary_sales_item_id is not null then
+      select *
+        into temporary_sales_row
+      from public.warehouse_temporary_sales_items
+      where id = movement_row.temporary_sales_item_id
+      for update;
+
+      if temporary_sales_row.id is null then
+        raise exception 'Temporary Sales item % no longer exists and cannot be restored', movement_row.temporary_sales_item_id;
+      end if;
+
+      update public.warehouse_temporary_sales_items
+      set
+        qty_in_area = coalesce(temporary_sales_row.qty_in_area, 0) + restored_qty,
+        status = 'IN_TEMPORARY_AREA',
+        updated_at = now()
+      where id = temporary_sales_row.id;
+
+      insert into public.upload_warehouse_storage_movements (
+        source_type,
+        source_batch_id,
+        source_line_id,
+        temporary_sales_item_id,
+        movement_type,
+        warehouse_storage_id,
+        rack_location_id,
+        location_snapshot,
+        sku_id,
+        item_name_snapshot,
+        size,
+        qty_before,
+        qty_delta,
+        qty_after,
+        storage_row_deleted,
+        reference_number,
+        created_by,
+        notes
+      ) values (
+        'upload_sales_import',
+        p_batch_id,
+        movement_row.source_line_id,
+        temporary_sales_row.id,
+        'REVERSE',
+        null,
+        null,
+        coalesce(movement_row.location_snapshot, '{}'::jsonb),
+        movement_row.sku_id,
+        movement_row.item_name_snapshot,
+        movement_row.size,
+        coalesce(temporary_sales_row.qty_in_area, 0),
+        restored_qty,
+        coalesce(temporary_sales_row.qty_in_area, 0) + restored_qty,
+        false,
+        movement_row.reference_number,
+        actor_email,
+        'Reverse daily sales upload deduction from Temporary Sales Area'
+      );
+
+      reversed_qty := reversed_qty + restored_qty;
+      continue;
+    end if;
+
     target_storage_id := movement_row.warehouse_storage_id;
 
     select *

@@ -39,6 +39,10 @@ function normalizeRequestSource(value) {
   return DEFAULT_SOURCE_TYPE
 }
 
+function requestedQtyForDisplay(row) {
+  return Number(row?.qty || 0)
+}
+
 function getRequestSourceCounts(rows = []) {
   return rows.reduce(
     (counts, row) => {
@@ -125,7 +129,7 @@ async function fetchStorageMatches(searchTerm, requestedSize = '', allowedRackLo
   for (const candidate of candidates) {
     const query = supabase
       .from('warehouse_storage')
-      .select('id, rack_location_id, item_name, size, qty')
+      .select('id, rack_location_id, sku_id, source_pl_packing_item_id, source_variant_code, item_name, size, qty')
       .order('qty', { ascending: false })
       .limit(200)
 
@@ -145,7 +149,7 @@ async function fetchStorageMatches(searchTerm, requestedSize = '', allowedRackLo
 
     const skuQuery = supabase
       .from('warehouse_storage')
-      .select('id, rack_location_id, item_name, size, qty')
+      .select('id, rack_location_id, sku_id, source_pl_packing_item_id, source_variant_code, item_name, size, qty')
       .order('qty', { ascending: false })
       .limit(200)
 
@@ -288,6 +292,11 @@ async function fetchSourceOptions(row) {
       storageId: entry.id,
       label: locationMap.get(getLocationKey(entry.rack_location_id)) || 'Location is not found',
       qty: Number(entry.qty || 0),
+      skuId: entry.sku_id || null,
+      sourcePlPackingItemId: entry.source_pl_packing_item_id || null,
+      sourceVariantCode: entry.source_variant_code || entry.sku_id || null,
+      itemName: entry.item_name || row.item_name || null,
+      size: entry.size || row.size || null,
     }))
 
   return Array.from(new Map(rawOptions.map((item) => [String(item.storageId), item])).values())
@@ -405,7 +414,9 @@ export default function TakeRequestsMobile() {
     setError('')
     setSuccess('')
 
+    const requestedQty = Number(selectedRequest.qty || 0)
     const fulfilledQty = Number(actualQty || 0)
+    const excessQty = Math.max(fulfilledQty - requestedQty, 0)
 
     if (fulfilledQty <= 0) {
       setError('Qty yang diambil harus lebih dari 0.')
@@ -416,10 +427,11 @@ export default function TakeRequestsMobile() {
     const selectedSourceStorageId =
       selectedSourceValue && selectedSourceValue !== 'unrecorded' ? Number(selectedSourceValue) : null
 
+    let sourceEntrySnapshot = null
     if (selectedSourceStorageId) {
       const { data: currentEntry, error: fetchError } = await supabase
         .from('warehouse_storage')
-        .select('id, qty')
+        .select('id, rack_location_id, sku_id, source_pl_packing_item_id, source_variant_code, item_name, size, qty')
         .eq('id', selectedSourceStorageId)
         .maybeSingle()
 
@@ -437,26 +449,59 @@ export default function TakeRequestsMobile() {
 
       const currentQty = Number(currentEntry.qty || 0)
 
+      sourceEntrySnapshot = currentEntry
+
       if (currentQty < fulfilledQty) {
         setError('The storage qty has changed and is no longer enough for this request.')
         setCompletingId('')
         return
       }
 
-      if (currentQty === fulfilledQty) {
-        const { error: deleteError } = await supabase
-          .from('warehouse_storage')
-          .delete()
-          .eq('id', selectedSourceStorageId)
+    }
 
-        if (deleteError) {
-          setError(deleteError.message)
-          setCompletingId('')
-          return
-        }
-      } else {
-        const pickerEmail = await getCurrentUserEmail()
-        const { error: updateError } = await supabase
+    const pickerEmail = await getCurrentUserEmail()
+    const selectedSourceLabel =
+      selectedSourceValue === 'unrecorded'
+        ? 'Location is not found'
+        : sourceOptions.find((item) => String(item.storageId) === selectedSourceValue)?.label || selectedRequest.take_from
+
+    let putawayRowId = null
+    if (excessQty > 0) {
+      const sourceOption = sourceOptions.find((item) => String(item.storageId) === selectedSourceValue)
+      const putawayPayload = {
+        restock_request_id: selectedRequest.id,
+        source_storage_id: selectedSourceStorageId,
+        source_location_label: selectedSourceLabel,
+        source_pl_packing_item_id: sourceEntrySnapshot?.source_pl_packing_item_id || sourceOption?.sourcePlPackingItemId || null,
+        sku_id: sourceEntrySnapshot?.sku_id || sourceOption?.skuId || selectedRequest.search_term || null,
+        source_variant_code: sourceEntrySnapshot?.source_variant_code || sourceOption?.sourceVariantCode || selectedRequest.search_term || null,
+        item_name: sourceEntrySnapshot?.item_name || sourceOption?.itemName || selectedRequest.item_name,
+        size: sourceEntrySnapshot?.size || sourceOption?.size || selectedRequest.size || null,
+        group_code: normalizeRequestSource(selectedRequest.source_type),
+        qty: excessQty,
+        notes: `Excess from restock request ${selectedRequest.id}`,
+        created_by: pickerEmail,
+      }
+      const { data: putawayRow, error: putawayError } = await supabase
+        .from('warehouse_shelving_queue')
+        .insert(putawayPayload)
+        .select('id')
+        .single()
+
+      if (putawayError) {
+        setError(putawayError.message)
+        setCompletingId('')
+        return
+      }
+
+      putawayRowId = putawayRow?.id || null
+    }
+
+    if (selectedSourceStorageId && sourceEntrySnapshot) {
+      const currentQty = Number(sourceEntrySnapshot.qty || 0)
+      const storageMutation = currentQty === fulfilledQty
+        ? await supabase.from('warehouse_storage').delete().eq('id', selectedSourceStorageId)
+        : await supabase
           .from('warehouse_storage')
           .update({
             qty: currentQty - fulfilledQty,
@@ -465,23 +510,19 @@ export default function TakeRequestsMobile() {
           })
           .eq('id', selectedSourceStorageId)
 
-        if (updateError) {
-          setError(updateError.message)
-          setCompletingId('')
-          return
+      if (storageMutation.error) {
+        if (putawayRowId) {
+          await supabase.from('warehouse_shelving_queue').delete().eq('id', putawayRowId)
         }
+        setError(storageMutation.error.message)
+        setCompletingId('')
+        return
       }
     }
 
-    const pickerEmail = await getCurrentUserEmail()
-    const selectedSourceLabel =
-      selectedSourceValue === 'unrecorded'
-        ? 'Location is not found'
-        : sourceOptions.find((item) => String(item.storageId) === selectedSourceValue)?.label || selectedRequest.take_from
     const { error: requestUpdateError } = await supabase
       .from(TAKE_REQUESTS_TABLE)
       .update({
-        qty: fulfilledQty,
         take_from: selectedSourceLabel,
         storage_id: selectedSourceStorageId,
         request_status: 'completed',
@@ -491,6 +532,9 @@ export default function TakeRequestsMobile() {
       .eq('id', selectedRequest.id)
 
     if (requestUpdateError) {
+      if (putawayRowId) {
+        await supabase.from('warehouse_shelving_queue').delete().eq('id', putawayRowId)
+      }
       setError(requestUpdateError.message)
       setCompletingId('')
       return
@@ -643,7 +687,7 @@ export default function TakeRequestsMobile() {
                 <strong>Size:</strong> {selectedRequest.size || '-'}
               </p>
               <p style={styles.modalText}>
-                <strong>Request Qty:</strong> {selectedRequest.qty}
+                <strong>Request Qty:</strong> {requestedQtyForDisplay(selectedRequest)}
               </p>
               <p style={styles.modalText}>
                 <strong>Registered Location:</strong> {formatTakeFromLabel(selectedRequest.take_from)}
@@ -702,6 +746,11 @@ export default function TakeRequestsMobile() {
                     inputMode="numeric"
                     required
                   />
+                  {Number(actualQty || 0) > requestedQtyForDisplay(selectedRequest) ? (
+                    <span style={styles.helperText}>
+                      Excess to shelving putaway: {Number(actualQty || 0) - requestedQtyForDisplay(selectedRequest)}
+                    </span>
+                  ) : null}
                 </div>
 
                 <div style={styles.modalActions}>
@@ -899,6 +948,13 @@ const styles = {
     color: '#9a3412',
     letterSpacing: '0.06em',
     textTransform: 'uppercase',
+  },
+  helperText: {
+    display: 'block',
+    marginTop: 6,
+    color: '#9a3412',
+    fontSize: 12,
+    fontWeight: 700,
   },
   requestValue: {
     color: '#111827',

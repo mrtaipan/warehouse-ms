@@ -3682,7 +3682,6 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
         const storageStatus = normalizeUpper(row.storage_status)
         const rowPayload = {
           ...batchPayload,
-          ...(storageStatus === 'QUEUED' ? { storage_status: 'released_without_stored' } : {}),
         }
         const { error: updateError } = await supabase
           .from('pl_packing_items')
