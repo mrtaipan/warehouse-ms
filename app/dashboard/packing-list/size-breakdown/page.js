@@ -1627,6 +1627,11 @@ function formatStatusLabel(value = '') {
   return normalized ? normalized.replaceAll('_', ' ') : 'QUEUED'
 }
 
+function canDeletePackingKoliStatus(value = '') {
+  const normalized = normalize(value || 'queued')
+  return normalized !== 'STORED' && normalized !== 'RELEASED_WITHOUT_STORED'
+}
+
 function escapeHtml(value) {
   return String(value ?? '')
     .replace(/&/g, '&amp;')
@@ -3539,6 +3544,7 @@ export default function PackingListSizeBreakdownPage() {
   const [printRange, setPrintRange] = useState('all')
   const [printSectionKey, setPrintSectionKey] = useState('')
   const [printPicMode, setPrintPicMode] = useState('with_pic')
+  const [deletingKoliKey, setDeletingKoliKey] = useState('')
   const [selectedKoliPrintKeys, setSelectedKoliPrintKeys] = useState([])
   const [modelFilters, setModelFilters] = useState({
     brand: '',
@@ -6294,9 +6300,13 @@ export default function PackingListSizeBreakdownPage() {
           koli_sequence: row.koli_sequence || null,
           storage_status: row.storage_status || 'queued',
           total_qty: 0,
+          itemIds: [],
+          canDelete: true,
           items: [],
         }
         current.total_qty += Number(row.qty || 0)
+        current.itemIds.push(Number(row.id || 0))
+        current.canDelete = current.canDelete && canDeletePackingKoliStatus(row.storage_status)
         current.items.push({
           id: row.id,
           pl_id: displayInfo.pl_id || '-',
@@ -6330,6 +6340,8 @@ export default function PackingListSizeBreakdownPage() {
         koli_sequence: koliRow.koli_sequence,
         storage_status: koliRow.storage_status || 'queued',
         koli_total_qty: koliRow.total_qty,
+        itemIds: koliRow.itemIds,
+        canDeleteKoli: koliRow.canDelete,
         isFirstKoliRow,
         isFirstItemRow,
       }
@@ -6378,6 +6390,57 @@ export default function PackingListSizeBreakdownPage() {
       if (hasSelectedAll) return prev.filter((key) => !visibleKeys.has(key))
       return Array.from(new Set([...prev, ...visibleKoliPrintKeys]))
     })
+  }
+
+  async function deletePackingKoli(koliRow) {
+    const itemIds = (koliRow?.itemIds || []).map((id) => Number(id || 0)).filter(Boolean)
+    if (!itemIds.length || deletingKoliKey) return
+    if (!koliRow.canDeleteKoli) {
+      setError('This Koli cannot be deleted because it is already stored or released.')
+      setSuccess('')
+      return
+    }
+
+    const confirmed = window.confirm(`Delete ${getPackingKoliTitle(koliRow)} from Packing List storing? This will return the qty to available Size Breakdown.`)
+    if (!confirmed) return
+
+    setDeletingKoliKey(koliRow.koliKey)
+    setError('')
+    setSuccess('')
+
+    const { data: latestRows, error: latestError } = await supabase
+      .from('pl_packing_items')
+      .select('id, storage_status')
+      .in('id', itemIds)
+
+    if (latestError) {
+      setDeletingKoliKey('')
+      setError(latestError.message || 'Failed to check Koli status before delete.')
+      return
+    }
+
+    const hasLockedStatus = (latestRows || []).some((row) => !canDeletePackingKoliStatus(row.storage_status))
+    if (hasLockedStatus) {
+      setDeletingKoliKey('')
+      setError('This Koli cannot be deleted because it is already stored or released.')
+      return
+    }
+
+    const { error: deleteError } = await supabase
+      .from('pl_packing_items')
+      .delete()
+      .in('id', itemIds)
+
+    if (deleteError) {
+      setDeletingKoliKey('')
+      setError(deleteError.message || 'Failed to delete Koli.')
+      return
+    }
+
+    setPackingRows((current) => current.filter((row) => !itemIds.includes(Number(row.id || 0))))
+    setSelectedKoliPrintKeys((current) => current.filter((key) => key !== koliRow.koliKey))
+    setDeletingKoliKey('')
+    setSuccess(`${getPackingKoliTitle(koliRow)} deleted.`)
   }
 
   function openPrintModal() {
@@ -6975,6 +7038,7 @@ export default function PackingListSizeBreakdownPage() {
                           <th style={styles.th}>Total Qty</th>
                           <th style={styles.th}>Status</th>
                           <th style={styles.th}>PIC</th>
+                          <th style={styles.th}>Action</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -7026,6 +7090,23 @@ export default function PackingListSizeBreakdownPage() {
                                 {row.isFirstKoliRow ? <span style={styles.koliStatusPill}>{formatStatusLabel(row.storage_status)}</span> : null}
                               </td>
                               <td style={{ ...styles.td, ...dividerStyle }}>{row.isFirstKoliRow ? getFirstName(row.packed_by) : null}</td>
+                              <td style={{ ...styles.td, ...dividerStyle }}>
+                                {row.isFirstKoliRow ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => deletePackingKoli(row)}
+                                    disabled={!row.canDeleteKoli || deletingKoliKey === row.koliKey}
+                                    style={
+                                      !row.canDeleteKoli || deletingKoliKey === row.koliKey
+                                        ? { ...styles.compactDangerButton, ...styles.disabledButton }
+                                        : styles.compactDangerButton
+                                    }
+                                    title={row.canDeleteKoli ? 'Delete Koli' : 'Stored or released Koli cannot be deleted'}
+                                  >
+                                    {deletingKoliKey === row.koliKey ? '...' : 'X'}
+                                  </button>
+                                ) : null}
+                              </td>
                             </tr>
                           )
                         })}

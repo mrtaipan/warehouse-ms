@@ -110,6 +110,27 @@ function preventNumberWheel(event) {
   event.currentTarget.blur()
 }
 
+function getNextRegularKoliSequence(rows = [], { inboundId, storingType, brandCode } = {}) {
+  const usedSequences = new Set(
+    rows
+      .filter((row) =>
+        Number(row.inbound_id || 0) === Number(inboundId || 0) &&
+        normalize(row.storing_type) === normalize(storingType) &&
+        normalize(row.package_type || 'REGULAR') === 'REGULAR' &&
+        normalize(row.brand_code) === normalize(brandCode)
+      )
+      .map((row) => Number(row.koli_sequence || 0))
+      .filter((sequence) => sequence > 0)
+  )
+
+  let nextSequence = 1
+  while (usedSequences.has(nextSequence)) {
+    nextSequence += 1
+  }
+
+  return nextSequence
+}
+
 function ItemStoringContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
@@ -517,17 +538,13 @@ function ItemStoringContent() {
 
       const brandCode = normalize(draftItems[0]?.brand_code) || null
       const isPhoto = packageType === 'PHOTO'
-      const maxSequence = isPhoto
+      const nextSequence = isPhoto
         ? 0
-        : latestPackingRows
-            .filter((row) =>
-              Number(row.inbound_id || 0) === Number(inbound.id || 0) &&
-              row.storing_type === storingType &&
-              row.package_type === 'REGULAR' &&
-              normalize(row.brand_code) === normalize(brandCode)
-            )
-            .reduce((max, row) => Math.max(max, Number(row.koli_sequence || 0)), 0)
-      const nextSequence = isPhoto ? null : maxSequence + 1
+        : getNextRegularKoliSequence(latestPackingRows, {
+            inboundId: inbound.id,
+            storingType,
+            brandCode,
+          })
       const now = new Date().toISOString()
       const groupKey = `${inbound.id}-${storingType}-${packageType}-${brandCode || 'none'}-${Date.now()}`
       const payload = draftItems.map((draft) => {
@@ -548,7 +565,7 @@ function ItemStoringContent() {
           model_name: sourceBreakdown.model_name || null,
           variant_name: sourceBreakdown.variant_name || null,
           size_label: draft.size_label,
-          koli_sequence: nextSequence,
+          koli_sequence: isPhoto ? null : nextSequence,
           qty: draft.qty,
           storage_status: 'queued',
           packed_by: displayName,
