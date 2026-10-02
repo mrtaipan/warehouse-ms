@@ -21,7 +21,8 @@ const STORAGE_STATIC_CACHE_TTL_MS = 5 * 60 * 1000
 const STORAGE_GROUP_FILTERS = ['ARKLINE', 'MOB', 'OI']
 const REJECT_GRADES = ['B', 'C']
 const REJECT_STORAGE_SELECT_COLUMNS = 'id, koli_number, product_name, size, category_id, sub_category_id, item_type_id, qty, grade, reject_note, status, posted_at, posted_by, created_by, created_at, updated_by, updated_at'
-const TEMPORARY_SALES_SELECT_COLUMNS = 'id, source_warehouse_storage_id, source_pl_packing_item_id, source_variant_code, sku_id, item_name, size, group_code, source_location_label, qty_in_area, status, entered_at, due_at, created_by, created_at, updated_at'
+const TEMPORARY_SALES_SELECT_COLUMNS = 'id, source_warehouse_storage_id, source_pl_packing_item_id, source_variant_code, sku_id, item_name, size, category_id, area_type, group_code, source_location_label, qty_in_area, status, entered_at, due_at, created_by, created_at, updated_at'
+const TEMPORARY_SALES_LEGACY_SELECT_COLUMNS = 'id, source_warehouse_storage_id, source_pl_packing_item_id, source_variant_code, sku_id, item_name, size, group_code, source_location_label, qty_in_area, status, entered_at, due_at, created_by, created_at, updated_at'
 const STORAGE_MOVEMENT_SELECT_COLUMNS = 'id, warehouse_storage_id, temporary_sales_item_id, movement_type, qty, from_location_label, to_location_label, item_name, size, sku_id, created_by, created_at'
 const PUTAWAY_QUEUE_SELECT_COLUMNS = 'id, restock_request_id, source_storage_id, source_location_label, source_pl_packing_item_id, sku_id, source_variant_code, item_name, size, group_code, qty, target_rack_location_id, status, notes, created_at, created_by, stored_at, stored_by'
 const WAREHOUSE_STORAGE_BASE_SELECT_COLUMNS = 'id, rack_location_id, source_pl_packing_item_id, source_variant_code, sku_id, item_name, size, qty, notes, created_at, updated_at'
@@ -40,6 +41,31 @@ const letterSizeRanks = new Map(
 
 function normalizeFilterValue(value) {
   return String(value || '').trim().toUpperCase()
+}
+
+function getTemporaryStatusStyle(status) {
+  const normalized = normalizeFilterValue(status)
+  const base = {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: '26px',
+    padding: '0 10px',
+    borderRadius: '999px',
+    fontSize: '12px',
+    fontWeight: '800',
+    lineHeight: 1,
+    whiteSpace: 'nowrap',
+  }
+
+  if (normalized === 'WAITING') return { ...base, background: '#f8fafc', color: '#475569' }
+  if (normalized === 'IN_TEMPORARY_AREA') return { ...base, background: '#eff6ff', color: '#1d4ed8' }
+  if (normalized === 'DUE_SOON') return { ...base, background: '#fffbeb', color: '#92400e' }
+  if (normalized === 'OVERDUE') return { ...base, background: '#fff1f2', color: '#b91c1c' }
+  if (normalized === 'RETURNED') return { ...base, background: '#ecfdf5', color: '#047857' }
+  if (normalized === 'COMPLETED') return { ...base, background: '#e2e8f0', color: '#475569' }
+  if (normalized === 'NOT_REQUIRED') return { ...base, background: '#f1f5f9', color: '#64748b' }
+  return { ...base, background: '#f1f5f9', color: '#475569' }
 }
 
 function getSkuDirectoryIdentity(value, brandRows = [], categoryRows = []) {
@@ -594,7 +620,18 @@ async function fetchTemporarySalesItems() {
     .order('entered_at', { ascending: false })
 
   if (error) {
-    if (isSchemaColumnError(error) || normalizeFilterValue(error?.message).includes('RELATION')) {
+    if (isSchemaColumnError(error)) {
+      const { data: legacyData, error: legacyError } = await supabase
+        .from('warehouse_temporary_sales_items')
+        .select(TEMPORARY_SALES_LEGACY_SELECT_COLUMNS)
+        .order('entered_at', { ascending: false })
+
+      if (!legacyError) {
+        return legacyData || []
+      }
+    }
+
+    if (normalizeFilterValue(error?.message).includes('RELATION')) {
       return []
     }
 
@@ -937,7 +974,7 @@ async function getCurrentUserEmail() {
 export default function StorageOverviewPage() {
   const searchParams = useSearchParams()
   const initialMode = String(searchParams.get('mode') || '').trim().toLowerCase()
-  const initialListMode = ['history', 'movement-history', 'queue', 'temporary-sales', 'putaway-queue', 'product-directory', 'reject-storage'].includes(initialMode) ? initialMode : 'stock'
+  const initialListMode = ['history', 'movement-history', 'queue', 'temporary-sales', 'temporary-retur', 'putaway-queue', 'product-directory', 'reject-storage'].includes(initialMode) ? initialMode : 'stock'
   const initialRegisterOpen = searchParams.get('register') === '1'
   const initialProductSearch = String(searchParams.get('q') || searchParams.get('search') || '').trim().toUpperCase()
   const [rackLocations, setRackLocations] = useState([])
@@ -982,6 +1019,24 @@ export default function StorageOverviewPage() {
   const [temporaryStoreError, setTemporaryStoreError] = useState('')
   const [temporaryStoreConfirmOpen, setTemporaryStoreConfirmOpen] = useState(false)
   const [storingTemporarySales, setStoringTemporarySales] = useState(false)
+  const [temporaryTakeOutModalRows, setTemporaryTakeOutModalRows] = useState([])
+  const [temporaryTakeOutQtys, setTemporaryTakeOutQtys] = useState({})
+  const [temporaryTakeOutError, setTemporaryTakeOutError] = useState('')
+  const [temporaryTakeOutConfirmOpen, setTemporaryTakeOutConfirmOpen] = useState(false)
+  const [takingTemporarySales, setTakingTemporarySales] = useState(false)
+  const [movingTemporarySales, setMovingTemporarySales] = useState(false)
+  const [temporaryMoveConfirmEntry, setTemporaryMoveConfirmEntry] = useState(null)
+  const [temporaryDestinationModal, setTemporaryDestinationModal] = useState(null)
+  const [temporaryDestinationType, setTemporaryDestinationType] = useState('SALES')
+  const [temporaryReturQtyModalRows, setTemporaryReturQtyModalRows] = useState([])
+  const [temporaryReturQtys, setTemporaryReturQtys] = useState({})
+  const [temporaryReturQtyError, setTemporaryReturQtyError] = useState('')
+  const [movingTemporaryRetur, setMovingTemporaryRetur] = useState(false)
+  const [temporaryDiscrepancyEntry, setTemporaryDiscrepancyEntry] = useState(null)
+  const [temporaryDiscrepancyQty, setTemporaryDiscrepancyQty] = useState('')
+  const [temporaryDiscrepancyNotes, setTemporaryDiscrepancyNotes] = useState('')
+  const [temporaryDiscrepancyError, setTemporaryDiscrepancyError] = useState('')
+  const [savingTemporaryDiscrepancy, setSavingTemporaryDiscrepancy] = useState(false)
   const [putawayModalEntry, setPutawayModalEntry] = useState(null)
   const [putawayForm, setPutawayForm] = useState({ locationId: '', locationCode: '', subLocation: '', notes: '' })
   const [putawayError, setPutawayError] = useState('')
@@ -1116,6 +1171,7 @@ export default function StorageOverviewPage() {
           variant.selling_name ||
           ''
         ).trim()
+        const skuIdentity = getSkuDirectoryIdentity(resolvedSku, brandData || [], categoryData || [])
 
         return {
           ...row,
@@ -1124,6 +1180,7 @@ export default function StorageOverviewPage() {
           variant_code: variant.variant_code || '',
           variant_name: variant.variant_name || '',
           resolved_sku: resolvedSku,
+          category_id: row.category_id || breakdown.category_id || variant.category_id || skuIdentity.categoryId || null,
         }
       })
 
@@ -1132,7 +1189,7 @@ export default function StorageOverviewPage() {
       setRejectStorageRows(rejectRows || [])
       setRestockHistoryRows(restockRows || [])
       setStorageQueueRows(normalizedQueueRows)
-      setTemporarySalesRows(temporaryRows || [])
+      setTemporarySalesRows((temporaryRows || []).map((row) => ({ ...row, area_type: row.area_type || 'SALES' })))
       setPutawayQueueRows(putawayRows || [])
       setStorageMovementRows(movementRows || [])
       setInboundRows(inboundData || [])
@@ -1315,6 +1372,7 @@ export default function StorageOverviewPage() {
       storageAccess.location ? ['stock', 'Current Stock'] : null,
       storageAccess.queue ? ['queue', 'Storage Queue'] : null,
       storageAccess.queue ? ['temporary-sales', 'Temp. Sales Area'] : null,
+      storageAccess.queue ? ['temporary-retur', 'Temp. Retur Keeping'] : null,
       storageAccess.queue ? ['putaway-queue', 'Shelving Queue'] : null,
       canViewRejectStorage ? ['reject-storage', 'Reject Storage'] : null,
     ].filter(Boolean),
@@ -1341,6 +1399,8 @@ export default function StorageOverviewPage() {
   const visibleListMode = storageTabItems.some(([mode]) => mode === activeListMode)
     ? activeListMode
     : storageTabItems[0]?.[0] || activeListMode
+  const isTemporaryAreaMode = ['temporary-sales', 'temporary-retur'].includes(visibleListMode)
+  const temporaryAreaType = visibleListMode === 'temporary-retur' ? 'RETUR_KEEPING' : 'SALES'
   const isStorageLocationMode = storageLocationTabItems.some(([mode]) => mode === visibleListMode)
   const isStorageHistoryMode = ['history', 'movement-history'].includes(visibleListMode)
   const visiblePrimaryTabMode = isStorageLocationMode
@@ -2039,7 +2099,11 @@ export default function StorageOverviewPage() {
     return true
   })
   const filteredTemporarySalesRows = temporarySalesRows.filter((entry) => {
-    if (normalizeFilterValue(entry.status) === 'COMPLETED') {
+    if (normalizeFilterValue(entry.area_type || 'SALES') !== temporaryAreaType) {
+      return false
+    }
+
+    if (normalizeFilterValue(entry.status) === 'COMPLETED' && normalizeFilterValue(temporarySalesStatus) !== 'COMPLETED') {
       return false
     }
 
@@ -2084,7 +2148,7 @@ export default function StorageOverviewPage() {
       .some((value) => value.includes(normalizedSearch))
   })
   const temporarySalesStats = useMemo(() => {
-    const rows = temporarySalesRows
+    const rows = temporarySalesRows.filter((row) => normalizeFilterValue(row.area_type || 'SALES') === temporaryAreaType)
     return {
       waiting: rows.filter((row) => normalizeFilterValue(row.status) === 'WAITING').length,
       inArea: rows.filter((row) => normalizeFilterValue(row.status) === 'IN_TEMPORARY_AREA').length,
@@ -2097,7 +2161,7 @@ export default function StorageOverviewPage() {
         return dueAt > 0 && dueAt < Date.now() && normalizeFilterValue(row.status) === 'IN_TEMPORARY_AREA'
       }).length,
     }
-  }, [temporarySalesRows])
+  }, [temporaryAreaType, temporarySalesRows])
   const selectableTemporarySalesRows = filteredTemporarySalesRows.filter(
     (row) => normalizeFilterValue(row.status) === 'IN_TEMPORARY_AREA'
   )
@@ -2490,6 +2554,8 @@ export default function StorageOverviewPage() {
         sku_id: entry.sku_id || null,
         item_name: entry.item_name || 'Unknown item',
         size: entry.size || null,
+        category_id: entry.category_id || getSkuDirectoryIdentity(entry.source_variant_code || entry.sku_id, brandRows, categoryRows).categoryId || null,
+        area_type: 'SALES',
         group_code: getLocationStorageGroup(entry.location) || null,
         source_location_label: getLocationLabel(entry.location),
         qty_in_area: Number(entry.qty || 0),
@@ -2503,6 +2569,8 @@ export default function StorageOverviewPage() {
         sku_id: getQueueItemSku(item) || null,
         item_name: getQueueItemName(item),
         size: item.size_label || null,
+        category_id: item.category_id || getSkuDirectoryIdentity(getQueueItemSku(item), brandRows, categoryRows).categoryId || null,
+        area_type: 'SALES',
         group_code: normalizeFilterValue(entry.storing_type) || null,
         source_location_label: `Storage Queue / ${getQueueKoliLabel(entry)}`,
         qty_in_area: Number(item.qty || 0),
@@ -2529,9 +2597,150 @@ export default function StorageOverviewPage() {
 
     setTemporarySalesRows((current) => [...(data || []), ...current])
     setSelectedTemporarySourceIds([])
+    setSelectedCategoryRowIds([])
     setSelectedQueueKeys([])
     setActiveListMode('temporary-sales')
+    setTemporaryDestinationModal(null)
     setSuccess(`${payload.length} item row(s) added to Temporary Sales as Waiting.`)
+  }
+
+  async function createTemporaryReturKeepingFromCurrentStock(qtyById = null) {
+    if (!canTakeStorageItem || selectedTemporarySourceIds.length === 0) return
+
+    const entries = storageRows
+      .filter((entry) => selectedTemporarySourceIdSet.has(String(entry.id)) && Number(entry.qty || 0) > 0)
+      .map((entry) => ({
+        ...entry,
+        requestedQty: qtyById ? Number(qtyById[String(entry.id)] || 0) : Number(entry.qty || 0),
+      }))
+      .filter((entry) => entry.requestedQty > 0)
+    if (entries.length === 0) return
+
+    setError('')
+    setSuccess('')
+    const now = new Date()
+    const dueAt = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString()
+    const createdBy = await getCurrentUserEmail()
+    const temporaryPayload = entries.map((entry) => ({
+      source_warehouse_storage_id: entry.id,
+      source_pl_packing_item_id: entry.source_pl_packing_item_id || null,
+      source_variant_code: entry.source_variant_code || entry.sku_id || null,
+      sku_id: entry.sku_id || null,
+      item_name: entry.item_name || 'Unknown item',
+      size: entry.size || null,
+      category_id: entry.category_id || getSkuDirectoryIdentity(entry.source_variant_code || entry.sku_id, brandRows, categoryRows).categoryId || null,
+      area_type: 'RETUR_KEEPING',
+      group_code: getLocationStorageGroup(entry.location) || null,
+      source_location_label: getLocationLabel(entry.location),
+      qty_in_area: entry.requestedQty,
+      status: 'IN_TEMPORARY_AREA',
+      entered_at: now.toISOString(),
+      due_at: dueAt,
+      created_by: createdBy,
+    }))
+    const { data: insertedRows, error: insertError } = await supabase
+      .from('warehouse_temporary_sales_items')
+      .insert(temporaryPayload)
+      .select(TEMPORARY_SALES_SELECT_COLUMNS)
+
+    if (insertError) {
+      setError(insertError.message)
+      return
+    }
+
+    const movementPayload = []
+    for (const entry of entries) {
+      const remainingQty = Number(entry.qty || 0) - entry.requestedQty
+      const { error: storageError } = remainingQty === 0
+        ? await supabase.from('warehouse_storage').delete().eq('id', entry.id)
+        : await supabase.from('warehouse_storage').update({ qty: remainingQty, updated_by: createdBy }).eq('id', entry.id)
+
+      if (storageError) {
+        setError(storageError.message)
+        return
+      }
+
+      movementPayload.push({
+        warehouse_storage_id: entry.id,
+        temporary_sales_item_id: insertedRows?.find((row) => String(row.source_warehouse_storage_id) === String(entry.id))?.id || null,
+        movement_type: 'TEMPORARY_IN',
+        qty: entry.requestedQty,
+        from_location_label: getLocationLabel(entry.location),
+        to_location_label: 'Temp. Retur Keeping',
+        item_name: entry.item_name,
+        size: entry.size || null,
+        sku_id: entry.sku_id || null,
+        created_by: createdBy,
+      })
+    }
+
+    const { error: movementError } = await supabase.from('warehouse_storage_movements').insert(movementPayload)
+    if (movementError) {
+      setError(movementError.message)
+      return
+    }
+
+    setStorageEntries((current) => current.filter((row) => !entries.some((entry) => String(entry.id) === String(row.id))))
+    setTemporarySalesRows((current) => [...(insertedRows || []), ...current])
+    setStorageMovementRows((current) => [
+      ...movementPayload.map((row, index) => ({ ...row, id: `local-retur-${Date.now()}-${index}`, created_at: now.toISOString() })),
+      ...current,
+    ])
+    setSelectedTemporarySourceIds([])
+    setSelectedCategoryRowIds([])
+    setTemporaryDestinationModal(null)
+    setTemporaryReturQtyModalRows([])
+    setTemporaryReturQtys({})
+    setTemporaryReturQtyError('')
+    setSuccess(`${entries.length} item row(s) moved to Temp. Retur Keeping.`)
+  }
+
+  function openTemporaryDestinationModal(source) {
+    const hasSelection = source === 'queue' ? selectedQueueEntries.length > 0 : selectedTemporarySourceIds.length > 0
+    if (!hasSelection) return
+    setTemporaryDestinationModal(source)
+    setTemporaryDestinationType('SALES')
+    setError('')
+    setSuccess('')
+  }
+
+  function openTemporaryReturQtyModal() {
+    const rows = storageRows.filter((entry) => selectedTemporarySourceIdSet.has(String(entry.id)) && Number(entry.qty || 0) > 0)
+    if (rows.length === 0) return
+    setTemporaryDestinationType('RETUR_KEEPING')
+    setTemporaryReturQtyModalRows(rows)
+    setTemporaryReturQtys(Object.fromEntries(rows.map((row) => [String(row.id), ''])))
+    setTemporaryReturQtyError('')
+  }
+
+  function closeTemporaryReturQtyModal() {
+    setTemporaryDestinationType('SALES')
+    setTemporaryReturQtyModalRows([])
+    setTemporaryReturQtys({})
+    setTemporaryReturQtyError('')
+  }
+
+  async function handleTemporaryReturQtySubmit(event) {
+    event.preventDefault()
+    if (movingTemporaryRetur) return
+    const qtyById = temporaryReturQtyModalRows.reduce((result, row) => {
+      result[String(row.id)] = Number(temporaryReturQtys[String(row.id)] || 0)
+      return result
+    }, {})
+    const hasInvalidQty = temporaryReturQtyModalRows.some((row) => {
+      const qty = qtyById[String(row.id)]
+      return qty <= 0 || !Number.isInteger(qty) || qty > Number(row.qty || 0)
+    })
+    if (hasInvalidQty) {
+      setTemporaryReturQtyError('Each quantity must be a whole number greater than 0 and cannot exceed available stock.')
+      return
+    }
+    setMovingTemporaryRetur(true)
+    try {
+      await createTemporaryReturKeepingFromCurrentStock(qtyById)
+    } finally {
+      setMovingTemporaryRetur(false)
+    }
   }
 
   async function handleTemporaryMoveOut(entry) {
@@ -2540,16 +2749,18 @@ export default function StorageOverviewPage() {
     const movedQty = Number(entry.qty_in_area || 0)
     if (movedQty <= 0) return
 
-    setError('')
-    setSuccess('')
-    const createdBy = await getCurrentUserEmail()
-    const sourceStorage = storageEntries.find((row) => String(row.id) === String(entry.source_warehouse_storage_id))
-    const sourceLabel = sourceStorage?.location ? getLocationLabel(sourceStorage.location) : entry.source_location_label || 'Storage'
+    setMovingTemporarySales(true)
+    try {
+      setError('')
+      setSuccess('')
+      const createdBy = await getCurrentUserEmail()
+      const sourceStorage = storageEntries.find((row) => String(row.id) === String(entry.source_warehouse_storage_id))
+      const sourceLabel = sourceStorage?.location ? getLocationLabel(sourceStorage.location) : entry.source_location_label || 'Storage'
 
-    if (sourceStorage && Number(sourceStorage.qty || 0) < movedQty) {
-      setError('The available storage quantity is lower than the Temporary Sales quantity.')
-      return
-    }
+      if (sourceStorage && Number(sourceStorage.qty || 0) < movedQty) {
+        setError('The available storage quantity is lower than the Temporary Sales quantity.')
+        return
+      }
 
     if (sourceStorage) {
       const remainingQty = Number(sourceStorage.qty || 0) - movedQty
@@ -2616,22 +2827,32 @@ export default function StorageOverviewPage() {
       return
     }
 
-    setTemporarySalesRows((current) => current.map((row) => String(row.id) === String(entry.id) ? updatedRow : row))
-    setStorageMovementRows((current) => [{
-      warehouse_storage_id: sourceStorage?.id || null,
-      temporary_sales_item_id: entry.id,
-      movement_type: 'TEMPORARY_IN',
-      qty: movedQty,
-      from_location_label: sourceLabel,
-      to_location_label: 'Temporary Sales Area',
-      item_name: entry.item_name,
-      size: entry.size || null,
-      sku_id: entry.sku_id || null,
-      created_by: createdBy,
-      id: `local-${Date.now()}`,
-      created_at: new Date().toISOString(),
-    }, ...current])
-    setSuccess('Item moved to Temporary Sales Area.')
+      setTemporarySalesRows((current) => current.map((row) => String(row.id) === String(entry.id) ? updatedRow : row))
+      setStorageMovementRows((current) => [{
+        warehouse_storage_id: sourceStorage?.id || null,
+        temporary_sales_item_id: entry.id,
+        movement_type: 'TEMPORARY_IN',
+        qty: movedQty,
+        from_location_label: sourceLabel,
+        to_location_label: 'Temporary Sales Area',
+        item_name: entry.item_name,
+        size: entry.size || null,
+        sku_id: entry.sku_id || null,
+        created_by: createdBy,
+        id: `local-${Date.now()}`,
+        created_at: new Date().toISOString(),
+      }, ...current])
+      setTemporaryMoveConfirmEntry(null)
+      setSuccess('Item moved to Temporary Sales Area.')
+    } finally {
+      setMovingTemporarySales(false)
+    }
+  }
+
+  function openTemporaryMoveConfirm(entry) {
+    if (!entry || normalizeFilterValue(entry.status) !== 'WAITING') return
+    setTemporaryMoveConfirmEntry(entry)
+    setError('')
   }
 
   async function handleTemporaryNotRequired(entry) {
@@ -3389,6 +3610,205 @@ export default function StorageOverviewPage() {
     setTemporaryStoreConfirmOpen(false)
   }
 
+  function openTemporaryTakeOutModal(entry = null) {
+    const rows = entry
+      ? [entry]
+      : temporarySalesRows.filter((row) => selectedTemporarySalesIds.includes(String(row.id)) && normalizeFilterValue(row.status) === 'IN_TEMPORARY_AREA')
+    if (rows.length === 0) return
+    setTemporaryTakeOutModalRows(rows)
+    setTemporaryTakeOutQtys(Object.fromEntries(rows.map((row) => [String(row.id), ''])))
+    setTemporaryTakeOutError('')
+    setTemporaryTakeOutConfirmOpen(false)
+  }
+
+  function closeTemporaryTakeOutModal() {
+    setTemporaryTakeOutModalRows([])
+    setTemporaryTakeOutQtys({})
+    setTemporaryTakeOutError('')
+    setTemporaryTakeOutConfirmOpen(false)
+  }
+
+  async function handleTemporaryTakeOutSubmit(event) {
+    event.preventDefault()
+    const entries = temporaryTakeOutModalRows.map((row) => ({
+      row,
+      qty: Number(temporaryTakeOutQtys[String(row.id)] || 0),
+    }))
+
+    if (entries.length === 0 || entries.some(({ row, qty }) => qty <= 0 || qty > Number(row.qty_in_area || 0))) {
+      setTemporaryTakeOutError('Take out quantity must be greater than 0 and cannot exceed the quantity in the temporary area.')
+      return
+    }
+
+    setTemporaryTakeOutConfirmOpen(true)
+  }
+
+  function openTemporaryDiscrepancyModal(entry) {
+    if (!entry || normalizeFilterValue(entry.area_type || 'SALES') !== 'SALES') return
+    setTemporaryDiscrepancyEntry(entry)
+    setTemporaryDiscrepancyQty('')
+    setTemporaryDiscrepancyNotes('')
+    setTemporaryDiscrepancyError('')
+  }
+
+  function closeTemporaryDiscrepancyModal() {
+    setTemporaryDiscrepancyEntry(null)
+    setTemporaryDiscrepancyQty('')
+    setTemporaryDiscrepancyNotes('')
+    setTemporaryDiscrepancyError('')
+  }
+
+  async function handleTemporaryDiscrepancySubmit(event) {
+    event.preventDefault()
+    if (!temporaryDiscrepancyEntry) return
+
+    const systemQty = Number(temporaryDiscrepancyEntry.qty_in_area || 0)
+    const actualQty = Number(temporaryDiscrepancyQty)
+    if (!Number.isFinite(actualQty) || actualQty < 0 || !Number.isInteger(actualQty)) {
+      setTemporaryDiscrepancyError('Actual quantity must be a whole number of 0 or more.')
+      return
+    }
+    if (actualQty === systemQty) {
+      setTemporaryDiscrepancyError('Actual quantity must be different from the system quantity.')
+      return
+    }
+
+    setSavingTemporaryDiscrepancy(true)
+    setTemporaryDiscrepancyError('')
+    const varianceQty = actualQty - systemQty
+    const createdBy = await getCurrentUserEmail()
+    const movementType = varianceQty > 0 ? 'TEMPORARY_ADJUSTMENT_IN' : 'TEMPORARY_ADJUSTMENT_OUT'
+    const { error: adjustmentError } = await supabase.from('warehouse_temporary_sales_adjustments').insert({
+      temporary_sales_item_id: temporaryDiscrepancyEntry.id,
+      system_qty: systemQty,
+      actual_qty: actualQty,
+      variance_qty: varianceQty,
+      reason: temporaryDiscrepancyNotes.trim() || null,
+      created_by: createdBy,
+    })
+
+    if (adjustmentError) {
+      setTemporaryDiscrepancyError(adjustmentError.message)
+      setSavingTemporaryDiscrepancy(false)
+      return
+    }
+
+    const { error: movementError } = await supabase.from('warehouse_storage_movements').insert({
+      warehouse_storage_id: null,
+      temporary_sales_item_id: temporaryDiscrepancyEntry.id,
+      movement_type: movementType,
+      qty: Math.abs(varianceQty),
+      from_location_label: varianceQty > 0 ? 'Physical count' : 'Temporary Sales Area',
+      to_location_label: varianceQty > 0 ? 'Temporary Sales Area' : 'Physical count adjustment',
+      item_name: temporaryDiscrepancyEntry.item_name,
+      size: temporaryDiscrepancyEntry.size || null,
+      sku_id: temporaryDiscrepancyEntry.sku_id || null,
+      created_by: createdBy,
+    })
+
+    if (movementError) {
+      setTemporaryDiscrepancyError(movementError.message)
+      setSavingTemporaryDiscrepancy(false)
+      return
+    }
+
+    const nextStatus = actualQty > 0 ? 'IN_TEMPORARY_AREA' : 'COMPLETED'
+    const { data: updatedRow, error: updateError } = await supabase
+      .from('warehouse_temporary_sales_items')
+      .update({ qty_in_area: actualQty, status: nextStatus, updated_at: new Date().toISOString() })
+      .eq('id', temporaryDiscrepancyEntry.id)
+      .select(TEMPORARY_SALES_SELECT_COLUMNS)
+      .single()
+
+    if (updateError) {
+      setTemporaryDiscrepancyError(updateError.message)
+      setSavingTemporaryDiscrepancy(false)
+      return
+    }
+
+    setTemporarySalesRows((current) => current.map((row) => String(row.id) === String(updatedRow.id) ? updatedRow : row))
+    setStorageMovementRows((current) => [{
+      id: `local-adjustment-${Date.now()}`,
+      warehouse_storage_id: null,
+      temporary_sales_item_id: temporaryDiscrepancyEntry.id,
+      movement_type: movementType,
+      qty: Math.abs(varianceQty),
+      from_location_label: varianceQty > 0 ? 'Physical count' : 'Temporary Sales Area',
+      to_location_label: varianceQty > 0 ? 'Temporary Sales Area' : 'Physical count adjustment',
+      item_name: temporaryDiscrepancyEntry.item_name,
+      size: temporaryDiscrepancyEntry.size || null,
+      sku_id: temporaryDiscrepancyEntry.sku_id || null,
+      created_by: createdBy,
+      created_at: new Date().toISOString(),
+    }, ...current])
+    setSuccess(`Temporary quantity reconciled with a ${varianceQty > 0 ? '+' : ''}${varianceQty} adjustment.`)
+    setSavingTemporaryDiscrepancy(false)
+    closeTemporaryDiscrepancyModal()
+  }
+
+  async function handleConfirmedTemporaryTakeOut() {
+    const entries = temporaryTakeOutModalRows.map((row) => ({
+      row,
+      qty: Number(temporaryTakeOutQtys[String(row.id)] || 0),
+    }))
+    if (entries.length === 0) return
+
+    setTakingTemporarySales(true)
+    setTemporaryTakeOutError('')
+    const createdBy = await getCurrentUserEmail()
+    const movementPayload = entries.map(({ row, qty }) => ({
+      warehouse_storage_id: null,
+      temporary_sales_item_id: row.id,
+      movement_type: 'TAKE_OUT',
+      qty,
+      from_location_label: 'Temp. Retur Keeping',
+      to_location_label: 'Sold / Taken Out',
+      item_name: row.item_name,
+      size: row.size || null,
+      sku_id: row.sku_id || null,
+      created_by: createdBy,
+    }))
+    const { error: movementError } = await supabase.from('warehouse_storage_movements').insert(movementPayload)
+
+    if (movementError) {
+      setTemporaryTakeOutError(movementError.message)
+      setTakingTemporarySales(false)
+      return
+    }
+
+    const updatedRows = []
+    for (const { row, qty } of entries) {
+      const remainingQty = Math.max(0, Number(row.qty_in_area || 0) - qty)
+      const { data: updatedRow, error: updateError } = await supabase
+        .from('warehouse_temporary_sales_items')
+        .update({
+          qty_in_area: remainingQty,
+          status: remainingQty === 0 ? 'COMPLETED' : 'IN_TEMPORARY_AREA',
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', row.id)
+        .select(TEMPORARY_SALES_SELECT_COLUMNS)
+        .single()
+
+      if (updateError) {
+        setTemporaryTakeOutError(updateError.message)
+        setTakingTemporarySales(false)
+        return
+      }
+      updatedRows.push(updatedRow)
+    }
+
+    setTemporarySalesRows((current) => current.map((row) => updatedRows.find((next) => String(next.id) === String(row.id)) || row))
+    setStorageMovementRows((current) => [
+      ...movementPayload.map((row, index) => ({ ...row, id: `local-retur-out-${Date.now()}-${index}`, created_at: new Date().toISOString() })),
+      ...current,
+    ])
+    setSelectedTemporarySalesIds((current) => current.filter((id) => !entries.some(({ row }) => String(row.id) === String(id))))
+    setSuccess('Temporary Retur Keeping items taken out successfully.')
+    setTakingTemporarySales(false)
+    closeTemporaryTakeOutModal()
+  }
+
   function handleTemporaryStoreLocationChange(event) {
     const { name, value } = event.target
     setTemporaryStoreForm((current) => ({
@@ -3447,8 +3867,9 @@ export default function StorageOverviewPage() {
       source_variant_code: row.source_variant_code || row.sku_id || null,
       item_name: row.item_name,
       size: normalizeSizeValue(row.size) || null,
+      category_id: row.category_id || getSkuDirectoryIdentity(row.source_variant_code || row.sku_id, brandRows, categoryRows).categoryId || null,
       qty,
-      notes: temporaryStoreForm.notes.trim() || 'Returned from Temporary Sales Area',
+      notes: temporaryStoreForm.notes.trim() || (row.area_type === 'RETUR_KEEPING' ? 'Returned from Temp. Retur Keeping' : 'Returned from Temporary Sales Area'),
       updated_by: createdBy,
     }))
     const { data: insertedStorageRows, error: storageError } = await supabase
@@ -3467,7 +3888,7 @@ export default function StorageOverviewPage() {
       temporary_sales_item_id: row.id,
       movement_type: 'TEMPORARY_RETURN',
       qty,
-      from_location_label: 'Temporary Sales Area',
+      from_location_label: row.area_type === 'RETUR_KEEPING' ? 'Temp. Retur Keeping' : 'Temporary Sales Area',
       to_location_label: destinationLabel,
       item_name: row.item_name,
       size: row.size || null,
@@ -3511,7 +3932,7 @@ export default function StorageOverviewPage() {
     setTemporarySalesRows((current) => current.map((row) => updatedRows.find((next) => String(next.id) === String(row.id)) || row))
     setStorageMovementRows((current) => [...movementPayload.map((row, index) => ({ ...row, id: `local-${Date.now()}-${index}`, created_at: new Date().toISOString() })), ...current])
     setSelectedTemporarySalesIds((current) => current.filter((id) => !entries.some(({ row }) => String(row.id) === String(id))))
-    setSuccess('Temporary Sales items stored back successfully.')
+    setSuccess('Temporary items stored back successfully.')
     setStoringTemporarySales(false)
     closeTemporaryStoreModal()
   }
@@ -4084,6 +4505,7 @@ export default function StorageOverviewPage() {
         sku_id: itemSku || null,
         item_name: formatStoredQueueItemName(getQueueItemName(item), grnNumber),
         size: normalizeSizeValue(item.size_label) || null,
+        category_id: item.category_id || getSkuDirectoryIdentity(itemSku, brandRows, categoryRows).categoryId || null,
         qty: Number(item.qty || 0),
         notes: userNote ? `${sourceNote} | ${userNote}` : sourceNote,
         updated_by: storedBy,
@@ -4655,6 +5077,8 @@ export default function StorageOverviewPage() {
             {storageLocationTabItems.map(([mode, label]) => {
               const count = mode === 'queue'
                 ? queueGroups.length
+                : ['temporary-sales', 'temporary-retur'].includes(mode)
+                  ? temporarySalesRows.filter((row) => normalizeFilterValue(row.area_type || 'SALES') === (mode === 'temporary-retur' ? 'RETUR_KEEPING' : 'SALES') && normalizeFilterValue(row.status) !== 'COMPLETED').length
                 : mode === 'putaway-queue'
                   ? filteredPutawayRows.length
                 : mode === 'reject-storage'
@@ -4726,19 +5150,25 @@ export default function StorageOverviewPage() {
           />
         ) : (
           <>
-        {visibleListMode === 'temporary-sales' ? (
+        {isTemporaryAreaMode ? (
           <div style={styles.temporarySalesShell}>
             <div
               style={isCompactLayout
                 ? { ...styles.temporarySalesKpiGrid, ...styles.temporarySalesKpiGridCompact }
                 : styles.temporarySalesKpiGrid}
             >
-              {[
-                ['Waiting Action', temporarySalesStats.waiting, styles.temporarySalesKpiWaiting],
-                ['In Temporary Area', temporarySalesStats.inArea, styles.temporarySalesKpiActive],
-                ['Due Soon', temporarySalesStats.dueSoon, styles.temporarySalesKpiDue],
-                ['Overdue', temporarySalesStats.overdue, styles.temporarySalesKpiOverdue],
-              ].map(([label, value, accentStyle]) => (
+              {(visibleListMode === 'temporary-retur'
+                ? [
+                  ['In Temporary Area', temporarySalesStats.inArea, styles.temporarySalesKpiActive],
+                  ['Due Soon', temporarySalesStats.dueSoon, styles.temporarySalesKpiDue],
+                  ['Overdue', temporarySalesStats.overdue, styles.temporarySalesKpiOverdue],
+                ]
+                : [
+                  ['Waiting Action', temporarySalesStats.waiting, styles.temporarySalesKpiWaiting],
+                  ['In Temporary Area', temporarySalesStats.inArea, styles.temporarySalesKpiActive],
+                  ['Due Soon', temporarySalesStats.dueSoon, styles.temporarySalesKpiDue],
+                  ['Overdue', temporarySalesStats.overdue, styles.temporarySalesKpiOverdue],
+                ]).map(([label, value, accentStyle]) => (
                 <div key={label} style={{ ...styles.temporarySalesKpiCard, ...accentStyle }}>
                   <span style={styles.temporarySalesKpiLabel}>{label}</span>
                   <strong style={styles.temporarySalesKpiValue}>{value}</strong>
@@ -4749,7 +5179,10 @@ export default function StorageOverviewPage() {
             <div
               style={isCompactLayout
                 ? { ...styles.temporarySalesToolbar, ...styles.temporarySalesToolbarCompact }
-                : styles.temporarySalesToolbar}
+                : {
+                  ...styles.temporarySalesToolbar,
+                  ...(visibleListMode === 'temporary-retur' ? styles.temporaryReturToolbar : {}),
+                }}
             >
               <div style={styles.field}>
                 <label style={styles.label}>Item Search</label>
@@ -4789,12 +5222,17 @@ export default function StorageOverviewPage() {
                 <div style={styles.field}>
                   <label style={styles.label}>Status</label>
                   <div style={styles.temporarySalesStatusToggle} aria-label="Temporary sales status filter">
-                    {[
+                    {(visibleListMode === 'temporary-retur' ? [
+                      ['in-area', 'In Area'],
+                      ['due-soon', 'Due Soon'],
+                      ['overdue', 'Overdue'],
+                    ] : [
                       ['waiting', 'Waiting'],
                       ['in-area', 'In Area'],
                       ['due-soon', 'Due Soon'],
                       ['overdue', 'Overdue'],
-                    ].map(([value, label]) => (
+                      ['completed', 'Completed'],
+                    ]).map(([value, label]) => (
                     <button
                       key={value}
                       type="button"
@@ -4969,14 +5407,15 @@ export default function StorageOverviewPage() {
             <div style={styles.toolbarActionField}>
               <button
                 type="button"
-                onClick={createTemporarySalesChecklist}
+                onClick={() => openTemporaryDestinationModal('queue')}
                 style={{
                   ...styles.iconChecklistButton,
                   ...styles.queueToolbarButton,
+                  ...styles.iconActionButtonWithBadge,
                   ...(selectedQueueEntries.length === 0 ? styles.iconActionButtonDisabled : {}),
                 }}
-                title="Add selected queue items to Temporary Sales"
-                aria-label="Add selected queue items to Temporary Sales"
+                title="Move selected items to a temporary area"
+                aria-label="Move selected items to a temporary area"
                 disabled={selectedQueueEntries.length === 0}
               >
                 <svg viewBox="0 0 24 24" style={styles.resetIcon} aria-hidden="true">
@@ -4986,6 +5425,7 @@ export default function StorageOverviewPage() {
                   <path d="m7 12 2 2 4-4" />
                   <path d="M7 17h8" />
                 </svg>
+                {selectedQueueEntries.length > 0 ? <span style={styles.actionBadge}>{selectedQueueEntries.length}</span> : null}
               </button>
             </div>
           ) : null}
@@ -5071,10 +5511,12 @@ export default function StorageOverviewPage() {
             <div style={styles.toolbarActionField}>
               <button
                 type="button"
-                onClick={createTemporarySalesChecklist}
-                style={selectedTemporarySourceIds.length > 0 ? styles.iconChecklistButton : { ...styles.iconChecklistButton, ...styles.iconActionButtonDisabled }}
-                title="Add selected stock to Temporary Sales"
-                aria-label="Add selected stock to Temporary Sales"
+                onClick={() => openTemporaryDestinationModal('stock')}
+                style={selectedTemporarySourceIds.length > 0
+                  ? { ...styles.iconChecklistButton, ...styles.iconActionButtonWithBadge }
+                  : { ...styles.iconChecklistButton, ...styles.iconActionButtonWithBadge, ...styles.iconActionButtonDisabled }}
+                title="Move selected items to a temporary area"
+                aria-label="Move selected items to a temporary area"
                 disabled={selectedTemporarySourceIds.length === 0}
               >
                 <svg viewBox="0 0 24 24" style={styles.resetIcon} aria-hidden="true">
@@ -5084,6 +5526,7 @@ export default function StorageOverviewPage() {
                   <path d="m7 12 2 2 4-4" />
                   <path d="M7 17h8" />
                 </svg>
+                {selectedTemporarySourceIds.length > 0 ? <span style={styles.actionBadge}>{selectedTemporarySourceIds.length}</span> : null}
               </button>
             </div>
           ) : null}
@@ -5506,9 +5949,9 @@ export default function StorageOverviewPage() {
           <div style={styles.historyToolbar}>
             <p style={styles.summary}>Showing {filteredMovementRows.length} storage movement record(s)</p>
           </div>
-        ) : visibleListMode === 'temporary-sales' ? (
+        ) : isTemporaryAreaMode ? (
           <div style={styles.historyToolbar}>
-            <p style={styles.summary}>Showing {filteredTemporarySalesRows.length} temporary sales item record(s)</p>
+            <p style={styles.summary}>Showing {filteredTemporarySalesRows.length} {visibleListMode === 'temporary-retur' ? 'temporary retur keeping' : 'temporary sales'} item record(s)</p>
           </div>
         ) : (
           <div style={styles.historyToolbar}>
@@ -5521,7 +5964,7 @@ export default function StorageOverviewPage() {
         {error ? <p style={styles.error}>{error}</p> : null}
         {success ? <p style={styles.success}>{success}</p> : null}
 
-        {visibleListMode === 'temporary-sales' ? (
+        {isTemporaryAreaMode ? (
           <div style={styles.temporarySalesTables}>
             <div style={styles.tableWrap}>
               <table style={styles.temporarySalesTable}>
@@ -5560,20 +6003,24 @@ export default function StorageOverviewPage() {
                         />
                       ) : null}
                     </td>
-                    <td style={styles.temporarySalesValueCell}>{entry.sku_id ? `${entry.sku_id} | ` : ''}{entry.item_name || '-'}</td>
+                    <td style={{ ...styles.temporarySalesValueCell, textAlign: 'left' }}>{entry.sku_id ? `${entry.sku_id} | ` : ''}{entry.item_name || '-'}</td>
                     <td style={styles.temporarySalesValueCell}>{entry.size || '-'}</td>
                     <td style={styles.temporarySalesValueCell}>{Number(entry.qty_in_area || 0)}</td>
                     <td style={styles.temporarySalesValueCell}>{entry.source_location_label || '-'}</td>
                     <td style={styles.temporarySalesValueCell}>{formatDateTime(entry.entered_at)}</td>
                     <td style={styles.temporarySalesValueCell}>{formatDateTime(entry.due_at)}</td>
-                    <td style={styles.temporarySalesValueCell}>{String(entry.status || '-').replaceAll('_', ' ')}</td>
+                    <td style={styles.temporarySalesValueCell}>
+                      <span style={getTemporaryStatusStyle(entry.status)}>
+                        {String(entry.status || '-').replaceAll('_', ' ')}
+                      </span>
+                    </td>
                     <td style={{ ...styles.td, ...styles.actionTd }}>
                       <div style={styles.temporarySalesActionGroup}>
                         {normalizeFilterValue(entry.status) === 'WAITING' ? (
                           <>
                             <button
                               type="button"
-                              onClick={() => handleTemporaryMoveOut(entry)}
+                              onClick={() => openTemporaryMoveConfirm(entry)}
                               style={{ ...styles.tableIconButton, ...styles.temporaryMoveOutButton }}
                               title="Move item out to Temporary Sales Area"
                               aria-label="Move item out to Temporary Sales Area"
@@ -5591,6 +6038,36 @@ export default function StorageOverviewPage() {
                             </button>
                           </>
                         ) : null}
+                        {visibleListMode === 'temporary-retur' && normalizeFilterValue(entry.status) === 'IN_TEMPORARY_AREA' ? (
+                          <button
+                            type="button"
+                            onClick={() => openTemporaryTakeOutModal(entry)}
+                            style={{ ...styles.tableIconButton, ...styles.tableIconButtonDark }}
+                            title="Take out item"
+                            aria-label="Take out item"
+                          >
+                            <svg viewBox="0 0 24 24" style={styles.tableActionIcon} aria-hidden="true">
+                              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+                              <path d="M16 17l5-5-5-5" />
+                              <path d="M21 12H9" />
+                            </svg>
+                          </button>
+                        ) : null}
+                        {visibleListMode === 'temporary-sales' && ['IN_TEMPORARY_AREA', 'COMPLETED'].includes(normalizeFilterValue(entry.status)) ? (
+                          <button
+                            type="button"
+                            onClick={() => openTemporaryDiscrepancyModal(entry)}
+                            style={styles.tableIconButton}
+                            title="Report discrepancy"
+                            aria-label="Report discrepancy"
+                          >
+                            <svg viewBox="0 0 24 24" style={styles.tableActionIcon} aria-hidden="true">
+                              <path d="M12 3 2.8 20h18.4L12 3Z" />
+                              <path d="M12 9v5" />
+                              <path d="M12 17h.01" />
+                            </svg>
+                          </button>
+                        ) : null}
                       </div>
                     </td>
                   </tr>
@@ -5606,8 +6083,8 @@ export default function StorageOverviewPage() {
                             <path d="M8 4h8l1 3H7l1-3Z" />
                           </svg>
                         </span>
-                        <strong>No temporary sales items yet</strong>
-                        <span>Selected items moved for sales staging will appear here.</span>
+                        <strong>{visibleListMode === 'temporary-retur' ? 'No temporary retur items yet' : 'No temporary sales items yet'}</strong>
+                        <span>{visibleListMode === 'temporary-retur' ? 'Items moved for return keeping will appear here.' : 'Selected items moved for sales staging will appear here.'}</span>
                       </div>
                     </td>
                   </tr>
@@ -6888,7 +7365,12 @@ export default function StorageOverviewPage() {
                     </div>
                     <input
                       value={temporaryStoreQtys[String(row.id)] || ''}
-                      onChange={(event) => setTemporaryStoreQtys((current) => ({ ...current, [String(row.id)]: event.target.value }))}
+                      onChange={(event) => {
+                        const rawValue = event.target.value
+                        const availableQty = Number(row.qty_in_area || 0)
+                        const nextValue = rawValue === '' ? '' : String(Math.min(Math.max(0, Number(rawValue) || 0), availableQty))
+                        setTemporaryStoreQtys((current) => ({ ...current, [String(row.id)]: nextValue }))
+                      }}
                       style={{ ...styles.input, ...styles.temporaryStoreQtyInput }}
                       inputMode="numeric"
                       min="1"
@@ -6909,6 +7391,223 @@ export default function StorageOverviewPage() {
         </div>
       ) : null}
 
+      {temporaryTakeOutModalRows.length > 0 && !temporaryTakeOutConfirmOpen ? (
+        <div style={styles.modalOverlay}>
+          <div style={styles.modalCard}>
+            <div style={styles.modalHeader}>
+              <div style={styles.modalTitleGroup}>
+                <p style={styles.modalEyebrow}>Temp. Retur Keeping</p>
+                <h2 style={styles.modalTitle}>Item Take Out</h2>
+              </div>
+              <div style={styles.modalHeaderActions}>
+                <button type="button" onClick={closeTemporaryTakeOutModal} style={styles.modalCancelButton}>Cancel</button>
+                <button type="submit" form="temporary-retur-take-out-form" style={styles.takeButton}>Take Out</button>
+              </div>
+            </div>
+            <p style={styles.modalText}>Enter the quantity to take out from Temp. Retur Keeping.</p>
+            <form id="temporary-retur-take-out-form" onSubmit={handleTemporaryTakeOutSubmit} style={styles.modalForm}>
+              {temporaryTakeOutModalRows.length === 1 ? (
+                <div style={styles.takeModalSummaryGrid}>
+                  <div style={styles.takeModalItemCard}>
+                    <span style={styles.selectedLocationLabel}>Item</span>
+                    <strong style={styles.takeModalItemName}>{temporaryTakeOutModalRows[0].sku_id ? `${temporaryTakeOutModalRows[0].sku_id} | ` : ''}{temporaryTakeOutModalRows[0].item_name || '-'}</strong>
+                    <div style={styles.takeModalSizeBlock}>
+                      <span style={styles.takeModalSizeLabel}>Size</span>
+                      <strong style={styles.takeModalSizeValue}>{temporaryTakeOutModalRows[0].size || '-'}</strong>
+                    </div>
+                  </div>
+                  <div style={styles.takeModalInfoCard}>
+                    <span style={styles.selectedLocationLabel}>Source</span>
+                    <strong style={styles.takeModalLocation}>Temp. Retur Keeping</strong>
+                  </div>
+                  <div style={styles.takeModalInfoCard}>
+                    <span style={styles.selectedLocationLabel}>Available Qty</span>
+                    <strong style={styles.takeModalQty}>{temporaryTakeOutModalRows[0].qty_in_area}</strong>
+                  </div>
+                </div>
+              ) : null}
+              <div style={styles.queueConfirmList}>
+                {temporaryTakeOutModalRows.map((row) => (
+                  <div key={row.id} style={styles.queueConfirmRow}>
+                    <div style={styles.temporaryStoreItemSummary}>
+                      <strong style={styles.queueItemText}>{row.sku_id ? `${row.sku_id} | ` : ''}{row.item_name}</strong>
+                      <span style={styles.queueMetaText}>Size {row.size || '-'} / Available {row.qty_in_area}</span>
+                    </div>
+                    <input
+                      value={temporaryTakeOutQtys[String(row.id)] || ''}
+                      onChange={(event) => setTemporaryTakeOutQtys((current) => ({ ...current, [String(row.id)]: event.target.value }))}
+                      style={{ ...styles.input, ...styles.temporaryStoreQtyInput }}
+                      inputMode="numeric"
+                      min="1"
+                      max={Number(row.qty_in_area || 0)}
+                      placeholder="Qty"
+                      required
+                    />
+                  </div>
+                ))}
+              </div>
+              {temporaryTakeOutError ? <p style={styles.modalInlineError}>{temporaryTakeOutError}</p> : null}
+            </form>
+          </div>
+        </div>
+      ) : null}
+
+      {temporaryTakeOutConfirmOpen && temporaryTakeOutModalRows.length > 0 ? (
+        <div style={{ ...styles.modalOverlay, zIndex: 70 }}>
+          <div style={styles.confirmationModalCard} role="dialog" aria-modal="true" aria-labelledby="temporary-retur-take-out-confirmation-title">
+            <p style={styles.modalEyebrow}>Temp. Retur Keeping</p>
+            <h2 id="temporary-retur-take-out-confirmation-title" style={styles.modalTitle}>Confirm Take Out?</h2>
+            <p style={styles.confirmationModalText}>
+              Take out {temporaryTakeOutModalRows.reduce((sum, row) => sum + Number(temporaryTakeOutQtys[String(row.id)] || 0), 0)} total unit(s) from Temp. Retur Keeping?
+            </p>
+            <div style={styles.modalHeaderActions}>
+              <button type="button" onClick={() => setTemporaryTakeOutConfirmOpen(false)} style={styles.modalCancelButton} disabled={takingTemporarySales}>Back</button>
+              <button type="button" onClick={handleConfirmedTemporaryTakeOut} style={styles.takeButton} disabled={takingTemporarySales}>
+                {takingTemporarySales ? 'Processing...' : 'Confirm Take Out'}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {temporaryDestinationModal ? (
+        <div style={{ ...styles.modalOverlay, zIndex: 70 }}>
+          <div style={styles.confirmationModalCard} role="dialog" aria-modal="true" aria-labelledby="temporary-destination-title">
+            <div style={styles.modalHeader}>
+              <div style={styles.modalTitleGroup}>
+                <p style={styles.modalEyebrow}>Temporary Area</p>
+                <h2 id="temporary-destination-title" style={styles.modalTitle}>Selection</h2>
+              </div>
+              <button
+                type="button"
+                onClick={() => { setTemporaryDestinationModal(null); closeTemporaryReturQtyModal() }}
+                style={styles.modalIconCloseButton}
+                aria-label="Close temporary destination modal"
+                title="Close"
+              >
+                <span aria-hidden="true">×</span>
+              </button>
+            </div>
+            <p style={styles.confirmationModalText}>Choose where the selected {temporaryDestinationModal === 'queue' ? 'queue item(s)' : 'stock item(s)'} should go.</p>
+            <div style={styles.temporaryDestinationToggle} role="group" aria-label="Temporary destination">
+              <button
+                type="button"
+                onClick={() => { setTemporaryDestinationType('SALES'); setTemporaryReturQtyModalRows([]); setTemporaryReturQtyError('') }}
+                style={{ ...styles.typeToggleButton, ...(temporaryDestinationType === 'SALES' ? styles.typeToggleButtonActive : {}) }}
+                aria-pressed={temporaryDestinationType === 'SALES'}
+              >
+                Temp. Sales Area
+              </button>
+              <button
+                type="button"
+                onClick={openTemporaryReturQtyModal}
+                style={{ ...styles.typeToggleButton, ...(temporaryDestinationType === 'RETUR_KEEPING' ? styles.typeToggleButtonActive : {}) }}
+                disabled={temporaryDestinationModal === 'queue'}
+                aria-pressed={temporaryDestinationType === 'RETUR_KEEPING'}
+                title={temporaryDestinationModal === 'queue' ? 'Store the queue item first before moving it to Temp. Retur Keeping' : 'Choose Temp. Retur Keeping'}
+              >
+                Temp. Retur Keeping
+              </button>
+            </div>
+            {temporaryDestinationModal === 'queue' ? (
+              <p style={styles.modalHint}>Storage Queue items must be stored first before they can move directly into Temp. Retur Keeping.</p>
+            ) : null}
+            {temporaryDestinationType === 'RETUR_KEEPING' ? (
+              <div style={styles.queueConfirmList}>
+                {temporaryReturQtyModalRows.map((row) => (
+                  <div key={row.id} style={styles.queueConfirmRow}>
+                    <div style={styles.temporaryStoreItemSummary}>
+                      <strong style={styles.queueItemText}>{getStorageItemDisplayName(row)}</strong>
+                      <span style={styles.queueMetaText}>Size {row.size || '-'} / Available {row.qty}</span>
+                    </div>
+                    <input
+                      value={temporaryReturQtys[String(row.id)] || ''}
+                      onChange={(event) => setTemporaryReturQtys((current) => ({ ...current, [String(row.id)]: event.target.value }))}
+                      style={{ ...styles.input, ...styles.temporaryStoreQtyInput }}
+                      inputMode="numeric"
+                      min="1"
+                      max={Number(row.qty || 0)}
+                      placeholder="Qty"
+                      required
+                    />
+                  </div>
+                ))}
+              </div>
+            ) : null}
+            {temporaryReturQtyError ? <p style={styles.modalInlineError}>{temporaryReturQtyError}</p> : null}
+            <div style={{ ...styles.modalHeaderActions, marginTop: temporaryDestinationType === 'RETUR_KEEPING' ? '16px' : 0 }}>
+              <button
+                type="button"
+                onClick={temporaryDestinationType === 'RETUR_KEEPING' ? () => handleTemporaryReturQtySubmit({ preventDefault() {} }) : createTemporarySalesChecklist}
+                style={movingTemporaryRetur ? { ...styles.registerButton, ...styles.processingButton } : styles.registerButton}
+                disabled={movingTemporaryRetur}
+              >
+                {movingTemporaryRetur ? 'Processing...' : 'Confirm'}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {temporaryDiscrepancyEntry ? (
+        <div style={styles.modalOverlay}>
+          <div style={styles.modalCard} role="dialog" aria-modal="true" aria-labelledby="temporary-discrepancy-title">
+            <div style={styles.modalHeader}>
+              <div style={styles.modalTitleGroup}>
+                <p style={styles.modalEyebrow}>Temporary Sales Area</p>
+                <h2 id="temporary-discrepancy-title" style={styles.modalTitle}>Report Discrepancy</h2>
+              </div>
+              <button type="button" onClick={closeTemporaryDiscrepancyModal} style={styles.modalCancelButton} disabled={savingTemporaryDiscrepancy}>Cancel</button>
+            </div>
+            <div style={styles.takeModalSummaryGrid}>
+              <div style={styles.takeModalItemCard}>
+                <span style={styles.selectedLocationLabel}>Item</span>
+                <strong style={styles.takeModalItemName}>{temporaryDiscrepancyEntry.sku_id ? `${temporaryDiscrepancyEntry.sku_id} | ` : ''}{temporaryDiscrepancyEntry.item_name || '-'}</strong>
+                <div style={styles.takeModalSizeBlock}>
+                  <span style={styles.takeModalSizeLabel}>Size</span>
+                  <strong style={styles.takeModalSizeValue}>{temporaryDiscrepancyEntry.size || '-'}</strong>
+                </div>
+              </div>
+              <div style={styles.takeModalInfoCard}>
+                <span style={styles.selectedLocationLabel}>System Qty</span>
+                <strong style={styles.takeModalQty}>{Number(temporaryDiscrepancyEntry.qty_in_area || 0)}</strong>
+              </div>
+            </div>
+            <form onSubmit={handleTemporaryDiscrepancySubmit} style={styles.modalForm}>
+              <div style={styles.field}>
+                <label style={styles.label}>Actual Qty</label>
+                <input
+                  value={temporaryDiscrepancyQty}
+                  onChange={(event) => setTemporaryDiscrepancyQty(event.target.value)}
+                  style={styles.input}
+                  inputMode="numeric"
+                  min="0"
+                  step="1"
+                  placeholder="Enter physical qty"
+                  required
+                />
+              </div>
+              <div style={styles.field}>
+                <label style={styles.label}>Notes</label>
+                <textarea
+                  value={temporaryDiscrepancyNotes}
+                  onChange={(event) => setTemporaryDiscrepancyNotes(event.target.value)}
+                  style={styles.textarea}
+                  placeholder="Explain the difference"
+                />
+              </div>
+              {temporaryDiscrepancyError ? <p style={styles.modalInlineError}>{temporaryDiscrepancyError}</p> : null}
+              <div style={styles.modalHeaderActions}>
+                <button type="button" onClick={closeTemporaryDiscrepancyModal} style={styles.modalCancelButton} disabled={savingTemporaryDiscrepancy}>Cancel</button>
+                <button type="submit" style={styles.registerButton} disabled={savingTemporaryDiscrepancy}>
+                  {savingTemporaryDiscrepancy ? 'Saving...' : 'Save Discrepancy'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      ) : null}
+
       {temporaryStoreConfirmOpen && temporaryStoreModalRows.length > 0 ? (
         <div style={{ ...styles.modalOverlay, zIndex: 70 }}>
           <div style={styles.confirmationModalCard} role="dialog" aria-modal="true" aria-labelledby="temporary-store-confirmation-title">
@@ -6921,6 +7620,36 @@ export default function StorageOverviewPage() {
               <button type="button" onClick={() => setTemporaryStoreConfirmOpen(false)} style={styles.modalCancelButton}>Back</button>
               <button type="button" onClick={handleConfirmedTemporaryStore} style={styles.registerButton} disabled={storingTemporarySales}>
                 {storingTemporarySales ? 'Saving...' : 'Confirm Store'}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {temporaryMoveConfirmEntry ? (
+        <div style={{ ...styles.modalOverlay, zIndex: 70 }}>
+          <div style={styles.confirmationModalCard} role="dialog" aria-modal="true" aria-labelledby="temporary-move-confirmation-title">
+            <p style={styles.modalEyebrow}>Temporary Sales Area</p>
+            <h2 id="temporary-move-confirmation-title" style={styles.modalTitle}>Move Item to Temporary Sales?</h2>
+            <p style={styles.confirmationModalText}>
+              Confirm that <strong>{temporaryMoveConfirmEntry.sku_id ? `${temporaryMoveConfirmEntry.sku_id} | ` : ''}{temporaryMoveConfirmEntry.item_name || 'this item'}</strong> will be moved with {Number(temporaryMoveConfirmEntry.qty_in_area || 0)} unit(s) from storage to the Temporary Sales Area.
+            </p>
+            <div style={styles.modalHeaderActions}>
+              <button
+                type="button"
+                onClick={() => setTemporaryMoveConfirmEntry(null)}
+                style={styles.modalCancelButton}
+                disabled={movingTemporarySales}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => handleTemporaryMoveOut(temporaryMoveConfirmEntry)}
+                style={styles.registerButton}
+                disabled={movingTemporarySales}
+              >
+                {movingTemporarySales ? 'Moving...' : 'Confirm Move'}
               </button>
             </div>
           </div>
@@ -7483,6 +8212,12 @@ const styles = {
     cursor: 'pointer',
     whiteSpace: 'nowrap',
   },
+  processingButton: {
+    background: '#cbd5e1',
+    color: '#64748b',
+    cursor: 'not-allowed',
+    boxShadow: 'none',
+  },
   title: {
     margin: 0,
     width: 'auto',
@@ -7986,6 +8721,9 @@ const styles = {
     gap: '10px',
     alignItems: 'end',
   },
+  temporaryReturToolbar: {
+    gridTemplateColumns: 'minmax(240px, 1fr) minmax(160px, 220px) minmax(360px, auto) repeat(3, 44px)',
+  },
   temporarySalesToolbarCompact: {
     gridTemplateColumns: 'minmax(0, 1fr)',
   },
@@ -7997,7 +8735,7 @@ const styles = {
   temporarySalesToolbarAction: {
     display: 'flex',
     alignItems: 'center',
-    justifyContent: 'flex-end',
+    justifyContent: 'flex-start',
   },
   temporarySalesStatusToggle: {
     minHeight: '44px',
@@ -8154,6 +8892,28 @@ const styles = {
     fontSize: '14px',
     lineHeight: 1.5,
   },
+  temporaryDestinationActions: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+    gap: '8px',
+    marginBottom: '12px',
+  },
+  temporaryDestinationToggle: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+    gap: '4px',
+    marginBottom: '12px',
+    padding: '4px',
+    border: '1px solid #dbe4ef',
+    borderRadius: '12px',
+    background: '#f8fafc',
+  },
+  modalHint: {
+    margin: '0 0 16px',
+    color: '#64748b',
+    fontSize: '12px',
+    lineHeight: 1.45,
+  },
   temporarySalesEmptyIcon: {
     width: '40px',
     height: '40px',
@@ -8190,10 +8950,10 @@ const styles = {
     gridTemplateColumns: 'minmax(0, 1fr) minmax(120px, 150px) 44px',
   },
   stockSearchToolbarWithAction: {
-    gridTemplateColumns: 'minmax(0, 1fr) minmax(120px, 150px) repeat(3, 44px)',
+    gridTemplateColumns: 'minmax(0, 1fr) minmax(120px, 150px) repeat(4, 44px)',
   },
   stockSearchToolbarCompact: {
-    gridTemplateColumns: 'minmax(0, 1fr) minmax(120px, 150px) repeat(3, 44px)',
+    gridTemplateColumns: 'minmax(0, 1fr) minmax(120px, 150px) repeat(4, 44px)',
   },
   mobileStockSearchToolbarCompact: {
     display: 'flex',
@@ -8714,6 +9474,14 @@ const styles = {
     alignItems: 'center',
     justifyContent: 'center',
     cursor: 'pointer',
+  },
+  temporaryReturToolbarButton: {
+    borderTopColor: '#0f766e',
+    borderRightColor: '#0f766e',
+    borderBottomColor: '#0f766e',
+    borderLeftColor: '#0f766e',
+    background: '#0f766e',
+    color: '#fff',
   },
   iconToolbarButtonDisabled: {
     borderTopColor: '#dbe4ef',
@@ -9412,6 +10180,21 @@ const styles = {
     justifyContent: 'flex-end',
     gap: '10px',
     flexWrap: 'wrap',
+  },
+  modalIconCloseButton: {
+    width: '32px',
+    height: '32px',
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    border: '1px solid #fecaca',
+    borderRadius: '9px',
+    background: '#fff1f2',
+    color: '#be123c',
+    fontSize: '22px',
+    fontWeight: '800',
+    lineHeight: 1,
+    cursor: 'pointer',
   },
   modalCloseButton: {
     border: '1px solid #d1d5db',

@@ -264,6 +264,7 @@ begin
           temporary_item.entered_at
         from public.warehouse_temporary_sales_items temporary_item
         where temporary_item.status = 'IN_TEMPORARY_AREA'
+          and coalesce(temporary_item.area_type, 'SALES') = 'SALES'
           and coalesce(temporary_item.qty_in_area, 0) > 0
           and upper(regexp_replace(coalesce(temporary_item.sku_id, ''), '[^A-Z0-9]', '', 'g')) = normalized_sku
           and upper(regexp_replace(coalesce(temporary_item.size, ''), '\s+', '', 'g')) = normalized_size
@@ -774,35 +775,40 @@ security invoker
 set search_path = ''
 as $$
 declare
+  expired_batch_count integer := 0;
+  purged_movement_count integer := 0;
   purged_line_count integer := 0;
   purged_batch_count integer := 0;
 begin
-  with expired_batches as (
+  select count(*)
+  into expired_batch_count
+  from public.upload_sales_import_batches
+  where raw_retention_until < now();
+
+  -- Remove movement history first so the three upload tables expire together.
+  delete from public.upload_warehouse_storage_movements movements
+  where movements.source_batch_id in (
     select id
     from public.upload_sales_import_batches
     where raw_retention_until < now()
-      and raw_purged_at is null
-      and status in ('posted', 'cancelled', 'reversed')
-  ),
-  deleted_lines as (
-    delete from public.upload_sales_import_lines lines
-    using expired_batches batches
-    where lines.batch_id = batches.id
-    returning lines.id
-  ),
-  updated_batches as (
-    update public.upload_sales_import_batches batches
-    set raw_purged_at = now()
-    from expired_batches expired
-    where batches.id = expired.id
-    returning batches.id
-  )
-  select
-    (select count(*) from deleted_lines),
-    (select count(*) from updated_batches)
-    into purged_line_count, purged_batch_count;
+  );
+  get diagnostics purged_movement_count = row_count;
+
+  delete from public.upload_sales_import_lines lines
+  where lines.batch_id in (
+    select id
+    from public.upload_sales_import_batches
+    where raw_retention_until < now()
+  );
+  get diagnostics purged_line_count = row_count;
+
+  delete from public.upload_sales_import_batches
+  where raw_retention_until < now();
+  get diagnostics purged_batch_count = row_count;
 
   return jsonb_build_object(
+    'expired_batches', expired_batch_count,
+    'purged_movements', purged_movement_count,
     'purged_lines', purged_line_count,
     'purged_batches', purged_batch_count
   );

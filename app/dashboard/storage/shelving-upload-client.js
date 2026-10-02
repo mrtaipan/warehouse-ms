@@ -128,6 +128,10 @@ function parseCsv(text) {
     rows.push(row)
   }
 
+  if (inQuotes) {
+    throw new Error('CSV format cannot be read: an opening quotation mark has no matching closing quotation mark.')
+  }
+
   return rows
 }
 
@@ -193,7 +197,26 @@ function buildImportPreview(csvRows, storageRows) {
   }
 
   const [headers, ...bodyRows] = csvRows
+  if (!headers || headers.length < 2) {
+    throw new Error('CSV format cannot be read. Use a comma-separated CSV file with a header row.')
+  }
+
   const headerMap = new Map(headers.map((header, index) => [normalizeText(header).toLowerCase(), index]))
+  const requiredHeaderGroups = [
+    { label: 'Nomor Pesanan', candidates: ['Nomor Pesanan'] },
+    { label: 'Status Pesanan', candidates: ['Status Pesanan'] },
+    { label: 'Kode Varian atau Kode Produk', candidates: ['Kode Varian', 'Kode Produk'] },
+    { label: 'Variasi', candidates: ['Variasi'] },
+    { label: 'Jumlah', candidates: ['Jumlah'] },
+  ]
+  const missingHeaders = requiredHeaderGroups
+    .filter(({ candidates }) => !candidates.some((candidate) => headerMap.has(candidate.toLowerCase())))
+    .map(({ label }) => label)
+
+  if (missingHeaders.length > 0) {
+    throw new Error(`CSV format cannot be read. Missing required column(s): ${missingHeaders.join(', ')}.`)
+  }
+
   const availability = buildShelvingAvailability(storageRows)
   const validStatusSet = new Set(VALID_STATUSES)
   const lines = []
@@ -216,7 +239,7 @@ function buildImportPreview(csvRows, storageRows) {
 
     const resolvedOrderNumber = orderNumber || currentOrderNumber
     const resolvedStatus = normalizeStatus(orderStatus || currentStatus)
-    const skuId = normalizeUpper(variantCode || productCode)
+    const skuId = getSkuCandidates(variantCode, productCode, productName)[0] || normalizeUpper(variantCode || productCode)
     const size = resolveSize(variationRaw)
     const validStatus = validStatusSet.has(resolvedStatus)
     let exclusionReason = ''
@@ -339,7 +362,7 @@ export default function ShelvingUploadClient({
   )
 
   const issueLines = useMemo(
-    () => selectedLines.filter((line) => !line.included || Number(line.skipped_qty || 0) > 0),
+    () => selectedLines.filter((line) => !line.included),
     [selectedLines]
   )
 
@@ -649,16 +672,41 @@ export default function ShelvingUploadClient({
             </div>
           </div>
 
-          <label style={styles.field}>
-            <span style={styles.label}>Jubelio CSV</span>
-            <input
-              type="file"
-              accept=".csv,text/csv"
-              onChange={(event) => setFile(event.target.files?.[0] || null)}
-              style={styles.fileInput}
-              disabled={!canUpload || saving}
-            />
-          </label>
+          <div style={styles.field}>
+            <span style={styles.label}>Upload CSV</span>
+            <div style={styles.filePickerRow}>
+              <label
+                style={{
+                  ...styles.filePicker,
+                  ...(file ? styles.filePickerSelected : {}),
+                  ...(!canUpload || saving ? styles.filePickerDisabled : {}),
+                }}
+              >
+                <span style={styles.filePickerName}>{file?.name || 'Choose CSV file'}</span>
+                <input
+                  key={file?.name || 'empty-file-input'}
+                  type="file"
+                  accept=".csv,text/csv"
+                  onChange={(event) => setFile(event.target.files?.[0] || null)}
+                  style={styles.hiddenFileInput}
+                  disabled={!canUpload || saving}
+                />
+              </label>
+              {file ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setFile(null)
+                    setPreview(null)
+                  }}
+                  disabled={saving}
+                  style={saving ? styles.smallButtonDisabled : styles.smallDeleteButton}
+                >
+                  Remove
+                </button>
+              ) : null}
+            </div>
+          </div>
 
           <label style={styles.field}>
             <span style={styles.label}>Notes</span>
@@ -701,8 +749,17 @@ export default function ShelvingUploadClient({
             <Metric label="Requested" value={selectedBatch ? selectedBatch.requested_qty : preview?.requestedQty || 0} />
             <Metric label="Applied" value={selectedBatch ? selectedBatch.applied_qty : preview?.appliedQty || 0} />
             <Metric label="Skipped" value={selectedBatch ? selectedBatch.skipped_qty : preview?.skippedQty || 0} tone="warning" />
-            <Metric label="Issues" value={selectedBatch ? selectedBatch.shortage_line_count : preview?.shortageLineCount || 0} tone="danger" />
+            <Metric
+              label="Issues"
+              value={selectedBatch
+                ? Number(selectedBatch.excluded_lines || 0)
+                : (preview?.lines || []).filter((line) => !line.included).length}
+              tone="danger"
+            />
           </div>
+          <p style={styles.metricLegend}>
+            Orders = jumlah nomor pesanan unik. Requested = total kolom <strong>Jumlah</strong> pada baris yang valid. Applied = qty yang benar-benar dikurangi dari shelving/Temporary Sales. Skipped = qty yang belum bisa dipenuhi. Issues = jumlah baris yang formatnya tidak valid atau stoknya kurang.
+          </p>
 
           <div style={styles.actionRow}>
             <button
@@ -830,7 +887,11 @@ export default function ShelvingUploadClient({
         <div style={styles.panelHeader}>
           <div>
             <h3 style={styles.panelTitle}>Preview & Issues</h3>
-            <p style={styles.panelHint}>Temporary safe line data. Raw lines can be purged after retention.</p>
+            <p style={styles.panelHint}>
+            {issueLines.length
+                ? `Menampilkan ${formatNumber(issueLines.length)} baris dengan format/data tidak valid. Qty yang tidak cukup tetap masuk ke Skipped.`
+                : 'Tidak ada baris dengan format/data bermasalah. Menampilkan maksimal 80 baris preview yang valid.'}
+            </p>
           </div>
         </div>
 
@@ -978,6 +1039,46 @@ const styles = {
     color: '#0f172a',
     fontSize: '13px',
   },
+  filePicker: {
+    position: 'relative',
+    display: 'flex',
+    alignItems: 'center',
+    minHeight: '44px',
+    border: '1px solid #dbe4ef',
+    borderRadius: '12px',
+    padding: '0 12px',
+    background: '#fff',
+    color: '#64748b',
+    fontSize: '13px',
+    cursor: 'pointer',
+    overflow: 'hidden',
+  },
+  filePickerRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+  },
+  filePickerSelected: {
+    background: '#f1f5f9',
+    color: '#334155',
+  },
+  filePickerDisabled: {
+    cursor: 'not-allowed',
+    opacity: 0.72,
+  },
+  filePickerName: {
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+  },
+  hiddenFileInput: {
+    position: 'absolute',
+    inset: 0,
+    width: '100%',
+    height: '100%',
+    opacity: 0,
+    cursor: 'pointer',
+  },
   textarea: {
     minHeight: '84px',
     border: '1px solid #dbe4ef',
@@ -1090,6 +1191,12 @@ const styles = {
     fontSize: '22px',
     lineHeight: 1,
     fontVariantNumeric: 'tabular-nums',
+  },
+  metricLegend: {
+    margin: '-2px 0 14px',
+    color: '#64748b',
+    fontSize: '12px',
+    lineHeight: 1.55,
   },
   actionRow: {
     display: 'flex',
