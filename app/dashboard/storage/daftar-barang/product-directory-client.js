@@ -889,6 +889,7 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
   const [groupTransferEditor, setGroupTransferEditor] = useState(null)
   const [groupTransferDrafts, setGroupTransferDrafts] = useState({})
   const [transferHistoryOpen, setTransferHistoryOpen] = useState(false)
+  const [transferHistorySearch, setTransferHistorySearch] = useState('')
   const [bundleEditor, setBundleEditor] = useState(null)
   const [bundleHistoryId, setBundleHistoryId] = useState(null)
   const [bundleDrafts, setBundleDrafts] = useState({})
@@ -1175,6 +1176,7 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
     const bundleComponentById = new Map((bundleComponentRows || []).map((row) => [Number(row.id || 0), row]))
 
     const packingTransferHistory = (groupTransferRows || [])
+      .filter((transfer) => Number(transfer.product_bundle_component_id || 0) <= 0)
       .map((transfer) => {
         const sourceRowId = Number(transfer.source_pl_packing_item_id || 0)
         const sourceRow = packingRowById.get(sourceRowId)
@@ -1200,6 +1202,7 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
         const bundle = bundleById.get(Number(component?.bundle_id || 0))
         return {
           id: `bundle-transfer:${transfer.id}`,
+          bundleId: Number(bundle?.id || 0),
           date: transfer.created_at || '',
           direction: `${normalizeStoringType(transfer.source_type) || '-'} → ${normalizeStoringType(transfer.target_type) || '-'}`,
           grn: 'GRN Bundle',
@@ -1215,6 +1218,20 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
       .sort((left, right) => new Date(right.date || 0) - new Date(left.date || 0))
   })()
 
+  const visibleTransferHistoryRows = transferHistoryRows.filter((row) => {
+    const activeGroup = normalizeUpper(filters.type)
+    const directionGroups = [normalizeStoringType(row.direction.split('→')[0]), normalizeStoringType(row.direction.split('→')[1])]
+    if (['MOB', 'OI'].includes(activeGroup) && !directionGroups.includes(activeGroup)) return false
+
+    const searchTerm = normalizeUpper(transferHistorySearch)
+    if (!searchTerm) return true
+
+    return [row.date, row.direction, row.grn, row.sku, row.productName, row.size, row.createdBy]
+      .map(normalizeUpper)
+      .join(' ')
+      .includes(searchTerm)
+  })
+
   const bundleHistoryDetail = useMemo(() => {
     const bundleId = Number(bundleHistoryId || 0)
     if (!bundleId) return null
@@ -1222,6 +1239,7 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
     const bundle = (bundleRows || []).find((row) => Number(row.id || 0) === bundleId)
     if (!bundle) return null
 
+    const activeGroup = ['MOB', 'OI'].includes(normalizeUpper(filters.type)) ? normalizeUpper(filters.type) : 'all'
     const components = (bundleComponentRows || []).filter((row) => Number(row.bundle_id || 0) === bundleId)
     const packingRowById = new Map((packingRows || []).map((row) => [Number(row.id || 0), row]))
     const bundleUnitQty = Math.max(1, Number(bundle.bundle_unit_qty || 1))
@@ -1269,7 +1287,11 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
         ...row,
         mobQty: Math.floor(row.mobComponentQty / bundleUnitQty),
         oiQty: Math.floor(row.oiComponentQty / bundleUnitQty),
-        totalQty: Math.floor((row.mobComponentQty + row.oiComponentQty) / bundleUnitQty),
+        totalQty: Math.floor((activeGroup === 'MOB'
+          ? row.mobComponentQty
+          : activeGroup === 'OI'
+            ? row.oiComponentQty
+            : row.mobComponentQty + row.oiComponentQty) / bundleUnitQty),
       }))
       .sort((left, right) => compareSizeValues(left.size, right.size))
 
@@ -1279,10 +1301,11 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
       componentProducts,
       sizeBreakdown,
       totalQty: sizeBreakdown.reduce((sum, row) => sum + row.totalQty, 0),
-      mobQty: sizeBreakdown.reduce((sum, row) => sum + row.mobQty, 0),
-      oiQty: sizeBreakdown.reduce((sum, row) => sum + row.oiQty, 0),
+      mobQty: activeGroup === 'OI' ? 0 : sizeBreakdown.reduce((sum, row) => sum + row.mobQty, 0),
+      oiQty: activeGroup === 'MOB' ? 0 : sizeBreakdown.reduce((sum, row) => sum + row.oiQty, 0),
+      activeGroup,
     }
-  }, [bundleComponentRows, bundleHistoryId, bundleRows, groupTransferRows, lookup, packingRows])
+  }, [bundleComponentRows, bundleHistoryId, bundleRows, filters.type, groupTransferRows, lookup, packingRows])
 
   const packingGroupedProducts = useMemo(() => {
     const groups = new Map()
@@ -5399,14 +5422,32 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
                         <thead>
                           <tr>
                             <th style={styles.th}>Size</th>
-                            <th style={styles.thNumber}>Total Bundle</th>
+                            {bundleHistoryDetail.activeGroup === 'all' ? (
+                              <>
+                                <th style={styles.thNumber}>MOB Bundle</th>
+                                <th style={styles.thNumber}>OI Bundle</th>
+                                <th style={styles.thNumber}>Total Bundle</th>
+                              </>
+                            ) : (
+                              <th style={styles.thNumber}>{bundleHistoryDetail.activeGroup} Bundle</th>
+                            )}
                           </tr>
                         </thead>
                         <tbody>
                           {bundleHistoryDetail.sizeBreakdown.map((row) => (
                             <tr key={row.size}>
                               <td style={styles.td}>{row.size}</td>
-                              <td style={styles.tdNumber}>{formatNumber(row.totalQty)}</td>
+                              {bundleHistoryDetail.activeGroup === 'all' ? (
+                                <>
+                                  <td style={styles.tdNumber}>{formatNumber(row.mobQty)}</td>
+                                  <td style={styles.tdNumber}>{formatNumber(row.oiQty)}</td>
+                                  <td style={styles.tdNumber}>{formatNumber(row.totalQty)}</td>
+                                </>
+                              ) : (
+                                <td style={styles.tdNumber}>
+                                  {formatNumber(bundleHistoryDetail.activeGroup === 'MOB' ? row.mobQty : row.oiQty)}
+                                </td>
+                              )}
                             </tr>
                           ))}
                         </tbody>
@@ -5465,41 +5506,65 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
                 <p style={styles.modalHelperText}>
                   Review recent quantity movements between MOB and OI. Packing List rows and warehouse locations are kept unchanged.
                 </p>
+                <div style={styles.historySearchRow}>
+                  <input
+                    type="search"
+                    value={transferHistorySearch}
+                    onChange={(event) => setTransferHistorySearch(event.target.value)}
+                    placeholder="Search GRN, SKU, product, size, or user"
+                    aria-label="Search transfer history"
+                    style={styles.historySearchInput}
+                  />
+                </div>
                 <div style={styles.historyTableWrap}>
                   <table style={styles.historyTable}>
                     <thead>
                       <tr>
-                        <th style={styles.th}>Date</th>
-                        <th style={styles.th}>Direction</th>
-                        <th style={styles.th}>GRN</th>
-                        <th style={styles.th}>SKU</th>
-                        <th style={styles.th}>Product</th>
-                        <th style={styles.th}>Size</th>
-                        <th style={styles.thNumber}>Qty</th>
-                        <th style={styles.th}>By</th>
+                        <th style={{ ...styles.th, ...styles.thCenter }}>Date</th>
+                        <th style={{ ...styles.th, ...styles.thCenter }}>Direction</th>
+                        <th style={{ ...styles.th, ...styles.thCenter }}>GRN</th>
+                        <th style={{ ...styles.th, ...styles.thCenter }}>SKU</th>
+                        <th style={{ ...styles.th, ...styles.thCenter }}>Product</th>
+                        <th style={{ ...styles.th, ...styles.thCenter }}>Size</th>
+                        <th style={{ ...styles.thNumber, ...styles.thCenter }}>Qty</th>
+                        <th style={{ ...styles.th, ...styles.thCenter }}>By</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {transferHistoryRows.slice(0, 150).map((row) => (
+                      {visibleTransferHistoryRows.slice(0, 150).map((row) => (
                         <tr key={row.id || `${row.date}-${row.sku}-${row.size}-${row.qty}`}>
-                          <td style={styles.td}>{formatDateTime(row.date)}</td>
-                          <td style={styles.td}>{row.direction}</td>
-                          <td style={styles.td}>{row.grn}</td>
-                          <td style={styles.td}>{row.sku}</td>
-                          <td style={styles.td}>{row.productName}</td>
-                          <td style={styles.td}>{row.size}</td>
-                          <td style={styles.tdNumber}>{formatNumber(row.qty)}</td>
-                          <td style={styles.td}>{row.createdBy}</td>
+                          <td style={{ ...styles.td, ...styles.tdCenter }}>{formatDateTime(row.date)}</td>
+                          <td style={{ ...styles.td, ...styles.tdCenter }}>{row.direction}</td>
+                          <td style={{ ...styles.td, ...styles.tdCenter }}>{row.grn}</td>
+                          <td style={{ ...styles.td, ...styles.tdCenter }}>
+                            {row.bundleId ? (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setTransferHistoryOpen(false)
+                                  setBundleHistoryId(row.bundleId)
+                                }}
+                                style={styles.bundleSkuButton}
+                                title="View bundle group and size breakdown"
+                              >
+                                {row.sku}
+                              </button>
+                            ) : row.sku}
+                          </td>
+                          <td style={{ ...styles.td, ...styles.tdCenter }}>{row.productName}</td>
+                          <td style={{ ...styles.td, ...styles.tdCenter }}>{row.size}</td>
+                          <td style={{ ...styles.tdNumber, ...styles.tdCenter }}>{formatNumber(row.qty)}</td>
+                          <td style={{ ...styles.td, ...styles.tdCenter }}>{row.createdBy}</td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
-                  {transferHistoryRows.length === 0 ? (
+                  {visibleTransferHistoryRows.length === 0 ? (
                     <div style={styles.historyEmptyState}>No transfer history yet.</div>
                   ) : null}
                 </div>
-                {transferHistoryRows.length > 150 ? (
-                  <p style={styles.transferFootnote}>Showing the latest 150 of {formatNumber(transferHistoryRows.length)} transfer record(s).</p>
+                {visibleTransferHistoryRows.length > 150 ? (
+                  <p style={styles.transferFootnote}>Showing the latest 150 of {formatNumber(visibleTransferHistoryRows.length)} transfer record(s).</p>
                 ) : null}
               </div>
             </div>
@@ -7168,6 +7233,22 @@ const styles = {
     overflow: 'auto',
     border: '1px solid #e2e8f0',
     borderRadius: '12px',
+  },
+  historySearchRow: {
+    display: 'flex',
+    width: '100%',
+  },
+  historySearchInput: {
+    width: '100%',
+    minHeight: '40px',
+    boxSizing: 'border-box',
+    borderRadius: '9px',
+    border: '1px solid #cbd5e1',
+    background: '#fff',
+    color: '#111827',
+    padding: '0 12px',
+    fontSize: '13px',
+    outline: 'none',
   },
   historyTable: {
     width: '100%',
