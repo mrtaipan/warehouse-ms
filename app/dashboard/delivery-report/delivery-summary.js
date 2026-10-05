@@ -270,28 +270,45 @@ export default function DeliverySummary({ lockedGroup: lockedGroupProp = '' }) {
     return () => window.clearTimeout(timer)
   }, [loadData])
 
+  const categoryFilteredOrders = useMemo(
+    () => orders.filter((row) => applied.category === 'ALL' || row.delivery_category === applied.category),
+    [applied.category, orders]
+  )
+
+  const categoryOrderKeys = useMemo(() => {
+    if (applied.category === 'ALL') return null
+    return new Set(
+      categoryFilteredOrders.map((row) => `${row.group_order || ''}|||${row.courier || 'UNDEFINED'}`)
+    )
+  }, [applied.category, categoryFilteredOrders])
+
+  const categoryFilteredDeliveryRows = useMemo(() => {
+    if (!categoryOrderKeys) return deliveryRows
+    return deliveryRows.filter((row) => categoryOrderKeys.has(`${row.group_order || ''}|||${row.courier || 'UNDEFINED'}`))
+  }, [categoryOrderKeys, deliveryRows])
+
+  const categoryFilteredPackingRows = useMemo(() => {
+    if (!categoryOrderKeys) return packingRows
+    return packingRows.filter((row) => categoryOrderKeys.has(`${row.group_order || ''}|||${row.courier || 'UNDEFINED'}`))
+  }, [categoryOrderKeys, packingRows])
+
   const targetByGroup = useMemo(
     () =>
       Object.fromEntries(
         visibleGroups.map((group) => [
           group,
-          orders.filter((row) => row.group_order === group).reduce((sum, row) => sum + safeNumber(row.quantity), 0),
+          categoryFilteredOrders.filter((row) => row.group_order === group).reduce((sum, row) => sum + safeNumber(row.quantity), 0),
         ])
       ),
-    [orders, visibleGroups]
+    [categoryFilteredOrders, visibleGroups]
   )
   const totalTarget = Object.values(targetByGroup).reduce((sum, value) => sum + value, 0)
-  const totalScanned = scanPhase === 'PACKING' ? packingRows.length : deliveryRows.length
+  const totalScanned = scanPhase === 'PACKING' ? categoryFilteredPackingRows.length : categoryFilteredDeliveryRows.length
   const totalProgress = pct(totalScanned, totalTarget)
 
   const deliveryByGroup = useMemo(
-    () => Object.fromEntries(visibleGroups.map((group) => [group, deliveryRows.filter((row) => row.group_order === group).length])),
-    [deliveryRows, visibleGroups]
-  )
-
-  const categoryFilteredOrders = useMemo(
-    () => orders.filter((row) => applied.category === 'ALL' || row.delivery_category === applied.category),
-    [applied.category, orders]
+    () => Object.fromEntries(visibleGroups.map((group) => [group, categoryFilteredDeliveryRows.filter((row) => row.group_order === group).length])),
+    [categoryFilteredDeliveryRows, visibleGroups]
   )
 
   const couriers = useMemo(() => {
@@ -305,15 +322,15 @@ export default function DeliverySummary({ lockedGroup: lockedGroupProp = '' }) {
   }, [categoryFilteredOrders])
 
   const matrixRows = useMemo(() => {
-    const names = [...new Set([...orders.map((row) => row.courier || 'UNDEFINED'), ...deliveryRows.map((row) => row.courier || 'UNDEFINED')])].filter((name) => name !== 'UNDEFINED')
+    const names = [...new Set([...categoryFilteredOrders.map((row) => row.courier || 'UNDEFINED'), ...categoryFilteredDeliveryRows.map((row) => row.courier || 'UNDEFINED')])].filter((name) => name !== 'UNDEFINED')
     return names
       .map((courier) => {
         const row = { courier }
         visibleGroups.forEach((group) => {
-          const target = orders
+          const target = categoryFilteredOrders
             .filter((item) => item.group_order === group && (item.courier || 'UNDEFINED') === courier)
             .reduce((sum, item) => sum + safeNumber(item.quantity), 0)
-          const delivered = deliveryRows.filter(
+          const delivered = categoryFilteredDeliveryRows.filter(
             (item) => item.group_order === group && (item.courier || 'UNDEFINED') === courier
           ).length
           row[group] = matrixMode === 'SHORTAGE' ? target - delivered : target
@@ -322,7 +339,7 @@ export default function DeliverySummary({ lockedGroup: lockedGroupProp = '' }) {
         return row
       })
       .sort((a, b) => b.total - a.total)
-  }, [deliveryRows, matrixMode, orders, visibleGroups])
+  }, [categoryFilteredDeliveryRows, categoryFilteredOrders, matrixMode, visibleGroups])
 
   const chartSeries = visibleGroups
 

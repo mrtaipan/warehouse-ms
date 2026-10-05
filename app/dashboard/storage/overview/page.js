@@ -1063,6 +1063,7 @@ export default function StorageOverviewPage() {
   const [brandLookupMode, setBrandLookupMode] = useState('brand')
   const [brandLookupSearch, setBrandLookupSearch] = useState('')
   const [historyPickerFilter, setHistoryPickerFilter] = useState('')
+  const [movementTypeFilter, setMovementTypeFilter] = useState('')
   const [queueFilters, setQueueFilters] = useState({
     group: '',
     grn: '',
@@ -2038,6 +2039,11 @@ export default function StorageOverviewPage() {
     return true
   })
   const filteredMovementRows = storageMovementRows.filter((entry) => {
+    const normalizedMovementFilter = normalizeFilterValue(movementTypeFilter)
+    if (normalizedMovementFilter && normalizeFilterValue(entry.movement_type) !== normalizedMovementFilter) {
+      return false
+    }
+
     const normalizedProductSearch = normalizeFilterValue(productSearch)
     if (!normalizedProductSearch) return true
 
@@ -2045,6 +2051,11 @@ export default function StorageOverviewPage() {
       .map((value) => normalizeFilterValue(value))
       .some((value) => value.includes(normalizedProductSearch))
   })
+  const movementTypeOptions = Array.from(new Set(
+    storageMovementRows
+      .map((entry) => String(entry.movement_type || '').trim())
+      .filter(Boolean)
+  )).sort(naturalSort.compare)
   const searchFilteredQueueRows = queueGroups.filter((entry) => {
     const normalizedProductSearch = normalizeFilterValue(productSearch)
 
@@ -5608,9 +5619,10 @@ export default function StorageOverviewPage() {
             <div style={styles.toolbarIconField}>
               <button
                 type="button"
-                onClick={() => {
+              onClick={() => {
                   setProductSearch('')
                   setHistoryPickerFilter('')
+                  setMovementTypeFilter('')
                 }}
                 style={styles.iconResetButton}
                 title="Clear Search"
@@ -5623,6 +5635,21 @@ export default function StorageOverviewPage() {
                   <path d="M3 21v-5h5" />
                 </svg>
               </button>
+            </div>
+          ) : null}
+          {visibleListMode === 'movement-history' ? (
+            <div style={styles.field}>
+              <label style={styles.label}>Movement</label>
+              <select
+                value={movementTypeFilter}
+                onChange={(event) => setMovementTypeFilter(event.target.value)}
+                style={{ ...styles.select, ...styles.compactFilterControl }}
+              >
+                <option value="">All movements</option>
+                {movementTypeOptions.map((movementType) => (
+                  <option key={movementType} value={movementType}>{movementType.replaceAll('_', ' ')}</option>
+                ))}
+              </select>
             </div>
           ) : null}
         </div>
@@ -8975,7 +9002,7 @@ const styles = {
   },
   stockFiltersGridAll: {
     gridTemplateColumns: 'minmax(120px, 0.72fr) minmax(120px, 0.72fr) minmax(104px, 0.58fr) repeat(3, minmax(0, 1fr))',
-    columnGap: '6px',
+    gap: '6px',
   },
   rejectSearchToolbar: {
     gridTemplateColumns: 'minmax(320px, 1fr) 44px',

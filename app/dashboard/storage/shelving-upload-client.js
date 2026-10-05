@@ -925,9 +925,9 @@ export default function ShelvingUploadClient({
                     <td style={styles.td}>{line.order_status || '-'}</td>
                     <td style={styles.td}>{line.sku_id || '-'}</td>
                     <td style={styles.td}>{line.size || '-'}</td>
-                    <td style={styles.numberTd}>{formatNumber(line.qty)}</td>
-                    <td style={styles.numberTd}>{formatNumber(line.applied_qty)}</td>
-                    <td style={styles.numberTd}>{formatNumber(line.skipped_qty)}</td>
+                    <td style={styles.quantityTd}>{formatNumber(line.qty)}</td>
+                    <td style={styles.quantityTd}>{formatNumber(line.applied_qty)}</td>
+                    <td style={styles.quantityTd}>{formatNumber(line.skipped_qty)}</td>
                     <td style={styles.td}>{line.exclusion_reason || (line.included ? '-' : 'Excluded')}</td>
                   </tr>
                 ))}
@@ -1262,6 +1262,15 @@ const styles = {
     textAlign: 'right',
     fontVariantNumeric: 'tabular-nums',
     verticalAlign: 'top',
+  },
+  quantityTd: {
+    padding: '10px 8px',
+    borderBottom: '1px solid #eef2f7',
+    color: '#0f172a',
+    fontSize: '13px',
+    textAlign: 'center',
+    fontVariantNumeric: 'tabular-nums',
+    verticalAlign: 'middle',
   },
   activeRow: {
     background: '#f8fafc',

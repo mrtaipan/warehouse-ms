@@ -813,7 +813,7 @@ export default async function DashboardPage({ searchParams }) {
   const showDeliveryReportButton = hasPermission(permissions, 'delivery_report.view', isAdmin)
   const showPenaltyPointsButton = hasPermission(permissions, 'hrga.penalty_points.view', isAdmin)
   const canAddPenaltyPoints = hasPermission(permissions, 'hrga.penalty_points.add', isAdmin)
-  const showBirthdayGiftRequestAnnouncements = isAdmin || role === 'warehouse_leader' || role === 'mob_cs'
+  const showBirthdayGiftRequestAnnouncements = isAdmin || role === 'leader' || role === 'warehouse_leader' || role === 'mob_cs'
 
   const { data: announcementRows } = await supabase.from('dir_user_profiles').select('*')
   const { data: currentPenaltyRows } = showPenaltyPointsButton
@@ -861,8 +861,7 @@ export default async function DashboardPage({ searchParams }) {
       dateLabel: status === 'APPROVED' ? 'Birthday gift approved' : 'Birthday gift request',
     }
   })
-  const newsAnnouncements = [...activeBroadcasts, ...birthdayGiftAnnouncements]
-  const birthdayAnnouncements = (announcementRows || [])
+  const birthdayReminderAnnouncements = (announcementRows || [])
     .map((person) => {
       const offset = getUpcomingBirthdayOffset(getBirthDateValue(person))
       if (offset == null || offset < 0 || offset > 3) {
@@ -870,13 +869,19 @@ export default async function DashboardPage({ searchParams }) {
       }
 
       return {
-        id: person.id,
-        name: formatDashboardName(person.display_name || person.email || 'Team'),
+        id: `birthday-reminder-${person.id}-${offset}`,
+        title: offset === 0 ? formatDashboardName(person.display_name || person.email || 'Team') : `Poke ${formatDashboardName(person.display_name || person.email || 'Team')}`,
+        message:
+          offset === 0
+            ? 'Terima kasih telah ada. Semoga kamu selalu bersinar terang. Selamat ulang tahun!'
+            : `${getUpcomingBirthdayLabel(offset)} birthday reminder from People Directory.`,
+        dateLabel: offset === 0 ? 'Happy Birthday' : 'Celebrating Soon',
         offset,
       }
     })
     .filter(Boolean)
-    .sort((left, right) => left.offset - right.offset || left.name.localeCompare(right.name))
+    .sort((left, right) => left.offset - right.offset || left.title.localeCompare(right.title))
+  const newsAnnouncements = [...activeBroadcasts, ...birthdayGiftAnnouncements, ...birthdayReminderAnnouncements]
 
   const showMyArklifeButton = true
   const adminGrnSummary = isAdmin ? await loadAdminGrnSummary(supabase, selectedGrn) : null
@@ -936,25 +941,6 @@ export default async function DashboardPage({ searchParams }) {
                     {item.title}
                   </strong>
                   <p className={styles.insightNote}>{item.message || 'No Announcement'}</p>
-                </div>
-              ))
-            ) : birthdayAnnouncements.length ? (
-              birthdayAnnouncements.map((item) => (
-                <div key={`${item.id}-${item.offset}`} className={styles.insightCard}>
-                  <span className={styles.insightLabel}>
-                    {item.offset === 0 ? 'Happy Birthday' : 'Celebrating Soon'}
-                  </span>
-                  <strong
-                    className={styles.insightValue}
-                    style={{ fontSize: '22px', lineHeight: 1.2, textTransform: 'none' }}
-                  >
-                    {item.offset === 0 ? item.name : `Poke ${item.name}`}
-                  </strong>
-                  <p className={styles.insightNote}>
-                    {item.offset === 0
-                      ? 'Terima kasih telah ada. Semoga kamu selalu bersinar terang. Selamat ulang tahun!'
-                      : `${getUpcomingBirthdayLabel(item.offset)} birthday reminder from People Directory.`}
-                  </p>
                 </div>
               ))
             ) : (
@@ -1027,25 +1013,6 @@ export default async function DashboardPage({ searchParams }) {
                       {item.title}
                     </strong>
                     <p className={styles.insightNote}>{item.message || 'No Announcement'}</p>
-                  </div>
-                ))
-              ) : birthdayAnnouncements.length ? (
-                birthdayAnnouncements.map((item) => (
-                  <div key={`${item.id}-${item.offset}`} className={styles.insightCard}>
-                    <span className={styles.insightLabel}>
-                      {item.offset === 0 ? 'Happy Birthday' : 'Celebrating Soon'}
-                    </span>
-                    <strong
-                      className={styles.insightValue}
-                      style={{ fontSize: '22px', lineHeight: 1.2, textTransform: 'none' }}
-                    >
-                      {item.offset === 0 ? item.name : `Poke ${item.name}`}
-                    </strong>
-                    <p className={styles.insightNote}>
-                      {item.offset === 0
-                        ? 'Terima kasih telah ada. Semoga kamu selalu bersinar terang. Selamat ulang tahun!'
-                        : `${getUpcomingBirthdayLabel(item.offset)} birthday reminder from People Directory.`}
-                    </p>
                   </div>
                 ))
               ) : (

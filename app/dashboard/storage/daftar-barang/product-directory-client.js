@@ -1663,6 +1663,7 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
       const components = componentsByBundleId.get(Number(bundle.id || 0)) || []
       if (!components.length) return []
 
+      const bundleUnitQty = Math.max(1, Number(bundle.bundle_unit_qty || 1))
       const buckets = new Map()
       const bundlePhotoUrls = new Set()
       components.forEach((component) => {
@@ -1700,6 +1701,8 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
           bucket.qty += qty
           bucket.componentRows.push({
             bundleComponentId: Number(component.id || 0),
+            bundleId: Number(bundle.id || 0),
+            bundleUnitQty,
             sourceGroup: groupType,
             qty,
             grn: 'GRN Bundle',
@@ -1763,7 +1766,6 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
         sizeBuckets.set(sizeKey, sizeBucket)
       })
 
-      const bundleUnitQty = Math.max(1, Number(bundle.bundle_unit_qty || 1))
       const sizeDetailItems = Array.from(sizeBuckets.values())
         .sort((left, right) => compareSizeValues(left.size, right.size))
         .map((sizeBucket) => ({
@@ -1796,6 +1798,7 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
           breakdownIds: [],
           bundleComponentIds: Array.from(new Set(sizeBucket.componentRows.map((row) => row.bundleComponentId))).filter(Boolean),
           bundleComponentRows: sizeBucket.componentRows,
+          bundleUnitQty,
           draftRowIds: [],
           splitAssignmentIds: [],
           plDetailSeqs: [],
@@ -2642,6 +2645,7 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
           sku: row.sku,
           productName: row.productName,
           photoUrl: row.photoUrl || '',
+          bundleUnitQty: Math.max(1, Number(row.bundleUnitQty || 1)),
           rowsBySize: new Map(),
         }
         group.photoUrl = group.photoUrl || row.photoUrl || ''
@@ -2650,10 +2654,12 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
         const sizeRow = group.rowsBySize.get(sizeKey) || {
           key: `${groupKey}::${sizeKey}`,
           size,
+          qtyPcs: 0,
           qty: 0,
           sourceRows: [],
         }
-        sizeRow.qty += Number(row.qty || 0)
+        sizeRow.qtyPcs += Number(row.qty || 0)
+        sizeRow.qty = Math.floor(sizeRow.qtyPcs / group.bundleUnitQty)
         sizeRow.sourceRows.push(row)
         group.rowsBySize.set(sizeKey, sizeRow)
         groupsByKey.set(groupKey, group)
@@ -2778,7 +2784,10 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
     if (!canManage || !groupTransferEditor || bulkWorking) return
 
     const transferRows = groupTransferEditor.groups.flatMap((group) => group.rows.flatMap((sizeRow) => {
-      let remainingQty = Number(groupTransferDrafts[sizeRow.key] || 0)
+      const requestedQty = Number(groupTransferDrafts[sizeRow.key] || 0)
+      let remainingQty = groupTransferEditor.isBundle
+        ? requestedQty * Math.max(1, Number(group.bundleUnitQty || 1))
+        : requestedQty
 
       return sizeRow.sourceRows.reduce((sourceTransfers, sourceRow) => {
         if (remainingQty <= 0) return sourceTransfers
@@ -2839,7 +2848,14 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
       setGroupTransferDrafts({})
       clearProductSelection()
       setGroupTransferRows((currentRows) => [...currentRows, ...nextTransferRows])
-      setActionMessage(`${formatNumber(transferRows.reduce((total, row) => total + row.transferQty, 0))} ${groupTransferEditor.isBundle ? 'bundle item(s)' : 'item(s)'} transferred from ${groupTransferEditor.sourceType} to ${groupTransferEditor.targetType}.`)
+      const transferredQty = groupTransferEditor.isBundle
+        ? groupTransferEditor.groups.reduce((total, group) => (
+            total + group.rows.reduce((groupTotal, row) => (
+              groupTotal + Number(groupTransferDrafts[row.key] || 0)
+            ), 0)
+          ), 0)
+        : transferRows.reduce((total, row) => total + row.transferQty, 0)
+      setActionMessage(`${formatNumber(transferredQty)} ${groupTransferEditor.isBundle ? 'bundle(s)' : 'item(s)'} transferred from ${groupTransferEditor.sourceType} to ${groupTransferEditor.targetType}.`)
     } catch (transferError) {
       setActionError(getActionErrorMessage(transferError))
     } finally {
@@ -4707,13 +4723,11 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
                         <tr key={`${row.key}-${item.key}`}>
                           {index === 0 ? (
                             <td rowSpan={detailRows.length} style={{ ...styles.td, ...styles.tdCenter, ...styles.middleCell, ...separatorStyle }}>
-                              {item.isBundle ? (
-                                <span style={styles.grnLink}>{item.grn || grnValue}</span>
-                              ) : (
+                              {!item.isBundle ? (
                                 <Link href={getGrnLink(item.baseGrn, item.grn)} style={styles.grnLink}>
                                   {item.grn || grnValue}
                                 </Link>
-                              )}
+                              ) : null}
                             </td>
                           ) : null}
                           <td style={{ ...styles.td, ...styles.tdCenter, ...separatorStyle }}>
@@ -4838,18 +4852,16 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
                         <td style={styles.td}>
                           <div style={styles.grnList}>
                             {detailGrnList.length
-                              ? detailGrnList.map((item) => (
-                                  item.isBundle ? (
-                                    <span key={item.grn} style={styles.grnLink}>{item.grn}</span>
-                                  ) : (
-                                    <Link
-                                      key={item.grn}
-                                      href={getGrnLink(item.baseGrn, item.grn)}
-                                      style={styles.grnLink}
-                                    >
-                                      {item.grn}
-                                    </Link>
-                                  )
+                              ? detailGrnList
+                                .filter((item) => !item.isBundle)
+                                .map((item) => (
+                                  <Link
+                                    key={item.grn}
+                                    href={getGrnLink(item.baseGrn, item.grn)}
+                                    style={styles.grnLink}
+                                  >
+                                    {item.grn}
+                                  </Link>
                                 ))
                               : '-'}
                           </div>

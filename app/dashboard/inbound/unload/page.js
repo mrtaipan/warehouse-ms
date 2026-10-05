@@ -3697,11 +3697,19 @@ export default function UnloadPage() {
 
     if (ignoredFilter !== 'search' && breakdownFilters.search.trim()) {
       const searchTerm = normalizeVariantLookupValue(breakdownFilters.search)
+      const matchingVariant = getVariantForRow(row)
       const searchableText = [
         row.model_name,
         row.variant_name,
         row.variant_label,
         row.variant_code,
+        row.sku_code,
+        row.sku,
+        matchingVariant?.variant_code,
+        matchingVariant?.variant_label,
+        matchingVariant?.sku_code,
+        matchingVariant?.sku,
+        getSkuForRow(row),
         getRowVariantIdentifier(row),
         getModelVariantLabelForRow(row),
       ]
@@ -6371,8 +6379,8 @@ export default function UnloadPage() {
                 value={breakdownFilters.search}
                 onChange={(event) => updateBreakdownFilter('search', event.target.value)}
                 style={styles.filterSearchInput}
-                placeholder="Search model name or variant"
-                aria-label="Search model name or variant"
+                placeholder="Search model, variant, SKU, or product ID"
+                aria-label="Search model, variant, SKU, or product ID"
               />
             </div>
 

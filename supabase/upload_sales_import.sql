@@ -872,5 +872,14 @@ values
   ('warehouse_leader', 'storage.shelving_upload.edit'),
   ('storage_coordinator', 'storage.shelving_upload.view'),
   ('storage_coordinator', 'storage.shelving_upload.add'),
-  ('storage_coordinator', 'storage.shelving_upload.edit')
+  ('storage_coordinator', 'storage.shelving_upload.edit'),
+  ('mob_cs', 'storage.shelving_upload.view'),
+  ('mob_cs', 'storage.shelving_upload.add'),
+  ('mob_cs', 'storage.shelving_upload.edit'),
+  ('oi_cs', 'storage.shelving_upload.view'),
+  ('oi_cs', 'storage.shelving_upload.add'),
+  ('oi_cs', 'storage.shelving_upload.edit'),
+  ('arkline_cs', 'storage.shelving_upload.view'),
+  ('arkline_cs', 'storage.shelving_upload.add'),
+  ('arkline_cs', 'storage.shelving_upload.edit')
 on conflict do nothing;
