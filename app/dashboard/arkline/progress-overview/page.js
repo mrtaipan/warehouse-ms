@@ -1704,9 +1704,24 @@ function isReturnArklineQcRow(row = {}) {
   return String(row?.qc_type || '').trim().toUpperCase() === 'RE_QC' || Boolean(row?.source_return_batch_id)
 }
 
-function getQcSampleReportData(productDetail, receiptDateFilter = 'all') {
+function getQcSampleReportData(productDetail, receiptDateFilter = ['all']) {
   const options = buildQcReceiptPeriodOptions(productDetail?.receipts || [])
-  const selectedOption = options.find((option) => option.value === receiptDateFilter) || options[0]
+  const requestedValues = Array.isArray(receiptDateFilter) ? receiptDateFilter : [receiptDateFilter]
+  const periodOptions = options.filter((option) => option.value !== 'all')
+  const selectedPeriods = requestedValues.includes('all')
+    ? periodOptions
+    : periodOptions.filter((option) => requestedValues.includes(option.value))
+  const allPeriodsSelected =
+    !periodOptions.length || requestedValues.includes('all') || selectedPeriods.length === periodOptions.length
+  const selectedOption = allPeriodsSelected
+    ? options[0]
+    : selectedPeriods.length
+      ? {
+          value: 'custom',
+          label: selectedPeriods.map((option) => option.label).join(' + '),
+          selectedPeriods,
+        }
+      : options[0]
 
   if (!selectedOption || selectedOption.value === 'all') {
     return {
@@ -1719,23 +1734,24 @@ function getQcSampleReportData(productDetail, receiptDateFilter = 'all') {
     }
   }
 
-  const { startDate, nextDate } = selectedOption
-  const qcRows = (productDetail?.qcRows || []).filter((row) => isDateWithinReceiptPeriod(getQcRowActivityDate(row), startDate, nextDate))
+  const matchesSelectedPeriod = (value) =>
+    selectedPeriods.some((option) => isDateWithinReceiptPeriod(value, option.startDate, option.nextDate))
+  const qcRows = (productDetail?.qcRows || []).filter((row) => matchesSelectedPeriod(getQcRowActivityDate(row)))
   const qcIds = new Set(qcRows.map((row) => String(row.id || '')).filter(Boolean))
   const qcCycleIds = new Set(qcRows.map((row) => String(row.qc_cycle_id || '')).filter(Boolean))
   const rejectRows = (productDetail?.qcRejectRows || []).filter(
     (row) => {
       const rowQcId = String(row.arkline_qc_id || '').trim()
       if (rowQcId) return qcIds.has(rowQcId)
-      return isDateWithinReceiptPeriod(row.created_at, startDate, nextDate)
+      return matchesSelectedPeriod(row.created_at)
     }
   )
   const adjustmentRows = (productDetail?.qcRejectAdjustments || []).filter((row) => {
     const rowCycleId = String(row.qc_cycle_id || '').trim()
     const matchesCycle = rowCycleId ? qcCycleIds.has(rowCycleId) : true
-    return matchesCycle && isDateWithinReceiptPeriod(getArklineAdjustmentDateValue(row), startDate, nextDate)
+    return matchesCycle && matchesSelectedPeriod(getArklineAdjustmentDateValue(row))
   })
-  const receipts = (productDetail?.receipts || []).filter((row) => isDateWithinReceiptPeriod(row.receive_date, startDate, nextDate))
+  const receipts = (productDetail?.receipts || []).filter((row) => matchesSelectedPeriod(row.receive_date))
 
   return { options, selectedOption, qcRows, rejectRows, adjustmentRows, receipts }
 }
@@ -1863,7 +1879,7 @@ export default function ArklineProgressOverviewPage() {
   const [printingQcReport, setPrintingQcReport] = useState(false)
   const [printingReturnHistory, setPrintingReturnHistory] = useState(false)
   const [printingCmtInspectionId, setPrintingCmtInspectionId] = useState('')
-  const [qcReceiptDateFilter, setQcReceiptDateFilter] = useState('all')
+  const [qcReceiptDateFilter, setQcReceiptDateFilter] = useState(['all'])
   const [expandedReturnBatchId, setExpandedReturnBatchId] = useState('')
   const [savingStatusChange, setSavingStatusChange] = useState(false)
   const [shortageBatch, setShortageBatch] = useState(null)
@@ -2288,6 +2304,25 @@ export default function ArklineProgressOverviewPage() {
     setMessage(`Refreshed at ${new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}`)
   }
 
+  function handleQcReceiptDateFilterChange(value, options = []) {
+    if (value === 'all') {
+      setQcReceiptDateFilter(['all'])
+      return
+    }
+
+    const periodValues = options.filter((option) => option.value !== 'all').map((option) => option.value)
+    const currentValues = Array.isArray(qcReceiptDateFilter) ? qcReceiptDateFilter : [qcReceiptDateFilter]
+    const currentPeriods = currentValues.includes('all') ? [] : currentValues.filter((currentValue) => periodValues.includes(currentValue))
+    const nextPeriods = currentPeriods.includes(value)
+      ? currentPeriods.filter((currentValue) => currentValue !== value)
+      : [...currentPeriods, value]
+
+    if (!nextPeriods.length) return
+
+    const allPeriodsSelected = periodValues.length > 0 && periodValues.every((periodValue) => nextPeriods.includes(periodValue))
+    setQcReceiptDateFilter(allPeriodsSelected ? ['all'] : nextPeriods)
+  }
+
   function closePoDetail() {
     setSelectedPoDetail(null)
     setSelectedProductDetail(null)
@@ -2297,7 +2332,7 @@ export default function ArklineProgressOverviewPage() {
     setProductActionMessage('')
     setProductActionError('')
     setExpandedReturnBatchId('')
-    setQcReceiptDateFilter('all')
+    setQcReceiptDateFilter(['all'])
   }
 
   function toggleProductDetailSection(sectionKey) {
@@ -2587,7 +2622,7 @@ export default function ArklineProgressOverviewPage() {
     setProductActionMessage('')
     setProductActionError('')
     setExpandedReturnBatchId('')
-    setQcReceiptDateFilter('all')
+    setQcReceiptDateFilter(['all'])
     setManualCompleteOpen(false)
     setHppModalOpen(false)
     setCmtInspectionModalOpen(false)
@@ -5657,20 +5692,38 @@ export default function ArklineProgressOverviewPage() {
 
                         return (
                           <>
-                            <label className={styles.filterField}>
+                            <div className={styles.filterField}>
                               <span>Incoming Goods Filter</span>
-                              <select
-                                className={styles.select}
-                                value={qcReceiptDateFilter}
-                                onChange={(event) => setQcReceiptDateFilter(event.target.value)}
-                              >
-                                {qcReportData.options.map((option) => (
-                                  <option key={option.value} value={option.value}>
-                                    {option.label}
-                                  </option>
-                                ))}
-                              </select>
-                            </label>
+                              <details className={styles.qcDateFilterDropdown}>
+                                <summary className={styles.qcDateFilterSummary}>
+                                  <span>{qcReportData.selectedOption?.label || 'All Incoming Goods'}</span>
+                                  <ChevronIcon expanded={false} />
+                                </summary>
+                                <div className={styles.qcDateFilterMenu} role="group" aria-label="Incoming goods date filter">
+                                  <div className={styles.qcDateFilterGroup}>
+                                    {qcReportData.options.map((option) => {
+                                      const activeValues = Array.isArray(qcReceiptDateFilter) ? qcReceiptDateFilter : [qcReceiptDateFilter]
+                                      const allSelected = activeValues.includes('all')
+                                      const checked = option.value === 'all' ? allSelected : allSelected || activeValues.includes(option.value)
+                                      return (
+                                        <label
+                                          key={option.value}
+                                          className={`${styles.qcDateFilterOption} ${checked ? styles.qcDateFilterOptionActive : ''}`.trim()}
+                                        >
+                                          <input
+                                            type="checkbox"
+                                            checked={checked}
+                                            onChange={() => handleQcReceiptDateFilterChange(option.value, qcReportData.options)}
+                                          />
+                                          <span className={styles.qcDateFilterDot} aria-hidden="true" />
+                                          <span className={styles.qcDateFilterOptionText}>{option.label}</span>
+                                        </label>
+                                      )
+                                    })}
+                                  </div>
+                                </div>
+                              </details>
+                            </div>
                             {!qcReportData.qcRows.length ? (
                               <div className={styles.emptyMini}>No QC sample rows for this incoming goods date.</div>
                             ) : null}

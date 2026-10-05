@@ -133,6 +133,132 @@
   font-weight: 700;
 }
 
+.qcDateFilterGroup {
+  display: grid;
+  gap: 4px;
+}
+
+.qcDateFilterDropdown {
+  position: relative;
+  width: 100%;
+}
+
+.qcDateFilterSummary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 36px;
+  padding: 0 11px;
+  border: 1px solid #dbe4f0;
+  border-radius: 10px;
+  background: #ffffff;
+  color: #0f172a;
+  cursor: pointer;
+  list-style: none;
+}
+
+.qcDateFilterSummary::-webkit-details-marker {
+  display: none;
+}
+
+.qcDateFilterSummary > span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  color: #0f172a !important;
+  font-size: 12px !important;
+  font-weight: 700 !important;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.qcDateFilterSummary svg {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  color: #64748b;
+  transition: transform 160ms ease;
+}
+
+.qcDateFilterDropdown[open] .qcDateFilterSummary {
+  border-color: #94a3b8;
+  box-shadow: 0 0 0 4px rgba(148, 163, 184, 0.12);
+}
+
+.qcDateFilterDropdown[open] .qcDateFilterSummary svg {
+  transform: rotate(180deg);
+}
+
+.qcDateFilterMenu {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 6px);
+  left: 0;
+  width: 100%;
+  min-width: 240px;
+  padding: 6px;
+  border: 1px solid #dbe4f0;
+  border-radius: 11px;
+  background: #ffffff;
+  box-shadow: 0 14px 32px rgba(15, 23, 42, 0.14);
+}
+
+.qcDateFilterOption {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  min-height: 34px;
+  padding: 0 9px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: #64748b;
+  cursor: pointer;
+  transition: border-color 160ms ease, background-color 160ms ease, color 160ms ease;
+}
+
+.qcDateFilterOption:hover {
+  border-color: #e2e8f0;
+  background: #f8fafc;
+  color: #334155;
+}
+
+.qcDateFilterOptionActive {
+  border-color: #e2e8f0;
+  background: #f1f5f9;
+  color: #0f172a;
+}
+
+.qcDateFilterOption input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.qcDateFilterDot {
+  width: 10px;
+  height: 10px;
+  border: 1.5px solid currentColor;
+  border-radius: 50%;
+  flex: 0 0 auto;
+}
+
+.qcDateFilterOptionActive .qcDateFilterDot {
+  background: #0f172a;
+  box-shadow: none;
+}
+
+.qcDateFilterOptionText {
+  color: inherit !important;
+  font-size: 11px !important;
+  font-weight: 700 !important;
+  white-space: nowrap;
+}
+
 .filterLabelRow {
   display: flex;
   align-items: center;
