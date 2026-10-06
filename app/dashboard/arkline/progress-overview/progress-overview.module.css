@@ -1743,6 +1743,293 @@
   text-transform: none;
 }
 
+.externalProductModalCard {
+  width: min(980px, 100%);
+}
+
+.externalProductMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin-top: 10px;
+  color: #64748b;
+  font-size: 11px;
+}
+
+.externalProductMeta strong {
+  color: #0f172a;
+  font-weight: 850;
+}
+
+.dailyProductionModalCard {
+  width: min(1080px, 100%);
+}
+
+.dailyProductionTopGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.dailyProductionSectionLabel {
+  color: #0f172a;
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.dailyProductionProcessPicker {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  background: #f8fafc;
+}
+
+.dailyProductionProcessChoices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.dailyProductionProcessChoice {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 32px;
+  padding: 0 10px;
+  border: 1px solid #dbe4f0;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.dailyProductionProcessChoice input {
+  accent-color: #0f172a;
+}
+
+.dailyProductionProcessChoiceActive {
+  border-color: #0f172a;
+  color: #0f172a;
+}
+
+.dailyProductionProcessChoice em {
+  color: #94a3b8;
+  font-size: 9px;
+  font-style: normal;
+  font-weight: 700;
+}
+
+.dailyProductionEditorList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.dailyProductionEditorSection {
+  overflow: hidden;
+  border: 1px solid #dbe4f0;
+  border-radius: 13px;
+  background: #ffffff;
+}
+
+.dailyProductionEditorHeader {
+  width: 100%;
+  min-height: 54px;
+  padding: 10px 12px;
+  border: 0;
+  background: #f8fafc;
+  color: #0f172a;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.dailyProductionEditorHeader > span:first-child {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.dailyProductionEditorHeader strong {
+  font-size: 13px;
+  font-weight: 850;
+}
+
+.dailyProductionEditorHeader small {
+  color: #64748b;
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.dailyProductionEditorHeaderMeta {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  color: #0f172a;
+}
+
+.dailyProductionEditorHeaderMeta strong {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.dailyProductionProcessFields {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  padding: 12px;
+  border-top: 1px solid #e2e8f0;
+}
+
+.dailyProductionBalanceField {
+  min-height: 36px;
+  padding: 0 11px;
+  border: 1px solid #dbe4f0;
+  border-radius: 10px;
+  background: #f8fafc;
+  color: #0f172a;
+  display: flex;
+  align-items: center;
+  font-size: 12px;
+  font-weight: 850;
+  font-variant-numeric: tabular-nums;
+}
+
+.dailyProductionNotesField {
+  grid-column: 1 / -1;
+}
+
+.dailyProductionNotesField .textarea {
+  min-height: 68px;
+}
+
+.dailyProductionReportList {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.dailyProductionReportCard {
+  padding: 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  background: #f8fafc;
+}
+
+.dailyProductionReportHead {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.dailyProductionReportHead > div {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.dailyProductionReportHead strong {
+  color: #0f172a;
+  font-size: 13px;
+  font-weight: 850;
+}
+
+.dailyProductionReportHead span {
+  color: #64748b;
+  font-size: 11px;
+}
+
+.dailyProductionReportHead > span {
+  color: #64748b;
+  font-size: 10px;
+  text-align: right;
+}
+
+.dailyProductionReportMetrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.dailyProductionReportMetrics > div {
+  min-width: 0;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+}
+
+.dailyProductionReportMetrics span,
+.dailyProductionProcessRow span {
+  display: block;
+  color: #64748b;
+  font-size: 9px;
+  font-weight: 750;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.dailyProductionReportMetrics strong,
+.dailyProductionProcessRow strong {
+  display: block;
+  margin-top: 3px;
+  color: #0f172a;
+  font-size: 12px;
+  font-weight: 850;
+  font-variant-numeric: tabular-nums;
+}
+
+.dailyProductionProcessList {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.dailyProductionProcessRow {
+  display: grid;
+  grid-template-columns: minmax(130px, 1.4fr) repeat(3, minmax(70px, 0.55fr)) minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
+  border-top: 1px solid #e2e8f0;
+  background: #ffffff;
+}
+
+.dailyProductionProcessName {
+  min-width: 0;
+}
+
+.dailyProductionProcessName strong {
+  margin-top: 0;
+}
+
+.dailyProductionProcessName span {
+  margin-top: 3px;
+  letter-spacing: 0;
+  text-transform: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dailyProductionProcessRow p {
+  margin: 0;
+  color: #475569;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
 .cmtInspectionFormSection {
   display: flex;
   flex-direction: column;
@@ -3683,4 +3970,58 @@
     flex-direction: column;
   }
 
+  .externalProductModalCard,
+  .dailyProductionModalCard {
+    width: 100%;
+  }
+
+  .dailyProductionTopGrid,
+  .dailyProductionReportMetrics {
+    grid-template-columns: 1fr;
+  }
+
+  .dailyProductionProcessFields {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .dailyProductionNotesField {
+    grid-column: 1 / -1;
+  }
+
+  .dailyProductionProcessRow {
+    grid-template-columns: minmax(0, 1fr) repeat(2, minmax(72px, 0.7fr));
+    align-items: start;
+  }
+
+  .dailyProductionProcessRow p:last-child {
+    grid-column: 1 / -1;
+  }
+
+}
+
+@media (max-width: 560px) {
+  .dailyProductionProcessFields {
+    grid-template-columns: 1fr;
+  }
+
+  .dailyProductionNotesField {
+    grid-column: auto;
+  }
+
+  .dailyProductionProcessRow {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .dailyProductionProcessName,
+  .dailyProductionProcessRow p:last-child {
+    grid-column: 1 / -1;
+  }
+
+  .dailyProductionReportHead {
+    flex-direction: column;
+  }
+
+  .dailyProductionReportHead > span {
+    text-align: left;
+  }
 }

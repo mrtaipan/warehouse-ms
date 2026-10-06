@@ -33,6 +33,20 @@ function sortRowsByRecent(rows) {
   })
 }
 
+function getPenaltyPeriodRange() {
+  const now = new Date()
+  const startMonth = Math.floor(now.getMonth() / 3) * 3
+  const start = new Date(now.getFullYear(), startMonth, 1)
+  const end = new Date(now.getFullYear(), startMonth + 3, 1)
+  const toIsoDate = (value) =>
+    `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`
+
+  return {
+    start: toIsoDate(start),
+    end: toIsoDate(end),
+  }
+}
+
 export default async function MyArklifePage() {
   const supabase = await createClient()
   const {
@@ -44,7 +58,8 @@ export default async function MyArklifePage() {
   }
 
   const { profile, permissions, isAdmin } = await loadAccessContext(supabase, user, '*')
-  const [leaveResult, giftResult, publicHolidayResult, penaltyResult] = await Promise.all([
+  const penaltyPeriod = getPenaltyPeriodRange()
+  const [leaveResult, giftResult, publicHolidayResult, penaltyResult, penaltyDetailResult] = await Promise.all([
     supabase
       .from('hrga_leave_requests')
       .select('*')
@@ -60,12 +75,21 @@ export default async function MyArklifePage() {
       .select('total_points')
       .eq('employee_profile_id', profile?.id || '')
       .maybeSingle(),
+    supabase
+      .from('hrga_penalty_points')
+      .select('id, penalty_date, points, reason, created_at')
+      .eq('employee_profile_id', profile?.id || '')
+      .gte('penalty_date', penaltyPeriod.start)
+      .lt('penalty_date', penaltyPeriod.end)
+      .order('penalty_date', { ascending: false })
+      .order('created_at', { ascending: false }),
   ])
 
   const { rows: leaveRowsRaw, missing: leaveMissing } = getQueryData(leaveResult)
   const { rows: giftRowsRaw, missing: giftMissing } = getQueryData(giftResult)
   const { rows: publicHolidayRows } = getQueryData(publicHolidayResult)
   const penaltyPoints = penaltyResult.error?.code === '42P01' ? 0 : Number(penaltyResult.data?.total_points || 0)
+  const penaltyDetails = penaltyDetailResult.error?.code === '42P01' ? [] : penaltyDetailResult.data || []
   const leaveRows = filterActiveLeaveRows(leaveRowsRaw).slice(0, 2)
   const giftRows = sortRowsByRecent(giftRowsRaw)
 
@@ -79,6 +103,7 @@ export default async function MyArklifePage() {
         leaveMissing={leaveMissing}
         giftMissing={giftMissing}
         penaltyPoints={penaltyPoints}
+        penaltyDetails={penaltyDetails}
         canOpenPeopleManagement={canAccessPeopleManagement(permissions, isAdmin)}
       />
     </div>

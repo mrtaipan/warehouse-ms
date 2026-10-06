@@ -323,6 +323,100 @@
   font-variant-numeric: tabular-nums;
 }
 
+.penaltyPersonButton {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: #0f172a;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0;
+  font: inherit;
+  font-weight: 800;
+  text-align: left;
+  cursor: pointer;
+}
+
+.penaltyPersonButton:disabled {
+  color: #334155;
+  cursor: default;
+}
+
+.penaltyExpandIcon {
+  width: 20px;
+  height: 20px;
+  border: 1px solid #dbe4ef;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  color: #0f172a;
+  background: #f8fafc;
+  font-size: 13px;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.penaltyDetailRow td {
+  padding: 0 12px 12px;
+  background: #fbfdff;
+}
+
+.penaltyDetailRow td:last-child {
+  text-align: left;
+  font-weight: 500;
+}
+
+.penaltyDetailList {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  background: #ffffff;
+}
+
+.penaltyDetailItem {
+  display: grid;
+  grid-template-columns: minmax(112px, 0.3fr) minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+  padding: 10px;
+  border-radius: 10px;
+  background: #f8fafc;
+}
+
+.penaltyDetailItem div,
+.penaltyDetailItem p {
+  margin: 0;
+}
+
+.penaltyDetailItem strong,
+.penaltyDetailItem span {
+  display: block;
+}
+
+.penaltyDetailItem strong {
+  color: #991b1b;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.penaltyDetailItem span {
+  margin-top: 3px;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.penaltyDetailItem p {
+  color: #334155;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
 .penaltyForm {
   padding: 16px;
   display: flex;

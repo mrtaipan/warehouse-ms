@@ -259,7 +259,44 @@ function MetricCard({ icon, label, value }) {
   )
 }
 
-export default function MyArklifeClient({ profile, leaveRows, giftRows, publicHolidayRows, leaveMissing, giftMissing, penaltyPoints = 0, canOpenPeopleManagement }) {
+function PenaltyMetricCard({ penaltyPoints = 0, penaltyDetails = [] }) {
+  const [expanded, setExpanded] = useState(false)
+  const hasDetails = Number(penaltyPoints || 0) > 0 && penaltyDetails.length > 0
+
+  return (
+    <div className={`${styles.metricCard} ${styles.penaltyMetricCard}`.trim()}>
+      <button
+        type="button"
+        className={styles.penaltyMetricButton}
+        onClick={() => hasDetails && setExpanded((current) => !current)}
+        disabled={!hasDetails}
+        aria-expanded={hasDetails ? expanded : undefined}
+      >
+        <div className={styles.metricIcon}><WarningIcon /></div>
+        <div className={styles.penaltyMetricCopy}>
+          <p className={styles.metricLabel}>Penalty Points</p>
+          <p className={styles.metricValue}>{formatNumber(penaltyPoints)}</p>
+        </div>
+        <span className={styles.penaltyMetricToggle}>{hasDetails ? (expanded ? '-' : '+') : ''}</span>
+      </button>
+      {expanded ? (
+        <div className={styles.penaltyMetricDetails}>
+          {penaltyDetails.map((item) => (
+            <article key={item.id} className={styles.penaltyMetricDetailItem}>
+              <div>
+                <strong>{formatNumber(item.points)} pt</strong>
+                <span>{formatLongDate(item.penalty_date)}</span>
+              </div>
+              <p>{item.reason || '-'}</p>
+            </article>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+export default function MyArklifeClient({ profile, leaveRows, giftRows, publicHolidayRows, leaveMissing, giftMissing, penaltyPoints = 0, penaltyDetails = [], canOpenPeopleManagement }) {
   const [openLeaveModal, setOpenLeaveModal] = useState(false)
   const [openGiftModal, setOpenGiftModal] = useState(false)
   const [openProfileModal, setOpenProfileModal] = useState(false)
@@ -395,7 +432,7 @@ export default function MyArklifeClient({ profile, leaveRows, giftRows, publicHo
       <section className={styles.metricsGrid}>
         <MetricCard icon={<CalendarIcon />} label="Join Date" value={formatLongDate(profile?.join_date)} />
         <MetricCard icon={<LeaveIcon />} label="Leave Balance" value={formatNumber(leaveBalance)} />
-        <MetricCard icon={<WarningIcon />} label="Penalty Points" value={formatNumber(penaltyPoints)} />
+        <PenaltyMetricCard penaltyPoints={penaltyPoints} penaltyDetails={penaltyDetails} />
         <MetricCard icon={<BriefcaseIcon />} label="Working Days" value={formatNumber(profile?.working_days || 0)} />
       </section>
 

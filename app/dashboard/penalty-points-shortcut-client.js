@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState, useTransition } from 'react'
+import { Fragment, useMemo, useState, useTransition } from 'react'
 import { createClient } from '@/utils/supabase/browser'
 import styles from './dashboard.module.css'
 
@@ -40,9 +40,34 @@ function formatNumber(value) {
   return new Intl.NumberFormat('id-ID', { maximumFractionDigits: 0 }).format(Number(value || 0))
 }
 
+function formatLongDate(value) {
+  if (!value) return '-'
+  const parsed = new Date(value)
+  if (Number.isNaN(parsed.getTime())) return '-'
+  return new Intl.DateTimeFormat('en-GB', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+  }).format(parsed)
+}
+
 function getTodayInputValue() {
   const now = new Date()
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+}
+
+function getPenaltyPeriodRange() {
+  const now = new Date()
+  const startMonth = Math.floor(now.getMonth() / 3) * 3
+  const start = new Date(now.getFullYear(), startMonth, 1)
+  const end = new Date(now.getFullYear(), startMonth + 3, 1)
+  const toIsoDate = (value) =>
+    `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`
+
+  return {
+    start: toIsoDate(start),
+    end: toIsoDate(end),
+  }
 }
 
 function normalizeGroup(value) {
@@ -74,9 +99,10 @@ function toProperCase(value) {
     .join(' ')
 }
 
-export default function PenaltyPointsShortcutButton({ people = [], currentRows = [], canAdd = false }) {
+export default function PenaltyPointsShortcutButton({ people = [], currentRows = [], detailRows = [], canAdd = false }) {
   const [open, setOpen] = useState(false)
   const [criteriaOpen, setCriteriaOpen] = useState(false)
+  const [expandedProfileIds, setExpandedProfileIds] = useState([])
   const [selectedProfileId, setSelectedProfileId] = useState('')
   const [selectedPersonText, setSelectedPersonText] = useState('')
   const [personFilter, setPersonFilter] = useState('')
@@ -85,6 +111,7 @@ export default function PenaltyPointsShortcutButton({ people = [], currentRows =
   const [points, setPoints] = useState('')
   const [reason, setReason] = useState('')
   const [rows, setRows] = useState(currentRows)
+  const [details, setDetails] = useState(detailRows)
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
   const [isPending, startTransition] = useTransition()
@@ -99,14 +126,35 @@ export default function PenaltyPointsShortcutButton({ people = [], currentRows =
     [people]
   )
   const pointsByProfile = useMemo(() => new Map(rows.map((row) => [row.employee_profile_id, Number(row.total_points || 0)])), [rows])
+  const detailsByProfile = useMemo(() => {
+    const grouped = new Map()
+    details.forEach((row) => {
+      const key = row.employee_profile_id
+      if (!key) return
+      const current = grouped.get(key) || []
+      current.push(row)
+      grouped.set(key, current)
+    })
+
+    grouped.forEach((items) => {
+      items.sort((left, right) => {
+        const leftValue = new Date(left?.penalty_date || left?.created_at || 0).getTime()
+        const rightValue = new Date(right?.penalty_date || right?.created_at || 0).getTime()
+        return rightValue - leftValue
+      })
+    })
+
+    return grouped
+  }, [details])
   const peopleWithPoints = useMemo(() => {
     return activePeople
       .map((person) => ({
         ...person,
         total_points: pointsByProfile.get(person.id) || 0,
+        penalty_details: detailsByProfile.get(person.id) || [],
       }))
       .sort((left, right) => right.total_points - left.total_points || String(left.display_name || left.id).localeCompare(String(right.display_name || right.id)))
-  }, [activePeople, pointsByProfile])
+  }, [activePeople, detailsByProfile, pointsByProfile])
   const divisionOptions = useMemo(() => Array.from(new Set(peopleWithPoints.map(getDivisionLabel).filter((item) => item !== '-'))).sort(), [peopleWithPoints])
   const inputPersonOptions = useMemo(
     () =>
@@ -151,6 +199,7 @@ export default function PenaltyPointsShortcutButton({ people = [], currentRows =
     setMessage('')
     setError('')
     setCriteriaOpen(false)
+    setExpandedProfileIds([])
   }
 
   function handleClose() {
@@ -164,6 +213,29 @@ export default function PenaltyPointsShortcutButton({ people = [], currentRows =
       throw new Error(fetchError.message)
     }
     setRows(data || [])
+  }
+
+  async function refreshCurrentDetails() {
+    const period = getPenaltyPeriodRange()
+    const { data, error: fetchError } = await supabase
+      .from('hrga_penalty_points')
+      .select('id, employee_profile_id, penalty_date, points, reason, created_at')
+      .gte('penalty_date', period.start)
+      .lt('penalty_date', period.end)
+      .order('penalty_date', { ascending: false })
+      .order('created_at', { ascending: false })
+
+    if (fetchError) {
+      throw new Error(fetchError.message)
+    }
+
+    setDetails(data || [])
+  }
+
+  function toggleExpandedProfile(profileId) {
+    setExpandedProfileIds((current) =>
+      current.includes(profileId) ? current.filter((item) => item !== profileId) : [...current, profileId]
+    )
   }
 
   function handleSubmit(event) {
@@ -197,7 +269,7 @@ export default function PenaltyPointsShortcutButton({ people = [], currentRows =
       setMessage('Penalty point saved.')
 
       try {
-        await refreshCurrentRows()
+        await Promise.all([refreshCurrentRows(), refreshCurrentDetails()])
       } catch (refreshError) {
         setError(refreshError.message || 'Saved, but failed to refresh current totals.')
       }
@@ -260,13 +332,48 @@ export default function PenaltyPointsShortcutButton({ people = [], currentRows =
                       </tr>
                     </thead>
                     <tbody>
-                      {filteredPeople.map((person) => (
-                        <tr key={person.id}>
-                          <td>{toProperCase(person.display_name || person.email || person.id)}</td>
-                          <td>{getDivisionLabel(person)}</td>
-                          <td>{formatNumber(person.total_points)}</td>
-                        </tr>
-                      ))}
+                      {filteredPeople.map((person) => {
+                        const hasDetails = person.total_points > 0 && person.penalty_details.length > 0
+                        const isExpanded = expandedProfileIds.includes(person.id)
+
+                        return (
+                          <Fragment key={person.id}>
+                            <tr key={person.id}>
+                              <td>
+                                <button
+                                  type="button"
+                                  className={styles.penaltyPersonButton}
+                                  onClick={() => hasDetails && toggleExpandedProfile(person.id)}
+                                  disabled={!hasDetails}
+                                  aria-expanded={hasDetails ? isExpanded : undefined}
+                                >
+                                  <span className={styles.penaltyExpandIcon}>{hasDetails ? (isExpanded ? '-' : '+') : ''}</span>
+                                  {toProperCase(person.display_name || person.email || person.id)}
+                                </button>
+                              </td>
+                              <td>{getDivisionLabel(person)}</td>
+                              <td>{formatNumber(person.total_points)}</td>
+                            </tr>
+                            {isExpanded ? (
+                              <tr key={`${person.id}-details`} className={styles.penaltyDetailRow}>
+                                <td colSpan={3}>
+                                  <div className={styles.penaltyDetailList}>
+                                    {person.penalty_details.map((item) => (
+                                      <article key={item.id} className={styles.penaltyDetailItem}>
+                                        <div>
+                                          <strong>{formatNumber(item.points)} pt</strong>
+                                          <span>{formatLongDate(item.penalty_date)}</span>
+                                        </div>
+                                        <p>{item.reason || '-'}</p>
+                                      </article>
+                                    ))}
+                                  </div>
+                                </td>
+                              </tr>
+                            ) : null}
+                          </Fragment>
+                        )
+                      })}
                       {!filteredPeople.length ? (
                         <tr>
                           <td colSpan={3}>No penalty points data matches the current filters.</td>

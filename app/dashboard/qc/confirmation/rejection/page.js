@@ -574,10 +574,29 @@ const styles = {
   },
   breakdownFilters: {
     display: 'grid',
-    gridTemplateColumns: 'minmax(150px, 0.9fr) minmax(240px, 1.35fr) minmax(280px, 1.55fr) minmax(170px, 0.8fr) auto',
+    gridTemplateColumns: 'minmax(150px, 0.9fr) minmax(240px, 1.35fr) minmax(280px, 1.55fr) minmax(150px, 0.75fr) minmax(128px, 0.52fr) auto',
     alignItems: 'center',
     gap: '8px',
     width: '100%',
+  },
+  unfinishedFilterLabel: {
+    height: '34px',
+    padding: '0 10px',
+    border: '1px solid #cbd5e1',
+    borderRadius: '8px',
+    background: '#fff',
+    color: '#0f172a',
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '7px',
+    fontSize: '12px',
+    fontWeight: '800',
+    whiteSpace: 'nowrap',
+  },
+  unfinishedFilterCheckbox: {
+    width: '14px',
+    height: '14px',
+    accentColor: '#111827',
   },
   filterSelect: {
     height: '34px',
@@ -957,6 +976,10 @@ function matchesResultFilterValues(row, qty, filters, ignoredFilter = '') {
     return false
   }
 
+  if (ignoredFilter !== 'unfinished' && filters.unfinished && Number(qty || 0) <= 0) {
+    return false
+  }
+
   return true
 }
 
@@ -1128,6 +1151,7 @@ export default function QcConfirmationRejectionPage() {
     modelName: '',
     grade: '',
     search: '',
+    unfinished: false,
   })
 
   const loadData = useCallback(async (silent = false) => {
@@ -1634,9 +1658,38 @@ export default function QcConfirmationRejectionPage() {
   )
   const activePostTargetOptions = returnKoliTargetOptions
   const activePostTargetQty = currentReturnKoliQty
+  const remainingQtyBySourceKey = useMemo(() => {
+    const takeDraftBySourceKey = new Map()
+    const returnDraftBySourceKey = new Map()
+
+    currentTakeKoliItems.forEach((item) => {
+      takeDraftBySourceKey.set(item.source_key, Number(takeDraftBySourceKey.get(item.source_key) || 0) + Number(item.qty || 0))
+    })
+
+    currentReturnKoliItems.forEach((item) => {
+      returnDraftBySourceKey.set(item.source_key, Number(returnDraftBySourceKey.get(item.source_key) || 0) + Number(item.qty || 0))
+    })
+
+    const result = new Map()
+    sourceRows.forEach((row) => {
+      result.set(
+        row.key,
+        Math.max(
+          0,
+          Number(row.source_qty || 0) -
+            Number(row.taken_qty || 0) -
+            Number(row.returned_qty || 0) -
+            Number(takeDraftBySourceKey.get(row.key) || 0) -
+            Number(returnDraftBySourceKey.get(row.key) || 0)
+        )
+      )
+    })
+
+    return result
+  }, [currentReturnKoliItems, currentTakeKoliItems, sourceRows])
   const brandFilterOptions = useMemo(() => {
     const options = new Map()
-    sourceRows.filter((row) => matchesResultFilterValues(row, Number(row.source_qty || 0), resultFilters, 'brandId')).forEach((row) => {
+    sourceRows.filter((row) => matchesResultFilterValues(row, Number(remainingQtyBySourceKey.get(row.key) || 0), resultFilters, 'brandId')).forEach((row) => {
       if (row.brand_id && row.brand_name) {
         options.set(String(row.brand_id), row.brand_name)
       }
@@ -1645,10 +1698,10 @@ export default function QcConfirmationRejectionPage() {
     return Array.from(options.entries())
       .map(([id, name]) => ({ id, name }))
       .sort((a, b) => a.name.localeCompare(b.name))
-  }, [resultFilters, sourceRows])
+  }, [remainingQtyBySourceKey, resultFilters, sourceRows])
   const categoryFilterOptions = useMemo(() => {
     const options = new Map()
-    sourceRows.filter((row) => matchesResultFilterValues(row, Number(row.source_qty || 0), resultFilters, 'categoryId')).forEach((row) => {
+    sourceRows.filter((row) => matchesResultFilterValues(row, Number(remainingQtyBySourceKey.get(row.key) || 0), resultFilters, 'categoryId')).forEach((row) => {
       if (row.category_id && row.category_name) {
         options.set(String(row.category_id), row.category_name)
       }
@@ -1657,37 +1710,38 @@ export default function QcConfirmationRejectionPage() {
     return Array.from(options.entries())
       .map(([id, name]) => ({ id, name }))
       .sort((a, b) => a.name.localeCompare(b.name))
-  }, [resultFilters, sourceRows])
+  }, [remainingQtyBySourceKey, resultFilters, sourceRows])
   const modelFilterOptions = useMemo(
     () =>
       Array.from(
         new Set(
           sourceRows
-            .filter((row) => matchesResultFilterValues(row, Number(row.source_qty || 0), resultFilters, 'modelName'))
+            .filter((row) => matchesResultFilterValues(row, Number(remainingQtyBySourceKey.get(row.key) || 0), resultFilters, 'modelName'))
             .map((row) => getModelNameLabel(row))
             .filter(Boolean)
         )
       ).sort((a, b) => a.localeCompare(b)),
-    [resultFilters, sourceRows]
+    [remainingQtyBySourceKey, resultFilters, sourceRows]
   )
   const gradeFilterOptions = useMemo(
     () =>
       Array.from(
         new Set(
           sourceRows
-            .filter((row) => matchesResultFilterValues(row, Number(row.source_qty || 0), resultFilters, 'grade'))
+            .filter((row) => matchesResultFilterValues(row, Number(remainingQtyBySourceKey.get(row.key) || 0), resultFilters, 'grade'))
             .map((row) => String(row.grade || '').toUpperCase())
             .filter(Boolean)
         )
       ).sort((a, b) => a.localeCompare(b)),
-    [resultFilters, sourceRows]
+    [remainingQtyBySourceKey, resultFilters, sourceRows]
   )
   const hasResultFilters = Boolean(
     resultFilters.brandId ||
     resultFilters.categoryId ||
     resultFilters.modelName ||
     resultFilters.grade ||
-    resultFilters.search
+    resultFilters.search ||
+    resultFilters.unfinished
   )
 
   function updateResultFilter(name, value) {
@@ -1704,6 +1758,7 @@ export default function QcConfirmationRejectionPage() {
       modelName: '',
       grade: '',
       search: '',
+      unfinished: false,
     })
   }
 
@@ -1711,8 +1766,8 @@ export default function QcConfirmationRejectionPage() {
     return matchesResultFilterValues(row, qty, resultFilters)
   }, [resultFilters])
   const filteredSourceRows = useMemo(
-    () => sourceRows.filter((row) => matchesResultFilters(row, Number(row.source_qty || 0))),
-    [matchesResultFilters, sourceRows]
+    () => sourceRows.filter((row) => matchesResultFilters(row, Number(remainingQtyBySourceKey.get(row.key) || 0))),
+    [matchesResultFilters, remainingQtyBySourceKey, sourceRows]
   )
   const adjustmentModelOptions = useMemo(
     () => {
@@ -1740,20 +1795,8 @@ export default function QcConfirmationRejectionPage() {
   )
   const selectedAdjustmentModel = adjustmentModelOptions.find((item) => item.label === adjustmentModelLabel) || null
 
-  function getDraftQty(sourceKey, type) {
-    const target = type === 'take' ? currentTakeKoliItems : currentReturnKoliItems
-    return target.filter((item) => item.source_key === sourceKey).reduce((sum, item) => sum + Number(item.qty || 0), 0)
-  }
-
   function getRemainingQty(row) {
-    return Math.max(
-      0,
-      Number(row.source_qty || 0) -
-        Number(row.taken_qty || 0) -
-        Number(row.returned_qty || 0) -
-        getDraftQty(row.key, 'take') -
-        getDraftQty(row.key, 'return')
-    )
+    return Number(remainingQtyBySourceKey.get(row.key) || 0)
   }
 
   function handleQtyInputChange(row, value) {
@@ -2396,6 +2439,15 @@ export default function QcConfirmationRejectionPage() {
                   <option key={grade} value={grade}>Grade {grade}</option>
                 ))}
               </select>
+              <label style={styles.unfinishedFilterLabel}>
+                <input
+                  type="checkbox"
+                  checked={resultFilters.unfinished}
+                  onChange={(event) => updateResultFilter('unfinished', event.target.checked)}
+                  style={styles.unfinishedFilterCheckbox}
+                />
+                Unfinished
+              </label>
               <button
                 type="button"
                 onClick={resetResultFilters}

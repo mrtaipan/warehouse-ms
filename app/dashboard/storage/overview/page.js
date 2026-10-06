@@ -23,6 +23,8 @@ const REJECT_GRADES = ['B', 'C']
 const REJECT_STORAGE_SELECT_COLUMNS = 'id, koli_number, product_name, size, category_id, sub_category_id, item_type_id, qty, grade, reject_note, status, posted_at, posted_by, created_by, created_at, updated_by, updated_at'
 const TEMPORARY_SALES_SELECT_COLUMNS = 'id, source_warehouse_storage_id, source_pl_packing_item_id, source_variant_code, sku_id, item_name, size, category_id, area_type, group_code, source_location_label, qty_in_area, status, entered_at, due_at, created_by, created_at, updated_at'
 const TEMPORARY_SALES_LEGACY_SELECT_COLUMNS = 'id, source_warehouse_storage_id, source_pl_packing_item_id, source_variant_code, sku_id, item_name, size, group_code, source_location_label, qty_in_area, status, entered_at, due_at, created_by, created_at, updated_at'
+const STORAGE_BUNDLE_SELECT_COLUMNS = 'id, bundle_code, bundle_name, bundle_unit_qty, storing_type, status'
+const STORAGE_BUNDLE_COMPONENT_SELECT_COLUMNS = 'id, bundle_id, sku, product_name, size_label, allocated_qty'
 const STORAGE_MOVEMENT_SELECT_COLUMNS = 'id, warehouse_storage_id, temporary_sales_item_id, movement_type, qty, from_location_label, to_location_label, item_name, size, sku_id, created_by, created_at'
 const PUTAWAY_QUEUE_SELECT_COLUMNS = 'id, restock_request_id, source_storage_id, source_location_label, source_pl_packing_item_id, sku_id, source_variant_code, item_name, size, group_code, qty, target_rack_location_id, status, notes, created_at, created_by, stored_at, stored_by'
 const WAREHOUSE_STORAGE_BASE_SELECT_COLUMNS = 'id, rack_location_id, source_pl_packing_item_id, source_variant_code, sku_id, item_name, size, qty, notes, created_at, updated_at'
@@ -41,6 +43,10 @@ const letterSizeRanks = new Map(
 
 function normalizeFilterValue(value) {
   return String(value || '').trim().toUpperCase()
+}
+
+function normalizeStorageSku(value) {
+  return normalizeFilterValue(value).replace(/[^A-Z0-9]/g, '')
 }
 
 function getTemporaryStatusStyle(status) {
@@ -641,6 +647,17 @@ async function fetchTemporarySalesItems() {
   return data || []
 }
 
+async function fetchStorageBundles() {
+  const [{ data: bundles, error: bundleError }, { data: components, error: componentError }] = await Promise.all([
+    supabase.from('product_bundles').select(STORAGE_BUNDLE_SELECT_COLUMNS).in('status', ['draft', 'released']).order('bundle_code', { ascending: true }),
+    supabase.from('product_bundle_components').select(STORAGE_BUNDLE_COMPONENT_SELECT_COLUMNS).order('id', { ascending: true }),
+  ])
+
+  if (bundleError) throw bundleError
+  if (componentError) throw componentError
+  return { bundles: bundles || [], components: components || [] }
+}
+
 async function fetchStorageMovementHistory() {
   const { data, error } = await supabase
     .from('warehouse_storage_movements')
@@ -983,6 +1000,8 @@ export default function StorageOverviewPage() {
   const [restockHistoryRows, setRestockHistoryRows] = useState([])
   const [storageQueueRows, setStorageQueueRows] = useState([])
   const [temporarySalesRows, setTemporarySalesRows] = useState([])
+  const [storageBundles, setStorageBundles] = useState([])
+  const [storageBundleComponents, setStorageBundleComponents] = useState([])
   const [putawayQueueRows, setPutawayQueueRows] = useState([])
   const [storageMovementRows, setStorageMovementRows] = useState([])
   const [inboundRows, setInboundRows] = useState([])
@@ -1015,6 +1034,9 @@ export default function StorageOverviewPage() {
   const [queueModalEntries, setQueueModalEntries] = useState([])
   const [temporaryStoreModalRows, setTemporaryStoreModalRows] = useState([])
   const [temporaryStoreQtys, setTemporaryStoreQtys] = useState({})
+  const [temporaryStoreMode, setTemporaryStoreMode] = useState('COMPONENT')
+  const [temporaryStoreBundleId, setTemporaryStoreBundleId] = useState('')
+  const [temporaryStoreBundleQty, setTemporaryStoreBundleQty] = useState('')
   const [temporaryStoreForm, setTemporaryStoreForm] = useState({ locationType: 'PALLET', locationId: '', locationCode: '', subLocation: '', notes: '' })
   const [temporaryStoreError, setTemporaryStoreError] = useState('')
   const [temporaryStoreConfirmOpen, setTemporaryStoreConfirmOpen] = useState(false)
@@ -1025,6 +1047,7 @@ export default function StorageOverviewPage() {
   const [temporaryTakeOutConfirmOpen, setTemporaryTakeOutConfirmOpen] = useState(false)
   const [takingTemporarySales, setTakingTemporarySales] = useState(false)
   const [movingTemporarySales, setMovingTemporarySales] = useState(false)
+  const [creatingTemporaryChecklist, setCreatingTemporaryChecklist] = useState(false)
   const [temporaryMoveConfirmEntry, setTemporaryMoveConfirmEntry] = useState(null)
   const [temporaryDestinationModal, setTemporaryDestinationModal] = useState(null)
   const [temporaryDestinationType, setTemporaryDestinationType] = useState('SALES')
@@ -1132,7 +1155,7 @@ export default function StorageOverviewPage() {
     }
 
     try {
-      const [rackData, storageData, rejectRows, restockRows, queueRows, temporaryRows, movementRows, putawayRows, breakdownRows, variantRows, inboundData, arklineProductRows, brandData, categoryData, profileRows] = await Promise.all([
+      const [rackData, storageData, rejectRows, restockRows, queueRows, temporaryRows, movementRows, putawayRows, breakdownRows, variantRows, inboundData, arklineProductRows, brandData, categoryData, profileRows, storageBundleData] = await Promise.all([
         fetchAllRackLocations(),
         fetchAllWarehouseStorage({ force: forceStorage }),
         fetchAllRejectStorageRows(),
@@ -1148,6 +1171,7 @@ export default function StorageOverviewPage() {
         fetchBrandDirectory(),
         fetchCategoryDirectory(),
         fetchUserProfilesByEmail(),
+        fetchStorageBundles(),
       ])
 
       const normalizedRackLocations = (rackData || []).map((item) => ({
@@ -1191,6 +1215,8 @@ export default function StorageOverviewPage() {
       setRestockHistoryRows(restockRows || [])
       setStorageQueueRows(normalizedQueueRows)
       setTemporarySalesRows((temporaryRows || []).map((row) => ({ ...row, area_type: row.area_type || 'SALES' })))
+      setStorageBundles(storageBundleData?.bundles || [])
+      setStorageBundleComponents(storageBundleData?.components || [])
       setPutawayQueueRows(putawayRows || [])
       setStorageMovementRows(movementRows || [])
       setInboundRows(inboundData || [])
@@ -2173,6 +2199,58 @@ export default function StorageOverviewPage() {
       }).length,
     }
   }, [temporaryAreaType, temporarySalesRows])
+  const temporaryStoreBundleOptions = useMemo(() => {
+    const selectedStock = new Map()
+    temporaryStoreModalRows.forEach((row) => {
+      const key = `${normalizeStorageSku(row.sku_id || row.source_variant_code)}::${normalizeSizeValue(row.size) || '-'}`
+      selectedStock.set(key, Number(selectedStock.get(key) || 0) + Number(row.qty_in_area || 0))
+    })
+
+    return storageBundles
+      .filter((bundle) => normalizeFilterValue(bundle.status) !== 'CANCELLED')
+      .map((bundle) => {
+        const components = storageBundleComponents.filter((component) => Number(component.bundle_id) === Number(bundle.id))
+        const sizeTotals = new Map()
+        components.forEach((component) => {
+          const size = normalizeSizeValue(component.size_label) || '-'
+          sizeTotals.set(size, Number(sizeTotals.get(size) || 0) + Number(component.allocated_qty || 0))
+        })
+
+        const requirements = []
+        let maxBundleQty = Number.POSITIVE_INFINITY
+        for (const [size, totalAllocated] of sizeTotals.entries()) {
+          const sizeBundleQty = Math.floor(totalAllocated / Math.max(1, Number(bundle.bundle_unit_qty || 1)))
+          if (sizeBundleQty <= 0 || totalAllocated % Math.max(1, Number(bundle.bundle_unit_qty || 1)) !== 0) {
+            maxBundleQty = 0
+            break
+          }
+
+          components
+            .filter((component) => (normalizeSizeValue(component.size_label) || '-') === size)
+            .reduce((componentMap, component) => {
+              const key = `${normalizeStorageSku(component.sku)}::${size}`
+              componentMap.set(key, Number(componentMap.get(key) || 0) + Number(component.allocated_qty || 0))
+              return componentMap
+            }, new Map())
+            .forEach((allocatedQty, key) => {
+              const qtyPerBundle = allocatedQty / sizeBundleQty
+              if (!Number.isInteger(qtyPerBundle) || qtyPerBundle <= 0) {
+                maxBundleQty = 0
+                return
+              }
+              requirements.push({ key, size, qtyPerBundle })
+              maxBundleQty = Math.min(maxBundleQty, Math.floor(Number(selectedStock.get(key) || 0) / qtyPerBundle))
+            })
+        }
+
+        return {
+          ...bundle,
+          maxBundleQty: Number.isFinite(maxBundleQty) ? maxBundleQty : 0,
+          requirements,
+        }
+      })
+      .filter((bundle) => bundle.maxBundleQty > 0)
+  }, [storageBundleComponents, storageBundles, temporaryStoreModalRows])
   const selectableTemporarySalesRows = filteredTemporarySalesRows.filter(
     (row) => normalizeFilterValue(row.status) === 'IN_TEMPORARY_AREA'
   )
@@ -2553,11 +2631,16 @@ export default function StorageOverviewPage() {
   }
 
   async function createTemporarySalesChecklist() {
-    if (!canTakeStorageItem) return
+    if (!canTakeStorageItem || creatingTemporaryChecklist) return
 
-    const stockEntries = storageRows.filter((entry) => selectedTemporarySourceIdSet.has(String(entry.id)))
-    const queueEntries = queueGroups.filter((entry) => selectedQueueKeySet.has(String(entry.key)))
-    const payload = [
+    setCreatingTemporaryChecklist(true)
+    setError('')
+    setSuccess('')
+
+    try {
+      const stockEntries = storageRows.filter((entry) => selectedTemporarySourceIdSet.has(String(entry.id)))
+      const queueEntries = queueGroups.filter((entry) => selectedQueueKeySet.has(String(entry.key)))
+      const payload = [
       ...stockEntries.map((entry) => ({
         source_warehouse_storage_id: entry.id,
         source_pl_packing_item_id: entry.source_pl_packing_item_id || null,
@@ -2588,31 +2671,34 @@ export default function StorageOverviewPage() {
         status: 'WAITING',
         created_by: null,
       }))),
-    ].filter((entry) => entry.qty_in_area > 0)
+      ].filter((entry) => entry.qty_in_area > 0)
 
-    if (payload.length === 0) {
-      setError('Select at least one current stock row or storage queue koli first.')
-      return
+      if (payload.length === 0) {
+        setError('Select at least one current stock row or storage queue koli first.')
+        return
+      }
+
+      const createdBy = await getCurrentUserEmail()
+      const { data, error: insertError } = await supabase
+        .from('warehouse_temporary_sales_items')
+        .insert(payload.map((entry) => ({ ...entry, created_by: createdBy })))
+        .select(TEMPORARY_SALES_SELECT_COLUMNS)
+
+      if (insertError) {
+        setError(insertError.code === '23505' ? 'Some selected items are already in Temporary Sales Area.' : insertError.message)
+        return
+      }
+
+      setTemporarySalesRows((current) => [...(data || []), ...current])
+      setSelectedTemporarySourceIds([])
+      setSelectedCategoryRowIds([])
+      setSelectedQueueKeys([])
+      setActiveListMode('temporary-sales')
+      setTemporaryDestinationModal(null)
+      setSuccess(`${payload.length} item row(s) added to Temporary Sales as Waiting.`)
+    } finally {
+      setCreatingTemporaryChecklist(false)
     }
-
-    const createdBy = await getCurrentUserEmail()
-    const { data, error: insertError } = await supabase
-      .from('warehouse_temporary_sales_items')
-      .insert(payload.map((entry) => ({ ...entry, created_by: createdBy })))
-      .select(TEMPORARY_SALES_SELECT_COLUMNS)
-
-    if (insertError) {
-      setError(insertError.message)
-      return
-    }
-
-    setTemporarySalesRows((current) => [...(data || []), ...current])
-    setSelectedTemporarySourceIds([])
-    setSelectedCategoryRowIds([])
-    setSelectedQueueKeys([])
-    setActiveListMode('temporary-sales')
-    setTemporaryDestinationModal(null)
-    setSuccess(`${payload.length} item row(s) added to Temporary Sales as Waiting.`)
   }
 
   async function createTemporaryReturKeepingFromCurrentStock(qtyById = null) {
@@ -3610,6 +3696,9 @@ export default function StorageOverviewPage() {
     setTemporaryStoreModalRows(rows)
     setTemporaryStoreQtys(Object.fromEntries(rows.map((row) => [String(row.id), ''])))
     setTemporaryStoreForm({ locationType: 'PALLET', locationId: '', locationCode: '', subLocation: '', notes: '' })
+    setTemporaryStoreMode('COMPONENT')
+    setTemporaryStoreBundleId('')
+    setTemporaryStoreBundleQty('')
     setTemporaryStoreError('')
     setTemporaryStoreConfirmOpen(false)
   }
@@ -3619,6 +3708,9 @@ export default function StorageOverviewPage() {
     setTemporaryStoreQtys({})
     setTemporaryStoreError('')
     setTemporaryStoreConfirmOpen(false)
+    setTemporaryStoreMode('COMPONENT')
+    setTemporaryStoreBundleId('')
+    setTemporaryStoreBundleQty('')
   }
 
   function openTemporaryTakeOutModal(entry = null) {
@@ -3831,11 +3923,54 @@ export default function StorageOverviewPage() {
     }))
   }
 
+  function getTemporaryBundleAllocations(bundleOption, bundleQty) {
+    if (!bundleOption || !Number.isInteger(bundleQty) || bundleQty <= 0) return []
+
+    const remainingByKey = new Map()
+    bundleOption.requirements.forEach((requirement) => {
+      const key = `${normalizeStorageSku(requirement.sku)}::${requirement.size}`
+      remainingByKey.set(key, Number(requirement.qtyPerBundle || 0) * bundleQty)
+    })
+
+    const allocations = []
+    for (const row of temporaryStoreModalRows) {
+      const key = `${normalizeStorageSku(row.sku_id || row.source_variant_code)}::${normalizeSizeValue(row.size) || '-'}`
+      const remaining = Number(remainingByKey.get(key) || 0)
+      if (remaining <= 0) continue
+      const qty = Math.min(remaining, Number(row.qty_in_area || 0))
+      if (qty > 0) {
+        allocations.push({ temporary_item_id: row.id, qty })
+        remainingByKey.set(key, remaining - qty)
+      }
+    }
+
+    return Array.from(remainingByKey.values()).some((qty) => qty > 0) ? [] : allocations
+  }
+
   async function handleTemporaryStoreSubmit(event) {
     event.preventDefault()
     if (temporaryStoreModalRows.length === 0) return
     if (!selectedTemporaryStoreLocation) {
       setTemporaryStoreError('Please complete the destination location first.')
+      return
+    }
+
+    if (temporaryStoreMode === 'BUNDLE') {
+      const bundleOption = temporaryStoreBundleOptions.find((bundle) => String(bundle.id) === String(temporaryStoreBundleId))
+      const bundleQty = Number(temporaryStoreBundleQty)
+      if (!bundleOption) {
+        setTemporaryStoreError('Select a bundle that can be formed from the selected temporary items.')
+        return
+      }
+      if (!Number.isInteger(bundleQty) || bundleQty <= 0 || bundleQty > bundleOption.maxBundleQty) {
+        setTemporaryStoreError(`Bundle quantity must be a whole number from 1 to ${bundleOption.maxBundleQty}.`)
+        return
+      }
+      if (getTemporaryBundleAllocations(bundleOption, bundleQty).length === 0) {
+        setTemporaryStoreError('The selected temporary quantities cannot form this bundle.')
+        return
+      }
+      setTemporaryStoreConfirmOpen(true)
       return
     }
 
@@ -3854,6 +3989,46 @@ export default function StorageOverviewPage() {
 
   async function handleConfirmedTemporaryStore() {
     if (!selectedTemporaryStoreLocation || temporaryStoreModalRows.length === 0) return
+
+    if (temporaryStoreMode === 'BUNDLE') {
+      const bundleOption = temporaryStoreBundleOptions.find((bundle) => String(bundle.id) === String(temporaryStoreBundleId))
+      const bundleQty = Number(temporaryStoreBundleQty)
+      const allocations = getTemporaryBundleAllocations(bundleOption, bundleQty)
+      if (!bundleOption || !Number.isInteger(bundleQty) || bundleQty <= 0 || allocations.length === 0) {
+        setTemporaryStoreError('The selected temporary quantities cannot form this bundle.')
+        setTemporaryStoreConfirmOpen(false)
+        return
+      }
+
+      setStoringTemporarySales(true)
+      setTemporaryStoreError('')
+      const createdBy = await getCurrentUserEmail()
+      const { error: bundleError } = await supabase.rpc('store_temporary_sales_as_bundle', {
+        p_bundle_id: Number(bundleOption.id),
+        p_bundle_qty: bundleQty,
+        p_destination_rack_location_id: Number(selectedTemporaryStoreLocation.id),
+        p_destination_label: getLocationLabel(selectedTemporaryStoreLocation),
+        p_items: allocations,
+        p_requirements: bundleOption.requirements.map((requirement) => ({
+          sku: requirement.sku,
+          size: requirement.size,
+          qty: Number(requirement.qtyPerBundle || 0) * bundleQty,
+        })),
+        p_actor: createdBy,
+      })
+
+      if (bundleError) {
+        setTemporaryStoreError(bundleError.message)
+        setStoringTemporarySales(false)
+        return
+      }
+
+      setSuccess(`${bundleQty} bundle(s) stored back successfully.`)
+      setStoringTemporarySales(false)
+      closeTemporaryStoreModal()
+      await refreshInventoryData()
+      return
+    }
 
     const entries = temporaryStoreModalRows.map((row) => ({
       row,
@@ -7383,7 +7558,75 @@ export default function StorageOverviewPage() {
                 </div>
               </div>
 
-              <div style={styles.queueConfirmList}>
+              <div style={styles.field}>
+                <label style={styles.label}>Store format</label>
+                <div style={styles.temporaryStoreTypeToggle} role="group" aria-label="Store format">
+                  {[
+                    ['COMPONENT', 'Store as SKU'],
+                    ['BUNDLE', 'Store as Bundle'],
+                  ].map(([mode, label]) => (
+                    <button
+                      key={mode}
+                      type="button"
+                      onClick={() => {
+                        setTemporaryStoreMode(mode)
+                        setTemporaryStoreError('')
+                        if (mode === 'COMPONENT') {
+                          setTemporaryStoreBundleId('')
+                          setTemporaryStoreBundleQty('')
+                        }
+                      }}
+                      style={{
+                        ...styles.typeToggleButton,
+                        ...(temporaryStoreMode === mode ? styles.typeToggleButtonActive : {}),
+                      }}
+                      aria-pressed={temporaryStoreMode === mode}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {temporaryStoreMode === 'BUNDLE' ? (
+                <div style={styles.filtersGrid}>
+                  <div style={styles.field}>
+                    <label style={styles.label}>Available bundle</label>
+                    <select
+                      value={temporaryStoreBundleId}
+                      onChange={(event) => {
+                        setTemporaryStoreBundleId(event.target.value)
+                        setTemporaryStoreBundleQty('')
+                        setTemporaryStoreError('')
+                      }}
+                      style={styles.select}
+                      required
+                    >
+                      <option value="">Select bundle</option>
+                      {temporaryStoreBundleOptions.map((bundle) => (
+                        <option key={bundle.id} value={bundle.id}>
+                          {bundle.bundle_code} | {bundle.bundle_name || 'Unnamed bundle'} ({bundle.maxBundleQty} available)
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div style={styles.field}>
+                    <label style={styles.label}>Bundle quantity</label>
+                    <input
+                      type="number"
+                      min="1"
+                      max={temporaryStoreBundleOptions.find((bundle) => String(bundle.id) === String(temporaryStoreBundleId))?.maxBundleQty || undefined}
+                      value={temporaryStoreBundleQty}
+                      onChange={(event) => setTemporaryStoreBundleQty(event.target.value)}
+                      style={styles.input}
+                      placeholder="Enter bundle qty"
+                      required
+                    />
+                  </div>
+                </div>
+              ) : null}
+
+              {temporaryStoreMode === 'COMPONENT' ? <div style={styles.queueConfirmList}>
                 {temporaryStoreModalRows.map((row) => (
                   <div key={row.id} style={styles.queueConfirmRow}>
                     <div style={styles.temporaryStoreItemSummary}>
@@ -7407,7 +7650,11 @@ export default function StorageOverviewPage() {
                     />
                   </div>
                 ))}
-              </div>
+              </div> : (
+                <p style={styles.modalText}>
+                  The selected temporary quantities will be converted into the chosen bundle SKU before they are stored.
+                </p>
+              )}
 
               <div style={styles.field}>
                 <label style={styles.label}>Notes</label>
@@ -7566,10 +7813,10 @@ export default function StorageOverviewPage() {
               <button
                 type="button"
                 onClick={temporaryDestinationType === 'RETUR_KEEPING' ? () => handleTemporaryReturQtySubmit({ preventDefault() {} }) : createTemporarySalesChecklist}
-                style={movingTemporaryRetur ? { ...styles.registerButton, ...styles.processingButton } : styles.registerButton}
-                disabled={movingTemporaryRetur}
+                style={(movingTemporaryRetur || creatingTemporaryChecklist) ? { ...styles.registerButton, ...styles.processingButton } : styles.registerButton}
+                disabled={movingTemporaryRetur || creatingTemporaryChecklist}
               >
-                {movingTemporaryRetur ? 'Processing...' : 'Confirm'}
+                {(movingTemporaryRetur || creatingTemporaryChecklist) ? 'Processing...' : 'Confirm'}
               </button>
             </div>
           </div>
@@ -8020,6 +8267,7 @@ export default function StorageOverviewPage() {
             <ShelvingUploadClient
               showHeader={false}
               storageRows={storageRows}
+              temporarySalesRows={temporarySalesRows}
               canUpload={canAddShelvingUpload}
               canManage={canManageShelvingUpload}
               onInventoryChanged={() => refreshInventoryData({ showLoading: false, forceStorage: true })}

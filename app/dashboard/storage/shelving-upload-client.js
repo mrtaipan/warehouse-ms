@@ -171,27 +171,36 @@ function getStorageKey(sku, size) {
   return `${normalizeSku(sku)}::${normalizeSize(size)}`
 }
 
-function buildShelvingAvailability(storageRows = []) {
+function buildShelvingAvailability(storageRows = [], temporarySalesRows = []) {
   const availability = new Map()
+  const unsizedSkus = new Set()
 
-  storageRows.forEach((row) => {
+  const addRows = (rows, isShelving) => rows.forEach((row) => {
     const locationType = normalizeUpper(row.location?.location_type || row.location_type)
     const skuCandidates = getSkuCandidates(row.sku_id, row.item_name)
-    const size = normalizeSize(row.size)
+    const size = normalizeSize(row.size) || '-'
     const qty = Math.max(0, Number(row.qty || 0))
 
-    if (locationType !== 'SHELVING' || !skuCandidates.length || !size || qty <= 0) return
+    if (isShelving && locationType !== 'SHELVING') return
+    if (!skuCandidates.length || qty <= 0) return
 
     skuCandidates.forEach((sku) => {
+      if (size === '-') unsizedSkus.add(sku)
       const key = getStorageKey(sku, size)
       availability.set(key, Number(availability.get(key) || 0) + qty)
     })
   })
 
-  return availability
+  addRows(temporarySalesRows.filter((row) => (
+    normalizeStatus(row.status) === 'in_temporary_area' &&
+    normalizeUpper(row.area_type || 'SALES') === 'SALES'
+  )), false)
+  addRows(storageRows, true)
+
+  return { availability, unsizedSkus }
 }
 
-function buildImportPreview(csvRows, storageRows) {
+function buildImportPreview(csvRows, storageRows, temporarySalesRows = []) {
   if (!csvRows.length) {
     throw new Error('CSV file is empty.')
   }
@@ -217,7 +226,7 @@ function buildImportPreview(csvRows, storageRows) {
     throw new Error(`CSV format cannot be read. Missing required column(s): ${missingHeaders.join(', ')}.`)
   }
 
-  const availability = buildShelvingAvailability(storageRows)
+  const { availability, unsizedSkus } = buildShelvingAvailability(storageRows, temporarySalesRows)
   const validStatusSet = new Set(VALID_STATUSES)
   const lines = []
   const duplicateLineKeys = new Map()
@@ -240,7 +249,8 @@ function buildImportPreview(csvRows, storageRows) {
     const resolvedOrderNumber = orderNumber || currentOrderNumber
     const resolvedStatus = normalizeStatus(orderStatus || currentStatus)
     const skuId = getSkuCandidates(variantCode, productCode, productName)[0] || normalizeUpper(variantCode || productCode)
-    const size = resolveSize(variationRaw)
+    let size = resolveSize(variationRaw)
+    if (!size && unsizedSkus.has(normalizeSku(skuId))) size = '-'
     const validStatus = validStatusSet.has(resolvedStatus)
     let exclusionReason = ''
 
@@ -336,6 +346,7 @@ function isSchemaError(error) {
 export default function ShelvingUploadClient({
   showHeader = true,
   storageRows = [],
+  temporarySalesRows = [],
   canUpload = false,
   canManage = false,
   onInventoryChanged,
@@ -466,7 +477,7 @@ export default function ShelvingUploadClient({
       }
 
       const parsedRows = parseCsv(fileText)
-      const nextPreview = buildImportPreview(parsedRows, storageRows)
+      const nextPreview = buildImportPreview(parsedRows, storageRows, temporarySalesRows)
 
       if (!nextPreview.lines.length) {
         throw new Error('No importable rows were found in this CSV.')

@@ -51,6 +51,12 @@ const CMT_ACCESSORIES_OPTIONS = [
   'Spare Button',
 ]
 const CMT_PACKING_OPTIONS = ['Shipping Mark', 'Barcode Sticker', 'Size/CLR Ratio', 'Hanger', 'Polybag', 'Hangtag', 'Tissue Paper']
+const DAILY_PRODUCTION_PROCESS_OPTIONS = [
+  { key: 'CUTTING', label: 'Cutting', balanceLabel: 'Output Qty - Order Qty', required: true },
+  { key: 'SEWING', label: 'Sewing', balanceLabel: 'Cutting Output Qty - Sewing Output Qty', required: true },
+  { key: 'PRINTING', label: 'Printing', balanceLabel: 'Sewing Output Qty - Printing Output Qty', required: false },
+  { key: 'FINISHING', label: 'Finishing', balanceLabel: 'Sewing Output Qty - Finishing Output Qty', required: true },
+]
 
 function CalendarIcon() {
   return (
@@ -932,6 +938,71 @@ function createCmtInspectionDraft(productDetail = {}) {
     inspectionResult: '',
     notes: '',
     orderQty: String(orderQty || 0),
+  }
+}
+
+function createDailyProductionProcessDraft() {
+  return {
+    planDate: '',
+    actualStartingDate: '',
+    outputQty: '',
+    rejectInProcess: '',
+    notes: '',
+    actualFinishedDate: '',
+  }
+}
+
+function createDailyProductionReportDraft(productDetail = {}) {
+  return {
+    reportDate: getTodayDateInputValue(),
+    productionLine: '',
+    enabledProcesses: {
+      CUTTING: true,
+      SEWING: true,
+      PRINTING: false,
+      FINISHING: true,
+    },
+    processes: DAILY_PRODUCTION_PROCESS_OPTIONS.reduce((accumulator, option) => {
+      accumulator[option.key] = createDailyProductionProcessDraft()
+      return accumulator
+    }, {}),
+    orderQty: String(parseNumberValue(productDetail?.financeSummary?.plannedQty || productDetail?.qty || 0)),
+  }
+}
+
+function getDailyProductionBalance(processType, report = {}, orderQty = 0) {
+  const processes = report?.processes || {}
+  const cuttingQty = Number(processes.CUTTING?.outputQty || 0)
+  const sewingQty = Number(processes.SEWING?.outputQty || 0)
+  const printingQty = Number(processes.PRINTING?.outputQty || 0)
+  const finishingQty = Number(processes.FINISHING?.outputQty || 0)
+
+  if (processType === 'CUTTING') return cuttingQty - Number(orderQty || 0)
+  if (processType === 'SEWING') return cuttingQty - sewingQty
+  if (processType === 'PRINTING') return sewingQty - printingQty
+  return sewingQty - finishingQty
+}
+
+function normalizeDailyProductionReportRow(row = {}, processRows = []) {
+  const processes = (processRows || []).reduce((accumulator, process) => {
+    accumulator[String(process?.process_type || '').trim().toUpperCase()] = {
+      ...process,
+      planDate: process?.plan_date || '',
+      actualStartingDate: process?.actual_starting_date || '',
+      outputQty: Number(process?.output_qty || 0),
+      rejectInProcess: Number(process?.reject_in_process || 0),
+      actualFinishedDate: process?.actual_finished_date || '',
+      notes: process?.notes || '',
+    }
+    return accumulator
+  }, {})
+
+  return {
+    ...row,
+    reportDate: row?.report_date || '',
+    productionLine: row?.production_line || '',
+    orderQty: Number(row?.order_qty || 0),
+    processes,
   }
 }
 
@@ -1872,6 +1943,7 @@ export default function ArklineProgressOverviewPage() {
     finance: false,
     qcSampleReport: false,
     cmtInspection: false,
+    dailyProductionReport: false,
     returnHistory: false,
   })
   const [productActionMessage, setProductActionMessage] = useState('')
@@ -1894,6 +1966,15 @@ export default function ArklineProgressOverviewPage() {
   const [cmtInspectionModalOpen, setCmtInspectionModalOpen] = useState(false)
   const [savingCmtInspection, setSavingCmtInspection] = useState(false)
   const [cmtInspectionDraft, setCmtInspectionDraft] = useState(() => createCmtInspectionDraft())
+  const [dailyProductionReportModalOpen, setDailyProductionReportModalOpen] = useState(false)
+  const [savingDailyProductionReport, setSavingDailyProductionReport] = useState(false)
+  const [dailyProductionReportDraft, setDailyProductionReportDraft] = useState(() => createDailyProductionReportDraft())
+  const [dailyProductionProcessOpen, setDailyProductionProcessOpen] = useState({
+    CUTTING: true,
+    SEWING: false,
+    PRINTING: false,
+    FINISHING: false,
+  })
   const [cmtDefectDrafts, setCmtDefectDrafts] = useState([])
   const [cmtRejectReasons, setCmtRejectReasons] = useState([])
   const [cmtPrefinalPdfFile, setCmtPrefinalPdfFile] = useState(null)
@@ -2626,6 +2707,7 @@ export default function ArklineProgressOverviewPage() {
     setManualCompleteOpen(false)
     setHppModalOpen(false)
     setCmtInspectionModalOpen(false)
+    setDailyProductionReportModalOpen(false)
     setSelectedCmtInspectionDetail(null)
     setCmtPrefinalPdfFile(null)
     setCmtMeasurementPdfFile(null)
@@ -2637,6 +2719,7 @@ export default function ArklineProgressOverviewPage() {
       finance: false,
       qcSampleReport: false,
       cmtInspection: false,
+      dailyProductionReport: false,
       returnHistory: false,
     })
     setSelectedProductDetail({
@@ -2657,6 +2740,7 @@ export default function ArklineProgressOverviewPage() {
       returnQcRows: [],
       returnQcRejectAdjustments: [],
       cmtInspections: [],
+      dailyProductionReports: [],
       financeSummary: null,
       sizeBreakdown: [],
     })
@@ -2668,7 +2752,7 @@ export default function ArklineProgressOverviewPage() {
       notes: '',
     })
     try {
-      const [itemRows, sizeRows, receiptRows, updateRows, paymentRowsRaw, qcRowsRaw, returnBatchRows, cmtInspectionRows, cmtRejectReasonRows] = await Promise.all([
+      const [itemRows, sizeRows, receiptRows, updateRows, paymentRowsRaw, qcRowsRaw, returnBatchRows, cmtInspectionRows, cmtRejectReasonRows, dailyProductionReportRows] = await Promise.all([
         loadOptionalRows(() =>
           supabase
             .from('arkline_po_items')
@@ -2739,8 +2823,36 @@ export default function ArklineProgressOverviewPage() {
             .eq('is_active', true)
             .order('reason_name', { ascending: true })
         ),
+        loadOptionalRows(() =>
+          supabase
+            .from('arkline_daily_production_reports')
+            .select('*')
+            .eq('arkline_po_item_id', entry.id)
+            .order('report_date', { ascending: false })
+            .order('created_at', { ascending: false })
+        ),
       ])
       setCmtRejectReasons(cmtRejectReasonRows || [])
+
+      const dailyProductionReportIds = (dailyProductionReportRows || []).map((row) => row.id).filter(Boolean)
+      const dailyProductionProcessRows = dailyProductionReportIds.length
+        ? await loadOptionalRows(() =>
+            supabase
+              .from('arkline_daily_production_processes')
+              .select('*')
+              .in('daily_production_report_id', dailyProductionReportIds)
+              .order('process_type', { ascending: true })
+          )
+        : []
+      const dailyProductionProcessesByReport = new Map()
+      ;(dailyProductionProcessRows || []).forEach((row) => {
+        const key = String(row?.daily_production_report_id || '')
+        if (!key) return
+        dailyProductionProcessesByReport.set(key, [...(dailyProductionProcessesByReport.get(key) || []), row])
+      })
+      const dailyProductionReports = (dailyProductionReportRows || []).map((row) =>
+        normalizeDailyProductionReportRow(row, dailyProductionProcessesByReport.get(String(row.id)) || [])
+      )
 
       const normalizedItemId = String(entry.id || '').trim()
       const normalizedSku = String(entry.sku || '').trim().toUpperCase()
@@ -2959,6 +3071,7 @@ export default function ArklineProgressOverviewPage() {
         returnQcRejectAdjustments: returnRejectAdjustmentRows,
         returnHistory,
         cmtInspections,
+        dailyProductionReports,
         sizeBreakdown,
         financeSummary: {
           price,
@@ -3187,6 +3300,174 @@ export default function ArklineProgressOverviewPage() {
     setCmtInspectionModalOpen(false)
     if (isExternalView) {
       setSelectedProductDetail(null)
+    }
+  }
+
+  function handleOpenDailyProductionReportDraft() {
+    if (!selectedProductDetail) return
+    setProductActionError('')
+    setProductActionMessage('')
+    setDailyProductionReportDraft(createDailyProductionReportDraft(selectedProductDetail))
+    setDailyProductionProcessOpen({
+      CUTTING: true,
+      SEWING: false,
+      PRINTING: false,
+      FINISHING: false,
+    })
+    setDailyProductionReportModalOpen(true)
+  }
+
+  function closeDailyProductionReportModal() {
+    if (savingDailyProductionReport) return
+    setDailyProductionReportModalOpen(false)
+  }
+
+  function updateDailyProductionReportDraft(field, value) {
+    setDailyProductionReportDraft((prev) => ({
+      ...prev,
+      [field]: value,
+    }))
+  }
+
+  function updateDailyProductionProcess(processType, field, value) {
+    setDailyProductionReportDraft((prev) => ({
+      ...prev,
+      processes: {
+        ...(prev.processes || {}),
+        [processType]: {
+          ...(prev.processes?.[processType] || createDailyProductionProcessDraft()),
+          [field]: value,
+        },
+      },
+    }))
+  }
+
+  function toggleDailyProductionProcess(processType) {
+    setDailyProductionReportDraft((prev) => ({
+      ...prev,
+      enabledProcesses: {
+        ...(prev.enabledProcesses || {}),
+        [processType]: !prev.enabledProcesses?.[processType],
+      },
+    }))
+  }
+
+  function toggleDailyProductionProcessOpen(processType) {
+    setDailyProductionProcessOpen((prev) => ({
+      ...prev,
+      [processType]: !prev[processType],
+    }))
+  }
+
+  async function handleSaveDailyProductionReport() {
+    if (!selectedProductDetail || savingDailyProductionReport) return
+    setProductActionError('')
+    setProductActionMessage('')
+
+    const reportDate = String(dailyProductionReportDraft.reportDate || '').trim()
+    const productionLine = String(dailyProductionReportDraft.productionLine || '').trim()
+    const orderQty = parseNumberValue(dailyProductionReportDraft.orderQty || selectedProductDetail.financeSummary?.plannedQty || selectedProductDetail.qty || 0)
+    const enabledOptions = DAILY_PRODUCTION_PROCESS_OPTIONS.filter((option) => dailyProductionReportDraft.enabledProcesses?.[option.key])
+    const missingRequiredProcess = DAILY_PRODUCTION_PROCESS_OPTIONS.find(
+      (option) => option.required && !dailyProductionReportDraft.enabledProcesses?.[option.key]
+    )
+
+    if (!reportDate) {
+      setProductActionError('Isi report date dulu.')
+      return
+    }
+    if (!productionLine) {
+      setProductActionError('Isi production line dulu.')
+      return
+    }
+    if (missingRequiredProcess) {
+      setProductActionError(`${missingRequiredProcess.label} wajib dipilih.`)
+      return
+    }
+    if (!enabledOptions.length) {
+      setProductActionError('Pilih minimal satu process.')
+      return
+    }
+
+    const processPayloads = enabledOptions.map((option) => {
+      const draft = dailyProductionReportDraft.processes?.[option.key] || createDailyProductionProcessDraft()
+      return {
+        process_type: option.key,
+        plan_date: String(draft.planDate || '').trim() || null,
+        actual_starting_date: String(draft.actualStartingDate || '').trim() || null,
+        output_qty: parseNumberValue(draft.outputQty),
+        reject_in_process: parseNumberValue(draft.rejectInProcess),
+        notes: String(draft.notes || '').trim() || null,
+        actual_finished_date: String(draft.actualFinishedDate || '').trim() || null,
+      }
+    })
+
+    const invalidOutput = enabledOptions.find((option) => {
+      const value = dailyProductionReportDraft.processes?.[option.key]?.outputQty
+      return String(value ?? '').trim() === '' || parseNumberValue(value) < 0
+    })
+    if (invalidOutput) {
+      setProductActionError(`Isi output qty untuk ${invalidOutput.label}.`)
+      return
+    }
+
+    setSavingDailyProductionReport(true)
+    try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser()
+      let submittedBy = String(user?.user_metadata?.display_name || user?.user_metadata?.full_name || '').trim()
+      const userId = String(user?.id || '').trim()
+      if (userId) {
+        const { data: profileRows } = await supabase
+          .from('dir_user_profiles')
+          .select('display_name')
+          .or(`authenticated_id.eq.${userId},id.eq.${userId}`)
+          .limit(1)
+        submittedBy = String(profileRows?.[0]?.display_name || submittedBy).trim()
+      }
+
+      const reportPayload = {
+        po_id: String(selectedProductDetail.poId || '').trim().toUpperCase(),
+        arkline_po_item_id: selectedProductDetail.id,
+        sku_induk: String(selectedProductDetail.sku || '').trim().toUpperCase(),
+        product_name: String(selectedProductDetail.productName || '').trim().toUpperCase(),
+        kategori_pengadaan: String(selectedProductDetail.category || '').trim().toUpperCase() || null,
+        production_line: productionLine,
+        report_date: reportDate,
+        order_qty: orderQty,
+        submitted_by: submittedBy || null,
+      }
+      const { data: insertedReport, error: reportError } = await supabase
+        .from('arkline_daily_production_reports')
+        .insert(reportPayload)
+        .select('id')
+        .single()
+
+      if (reportError) {
+        if (String(reportError.code || '') === '23505') {
+          throw new Error('Daily Production Report untuk production line dan tanggal tersebut sudah ada.')
+        }
+        throw new Error(reportError.message || 'Failed to save Daily Production Report.')
+      }
+
+      const { error: processError } = await supabase.from('arkline_daily_production_processes').insert(
+        processPayloads.map((row) => ({
+          ...row,
+          daily_production_report_id: insertedReport.id,
+        }))
+      )
+      if (processError) {
+        throw new Error(processError.message || 'Report saved, but failed to save process details.')
+      }
+
+      setDailyProductionReportModalOpen(false)
+      await openProductDetail(selectedProductDetail)
+      setProductActionMessage('Daily Production Report berhasil disimpan.')
+    } catch (error) {
+      setProductActionError(error?.message || 'Failed to save Daily Production Report.')
+    } finally {
+      setSavingDailyProductionReport(false)
     }
   }
 
@@ -5051,7 +5332,7 @@ export default function ArklineProgressOverviewPage() {
                                 key={entry.id}
                                 type="button"
                                 className={styles.modalListButton}
-                                onClick={() => openProductDetail(entry, isExternalView ? { openCmtInspectionOnly: true } : undefined)}
+                                onClick={() => openProductDetail(entry)}
                               >
                                 <div
                                   className={`${styles.modalListRow} ${
@@ -5369,6 +5650,158 @@ export default function ArklineProgressOverviewPage() {
         </div>
       ) : null}
 
+      {selectedProductDetail && isExternalView ? (
+        <div className={styles.modalOverlay} onClick={() => setSelectedProductDetail(null)}>
+          <div className={`${styles.modalCard} ${styles.productModalCard} ${styles.externalProductModalCard}`.trim()} onClick={(event) => event.stopPropagation()}>
+            <div className={styles.modalHeader}>
+              <div>
+                <p className={styles.eyebrow}>Product Detail</p>
+                <h3 className={styles.modalTitle}>{selectedProductDetail.productName || 'NO PRODUCT'}</h3>
+                <div className={styles.externalProductMeta}>
+                  <span>PO <strong>{selectedProductDetail.poId || '-'}</strong></span>
+                  <span>SKU <strong>{selectedProductDetail.sku || '-'}</strong></span>
+                  <span>Order Qty <strong>{formatNumber(selectedProductDetail.qty || 0)} pcs</strong></span>
+                </div>
+              </div>
+              <div className={styles.productHeaderActions}>
+                <button type="button" className={styles.iconButton} onClick={() => setSelectedProductDetail(null)} aria-label="Close product detail">
+                  <CloseIcon />
+                </button>
+              </div>
+            </div>
+
+            {productDetailLoading ? <div className={styles.emptyMini}>Loading product detail...</div> : null}
+            {productActionError ? <div className={styles.productActionError}>{productActionError}</div> : null}
+            {productActionMessage ? <div className={styles.productActionMessage}>{productActionMessage}</div> : null}
+
+            <div className={styles.productDetailStack}>
+              <div className={styles.productDetailSection}>
+                <div className={styles.productDetailSectionHead}>
+                  <div className={styles.productSectionHeadLeft}>
+                    <h4 className={styles.modalSectionTitle}>CMT Inspection</h4>
+                    <button
+                      type="button"
+                      className={styles.productSectionLaunch}
+                      onClick={handleOpenCmtInspectionDraft}
+                      aria-label="Add CMT inspection"
+                      title="Add CMT inspection"
+                    >
+                      <PlusIcon />
+                    </button>
+                  </div>
+                  <button type="button" className={styles.productDetailSectionToggle} onClick={() => toggleProductDetailSection('cmtInspection')}>
+                    <span className={styles.productDetailHint}>{selectedProductDetail.cmtInspections?.length || 0} report(s)</span>
+                    <ChevronIcon expanded={productDetailSections.cmtInspection} />
+                  </button>
+                </div>
+                {productDetailSections.cmtInspection ? (
+                  <div className={styles.productDetailRows}>
+                    {(selectedProductDetail.cmtInspections || []).length ? (
+                      <div className={styles.cmtInspectionStageGrid}>
+                        {sortCmtInspectionsByDate(selectedProductDetail.cmtInspections || []).map((inspection) => {
+                          const defectQty = getCmtInspectionDefectQty(inspection)
+                          const isPrefinal = String(inspection.inspection_type || '').toUpperCase() === 'PREFINAL'
+                          return (
+                            <div
+                              key={inspection.id}
+                              role="button"
+                              tabIndex={0}
+                              className={styles.cmtInspectionStageCard}
+                              onClick={() => setSelectedCmtInspectionDetail(inspection)}
+                              onKeyDown={(event) => {
+                                if (event.key === 'Enter' || event.key === ' ') {
+                                  event.preventDefault()
+                                  setSelectedCmtInspectionDetail(inspection)
+                                }
+                              }}
+                            >
+                              <div className={styles.cmtInspectionStageTop}><span>{getCmtInspectionTitle(inspection)}</span></div>
+                              <strong>{isPrefinal ? getCmtInspectionResultLabel(inspection) : `${formatNumber(defectQty)} defect qty`}</strong>
+                              <div className={styles.cmtInspectionStageMeta}>
+                                <span>{formatDateLabel(inspection.inspection_date)}</span>
+                                <span>Sample {formatNumber(inspection.sampling_qty || 0)}</span>
+                                <span>Defect {formatNumber(defectQty)}</span>
+                              </div>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    ) : (
+                      <div className={styles.emptyMini}>No CMT inspection yet.</div>
+                    )}
+                  </div>
+                ) : null}
+              </div>
+
+              <div className={styles.productDetailSection}>
+                <div className={styles.productDetailSectionHead}>
+                  <div className={styles.productSectionHeadLeft}>
+                    <h4 className={styles.modalSectionTitle}>Daily Production Report</h4>
+                    <button
+                      type="button"
+                      className={styles.productSectionLaunch}
+                      onClick={handleOpenDailyProductionReportDraft}
+                      aria-label="Add Daily Production Report"
+                      title="Add Daily Production Report"
+                    >
+                      <PlusIcon />
+                    </button>
+                  </div>
+                  <button type="button" className={styles.productDetailSectionToggle} onClick={() => toggleProductDetailSection('dailyProductionReport')}>
+                    <span className={styles.productDetailHint}>{selectedProductDetail.dailyProductionReports?.length || 0} report(s)</span>
+                    <ChevronIcon expanded={productDetailSections.dailyProductionReport} />
+                  </button>
+                </div>
+                {productDetailSections.dailyProductionReport ? (
+                  <div className={styles.productDetailRows}>
+                    {(selectedProductDetail.dailyProductionReports || []).length ? (
+                      <div className={styles.dailyProductionReportList}>
+                        {selectedProductDetail.dailyProductionReports.map((report) => (
+                          <article key={report.id} className={styles.dailyProductionReportCard}>
+                            <div className={styles.dailyProductionReportHead}>
+                              <div>
+                                <strong>{formatDateLabel(report.reportDate)}</strong>
+                                <span>{report.productionLine || 'Production line not recorded'}</span>
+                              </div>
+                              <span>{report.submitted_by || 'Supplier report'}</span>
+                            </div>
+                            <div className={styles.dailyProductionReportMetrics}>
+                              <div><span>Order Qty</span><strong>{formatNumber(report.orderQty)} pcs</strong></div>
+                              <div><span>Processes</span><strong>{Object.keys(report.processes || {}).length}</strong></div>
+                              <div><span>Report Date</span><strong>{formatDateLabel(report.reportDate)}</strong></div>
+                            </div>
+                            <div className={styles.dailyProductionProcessList}>
+                              {DAILY_PRODUCTION_PROCESS_OPTIONS.map((option) => {
+                                const process = report.processes?.[option.key]
+                                if (!process) return null
+                                return (
+                                  <div key={`${report.id}-${option.key}`} className={styles.dailyProductionProcessRow}>
+                                    <div className={styles.dailyProductionProcessName}>
+                                      <strong>{option.label}</strong>
+                                      <span>{[process.planDate, process.actualStartingDate, process.actualFinishedDate].filter(Boolean).map(formatDateLabel).join(' -> ') || 'Dates not recorded'}</span>
+                                    </div>
+                                    <div><span>Output</span><strong>{formatNumber(process.outputQty)}</strong></div>
+                                    <div><span>Balance</span><strong>{formatNumber(getDailyProductionBalance(option.key, report, report.orderQty))}</strong></div>
+                                    <div><span>Reject</span><strong>{formatNumber(process.rejectInProcess)}</strong></div>
+                                    {process.notes ? <p>{process.notes}</p> : null}
+                                  </div>
+                                )
+                              })}
+                            </div>
+                          </article>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className={styles.emptyMini}>No Daily Production Report yet.</div>
+                    )}
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       {selectedProductDetail && !isExternalView ? (
         <div className={styles.modalOverlay} onClick={() => setSelectedProductDetail(null)}>
           <div className={`${styles.modalCard} ${styles.productModalCard}`.trim()} onClick={(event) => event.stopPropagation()}>
@@ -5572,6 +6005,73 @@ export default function ArklineProgressOverviewPage() {
                 ) : null}
               </div>
               ) : null}
+
+              <div className={styles.productDetailSection}>
+                <div className={styles.productDetailSectionHead}>
+                  <div className={styles.productSectionHeadLeft}>
+                    <h4 className={styles.modalSectionTitle}>Daily Production Report</h4>
+                    {['admin', 'arkline_merchandiser', 'arkline_host'].includes(role) ? (
+                      <button
+                        type="button"
+                        className={styles.productSectionLaunch}
+                        onClick={handleOpenDailyProductionReportDraft}
+                        aria-label="Add Daily Production Report"
+                        title="Add Daily Production Report"
+                      >
+                        <PlusIcon />
+                      </button>
+                    ) : null}
+                  </div>
+                  <button type="button" className={styles.productDetailSectionToggle} onClick={() => toggleProductDetailSection('dailyProductionReport')}>
+                    <span className={styles.productDetailHint}>{selectedProductDetail.dailyProductionReports?.length || 0} report(s)</span>
+                    <ChevronIcon expanded={productDetailSections.dailyProductionReport} />
+                  </button>
+                </div>
+                {productDetailSections.dailyProductionReport ? (
+                  <div className={styles.productDetailRows}>
+                    {(selectedProductDetail.dailyProductionReports || []).length ? (
+                      <div className={styles.dailyProductionReportList}>
+                        {selectedProductDetail.dailyProductionReports.map((report) => (
+                          <article key={report.id} className={styles.dailyProductionReportCard}>
+                            <div className={styles.dailyProductionReportHead}>
+                              <div>
+                                <strong>{formatDateLabel(report.reportDate)}</strong>
+                                <span>{report.productionLine || 'Production line not recorded'}</span>
+                              </div>
+                              <span>{report.submitted_by || 'Supplier report'}</span>
+                            </div>
+                            <div className={styles.dailyProductionReportMetrics}>
+                              <div><span>Order Qty</span><strong>{formatNumber(report.orderQty)} pcs</strong></div>
+                              <div><span>Processes</span><strong>{Object.keys(report.processes || {}).length}</strong></div>
+                              <div><span>Report Date</span><strong>{formatDateLabel(report.reportDate)}</strong></div>
+                            </div>
+                            <div className={styles.dailyProductionProcessList}>
+                              {DAILY_PRODUCTION_PROCESS_OPTIONS.map((option) => {
+                                const process = report.processes?.[option.key]
+                                if (!process) return null
+                                return (
+                                  <div key={`${report.id}-${option.key}`} className={styles.dailyProductionProcessRow}>
+                                    <div className={styles.dailyProductionProcessName}>
+                                      <strong>{option.label}</strong>
+                                      <span>{[process.planDate, process.actualStartingDate, process.actualFinishedDate].filter(Boolean).map(formatDateLabel).join(' -> ') || 'Dates not recorded'}</span>
+                                    </div>
+                                    <div><span>Output</span><strong>{formatNumber(process.outputQty)}</strong></div>
+                                    <div><span>Balance</span><strong>{formatNumber(getDailyProductionBalance(option.key, report, report.orderQty))}</strong></div>
+                                    <div><span>Reject</span><strong>{formatNumber(process.rejectInProcess)}</strong></div>
+                                    {process.notes ? <p>{process.notes}</p> : null}
+                                  </div>
+                                )
+                              })}
+                            </div>
+                          </article>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className={styles.emptyMini}>No Daily Production Report yet.</div>
+                    )}
+                  </div>
+                ) : null}
+              </div>
 
               <div className={styles.productDetailSection}>
                 <div className={styles.productDetailSectionHead}>
@@ -6225,6 +6725,133 @@ export default function ArklineProgressOverviewPage() {
                   />
                 </label>
               </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {selectedProductDetail && dailyProductionReportModalOpen ? (
+        <div className={styles.modalOverlay} onClick={closeDailyProductionReportModal}>
+          <div className={`${styles.modalCard} ${styles.actionModalCard} ${styles.dailyProductionModalCard}`.trim()} onClick={(event) => event.stopPropagation()}>
+            <div className={styles.modalHeader}>
+              <div>
+                <p className={styles.eyebrow}>Daily Production Report</p>
+                <h3 className={styles.modalTitle}>{selectedProductDetail.productName || 'NO PRODUCT'}</h3>
+                <div className={styles.cmtInspectionMetaGrid}>
+                  <div><span>PO Number</span><strong>{selectedProductDetail.poId || '-'}</strong></div>
+                  <div><span>SKU</span><strong>{selectedProductDetail.sku || '-'}</strong></div>
+                  <div><span>Category</span><strong>{selectedProductDetail.category || 'NO CATEGORY'}</strong></div>
+                  <div><span>Order Qty</span><strong>{formatNumber(dailyProductionReportDraft.orderQty || selectedProductDetail.qty || 0)} pcs</strong></div>
+                </div>
+              </div>
+              <div className={styles.productHeaderActions}>
+                <button type="button" className={styles.blackPrimaryButton} onClick={() => void handleSaveDailyProductionReport()} disabled={savingDailyProductionReport}>
+                  {savingDailyProductionReport ? 'Saving...' : 'Save Report'}
+                </button>
+                <button type="button" className={styles.iconButton} onClick={closeDailyProductionReportModal} disabled={savingDailyProductionReport} aria-label="Close Daily Production Report">
+                  <CloseIcon />
+                </button>
+              </div>
+            </div>
+
+            {productActionError ? <div className={styles.productActionError}>{productActionError}</div> : null}
+            {productActionMessage ? <div className={styles.productActionMessage}>{productActionMessage}</div> : null}
+
+            <div className={styles.dailyProductionTopGrid}>
+              <label className={styles.filterField}>
+                <span>Report Date</span>
+                <input
+                  className={styles.input}
+                  type="date"
+                  value={dailyProductionReportDraft.reportDate}
+                  onChange={(event) => updateDailyProductionReportDraft('reportDate', event.target.value)}
+                  disabled={savingDailyProductionReport}
+                />
+              </label>
+              <label className={styles.filterField}>
+                <span>Production Line</span>
+                <input
+                  className={styles.input}
+                  value={dailyProductionReportDraft.productionLine}
+                  onChange={(event) => updateDailyProductionReportDraft('productionLine', event.target.value)}
+                  placeholder="e.g. Line 1 / Line A"
+                  disabled={savingDailyProductionReport}
+                />
+              </label>
+            </div>
+
+            <div className={styles.dailyProductionProcessPicker}>
+              <div className={styles.dailyProductionSectionLabel}>Select Process</div>
+              <div className={styles.dailyProductionProcessChoices}>
+                {DAILY_PRODUCTION_PROCESS_OPTIONS.map((option) => {
+                  const isEnabled = Boolean(dailyProductionReportDraft.enabledProcesses?.[option.key])
+                  return (
+                    <label key={option.key} className={`${styles.dailyProductionProcessChoice} ${isEnabled ? styles.dailyProductionProcessChoiceActive : ''}`.trim()}>
+                      <input
+                        type="checkbox"
+                        checked={isEnabled}
+                        onChange={() => toggleDailyProductionProcess(option.key)}
+                        disabled={savingDailyProductionReport || option.required}
+                      />
+                      <span>{option.label}</span>
+                      {option.required ? <em>Required</em> : null}
+                    </label>
+                  )
+                })}
+              </div>
+            </div>
+
+            <div className={styles.dailyProductionEditorList}>
+              {DAILY_PRODUCTION_PROCESS_OPTIONS.filter((option) => dailyProductionReportDraft.enabledProcesses?.[option.key]).map((option) => {
+                const process = dailyProductionReportDraft.processes?.[option.key] || createDailyProductionProcessDraft()
+                const isOpen = Boolean(dailyProductionProcessOpen[option.key])
+                return (
+                  <div key={option.key} className={styles.dailyProductionEditorSection}>
+                    <button type="button" className={styles.dailyProductionEditorHeader} onClick={() => toggleDailyProductionProcessOpen(option.key)}>
+                      <span>
+                        <strong>{option.label}</strong>
+                        <small>{option.balanceLabel}</small>
+                      </span>
+                      <span className={styles.dailyProductionEditorHeaderMeta}>
+                        <strong>{formatNumber(getDailyProductionBalance(option.key, dailyProductionReportDraft, dailyProductionReportDraft.orderQty))}</strong>
+                        <ChevronIcon expanded={isOpen} />
+                      </span>
+                    </button>
+                    {isOpen ? (
+                      <div className={styles.dailyProductionProcessFields}>
+                        <label className={styles.filterField}>
+                          <span>Plan Date</span>
+                          <input className={styles.input} type="date" value={process.planDate} onChange={(event) => updateDailyProductionProcess(option.key, 'planDate', event.target.value)} disabled={savingDailyProductionReport} />
+                        </label>
+                        <label className={styles.filterField}>
+                          <span>Actual Starting Date</span>
+                          <input className={styles.input} type="date" value={process.actualStartingDate} onChange={(event) => updateDailyProductionProcess(option.key, 'actualStartingDate', event.target.value)} disabled={savingDailyProductionReport} />
+                        </label>
+                        <label className={styles.filterField}>
+                          <span>Output Qty</span>
+                          <input className={styles.input} type="number" min="0" value={process.outputQty} onChange={(event) => updateDailyProductionProcess(option.key, 'outputQty', event.target.value)} disabled={savingDailyProductionReport} />
+                        </label>
+                        <div className={styles.filterField}>
+                          <span>Balance</span>
+                          <div className={styles.dailyProductionBalanceField}>{formatNumber(getDailyProductionBalance(option.key, dailyProductionReportDraft, dailyProductionReportDraft.orderQty))}</div>
+                        </div>
+                        <label className={styles.filterField}>
+                          <span>Reject in Process</span>
+                          <input className={styles.input} type="number" min="0" value={process.rejectInProcess} onChange={(event) => updateDailyProductionProcess(option.key, 'rejectInProcess', event.target.value)} disabled={savingDailyProductionReport} />
+                        </label>
+                        <label className={styles.filterField}>
+                          <span>Actual Finished Date</span>
+                          <input className={styles.input} type="date" value={process.actualFinishedDate} onChange={(event) => updateDailyProductionProcess(option.key, 'actualFinishedDate', event.target.value)} disabled={savingDailyProductionReport} />
+                        </label>
+                        <label className={`${styles.filterField} ${styles.dailyProductionNotesField}`.trim()}>
+                          <span>Notes</span>
+                          <textarea className={styles.textarea} value={process.notes} onChange={(event) => updateDailyProductionProcess(option.key, 'notes', event.target.value)} placeholder={`Notes for ${option.label.toLowerCase()}`} disabled={savingDailyProductionReport} />
+                        </label>
+                      </div>
+                    ) : null}
+                  </div>
+                )
+              })}
             </div>
           </div>
         </div>

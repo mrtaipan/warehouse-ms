@@ -63,6 +63,18 @@ create index if not exists warehouse_temporary_sales_items_status_idx
 create index if not exists warehouse_temporary_sales_items_source_idx
   on public.warehouse_temporary_sales_items (source_warehouse_storage_id);
 
+-- A source row may only create one active Temporary Sales record. This protects
+-- against double-clicks and retries when the network response is delayed.
+create unique index if not exists warehouse_temporary_sales_active_storage_source_uidx
+  on public.warehouse_temporary_sales_items (source_warehouse_storage_id)
+  where source_warehouse_storage_id is not null
+    and status in ('WAITING', 'IN_TEMPORARY_AREA');
+
+create unique index if not exists warehouse_temporary_sales_active_pl_source_uidx
+  on public.warehouse_temporary_sales_items (source_pl_packing_item_id)
+  where source_pl_packing_item_id is not null
+    and status in ('WAITING', 'IN_TEMPORARY_AREA');
+
 create index if not exists warehouse_storage_movements_created_at_idx
   on public.warehouse_storage_movements (created_at desc);
 
