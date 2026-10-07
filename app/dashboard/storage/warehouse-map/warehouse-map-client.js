@@ -158,6 +158,8 @@ const WAREHOUSES = {
 const WAREHOUSE_ORDER = ['LV83', 'LV85', 'LV87']
 const LV83_ARKLINE_ZONE_CODES = new Set(['1', '2', '3', '4', '5', '6', '7', '8'])
 const MAP_BUILDER_STORAGE_KEY = 'warehouse-map-builder-layout-v2'
+const MAP_BUILDER_WAREHOUSE_KEY = 'warehouse-map-selected-warehouse-v1'
+const WAREHOUSE_MAP_LAYOUT_TABLE = 'warehouse_map_layouts'
 const EMBEDDED_MAP_LAYOUTS = embeddedMapLayouts
 const SNAP_STEP = 1
 const MIN_ELEMENT_SIZE = 2
@@ -412,6 +414,44 @@ function createDefaultLayouts(rackLocations = []) {
       warehouse.key,
       { elements: createDefaultMapElements(warehouse, rackLocations) },
     ])
+  )
+}
+
+function normalizeSavedMapLayouts(layouts) {
+  const nextLayouts = {}
+
+  Object.entries(layouts || {}).forEach(([warehouseKey, layout]) => {
+    if (!WAREHOUSES[warehouseKey] || !Array.isArray(layout?.elements)) {
+      return
+    }
+
+    nextLayouts[warehouseKey] = {
+      elements: layout.elements.map(normalizeSavedElement),
+    }
+  })
+
+  return nextLayouts
+}
+
+async function fetchSavedMapLayouts() {
+  const { data, error } = await supabase
+    .from(WAREHOUSE_MAP_LAYOUT_TABLE)
+    .select('warehouse_key, elements')
+    .in('warehouse_key', WAREHOUSE_ORDER)
+
+  if (error) {
+    throw error
+  }
+
+  return normalizeSavedMapLayouts(
+    Object.fromEntries(
+      (data || []).map((row) => [
+        row.warehouse_key,
+        {
+          elements: row.elements,
+        },
+      ])
+    )
   )
 }
 
@@ -1283,6 +1323,8 @@ export default function WarehouseMapClient({ canEditMap = false, canUseRegistry 
   const [mapLayouts, setMapLayouts] = useState({})
   const [selectedElementId, setSelectedElementId] = useState('')
   const [layoutStatus, setLayoutStatus] = useState('')
+  const [layoutSaving, setLayoutSaving] = useState(false)
+  const [layoutLoading, setLayoutLoading] = useState(true)
   const [rackLocations, setRackLocations] = useState([])
   const [storageEntries, setStorageEntries] = useState([])
   const [restockHistoryRows, setRestockHistoryRows] = useState([])
@@ -1357,50 +1399,73 @@ export default function WarehouseMapClient({ canEditMap = false, canUseRegistry 
 
   useEffect(() => {
     try {
-      const savedLayout = window.localStorage.getItem(MAP_BUILDER_STORAGE_KEY)
-
-      if (!savedLayout) {
-        return
-      }
-
-      const parsedLayout = JSON.parse(savedLayout)
-      const nextLayouts = {}
-      let removedLv83Shelving = false
-
-      Object.entries(parsedLayout || {}).forEach(([warehouseKey, layout]) => {
-        if (!WAREHOUSES[warehouseKey] || !Array.isArray(layout?.elements)) {
-          return
-        }
-
-        const normalizedElements = layout.elements.map(normalizeSavedElement)
-        const elements =
-          warehouseKey === 'LV83'
-            ? normalizedElements.filter((element) => {
-                const shouldKeep = element.type !== 'shelving'
-
-                if (!shouldKeep) {
-                  removedLv83Shelving = true
-                }
-
-                return shouldKeep
-              })
-            : normalizedElements
-
-        nextLayouts[warehouseKey] = {
-          elements,
-        }
-      })
-
-      setMapLayouts(nextLayouts)
-
-      if (removedLv83Shelving) {
-        window.localStorage.setItem(MAP_BUILDER_STORAGE_KEY, JSON.stringify(nextLayouts))
+      const savedWarehouseKey = window.localStorage.getItem(MAP_BUILDER_WAREHOUSE_KEY)
+      if (WAREHOUSES[savedWarehouseKey]) {
+        setSelectedWarehouseKey(savedWarehouseKey)
       }
     } catch {
-      setLayoutStatus('Saved map layout could not be loaded.')
+      // Browser storage may be unavailable; the default warehouse remains selected.
     }
   }, [])
 
+  useEffect(() => {
+    let cancelled = false
+    let localLayouts = {}
+
+    try {
+      const savedLayout = window.localStorage.getItem(MAP_BUILDER_STORAGE_KEY)
+      if (savedLayout) {
+        localLayouts = normalizeSavedMapLayouts(JSON.parse(savedLayout))
+      }
+    } catch {
+      if (!cancelled) {
+        setLayoutStatus('Saved map layout could not be loaded.')
+      }
+    }
+
+    async function loadSharedMapLayouts() {
+      try {
+        const sharedLayouts = await fetchSavedMapLayouts()
+
+        if (cancelled) {
+          return
+        }
+
+        if (Object.keys(sharedLayouts).length > 0) {
+          setMapLayouts(sharedLayouts)
+          try {
+            window.localStorage.setItem(MAP_BUILDER_STORAGE_KEY, JSON.stringify(sharedLayouts))
+          } catch {
+            // The shared layout is still available without a browser cache.
+          }
+          setLayoutLoading(false)
+          return
+        }
+      } catch (loadError) {
+        if (!cancelled) {
+          const missingTable = loadError?.code === '42P01' || loadError?.code === 'PGRST205'
+          setLayoutStatus(
+            missingTable
+              ? 'Shared map storage is not set up yet. Run supabase/warehouse_map_layouts.sql.'
+              : 'Shared map could not be loaded. Using the saved layout on this device.'
+          )
+        }
+      }
+
+      if (!cancelled && Object.keys(localLayouts).length > 0) {
+        setMapLayouts(localLayouts)
+      }
+      if (!cancelled) {
+        setLayoutLoading(false)
+      }
+    }
+
+    loadSharedMapLayouts()
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
   const locationById = useMemo(
     () => new Map(rackLocations.map((location) => [String(location.id), location])),
     [rackLocations]
@@ -1726,102 +1791,6 @@ export default function WarehouseMapClient({ canEditMap = false, canUseRegistry 
     [assignedShelvingCodes, warehouseShelvingCodes]
   )
 
-  useEffect(() => {
-    setMapLayouts((prev) => {
-      const lv83Elements = prev.LV83?.elements
-
-      if (!lv83Elements || !lv83Elements.some((element) => element.type === 'shelving')) {
-        return prev
-      }
-
-      const nextLayouts = {
-        ...prev,
-        LV83: {
-          elements: lv83Elements.filter((element) => element.type !== 'shelving'),
-        },
-      }
-
-      window.localStorage.setItem(
-        MAP_BUILDER_STORAGE_KEY,
-        JSON.stringify({
-          ...defaultMapLayouts,
-          ...nextLayouts,
-        })
-      )
-
-      return nextLayouts
-    })
-  }, [defaultMapLayouts])
-
-  useEffect(() => {
-    const defaultArklineEight = (defaultMapLayouts.LV83?.elements || []).find(
-      (element) =>
-        element.type === 'pallet' &&
-        getArklineRackNumber(element.code) === '8' &&
-        isArklineZone(element, 'LV83')
-    )
-
-    if (!defaultArklineEight) {
-      return
-    }
-
-    setMapLayouts((prev) => {
-      const lv83Elements = prev.LV83?.elements
-
-      if (
-        !lv83Elements ||
-        lv83Elements.some(
-          (element) =>
-            element.type === 'pallet' &&
-            getArklineRackNumber(element.code) === '8' &&
-            isArklineZone(element, 'LV83')
-        )
-      ) {
-        return prev
-      }
-
-      const nextLayouts = {
-        ...prev,
-        LV83: {
-          elements: [...lv83Elements, defaultArklineEight],
-        },
-      }
-
-      window.localStorage.setItem(
-        MAP_BUILDER_STORAGE_KEY,
-        JSON.stringify({
-          ...defaultMapLayouts,
-          ...nextLayouts,
-        })
-      )
-
-      return nextLayouts
-    })
-  }, [defaultMapLayouts])
-
-  useEffect(() => {
-    const defaultLv87Shelving = (defaultMapLayouts.LV87?.elements || []).filter((element) => element.type === 'shelving')
-
-    if (defaultLv87Shelving.length === 0) {
-      return
-    }
-
-    setMapLayouts((prev) => {
-      const savedLv87Elements = prev.LV87?.elements
-
-      if (!savedLv87Elements || savedLv87Elements.some((element) => element.type === 'shelving')) {
-        return prev
-      }
-
-      return {
-        ...prev,
-        LV87: {
-          elements: [...savedLv87Elements, ...defaultLv87Shelving],
-        },
-      }
-    })
-  }, [defaultMapLayouts])
-
   function getCanvasPoint(event) {
     const rect = canvasRef.current?.getBoundingClientRect()
 
@@ -1907,16 +1876,63 @@ export default function WarehouseMapClient({ canEditMap = false, canUseRegistry 
     })
   }
 
-  function handleSaveLayout() {
+  async function handleSaveLayout() {
+    if (layoutSaving || layoutLoading) {
+      return
+    }
+
     const nextLayouts = {
       ...defaultMapLayouts,
       ...mapLayouts,
+      [warehouse.key]: {
+        elements: (mapLayouts[warehouse.key]?.elements || defaultMapLayouts[warehouse.key]?.elements || [])
+          .map(normalizeSavedElement),
+      },
     }
 
-    window.localStorage.setItem(MAP_BUILDER_STORAGE_KEY, JSON.stringify(nextLayouts))
-    setLayoutStatus('Layout saved.')
-  }
+    setLayoutSaving(true)
+    setLayoutStatus('Saving layout...')
 
+    try {
+      const updatedBy = await getCurrentUserEmail()
+      const { data, error: saveError } = await supabase
+        .from(WAREHOUSE_MAP_LAYOUT_TABLE)
+        .upsert(
+          {
+            warehouse_key: warehouse.key,
+            elements: nextLayouts[warehouse.key].elements,
+            updated_by: updatedBy,
+          },
+          { onConflict: 'warehouse_key' }
+        )
+        .select('warehouse_key')
+        .single()
+
+      if (saveError) {
+        throw saveError
+      }
+      if (data?.warehouse_key !== warehouse.key) {
+        throw new Error('The saved warehouse could not be verified.')
+      }
+
+      setMapLayouts(nextLayouts)
+      try {
+        window.localStorage.setItem(MAP_BUILDER_STORAGE_KEY, JSON.stringify(nextLayouts))
+      } catch {
+        // Shared layout is already saved; the browser cache is optional.
+      }
+      setLayoutStatus('Layout saved for all users.')
+    } catch (saveError) {
+      const missingTable = saveError?.code === '42P01' || saveError?.code === 'PGRST205'
+      setLayoutStatus(
+        missingTable
+          ? 'Shared map storage is not set up yet. Run supabase/warehouse_map_layouts.sql.'
+          : 'Layout could not be saved to the shared map: ' + (saveError?.message || 'Unknown error') + '.'
+      )
+    } finally {
+      setLayoutSaving(false)
+    }
+  }
   function handleResetLayout() {
     updateWarehouseElements(defaultMapLayouts[warehouse.key]?.elements || [])
     setSelectedElementId('')
@@ -2161,7 +2177,15 @@ export default function WarehouseMapClient({ canEditMap = false, canUseRegistry 
   }, [selectedSlotCode])
 
   function handleWarehouseSelect(warehouseKey) {
+    if (!WAREHOUSES[warehouseKey]) {
+      return
+    }
     setSelectedWarehouseKey(warehouseKey)
+    try {
+      window.localStorage.setItem(MAP_BUILDER_WAREHOUSE_KEY, warehouseKey)
+    } catch {
+      // Navigation still works if browser storage is unavailable.
+    }
     setSelectedZoneCode('')
     setSelectedLocationKind('pallet')
     setIsRackOpen(false)
@@ -2375,13 +2399,19 @@ export default function WarehouseMapClient({ canEditMap = false, canUseRegistry 
                         setEditMode((current) => !current)
                         setSelectedElementId('')
                       }}
+                      disabled={layoutLoading}
                     >
-                      {editMode ? 'View Map' : 'Edit Map'}
+                      {layoutLoading ? 'Loading map...' : editMode ? 'View Map' : 'Edit Map'}
                     </button>
                     {editMode ? (
                       <>
-                        <button type="button" className={styles.primaryBuilderButton} onClick={handleSaveLayout}>
-                          Save Layout
+                        <button
+                          type="button"
+                          className={styles.primaryBuilderButton}
+                          onClick={handleSaveLayout}
+                          disabled={layoutSaving || layoutLoading}
+                        >
+                          {layoutSaving ? 'Saving...' : 'Save Layout'}
                         </button>
                         <button type="button" className={styles.secondaryButton} onClick={handleResetLayout}>
                           Reset
