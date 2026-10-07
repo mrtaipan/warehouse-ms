@@ -3639,7 +3639,13 @@ export default function PackingListSizeBreakdownPage() {
             )
           `)
           .order('validated_at', { ascending: true }),
-        supabase.from('pl_size_breakdown').select('*').order('detail_order', { ascending: true }).order('id', { ascending: true }),
+        fetchAllSupabaseRows(() =>
+          supabase
+            .from('pl_size_breakdown')
+            .select('*')
+            .order('detail_order', { ascending: true })
+            .order('id', { ascending: true })
+        ),
         supabase.from('pl_general_photos').select('*').order('display_order', { ascending: true }).order('id', { ascending: true }),
         fetchAllSupabaseRows(() =>
           supabase.from('pl_packing_items').select('*').order('koli_sequence', { ascending: true }).order('id', { ascending: true })
@@ -3692,7 +3698,7 @@ export default function PackingListSizeBreakdownPage() {
     }
 
     loadData()
-  }, [])
+  }, [initialGrn])
 
   const catalogContext = useMemo(() => {
     const brandById = new Map()
