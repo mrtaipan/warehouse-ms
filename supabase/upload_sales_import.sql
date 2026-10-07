@@ -84,7 +84,7 @@ from (
   group by batch_id
 ) summary
 where batches.id = summary.batch_id
-  and coalesce(batches.order_count, 0) = 0;
+;
 
 create table if not exists public.upload_sales_import_lines (
   id uuid primary key default gen_random_uuid(),
@@ -187,8 +187,12 @@ set search_path = ''
 as $$
 declare
   source_line record;
-  bundle record;
+  v_bundle_id bigint;
+  v_bundle_code text;
+  v_bundle_unit_qty integer;
   component record;
+  component_size_total numeric;
+  size_bundle_count numeric;
   direct_qty numeric;
   component_qty numeric;
   next_row integer;
@@ -200,34 +204,40 @@ begin
   for source_line in
     select line.*
     from public.upload_sales_import_lines line
-    join public.product_bundles bundle
-      on regexp_replace(upper(coalesce(line.sku_id, '')), '[^A-Z0-9]', '', 'g') = regexp_replace(upper(bundle.bundle_code), '[^A-Z0-9]', '', 'g')
+    join public.product_bundles bundle_match
+      on regexp_replace(upper(coalesce(line.sku_id, '')), '[^A-Z0-9]', '', 'g') = regexp_replace(upper(bundle_match.bundle_code), '[^A-Z0-9]', '', 'g')
     where line.batch_id = p_batch_id
       and line.included = true
       and line.qty > 0
-      and bundle.status in ('draft', 'released')
+      and bundle_match.status in ('draft', 'released')
   loop
     select b.id, b.bundle_code, b.bundle_unit_qty
-      into bundle
+      into v_bundle_id, v_bundle_code, v_bundle_unit_qty
     from public.product_bundles b
     where regexp_replace(upper(coalesce(source_line.sku_id, '')), '[^A-Z0-9]', '', 'g') = regexp_replace(upper(b.bundle_code), '[^A-Z0-9]', '', 'g')
       and b.status in ('draft', 'released')
     order by b.id desc
     limit 1;
 
+    if not found then
+      continue;
+    end if;
+
     select coalesce(sum(stock.qty), 0)
       into direct_qty
     from public.warehouse_storage stock
-    where regexp_replace(upper(coalesce(stock.sku_id, '')), '[^A-Z0-9]', '', 'g') = regexp_replace(upper(bundle.bundle_code), '[^A-Z0-9]', '', 'g')
-      and coalesce(nullif(trim(stock.size), ''), '-') = coalesce(nullif(trim(source_line.size), ''), '-');
+    where regexp_replace(upper(coalesce(stock.sku_id, '')), '[^A-Z0-9]', '', 'g') = regexp_replace(upper(v_bundle_code), '[^A-Z0-9]', '', 'g')
+      and (coalesce(nullif(trim(source_line.size), ''), '-') = '-'
+        or coalesce(nullif(trim(stock.size), ''), '-') = coalesce(nullif(trim(source_line.size), ''), '-'));
 
     select direct_qty + coalesce(sum(temp.qty_in_area), 0)
       into direct_qty
     from public.warehouse_temporary_sales_items temp
     where temp.status = 'IN_TEMPORARY_AREA'
       and coalesce(temp.area_type, 'SALES') = 'SALES'
-      and regexp_replace(upper(coalesce(temp.sku_id, '')), '[^A-Z0-9]', '', 'g') = regexp_replace(upper(bundle.bundle_code), '[^A-Z0-9]', '', 'g')
-      and coalesce(nullif(trim(temp.size), ''), '-') = coalesce(nullif(trim(source_line.size), ''), '-');
+      and regexp_replace(upper(coalesce(temp.sku_id, temp.source_variant_code, '')), '[^A-Z0-9]', '', 'g') = regexp_replace(upper(v_bundle_code), '[^A-Z0-9]', '', 'g')
+      and (coalesce(nullif(trim(source_line.size), ''), '-') = '-'
+        or coalesce(nullif(trim(temp.size), ''), '-') = coalesce(nullif(trim(source_line.size), ''), '-'));
 
     -- Keep the original line when the warehouse already stores the bundle.
     if direct_qty > 0 then
@@ -235,14 +245,28 @@ begin
     end if;
 
     for component in
-      select c.sku, c.product_name, c.size_label, c.allocated_qty
+      select
+        min(c.sku) as sku,
+        min(c.product_name) as product_name,
+        c.size_label,
+        sum(c.allocated_qty)::integer as allocated_qty
       from public.product_bundle_components c
-      where c.bundle_id = bundle.id
-      order by c.id
+      where c.bundle_id = v_bundle_id
+      group by c.sku, c.size_label
+      order by c.sku, c.size_label
     loop
-      component_qty := source_line.qty * component.allocated_qty / greatest(bundle.bundle_unit_qty, 1);
+      select coalesce(sum(c2.allocated_qty), 0)
+        into component_size_total
+      from public.product_bundle_components c2
+      where c2.bundle_id = v_bundle_id
+        and coalesce(nullif(trim(c2.size_label), ''), '-') = coalesce(nullif(trim(component.size_label), ''), '-');
+      size_bundle_count := floor(component_size_total / greatest(v_bundle_unit_qty, 1));
+      component_qty := case
+        when size_bundle_count > 0 then source_line.qty * component.allocated_qty / size_bundle_count
+        else 0
+      end;
       if component_qty <> trunc(component_qty) then
-        raise exception 'Bundle % cannot be expanded: component quantity is not a whole number', bundle.bundle_code;
+        raise exception 'Bundle % cannot be expanded: component quantity is not a whole number', v_bundle_code;
       end if;
 
       next_row := next_row + 1;
@@ -252,7 +276,7 @@ begin
       ) values (
         source_line.batch_id, next_row, source_line.order_number, source_line.order_status,
         component.sku, coalesce(component.product_name, component.sku),
-        'Expanded from bundle ' || bundle.bundle_code, coalesce(component.size_label, source_line.size),
+        'Expanded from bundle ' || v_bundle_code, coalesce(component.size_label, source_line.size),
         component_qty::integer, true, null
       );
     end loop;
@@ -297,6 +321,7 @@ declare
   actor_email text := nullif(trim(coalesce(p_actor_email, '')), '');
   normalized_sku text;
   normalized_size text;
+  allow_any_size boolean;
 begin
   select *
     into target_batch
@@ -326,10 +351,16 @@ begin
     remaining_qty := import_line.qty;
     line_applied := 0;
     normalized_sku := upper(regexp_replace(coalesce(import_line.sku_id, ''), '[^A-Z0-9]', '', 'g'));
-    normalized_size := upper(regexp_replace(coalesce(import_line.size, ''), '\s+', '', 'g'));
+    normalized_size := upper(regexp_replace(coalesce(import_line.size, ''), '[^A-Z0-9]', '', 'g'));
     if normalized_size = '' then
       normalized_size := '-';
     end if;
+
+    select normalized_size = '-' and exists (
+      select 1 from public.product_bundles b
+      where b.status in ('draft', 'released')
+        and regexp_replace(upper(coalesce(b.bundle_code, '')), '[^A-Z0-9]', '', 'g') = normalized_sku
+    ) into allow_any_size;
 
     if normalized_sku = '' then
       update public.upload_sales_import_lines
@@ -361,8 +392,18 @@ begin
         where temporary_item.status = 'IN_TEMPORARY_AREA'
           and coalesce(temporary_item.area_type, 'SALES') = 'SALES'
           and coalesce(temporary_item.qty_in_area, 0) > 0
-          and upper(regexp_replace(coalesce(temporary_item.sku_id, ''), '[^A-Z0-9]', '', 'g')) = normalized_sku
-          and coalesce(nullif(upper(regexp_replace(coalesce(temporary_item.size, ''), '\s+', '', 'g')), ''), '-') = normalized_size
+          and exists (
+            select 1
+            from regexp_split_to_table(
+              concat_ws(' ', temporary_item.sku_id, temporary_item.source_variant_code, temporary_item.item_name),
+              '[[:space:]|,;/]+'
+            ) as sku_token(raw_value)
+            where upper(regexp_replace(coalesce(sku_token.raw_value, ''), '[^A-Z0-9]', '', 'g')) = normalized_sku
+          )
+          and (
+            allow_any_size
+            or coalesce(nullif(regexp_replace(upper(coalesce(temporary_item.size, '')), '[^A-Z0-9]', '', 'g'), ''), '-') = normalized_size
+          )
         order by temporary_item.entered_at asc nulls first, temporary_item.id asc
         for update of temporary_item
       loop
@@ -459,10 +500,13 @@ begin
         and coalesce(storage.qty, 0) > 0
         and exists (
           select 1
-          from regexp_split_to_table(concat_ws(' ', storage.sku_id, storage.item_name), '[[:space:]|,;/]+') as sku_token(raw_value)
+          from regexp_split_to_table(concat_ws(' ', storage.sku_id, storage.source_variant_code, storage.item_name), '[[:space:]|,;/]+') as sku_token(raw_value)
           where upper(regexp_replace(coalesce(sku_token.raw_value, ''), '[^A-Z0-9]', '', 'g')) = normalized_sku
         )
-        and coalesce(nullif(upper(regexp_replace(coalesce(storage.size, ''), '\s+', '', 'g')), ''), '-') = normalized_size
+        and (
+          allow_any_size
+          or coalesce(nullif(regexp_replace(upper(coalesce(storage.size, '')), '[^A-Z0-9]', '', 'g'), ''), '-') = normalized_size
+        )
       order by storage.created_at asc nulls first, storage.id asc
       for update of storage
     loop
@@ -595,6 +639,7 @@ declare
   actor_email text := nullif(trim(coalesce(p_actor_email, '')), '');
   normalized_sku text;
   normalized_size text;
+  allow_any_size boolean;
 begin
   select *
     into target_batch
@@ -624,10 +669,16 @@ begin
     remaining_qty := import_line.skipped_qty;
     line_applied := 0;
     normalized_sku := upper(regexp_replace(coalesce(import_line.sku_id, ''), '[^A-Z0-9]', '', 'g'));
-    normalized_size := upper(regexp_replace(coalesce(import_line.size, ''), '\s+', '', 'g'));
+    normalized_size := upper(regexp_replace(coalesce(import_line.size, ''), '[^A-Z0-9]', '', 'g'));
     if normalized_size = '' then
       normalized_size := '-';
     end if;
+
+    select normalized_size = '-' and exists (
+      select 1 from public.product_bundles b
+      where b.status in ('draft', 'released')
+        and regexp_replace(upper(coalesce(b.bundle_code, '')), '[^A-Z0-9]', '', 'g') = normalized_sku
+    ) into allow_any_size;
 
     if normalized_sku = '' then
       continue;
@@ -648,8 +699,18 @@ begin
       where temporary_item.status = 'IN_TEMPORARY_AREA'
         and coalesce(temporary_item.area_type, 'SALES') = 'SALES'
         and coalesce(temporary_item.qty_in_area, 0) > 0
-        and upper(regexp_replace(coalesce(temporary_item.sku_id, ''), '[^A-Z0-9]', '', 'g')) = normalized_sku
-          and coalesce(nullif(upper(regexp_replace(coalesce(temporary_item.size, ''), '\s+', '', 'g')), ''), '-') = normalized_size
+        and exists (
+          select 1
+          from regexp_split_to_table(
+            concat_ws(' ', temporary_item.sku_id, temporary_item.source_variant_code, temporary_item.item_name),
+            '[[:space:]|,;/]+'
+          ) as sku_token(raw_value)
+          where upper(regexp_replace(coalesce(sku_token.raw_value, ''), '[^A-Z0-9]', '', 'g')) = normalized_sku
+        )
+        and (
+          allow_any_size
+          or coalesce(nullif(regexp_replace(upper(coalesce(temporary_item.size, '')), '[^A-Z0-9]', '', 'g'), ''), '-') = normalized_size
+        )
       order by temporary_item.entered_at asc nulls first, temporary_item.id asc
       for update of temporary_item
     loop
@@ -714,10 +775,13 @@ begin
         and coalesce(storage.qty, 0) > 0
         and exists (
           select 1
-          from regexp_split_to_table(concat_ws(' ', storage.sku_id, storage.item_name), '[[:space:]|,;/]+') as sku_token(raw_value)
+          from regexp_split_to_table(concat_ws(' ', storage.sku_id, storage.source_variant_code, storage.item_name), '[[:space:]|,;/]+') as sku_token(raw_value)
           where upper(regexp_replace(coalesce(sku_token.raw_value, ''), '[^A-Z0-9]', '', 'g')) = normalized_sku
         )
-        and coalesce(nullif(upper(regexp_replace(coalesce(storage.size, ''), '\s+', '', 'g')), ''), '-') = normalized_size
+        and (
+          allow_any_size
+          or coalesce(nullif(regexp_replace(upper(coalesce(storage.size, '')), '[^A-Z0-9]', '', 'g'), ''), '-') = normalized_size
+        )
       order by storage.created_at asc nulls first, storage.id asc
       for update of storage
     loop

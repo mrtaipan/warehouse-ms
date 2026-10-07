@@ -177,9 +177,9 @@ function buildShelvingAvailability(storageRows = [], temporarySalesRows = []) {
 
   const addRows = (rows, isShelving) => rows.forEach((row) => {
     const locationType = normalizeUpper(row.location?.location_type || row.location_type)
-    const skuCandidates = getSkuCandidates(row.sku_id, row.item_name)
+    const skuCandidates = getSkuCandidates(row.sku_id, row.source_variant_code, row.item_name)
     const size = normalizeSize(row.size) || '-'
-    const qty = Math.max(0, Number(row.qty || 0))
+    const qty = Math.max(0, Number(row.qty_in_area ?? row.qty ?? 0))
 
     if (isShelving && locationType !== 'SHELVING') return
     if (!skuCandidates.length || qty <= 0) return
@@ -200,7 +200,7 @@ function buildShelvingAvailability(storageRows = [], temporarySalesRows = []) {
   return { availability, unsizedSkus }
 }
 
-function buildImportPreview(csvRows, storageRows, temporarySalesRows = []) {
+function buildImportPreview(csvRows, storageRows, temporarySalesRows = [], bundleRows = [], bundleComponentRows = []) {
   if (!csvRows.length) {
     throw new Error('CSV file is empty.')
   }
@@ -227,6 +227,8 @@ function buildImportPreview(csvRows, storageRows, temporarySalesRows = []) {
   }
 
   const { availability, unsizedSkus } = buildShelvingAvailability(storageRows, temporarySalesRows)
+  const bundleCodes = new Set(bundleRows.map((bundle) => normalizeSku(bundle.bundle_code)).filter(Boolean))
+  const bundleByCode = new Map(bundleRows.map((bundle) => [normalizeSku(bundle.bundle_code), bundle]))
   const validStatusSet = new Set(VALID_STATUSES)
   const lines = []
   const duplicateLineKeys = new Map()
@@ -250,22 +252,110 @@ function buildImportPreview(csvRows, storageRows, temporarySalesRows = []) {
     const resolvedStatus = normalizeStatus(orderStatus || currentStatus)
     const skuId = getSkuCandidates(variantCode, productCode, productName)[0] || normalizeUpper(variantCode || productCode)
     let size = resolveSize(variationRaw)
-    if (!size && unsizedSkus.has(normalizeSku(skuId))) size = '-'
+    const isBundleSku = bundleCodes.has(normalizeSku(skuId))
+    if (!size && (unsizedSkus.has(normalizeSku(skuId)) || isBundleSku)) size = '-'
+    if (!size) size = '-'
     const validStatus = validStatusSet.has(resolvedStatus)
     let exclusionReason = ''
 
     if (!skuId) exclusionReason = 'Missing SKU'
-    else if (!size) exclusionReason = 'Missing size'
     else if (qty <= 0) exclusionReason = 'Qty must be greater than 0'
     else if (!validStatus) exclusionReason = `Status ${resolvedStatus || '-'} is not included`
 
     const included = !exclusionReason
     const key = getStorageKey(skuId, size)
-    const availableQty = included ? Math.max(0, Number(availability.get(key) || 0)) : 0
-    const appliedQty = included ? Math.min(qty, availableQty) : 0
-    const skippedQty = included ? Math.max(0, qty - appliedQty) : 0
+    let availableQty = included ? Math.max(0, Number(availability.get(key) || 0)) : 0
+    let appliedQty = included ? Math.min(qty, availableQty) : 0
+    let skippedQty = included ? Math.max(0, qty - appliedQty) : 0
 
-    if (included) {
+    if (included && isBundleSku) {
+      const bundle = bundleByCode.get(normalizeSku(skuId))
+      const rawComponents = bundleComponentRows.filter((component) => Number(component.bundle_id) === Number(bundle?.id))
+      const components = Array.from(rawComponents.reduce((componentMap, component) => {
+        const componentSku = normalizeSku(component.sku)
+        const componentSize = normalizeSize(component.size_label) || '-'
+        const key = `${componentSku}::${componentSize}`
+        const current = componentMap.get(key)
+        componentMap.set(key, {
+          ...component,
+          sku: component.sku,
+          size_label: componentSize,
+          allocated_qty: Number(current?.allocated_qty || 0) + Number(component.allocated_qty || 0),
+        })
+        return componentMap
+      }, new Map()).values())
+      const unitQty = Math.max(1, Number(bundle?.bundle_unit_qty || 1))
+      const sizeTotals = new Map()
+      components.forEach((component) => {
+        const componentSize = normalizeSize(component.size_label) || '-'
+        sizeTotals.set(componentSize, Number(sizeTotals.get(componentSize) || 0) + Number(component.allocated_qty || 0))
+      })
+      const componentRequirements = components.map((component) => {
+        const componentSize = normalizeSize(component.size_label) || '-'
+        const sizeBundleCount = Math.floor(Number(sizeTotals.get(componentSize) || 0) / unitQty)
+        return { component, required: sizeBundleCount > 0 ? Number(component.allocated_qty || 0) / sizeBundleCount : 0 }
+      })
+      const componentAvailable = componentRequirements.map(({ component, required }) => {
+        if (!Number.isInteger(required) || required <= 0) return 0
+        const componentSku = normalizeSku(component.sku)
+        const componentSize = normalizeSize(component.size_label) || '-'
+        const componentStock = componentSize === '-'
+          ? Array.from(availability.entries())
+            .filter(([stockKey]) => stockKey.startsWith(`${componentSku}::`))
+            .reduce((sum, [, stockQty]) => sum + Number(stockQty || 0), 0)
+          : Number(availability.get(getStorageKey(componentSku, componentSize)) || 0)
+        return Math.floor(componentStock / required)
+      })
+      availableQty = componentAvailable.length ? Math.min(...componentAvailable) : 0
+      appliedQty = Math.min(qty, availableQty)
+      skippedQty = Math.max(0, qty - appliedQty)
+    }
+
+    if (included && isBundleSku && appliedQty > 0) {
+      const bundle = bundleByCode.get(normalizeSku(skuId))
+      const components = Array.from(bundleComponentRows
+        .filter((component) => Number(component.bundle_id) === Number(bundle?.id))
+        .reduce((componentMap, component) => {
+          const componentSku = normalizeSku(component.sku)
+          const componentSize = normalizeSize(component.size_label) || '-'
+          const key = `${componentSku}::${componentSize}`
+          const current = componentMap.get(key)
+          componentMap.set(key, {
+            ...component,
+            size_label: componentSize,
+            allocated_qty: Number(current?.allocated_qty || 0) + Number(component.allocated_qty || 0),
+          })
+          return componentMap
+        }, new Map()).values())
+      const unitQty = Math.max(1, Number(bundle?.bundle_unit_qty || 1))
+      const sizeTotals = new Map()
+      components
+        .forEach((component) => {
+          const componentSize = normalizeSize(component.size_label) || '-'
+          sizeTotals.set(componentSize, Number(sizeTotals.get(componentSize) || 0) + Number(component.allocated_qty || 0))
+        })
+      components
+        .forEach((component) => {
+          const componentSize = normalizeSize(component.size_label) || '-'
+          const sizeBundleCount = Math.floor(Number(sizeTotals.get(componentSize) || 0) / unitQty)
+          const required = sizeBundleCount > 0 ? Number(component.allocated_qty || 0) / sizeBundleCount : 0
+          if (!Number.isInteger(required) || required <= 0) return
+          const componentSku = normalizeSku(component.sku)
+          const componentKey = getStorageKey(componentSku, componentSize)
+          if (componentSize === '-') {
+            let remaining = required * appliedQty
+            Array.from(availability.keys())
+              .filter((stockKey) => stockKey.startsWith(`${componentSku}::`))
+              .forEach((stockKey) => {
+                const taken = Math.min(remaining, Number(availability.get(stockKey) || 0))
+                availability.set(stockKey, Number(availability.get(stockKey) || 0) - taken)
+                remaining -= taken
+              })
+          } else {
+            availability.set(componentKey, Math.max(0, Number(availability.get(componentKey) || 0) - required * appliedQty))
+          }
+        })
+    } else if (included) {
       availability.set(key, Math.max(0, availableQty - appliedQty))
     }
 
@@ -300,7 +390,7 @@ function buildImportPreview(csvRows, storageRows, temporarySalesRows = []) {
   return {
     lines,
     totalCsvRows: bodyRows.length,
-    orderCount: new Set(includedLines.map((line) => line.orderNumber).filter(Boolean)).size,
+    orderCount: new Set(lines.map((line) => line.orderNumber).filter(Boolean)).size,
     totalOrderLines: lines.filter((line) => line.qty > 0).length,
     includedLines: includedLines.length,
     excludedLines: lines.length - includedLines.length,
@@ -347,6 +437,8 @@ export default function ShelvingUploadClient({
   showHeader = true,
   storageRows = [],
   temporarySalesRows = [],
+  bundleRows = [],
+  bundleComponentRows = [],
   canUpload = false,
   canManage = false,
   onInventoryChanged,
@@ -354,6 +446,9 @@ export default function ShelvingUploadClient({
   const [batches, setBatches] = useState([])
   const [selectedBatchId, setSelectedBatchId] = useState('')
   const [selectedLines, setSelectedLines] = useState([])
+  const [lineSearch, setLineSearch] = useState('')
+  const [lineSizeSearch, setLineSizeSearch] = useState('')
+  const [lineFilter, setLineFilter] = useState('ALL')
   const [file, setFile] = useState(null)
   const [notes, setNotes] = useState('')
   const [preview, setPreview] = useState(null)
@@ -361,6 +456,7 @@ export default function ShelvingUploadClient({
   const [linesLoading, setLinesLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [posting, setPosting] = useState(false)
+  const [retryingId, setRetryingId] = useState('')
   const [reversingId, setReversingId] = useState('')
   const [deletingId, setDeletingId] = useState('')
   const [deleteCandidate, setDeleteCandidate] = useState(null)
@@ -375,6 +471,33 @@ export default function ShelvingUploadClient({
   const issueLines = useMemo(
     () => selectedLines.filter((line) => !line.included),
     [selectedLines]
+  )
+
+  const filteredPreviewLines = useMemo(() => {
+    const query = normalizeUpper(lineSearch)
+    const sizeQuery = normalizeUpper(lineSizeSearch)
+    const filteredSource = selectedLines.filter((line) => {
+      if (lineFilter === 'APPLIED') return Number(line.applied_qty || 0) > 0
+      if (lineFilter === 'SKIPPED') return Number(line.skipped_qty || 0) > 0
+      if (lineFilter === 'ISSUES') return !line.included
+      return true
+    })
+    return filteredSource.filter((line) => {
+      const matchesSearch = !query || [line.sku_id, line.product_name, line.order_number, line.size]
+        .some((value) => normalizeUpper(value).includes(query))
+      const matchesSize = !sizeQuery || normalizeUpper(line.size).includes(sizeQuery)
+      return matchesSearch && matchesSize
+    })
+  }, [lineFilter, lineSearch, lineSizeSearch, selectedLines])
+
+  const visiblePreviewLines = useMemo(
+    () => !lineSearch && !lineSizeSearch && lineFilter === 'ALL' ? filteredPreviewLines.slice(0, 80) : filteredPreviewLines,
+    [filteredPreviewLines, lineFilter, lineSearch, lineSizeSearch]
+  )
+
+  const filteredPreviewQty = useMemo(
+    () => filteredPreviewLines.reduce((sum, line) => sum + Number(line.qty || 0), 0),
+    [filteredPreviewLines]
   )
 
   async function loadBatches({ keepSelection = false } = {}) {
@@ -432,6 +555,34 @@ export default function ShelvingUploadClient({
     setLinesLoading(false)
   }
 
+  function downloadBatchCsv(batch) {
+    if (!batch || selectedLines.length === 0) return
+
+    const headers = ['Order Number', 'Order Status', 'SKU', 'Product Name', 'Size', 'Qty']
+    const escapeCsv = (value) => {
+      const text = String(value ?? '')
+      return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text
+    }
+    const rows = selectedLines.map((line) => [
+      line.order_number,
+      line.order_status,
+      line.sku_id,
+      line.product_name,
+      line.size,
+      line.qty,
+    ].map(escapeCsv).join(','))
+    const csv = `\uFEFF${headers.join(',')}\n${rows.join('\n')}`
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = batch.file_name || `${batch.batch_number || 'upload-batch'}.csv`
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    URL.revokeObjectURL(url)
+  }
+
   useEffect(() => {
     loadBatches()
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -477,7 +628,7 @@ export default function ShelvingUploadClient({
       }
 
       const parsedRows = parseCsv(fileText)
-      const nextPreview = buildImportPreview(parsedRows, storageRows, temporarySalesRows)
+      const nextPreview = buildImportPreview(parsedRows, storageRows, temporarySalesRows, bundleRows, bundleComponentRows)
 
       if (!nextPreview.lines.length) {
         throw new Error('No importable rows were found in this CSV.')
@@ -591,6 +742,39 @@ export default function ShelvingUploadClient({
       setError(postError.message || 'Failed to post shelving upload.')
     } finally {
       setPosting(false)
+    }
+  }
+
+  async function handleRetryBatch(batch = selectedBatch) {
+    if (!canManage || !batch?.id || batch.status !== 'posted' || Number(batch.skipped_qty || 0) <= 0 || retryingId) return
+
+    setRetryingId(batch.id)
+    setError('')
+    setSuccess('')
+
+    try {
+      const actor = await getCurrentUserEmail()
+      const { data, error: retryError } = await supabase.rpc('retry_upload_sales_import_batch', {
+        p_batch_id: batch.id,
+        p_actor_email: actor,
+      })
+
+      if (retryError) {
+        throw retryError
+      }
+
+      setSuccess(
+        `${batch.batch_number} retry completed. Total applied ${formatNumber(data?.applied_qty)} pcs, remaining skipped ${formatNumber(data?.skipped_qty)} pcs.`
+      )
+      await loadBatches({ keepSelection: true })
+      await loadLines(batch.id)
+      if (typeof onInventoryChanged === 'function') {
+        onInventoryChanged()
+      }
+    } catch (retryError) {
+      setError(retryError.message || 'Failed to retry skipped shelving upload quantities.')
+    } finally {
+      setRetryingId('')
     }
   }
 
@@ -781,7 +965,15 @@ export default function ShelvingUploadClient({
             >
               {posting ? 'Posting...' : 'Post Deduction'}
             </button>
-            <span style={styles.mutedText}>Draft posting reduces SHELVING stock only. Pallet stock is untouched.</span>
+            <button
+              type="button"
+              onClick={() => handleRetryBatch(selectedBatch)}
+              disabled={!canManage || !selectedBatch || selectedBatch.status !== 'posted' || Number(selectedBatch.skipped_qty || 0) <= 0 || Boolean(retryingId)}
+              style={!canManage || !selectedBatch || selectedBatch.status !== 'posted' || Number(selectedBatch.skipped_qty || 0) <= 0 || Boolean(retryingId) ? styles.primaryButtonDisabled : styles.secondaryButton}
+            >
+              {retryingId === selectedBatch?.id ? 'Retrying...' : 'Retry Skipped'}
+            </button>
+            <span style={styles.mutedText}>Retry only reprocesses unapplied quantities. Applied rows are never deducted again.</span>
           </div>
         </article>
       </div>
@@ -837,11 +1029,27 @@ export default function ShelvingUploadClient({
                         <div style={styles.tableActionGroup}>
                           <button
                             type="button"
+                            onClick={() => downloadBatchCsv(batch)}
+                            disabled={String(batch.id) !== String(selectedBatchId) || linesLoading || selectedLines.length === 0}
+                            style={String(batch.id) === String(selectedBatchId) && !linesLoading && selectedLines.length > 0 ? styles.smallButton : styles.smallButtonDisabled}
+                          >
+                            Download CSV
+                          </button>
+                          <button
+                            type="button"
                             onClick={() => handleReverseBatch(batch)}
                             disabled={!canReverse || Boolean(reversingId)}
                             style={canReverse && !reversingId ? styles.smallDangerButton : styles.smallButtonDisabled}
                           >
                             {reversingId === batch.id ? 'Reversing...' : 'Reverse'}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleRetryBatch(batch)}
+                            disabled={!canManage || batch.status !== 'posted' || Number(batch.skipped_qty || 0) <= 0 || Boolean(retryingId)}
+                            style={canManage && batch.status === 'posted' && Number(batch.skipped_qty || 0) > 0 && !retryingId ? styles.smallButton : styles.smallButtonDisabled}
+                          >
+                            {retryingId === batch.id ? 'Retrying...' : 'Retry'}
                           </button>
                           <button
                             type="button"
@@ -914,6 +1122,44 @@ export default function ShelvingUploadClient({
           <div style={styles.empty}>No line detail is available for this batch.</div>
         ) : (
           <div style={styles.tableWrap}>
+            <div style={styles.previewFilterFields}>
+              <input
+                value={lineSearch}
+                onChange={(event) => setLineSearch(event.target.value)}
+                style={styles.searchInput}
+                placeholder="Search SKU, product, or order"
+                aria-label="Search preview and issues"
+              />
+              <input
+                value={lineSizeSearch}
+                onChange={(event) => setLineSizeSearch(event.target.value)}
+                style={styles.searchInput}
+                placeholder="Filter size"
+                aria-label="Filter size"
+              />
+            </div>
+            <div style={styles.lineFilterToggle} role="group" aria-label="Filter preview and issues">
+              {[
+                ['ALL', 'All'],
+                ['APPLIED', 'Applied'],
+                ['SKIPPED', 'Skipped'],
+                ['ISSUES', 'Issues'],
+              ].map(([value, label]) => (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => setLineFilter(value)}
+                  style={{
+                    ...styles.lineFilterButton,
+                    ...(lineFilter === value ? styles.lineFilterButtonActive : {}),
+                  }}
+                  aria-pressed={lineFilter === value}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <p style={styles.filteredQtyText}>Filtered qty: <strong>{formatNumber(filteredPreviewQty)}</strong></p>
             <table style={styles.table}>
               <thead>
                 <tr>
@@ -929,7 +1175,7 @@ export default function ShelvingUploadClient({
                 </tr>
               </thead>
               <tbody>
-                {(issueLines.length ? issueLines : selectedLines.slice(0, 80)).map((line) => (
+                {visiblePreviewLines.map((line) => (
                   <tr key={line.id}>
                     <td style={styles.td}>{line.row_number}</td>
                     <td style={styles.td}>{line.order_number || '-'}</td>
@@ -944,6 +1190,7 @@ export default function ShelvingUploadClient({
                 ))}
               </tbody>
             </table>
+            {!visiblePreviewLines.length ? <p style={styles.mutedText}>No matching preview or issue rows.</p> : null}
             {!issueLines.length && selectedLines.length > 80 ? (
               <p style={styles.mutedText}>Showing first 80 clean rows. Issue rows are prioritized when available.</p>
             ) : null}
@@ -1029,6 +1276,51 @@ const styles = {
     color: '#64748b',
     fontSize: '13px',
     lineHeight: 1.45,
+  },
+  searchInput: {
+    width: '100%',
+    minHeight: '40px',
+    boxSizing: 'border-box',
+    marginBottom: '12px',
+    border: '1px solid #cbd5e1',
+    borderRadius: '10px',
+    padding: '0 12px',
+    background: '#fff',
+    color: '#0f172a',
+    fontSize: '14px',
+    outline: 'none',
+  },
+  previewFilterFields: {
+    display: 'grid',
+    gridTemplateColumns: 'minmax(0, 1fr) minmax(140px, 220px)',
+    gap: '8px',
+  },
+  filteredQtyText: {
+    margin: '0 0 12px',
+    color: '#475569',
+    fontSize: '13px',
+  },
+  lineFilterToggle: {
+    display: 'flex',
+    flexWrap: 'wrap',
+    gap: '6px',
+    marginBottom: '12px',
+  },
+  lineFilterButton: {
+    minHeight: '34px',
+    border: '1px solid #dbe4ef',
+    borderRadius: '9px',
+    padding: '0 12px',
+    background: '#f8fafc',
+    color: '#64748b',
+    fontSize: '12px',
+    fontWeight: '800',
+    cursor: 'pointer',
+  },
+  lineFilterButtonActive: {
+    border: '1px solid #172033',
+    background: '#172033',
+    color: '#fff',
   },
   field: {
     display: 'flex',
@@ -1152,6 +1444,17 @@ const styles = {
     padding: '0 10px',
     background: '#fee2e2',
     color: '#991b1b',
+    fontSize: '12px',
+    fontWeight: '900',
+    cursor: 'pointer',
+  },
+  smallButton: {
+    minHeight: '32px',
+    border: '1px solid #cbd5e1',
+    borderRadius: '10px',
+    padding: '0 10px',
+    background: '#fff',
+    color: '#1e293b',
     fontSize: '12px',
     fontWeight: '900',
     cursor: 'pointer',

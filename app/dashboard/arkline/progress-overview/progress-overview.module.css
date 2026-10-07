@@ -3461,6 +3461,99 @@
   transform: none;
 }
 
+.financeResolutionBar,
+.financeResolutionResolved {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 11px 12px;
+  border-radius: 12px;
+}
+
+.financeResolutionBar {
+  border: 1px solid #fed7aa;
+  background: #fff7ed;
+}
+
+.financeResolutionResolved {
+  align-items: flex-start;
+  border: 1px solid #bbf7d0;
+  background: #f0fdf4;
+}
+
+.financeResolutionBar > div,
+.financeResolutionResolved > div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.financeResolutionBar strong,
+.financeResolutionResolved strong {
+  color: #0f172a;
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.financeResolutionBar span,
+.financeResolutionResolved span,
+.financeResolutionResolved p {
+  margin: 0;
+  color: #64748b;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.financeResolutionResolved strong {
+  color: #166534;
+}
+
+.financeResolutionResolved p {
+  max-width: 52%;
+  color: #166534;
+  font-weight: 650;
+  text-align: right;
+}
+
+.financeResolutionButton {
+  flex: 0 0 auto;
+  min-height: 32px;
+  padding: 0 11px;
+  border: 1px solid #c2410c;
+  border-radius: 9px;
+  background: #ffffff;
+  color: #9a3412;
+  font-size: 11px;
+  font-weight: 850;
+  cursor: pointer;
+}
+
+.financeResolutionButton:hover {
+  background: #ffedd5;
+}
+
+.financeResolutionModalCard {
+  width: min(560px, 100%);
+}
+
+.financeResolutionModalNotice {
+  padding: 11px 12px;
+  border: 1px solid #dbe4f0;
+  border-radius: 12px;
+  background: #f8fafc;
+  color: #475569;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.financeResolutionModalActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .financeTableWrap {
   border: 1px solid #e2e8f0;
   border-radius: 14px;
@@ -4000,6 +4093,21 @@
 }
 
 @media (max-width: 560px) {
+  .financeResolutionBar,
+  .financeResolutionResolved {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .financeResolutionResolved p {
+    max-width: none;
+    text-align: left;
+  }
+
+  .financeResolutionButton {
+    align-self: flex-start;
+  }
+
   .dailyProductionProcessFields {
     grid-template-columns: 1fr;
   }

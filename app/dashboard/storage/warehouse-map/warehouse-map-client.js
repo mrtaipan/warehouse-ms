@@ -2532,9 +2532,6 @@ export default function WarehouseMapClient({ canEditMap = false, canUseRegistry 
                     aria-label={`${warehouse.title} shelving ${shelving.code || 'unassigned'}, ${shelvingData.entries.length > 0 ? 'occupied' : 'empty'}`}
                   >
                     <span className={styles.shelvingNumber}>{shelvingLabel}</span>
-                    {shelvingData.entries.length > 0 ? (
-                      <span className={styles.zoneQty}>{formatNumber(shelvingData.totalQty)}</span>
-                    ) : null}
                     {renderResizeHandles(shelving)}
                   </button>
                 )

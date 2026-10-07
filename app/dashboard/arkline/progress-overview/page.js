@@ -369,6 +369,7 @@ function normalizePoRow(row) {
   const targetDate = String(row?.request_delivery_date || '').slice(0, 10)
   const status = normalizeBoardStatus(row?.status)
   const includePpn = normalizeBoolean(row?.include_ppn, true)
+  const financeResolved = normalizeBoolean(row?.finance_resolved, false)
 
   return {
     id: String(row?.id || poId).trim(),
@@ -385,6 +386,10 @@ function normalizePoRow(row) {
     completionDate: '',
     notes,
     subtitle: notes,
+    financeResolved,
+    financeResolvedAt: row?.finance_resolved_at || '',
+    financeResolvedBy: String(row?.finance_resolved_by || '').trim(),
+    financeResolutionNotes: String(row?.finance_resolution_notes || '').trim(),
     productNames: [],
     productEntries: [],
     totalQty: 0,
@@ -403,7 +408,7 @@ async function loadSnapshotRows() {
   ] = await Promise.all([
     supabase
       .from('arkline_pos')
-      .select('id, po_id, supplier_name, method, status, request_delivery_date, include_ppn, notes, created_at, updated_at')
+      .select('id, po_id, supplier_name, method, status, request_delivery_date, include_ppn, finance_resolved, finance_resolved_at, finance_resolved_by, finance_resolution_notes, notes, created_at, updated_at')
       .not('po_id', 'is', null)
       .order('created_at', { ascending: false }),
     supabase
@@ -629,7 +634,10 @@ async function loadSnapshotRows() {
         financeDueValue,
         financePaidValue,
         financeOutstandingValue,
-        isFinanceSettled: derivedStatus === 'Completed' && financeDueValue > 0 && financeOutstandingValue === 0,
+        isFinanceSettled:
+          derivedStatus === 'Completed' &&
+          financeDueValue > 0 &&
+          (financeOutstandingValue === 0 || normalized.financeResolved),
         updatedDate: actualDate,
         displayDate: actualDate || normalized.targetDate || normalized.startDate,
         completionDate: derivedStatus === 'Completed' ? actualDate : '',
@@ -1930,6 +1938,9 @@ export default function ArklineProgressOverviewPage() {
     finance: false,
     documentHistory: false,
   })
+  const [financeResolutionModalOpen, setFinanceResolutionModalOpen] = useState(false)
+  const [savingFinanceResolution, setSavingFinanceResolution] = useState(false)
+  const [financeResolutionNotes, setFinanceResolutionNotes] = useState('')
   const [printingPoDetail, setPrintingPoDetail] = useState(false)
   const [uploadingSignedPo, setUploadingSignedPo] = useState(false)
   const [selectedProductDetail, setSelectedProductDetail] = useState(null)
@@ -2407,6 +2418,8 @@ export default function ArklineProgressOverviewPage() {
   function closePoDetail() {
     setSelectedPoDetail(null)
     setSelectedProductDetail(null)
+    setFinanceResolutionModalOpen(false)
+    setFinanceResolutionNotes('')
     setPrintingPoDetail(false)
     setDeliveryModalOpen(false)
     setStatusModalOpen(false)
@@ -2552,6 +2565,10 @@ export default function ArklineProgressOverviewPage() {
       financeDueValue: applyPpnToAmount(netAmount, includePpn),
       financePaidValue: 0,
       financeOutstandingValue: 0,
+      financeResolved: false,
+      financeResolvedAt: '',
+      financeResolvedBy: '',
+      financeResolutionNotes: '',
       payments: [],
       documentHistory: {
         receipts: [],
@@ -2583,6 +2600,80 @@ export default function ArklineProgressOverviewPage() {
       ...prev,
       [sectionKey]: !prev[sectionKey],
     }))
+  }
+
+  function openFinanceResolutionModal() {
+    if (!selectedPoDetail) return
+    setFinanceResolutionNotes(String(selectedPoDetail.financeResolutionNotes || '').trim())
+    setProductActionError('')
+    setProductActionMessage('')
+    setFinanceResolutionModalOpen(true)
+  }
+
+  function closeFinanceResolutionModal() {
+    if (savingFinanceResolution) return
+    setFinanceResolutionModalOpen(false)
+  }
+
+  async function handleResolveFinance() {
+    if (!selectedPoDetail || savingFinanceResolution) return
+    const notes = String(financeResolutionNotes || '').trim()
+    if (!notes) {
+      setProductActionError('Tambahkan catatan sebelum menandai finance sebagai resolved.')
+      return
+    }
+
+    setSavingFinanceResolution(true)
+    setProductActionError('')
+    setProductActionMessage('')
+
+    try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser()
+      let resolvedBy = String(user?.user_metadata?.display_name || user?.user_metadata?.full_name || '').trim()
+      const userId = String(user?.id || '').trim()
+      if (userId) {
+        const { data: profileRows } = await supabase
+          .from('dir_user_profiles')
+          .select('display_name')
+          .or(`authenticated_id.eq.${userId},id.eq.${userId}`)
+          .limit(1)
+        resolvedBy = String(profileRows?.[0]?.display_name || resolvedBy).trim()
+      }
+
+      const resolvedAt = new Date().toISOString()
+      const { error } = await supabase
+        .from('arkline_pos')
+        .update({
+          finance_resolved: true,
+          finance_resolved_at: resolvedAt,
+          finance_resolved_by: resolvedBy || null,
+          finance_resolution_notes: notes,
+        })
+        .eq('id', selectedPoDetail.id)
+
+      if (error) throw new Error(error.message || 'Failed to resolve finance.')
+
+      setSelectedPoDetail((prev) =>
+        prev
+          ? {
+              ...prev,
+              financeResolved: true,
+              financeResolvedAt: resolvedAt,
+              financeResolvedBy: resolvedBy,
+              financeResolutionNotes: notes,
+            }
+          : prev
+      )
+      setFinanceResolutionModalOpen(false)
+      setProductActionMessage('Finance berhasil ditandai sebagai resolved.')
+      await refreshRows()
+    } catch (error) {
+      setProductActionError(error?.message || 'Failed to resolve finance.')
+    } finally {
+      setSavingFinanceResolution(false)
+    }
   }
 
   async function handlePrintPoDetail() {
@@ -5404,6 +5495,7 @@ export default function ArklineProgressOverviewPage() {
                       .reduce((sum, row) => sum + parseNumberValue(row?.amount), 0)
                     const outstandingValue = getFinanceOutstandingValue(dueValue, paidValue)
                     const hasOpenReturnProduct = (selectedPoDetail.productEntries || []).some((entry) => entry.hasOpenReturn)
+                    const isFinanceResolved = Boolean(selectedPoDetail.financeResolved)
 
                     return (
                       <>
@@ -5432,6 +5524,28 @@ export default function ArklineProgressOverviewPage() {
                             </strong>
                           </div>
                         </div>
+                        {isFinanceResolved ? (
+                          <div className={styles.financeResolutionResolved}>
+                            <div>
+                              <strong>Finance resolved</strong>
+                              <span>
+                                {selectedPoDetail.financeResolvedBy || 'Internal user'}
+                                {selectedPoDetail.financeResolvedAt ? ` • ${formatDateTimeLabel(selectedPoDetail.financeResolvedAt)}` : ''}
+                              </span>
+                            </div>
+                            <p>{selectedPoDetail.financeResolutionNotes || 'Resolved manually.'}</p>
+                          </div>
+                        ) : outstandingValue > 0 ? (
+                          <div className={styles.financeResolutionBar}>
+                            <div>
+                              <strong>Outstanding is still {formatNumber(outstandingValue)}</strong>
+                              <span>Mark this finance as resolved only when the remaining amount has been settled outside the system.</span>
+                            </div>
+                            <button type="button" className={styles.financeResolutionButton} onClick={openFinanceResolutionModal}>
+                              Mark Resolved
+                            </button>
+                          </div>
+                        ) : null}
                         {hasOpenReturnProduct ? (
                           <p className={styles.financeReturnNote}>
                             <span className={`${styles.returnInProgressMark} ${styles.financeReturnNoteMark}`.trim()}>*</span>
@@ -5646,6 +5760,48 @@ export default function ArklineProgressOverviewPage() {
                   : null}
               </div>
             ) : null}
+          </div>
+        </div>
+      ) : null}
+
+      {selectedPoDetail && financeResolutionModalOpen ? (
+        <div className={styles.modalOverlay} onClick={closeFinanceResolutionModal}>
+          <div className={`${styles.modalCard} ${styles.actionModalCard} ${styles.financeResolutionModalCard}`.trim()} onClick={(event) => event.stopPropagation()}>
+            <div className={styles.modalHeader}>
+              <div>
+                <p className={styles.eyebrow}>Finance Resolution</p>
+                <h3 className={styles.modalTitle}>Mark finance as resolved</h3>
+                <p className={styles.modalMetaLine}>{selectedPoDetail.poId}</p>
+              </div>
+              <button type="button" className={styles.iconButton} onClick={closeFinanceResolutionModal} disabled={savingFinanceResolution} aria-label="Close finance resolution">
+                <CloseIcon />
+              </button>
+            </div>
+
+            <div className={styles.financeResolutionModalNotice}>
+              This does not change the calculated due, paid, or outstanding amount. It records that the remaining finance item has been resolved outside the system.
+            </div>
+
+            <label className={styles.filterField}>
+              <span>Resolution Note *</span>
+              <textarea
+                className={styles.textarea}
+                value={financeResolutionNotes}
+                onChange={(event) => setFinanceResolutionNotes(event.target.value)}
+                placeholder="Explain why this finance item is considered resolved."
+                disabled={savingFinanceResolution}
+                autoFocus
+              />
+            </label>
+
+            <div className={styles.financeResolutionModalActions}>
+              <button type="button" className={styles.secondaryButton} onClick={closeFinanceResolutionModal} disabled={savingFinanceResolution}>
+                Cancel
+              </button>
+              <button type="button" className={styles.blackPrimaryButton} onClick={() => void handleResolveFinance()} disabled={savingFinanceResolution}>
+                {savingFinanceResolution ? 'Saving...' : 'Confirm Resolved'}
+              </button>
+            </div>
           </div>
         </div>
       ) : null}

@@ -265,6 +265,7 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
   const [poFilter, setPoFilter] = useState('')
   const [productFilter, setProductFilter] = useState('')
   const [progressPoFilter, setProgressPoFilter] = useState('')
+  const [progressSupplierFilter, setProgressSupplierFilter] = useState('')
   const [progressProductFilter, setProgressProductFilter] = useState('')
   const [progressRejectReasonFilter, setProgressRejectReasonFilter] = useState('')
   const [progressStatusFilter, setProgressStatusFilter] = useState('')
@@ -353,35 +354,56 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
       Array.from(new Set(
         batches
           .filter((batch) => {
+            const matchesSupplier = !progressSupplierFilter || batch.supplierName === progressSupplierFilter
             const matchesProduct = !progressProductFilter || batch.modelName === progressProductFilter
             const matchesRejectReason =
               !progressRejectReasonFilter ||
               batch.lines.some((line) => String(line.reasonId || line.reasonName || '').trim() === progressRejectReasonFilter)
             const matchesStatus = !progressStatusFilter || String(batch.status || 'SENT') === progressStatusFilter
-            return matchesProduct && matchesRejectReason && matchesStatus
+            return matchesSupplier && matchesProduct && matchesRejectReason && matchesStatus
           })
           .map((batch) => batch.poId)
           .filter(Boolean)
       )).sort((a, b) => a.localeCompare(b, undefined, { numeric: true })),
-    [batches, progressProductFilter, progressRejectReasonFilter, progressStatusFilter]
+    [batches, progressSupplierFilter, progressProductFilter, progressRejectReasonFilter, progressStatusFilter]
+  )
+  const progressSupplierOptions = useMemo(
+    () =>
+      Array.from(new Set(
+        batches
+          .filter((batch) => {
+            const matchesPo = !progressPoFilter || batch.poId === progressPoFilter
+            const matchesProduct = !progressProductFilter || batch.modelName === progressProductFilter
+            const matchesRejectReason =
+              !progressRejectReasonFilter ||
+              batch.lines.some((line) => String(line.reasonId || line.reasonName || '').trim() === progressRejectReasonFilter)
+            const matchesStatus = !progressStatusFilter || String(batch.status || 'SENT') === progressStatusFilter
+            return matchesPo && matchesProduct && matchesRejectReason && matchesStatus
+          })
+          .map((batch) => batch.supplierName)
+          .filter(Boolean)
+      )).sort((a, b) => a.localeCompare(b, undefined, { numeric: true })),
+    [batches, progressPoFilter, progressProductFilter, progressRejectReasonFilter, progressStatusFilter]
   )
   const progressProductOptions = useMemo(() => {
     const source = batches.filter((batch) => {
       const matchesPo = !progressPoFilter || batch.poId === progressPoFilter
+      const matchesSupplier = !progressSupplierFilter || batch.supplierName === progressSupplierFilter
       const matchesRejectReason =
         !progressRejectReasonFilter ||
         batch.lines.some((line) => String(line.reasonId || line.reasonName || '').trim() === progressRejectReasonFilter)
       const matchesStatus = !progressStatusFilter || String(batch.status || 'SENT') === progressStatusFilter
-      return matchesPo && matchesRejectReason && matchesStatus
+      return matchesPo && matchesSupplier && matchesRejectReason && matchesStatus
     })
     return Array.from(new Set(source.map((batch) => batch.modelName).filter(Boolean))).sort((a, b) => a.localeCompare(b))
-  }, [batches, progressPoFilter, progressRejectReasonFilter, progressStatusFilter])
+  }, [batches, progressPoFilter, progressSupplierFilter, progressRejectReasonFilter, progressStatusFilter])
   const progressRejectReasonOptions = useMemo(() => {
     const source = batches.filter((batch) => {
       const matchesPo = !progressPoFilter || batch.poId === progressPoFilter
+      const matchesSupplier = !progressSupplierFilter || batch.supplierName === progressSupplierFilter
       const matchesProduct = !progressProductFilter || batch.modelName === progressProductFilter
       const matchesStatus = !progressStatusFilter || String(batch.status || 'SENT') === progressStatusFilter
-      return matchesPo && matchesProduct && matchesStatus
+      return matchesPo && matchesSupplier && matchesProduct && matchesStatus
     })
     const grouped = new Map()
 
@@ -396,20 +418,21 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
     return Array.from(grouped.entries())
       .map(([id, name]) => ({ id, name }))
       .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }))
-  }, [batches, progressPoFilter, progressProductFilter, progressStatusFilter])
+  }, [batches, progressPoFilter, progressSupplierFilter, progressProductFilter, progressStatusFilter])
   const progressStatusOptions = useMemo(() => {
     const source = batches.filter((batch) => {
       const matchesPo = !progressPoFilter || batch.poId === progressPoFilter
+      const matchesSupplier = !progressSupplierFilter || batch.supplierName === progressSupplierFilter
       const matchesProduct = !progressProductFilter || batch.modelName === progressProductFilter
       const matchesRejectReason =
         !progressRejectReasonFilter ||
         batch.lines.some((line) => String(line.reasonId || line.reasonName || '').trim() === progressRejectReasonFilter)
-      return matchesPo && matchesProduct && matchesRejectReason
+      return matchesPo && matchesSupplier && matchesProduct && matchesRejectReason
     })
     return Array.from(new Set(source.map((batch) => String(batch.status || 'SENT')).filter(Boolean))).sort((a, b) =>
       formatStatus(a).localeCompare(formatStatus(b), undefined, { numeric: true })
     )
-  }, [batches, progressPoFilter, progressProductFilter, progressRejectReasonFilter])
+  }, [batches, progressPoFilter, progressSupplierFilter, progressProductFilter, progressRejectReasonFilter])
   const filteredEligibleRows = useMemo(
     () =>
       eligibleRows
@@ -429,14 +452,15 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
     () =>
       batches.filter((batch) => {
         const matchesPo = !progressPoFilter || batch.poId === progressPoFilter
+        const matchesSupplier = !progressSupplierFilter || batch.supplierName === progressSupplierFilter
         const matchesProduct = !progressProductFilter || batch.modelName === progressProductFilter
         const matchesRejectReason =
           !progressRejectReasonFilter ||
           batch.lines.some((line) => String(line.reasonId || line.reasonName || '').trim() === progressRejectReasonFilter)
         const matchesStatus = !progressStatusFilter || String(batch.status || 'SENT') === progressStatusFilter
-        return matchesPo && matchesProduct && matchesRejectReason && matchesStatus
+        return matchesPo && matchesSupplier && matchesProduct && matchesRejectReason && matchesStatus
       }),
-    [batches, progressPoFilter, progressProductFilter, progressRejectReasonFilter, progressStatusFilter]
+    [batches, progressPoFilter, progressSupplierFilter, progressProductFilter, progressRejectReasonFilter, progressStatusFilter]
   )
   const groupedStorages = useMemo(() => {
     const grouped = new Map()
@@ -1277,7 +1301,7 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
           </div>
         </div>
 
-        <div className={styles.filterGrid}>
+        <div className={`${styles.filterGrid} ${styles.progressFilterGrid}`.trim()}>
           <div className={styles.field}>
             <label htmlFor="return-progress-po-filter">PO</label>
             <select
@@ -1286,6 +1310,7 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
               value={progressPoFilter}
               onChange={(event) => {
                 setProgressPoFilter(event.target.value)
+                setProgressSupplierFilter('')
                 setProgressProductFilter('')
                 setProgressRejectReasonFilter('')
                 setProgressStatusFilter('')
@@ -1293,6 +1318,23 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
             >
               <option value="">All PO</option>
               {progressPoOptions.map((po) => <option key={po} value={po}>{po}</option>)}
+            </select>
+          </div>
+          <div className={styles.field}>
+            <label htmlFor="return-progress-supplier-filter">Supplier</label>
+            <select
+              id="return-progress-supplier-filter"
+              className={styles.input}
+              value={progressSupplierFilter}
+              onChange={(event) => {
+                setProgressSupplierFilter(event.target.value)
+                setProgressProductFilter('')
+                setProgressRejectReasonFilter('')
+                setProgressStatusFilter('')
+              }}
+            >
+              <option value="">All suppliers</option>
+              {progressSupplierOptions.map((supplier) => <option key={supplier} value={supplier}>{supplier}</option>)}
             </select>
           </div>
           <div className={styles.field}>
