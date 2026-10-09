@@ -446,17 +446,22 @@ function formatTakeFromLabel(value) {
 }
 
 async function fetchOpenRequests() {
-    const { data, error } = await supabase
-      .from(TAKE_REQUESTS_TABLE)
-    .select('id, requester_name, item_name, size, qty, take_from, storage_id, search_term, source_type, note, created_at')
+  let result = await supabase
+    .from(TAKE_REQUESTS_TABLE)
+    .select('id, requester_user_id, requester_name, item_name, size, qty, take_from, storage_id, search_term, source_type, note, created_at')
     .eq('request_status', 'open')
     .order('created_at', { ascending: false })
 
-  if (error) {
-    throw error
+  if (result.error && ['42703', 'PGRST204'].includes(result.error.code) && /requester_user_id/i.test(result.error.message)) {
+    result = await supabase
+      .from(TAKE_REQUESTS_TABLE)
+      .select('id, requester_name, item_name, size, qty, take_from, storage_id, search_term, source_type, note, created_at')
+      .eq('request_status', 'open')
+      .order('created_at', { ascending: false })
   }
 
-  return data || []
+  if (result.error) throw result.error
+  return result.data || []
 }
 
 export default function RestockRequestSubmit({
@@ -472,6 +477,9 @@ export default function RestockRequestSubmit({
   const [rackLocations, setRackLocations] = useState([])
   const [requests, setRequests] = useState([])
   const [requesterName, setRequesterName] = useState('')
+  const [requesterUserId, setRequesterUserId] = useState('')
+  const [editingRequestId, setEditingRequestId] = useState('')
+  const [deletingRequestId, setDeletingRequestId] = useState('')
   const [arklineProducts, setArklineProducts] = useState([])
   const [arklineProductError, setArklineProductError] = useState('')
   const [loading, setLoading] = useState(true)
@@ -511,7 +519,7 @@ export default function RestockRequestSubmit({
     return requests.filter((row) => normalizeRequestSource(row.source_type) === pickListSourceFilter)
   }, [pickListSourceFilter, requests])
 
-  async function fetchRequesterName() {
+  async function fetchRequesterIdentity() {
     const {
       data: { user },
     } = await supabase.auth.getUser()
@@ -526,7 +534,10 @@ export default function RestockRequestSubmit({
       throw profileError
     }
 
-    return normalizeText(profile?.display_name || user.email.split('@')[0])
+    return {
+      name: normalizeText(profile?.display_name || user.email.split('@')[0]),
+      userId: user.id,
+    }
   }
 
   async function refreshRequests(showSpinner = false) {
@@ -552,10 +563,10 @@ export default function RestockRequestSubmit({
       setError('')
 
       try {
-        const [rackData, requestRows, currentRequesterName, productRows] = await Promise.all([
+        const [rackData, requestRows, currentRequester, productRows] = await Promise.all([
           fetchAllRackLocations(),
           fetchOpenRequests(),
-          fetchRequesterName(),
+          fetchRequesterIdentity(),
           fetchArklineProducts().catch((productError) => {
             setArklineProductError(productError.message || 'Failed to load Arkline products.')
             return []
@@ -578,7 +589,8 @@ export default function RestockRequestSubmit({
 
         setRackLocations(normalizedRackLocations)
         setRequests(requestRows)
-        setRequesterName(currentRequesterName)
+        setRequesterName(currentRequester.name)
+        setRequesterUserId(currentRequester.userId)
         setArklineProducts(productRows)
         setLoading(false)
       } catch (loadError) {
@@ -649,6 +661,55 @@ export default function RestockRequestSubmit({
     setArklineDropdownOpen(false)
   }
 
+  function handleEditRequest(row) {
+    if (!requesterUserId || row.requester_user_id !== requesterUserId) return
+
+    setEditingRequestId(row.id)
+    setForm({
+      sourceType: normalizeRequestSource(row.source_type),
+      searchTerm: normalizeSearchTermInput(row.search_term),
+      size: row.size === '-' ? '' : normalizeSizeValue(row.size),
+      qty: String(row.qty),
+      note: row.note || '',
+    })
+    setError('')
+    setSuccess('')
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+
+  function handleCancelEdit() {
+    setEditingRequestId('')
+    setForm({ sourceType: '', searchTerm: '', size: '', qty: '1', note: '' })
+    setError('')
+  }
+
+  async function handleDeleteRequest(row) {
+    if (!requesterUserId || row.requester_user_id !== requesterUserId || deletingRequestId) return
+    if (!window.confirm('Delete this open request?')) return
+
+    setDeletingRequestId(row.id)
+    setError('')
+    setSuccess('')
+    const { data, error: deleteError } = await supabase
+      .from(TAKE_REQUESTS_TABLE)
+      .delete()
+      .eq('id', row.id)
+      .eq('request_status', 'open')
+      .eq('requester_user_id', requesterUserId)
+      .select('id')
+      .maybeSingle()
+
+    if (deleteError) {
+      setError(deleteError.message)
+    } else if (!data) {
+      setError('This request is no longer open. Refresh the pick list.')
+    } else {
+      if (editingRequestId === row.id) handleCancelEdit()
+      await refreshRequests(false)
+      setSuccess('Request deleted.')
+    }
+    setDeletingRequestId('')
+  }
   async function handleSubmit(event) {
     event.preventDefault()
     setSubmitting(true)
@@ -727,18 +788,59 @@ export default function RestockRequestSubmit({
       payload = buildRequestRows(matchedRows, rackLocations, form, requesterName)
     }
 
-    const { error: insertError } = await supabase.from(TAKE_REQUESTS_TABLE).insert(payload)
+    if (!requesterUserId) {
+      setError('User session not found. Please sign in again.')
+      setSubmitting(false)
+      return
+    }
 
-    if (insertError) {
+    const requestFields = payload[0]
+    let mutationError = null
+    let updatedRequest = null
+    if (editingRequestId) {
+      const result = await supabase
+        .from(TAKE_REQUESTS_TABLE)
+        .update({
+          item_name: requestFields.item_name,
+          size: requestFields.size,
+          qty: requestFields.qty,
+          take_from: requestFields.take_from,
+          search_term: requestFields.search_term,
+          source_type: requestFields.source_type,
+          note: requestFields.note,
+        })
+        .eq('id', editingRequestId)
+        .eq('request_status', 'open')
+        .eq('requester_user_id', requesterUserId)
+        .select('id')
+        .maybeSingle()
+      mutationError = result.error
+      updatedRequest = result.data
+    } else {
+      let result = await supabase.from(TAKE_REQUESTS_TABLE).insert({
+        ...requestFields,
+        requester_user_id: requesterUserId,
+      })
+      if (result.error && ['42703', 'PGRST204'].includes(result.error.code) && /requester_user_id/i.test(result.error.message)) {
+        result = await supabase.from(TAKE_REQUESTS_TABLE).insert(requestFields)
+      }
+      mutationError = result.error
+    }
+
+    if (mutationError || (editingRequestId && !updatedRequest)) {
       setError(
-        isSourceTypeConstraintError(insertError)
-          ? 'Database source type is not ready for OI yet. Please run the restock_request source type SQL update in Supabase.'
-          : `${insertError.message} Make sure the ${TAKE_REQUESTS_TABLE} table and insert/select policies are available.`
+        mutationError
+          ? isSourceTypeConstraintError(mutationError)
+            ? 'Database source type is not ready for OI yet. Please run the restock_request source type SQL update in Supabase.'
+            : mutationError.message
+          : 'This request is no longer open or is not yours. Refresh the pick list.'
       )
       setSubmitting(false)
       return
     }
 
+    const wasEditing = Boolean(editingRequestId)
+    setEditingRequestId('')
     await refreshRequests(false)
     setForm((prev) => ({
       ...prev,
@@ -747,7 +849,7 @@ export default function RestockRequestSubmit({
       searchTerm: '',
       note: '',
     }))
-    setSuccess('Request submitted successfully.')
+    setSuccess(wasEditing ? 'Request updated.' : 'Request submitted successfully.')
     setSubmitting(false)
   }
 
@@ -776,7 +878,7 @@ export default function RestockRequestSubmit({
 
         <form onSubmit={handleSubmit} style={styles.card}>
           <div style={styles.cardHeader}>
-            <h2 style={styles.cardTitle}>Create Request</h2>
+            <h2 style={styles.cardTitle}>{editingRequestId ? 'Edit Request' : 'Create Request'}</h2>
           </div>
 
           <div style={styles.requesterBox}>
@@ -907,9 +1009,16 @@ export default function RestockRequestSubmit({
           {error ? <p style={styles.error}>{error}</p> : null}
           {success ? <p style={styles.success}>{success}</p> : null}
 
-          <button type="submit" style={styles.primaryButton} disabled={submitting}>
-            {submitting ? 'Submitting...' : 'Submit Request'}
-          </button>
+          <div style={styles.formActions}>
+            {editingRequestId ? (
+              <button type="button" style={styles.ghostButton} onClick={handleCancelEdit} disabled={submitting}>
+                Cancel
+              </button>
+            ) : null}
+            <button type="submit" style={{ ...styles.primaryButton, flex: 1 }} disabled={submitting}>
+              {submitting ? 'Saving...' : editingRequestId ? 'Save Changes' : 'Submit Request'}
+            </button>
+          </div>
         </form>
 
         <div style={styles.card}>
@@ -998,6 +1107,16 @@ export default function RestockRequestSubmit({
                     </div>
                   ) : null}
 
+                  {row.requester_user_id === requesterUserId ? (
+                    <div style={styles.requestActions}>
+                      <button type="button" style={styles.ghostButton} onClick={() => handleEditRequest(row)} disabled={submitting || Boolean(deletingRequestId)}>
+                        Edit
+                      </button>
+                      <button type="button" style={styles.deleteButton} onClick={() => handleDeleteRequest(row)} disabled={submitting || Boolean(deletingRequestId)}>
+                        {deletingRequestId === row.id ? 'Deleting...' : 'Delete'}
+                      </button>
+                    </div>
+                  ) : null}
                 </div>
               ))}
             </div>
@@ -1219,6 +1338,26 @@ const styles = {
     outline: 'none',
     resize: 'vertical',
     fontFamily: 'inherit',
+  },
+  formActions: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+  },
+  requestActions: {
+    display: 'flex',
+    justifyContent: 'flex-end',
+    gap: '8px',
+  },
+  deleteButton: {
+    border: '1px solid #fecaca',
+    borderRadius: '999px',
+    background: '#fff',
+    color: '#b91c1c',
+    fontSize: '12px',
+    fontWeight: '700',
+    padding: '8px 12px',
+    cursor: 'pointer',
   },
   primaryButton: {
     height: '46px',
