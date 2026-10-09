@@ -1299,7 +1299,7 @@ export default function QcConfirmationRejectionPage() {
         .order('koli_sequence', { ascending: true }),
       supabase
         .from('warehouse_returns')
-        .select('id, inbound_id, source_phase, brand_id, category_id, model_name, variant_name, qty, koli_sequence, grade, is_adjustment, adjustment_type, pic_name')
+        .select('id, inbound_id, source_phase, brand_id, category_id, product_model_id, product_model_variant_id, source_variant_code, model_name, variant_name, qty, koli_sequence, grade, is_adjustment, adjustment_type, pic_name')
         .eq('source_phase', 'qc')
         .order('koli_sequence', { ascending: true }),
     ])
@@ -2181,6 +2181,9 @@ export default function QcConfirmationRejectionPage() {
       inbound_id: item.inbound_id,
       brand_id: item.brand_id,
       category_id: item.category_id,
+      product_model_id: item.product_model_id || null,
+      product_model_variant_id: item.product_model_variant_id || null,
+      source_variant_code: item.source_variant_code || null,
       model_name: item.model_name,
       variant_name: item.model_color || null,
       qty: Number(item.qty || 0),
@@ -2195,7 +2198,7 @@ export default function QcConfirmationRejectionPage() {
     const { data, error: insertError } = await supabase
       .from('warehouse_returns')
       .insert(payload)
-      .select('id, inbound_id, source_phase, brand_id, category_id, model_name, variant_name, qty, koli_sequence, grade, is_adjustment, adjustment_type, pic_name')
+      .select('id, inbound_id, source_phase, brand_id, category_id, product_model_id, product_model_variant_id, source_variant_code, model_name, variant_name, qty, koli_sequence, grade, is_adjustment, adjustment_type, pic_name')
 
     if (insertError) {
       setError(insertError.message)

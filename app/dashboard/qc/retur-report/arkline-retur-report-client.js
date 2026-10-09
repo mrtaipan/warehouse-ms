@@ -32,6 +32,22 @@ function getStatusBadgeClass(status) {
   return ''
 }
 
+function getArrangementCycleType(row) {
+  const normalized = String(row?.qcType || 'INITIAL').trim().toUpperCase().replaceAll('-', '_').replaceAll(' ', '_')
+  return normalized || 'INITIAL'
+}
+
+function getArrangementCycleKey(row) {
+  return `${getArrangementCycleType(row)}:${Number(row?.qcRoundNumber || 1)}`
+}
+
+function getArrangementCycleLabel(row) {
+  const roundNumber = Number(row?.qcRoundNumber || 1)
+  const cycleType = getArrangementCycleType(row)
+  if (cycleType === 'INITIAL') return `Round ${roundNumber}`
+  return `${cycleType.replaceAll('_', '-')} ${roundNumber}`
+}
+
 function normalizeSize(value) {
   const size = String(value || '').trim().toUpperCase()
   return size || 'NO SIZE'
@@ -262,6 +278,7 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
   const [rejectReasonFilter, setRejectReasonFilter] = useState('')
   const [sizeFilter, setSizeFilter] = useState('')
   const [gradeFilter, setGradeFilter] = useState('')
+  const [qcCycleFilter, setQcCycleFilter] = useState('')
   const [poFilter, setPoFilter] = useState('')
   const [productFilter, setProductFilter] = useState('')
   const [progressPoFilter, setProgressPoFilter] = useState('')
@@ -303,11 +320,12 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
     const matchesRejectReason = ignoredFilter === 'rejectReason' || !rejectReasonFilter || rowReasonKey === rejectReasonFilter
     const matchesSize = ignoredFilter === 'size' || !sizeFilter || String(row.size || '') === sizeFilter
     const matchesGrade = ignoredFilter === 'grade' || !gradeFilter || String(row.grade || '') === gradeFilter
+    const matchesQcCycle = ignoredFilter === 'qcCycle' || !qcCycleFilter || getArrangementCycleKey(row) === qcCycleFilter
     const matchesPo = ignoredFilter === 'po' || !poFilter || row.poId === poFilter
     const matchesProduct = ignoredFilter === 'product' || !productFilter || row.modelName === productFilter
 
-    return matchesRepairability && matchesRejectReason && matchesSize && matchesGrade && matchesPo && matchesProduct
-  }, [gradeFilter, poFilter, productFilter, rejectReasonFilter, repairabilityFilter, sizeFilter])
+    return matchesRepairability && matchesRejectReason && matchesSize && matchesGrade && matchesQcCycle && matchesPo && matchesProduct
+  }, [gradeFilter, poFilter, productFilter, qcCycleFilter, rejectReasonFilter, repairabilityFilter, sizeFilter])
 
   const poOptions = useMemo(
     () =>
@@ -337,6 +355,23 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
       ),
     [eligibleRows, matchesArrangementFilters]
   )
+  const qcCycleOptions = useMemo(() => {
+    const grouped = new Map()
+    eligibleRows.filter((row) => matchesArrangementFilters(row, 'qcCycle')).forEach((row) => {
+      const cycleKey = getArrangementCycleKey(row)
+      grouped.set(cycleKey, {
+        id: cycleKey,
+        label: getArrangementCycleLabel(row),
+        roundNumber: Number(row.qcRoundNumber || 1),
+        cycleType: getArrangementCycleType(row),
+      })
+    })
+
+    return Array.from(grouped.values()).sort((a, b) => {
+      if (a.roundNumber !== b.roundNumber) return a.roundNumber - b.roundNumber
+      return a.cycleType.localeCompare(b.cycleType, undefined, { numeric: true })
+    })
+  }, [eligibleRows, matchesArrangementFilters])
   const rejectReasonOptions = useMemo(() => {
     const grouped = new Map()
     eligibleRows.filter((row) => matchesArrangementFilters(row, 'rejectReason')).forEach((row) => {
@@ -1161,6 +1196,21 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
             >
               <option value="">All grades</option>
               {gradeOptions.map((grade) => <option key={grade} value={grade}>Grade {grade}</option>)}
+            </select>
+          </div>
+          <div className={styles.field}>
+            <label htmlFor="return-qc-cycle-filter">QC Cycle</label>
+            <select
+              id="return-qc-cycle-filter"
+              className={styles.input}
+              value={qcCycleFilter}
+              onChange={(event) => {
+                setQcCycleFilter(event.target.value)
+                setSelectedIds([])
+              }}
+            >
+              <option value="">All QC cycles</option>
+              {qcCycleOptions.map((cycle) => <option key={cycle.id} value={cycle.id}>{cycle.label}</option>)}
             </select>
           </div>
           <div className={styles.field}>

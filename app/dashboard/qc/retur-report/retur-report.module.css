@@ -411,6 +411,10 @@
   border-top: 1px solid #eef2f7;
 }
 
+.progressFilterGrid {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
 .tableWrap {
   margin-top: 18px;
   overflow-x: auto;
@@ -969,6 +973,10 @@
   }
 
   .filterGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .progressFilterGrid {
     grid-template-columns: 1fr;
   }
 

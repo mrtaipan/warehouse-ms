@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
+import { createPortal } from 'react-dom'
 import Link from 'next/link'
 import { createClient } from '@/utils/supabase/browser'
 import { getProfileByAuthenticatedUser } from '@/utils/user-profiles'
@@ -480,6 +481,8 @@ export default function RestockRequestSubmit({
   const [requesterUserId, setRequesterUserId] = useState('')
   const [editingRequestId, setEditingRequestId] = useState('')
   const [deletingRequestId, setDeletingRequestId] = useState('')
+  const [requestToDelete, setRequestToDelete] = useState(null)
+  const [deleteError, setDeleteError] = useState('')
   const [arklineProducts, setArklineProducts] = useState([])
   const [arklineProductError, setArklineProductError] = useState('')
   const [loading, setLoading] = useState(true)
@@ -605,6 +608,16 @@ export default function RestockRequestSubmit({
     initializePage()
   }, [])
 
+  useEffect(() => {
+    if (!requestToDelete) return undefined
+
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      document.body.style.overflow = previousOverflow
+    }
+  }, [requestToDelete])
+
   useRealtimeRefresh({
     supabase,
     topic: 'warehouse:restock',
@@ -683,32 +696,50 @@ export default function RestockRequestSubmit({
     setError('')
   }
 
-  async function handleDeleteRequest(row) {
+  function openDeleteConfirmation(row) {
     if (!requesterUserId || row.requester_user_id !== requesterUserId || deletingRequestId) return
-    if (!window.confirm('Delete this open request?')) return
+    setDeleteError('')
+    setRequestToDelete(row)
+  }
+
+  function closeDeleteConfirmation() {
+    if (deletingRequestId) return
+    setRequestToDelete(null)
+    setDeleteError('')
+  }
+
+  async function handleDeleteRequest() {
+    const row = requestToDelete
+    if (!row || !requesterUserId || row.requester_user_id !== requesterUserId || deletingRequestId) return
 
     setDeletingRequestId(row.id)
-    setError('')
+    setDeleteError('')
     setSuccess('')
-    const { data, error: deleteError } = await supabase
-      .from(TAKE_REQUESTS_TABLE)
-      .delete()
-      .eq('id', row.id)
-      .eq('request_status', 'open')
-      .eq('requester_user_id', requesterUserId)
-      .select('id')
-      .maybeSingle()
+    try {
+      const { data, error: mutationError } = await supabase
+        .from(TAKE_REQUESTS_TABLE)
+        .delete()
+        .eq('id', row.id)
+        .eq('request_status', 'open')
+        .eq('requester_user_id', requesterUserId)
+        .select('id')
+        .maybeSingle()
 
-    if (deleteError) {
-      setError(deleteError.message)
-    } else if (!data) {
-      setError('This request is no longer open. Refresh the pick list.')
-    } else {
-      if (editingRequestId === row.id) handleCancelEdit()
-      await refreshRequests(false)
-      setSuccess('Request deleted.')
+      if (mutationError) {
+        setDeleteError(mutationError.message)
+      } else if (!data) {
+        setDeleteError('This request is no longer open. Refresh the pick list.')
+      } else {
+        if (editingRequestId === row.id) handleCancelEdit()
+        await refreshRequests(false)
+        setRequestToDelete(null)
+        setSuccess('Request deleted.')
+      }
+    } catch (mutationError) {
+      setDeleteError(mutationError.message || 'Failed to delete this request.')
+    } finally {
+      setDeletingRequestId('')
     }
-    setDeletingRequestId('')
   }
   async function handleSubmit(event) {
     event.preventDefault()
@@ -1011,7 +1042,7 @@ export default function RestockRequestSubmit({
 
           <div style={styles.formActions}>
             {editingRequestId ? (
-              <button type="button" style={styles.ghostButton} onClick={handleCancelEdit} disabled={submitting}>
+              <button type="button" style={{ ...styles.primaryButton, ...styles.cancelEditButton, flex: 1 }} onClick={handleCancelEdit} disabled={submitting}>
                 Cancel
               </button>
             ) : null}
@@ -1075,7 +1106,19 @@ export default function RestockRequestSubmit({
                 <div key={row.id} style={styles.requestCard}>
                   <div style={styles.requestOwner}>
                     <span style={styles.requestOwnerLabel}>For</span>
-                    <strong style={styles.requestOwnerValue}>{row.requester_name}</strong>
+                    <div style={styles.requestOwnerRight}>
+                      {row.requester_user_id === requesterUserId ? (
+                        <div style={styles.requestActions}>
+                          <button type="button" style={{ ...styles.requestIconButton, ...((submitting || deletingRequestId) ? styles.requestIconButtonDisabled : {}) }} onClick={() => handleEditRequest(row)} disabled={submitting || Boolean(deletingRequestId)} aria-label="Edit request" title="Edit request">
+                            <span aria-hidden="true">✎</span>
+                          </button>
+                          <button type="button" style={{ ...styles.requestIconButton, ...styles.requestDeleteIconButton, ...((submitting || deletingRequestId) ? styles.requestIconButtonDisabled : {}) }} onClick={() => openDeleteConfirmation(row)} disabled={submitting || Boolean(deletingRequestId)} aria-label="Delete request" title="Delete request">
+                            <span aria-hidden="true">🗑︎</span>
+                          </button>
+                        </div>
+                      ) : null}
+                      <strong style={styles.requestOwnerValue}>{row.requester_name}</strong>
+                    </div>
                   </div>
 
                   <div style={styles.requestGrid}>
@@ -1106,23 +1149,40 @@ export default function RestockRequestSubmit({
                       <strong style={styles.noteValue}>{row.note}</strong>
                     </div>
                   ) : null}
-
-                  {row.requester_user_id === requesterUserId ? (
-                    <div style={styles.requestActions}>
-                      <button type="button" style={styles.ghostButton} onClick={() => handleEditRequest(row)} disabled={submitting || Boolean(deletingRequestId)}>
-                        Edit
-                      </button>
-                      <button type="button" style={styles.deleteButton} onClick={() => handleDeleteRequest(row)} disabled={submitting || Boolean(deletingRequestId)}>
-                        {deletingRequestId === row.id ? 'Deleting...' : 'Delete'}
-                      </button>
-                    </div>
-                  ) : null}
                 </div>
               ))}
             </div>
           )}
         </div>
       </div>
+      {requestToDelete && typeof document !== 'undefined' ? createPortal(
+        <div style={styles.deleteModalOverlay} onClick={closeDeleteConfirmation}>
+          <div
+            style={styles.deleteModalCard}
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="delete-request-title"
+            aria-describedby="delete-request-description"
+            onClick={(event) => event.stopPropagation()}
+            onKeyDown={(event) => {
+              if (event.key === 'Escape') closeDeleteConfirmation()
+            }}
+          >
+            <h2 id="delete-request-title" style={styles.deleteModalTitle}>Delete Request?</h2>
+            <p id="delete-request-description" style={styles.deleteModalText}>
+              Delete <strong>{requestToDelete.item_name}</strong> ({requestToDelete.size || '-'}) from the pick list? This cannot be undone.
+            </p>
+            {deleteError ? <p style={styles.error} role="alert">{deleteError}</p> : null}
+            <div style={styles.deleteModalActions}>
+              <button type="button" style={styles.deleteModalCancel} onClick={closeDeleteConfirmation} disabled={Boolean(deletingRequestId)} autoFocus>Cancel</button>
+              <button type="button" style={styles.deleteModalConfirm} onClick={handleDeleteRequest} disabled={Boolean(deletingRequestId)}>
+                {deletingRequestId ? 'Deleting...' : 'Delete'}
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      ) : null}
     </div>
   )
 }
@@ -1346,24 +1406,105 @@ const styles = {
   },
   requestActions: {
     display: 'flex',
-    justifyContent: 'flex-end',
-    gap: '8px',
+    alignItems: 'center',
+    gap: '4px',
+    flexShrink: 0,
   },
-  deleteButton: {
-    border: '1px solid #fecaca',
-    borderRadius: '999px',
+  requestIconButton: {
+    width: '32px',
+    height: '32px',
+    padding: 0,
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    border: '1px solid #fdba74',
+    borderRadius: '8px',
     background: '#fff',
-    color: '#b91c1c',
-    fontSize: '12px',
-    fontWeight: '700',
-    padding: '8px 12px',
+    color: '#9a3412',
+    fontSize: '16px',
+    fontFamily: 'Segoe UI Symbol, sans-serif',
     cursor: 'pointer',
+  },
+  requestDeleteIconButton: {
+    borderColor: '#fecaca',
+    color: '#b91c1c',
+    fontSize: '15px',
+  },
+  requestIconButtonDisabled: {
+    opacity: 0.5,
+    cursor: 'not-allowed',
   },
   primaryButton: {
     height: '46px',
     border: 'none',
     borderRadius: '14px',
     background: '#111827',
+    color: '#fff',
+    fontSize: '14px',
+    fontWeight: '700',
+    cursor: 'pointer',
+  },
+  cancelEditButton: {
+    border: '1px solid #fecaca',
+    background: '#fff1f2',
+    color: '#b91c1c',
+  },
+  deleteModalOverlay: {
+    position: 'fixed',
+    inset: 0,
+    zIndex: 3000,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflowY: 'auto',
+    padding: '16px',
+    background: 'rgba(17, 24, 39, 0.48)',
+  },
+  deleteModalCard: {
+    width: '100%',
+    maxWidth: '420px',
+    padding: '20px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '16px',
+    borderRadius: '12px',
+    border: '1px solid #e5e7eb',
+    background: '#fff',
+    boxShadow: '0 16px 40px rgba(15, 23, 42, 0.16)',
+  },
+  deleteModalTitle: {
+    margin: 0,
+    color: '#111827',
+    fontSize: '20px',
+  },
+  deleteModalText: {
+    margin: 0,
+    color: '#374151',
+    fontSize: '14px',
+    lineHeight: 1.5,
+    overflowWrap: 'anywhere',
+  },
+  deleteModalActions: {
+    display: 'flex',
+    gap: '8px',
+  },
+  deleteModalCancel: {
+    flex: 1,
+    height: '44px',
+    border: '1px solid #d1d5db',
+    borderRadius: '8px',
+    background: '#fff',
+    color: '#111827',
+    fontSize: '14px',
+    fontWeight: '700',
+    cursor: 'pointer',
+  },
+  deleteModalConfirm: {
+    flex: 1,
+    height: '44px',
+    border: '1px solid #b91c1c',
+    borderRadius: '8px',
+    background: '#b91c1c',
     color: '#fff',
     fontSize: '14px',
     fontWeight: '700',
@@ -1474,11 +1615,19 @@ const styles = {
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'space-between',
-    gap: '12px',
+    gap: '8px',
     padding: '9px 11px',
     borderRadius: '12px',
     background: '#fff7ed',
     border: '1px solid #fdba74',
+  },
+  requestOwnerRight: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: '6px',
+    minWidth: 0,
+    flex: 1,
   },
   requestOwnerLabel: {
     fontSize: '10px',
@@ -1490,6 +1639,8 @@ const styles = {
   requestOwnerValue: {
     color: '#7c2d12',
     fontSize: '13px',
+    textAlign: 'right',
+    overflowWrap: 'anywhere',
   },
   requestGrid: {
     display: 'grid',
