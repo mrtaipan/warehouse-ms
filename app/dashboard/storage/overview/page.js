@@ -2180,7 +2180,7 @@ export default function StorageOverviewPage() {
     return matchesSearch && matchesStatus && matchesGroup
   })
   const filteredPutawayRows = putawayQueueRows.filter((entry) => {
-    if (normalizeFilterValue(entry.status) !== 'WAITING_PUTAWAY') return false
+    if (normalizeFilterValue(entry.status) !== 'WAITING_SHELVING') return false
     const normalizedGroup = normalizeFilterValue(shelvingQueueGroup)
     if (normalizedGroup && normalizeFilterValue(entry.group_code) !== normalizedGroup) return false
     const normalizedSearch = normalizeFilterValue(productSearch)
