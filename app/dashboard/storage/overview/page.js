@@ -1083,6 +1083,9 @@ export default function StorageOverviewPage() {
   const [selectedTemporarySalesIds, setSelectedTemporarySalesIds] = useState([])
   const [selectedRejectKoliNumbers, setSelectedRejectKoliNumbers] = useState([])
   const [expandedRejectKoliNumbers, setExpandedRejectKoliNumbers] = useState([])
+  const [rejectDeleteEntry, setRejectDeleteEntry] = useState(null)
+  const [deletingReject, setDeletingReject] = useState(false)
+  const [rejectDeleteError, setRejectDeleteError] = useState('')
   const [productSearch, setProductSearch] = useState(initialProductSearch)
   const [brandLookupMode, setBrandLookupMode] = useState('brand')
   const [brandLookupSearch, setBrandLookupSearch] = useState('')
@@ -3349,6 +3352,58 @@ export default function StorageOverviewPage() {
       )
     } finally {
       setSavingReject(false)
+    }
+  }
+
+  function openRejectDeleteConfirmation(entry) {
+    if (!canEditRejectStorage || normalizeRejectStatus(entry?.status) !== 'DRAFT') return
+    setRejectDeleteEntry(entry)
+    setRejectDeleteError('')
+  }
+
+  function closeRejectDeleteConfirmation() {
+    if (deletingReject) return
+    setRejectDeleteEntry(null)
+    setRejectDeleteError('')
+  }
+
+  async function handleRejectDelete() {
+    const entry = rejectDeleteEntry
+    if (!entry?.id || deletingReject || !canEditRejectStorage || normalizeRejectStatus(entry.status) !== 'DRAFT') return
+
+    setDeletingReject(true)
+    setRejectDeleteError('')
+
+    try {
+      const { data, error: deleteError } = await supabase
+        .from('warehouse_reject_storage')
+        .delete()
+        .eq('id', entry.id)
+        .eq('status', 'DRAFT')
+        .select('id')
+
+      if (deleteError) throw deleteError
+      if (data?.length !== 1) {
+        throw new Error('This reject item is no longer a draft. Refresh and try again.')
+      }
+
+      const koliNumber = normalizeFilterValue(entry.koli_number)
+      const hasRemainingItems = rejectStorageRows.some(
+        (row) => String(row.id) !== String(entry.id) && normalizeFilterValue(row.koli_number) === koliNumber
+      )
+
+      setRejectStorageRows((currentRows) => currentRows.filter((row) => String(row.id) !== String(entry.id)))
+      setSelectedRejectKoliNumbers((current) => current.filter((value) => normalizeFilterValue(value) !== koliNumber))
+      if (!hasRemainingItems) {
+        setExpandedRejectKoliNumbers((current) => current.filter((value) => normalizeFilterValue(value) !== koliNumber))
+      }
+      setRejectDeleteEntry(null)
+      setError('')
+      setSuccess('Draft reject item deleted.')
+    } catch (deleteError) {
+      setRejectDeleteError(deleteError.message || 'Failed to delete draft reject item.')
+    } finally {
+      setDeletingReject(false)
     }
   }
 
@@ -6770,6 +6825,7 @@ export default function StorageOverviewPage() {
                               <tbody>
                                 {group.rows.map((entry) => {
                                   const categoryLabel = getRejectCategoryLabel(entry, categoryById)
+                                  const isEntryDraft = normalizeRejectStatus(entry.status) === 'DRAFT'
 
                                   return (
                                     <tr key={entry.id}>
@@ -6780,20 +6836,40 @@ export default function StorageOverviewPage() {
                                       <td style={styles.rejectDetailTd}>{entry.grade || '-'}</td>
                                       <td style={styles.rejectDetailTd}>{entry.reject_note || '-'}</td>
                                       {canEditRejectStorage ? (
-                                        <td style={styles.rejectDetailTd}>
-                                          <button
-                                            type="button"
-                                            onClick={() => openRejectModal(entry)}
-                                            style={isDraft ? styles.tableIconButton : { ...styles.tableIconButton, ...styles.tableIconButtonDisabled }}
-                                            disabled={!isDraft}
-                                            title={isDraft ? 'Edit reject item' : 'Posted koli cannot be edited'}
-                                            aria-label="Edit reject item"
-                                          >
-                                            <svg viewBox="0 0 24 24" style={styles.tableActionIcon} aria-hidden="true">
-                                              <path d="M12 20h9" />
-                                              <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5Z" />
-                                            </svg>
-                                          </button>
+                                        <td style={{ ...styles.rejectDetailTd, verticalAlign: 'middle', whiteSpace: 'nowrap' }}>
+                                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                            <button
+                                              type="button"
+                                              onClick={() => openRejectModal(entry)}
+                                              style={isEntryDraft ? styles.tableIconButton : { ...styles.tableIconButton, ...styles.tableIconButtonDisabled }}
+                                              disabled={!isEntryDraft || deletingReject}
+                                              title={isEntryDraft ? 'Edit reject item' : 'Posted koli cannot be edited'}
+                                              aria-label="Edit reject item"
+                                            >
+                                              <svg viewBox="0 0 24 24" style={styles.tableActionIcon} aria-hidden="true">
+                                                <path d="M12 20h9" />
+                                                <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5Z" />
+                                              </svg>
+                                            </button>
+                                            {isEntryDraft ? (
+                                              <button
+                                                type="button"
+                                                onClick={() => openRejectDeleteConfirmation(entry)}
+                                                style={{ ...styles.tableIconButton, ...styles.tableIconButtonDanger }}
+                                                disabled={deletingReject}
+                                                title="Delete draft reject item"
+                                                aria-label="Delete draft reject item"
+                                              >
+                                                <svg viewBox="0 0 24 24" style={styles.tableActionIcon} aria-hidden="true">
+                                                  <path d="M3 6h18" />
+                                                  <path d="M8 6V4h8v2" />
+                                                  <path d="M5 6l1 15h12l1-15" />
+                                                  <path d="M10 10v7" />
+                                                  <path d="M14 10v7" />
+                                                </svg>
+                                              </button>
+                                            ) : null}
+                                          </div>
                                         </td>
                                       ) : null}
                                     </tr>
@@ -6893,6 +6969,25 @@ export default function StorageOverviewPage() {
           </div>
         </div>
       </div>
+
+      {rejectDeleteEntry ? (
+        <div style={{ ...styles.modalOverlay, zIndex: 70 }}>
+          <div style={styles.confirmationModalCard} role="dialog" aria-modal="true" aria-labelledby="reject-delete-title">
+            <p style={styles.modalEyebrow}>Reject Storage</p>
+            <h2 id="reject-delete-title" style={styles.modalTitle}>Delete Draft Item?</h2>
+            <p style={styles.confirmationModalText}>
+              Delete <strong>{rejectDeleteEntry.product_name}</strong> from {rejectDeleteEntry.koli_number}? This cannot be undone.
+            </p>
+            {rejectDeleteError ? <p style={{ ...styles.modalInlineError, marginBottom: '16px' }}>{rejectDeleteError}</p> : null}
+            <div style={styles.modalHeaderActions}>
+              <button type="button" onClick={closeRejectDeleteConfirmation} style={styles.modalCloseButton} disabled={deletingReject}>Cancel</button>
+              <button type="button" onClick={handleRejectDelete} style={deletingReject ? { ...styles.modalDeleteButton, opacity: 0.6, cursor: 'not-allowed' } : styles.modalDeleteButton} disabled={deletingReject}>
+                {deletingReject ? 'Deleting...' : 'Delete Draft'}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {isRejectModalOpen ? (
         <div style={styles.modalOverlay}>
@@ -10691,6 +10786,17 @@ const styles = {
     padding: '8px 12px',
     cursor: 'pointer',
     fontWeight: '600',
+  },
+  modalDeleteButton: {
+    height: '36px',
+    padding: '0 14px',
+    borderRadius: '8px',
+    border: '1px solid #b91c1c',
+    background: '#b91c1c',
+    color: '#fff',
+    fontSize: '13px',
+    fontWeight: '800',
+    cursor: 'pointer',
   },
   modalCancelButton: {
     height: '36px',

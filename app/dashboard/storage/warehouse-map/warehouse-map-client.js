@@ -278,14 +278,17 @@ function getShelvingCode(location) {
   return locationId && locationCode ? `${locationId}.${locationCode}` : ''
 }
 
-function getShelvingLabel(element) {
+function getShelvingLabel(element, warehouseKey) {
   const code = String(element?.code || '').trim()
 
   if (!code) {
     return 'Shelf'
   }
 
-  if (Number(element?.w || 0) >= 3 && Number(element?.h || 0) >= 4) {
+  if (
+    (warehouseKey === 'LV83' && /^A\d+\./i.test(code)) ||
+    (Number(element?.w || 0) >= 3 && Number(element?.h || 0) >= 4)
+  ) {
     return code
   }
 
@@ -2540,7 +2543,12 @@ export default function WarehouseMapClient({ canEditMap = false, canUseRegistry 
                 }
                 const isSelected = selectedLocationKind === 'shelving' && selectedZoneCode === shelving.code
                 const isElementSelected = editMode && selectedElementId === shelving.id
-                const shelvingLabel = getShelvingLabel(shelving)
+                const shelvingLabel = getShelvingLabel(shelving, warehouse.key)
+                const shelvingPrefix =
+                  (warehouse.key === 'LV87' && /^O\d/i.test(shelvingLabel)) ||
+                  (warehouse.key === 'LV83' && /^A\d/i.test(shelvingLabel))
+                    ? shelvingLabel[0]
+                    : ''
 
                 return (
                   <button
@@ -2561,7 +2569,14 @@ export default function WarehouseMapClient({ canEditMap = false, canUseRegistry 
                     aria-pressed={editMode ? isElementSelected : isSelected}
                     aria-label={`${warehouse.title} shelving ${shelving.code || 'unassigned'}, ${shelvingData.entries.length > 0 ? 'occupied' : 'empty'}`}
                   >
-                    <span className={styles.shelvingNumber}>{shelvingLabel}</span>
+                    <span className={`${styles.shelvingNumber} ${warehouse.key === 'LV83' && shelvingPrefix ? styles.shelvingNumberWide : ''}`.trim()}>
+                      {shelvingPrefix ? (
+                        <>
+                          <span className={styles.shelvingNumberPrefix}>{shelvingPrefix}</span>
+                          {shelvingLabel.slice(1)}
+                        </>
+                      ) : shelvingLabel}
+                    </span>
                     {renderResizeHandles(shelving)}
                   </button>
                 )
