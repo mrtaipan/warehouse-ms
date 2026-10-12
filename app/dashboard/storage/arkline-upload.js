@@ -23,11 +23,16 @@ export function parseArklineWorkbookRows(rows) {
   if (!rows?.length) throw new Error('Arkline file is empty.')
   const [headers, ...body] = rows
   const map = new Map(headers.map((header, index) => [String(header ?? '').trim().toUpperCase(), index]))
-  const required = ['SKU', 'NAMA BARANG', 'NO PESANAN', 'TANGGAL', 'QTY', 'STATUS']
+  const required = ['SKU', 'NAMA BARANG', 'TANGGAL', 'QTY', 'STATUS']
   const missing = required.filter((name) => !map.has(name))
+  if (!['NOMOR INVOICE', 'NO INVOICE', 'NO PESANAN'].some((name) => map.has(name))) {
+    missing.push('NOMOR INVOICE or NO PESANAN')
+  }
   if (missing.length) throw new Error(`Arkline file is missing: ${missing.join(', ')}.`)
 
   const value = (row, name) => row[map.get(name)]
+  const invoiceColumn = ['NOMOR INVOICE', 'NO INVOICE'].find((name) => map.has(name))
+  const orderColumn = invoiceColumn || 'NO PESANAN'
   return body.map((row, index) => ({ row, rowNumber: index + 2 }))
     .filter(({ row }) => row.some((cell) => cell !== null && cell !== undefined && String(cell).trim()))
     .map(({ row, rowNumber }) => {
@@ -35,7 +40,8 @@ export function parseArklineWorkbookRows(rows) {
     const status = String(value(row, 'STATUS') ?? '').trim().toUpperCase()
     const qty = Number(value(row, 'QTY'))
     const orderDate = parseArklineDate(value(row, 'TANGGAL'))
-    const orderNumber = String(value(row, 'NO PESANAN') ?? '').trim()
+    const orderNumber = String(value(row, orderColumn) ?? '').trim()
+      || String(value(row, 'NO PESANAN') ?? '').trim()
     const exclusionReason = !parsed ? 'Invalid Arkline SKU or size'
       : !orderDate ? 'Missing order date'
         : !orderNumber ? 'Missing order number'

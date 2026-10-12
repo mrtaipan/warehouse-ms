@@ -71,6 +71,10 @@ function parseAmountInput(value) {
   return digits ? Number(digits) : 0
 }
 
+function normalizeSnapshotName(value) {
+  return String(value || '').trim().toUpperCase()
+}
+
 function formatAttachmentCount(count) {
   return `${count} attachment${count === 1 ? '' : 's'} added`
 }
@@ -444,7 +448,7 @@ export default function MyArklifeReimbursementClient({ profile, headerActions = 
         const payload = {
           employee_authenticated_id: user.id,
           employee_email_snapshot: String(user.email || profile?.email || '').toLowerCase(),
-          employee_name_snapshot: profile?.display_name || user.user_metadata?.full_name || user.email?.split('@')[0] || 'Team',
+          employee_name_snapshot: normalizeSnapshotName(profile?.display_name || user.user_metadata?.full_name || user.email?.split('@')[0] || 'Team'),
           expense_date: row.expense_date,
           expense_category_id: Number(row.expense_category_id),
           status: 'SUBMITTED',

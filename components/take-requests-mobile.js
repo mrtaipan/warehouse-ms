@@ -427,6 +427,32 @@ export default function TakeRequestsMobile() {
     const selectedSourceStorageId =
       selectedSourceValue && selectedSourceValue !== 'unrecorded' ? Number(selectedSourceValue) : null
 
+    if (normalizeRequestSource(selectedRequest.source_type) === 'ARKLINE') {
+      try {
+        const { data, error: completeError } = await supabase.rpc('complete_arkline_restock_request', {
+          p_request_id: selectedRequest.id,
+          p_source_storage_id: selectedSourceStorageId,
+          p_fulfilled_qty: fulfilledQty,
+        })
+        if (completeError) throw completeError
+
+        await refreshRequests(false)
+        setSuccess(
+          data?.excess_destination === 'SHELVING'
+            ? `Request completed. ${data.excess_qty} excess item(s) stored in Arkline shelving.`
+            : data?.excess_destination === 'QUEUE'
+              ? `Request completed. ${data.excess_qty} excess item(s) are waiting in Shelving Queue.`
+            : `Request for ${selectedRequest.requester_name} has been completed.`
+        )
+        closeCompleteModal()
+      } catch (completeError) {
+        setError(completeError.message || 'Failed to complete Arkline request.')
+      } finally {
+        setCompletingId('')
+      }
+      return
+    }
+
     let sourceEntrySnapshot = null
     if (selectedSourceStorageId) {
       const { data: currentEntry, error: fetchError } = await supabase
@@ -457,20 +483,6 @@ export default function TakeRequestsMobile() {
         return
       }
 
-    }
-
-    let supportsArklinePickSnapshot = false
-    if (normalizeRequestSource(selectedRequest.source_type) === 'ARKLINE') {
-      const { error: snapshotSchemaError } = await supabase
-        .from(TAKE_REQUESTS_TABLE)
-        .select('source_sku_id, fulfilled_qty')
-        .limit(1)
-      if (snapshotSchemaError && !['42703', 'PGRST204'].includes(snapshotSchemaError.code)) {
-        setError(snapshotSchemaError.message)
-        setCompletingId('')
-        return
-      }
-      supportsArklinePickSnapshot = !snapshotSchemaError
     }
 
     const pickerEmail = await getCurrentUserEmail()
@@ -539,10 +551,6 @@ export default function TakeRequestsMobile() {
       .update({
         take_from: selectedSourceLabel,
         storage_id: selectedSourceStorageId,
-        ...(supportsArklinePickSnapshot ? {
-          source_sku_id: sourceEntrySnapshot?.sku_id || sourceOptions.find((item) => String(item.storageId) === selectedSourceValue)?.skuId || selectedRequest.search_term || null,
-          fulfilled_qty: fulfilledQty,
-        } : {}),
         request_status: 'completed',
         completed_at: new Date().toISOString(),
         completed_by: pickerEmail,
@@ -766,7 +774,7 @@ export default function TakeRequestsMobile() {
                   />
                   {Number(actualQty || 0) > requestedQtyForDisplay(selectedRequest) ? (
                     <span style={styles.helperText}>
-                      Excess to shelving putaway: {Number(actualQty || 0) - requestedQtyForDisplay(selectedRequest)}
+                      Excess for shelving: {Number(actualQty || 0) - requestedQtyForDisplay(selectedRequest)}
                     </span>
                   ) : null}
                 </div>

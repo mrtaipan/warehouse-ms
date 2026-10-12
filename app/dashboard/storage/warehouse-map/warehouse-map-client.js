@@ -1591,6 +1591,9 @@ export default function WarehouseMapClient({ canEditMap = false, canUseRegistry 
     [selectedShelvingData]
   )
   const selectedShelvingLevel = selectedShelvingLevels.find((level) => level.key === selectedShelvingLevelKey) || null
+  const selectedRegistryIsArkline = selectedLocationKind === 'shelving'
+    ? Boolean(selectedShelvingData?.locations?.some(isArklineLocation))
+    : selectedZoneIsArkline
   const shelvingGoodsGroups = useMemo(() => {
     if (!selectedShelvingData) {
       return []
@@ -1654,9 +1657,13 @@ export default function WarehouseMapClient({ canEditMap = false, canUseRegistry 
     selectedZoneIsArkline && selectedSlot?.locations?.length
       ? selectedSlot.locations.find((location) => isArklineLocation(location)) || selectedSlot.locations[0]
       : null
-  const activeRegistryLocation = selectedZoneIsArkline ? selectedArklineRegistryLocation : selectedRegistryLocation
+  const activeRegistryLocation = selectedLocationKind === 'shelving'
+    ? selectedShelvingLevel?.location || null
+    : selectedZoneIsArkline
+      ? selectedArklineRegistryLocation
+      : selectedRegistryLocation
   const selectedArklineProduct = useMemo(() => {
-    if (!selectedZoneIsArkline) {
+    if (!selectedRegistryIsArkline) {
       return null
     }
 
@@ -1664,7 +1671,7 @@ export default function WarehouseMapClient({ canEditMap = false, canUseRegistry 
     const selectedSku = String(registryForm.skuId || '').trim().toUpperCase()
 
     return arklineProducts.find((product) => product.label === selectedLabel || product.sku === selectedLabel || product.sku === selectedSku) || null
-  }, [arklineProducts, registryForm.itemName, registryForm.skuId, selectedZoneIsArkline])
+  }, [arklineProducts, registryForm.itemName, registryForm.skuId, selectedRegistryIsArkline])
   const selectedSubLocation = subLocationSlots.find((slot) => slot.key === selectedSubLocationKey) || null
   const currentGoodsGroups = useMemo(() => {
     if (selectedZoneIsArkline) {
@@ -2177,7 +2184,7 @@ export default function WarehouseMapClient({ canEditMap = false, canUseRegistry 
       qty: '1',
       notes: '',
     })
-  }, [selectedSlotCode])
+  }, [selectedSlotCode, selectedZoneCode, selectedLocationKind])
 
   function handleWarehouseSelect(warehouseKey) {
     if (!WAREHOUSES[warehouseKey]) {
@@ -2259,7 +2266,7 @@ export default function WarehouseMapClient({ canEditMap = false, canUseRegistry 
       return
     }
 
-    if (name === 'itemName' && selectedZoneIsArkline) {
+    if (name === 'itemName' && selectedRegistryIsArkline) {
       const nextItemName = value.toUpperCase()
       const matchedProduct = arklineProducts.find((product) => product.label === nextItemName || product.sku === nextItemName)
 
@@ -2293,9 +2300,11 @@ export default function WarehouseMapClient({ canEditMap = false, canUseRegistry 
 
     if (!activeRegistryLocation) {
       setRegistryError(
-        selectedZoneIsArkline
-          ? 'No mapped ARKLINE rack position found for this slot.'
-          : 'Please choose a K position first.'
+        selectedLocationKind === 'shelving'
+          ? 'Please choose a shelving level first.'
+          : selectedZoneIsArkline
+            ? 'No mapped ARKLINE rack position found for this slot.'
+            : 'Please choose a K position first.'
       )
       setRegistrySaving(false)
       return
@@ -2307,18 +2316,18 @@ export default function WarehouseMapClient({ canEditMap = false, canUseRegistry 
       return
     }
 
-    if (selectedZoneIsArkline && !selectedArklineProduct) {
+    if (selectedRegistryIsArkline && !selectedArklineProduct) {
       setRegistryError('Please choose an active ARKLINE product from the list.')
       setRegistrySaving(false)
       return
     }
 
-    const rawItemName = selectedZoneIsArkline
+    const rawItemName = selectedRegistryIsArkline
       ? selectedArklineProduct?.productName || selectedArklineProduct?.label || ''
       : registryForm.itemName.trim()
     const parsedItem = splitSkuItemName(rawItemName)
     const itemSku = String(
-      selectedZoneIsArkline ? selectedArklineProduct?.sku || '' : registryForm.skuId || ''
+      selectedRegistryIsArkline ? selectedArklineProduct?.sku || '' : registryForm.skuId || ''
     ).trim().toUpperCase() || parsedItem.skuId
 
     const payload = {
@@ -2851,7 +2860,26 @@ export default function WarehouseMapClient({ canEditMap = false, canUseRegistry 
                 </div>
               </div>
 
-              <div className={styles.storageList}>
+              <div className={styles.segmentedControl} aria-label="Shelving detail mode">
+                <button
+                  type="button"
+                  className={activePanel === 'current' ? styles.segmentActive : ''}
+                  onClick={() => setActivePanel('current')}
+                >
+                  Current Goods
+                </button>
+                {canUseRegistry ? (
+                  <button
+                    type="button"
+                    className={activePanel === 'registry' ? styles.segmentActive : ''}
+                    onClick={() => setActivePanel('registry')}
+                  >
+                    Registry Storage
+                  </button>
+                ) : null}
+              </div>
+
+              {activePanel === 'current' ? <div className={styles.storageList}>
                 {shelvingGoodsGroups.length === 0 ? (
                   <div className={styles.emptyState}>
                     <p>
@@ -2879,7 +2907,118 @@ export default function WarehouseMapClient({ canEditMap = false, canUseRegistry 
                     </section>
                   ))
                 )}
-              </div>
+              </div> : null}
+
+              {activePanel === 'registry' && canUseRegistry ? (
+                <form className={styles.registryForm} onSubmit={handleRegistrySubmit}>
+                  <div className={styles.registryHeader}>
+                    <div>
+                      <h3>Registry Storage</h3>
+                      <p>{warehouse.key} / {selectedShelving.code}</p>
+                    </div>
+                    <span>{selectedShelvingLevels.length} level(s)</span>
+                  </div>
+
+                  <div className={styles.registryGrid}>
+                    <label className={styles.registryField}>
+                      <span>Level</span>
+                      <select
+                        value={selectedShelvingLevelKey === SUBLOCATION_ALL_KEY ? '' : selectedShelvingLevelKey}
+                        onChange={(event) => setSelectedShelvingLevelKey(event.target.value || SUBLOCATION_ALL_KEY)}
+                        required
+                      >
+                        <option value="">Select level</option>
+                        {selectedShelvingLevels.map((level) => (
+                          <option key={level.key} value={level.key}>{level.key}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className={styles.registryField}>
+                      <span>Qty</span>
+                      <input
+                        name="qty"
+                        value={registryForm.qty}
+                        onChange={handleRegistryInputChange}
+                        inputMode="numeric"
+                        placeholder="1"
+                        required
+                      />
+                    </label>
+                  </div>
+
+                  <label className={styles.registryField}>
+                    <span>Item Name</span>
+                    <input
+                      name="itemName"
+                      value={registryForm.itemName}
+                      onChange={handleRegistryInputChange}
+                      placeholder={selectedRegistryIsArkline ? 'TYPE SKU OR PRODUCT' : 'ITEM NAME'}
+                      list={selectedRegistryIsArkline ? 'warehouse-map-shelving-arkline-products' : undefined}
+                      required
+                    />
+                    {selectedRegistryIsArkline ? (
+                      <datalist id="warehouse-map-shelving-arkline-products">
+                        {arklineProducts.map((product) => (
+                          <option key={product.sku} value={product.label} />
+                        ))}
+                      </datalist>
+                    ) : null}
+                  </label>
+
+                  <label className={styles.registryField}>
+                    <span>SKU</span>
+                    <input
+                      name="skuId"
+                      value={registryForm.skuId || ''}
+                      onChange={handleRegistryInputChange}
+                      placeholder="SKU ID"
+                      readOnly={selectedRegistryIsArkline}
+                    />
+                  </label>
+
+                  <div className={styles.registryGrid}>
+                    <label className={styles.registryField}>
+                      <span>Size</span>
+                      <input
+                        name="size"
+                        value={registryForm.size}
+                        onChange={handleRegistryInputChange}
+                        placeholder="SIZE"
+                      />
+                    </label>
+                    <label className={styles.registryField}>
+                      <span>Selected Location</span>
+                      <input
+                        value={activeRegistryLocation ? `${selectedShelving.code} / ${selectedShelvingLevelKey}` : ''}
+                        readOnly
+                      />
+                    </label>
+                  </div>
+
+                  <label className={styles.registryField}>
+                    <span>Notes</span>
+                    <textarea
+                      name="notes"
+                      value={registryForm.notes}
+                      onChange={handleRegistryInputChange}
+                      placeholder="Optional notes"
+                    />
+                  </label>
+
+                  {selectedShelvingLevels.length === 0 ? (
+                    <p className={styles.registryWarning}>No mapped shelving level found.</p>
+                  ) : null}
+                  {registryError ? <p className={styles.registryError}>{registryError}</p> : null}
+                  {registrySuccess ? <p className={styles.registrySuccess}>{registrySuccess}</p> : null}
+                  <button
+                    type="submit"
+                    className={styles.registrySubmit}
+                    disabled={registrySaving || !activeRegistryLocation}
+                  >
+                    {registrySaving ? 'Saving...' : 'Save to Storage'}
+                  </button>
+                </form>
+              ) : null}
             </div>
           ) : !selectedZone || !selectedZoneData ? (
             <div className={styles.emptyInspector}>

@@ -41,6 +41,9 @@ test('Arkline export SKU is split into product SKU and size', () => {
     sku: 'ARK01SSP019', size: 'L', color: 'OWHITE',
   })
   assert.equal(parseArklineSku('invalid'), null)
+  assert.deepEqual(parseArklineSku('ARK01LSP022LCREAM'), {
+    sku: 'ARK01LSP022', size: 'L', color: 'CREAM',
+  })
 })
 
 test('Arkline workbook rows accept processing and preserve transaction date', () => {
@@ -54,6 +57,17 @@ test('Arkline workbook rows accept processing and preserve transaction date', ()
   assert.equal(rows[0].included, true)
 })
 
+test('Arkline Orders count unique invoice numbers when invoice and order columns exist', () => {
+  const rows = parseArklineWorkbookRows([
+    ['SKU', 'Nama Barang', 'No Pesanan', 'Nomor Invoice', 'Tanggal', 'QTY', 'Status'],
+    ['ARK01SSP019LOWHITE', 'Gentle Polo Shirt', 'ORDER-1', 'INV-1', day, 1, 'PROCESSING'],
+    ['ARK01SSP019LOWHITE', 'Gentle Polo Shirt', 'ORDER-2', 'INV-1', day, 1, 'PROCESSING'],
+    ['ARK01SSP019LOWHITE', 'Gentle Polo Shirt', 'ORDER-3', 'INV-2', day, 1, 'SHIPPED'],
+  ])
+  assert.deepEqual(rows.map((row) => row.orderNumber), ['INV-1', 'INV-1', 'INV-2'])
+  assert.equal(buildArklineImportPreview(rows, [shelf(3)]).orderCount, 2)
+})
+
 test('picker handoff is credited once, excess putaway remains on the shelf', () => {
   const beforePutaway = buildArklineImportPreview([line()], [shelf(4)], [pick()])
   assert.equal(beforePutaway.pickOffsetQty, 1)
@@ -62,6 +76,13 @@ test('picker handoff is credited once, excess putaway remains on the shelf', () 
 
   const afterPutaway = buildArklineImportPreview([line()], [shelf(7)], [pick()])
   assert.equal(afterPutaway.lines[0].balanceAfter, 3)
+})
+
+test('six sales with one completed pick settle an eight-piece shelf balance to three', () => {
+  const preview = buildArklineImportPreview([line(6)], [shelf(5 + (4 - 1))], [pick(1, 4)])
+  assert.equal(preview.pickOffsetQty, 1)
+  assert.equal(preview.appliedQty, 5)
+  assert.equal(preview.lines[0].balanceAfter, 3)
 })
 
 test('credits only the actually fulfilled picker quantity', () => {

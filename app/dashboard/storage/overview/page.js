@@ -74,6 +74,16 @@ function getTemporaryStatusStyle(status) {
   return { ...base, background: '#f1f5f9', color: '#475569' }
 }
 
+function getTemporaryDisplayStatus(entry, now = Date.now()) {
+  const status = normalizeFilterValue(entry.status)
+  if (status !== 'IN_TEMPORARY_AREA') return status
+  const dueAt = new Date(entry.due_at || 0).getTime()
+  if (!dueAt) return status
+  if (dueAt < now) return 'OVERDUE'
+  if (dueAt <= now + 24 * 60 * 60 * 1000) return 'DUE_SOON'
+  return status
+}
+
 function getSkuDirectoryIdentity(value, brandRows = [], categoryRows = []) {
   const skuToken = normalizeFilterValue(value).replace(/[^A-Z0-9]/g, '')
 
@@ -935,6 +945,7 @@ const EMPTY_STORAGE_ACCESS = {
   brandLookup: false,
   categoryManage: false,
   lockedGroup: '',
+  isAdmin: false,
 }
 
 async function fetchCurrentStorageAccess() {
@@ -977,6 +988,7 @@ async function fetchCurrentStorageAccess() {
         role === 'oi_cs'
     ),
     lockedGroup: getRoleLockedGroup(role),
+    isAdmin,
   }
 }
 
@@ -1029,6 +1041,7 @@ export default function StorageOverviewPage() {
   const [takeModalEntry, setTakeModalEntry] = useState(null)
   const [editModalEntry, setEditModalEntry] = useState(null)
   const [moveModalEntry, setMoveModalEntry] = useState(null)
+  const [moveModalEntries, setMoveModalEntries] = useState([])
   const [categoryModalEntries, setCategoryModalEntries] = useState([])
   const [rejectModalEntry, setRejectModalEntry] = useState(null)
   const [queueModalEntry, setQueueModalEntry] = useState(null)
@@ -2159,20 +2172,18 @@ export default function StorageOverviewPage() {
     const normalizedSearch = normalizeFilterValue(temporarySalesSearch)
     const normalizedStatus = normalizeFilterValue(temporarySalesStatus)
     const normalizedGroup = normalizeFilterValue(temporarySalesGroup)
-    const dueAt = new Date(entry.due_at || 0).getTime()
-    const isDueSoon = dueAt > Date.now() && dueAt <= Date.now() + 24 * 60 * 60 * 1000
-    const isOverdue = dueAt > 0 && dueAt < Date.now() && normalizeFilterValue(entry.status) === 'IN_TEMPORARY_AREA'
+    const displayStatus = getTemporaryDisplayStatus(entry)
     const matchesSearch = !normalizedSearch || [entry.item_name, entry.sku_id, entry.size, entry.group_code, entry.source_location_label]
       .map((value) => normalizeFilterValue(value))
       .some((value) => value.includes(normalizedSearch))
     const matchesStatus = !normalizedStatus || (
       normalizedStatus === 'IN-AREA'
-        ? normalizeFilterValue(entry.status) === 'IN_TEMPORARY_AREA'
+        ? displayStatus === 'IN_TEMPORARY_AREA'
         : normalizedStatus === 'DUE-SOON'
-        ? isDueSoon
+        ? displayStatus === 'DUE_SOON'
         : normalizedStatus === 'OVERDUE'
-          ? isOverdue
-          : normalizeFilterValue(entry.status) === normalizedStatus
+          ? displayStatus === 'OVERDUE'
+          : displayStatus === normalizedStatus
     )
 
     const matchesGroup = !normalizedGroup || normalizeFilterValue(entry.group_code) === normalizedGroup
@@ -2193,15 +2204,9 @@ export default function StorageOverviewPage() {
     const rows = temporarySalesRows.filter((row) => normalizeFilterValue(row.area_type || 'SALES') === temporaryAreaType)
     return {
       waiting: rows.filter((row) => normalizeFilterValue(row.status) === 'WAITING').length,
-      inArea: rows.filter((row) => normalizeFilterValue(row.status) === 'IN_TEMPORARY_AREA').length,
-      dueSoon: rows.filter((row) => {
-        const dueAt = new Date(row.due_at || 0).getTime()
-        return dueAt > Date.now() && dueAt <= Date.now() + 24 * 60 * 60 * 1000
-      }).length,
-      overdue: rows.filter((row) => {
-        const dueAt = new Date(row.due_at || 0).getTime()
-        return dueAt > 0 && dueAt < Date.now() && normalizeFilterValue(row.status) === 'IN_TEMPORARY_AREA'
-      }).length,
+      inArea: rows.filter((row) => getTemporaryDisplayStatus(row) === 'IN_TEMPORARY_AREA').length,
+      dueSoon: rows.filter((row) => getTemporaryDisplayStatus(row) === 'DUE_SOON').length,
+      overdue: rows.filter((row) => getTemporaryDisplayStatus(row) === 'OVERDUE').length,
     }
   }, [temporaryAreaType, temporarySalesRows])
   const temporaryStoreBundleOptions = useMemo(() => {
@@ -2373,6 +2378,10 @@ export default function StorageOverviewPage() {
   const selectedCategoryRowIdSet = useMemo(
     () => new Set(selectedCategoryRowIds.map((id) => String(id))),
     [selectedCategoryRowIds]
+  )
+  const selectedMoveRows = useMemo(
+    () => storageRows.filter((entry) => selectedTemporarySourceIdSet.has(String(entry.id))),
+    [selectedTemporarySourceIdSet, storageRows]
   )
   const selectedCategoryRows = useMemo(
     () => storageRows.filter((entry) => selectedCategoryRowIdSet.has(String(entry.id))),
@@ -3601,8 +3610,26 @@ export default function StorageOverviewPage() {
 
   function openPutawayModal(entry) {
     if (!entry || !storageAccess.queueEdit) return
+    const group = normalizeFilterValue(entry.group_code)
+    const sku = normalizeStorageSku(entry.sku_id || entry.source_variant_code)
+    const size = normalizeSizeValue(entry.size)
+    const matchingStock = group === 'ARKLINE' || !sku ? null : storageRows
+      .filter((row) => (
+        Number(row.qty || 0) > 0 &&
+        normalizeFilterValue(row.location?.location_type) === 'SHELVING' &&
+        getLocationStorageGroup(row.location) === group &&
+        normalizeStorageSku(row.sku_id) === sku &&
+        normalizeSizeValue(row.size) === size
+      ))
+      .sort((left, right) => Number(right.qty || 0) - Number(left.qty || 0))[0]
+    const recommendedLocation = matchingStock?.location
     setPutawayModalEntry(entry)
-    setPutawayForm({ locationId: '', locationCode: '', subLocation: '', notes: entry.notes || '' })
+    setPutawayForm({
+      locationId: recommendedLocation ? String(recommendedLocation.location_id) : '',
+      locationCode: recommendedLocation?.location_code || '',
+      subLocation: recommendedLocation?.sub_location || '',
+      notes: entry.notes || '',
+    })
     setPutawayError('')
     setError('')
     setSuccess('')
@@ -4369,15 +4396,22 @@ export default function StorageOverviewPage() {
     setSuccess('')
   }
 
-  function openMoveModal(entry) {
+  function openMoveModal(entries) {
     if (!canMoveStorageItem) return
-    const location = entry.location || {}
-    setMoveModalEntry(entry)
+    const selectedEntries = entries.filter(Boolean)
+    if (selectedEntries.length === 0) return
+    const groups = new Set(selectedEntries.map((entry) => getLocationStorageGroup(entry.location)))
+    if (groups.size !== 1) {
+      setError('Select items from one storage group to move together.')
+      return
+    }
+    setMoveModalEntry(selectedEntries[0])
+    setMoveModalEntries(selectedEntries)
     setMoveForm({
-      locationType: location.location_type || '',
-      locationId: location.location_id ? String(location.location_id) : '',
-      locationCode: location.location_code || '',
-      subLocation: location.sub_location || '',
+      locationType: '',
+      locationId: '',
+      locationCode: '',
+      subLocation: '',
     })
     setMoveModalError('')
     setIsMoveLocationCodeMenuOpen(false)
@@ -4456,6 +4490,7 @@ export default function StorageOverviewPage() {
 
   function closeMoveModal() {
     setMoveModalEntry(null)
+    setMoveModalEntries([])
     setMoveModalError('')
     setMoveForm({
       locationType: '',
@@ -5150,9 +5185,9 @@ export default function StorageOverviewPage() {
   async function handleMoveSubmit(event) {
     event.preventDefault()
 
-    if (!canMoveStorageItem) return
+    if (!canMoveStorageItem || moving) return
 
-    if (!moveModalEntry) {
+    if (moveModalEntries.length === 0) {
       return
     }
 
@@ -5167,13 +5202,13 @@ export default function StorageOverviewPage() {
       return
     }
 
-    if (String(selectedMoveLocation.id) === String(moveModalEntry.rack_location_id)) {
-      setMoveModalError('Destination location is the same as the current location.')
+    if (moveModalEntries.some((entry) => String(selectedMoveLocation.id) === String(entry.rack_location_id))) {
+      setMoveModalError('At least one selected item is already at this destination.')
       setMoving(false)
       return
     }
 
-    const sourceGroupCode = getLocationStorageGroup(moveModalEntry.location)
+    const sourceGroupCode = getLocationStorageGroup(moveModalEntries[0].location)
     const destinationGroupCode = getLocationStorageGroup(selectedMoveLocation)
     if (sourceGroupCode && destinationGroupCode !== sourceGroupCode) {
       setMoveModalError(`Destination must stay inside the ${sourceGroupCode} group.`)
@@ -5181,76 +5216,73 @@ export default function StorageOverviewPage() {
       return
     }
 
-    const updatedAt = new Date().toISOString()
-    const updatedBy = await getCurrentUserEmail()
-    const payload = {
-      rack_location_id: selectedMoveLocation.id,
-      updated_by: updatedBy,
-      updated_at: updatedAt,
-    }
+    try {
+      const updatedBy = await getCurrentUserEmail()
+      const movedIds = []
+      let failure = ''
 
-    const { error: updateError } = await supabase
-      .from('warehouse_storage')
-      .update(payload)
-      .eq('id', moveModalEntry.id)
+      for (const entry of moveModalEntries) {
+        const updatedAt = new Date().toISOString()
+        const { data: updatedRow, error: updateError } = await supabase
+          .from('warehouse_storage')
+          .update({ rack_location_id: selectedMoveLocation.id, updated_by: updatedBy, updated_at: updatedAt })
+          .eq('id', entry.id)
+          .eq('rack_location_id', entry.rack_location_id)
+          .select('id')
+          .maybeSingle()
 
-    if (updateError) {
-      setMoveModalError(updateError.message)
+        if (updateError || !updatedRow) {
+          failure = updateError?.message || 'An item changed location. Refresh and select it again.'
+          break
+        }
+
+        const { error: movementError } = await supabase.from('warehouse_storage_movements').insert({
+          warehouse_storage_id: entry.id,
+          movement_type: 'MOVE',
+          qty: Number(entry.qty || 0),
+          from_location_label: entry.location ? getLocationLabel(entry.location) : null,
+          to_location_label: getLocationLabel(selectedMoveLocation),
+          item_name: entry.item_name || null,
+          size: entry.size || null,
+          sku_id: entry.sku_id || null,
+          created_by: updatedBy,
+        })
+
+        if (movementError) {
+          const { error: rollbackError } = await supabase
+            .from('warehouse_storage')
+            .update({ rack_location_id: entry.rack_location_id, updated_by: updatedBy, updated_at: new Date().toISOString() })
+            .eq('id', entry.id)
+            .eq('rack_location_id', selectedMoveLocation.id)
+          failure = rollbackError
+            ? `${movementError.message}. Location rollback also failed: ${rollbackError.message}`
+            : movementError.message
+          break
+        }
+        movedIds.push(String(entry.id))
+      }
+
+      if (movedIds.length > 0) {
+        const movedSet = new Set(movedIds)
+        setSelectedTemporarySourceIds((current) => current.filter((id) => !movedSet.has(String(id))))
+        setSelectedCategoryRowIds((current) => current.filter((id) => !movedSet.has(String(id))))
+      }
+      await refreshInventoryData({ forceStorage: true })
+
+      if (failure) {
+        const remaining = moveModalEntries.filter((entry) => !movedIds.includes(String(entry.id)))
+        setMoveModalEntries(remaining)
+        setMoveModalEntry(remaining[0] || null)
+        setMoveModalError(`${movedIds.length} of ${moveModalEntries.length} item(s) moved. ${failure}`)
+      } else {
+        closeMoveModal()
+        setSuccess(`${movedIds.length} storage item(s) moved successfully.`)
+      }
+    } catch (moveError) {
+      setMoveModalError(moveError.message || 'Unable to move the selected items.')
+    } finally {
       setMoving(false)
-      return
     }
-
-    const { error: movementError } = await supabase.from('warehouse_storage_movements').insert({
-      warehouse_storage_id: moveModalEntry.id,
-      movement_type: 'MOVE',
-      qty: Number(moveModalEntry.qty || 0),
-      from_location_label: moveModalEntry.location ? getLocationLabel(moveModalEntry.location) : null,
-      to_location_label: getLocationLabel(selectedMoveLocation),
-      item_name: moveModalEntry.item_name || null,
-      size: moveModalEntry.size || null,
-      sku_id: moveModalEntry.sku_id || null,
-      created_by: updatedBy,
-    })
-
-    if (movementError) {
-      await supabase
-        .from('warehouse_storage')
-        .update({ rack_location_id: moveModalEntry.rack_location_id, updated_by: updatedBy, updated_at: new Date().toISOString() })
-        .eq('id', moveModalEntry.id)
-      setMoveModalError(movementError.message)
-      setMoving(false)
-      return
-    }
-
-    setStorageEntries((currentRows) => {
-      const nextRows = currentRows.map((row) => (
-        String(row.id) === String(moveModalEntry.id)
-          ? {
-              ...row,
-              rack_location_id: selectedMoveLocation.id,
-              updated_at: updatedAt,
-            }
-          : row
-      ))
-
-      return setWarehouseStorageCache(nextRows)
-    })
-    setStorageMovementRows((current) => [{
-      warehouse_storage_id: moveModalEntry.id,
-      movement_type: 'MOVE',
-      qty: Number(moveModalEntry.qty || 0),
-      from_location_label: moveModalEntry.location ? getLocationLabel(moveModalEntry.location) : null,
-      to_location_label: getLocationLabel(selectedMoveLocation),
-      item_name: moveModalEntry.item_name || null,
-      size: moveModalEntry.size || null,
-      sku_id: moveModalEntry.sku_id || null,
-      created_by: updatedBy,
-      id: `local-${Date.now()}`,
-      created_at: new Date().toISOString(),
-    }, ...current])
-    setSuccess('Storage item moved successfully.')
-    setMoving(false)
-    closeMoveModal()
   }
 
   async function handleCategorySubmit(event) {
@@ -5938,6 +5970,30 @@ export default function StorageOverviewPage() {
               </button>
             </div>
           ) : null}
+          {visibleListMode === 'stock' && canMoveStorageItem ? (
+            <div style={styles.toolbarActionField}>
+              <button
+                type="button"
+                onClick={() => openMoveModal(selectedMoveRows)}
+                style={{
+                  ...styles.iconActionButton,
+                  ...styles.iconActionButtonWithBadge,
+                  ...(selectedMoveRows.length === 0 ? styles.iconActionButtonDisabled : {}),
+                }}
+                title="Move selected items to one location"
+                aria-label="Move selected items to one location"
+                disabled={selectedMoveRows.length === 0}
+              >
+                <svg viewBox="0 0 24 24" style={styles.actionIcon} aria-hidden="true">
+                  <path d="M4 12h16" />
+                  <path d="m15 7 5 5-5 5" />
+                  <path d="M4 6h8" />
+                  <path d="M4 18h8" />
+                </svg>
+                {selectedMoveRows.length > 0 ? <span style={styles.actionBadge}>{selectedMoveRows.length}</span> : null}
+              </button>
+            </div>
+          ) : null}
           {visibleListMode === 'reject-storage' && canAddRejectStorage ? (
             <div style={styles.rejectToolbarActionField}>
               <button
@@ -6434,8 +6490,8 @@ export default function StorageOverviewPage() {
                     <td style={styles.temporarySalesValueCell}>{formatDateTime(entry.entered_at)}</td>
                     <td style={styles.temporarySalesValueCell}>{formatDateTime(entry.due_at)}</td>
                     <td style={styles.temporarySalesValueCell}>
-                      <span style={getTemporaryStatusStyle(entry.status)}>
-                        {String(entry.status || '-').replaceAll('_', ' ')}
+                      <span style={getTemporaryStatusStyle(getTemporaryDisplayStatus(entry))}>
+                        {getTemporaryDisplayStatus(entry).replaceAll('_', ' ')}
                       </span>
                     </td>
                     <td style={{ ...styles.td, ...styles.actionTd }}>
@@ -6583,24 +6639,6 @@ export default function StorageOverviewPage() {
                               <svg viewBox="0 0 24 24" style={styles.tableActionIcon} aria-hidden="true">
                                 <path d="M12 20h9" />
                                 <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5Z" />
-                              </svg>
-                            </button>
-                          ) : null}
-                          {canMoveStorageItem ? (
-                            <button
-                              type="button"
-                              onClick={() => openMoveModal(entry)}
-                              style={styles.tableIconButton}
-                              title="Move to another location"
-                              aria-label="Move to another location"
-                            >
-                              <svg viewBox="0 0 24 24" style={styles.tableActionIcon} aria-hidden="true">
-                                <path d="M5 9V5h4" />
-                                <path d="M19 15v4h-4" />
-                                <path d="M5 5l14 14" />
-                                <path d="M19 5v4h-4" />
-                                <path d="M5 19v-4h4" />
-                                <path d="M19 5 5 19" />
                               </svg>
                             </button>
                           ) : null}
@@ -8324,18 +8362,28 @@ export default function StorageOverviewPage() {
               </div>
             </div>
 
-            <div style={styles.moveSummaryGrid}>
+            <div style={{
+              ...styles.moveSummaryGrid,
+              ...(isCompactLayout ? { gridTemplateColumns: 'minmax(0, 1fr)' } : {}),
+              maxHeight: '240px',
+              overflowY: 'auto',
+            }}>
               <div style={styles.takeModalItemCard}>
-                <span style={styles.selectedLocationLabel}>Item</span>
-                <strong style={styles.takeModalItemName}>{getStorageItemDisplayName(moveModalEntry)}</strong>
-                <div style={styles.moveMetaRow}>
-                  <span style={styles.moveMetaPill}>Size {moveModalEntry.size || '-'}</span>
-                  <span style={styles.moveMetaPill}>Qty {moveModalEntry.qty || 0}</span>
-                </div>
+                <span style={styles.selectedLocationLabel}>{moveModalEntries.length} Selected Item(s)</span>
+                {moveModalEntries.map((entry) => (
+                  <div key={entry.id} style={{ padding: '8px 0', borderBottom: '1px solid #e2e8f0' }}>
+                    <strong style={{ ...styles.takeModalItemName, overflowWrap: 'anywhere' }}>{getStorageItemDisplayName(entry)}</strong>
+                    <div style={styles.moveMetaRow}>
+                      <span style={styles.moveMetaPill}>Size {entry.size || '-'}</span>
+                      <span style={styles.moveMetaPill}>Qty {entry.qty || 0}</span>
+                      <span style={styles.moveMetaPill}>{getLocationLabel(entry.location)}</span>
+                    </div>
+                  </div>
+                ))}
               </div>
               <div style={styles.takeModalInfoCard}>
-                <span style={styles.selectedLocationLabel}>Current Location</span>
-                <strong style={styles.takeModalLocation}>{getLocationLabel(moveModalEntry.location)}</strong>
+                <span style={styles.selectedLocationLabel}>Source Group</span>
+                <strong style={styles.takeModalLocation}>{moveSourceGroupCode || '-'}</strong>
               </div>
             </div>
 
@@ -8576,6 +8624,8 @@ export default function StorageOverviewPage() {
               bundleComponentRows={storageBundleComponents}
               canUpload={canAddShelvingUpload}
               canManage={canManageShelvingUpload}
+              canRetry={Boolean(storageAccess.isAdmin)}
+              lockedGroup={lockedStorageGroup}
               onInventoryChanged={() => refreshInventoryData({ showLoading: false, forceStorage: true })}
             />
           </div>

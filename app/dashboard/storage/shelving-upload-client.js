@@ -3,12 +3,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createClient } from '@/utils/supabase/browser'
 import { read, utils } from 'xlsx'
-import { buildArklineImportPreview, parseArklineWorkbookRows } from './arkline-upload'
+import { buildArklineImportPreview, parseArklineDate, parseArklineSku, parseArklineWorkbookRows } from './arkline-upload'
 
 const supabase = createClient()
 const VALID_STATUSES = ['packaged', 'ship', 'shipped']
 const SIZE_TOKENS = ['8XL', '7XL', '6XL', '5XL', '4XL', '3XL', 'XXXL', '2XL', 'XXL', 'XL', 'XXS', 'XS', 'L', 'M', 'S']
 const LINE_INSERT_CHUNK_SIZE = 500
+const UPLOAD_GROUP_CODES = ['MOB', 'ARKLINE']
+const UPLOAD_GROUP_OPTIONS = [
+  ['MOB', 'MOB'],
+  ['ARKLINE', 'ARKLINE'],
+]
 
 function formatNumber(value) {
   return new Intl.NumberFormat('id-ID').format(Number(value || 0))
@@ -209,7 +214,7 @@ function buildShelvingAvailability(storageRows = [], temporarySalesRows = [], gr
   return { availability, unsizedSkus }
 }
 
-function buildImportPreview(csvRows, storageRows, temporarySalesRows = [], bundleRows = [], bundleComponentRows = [], groupCode = 'MOB') {
+function buildImportPreview(csvRows, storageRows, temporarySalesRows = [], bundleRows = [], bundleComponentRows = [], groupCode = 'MOB', arklinePickRows = []) {
   if (!csvRows.length) {
     throw new Error('CSV file is empty.')
   }
@@ -240,9 +245,11 @@ function buildImportPreview(csvRows, storageRows, temporarySalesRows = [], bundl
   const bundleByCode = new Map(bundleRows.map((bundle) => [normalizeSku(bundle.bundle_code), bundle]))
   const validStatusSet = new Set(VALID_STATUSES)
   const lines = []
+  const arklineRowNumbers = new Set()
   const duplicateLineKeys = new Map()
   let currentOrderNumber = ''
   let currentStatus = ''
+  let currentOrderDate = ''
 
   bodyRows.forEach((row, bodyIndex) => {
     const rowNumber = bodyIndex + 2
@@ -254,13 +261,26 @@ function buildImportPreview(csvRows, storageRows, temporarySalesRows = [], bundl
     const variationRaw = getCsvValue(row, headerMap, ['Variasi'])
     const qty = parseQty(getCsvValue(row, headerMap, ['Jumlah']))
 
+    if (orderNumber && orderNumber !== currentOrderNumber) currentOrderDate = ''
     if (orderNumber) currentOrderNumber = orderNumber
     if (orderStatus) currentStatus = normalizeStatus(orderStatus)
+    const rowOrderDate = parseArklineDate(getCsvValue(row, headerMap, ['Tanggal Pesanan']))
+    if (rowOrderDate) currentOrderDate = rowOrderDate
 
     const resolvedOrderNumber = orderNumber || currentOrderNumber
     const resolvedStatus = normalizeStatus(orderStatus || currentStatus)
-    const skuId = getSkuCandidates(variantCode, productCode, productName)[0] || normalizeUpper(variantCode || productCode)
-    let size = resolveSize(variationRaw)
+    const skuCandidates = getSkuCandidates(variantCode, productCode, productName)
+    const arklineCandidates = getSkuCandidates(variantCode, productCode)
+    const parsedArklineSku = groupCode === 'MOB' ? arklineCandidates.map(parseArklineSku).find(Boolean) : null
+    const baseArklineSku = arklineCandidates.find((candidate) => /^ARK\d{2}[A-Z]{3}\d{3}$/.test(candidate))
+    const variationSize = resolveSize(variationRaw)
+    const arklineSku = parsedArklineSku || (groupCode === 'MOB' && baseArklineSku && SIZE_TOKENS.includes(variationSize)
+      ? { sku: baseArklineSku, size: variationSize }
+      : null)
+    const skuId = arklineSku?.sku || skuCandidates[0] || normalizeUpper(variantCode || productCode)
+    let size = arklineSku?.size || variationSize
+    const orderDate = currentOrderDate
+    if (arklineSku) arklineRowNumbers.add(rowNumber)
     const isBundleSku = bundleCodes.has(normalizeSku(skuId))
     if (!size && (unsizedSkus.has(normalizeSku(skuId)) || isBundleSku)) size = '-'
     if (!size) size = '-'
@@ -270,10 +290,11 @@ function buildImportPreview(csvRows, storageRows, temporarySalesRows = [], bundl
     if (!skuId) exclusionReason = 'Missing SKU'
     else if (qty <= 0) exclusionReason = 'Qty must be greater than 0'
     else if (!validStatus) exclusionReason = `Status ${resolvedStatus || '-'} is not included`
+    else if (arklineSku && !orderDate) exclusionReason = 'Missing Arkline transaction date'
 
     const included = !exclusionReason
     const key = getStorageKey(skuId, size)
-    let availableQty = included ? Math.max(0, Number(availability.get(key) || 0)) : 0
+    let availableQty = included && !arklineSku ? Math.max(0, Number(availability.get(key) || 0)) : 0
     let appliedQty = included ? Math.min(qty, availableQty) : 0
     let skippedQty = included ? Math.max(0, qty - appliedQty) : 0
 
@@ -364,7 +385,7 @@ function buildImportPreview(csvRows, storageRows, temporarySalesRows = [], bundl
             availability.set(componentKey, Math.max(0, Number(availability.get(componentKey) || 0) - required * appliedQty))
           }
         })
-    } else if (included) {
+    } else if (included && !arklineSku) {
       availability.set(key, Math.max(0, availableQty - appliedQty))
     }
 
@@ -377,6 +398,7 @@ function buildImportPreview(csvRows, storageRows, temporarySalesRows = [], bundl
       rowNumber,
       orderNumber: resolvedOrderNumber,
       orderStatus: resolvedStatus,
+      orderDate,
       skuId,
       productName,
       variationRaw,
@@ -389,6 +411,18 @@ function buildImportPreview(csvRows, storageRows, temporarySalesRows = [], bundl
       skippedQty,
     })
   })
+
+  if (arklineRowNumbers.size) {
+    const arklinePreview = buildArklineImportPreview(
+      lines.filter((line) => arklineRowNumbers.has(line.rowNumber)),
+      storageRows,
+      arklinePickRows
+    )
+    const arklineByRow = new Map(arklinePreview.lines.map((line) => [line.rowNumber, line]))
+    lines.forEach((line, index) => {
+      if (arklineByRow.has(line.rowNumber)) lines[index] = arklineByRow.get(line.rowNumber)
+    })
+  }
 
   const includedLines = lines.filter((line) => line.included)
   const duplicateOrderCount = Array.from(duplicateLineKeys.values()).reduce(
@@ -404,10 +438,11 @@ function buildImportPreview(csvRows, storageRows, temporarySalesRows = [], bundl
     includedLines: includedLines.length,
     excludedLines: lines.length - includedLines.length,
     requestedQty: includedLines.reduce((sum, line) => sum + Number(line.qty || 0), 0),
+    pickOffsetQty: includedLines.reduce((sum, line) => sum + Number(line.pickOffsetQty || 0), 0),
     appliedQty: includedLines.reduce((sum, line) => sum + Number(line.appliedQty || 0), 0),
     skippedQty: includedLines.reduce((sum, line) => sum + Number(line.skippedQty || 0), 0),
     duplicateOrderCount,
-    shortageLineCount: includedLines.filter((line) => Number(line.skippedQty || 0) > 0).length,
+    shortageLineCount: includedLines.filter((line) => Number(line.skippedQty || 0) > 0 || Number(line.balanceAfter) < 0).length,
     missingSkuCount: lines.filter((line) => line.exclusionReason === 'Missing SKU').length,
   }
 }
@@ -459,7 +494,7 @@ async function getCurrentUserEmail() {
 
 function getSchemaMissingMessage(error, groupCode = 'MOB') {
   const detail = normalizeText(error?.message || error?.details)
-  const file = groupCode === 'ARKLINE' ? 'supabase/upload_sales_import_arkline_workflow.sql' : 'supabase/upload_sales_import.sql'
+  const file = groupCode === 'ARKLINE' ? 'supabase/upload_sales_import_arkline_workflow.sql' : 'supabase/upload_sales_import_group_modes.sql and supabase/upload_sales_import_arkline_workflow.sql'
   return `Shelving Upload schema is not ready. Please run ${file} first.${detail ? ` Detail: ${detail}` : ''}`
 }
 
@@ -476,10 +511,15 @@ export default function ShelvingUploadClient({
   bundleComponentRows = [],
   canUpload = false,
   canManage = false,
+  canRetry = false,
+  lockedGroup = '',
   onInventoryChanged,
 }) {
-  const [uploadGroup, setUploadGroup] = useState('MOB')
-  const activeGroupRef = useRef('MOB')
+  const normalizedLockedGroup = normalizeUpper(lockedGroup)
+  const lockedUploadGroup = UPLOAD_GROUP_CODES.includes(normalizedLockedGroup) ? normalizedLockedGroup : ''
+  const initialUploadGroup = lockedUploadGroup || 'MOB'
+  const [uploadGroup, setUploadGroup] = useState(initialUploadGroup)
+  const activeGroupRef = useRef(initialUploadGroup)
   const batchRequestRef = useRef(0)
   const linesRequestRef = useRef(0)
   const [batches, setBatches] = useState([])
@@ -502,6 +542,11 @@ export default function ShelvingUploadClient({
   const [deleteCandidate, setDeleteCandidate] = useState(null)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
+
+  const uploadGroupOptions = useMemo(
+    () => (lockedUploadGroup ? UPLOAD_GROUP_OPTIONS.filter(([value]) => value === lockedUploadGroup) : UPLOAD_GROUP_OPTIONS),
+    [lockedUploadGroup]
+  )
 
   const selectedBatch = useMemo(
     () => batches.find((batch) => batch.group_code === uploadGroup && String(batch.id) === String(selectedBatchId)) || null,
@@ -633,6 +678,27 @@ export default function ShelvingUploadClient({
   }
 
   useEffect(() => {
+    if (!lockedUploadGroup || uploadGroup === lockedUploadGroup) return
+
+    activeGroupRef.current = lockedUploadGroup
+    batchRequestRef.current += 1
+    linesRequestRef.current += 1
+    setBatches([])
+    setSelectedBatchId('')
+    setSelectedLines([])
+    setPreview(null)
+    setFile(null)
+    setNotes('')
+    setLineSearch('')
+    setLineSizeSearch('')
+    setLineFilter('ALL')
+    setLinesLoading(false)
+    setUploadGroup(lockedUploadGroup)
+    setError('')
+    setSuccess('')
+  }, [lockedUploadGroup, uploadGroup])
+
+  useEffect(() => {
     setSelectedBatchId('')
     setSelectedLines([])
     setPreview(null)
@@ -693,13 +759,17 @@ export default function ShelvingUploadClient({
       const parsedRows = workbook
         ? utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], { header: 1, defval: '' })
         : parseCsv(await file.text())
-      const nextPreview = uploadGroup === 'ARKLINE'
+      let nextPreview = uploadGroup === 'ARKLINE'
         ? await (async () => {
           const lines = parseArklineWorkbookRows(parsedRows)
           const picks = await fetchArklinePickRows(lines)
           return buildArklineImportPreview(lines, storageRows, picks)
         })()
         : buildImportPreview(parsedRows, storageRows, temporarySalesRows, bundleRows, bundleComponentRows, uploadGroup)
+      if (uploadGroup === 'MOB' && nextPreview.lines.some((line) => line.orderDate && /^ARK\d{2}[A-Z]{3}\d{3}$/.test(line.skuId))) {
+        const picks = await fetchArklinePickRows(nextPreview.lines.filter((line) => /^ARK\d{2}[A-Z]{3}\d{3}$/.test(line.skuId)))
+        nextPreview = buildImportPreview(parsedRows, storageRows, temporarySalesRows, bundleRows, bundleComponentRows, uploadGroup, picks)
+      }
 
       if (!nextPreview.lines.length) {
         throw new Error('No importable rows were found in this file.')
@@ -806,11 +876,11 @@ export default function ShelvingUploadClient({
         throw postError
       }
 
-      setSuccess(uploadGroup === 'ARKLINE'
-        ? data?.status === 'pending_settlement'
-          ? `${selectedBatch.batch_number} posted. Stock will settle at 21:00 WIB, or use Settle Now.`
-          : `${selectedBatch.batch_number} settled. Pick History ${formatNumber(data?.pick_offset_qty)} pcs; shelving ${formatNumber(data?.applied_qty)} pcs; skipped ${formatNumber(data?.skipped_qty)} pcs.`
-        : `${selectedBatch.batch_number} posted. Applied ${formatNumber(data?.applied_qty)} pcs, skipped ${formatNumber(data?.skipped_qty)} pcs.`
+      setSuccess(data?.status === 'pending_settlement'
+        ? `${selectedBatch.batch_number} posted. Stock will settle at 21:00 WIB, or use Settle Now.`
+        : uploadGroup === 'ARKLINE'
+          ? `${selectedBatch.batch_number} settled. Pick History ${formatNumber(data?.pick_offset_qty)} pcs; shelving ${formatNumber(data?.applied_qty)} pcs; skipped ${formatNumber(data?.skipped_qty)} pcs.`
+          : `${selectedBatch.batch_number} settled. Applied ${formatNumber(data?.applied_qty)} pcs, skipped ${formatNumber(data?.skipped_qty)} pcs.`
       )
       await loadBatches({ keepSelection: true })
       await loadLines(selectedBatch.id)
@@ -825,14 +895,14 @@ export default function ShelvingUploadClient({
   }
 
   async function handleSettleBatch(batch = selectedBatch) {
-    if (!canManage || uploadGroup !== 'ARKLINE' || !batch?.id || batch.status !== 'pending_settlement' || settling) return
+    if (!canManage || !batch?.id || batch.status !== 'pending_settlement' || settling) return
 
     setSettling(true)
     setError('')
     setSuccess('')
     try {
       const actor = await getCurrentUserEmail()
-      const { data, error: settleError } = await supabase.rpc('settle_arkline_sales_import_batch', {
+      const { data, error: settleError } = await supabase.rpc(uploadGroup === 'ARKLINE' ? 'settle_arkline_sales_import_batch' : 'settle_mob_sales_import_batch', {
         p_batch_id: batch.id,
         p_actor_email: actor,
       })
@@ -849,7 +919,7 @@ export default function ShelvingUploadClient({
   }
 
   async function handleRetryBatch(batch = selectedBatch) {
-    if (!canManage || !batch?.id || batch.status !== 'posted' || Number(batch.skipped_qty || 0) <= 0 || retryingId) return
+    if (!canRetry || !canManage || !batch?.id || batch.status !== 'posted' || Number(batch.skipped_qty || 0) <= 0 || retryingId) return
 
     setRetryingId(batch.id)
     setError('')
@@ -890,7 +960,7 @@ export default function ShelvingUploadClient({
 
     try {
       const actor = await getCurrentUserEmail()
-      const { data, error: reverseError } = await supabase.rpc(uploadGroup === 'ARKLINE' ? 'reverse_arkline_sales_import_batch' : 'reverse_upload_sales_import_batch', {
+      const { data, error: reverseError } = await supabase.rpc(uploadGroup === 'ARKLINE' ? 'reverse_arkline_sales_import_batch' : 'reverse_mob_sales_import_batch', {
         p_batch_id: batch.id,
         p_actor_email: actor,
       })
@@ -915,8 +985,9 @@ export default function ShelvingUploadClient({
   }
 
   function handleUploadGroupChange(nextGroup) {
-    if (nextGroup === uploadGroup || saving || posting || settling || retryingId || reversingId || deletingId) return
-    activeGroupRef.current = nextGroup
+    const nextUploadGroup = normalizeUpper(nextGroup)
+    if ((lockedUploadGroup && nextUploadGroup !== lockedUploadGroup) || nextUploadGroup === uploadGroup || saving || posting || settling || retryingId || reversingId || deletingId) return
+    activeGroupRef.current = nextUploadGroup
     batchRequestRef.current += 1
     linesRequestRef.current += 1
     setBatches([])
@@ -924,7 +995,7 @@ export default function ShelvingUploadClient({
     setSelectedLines([])
     setPreview(null)
     setLinesLoading(false)
-    setUploadGroup(nextGroup)
+    setUploadGroup(nextUploadGroup)
     setError('')
     setSuccess('')
   }
@@ -986,10 +1057,7 @@ export default function ShelvingUploadClient({
               <p style={styles.panelHint}>Upload sales CSV for <strong>{uploadGroup}</strong>. Preview and stock deduction stay inside this group.</p>
             </div>
             <div style={styles.groupToggle} role="group" aria-label="Upload group">
-              {[
-                ['MOB', 'MOB'],
-                ['ARKLINE', 'ARKLINE'],
-              ].map(([value, label]) => (
+              {uploadGroupOptions.map(([value, label]) => (
                 <button
                   key={value}
                   type="button"
@@ -998,6 +1066,7 @@ export default function ShelvingUploadClient({
                   style={{
                     ...styles.groupToggleButton,
                     ...(uploadGroup === value ? styles.groupToggleButtonActive : {}),
+                    ...(lockedUploadGroup ? styles.groupToggleButtonLocked : {}),
                   }}
                   aria-pressed={uploadGroup === value}
                 >
@@ -1083,9 +1152,7 @@ export default function ShelvingUploadClient({
           <div style={styles.metricGrid}>
             <Metric label="Orders" value={selectedBatch ? selectedBatch.order_count : preview?.orderCount || 0} />
             <Metric label="Requested" value={selectedBatch ? selectedBatch.requested_qty : preview?.requestedQty || 0} />
-            {uploadGroup === 'ARKLINE' ? (
-              <Metric label="Pick History" value={selectedBatch ? selectedBatch.pick_offset_qty : preview?.pickOffsetQty || 0} />
-            ) : null}
+            <Metric label="Pick History" value={selectedBatch ? selectedBatch.pick_offset_qty : preview?.pickOffsetQty || 0} />
             <Metric label={uploadGroup === 'ARKLINE' ? 'Shelving' : 'Applied'} value={selectedBatch ? selectedBatch.applied_qty : preview?.appliedQty || 0} />
             <Metric label="Skipped" value={selectedBatch ? selectedBatch.skipped_qty : preview?.skippedQty || 0} tone="warning" />
             <Metric
@@ -1099,7 +1166,7 @@ export default function ShelvingUploadClient({
           <p style={styles.metricLegend}>
             {uploadGroup === 'ARKLINE'
               ? 'Requested = total QTY file. Pick History = qty permintaan yang sudah langsung diberikan ke picker pada tanggal yang sama. Shelving = qty yang dikurangi dari shelving Arkline setelah settlement. Skipped = belum ada baris shelving untuk SKU dan size; bisa dicoba lagi setelah lokasinya tersedia.'
-              : <>Orders = jumlah nomor pesanan unik. Requested = total kolom <strong>Jumlah</strong> pada baris yang valid. Applied = qty yang benar-benar dikurangi dari shelving/Temporary Sales. Skipped = qty yang belum bisa dipenuhi. Issues = jumlah baris yang formatnya tidak valid atau stoknya kurang.</>}
+              : <>Orders = jumlah nomor pesanan unik. Requested = total kolom <strong>Jumlah</strong> pada baris yang valid. SKU ARK memakai Pick History hari yang sama dan shelving Arkline. Applied = qty yang benar-benar dikurangi dari shelving/Temporary Sales. Skipped = qty yang belum bisa dipenuhi. Issues = jumlah baris yang formatnya tidak valid atau stoknya kurang.</>}
           </p>
 
           <div style={styles.actionRow}>
@@ -1111,25 +1178,29 @@ export default function ShelvingUploadClient({
             >
               {posting ? 'Posting...' : 'Post Deduction'}
             </button>
-            {uploadGroup === 'ARKLINE' ? (
-              <button
-                type="button"
-                onClick={() => handleSettleBatch(selectedBatch)}
-                disabled={!canManage || selectedBatch?.status !== 'pending_settlement' || settling}
-                style={!canManage || selectedBatch?.status !== 'pending_settlement' || settling ? styles.primaryButtonDisabled : styles.secondaryButton}
-              >
-                {settling ? 'Settling...' : 'Settle Now'}
-              </button>
-            ) : null}
             <button
               type="button"
-              onClick={() => handleRetryBatch(selectedBatch)}
-              disabled={!canManage || !selectedBatch || selectedBatch.status !== 'posted' || Number(selectedBatch.skipped_qty || 0) <= 0 || Boolean(retryingId)}
-              style={!canManage || !selectedBatch || selectedBatch.status !== 'posted' || Number(selectedBatch.skipped_qty || 0) <= 0 || Boolean(retryingId) ? styles.primaryButtonDisabled : styles.secondaryButton}
+              onClick={() => handleSettleBatch(selectedBatch)}
+              disabled={!canManage || selectedBatch?.status !== 'pending_settlement' || settling}
+              style={!canManage || selectedBatch?.status !== 'pending_settlement' || settling ? styles.primaryButtonDisabled : styles.secondaryButton}
             >
-              {retryingId === selectedBatch?.id ? 'Retrying...' : 'Retry Skipped'}
+              {settling ? 'Settling...' : 'Settle Now'}
             </button>
-            <span style={styles.mutedText}>{uploadGroup === 'ARKLINE' ? 'Posted Arkline batches settle at 21:00 WIB unless settled now. Retry only reprocesses skipped quantities.' : 'Retry only reprocesses unapplied quantities. Applied rows are never deducted again.'}</span>
+            {canRetry ? (
+              <button
+                type="button"
+                onClick={() => handleRetryBatch(selectedBatch)}
+                disabled={!canManage || !selectedBatch || selectedBatch.status !== 'posted' || Number(selectedBatch.skipped_qty || 0) <= 0 || Boolean(retryingId)}
+                style={!canManage || !selectedBatch || selectedBatch.status !== 'posted' || Number(selectedBatch.skipped_qty || 0) <= 0 || Boolean(retryingId) ? styles.primaryButtonDisabled : styles.secondaryButton}
+              >
+                {retryingId === selectedBatch?.id ? 'Retrying...' : 'Retry Skipped'}
+              </button>
+            ) : null}
+            <span style={styles.mutedText}>
+              {canRetry
+                ? 'Posted batches settle at 21:00 WIB unless settled now. Retry only reprocesses skipped quantities.'
+                : 'Posted batches settle at 21:00 WIB unless settled now.'}
+            </span>
           </div>
         </article>
       </div>
@@ -1156,7 +1227,7 @@ export default function ShelvingUploadClient({
                   <th style={styles.th}>Uploaded</th>
                   <th style={styles.th}>Orders</th>
                   <th style={styles.th}>Requested</th>
-                  {uploadGroup === 'ARKLINE' ? <th style={styles.th}>Pick History</th> : null}
+                  <th style={styles.th}>Pick History</th>
                   <th style={styles.th}>{uploadGroup === 'ARKLINE' ? 'Shelving' : 'Applied'}</th>
                   <th style={styles.th}>Skipped</th>
                   {uploadGroup === 'ARKLINE' ? <th style={styles.th}>Below Zero</th> : null}
@@ -1166,7 +1237,7 @@ export default function ShelvingUploadClient({
               <tbody>
                 {batches.map((batch) => {
                   const isSelected = String(batch.id) === String(selectedBatchId)
-                  const canReverse = canManage && (batch.status === 'posted' || (uploadGroup === 'ARKLINE' && batch.status === 'pending_settlement'))
+                  const canReverse = canManage && (batch.status === 'posted' || batch.status === 'pending_settlement')
                   const canDelete = canManage && batch.status === 'draft'
 
                   return (
@@ -1181,7 +1252,7 @@ export default function ShelvingUploadClient({
                       <td style={styles.td}>{formatDateTime(batch.uploaded_at)}</td>
                       <td style={styles.numberTd}>{formatNumber(batch.order_count)}</td>
                       <td style={styles.numberTd}>{formatNumber(batch.requested_qty)}</td>
-                      {uploadGroup === 'ARKLINE' ? <td style={styles.numberTd}>{formatNumber(batch.pick_offset_qty)}</td> : null}
+                      <td style={styles.numberTd}>{formatNumber(batch.pick_offset_qty)}</td>
                       <td style={styles.numberTd}>{formatNumber(batch.applied_qty)}</td>
                       <td style={styles.numberTd}>{formatNumber(batch.skipped_qty)}</td>
                       {uploadGroup === 'ARKLINE' ? <td style={styles.numberTd}>{formatNumber(batch.shortage_line_count)}</td> : null}
@@ -1203,7 +1274,7 @@ export default function ShelvingUploadClient({
                           >
                             {reversingId === batch.id ? 'Reversing...' : batch.status === 'pending_settlement' ? 'Cancel' : 'Reverse'}
                           </button>
-                          {uploadGroup === 'ARKLINE' && batch.status === 'pending_settlement' ? (
+                          {batch.status === 'pending_settlement' ? (
                             <button
                               type="button"
                               onClick={() => handleSettleBatch(batch)}
@@ -1213,14 +1284,16 @@ export default function ShelvingUploadClient({
                               {settling ? 'Settling...' : 'Settle Now'}
                             </button>
                           ) : null}
-                          <button
-                            type="button"
-                            onClick={() => handleRetryBatch(batch)}
-                            disabled={!canManage || batch.status !== 'posted' || Number(batch.skipped_qty || 0) <= 0 || Boolean(retryingId)}
-                            style={canManage && batch.status === 'posted' && Number(batch.skipped_qty || 0) > 0 && !retryingId ? styles.smallButton : styles.smallButtonDisabled}
-                          >
-                            {retryingId === batch.id ? 'Retrying...' : 'Retry'}
-                          </button>
+                          {canRetry ? (
+                            <button
+                              type="button"
+                              onClick={() => handleRetryBatch(batch)}
+                              disabled={!canManage || batch.status !== 'posted' || Number(batch.skipped_qty || 0) <= 0 || Boolean(retryingId)}
+                              style={canManage && batch.status === 'posted' && Number(batch.skipped_qty || 0) > 0 && !retryingId ? styles.smallButton : styles.smallButtonDisabled}
+                            >
+                              {retryingId === batch.id ? 'Retrying...' : 'Retry'}
+                            </button>
+                          ) : null}
                           <button
                             type="button"
                             onClick={() => setDeleteCandidate(batch)}
@@ -1339,7 +1412,7 @@ export default function ShelvingUploadClient({
                   <th style={styles.th}>SKU</th>
                   <th style={styles.th}>Size</th>
                   <th style={styles.th}>Qty</th>
-                  {uploadGroup === 'ARKLINE' ? <th style={styles.th}>Pick History</th> : null}
+                  <th style={styles.th}>Pick History</th>
                   <th style={styles.th}>{uploadGroup === 'ARKLINE' ? 'Shelving' : 'Applied'}</th>
                   <th style={styles.th}>Skipped</th>
                   {uploadGroup === 'ARKLINE' ? <th style={styles.th}>Balance</th> : null}
@@ -1355,7 +1428,7 @@ export default function ShelvingUploadClient({
                     <td style={styles.td}>{line.sku_id || '-'}</td>
                     <td style={styles.td}>{line.size || '-'}</td>
                     <td style={styles.quantityTd}>{formatNumber(line.qty)}</td>
-                    {uploadGroup === 'ARKLINE' ? <td style={styles.quantityTd}>{formatNumber(line.pick_offset_qty)}</td> : null}
+                    <td style={styles.quantityTd}>{formatNumber(line.pick_offset_qty)}</td>
                     <td style={styles.quantityTd}>{formatNumber(line.applied_qty)}</td>
                     <td style={styles.quantityTd}>{formatNumber(line.skipped_qty)}</td>
                     {uploadGroup === 'ARKLINE' ? <td style={styles.quantityTd}>{line.balance_after_snapshot == null ? '-' : formatNumber(line.balance_after_snapshot)}</td> : null}
@@ -1504,6 +1577,9 @@ const styles = {
     border: '1px solid #172033',
     background: '#172033',
     color: '#fff',
+  },
+  groupToggleButtonLocked: {
+    cursor: 'default',
   },
   lineFilterToggle: {
     display: 'flex',

@@ -267,6 +267,7 @@ function formatMonthKey(value) {
 
 function buildCalendarEvents({ leaveRowsAll, peopleRows, publicHolidayRows }) {
   const events = []
+  const activePeopleRows = (peopleRows || []).filter((person) => !String(person?.resign_date || '').trim())
 
   for (const row of publicHolidayRows || []) {
     if (!row?.holiday_date) continue
@@ -279,7 +280,7 @@ function buildCalendarEvents({ leaveRowsAll, peopleRows, publicHolidayRows }) {
     })
   }
 
-  for (const person of peopleRows || []) {
+  for (const person of activePeopleRows) {
     const birthdayValue = person?.date_of_birth || person?.birthdate || person?.birth_date
     if (!birthdayValue) continue
     const parsed = new Date(birthdayValue)
@@ -302,6 +303,8 @@ function buildCalendarEvents({ leaveRowsAll, peopleRows, publicHolidayRows }) {
   for (const row of leaveRowsAll || []) {
     const status = String(row?.status || '').toUpperCase()
     if (status === 'REJECTED') continue
+    const profile = resolveLeaveProfile(row, peopleRows)
+    if (profile && String(profile?.resign_date || '').trim()) continue
 
     const startDate = new Date(row?.start_date || '')
     const endDate = new Date(row?.end_date || row?.start_date || '')

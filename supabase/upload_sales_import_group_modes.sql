@@ -1,5 +1,7 @@
 -- Separate shelving sales uploads by warehouse group.
 -- Existing batches are treated as MOB for backward compatibility.
+-- For MOB 21:00 settlement and ARK rows, run upload_sales_import_arkline_workflow.sql
+-- before using the functions below, then schedule upload_sales_import_arkline_2100_cron.sql.
 alter table public.upload_sales_import_batches
   add column if not exists group_code text;
 
@@ -140,12 +142,12 @@ begin
       next_row := next_row + 1;
       insert into public.upload_sales_import_lines (
         batch_id, row_number, order_number, order_status, sku_id,
-        product_name, variation_raw, size, qty, included, exclusion_reason
+        product_name, variation_raw, size, qty, included, exclusion_reason, order_date
       ) values (
         source_line.batch_id, next_row, source_line.order_number, source_line.order_status,
         component.sku, coalesce(component.product_name, component.sku),
         'Expanded from bundle ' || v_bundle_code, coalesce(component.size_label, source_line.size),
-        component_qty::integer, true, null
+        component_qty::integer, true, null, source_line.order_date
       );
     end loop;
 
@@ -157,7 +159,7 @@ begin
 end;
 $$;
 
-create or replace function public.post_upload_sales_import_batch(
+create or replace function public.settle_mob_sales_import_batch(
   p_batch_id uuid,
   p_actor_email text default null
 )
@@ -182,7 +184,13 @@ declare
   normalized_sku text;
   normalized_size text;
   allow_any_size boolean;
+  arkline_result jsonb;
+  total_pick integer := 0;
 begin
+  if current_user <> 'postgres' and not public.arkline_upload_can_manage() then
+    raise exception 'Not allowed to settle MOB uploads';
+  end if;
+
   select *
     into target_batch
   from public.upload_sales_import_batches
@@ -193,11 +201,23 @@ begin
     raise exception 'Shelving sales import batch not found';
   end if;
 
-  if target_batch.status <> 'draft' then
-    raise exception 'Only draft shelving import batches can be posted. Current status: %', target_batch.status;
+  if target_batch.group_code <> 'MOB' or target_batch.status <> 'pending_settlement' then
+    raise exception 'Only pending MOB import batches can be settled. Current status: %', target_batch.status;
   end if;
 
   perform public.expand_upload_bundle_lines(p_batch_id);
+
+  if exists (
+    select 1 from public.upload_sales_import_lines line
+    where line.batch_id = p_batch_id and line.included = true and line.qty > 0
+      and regexp_replace(upper(coalesce(line.sku_id, '')), '[^A-Z0-9]', '', 'g') ~ '^ARK[0-9]{2}[A-Z]{3}[0-9]{3}$'
+  ) then
+    arkline_result := public.settle_arkline_sales_import_batch(p_batch_id, actor_email);
+    total_pick := coalesce((arkline_result->>'pick_offset_qty')::integer, 0);
+    total_applied := coalesce((arkline_result->>'applied_qty')::integer, 0);
+    total_skipped := coalesce((arkline_result->>'skipped_qty')::integer, 0);
+    shortage_lines := coalesce((arkline_result->>'shortage_line_count')::integer, 0);
+  end if;
 
   for import_line in
     select *
@@ -211,6 +231,9 @@ begin
     remaining_qty := import_line.qty;
     line_applied := 0;
     normalized_sku := upper(regexp_replace(coalesce(import_line.sku_id, ''), '[^A-Z0-9]', '', 'g'));
+    if normalized_sku ~ '^ARK[0-9]{2}[A-Z]{3}[0-9]{3}$' then
+      continue;
+    end if;
     normalized_size := upper(regexp_replace(coalesce(import_line.size, ''), '[^A-Z0-9]', '', 'g'));
     if normalized_size = '' then
       normalized_size := '-';
@@ -457,8 +480,13 @@ begin
   update public.upload_sales_import_batches
   set
     status = 'posted',
-    posted_by = actor_email,
-    posted_at = now(),
+    posted_by = coalesce(actor_email, posted_by),
+    posted_at = coalesce(posted_at, now()),
+    settled_at = now(),
+    settled_by = coalesce(actor_email, 'MOB AUTO 21:00'),
+    settlement_error = null,
+    raw_retention_until = now() + interval '7 days',
+    pick_offset_qty = total_pick,
     applied_qty = total_applied,
     skipped_qty = total_skipped,
     shortage_line_count = shortage_lines
@@ -467,12 +495,109 @@ begin
   return jsonb_build_object(
     'batch_id', p_batch_id,
     'status', 'posted',
+    'pick_offset_qty', total_pick,
     'applied_qty', total_applied,
     'skipped_qty', total_skipped,
     'shortage_line_count', shortage_lines
   );
 end;
 $$;
+
+create or replace function public.post_upload_sales_import_batch(
+  p_batch_id uuid,
+  p_actor_email text default null
+)
+returns jsonb
+language plpgsql
+security invoker
+set search_path = ''
+as $$
+declare
+  target_batch public.upload_sales_import_batches%rowtype;
+begin
+  if not public.arkline_upload_can_manage() then
+    raise exception 'Not allowed to manage MOB uploads';
+  end if;
+
+  select * into target_batch
+  from public.upload_sales_import_batches
+  where id = p_batch_id
+  for update;
+
+  if target_batch.id is null or target_batch.group_code <> 'MOB' or target_batch.status <> 'draft' then
+    raise exception 'Only draft MOB upload batches can be posted';
+  end if;
+
+  update public.upload_sales_import_batches
+  set status = 'pending_settlement',
+      posted_by = nullif(trim(coalesce(p_actor_email, '')), ''),
+      posted_at = now(),
+      pick_offset_qty = 0,
+      applied_qty = 0,
+      skipped_qty = 0,
+      shortage_line_count = 0,
+      settlement_error = null,
+      raw_retention_until = 'infinity'::timestamptz,
+      updated_at = now()
+  where id = p_batch_id;
+
+  update public.upload_sales_import_lines
+  set pick_offset_qty = 0,
+      applied_qty = 0,
+      skipped_qty = 0,
+      balance_after_snapshot = null
+  where batch_id = p_batch_id;
+
+  if (now() at time zone 'Asia/Jakarta')::time >= time '21:00' then
+    return public.settle_mob_sales_import_batch(p_batch_id, p_actor_email);
+  end if;
+
+  return jsonb_build_object('batch_id', p_batch_id, 'status', 'pending_settlement');
+end;
+$$;
+
+create or replace function public.settle_pending_mob_sales_import_batches()
+returns jsonb
+language plpgsql
+security invoker
+set search_path = ''
+as $$
+declare
+  pending_batch record;
+  settled_count integer := 0;
+  failed_count integer := 0;
+begin
+  if current_user <> 'postgres' then
+    raise exception 'MOB settlement job must run as postgres';
+  end if;
+
+  for pending_batch in
+    select id from public.upload_sales_import_batches
+    where group_code = 'MOB'
+      and status = 'pending_settlement'
+      and (posted_at at time zone 'Asia/Jakarta')::date <= (now() at time zone 'Asia/Jakarta')::date
+    order by posted_at, id
+  loop
+    begin
+      perform public.settle_mob_sales_import_batch(pending_batch.id, null);
+      settled_count := settled_count + 1;
+    exception when others then
+      failed_count := failed_count + 1;
+      update public.upload_sales_import_batches
+      set settlement_error = sqlerrm, updated_at = now()
+      where id = pending_batch.id;
+    end;
+  end loop;
+
+  return jsonb_build_object('settled', settled_count, 'failed', failed_count);
+end;
+$$;
+
+revoke execute on function public.settle_pending_mob_sales_import_batches() from public, anon, authenticated;
+revoke execute on function public.settle_mob_sales_import_batch(uuid, text) from public, anon;
+grant execute on function public.settle_mob_sales_import_batch(uuid, text) to authenticated;
+revoke execute on function public.post_upload_sales_import_batch(uuid, text) from public, anon;
+grant execute on function public.post_upload_sales_import_batch(uuid, text) to authenticated;
 
 create or replace function public.retry_upload_sales_import_batch(
   p_batch_id uuid,
@@ -516,6 +641,14 @@ begin
 
   perform public.expand_upload_bundle_lines(p_batch_id);
 
+  if exists (
+    select 1 from public.upload_sales_import_lines line
+    where line.batch_id = p_batch_id and line.included = true and line.skipped_qty > 0
+      and regexp_replace(upper(coalesce(line.sku_id, '')), '[^A-Z0-9]', '', 'g') ~ '^ARK[0-9]{2}[A-Z]{3}[0-9]{3}$'
+  ) then
+    perform public.retry_arkline_sales_import_batch(p_batch_id, actor_email);
+  end if;
+
   for import_line in
     select *
     from public.upload_sales_import_lines
@@ -528,6 +661,9 @@ begin
     remaining_qty := import_line.skipped_qty;
     line_applied := 0;
     normalized_sku := upper(regexp_replace(coalesce(import_line.sku_id, ''), '[^A-Z0-9]', '', 'g'));
+    if normalized_sku ~ '^ARK[0-9]{2}[A-Z]{3}[0-9]{3}$' then
+      continue;
+    end if;
     normalized_size := upper(regexp_replace(coalesce(import_line.size, ''), '[^A-Z0-9]', '', 'g'));
     if normalized_size = '' then
       normalized_size := '-';
@@ -728,3 +864,66 @@ begin
   );
 end;
 $$;
+
+create or replace function public.reverse_mob_sales_import_batch(
+  p_batch_id uuid,
+  p_actor_email text default null
+)
+returns jsonb
+language plpgsql
+security invoker
+set search_path = ''
+as $$
+declare
+  target_batch public.upload_sales_import_batches%rowtype;
+  offset_row record;
+  result jsonb;
+  actor_email text := nullif(trim(coalesce(p_actor_email, '')), '');
+begin
+  if not public.arkline_upload_can_manage() then
+    raise exception 'Not allowed to reverse MOB uploads';
+  end if;
+
+  select * into target_batch
+  from public.upload_sales_import_batches
+  where id = p_batch_id
+  for update;
+
+  if target_batch.id is null or target_batch.group_code <> 'MOB' then
+    raise exception 'MOB upload batch not found';
+  end if;
+
+  if target_batch.status = 'pending_settlement' then
+    update public.upload_sales_import_batches
+    set status = 'reversed',
+        reversed_by = actor_email,
+        reversed_at = now(),
+        settlement_error = null,
+        raw_retention_until = now() + interval '7 days',
+        updated_at = now()
+    where id = p_batch_id;
+    return jsonb_build_object('batch_id', p_batch_id, 'status', 'reversed', 'reversed_qty', 0);
+  end if;
+
+  result := public.reverse_upload_sales_import_batch(p_batch_id, actor_email);
+
+  for offset_row in
+    select * from public.upload_arkline_pick_offsets
+    where batch_id = p_batch_id and reversed_at is null
+    for update
+  loop
+    update public.restock_request
+    set sales_upload_credited_qty = greatest(0, sales_upload_credited_qty - offset_row.qty)
+    where id = offset_row.restock_request_id;
+
+    update public.upload_arkline_pick_offsets
+    set reversed_at = now()
+    where id = offset_row.id;
+  end loop;
+
+  return result;
+end;
+$$;
+
+revoke execute on function public.reverse_mob_sales_import_batch(uuid, text) from public, anon;
+grant execute on function public.reverse_mob_sales_import_batch(uuid, text) to authenticated;

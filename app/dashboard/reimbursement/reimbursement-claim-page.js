@@ -53,6 +53,10 @@ function normalizeProfile(row, user) {
   }
 }
 
+function normalizeSnapshotName(value) {
+  return String(value || '').trim().toUpperCase()
+}
+
 function normalizeClaim(row) {
   const attachments = Array.isArray(row?.attachments) ? row.attachments : []
   const categoryName = row?.category?.name || ''
@@ -631,7 +635,7 @@ export default function ReimbursementClaimPage({
     [access.reimbursementApprove, claims, isClaimOwner, selfOnly]
   )
 
-  const filteredClaims = useMemo(() => {
+  const uiFilteredClaimsWithoutRequester = useMemo(() => {
     const keyword = search.trim().toUpperCase()
     const now = new Date()
     const sevenDaysAgo = new Date(now)
@@ -654,13 +658,6 @@ export default function ReimbursementClaimPage({
           .toUpperCase()
           .includes(keyword)
 
-      const matchesRequester =
-        !requesterFilter ||
-        String(item.employee_name_snapshot || item.employee_email_snapshot || '')
-          .trim()
-          .toUpperCase()
-          .includes(String(requesterFilter || '').trim().toUpperCase())
-
       const matchesCategory = !categoryFilter || item.expense_category_id === categoryFilter
       const matchesGroup = !groupFilter || String(item.group || '').toUpperCase() === groupFilter
       const referenceDate = getClaimReferenceDate(item)
@@ -669,9 +666,22 @@ export default function ReimbursementClaimPage({
       const withinRecentPaidWindow =
         item.status !== 'PAID' || monthFilter || yearFilter || (referenceDate ? referenceDate >= sevenDaysAgo : false)
 
-      return matchesKeyword && matchesRequester && matchesCategory && matchesGroup && matchesMonth && matchesYear && withinRecentPaidWindow
+      return matchesKeyword && matchesCategory && matchesGroup && matchesMonth && matchesYear && withinRecentPaidWindow
     })
-  }, [categoryFilter, groupFilter, monthFilter, requesterFilter, search, visibleClaims, yearFilter])
+  }, [categoryFilter, groupFilter, monthFilter, search, visibleClaims, yearFilter])
+
+  const filteredClaims = useMemo(() => {
+    const normalizedRequesterFilter = String(requesterFilter || '').trim().toUpperCase()
+    return uiFilteredClaimsWithoutRequester.filter((item) => {
+      return (
+        !normalizedRequesterFilter ||
+        String(item.employee_name_snapshot || item.employee_email_snapshot || '')
+          .trim()
+          .toUpperCase()
+          .includes(normalizedRequesterFilter)
+      )
+    })
+  }, [requesterFilter, uiFilteredClaimsWithoutRequester])
 
   const groupFilterOptions = useMemo(
     () =>
@@ -683,12 +693,12 @@ export default function ReimbursementClaimPage({
     () =>
       Array.from(
         new Set(
-          visibleClaims
+          uiFilteredClaimsWithoutRequester
             .map((item) => String(item.employee_name_snapshot || item.employee_email_snapshot || '').trim())
             .filter(Boolean)
         )
       ).sort((a, b) => a.localeCompare(b, undefined, { numeric: true })),
-    [visibleClaims]
+    [uiFilteredClaimsWithoutRequester]
   )
 
   useEffect(() => {
@@ -1079,7 +1089,7 @@ export default function ReimbursementClaimPage({
         const payload = {
           employee_authenticated_id: profile.authenticated_id || null,
           employee_email_snapshot: profile.email || null,
-          employee_name_snapshot: profile.display_name || null,
+          employee_name_snapshot: normalizeSnapshotName(profile.display_name) || null,
           expense_date: row.expense_date,
           expense_category_id: Number(row.expense_category_id),
           status: 'SUBMITTED',

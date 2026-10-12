@@ -304,11 +304,18 @@ function buildGradeASimpleSummaryLines(rows = [], fallback = '') {
   return Array.from(grouped.values())
     .sort((left, right) => left.label.localeCompare(right.label))
     .map((item) => ({
-      depth: 0,
+      depth: 1,
       label: item.label,
       qty: item.qty,
       text: `${item.label} = ${formatNumber(item.qty)} pcs.`,
     }))
+}
+
+function buildRejectCategorySummaryLines(rows = [], fallback = '') {
+  return buildGradeASimpleSummaryLines(rows, fallback).map((item) => ({
+    ...item,
+    text: `${item.label} = ${formatNumber(item.qty)} pcs.`,
+  }))
 }
 
 function buildGrnSummaryCopyText(selectedInbound, summary, options = {}) {
@@ -338,16 +345,22 @@ function buildGrnSummaryCopyText(selectedInbound, summary, options = {}) {
   if (summary.totalReturQty > 0) {
     lines.push(`*Total Reject:* ${formatNumber(summary.totalReturQty)} pcs.`)
 
-    if (summary.returQcQty > 0) {
-      lines.push(`\t- Reject QC: ${formatNumber(summary.returQcQty)} pcs.`)
-    }
+    if (useGradeACategorySummary && (summary.rejectCategorySummaryLines || []).length) {
+      summary.rejectCategorySummaryLines.forEach((item) => {
+        lines.push(`${'\t'.repeat(Number(item.depth || 0))}${item.label || item.text} = ${formatNumber(item.qty)} pcs.`)
+      })
+    } else {
+      if (summary.returQcQty > 0) {
+        lines.push(`\t- Reject QC: ${formatNumber(summary.returQcQty)} pcs.`)
+      }
 
-    if (summary.returPlQty > 0) {
-      lines.push(`\t- Reject Packing List: ${formatNumber(summary.returPlQty)} pcs.`)
-    }
+      if (summary.returPlQty > 0) {
+        lines.push(`\t- Reject Packing List: ${formatNumber(summary.returPlQty)} pcs.`)
+      }
 
-    if (summary.returBongkarQty > 0) {
-      lines.push(`\t- Reject Bongkar: ${formatNumber(summary.returBongkarQty)} pcs.`)
+      if (summary.returBongkarQty > 0) {
+        lines.push(`\t- Reject Bongkar: ${formatNumber(summary.returBongkarQty)} pcs.`)
+      }
     }
   }
 
@@ -570,7 +583,28 @@ async function loadAdminGrnSummary(supabase, selectedGrn = '') {
       .limit(5000),
     supabase
       .from('warehouse_returns')
-      .select('id, qty, source_phase')
+      .select(`
+        id,
+        qty,
+        source_phase,
+        category_id,
+        model_name,
+        variant_name,
+        source_variant_code,
+        categories:dir_categories!category_id (
+          id,
+          category_name,
+          full_name
+        ),
+        product_model:product_model_id (
+          id,
+          categories:dir_categories!category_id (
+            id,
+            category_name,
+            full_name
+          )
+        )
+      `)
       .eq('inbound_id', selectedInbound.id)
       .limit(5000),
   ])
@@ -618,6 +652,7 @@ async function loadAdminGrnSummary(supabase, selectedGrn = '') {
   const productSummary = itemName || fallbackItemName
   const gradeABreakdownRows = buildGradeBreakdownRows(plBreakdownRows, productSummary)
   const gradeACategorySummaryLines = buildGradeASimpleSummaryLines(plBreakdownRows, productSummary)
+  const rejectCategorySummaryLines = buildRejectCategorySummaryLines(returnRows, productSummary)
 
   return {
     grnOptions,
@@ -646,6 +681,7 @@ async function loadAdminGrnSummary(supabase, selectedGrn = '') {
       productSummary,
       gradeABreakdownRows,
       gradeACategorySummaryLines,
+      rejectCategorySummaryLines,
     },
     error: '',
   }
@@ -780,11 +816,24 @@ function AdminGrnSummaryCard({
               {summary.totalReturQty > 0 ? (
                 <div className={styles.grnSummaryRejectBlock}>
                   <p className={styles.grnSummaryStrongLine}>Total Reject: {formatNumber(summary.totalReturQty)} pcs.</p>
-                  <div className={styles.grnSummarySubLines}>
-                    {summary.returQcQty > 0 ? <p>- Reject QC: {formatNumber(summary.returQcQty)} pcs.</p> : null}
-                    {summary.returPlQty > 0 ? <p>- Reject Packing List: {formatNumber(summary.returPlQty)} pcs.</p> : null}
-                    {summary.returBongkarQty > 0 ? <p>- Reject Bongkar: {formatNumber(summary.returBongkarQty)} pcs.</p> : null}
-                  </div>
+                  {useGradeACategorySummary && (summary.rejectCategorySummaryLines || []).length ? (
+                    <div className={styles.grnSummaryCategoryTree}>
+                      {summary.rejectCategorySummaryLines.map((item, index) => (
+                        <p
+                          key={`reject-${item.depth}-${item.text}-${index}`}
+                          className={styles[`grnSummaryTreeDepth${Math.min(Number(item.depth || 0), 2)}`]}
+                        >
+                          {item.label || item.text} = {formatNumber(item.qty)} pcs.
+                        </p>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className={styles.grnSummarySubLines}>
+                      {summary.returQcQty > 0 ? <p>- Reject QC: {formatNumber(summary.returQcQty)} pcs.</p> : null}
+                      {summary.returPlQty > 0 ? <p>- Reject Packing List: {formatNumber(summary.returPlQty)} pcs.</p> : null}
+                      {summary.returBongkarQty > 0 ? <p>- Reject Bongkar: {formatNumber(summary.returBongkarQty)} pcs.</p> : null}
+                    </div>
+                  )}
                 </div>
               ) : null}
               <p>Total: {formatNumber(summary.totalSummaryQty)} pcs [{getSjComparisonLabel(summary.sjVarianceQty)}].</p>

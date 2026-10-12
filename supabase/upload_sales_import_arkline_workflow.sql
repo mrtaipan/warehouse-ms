@@ -102,6 +102,9 @@ alter table public.upload_warehouse_storage_movements
     and (
       (qty_before >= 0 and qty_after >= 0)
       or source_type = 'upload_arkline_sales_import'
+      or (source_type = 'upload_sales_import'
+        and movement_type = 'REVERSE'
+        and location_snapshot->>'group_code' = 'ARKLINE')
     )
   );
 
@@ -144,7 +147,7 @@ begin
   where id = p_batch_id
   for update;
 
-  if target_batch.id is null or target_batch.group_code <> 'ARKLINE' then
+  if target_batch.id is null or target_batch.group_code not in ('ARKLINE', 'MOB') then
     raise exception 'Arkline upload batch not found';
   end if;
   if target_batch.status = 'posted' and target_batch.settled_at is not null then
@@ -165,6 +168,7 @@ begin
   for lock_key in
     select distinct sku_id, size from public.upload_sales_import_lines
     where batch_id = p_batch_id and included = true and qty > 0
+      and regexp_replace(upper(coalesce(sku_id, '')), '[^A-Z0-9]', '', 'g') ~ '^ARK[0-9]{2}[A-Z]{3}[0-9]{3}$'
     order by sku_id, size
   loop
     perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext(lock_key.sku_id), pg_catalog.hashtext(lock_key.size));
@@ -173,6 +177,7 @@ begin
   for import_line in
     select * from public.upload_sales_import_lines
     where batch_id = p_batch_id and included = true and qty > 0
+      and regexp_replace(upper(coalesce(sku_id, '')), '[^A-Z0-9]', '', 'g') ~ '^ARK[0-9]{2}[A-Z]{3}[0-9]{3}$'
     order by row_number, id
     for update
   loop
@@ -181,7 +186,8 @@ begin
     if normalized_sku !~ '^ARK[0-9]{2}[A-Z]{3}[0-9]{3}$'
        or normalized_size = ''
        or import_line.order_date is null
-       or upper(coalesce(import_line.order_status, '')) not in ('PROCESSING', 'SHIPPED') then
+       or (target_batch.group_code = 'ARKLINE' and upper(coalesce(import_line.order_status, '')) not in ('PROCESSING', 'SHIPPED'))
+       or (target_batch.group_code = 'MOB' and lower(coalesce(import_line.order_status, '')) not in ('packaged', 'ship', 'shipped')) then
       raise exception 'Invalid Arkline line %: SKU, size, date and status are required', import_line.row_number;
     end if;
     perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext(normalized_sku), pg_catalog.hashtext(normalized_size));
@@ -345,6 +351,17 @@ begin
     end if;
   end loop;
 
+  if target_batch.group_code = 'MOB' then
+    return jsonb_build_object(
+      'batch_id', p_batch_id,
+      'status', 'pending_settlement',
+      'pick_offset_qty', total_pick,
+      'applied_qty', total_shelving,
+      'skipped_qty', total_skipped,
+      'shortage_line_count', shortage_lines
+    );
+  end if;
+
   update public.upload_sales_import_batches
   set status = 'posted',
       settled_at = now(),
@@ -501,13 +518,14 @@ begin
   from public.upload_sales_import_batches
   where id = p_batch_id
   for update;
-  if target_batch.id is null or target_batch.group_code <> 'ARKLINE' or target_batch.status <> 'posted' then
+  if target_batch.id is null or target_batch.group_code not in ('ARKLINE', 'MOB') or target_batch.status <> 'posted' then
     raise exception 'Posted Arkline upload batch not found';
   end if;
 
   for lock_key in
     select distinct sku_id, size from public.upload_sales_import_lines
     where batch_id = p_batch_id and included = true and skipped_qty > 0
+      and regexp_replace(upper(coalesce(sku_id, '')), '[^A-Z0-9]', '', 'g') ~ '^ARK[0-9]{2}[A-Z]{3}[0-9]{3}$'
     order by sku_id, size
   loop
     perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext(lock_key.sku_id), pg_catalog.hashtext(lock_key.size));
@@ -516,6 +534,7 @@ begin
   for import_line in
     select * from public.upload_sales_import_lines
     where batch_id = p_batch_id and included = true and skipped_qty > 0
+      and regexp_replace(upper(coalesce(sku_id, '')), '[^A-Z0-9]', '', 'g') ~ '^ARK[0-9]{2}[A-Z]{3}[0-9]{3}$'
     order by row_number, id
     for update
   loop
