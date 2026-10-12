@@ -33,6 +33,14 @@ declare
   can_manage_upload boolean;
 begin
   if actor_id is null then
+    if current_user = 'postgres' and tg_op = 'UPDATE' then
+      if old.request_status = 'completed'
+        and new.request_status = 'completed'
+        and to_jsonb(new) - 'sales_upload_credited_qty'
+          is not distinct from to_jsonb(old) - 'sales_upload_credited_qty' then
+        return new;
+      end if;
+    end if;
     raise exception 'Authentication is required for restock request changes.' using errcode = '42501';
   end if;
 

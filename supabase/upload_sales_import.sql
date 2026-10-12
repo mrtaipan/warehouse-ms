@@ -13,6 +13,7 @@ create table if not exists public.upload_sales_import_batches (
   file_name text,
   file_hash text,
   source_channel text not null default 'jubelio',
+  group_code text not null default 'MOB',
   status text not null default 'draft',
   valid_statuses text[] not null default array['packaged', 'ship', 'shipped'],
   uploaded_by text,
@@ -38,7 +39,6 @@ create table if not exists public.upload_sales_import_batches (
   created_at timestamp with time zone not null default now(),
   updated_at timestamp with time zone not null default now(),
   constraint upload_sales_import_batches_batch_number_key unique (batch_number),
-  constraint upload_sales_import_batches_file_hash_key unique (file_hash),
   constraint upload_sales_import_batches_status_check
     check (status in ('draft', 'posted', 'cancelled', 'reversed')),
   constraint upload_sales_import_batches_qty_check
@@ -56,6 +56,35 @@ create table if not exists public.upload_sales_import_batches (
       and missing_sku_count >= 0
     )
 );
+
+alter table public.upload_sales_import_batches
+  add column if not exists group_code text not null default 'MOB';
+
+update public.upload_sales_import_batches
+set group_code = 'MOB'
+where group_code is null
+   or upper(trim(group_code)) not in ('MOB', 'ARKLINE');
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conrelid = 'public.upload_sales_import_batches'::regclass
+      and conname = 'upload_sales_import_batches_group_code_check'
+  ) then
+    alter table public.upload_sales_import_batches
+      add constraint upload_sales_import_batches_group_code_check
+      check (group_code in ('MOB', 'ARKLINE'));
+  end if;
+end $$;
+
+alter table public.upload_sales_import_batches
+  drop constraint if exists upload_sales_import_batches_file_hash_key;
+
+create unique index if not exists upload_sales_import_batches_group_file_hash_key
+  on public.upload_sales_import_batches (group_code, file_hash)
+  where file_hash is not null;
 
 alter table public.upload_sales_import_batches
   add column if not exists order_count integer not null default 0;
@@ -140,6 +169,9 @@ create table if not exists public.upload_warehouse_storage_movements (
     check (qty_before >= 0 and qty_after >= 0 and qty_delta <> 0)
 );
 
+create index if not exists upload_sales_import_batches_group_idx
+  on public.upload_sales_import_batches (group_code, uploaded_at desc);
+
 create index if not exists upload_sales_import_batches_status_idx
   on public.upload_sales_import_batches (status, uploaded_at desc);
 
@@ -196,7 +228,12 @@ declare
   direct_qty numeric;
   component_qty numeric;
   next_row integer;
+  v_group_code text;
 begin
+  select coalesce(nullif(upper(trim(group_code)), ''), 'MOB')
+    into v_group_code
+  from public.upload_sales_import_batches
+  where id = p_batch_id;
   select coalesce(max(row_number), 0) into next_row
   from public.upload_sales_import_lines
   where batch_id = p_batch_id;
@@ -226,7 +263,10 @@ begin
     select coalesce(sum(stock.qty), 0)
       into direct_qty
     from public.warehouse_storage stock
-    where regexp_replace(upper(coalesce(stock.sku_id, '')), '[^A-Z0-9]', '', 'g') = regexp_replace(upper(v_bundle_code), '[^A-Z0-9]', '', 'g')
+    join public.dir_rack_locations stock_location
+      on stock_location.id = stock.rack_location_id
+    where coalesce(nullif(upper(trim(stock_location.group_code)), ''), 'MOB') = v_group_code
+      and regexp_replace(upper(coalesce(stock.sku_id, '')), '[^A-Z0-9]', '', 'g') = regexp_replace(upper(v_bundle_code), '[^A-Z0-9]', '', 'g')
       and (coalesce(nullif(trim(source_line.size), ''), '-') = '-'
         or coalesce(nullif(trim(stock.size), ''), '-') = coalesce(nullif(trim(source_line.size), ''), '-'));
 
@@ -235,6 +275,7 @@ begin
     from public.warehouse_temporary_sales_items temp
     where temp.status = 'IN_TEMPORARY_AREA'
       and coalesce(temp.area_type, 'SALES') = 'SALES'
+      and coalesce(nullif(upper(trim(temp.group_code)), ''), 'MOB') = v_group_code
       and regexp_replace(upper(coalesce(temp.sku_id, temp.source_variant_code, '')), '[^A-Z0-9]', '', 'g') = regexp_replace(upper(v_bundle_code), '[^A-Z0-9]', '', 'g')
       and (coalesce(nullif(trim(source_line.size), ''), '-') = '-'
         or coalesce(nullif(trim(temp.size), ''), '-') = coalesce(nullif(trim(source_line.size), ''), '-'));
@@ -391,6 +432,7 @@ begin
         from public.warehouse_temporary_sales_items temporary_item
         where temporary_item.status = 'IN_TEMPORARY_AREA'
           and coalesce(temporary_item.area_type, 'SALES') = 'SALES'
+          and coalesce(nullif(upper(trim(temporary_item.group_code)), ''), 'MOB') = coalesce(nullif(upper(trim(target_batch.group_code)), ''), 'MOB')
           and coalesce(temporary_item.qty_in_area, 0) > 0
           and exists (
             select 1
@@ -497,6 +539,7 @@ begin
       join public.dir_rack_locations location
         on location.id = storage.rack_location_id
       where upper(trim(coalesce(location.location_type, ''))) = 'SHELVING'
+        and coalesce(nullif(upper(trim(location.group_code)), ''), 'MOB') = coalesce(nullif(upper(trim(target_batch.group_code)), ''), 'MOB')
         and coalesce(storage.qty, 0) > 0
         and exists (
           select 1
@@ -697,7 +740,8 @@ begin
         temporary_item.entered_at
       from public.warehouse_temporary_sales_items temporary_item
       where temporary_item.status = 'IN_TEMPORARY_AREA'
-        and coalesce(temporary_item.area_type, 'SALES') = 'SALES'
+          and coalesce(temporary_item.area_type, 'SALES') = 'SALES'
+          and coalesce(nullif(upper(trim(temporary_item.group_code)), ''), 'MOB') = coalesce(nullif(upper(trim(target_batch.group_code)), ''), 'MOB')
         and coalesce(temporary_item.qty_in_area, 0) > 0
         and exists (
           select 1
@@ -772,6 +816,7 @@ begin
       join public.dir_rack_locations location
         on location.id = storage.rack_location_id
       where upper(trim(coalesce(location.location_type, ''))) = 'SHELVING'
+        and coalesce(nullif(upper(trim(location.group_code)), ''), 'MOB') = coalesce(nullif(upper(trim(target_batch.group_code)), ''), 'MOB')
         and coalesce(storage.qty, 0) > 0
         and exists (
           select 1

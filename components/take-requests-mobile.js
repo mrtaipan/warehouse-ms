@@ -459,6 +459,20 @@ export default function TakeRequestsMobile() {
 
     }
 
+    let supportsArklinePickSnapshot = false
+    if (normalizeRequestSource(selectedRequest.source_type) === 'ARKLINE') {
+      const { error: snapshotSchemaError } = await supabase
+        .from(TAKE_REQUESTS_TABLE)
+        .select('source_sku_id, fulfilled_qty')
+        .limit(1)
+      if (snapshotSchemaError && !['42703', 'PGRST204'].includes(snapshotSchemaError.code)) {
+        setError(snapshotSchemaError.message)
+        setCompletingId('')
+        return
+      }
+      supportsArklinePickSnapshot = !snapshotSchemaError
+    }
+
     const pickerEmail = await getCurrentUserEmail()
     const selectedSourceLabel =
       selectedSourceValue === 'unrecorded'
@@ -525,6 +539,10 @@ export default function TakeRequestsMobile() {
       .update({
         take_from: selectedSourceLabel,
         storage_id: selectedSourceStorageId,
+        ...(supportsArklinePickSnapshot ? {
+          source_sku_id: sourceEntrySnapshot?.sku_id || sourceOptions.find((item) => String(item.storageId) === selectedSourceValue)?.skuId || selectedRequest.search_term || null,
+          fulfilled_qty: fulfilledQty,
+        } : {}),
         request_status: 'completed',
         completed_at: new Date().toISOString(),
         completed_by: pickerEmail,
