@@ -994,7 +994,105 @@
   gap: 10px;
 }
 
+.itemSearchTitleRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.itemSearchTitleRow h2 {
+  margin-right: 2px;
+}
+
+.itemSearchFilterBar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+
+.itemSearchGroupToggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 3px;
+  border: 1px solid #dbe4ef;
+  border-radius: 999px;
+  background: #f8fafc;
+  flex-shrink: 0;
+}
+
+.itemSearchGroupButton,
+.itemSearchGroupButtonActive {
+  min-height: 26px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  padding: 0 9px;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 850;
+  cursor: pointer;
+}
+
+.itemSearchGroupButton {
+  background: transparent;
+  color: #64748b;
+}
+
+.itemSearchGroupButtonActive {
+  background: #0f172a;
+  border-color: #0f172a;
+  color: #ffffff;
+}
+
+.itemSearchGroupButton:disabled,
+.itemSearchGroupButtonActive:disabled {
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
+.itemSearchSizeFilter {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 850;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.itemSearchSizeFilter select {
+  min-height: 36px;
+  min-width: 120px;
+  border: 1px solid #dbe4ef;
+  border-radius: 12px;
+  background: #ffffff;
+  color: #0f172a;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0;
+  text-transform: none;
+  padding: 0 34px 0 12px;
+}
+
+.itemSearchSizeFilter select:disabled {
+  background: #f8fafc;
+  color: #94a3b8;
+  cursor: not-allowed;
+}
+
+.itemSearchCombobox {
+  position: relative;
+  min-width: 0;
+}
+
 .itemSearchInput {
+  width: 100%;
   min-width: 0;
   height: 42px;
   padding: 0 13px;
@@ -1029,6 +1127,61 @@
 .itemSearchButton:disabled {
   cursor: not-allowed;
   opacity: 0.6;
+}
+
+.itemSearchDropdown {
+  position: absolute;
+  inset: calc(100% + 6px) 0 auto 0;
+  z-index: 5;
+  padding: 4px;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  background: #ffffff;
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.12);
+  max-height: min(320px, 42vh);
+  overflow-y: auto;
+}
+
+.itemSearchDropdown p {
+  margin: 0;
+  padding: 10px 12px;
+  color: #64748b;
+  font-size: 13px;
+}
+
+.itemSearchSuggestion {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  min-height: 42px;
+  padding: 9px 12px;
+  border: 0;
+  border-radius: 8px;
+  background: #ffffff;
+  text-align: left;
+  cursor: pointer;
+}
+
+.itemSearchSuggestion:hover,
+.itemSearchSuggestion:focus-visible {
+  background: #f1f5f9;
+  outline: none;
+}
+
+.itemSearchSuggestion strong {
+  color: #0f172a;
+  font-size: 13px;
+  line-height: 1.4;
+  flex-shrink: 0;
+}
+
+.itemSearchSuggestion span {
+  min-width: 0;
+  color: #475569;
+  font-size: 13px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
 }
 
 .itemSearchError,
@@ -1091,6 +1244,24 @@
   font-size: 13px;
   font-weight: 850;
   text-align: right;
+}
+
+.itemSearchLocationBlock {
+  display: grid;
+  justify-items: end;
+  gap: 4px;
+}
+
+.itemSearchLocationBlock span {
+  display: inline-flex;
+  width: fit-content;
+  margin: 0;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: #ecfeff;
+  color: #0f766e;
+  font-size: 11px;
+  font-weight: 900;
 }
 
 .accentCard {
@@ -1601,6 +1772,39 @@
 
   .itemSearchResultCard p {
     text-align: left;
+  }
+
+  .itemSearchFilterBar,
+  .itemSearchSizeFilter {
+    align-items: stretch;
+    width: 100%;
+  }
+
+  .itemSearchTitleRow {
+    align-items: flex-start;
+  }
+
+  .itemSearchGroupToggle {
+    max-width: 100%;
+    overflow-x: auto;
+  }
+
+  .itemSearchGroupButton,
+  .itemSearchGroupButtonActive {
+    min-width: 56px;
+  }
+
+  .itemSearchSizeFilter {
+    display: grid;
+    gap: 6px;
+  }
+
+  .itemSearchSizeFilter select {
+    width: 100%;
+  }
+
+  .itemSearchLocationBlock {
+    justify-items: start;
   }
 
   .itemSearchButton,

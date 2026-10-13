@@ -895,14 +895,14 @@ begin
 
   if target_batch.status = 'pending_settlement' then
     update public.upload_sales_import_batches
-    set status = 'reversed',
-        reversed_by = actor_email,
-        reversed_at = now(),
+    set status = 'cancelled',
+        cancelled_by = actor_email,
+        cancelled_at = now(),
         settlement_error = null,
         raw_retention_until = now() + interval '7 days',
         updated_at = now()
     where id = p_batch_id;
-    return jsonb_build_object('batch_id', p_batch_id, 'status', 'reversed', 'reversed_qty', 0);
+    return jsonb_build_object('batch_id', p_batch_id, 'status', 'cancelled', 'reversed_qty', 0);
   end if;
 
   result := public.reverse_upload_sales_import_batch(p_batch_id, actor_email);

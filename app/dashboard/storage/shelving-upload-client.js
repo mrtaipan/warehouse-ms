@@ -960,7 +960,10 @@ export default function ShelvingUploadClient({
 
     try {
       const actor = await getCurrentUserEmail()
-      const { data, error: reverseError } = await supabase.rpc(uploadGroup === 'ARKLINE' ? 'reverse_arkline_sales_import_batch' : 'reverse_mob_sales_import_batch', {
+      const action = batch.status === 'pending_settlement'
+        ? 'cancel_upload_sales_import_batch'
+        : uploadGroup === 'ARKLINE' ? 'reverse_arkline_sales_import_batch' : 'reverse_mob_sales_import_batch'
+      const { data, error: reverseError } = await supabase.rpc(action, {
         p_batch_id: batch.id,
         p_actor_email: actor,
       })
@@ -1238,7 +1241,7 @@ export default function ShelvingUploadClient({
                 {batches.map((batch) => {
                   const isSelected = String(batch.id) === String(selectedBatchId)
                   const canReverse = canManage && (batch.status === 'posted' || batch.status === 'pending_settlement')
-                  const canDelete = canManage && batch.status === 'draft'
+                  const canDelete = canManage && ['draft', 'cancelled', 'reversed'].includes(batch.status)
 
                   return (
                     <tr key={batch.id} style={isSelected ? styles.activeRow : undefined}>
@@ -1317,10 +1320,14 @@ export default function ShelvingUploadClient({
         <div style={styles.confirmOverlay}>
           <div style={styles.confirmCard}>
             <div>
-              <p style={styles.confirmEyebrow}>Delete draft upload</p>
+              <p style={styles.confirmEyebrow}>Delete upload batch</p>
               <h3 style={styles.confirmTitle}>{deleteCandidate.batch_number}</h3>
               <p style={styles.confirmText}>
-                This will remove the draft batch and its temporary line detail. Stock will not change because this batch has not been posted.
+                {deleteCandidate.status === 'reversed'
+                  ? 'This removes the reversed batch, its lines, and upload movement history. Any applied deduction was already undone; deleting will not change stock again.'
+                  : deleteCandidate.status === 'cancelled'
+                    ? 'This removes the cancelled batch and its lines. No stock was deducted.'
+                    : 'This removes the draft batch and its lines. No stock was deducted.'}
               </p>
             </div>
             <div style={styles.confirmActions}>
@@ -1338,7 +1345,7 @@ export default function ShelvingUploadClient({
                 style={styles.smallDeleteButton}
                 disabled={Boolean(deletingId)}
               >
-                {deletingId ? 'Deleting...' : 'Delete Draft'}
+                {deletingId ? 'Deleting...' : 'Delete Batch'}
               </button>
             </div>
           </div>

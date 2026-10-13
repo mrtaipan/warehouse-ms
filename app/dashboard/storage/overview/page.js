@@ -7818,8 +7818,9 @@ export default function StorageOverviewPage() {
                           ...(locationType === 'RETUR_KEEPING' && temporaryStoreModalRows.some((row) => normalizeFilterValue(row.area_type || 'SALES') !== 'SALES') ? styles.controlDisabled : {}),
                         }}
                         aria-pressed={temporaryStoreForm.locationType === locationType}
+                        title={locationType === 'RETUR_KEEPING' ? 'Temp. Retur Keeping' : undefined}
                       >
-                        {locationType === 'PALLET' ? 'Pallet' : locationType === 'SHELVING' ? 'Shelving' : 'Temp. Retur Keeping'}
+                        {locationType === 'PALLET' ? 'Pallet' : locationType === 'SHELVING' ? 'Shelving' : 'Retur Keep.'}
                       </button>
                     ))}
                   </div>
