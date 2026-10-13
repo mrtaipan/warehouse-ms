@@ -1138,6 +1138,15 @@ export default function ReturReportClient({ rows, canAdd = false }) {
                       </select>
                     </div>
                   ) : null}
+                  {categoryOptions.length ? (
+                    <div className={reportStyles.field}>
+                      <label htmlFor="qc-retur-prep-category-filter">Category</label>
+                      <select id="qc-retur-prep-category-filter" className={reportStyles.input} value={categoryFilter} onChange={(event) => updateFilter(setCategoryFilter, event.target.value)}>
+                        <option value="">All Category</option>
+                        {categoryOptions.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+                      </select>
+                    </div>
+                  ) : null}
                   {modelOptions.length ? (
                     <div className={reportStyles.field}>
                       <label htmlFor="qc-retur-prep-model-filter">Model-Variant</label>
