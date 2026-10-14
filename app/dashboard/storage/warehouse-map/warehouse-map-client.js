@@ -752,12 +752,9 @@ function aggregateStorageDisplayEntries(entries = []) {
   entries.forEach((entry) => {
     const key = [
       String(entry.rack_location_id || ''),
-      normalizeStorageDisplayToken(entry.sku_id || entry.source_variant_code || ''),
-      normalizeStorageDisplayToken(entry.source_variant_code || ''),
-      String(entry.item_name || '').trim().toUpperCase(),
+      normalizeStorageDisplayToken(entry.sku_id || ''),
+      normalizeStorageDisplayToken(entry.item_name || ''),
       normalizeSizeValue(entry.size),
-      String(entry.category_id || ''),
-      String(entry.brand_code || '').trim().toUpperCase(),
     ].join('|')
     const existing = groups.get(key)
 

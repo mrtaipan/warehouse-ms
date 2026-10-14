@@ -73,6 +73,24 @@ function getLocationKey(value) {
   return String(value || '').trim()
 }
 
+function buildLocationSummary(labels = []) {
+  const uniqueLocations = Array.from(
+    new Set(
+      labels
+        .map((label) => String(label || '').trim())
+        .filter((label) => label && label !== 'Location is not found')
+    )
+  )
+
+  if (uniqueLocations.length === 0) {
+    return null
+  }
+
+  return `${uniqueLocations.length} Registered Location${uniqueLocations.length === 1 ? '' : 's'} - ${uniqueLocations
+    .slice(0, 2)
+    .join(', ')}${uniqueLocations.length > 2 ? ' ...' : ''}`
+}
+
 function normalizeText(value) {
   return String(value || '').trim().toUpperCase()
 }
@@ -248,9 +266,18 @@ function normalizeSizeValue(value) {
   return normalizeText(value).replace(/\s+/g, '')
 }
 
+function isUnspecifiedSize(value) {
+  const normalizedValue = normalizeSizeValue(value)
+  return normalizedValue === '' || normalizedValue === '-'
+}
+
 function matchesRequestedSize(entrySize, requestedSize) {
   if (!requestedSize) {
     return true
+  }
+
+  if (isUnspecifiedSize(requestedSize)) {
+    return isUnspecifiedSize(entrySize)
   }
 
   return normalizeSizeValue(entrySize) === normalizeSizeValue(requestedSize)
@@ -465,6 +492,57 @@ async function fetchOpenRequests() {
   return result.data || []
 }
 
+async function refreshMissingRequestLocations(rows = [], rackLocations = []) {
+  const staleRows = rows.filter(
+    (row) =>
+      /^Location is not found$/i.test(String(row?.take_from || '').trim()) &&
+      String(row?.search_term || row?.item_name || '').trim()
+  )
+
+  if (staleRows.length === 0 || rackLocations.length === 0) {
+    return rows
+  }
+
+  const locationById = new Map(rackLocations.map((item) => [getLocationKey(item.id), item]))
+  const refreshedRows = await Promise.all(
+    staleRows.map(async (row) => {
+      try {
+        const allowedRackLocationIds = getAllowedRackLocationIds(rackLocations, row.source_type)
+        const matches = await fetchStorageMatches(
+          row.search_term || row.item_name,
+          row.size,
+          allowedRackLocationIds
+        )
+        const matchedRows = selectRowsForRequestedSize(matches || [], row.size)
+        const labels = matchedRows
+          .filter(
+            (entry) =>
+              Number(entry.qty || 0) > 0 &&
+              allowedRackLocationIds.has(getLocationKey(entry.rack_location_id))
+          )
+          .map((entry) => getLocationLabel(locationById.get(getLocationKey(entry.rack_location_id))))
+        const takeFrom = buildLocationSummary(labels)
+
+        if (!takeFrom) {
+          return row
+        }
+
+        await supabase
+          .from(TAKE_REQUESTS_TABLE)
+          .update({ take_from: takeFrom })
+          .eq('id', row.id)
+
+        return { ...row, take_from: takeFrom }
+      } catch {
+        return row
+      }
+    })
+  )
+
+  const refreshedById = new Map(refreshedRows.map((row) => [String(row.id), row]))
+  return rows.map((row) => refreshedById.get(String(row.id)) || row)
+}
+
 export default function RestockRequestSubmit({
   pickerHref = '/take-requests',
   pickerLabel = 'Open Picker',
@@ -550,7 +628,7 @@ export default function RestockRequestSubmit({
 
     try {
       const rows = await fetchOpenRequests()
-      setRequests(rows)
+      setRequests(await refreshMissingRequestLocations(rows, rackLocations))
     } catch (loadError) {
       setError(loadError.message || 'Failed to load request list.')
     } finally {
@@ -591,7 +669,7 @@ export default function RestockRequestSubmit({
         }))
 
         setRackLocations(normalizedRackLocations)
-        setRequests(requestRows)
+        setRequests(await refreshMissingRequestLocations(requestRows, normalizedRackLocations))
         setRequesterName(currentRequester.name)
         setRequesterUserId(currentRequester.userId)
         setArklineProducts(productRows)

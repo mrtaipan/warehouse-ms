@@ -31,6 +31,7 @@ as $$
 declare
   actor_id uuid := auth.uid();
   can_manage_upload boolean;
+  can_manage_restock boolean;
 begin
   if actor_id is null then
     if current_user = 'postgres' and tg_op = 'UPDATE' then
@@ -60,6 +61,19 @@ begin
   end if;
 
   if old.request_status = 'open' and new.request_status = 'open' then
+    select exists (
+      select 1 from public.dir_user_profiles profile
+      left join public.dir_user_roles role_map on role_map.role = profile.role
+      where profile.authenticated_id = actor_id
+        and (profile.role = 'admin' or role_map.permission_code = 'storage.restock_picker.edit')
+    ) into can_manage_restock;
+
+    if can_manage_restock
+      and lower(btrim(coalesce(old.take_from, ''))) = 'location is not found'
+      and to_jsonb(new) - 'take_from' is not distinct from to_jsonb(old) - 'take_from' then
+      return new;
+    end if;
+
     if old.requester_user_id is distinct from actor_id
       or to_jsonb(new) - array['item_name', 'size', 'qty', 'take_from', 'search_term', 'source_type', 'note']
         is distinct from

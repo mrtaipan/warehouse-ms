@@ -308,6 +308,44 @@ function aggregateStorageDisplayRows(rows = []) {
   }))
 }
 
+function getStorageSourceEntries(entry = {}) {
+  return Array.isArray(entry.sourceEntries) && entry.sourceEntries.length > 0
+    ? entry.sourceEntries
+    : [entry]
+}
+
+function allocateStorageQty(entries = [], requestedQty = 0) {
+  let remainingQty = Math.max(0, Number(requestedQty || 0))
+
+  return entries
+    .filter((entry) => Number(entry.qty || 0) > 0)
+    .map((entry) => {
+      const allocatedQty = Math.min(Number(entry.qty || 0), remainingQty)
+      remainingQty -= allocatedQty
+      return { entry, qty: allocatedQty }
+    })
+    .filter(({ qty }) => qty > 0)
+}
+
+function distributeStorageEditQty(entries = [], requestedQty = 0) {
+  const allocations = allocateStorageQty(entries, requestedQty)
+  const allocatedQty = allocations.reduce((total, allocation) => total + allocation.qty, 0)
+  const remainingQty = Math.max(0, Number(requestedQty || 0) - allocatedQty)
+
+  if (remainingQty > 0 && entries.length > 0) {
+    const firstEntryId = String(entries[0].id)
+    const existingAllocation = allocations.find((allocation) => String(allocation.entry.id) === firstEntryId)
+
+    if (existingAllocation) {
+      existingAllocation.qty += remainingQty
+    } else {
+      allocations.unshift({ entry: entries[0], qty: remainingQty })
+    }
+  }
+
+  return allocations
+}
+
 function setWarehouseStorageCache(rows = []) {
   warehouseStorageCache.rows = sortStorageEntries(rows)
   warehouseStorageCache.expiresAt = Date.now() + STORAGE_DATA_CACHE_TTL_MS
@@ -1146,7 +1184,6 @@ export default function StorageOverviewPage() {
   const [selectedCategoryRowIds, setSelectedCategoryRowIds] = useState([])
   const [selectedQueueKeys, setSelectedQueueKeys] = useState([])
   const [selectedTemporarySourceIds, setSelectedTemporarySourceIds] = useState([])
-  const [expandedStorageGroupKeys, setExpandedStorageGroupKeys] = useState([])
   const [selectedTemporarySalesIds, setSelectedTemporarySalesIds] = useState([])
   const [selectedRejectKoliNumbers, setSelectedRejectKoliNumbers] = useState([])
   const [expandedRejectKoliNumbers, setExpandedRejectKoliNumbers] = useState([])
@@ -2782,14 +2819,6 @@ export default function StorageOverviewPage() {
       sourceIds.forEach((id) => (checked ? next.add(String(id)) : next.delete(String(id))))
       return Array.from(next)
     })
-  }
-
-  function toggleStorageDisplayGroupExpanded(groupKey) {
-    setExpandedStorageGroupKeys((current) => (
-      current.includes(groupKey)
-        ? current.filter((key) => key !== groupKey)
-        : [...current, groupKey]
-    ))
   }
 
   function toggleVisibleTemporarySourceSelection(checked) {
@@ -4668,7 +4697,12 @@ export default function StorageOverviewPage() {
 
   function openTakeModal(entry) {
     if (!canTakeStorageItem) return
-    setTakeModalEntry(entry)
+    const sourceEntries = getStorageSourceEntries(entry)
+    setTakeModalEntry({
+      ...entry,
+      sourceEntries,
+      qty: sourceEntries.reduce((total, sourceEntry) => total + Number(sourceEntry.qty || 0), 0),
+    })
     setTakeForm({
       takeOutAll: false,
       qty: '',
@@ -4680,11 +4714,16 @@ export default function StorageOverviewPage() {
 
   function openEditModal(entry) {
     if (!canEditStorageItem) return
-    setEditModalEntry(entry)
+    const sourceEntries = getStorageSourceEntries(entry)
+    setEditModalEntry({
+      ...entry,
+      sourceEntries,
+      qty: sourceEntries.reduce((total, sourceEntry) => total + Number(sourceEntry.qty || 0), 0),
+    })
     setEditForm({
       itemName: entry.item_name || '',
       size: entry.size || '',
-      qty: String(entry.qty || ''),
+      qty: String(sourceEntries.reduce((total, sourceEntry) => total + Number(sourceEntry.qty || 0), 0) || ''),
       notes: entry.notes || '',
     })
     setError('')
@@ -5356,7 +5395,8 @@ export default function StorageOverviewPage() {
     setTakeModalError('')
     setSuccess('')
 
-    const currentQty = Number(takeModalEntry.qty || 0)
+    const sourceEntries = getStorageSourceEntries(takeModalEntry)
+    const currentQty = sourceEntries.reduce((total, entry) => total + Number(entry.qty || 0), 0)
     const takeQty = takeForm.takeOutAll ? currentQty : Number(takeForm.qty || 0)
 
     if (!canTakeStorageItem) {
@@ -5377,58 +5417,71 @@ export default function StorageOverviewPage() {
       return
     }
 
-    const keepEmptyArklineShelf = takeQty === currentQty && isArklineShelvingLocation(takeModalEntry.location)
-    if (takeQty === currentQty && !keepEmptyArklineShelf) {
-      const { data: deletedRows, error: deleteError } = await supabase
-        .from('warehouse_storage')
-        .delete()
-        .eq('id', takeModalEntry.id)
-        .select('id')
+    const updatedBy = await getCurrentUserEmail()
+    const allocations = allocateStorageQty(sourceEntries, takeQty)
+    const changedRows = []
+    const deletedIds = new Set()
+    const movementRows = []
 
-      if (deleteError) {
-        setTakeModalError(deleteError.message)
-        setTaking(false)
-        return
+    for (const { entry, qty } of allocations) {
+      const entryQty = Number(entry.qty || 0)
+      const remainingQty = entryQty - qty
+      const keepEmptyArklineShelf = remainingQty === 0 && isArklineShelvingLocation(entry.location)
+
+      if (remainingQty === 0 && !keepEmptyArklineShelf) {
+        const { data: deletedRows, error: deleteError } = await supabase
+          .from('warehouse_storage')
+          .delete()
+          .eq('id', entry.id)
+          .select('id')
+
+        if (deleteError) {
+          setTakeModalError(deleteError.message)
+          setTaking(false)
+          return
+        }
+
+        if (!deletedRows || deletedRows.length === 0) {
+          setTakeModalError(
+            'Take out all could not remove the item. Please check the DELETE policy for warehouse_storage.'
+          )
+          setTaking(false)
+          return
+        }
+        deletedIds.add(String(entry.id))
+      } else {
+        const { error: updateError } = await supabase
+          .from('warehouse_storage')
+          .update({
+            qty: keepEmptyArklineShelf ? 0 : remainingQty,
+            updated_by: updatedBy,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', entry.id)
+
+        if (updateError) {
+          setTakeModalError(updateError.message)
+          setTaking(false)
+          return
+        }
+
+        changedRows.push({ ...entry, qty: keepEmptyArklineShelf ? 0 : remainingQty, updated_at: new Date().toISOString() })
       }
 
-      if (!deletedRows || deletedRows.length === 0) {
-        setTakeModalError(
-          'Take out all could not remove the item. Please check the DELETE policy for warehouse_storage.'
-        )
-        setTaking(false)
-        return
-      }
-    } else {
-      const updatedBy = await getCurrentUserEmail()
-
-      const { error: updateError } = await supabase
-        .from('warehouse_storage')
-        .update({
-          qty: keepEmptyArklineShelf ? 0 : currentQty - takeQty,
-          updated_by: updatedBy,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', takeModalEntry.id)
-
-      if (updateError) {
-        setTakeModalError(updateError.message)
-        setTaking(false)
-        return
-      }
+      movementRows.push({
+        warehouse_storage_id: entry.id,
+        movement_type: 'TAKE_OUT',
+        qty,
+        from_location_label: entry.location ? getLocationLabel(entry.location) : null,
+        to_location_label: 'Outbound',
+        item_name: entry.item_name || null,
+        size: entry.size || null,
+        sku_id: entry.sku_id || entry.source_variant_code || null,
+        created_by: updatedBy,
+      })
     }
 
-    const updatedBy = await getCurrentUserEmail()
-    const { error: movementError } = await supabase.from('warehouse_storage_movements').insert({
-      warehouse_storage_id: takeModalEntry.id,
-      movement_type: 'TAKE_OUT',
-      qty: takeQty,
-      from_location_label: takeModalEntry.location ? getLocationLabel(takeModalEntry.location) : null,
-      to_location_label: 'Outbound',
-      item_name: takeModalEntry.item_name || null,
-      size: takeModalEntry.size || null,
-      sku_id: takeModalEntry.sku_id || null,
-      created_by: updatedBy,
-    })
+    const { error: movementError } = await supabase.from('warehouse_storage_movements').insert(movementRows)
 
     if (movementError) {
       setTakeModalError(movementError.message)
@@ -5437,30 +5490,17 @@ export default function StorageOverviewPage() {
     }
 
     setStorageEntries((currentRows) => {
-      const nextRows =
-        takeQty === currentQty && !keepEmptyArklineShelf
-          ? currentRows.filter((row) => String(row.id) !== String(takeModalEntry.id))
-          : currentRows.map((row) => (
-              String(row.id) === String(takeModalEntry.id)
-                ? { ...row, qty: currentQty - takeQty, updated_at: new Date().toISOString() }
-                : row
-            ))
+      const changedById = new Map(changedRows.map((row) => [String(row.id), row]))
+      const nextRows = currentRows
+        .filter((row) => !deletedIds.has(String(row.id)))
+        .map((row) => changedById.get(String(row.id)) || row)
 
       return setWarehouseStorageCache(nextRows)
     })
-    setStorageMovementRows((current) => [{
-      warehouse_storage_id: takeModalEntry.id,
-      movement_type: 'TAKE_OUT',
-      qty: takeQty,
-      from_location_label: takeModalEntry.location ? getLocationLabel(takeModalEntry.location) : null,
-      to_location_label: 'Outbound',
-      item_name: takeModalEntry.item_name || null,
-      size: takeModalEntry.size || null,
-      sku_id: takeModalEntry.sku_id || null,
-      created_by: updatedBy,
-      id: `local-${Date.now()}`,
-      created_at: new Date().toISOString(),
-    }, ...current])
+    setStorageMovementRows((current) => [
+      ...movementRows.map((row, index) => ({ ...row, id: `local-${Date.now()}-${index}`, created_at: new Date().toISOString() })),
+      ...current,
+    ])
     setSuccess('Storage quantity updated successfully.')
     setTaking(false)
     closeTakeModal()
@@ -5494,38 +5534,38 @@ export default function StorageOverviewPage() {
     }
 
     const updatedBy = await getCurrentUserEmail()
+    const sourceEntries = getStorageSourceEntries(editModalEntry)
+    const allocations = distributeStorageEditQty(sourceEntries, nextQty)
+    const qtyById = new Map(allocations.map(({ entry, qty }) => [String(entry.id), qty]))
+    const updatedAt = new Date().toISOString()
+    const updatePayload = {
+      item_name: editForm.itemName.trim(),
+      size: editForm.size.trim() || null,
+      notes: editForm.notes.trim() || null,
+      updated_by: updatedBy,
+      updated_at: updatedAt,
+    }
 
-    const { error: updateError } = await supabase
-      .from('warehouse_storage')
-      .update({
-        item_name: editForm.itemName.trim(),
-        size: editForm.size.trim() || null,
-        qty: nextQty,
-        notes: editForm.notes.trim() || null,
-        updated_by: updatedBy,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', editModalEntry.id)
+    for (const entry of sourceEntries) {
+      const { error: updateError } = await supabase
+        .from('warehouse_storage')
+        .update({ ...updatePayload, qty: qtyById.get(String(entry.id)) || 0 })
+        .eq('id', entry.id)
 
-    if (updateError) {
-      setError(updateError.message)
-      setEditing(false)
-      return
+      if (updateError) {
+        setError(updateError.message)
+        setEditing(false)
+        return
+      }
     }
 
     setStorageEntries((currentRows) => {
-      const nextRows = currentRows.map((row) => (
-        String(row.id) === String(editModalEntry.id)
-          ? {
-              ...row,
-              item_name: editForm.itemName.trim(),
-              size: editForm.size.trim() || null,
-              qty: nextQty,
-              notes: editForm.notes.trim() || null,
-              updated_at: new Date().toISOString(),
-            }
-          : row
-      ))
+      const nextRows = currentRows.map((row) => {
+        const nextQty = qtyById.get(String(row.id))
+        return nextQty === undefined
+          ? row
+          : { ...row, ...updatePayload, qty: nextQty }
+      })
 
       return setWarehouseStorageCache(nextRows)
     })
@@ -6235,16 +6275,21 @@ export default function StorageOverviewPage() {
             <div style={styles.searchLabelRow}>
               <label style={styles.label}>{visibleListMode === 'reject-storage' ? 'Reject Search' : 'Product Search'}</label>
               {visibleListMode === 'stock' ? (
-                <label style={styles.inlineUncategorizedControl}>
-                  <input
-                    type="checkbox"
-                    name="uncategorized"
-                    checked={filters.uncategorized}
-                    onChange={handleFilterChange}
-                    style={styles.rowCheckbox}
-                  />
-                  <span>Uncategorized</span>
-                </label>
+                <div style={styles.searchLabelActions}>
+                  <label style={styles.inlineUncategorizedControl}>
+                    <input
+                      type="checkbox"
+                      name="uncategorized"
+                      checked={filters.uncategorized}
+                      onChange={handleFilterChange}
+                      style={styles.rowCheckbox}
+                    />
+                    <span>Uncategorized</span>
+                  </label>
+                  <button type="button" onClick={clearFilters} style={styles.textResetButton}>
+                    Reset
+                  </button>
+                </div>
               ) : null}
             </div>
             <input
@@ -6290,7 +6335,7 @@ export default function StorageOverviewPage() {
           {visibleListMode === 'stock' ? (
             <div style={isCompactLayout ? styles.mobileToolbarQtyField : styles.toolbarQtyField}>
               <span style={styles.filteredQtyCard}>
-                <span style={styles.filteredQtyLabel}>Qty of filtered</span>
+                 <span style={styles.filteredQtyLabel}>Filtered Qty</span>
                 <strong style={styles.filteredQtyValue}>{filteredQty}</strong>
               </span>
             </div>
@@ -6519,18 +6564,6 @@ export default function StorageOverviewPage() {
               </button>
             </div>
           ) : null}
-          {visibleListMode === 'stock' ? (
-            <div style={styles.toolbarIconField}>
-              <button type="button" onClick={clearFilters} style={styles.iconResetButton} title="Clear Filters" aria-label="Clear Filters">
-                <svg viewBox="0 0 24 24" style={styles.resetIcon} aria-hidden="true">
-                  <path d="M3 12a9 9 0 0 1 15.4-6.4L21 8" />
-                  <path d="M21 3v5h-5" />
-                  <path d="M21 12a9 9 0 0 1-15.4 6.4L3 16" />
-                  <path d="M3 21v-5h5" />
-                </svg>
-              </button>
-            </div>
-          ) : null}
           {visibleListMode === 'reject-storage' ? (
             <div style={styles.rejectToolbarIconField}>
               <button type="button" onClick={clearRejectFilters} style={styles.iconResetButton} title="Clear Reject Search" aria-label="Clear Reject Search">
@@ -6695,7 +6728,7 @@ export default function StorageOverviewPage() {
             </div>
           ) : filters.locationType === 'SHELVING' ? (
             <div style={{ ...styles.field, ...styles.compactFilterField }}>
-              <label style={styles.label}>Shelving Location Name</label>
+              <label style={styles.label}>Shelving Location</label>
               <input
                 name="locationName"
                 value={filters.locationName}
@@ -7079,15 +7112,11 @@ export default function StorageOverviewPage() {
               </thead>
               <tbody>
                 {visibleStockRows.map((entry) => {
-                  const sourceEntries = entry.sourceEntries || [entry]
                   const sourceIds = entry.sourceRowIds || [String(entry.id)]
-                  const isExpanded = expandedStorageGroupKeys.includes(entry.aggregateKey)
                   const allGroupRowsSelected = sourceIds.length > 0 && sourceIds.every((id) => selectedTemporarySourceIdSet.has(String(id)))
-                  const singleSourceEntry = sourceEntries.length === 1 ? sourceEntries[0] : null
 
                   return (
-                    <Fragment key={entry.aggregateKey || entry.id}>
-                      <tr>
+                    <tr key={entry.aggregateKey || entry.id}>
                         {canSelectCurrentStockRows ? (
                           <td style={{ ...styles.td, ...styles.selectTd }}>
                             <input
@@ -7102,36 +7131,19 @@ export default function StorageOverviewPage() {
                         <td style={styles.td}>{getLocationLabel(entry.location)}</td>
                         <td style={styles.td}>
                           <div style={styles.cellStack}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                              {sourceEntries.length > 1 ? (
-                                <button
-                                  type="button"
-                                  onClick={() => toggleStorageDisplayGroupExpanded(entry.aggregateKey)}
-                                  style={styles.tableIconButton}
-                                  title={isExpanded ? 'Hide source rows' : 'Show source rows'}
-                                  aria-label={isExpanded ? 'Hide source rows' : 'Show source rows'}
-                                >
-                                  <span aria-hidden="true">{isExpanded ? '−' : '+'}</span>
-                                </button>
-                              ) : null}
-                              <span>{getStorageItemDisplayName(entry)}</span>
-                            </div>
-                            <span style={styles.cellMeta}>
-                              {entry.category ? getCategoryDisplayName(entry.category) : 'Uncategorized'}
-                              {sourceEntries.length > 1 ? ` · ${sourceEntries.length} source rows` : ''}
-                            </span>
+                            <span>{getStorageItemDisplayName(entry)}</span>
+                            <span style={styles.cellMeta}>{entry.category ? getCategoryDisplayName(entry.category) : 'Uncategorized'}</span>
                           </div>
                         </td>
                         <td style={styles.td}>{entry.size || '-'}</td>
                         <td style={styles.td}>{entry.qty}</td>
                         {canShowStorageLocationActions ? (
                           <td style={{ ...styles.td, ...styles.actionTd }}>
-                            {singleSourceEntry ? (
-                              <div style={styles.actionGroup}>
+                            <div style={styles.actionGroup}>
                                 {canEditStorageItem ? (
                                   <button
                                     type="button"
-                                    onClick={() => openEditModal(singleSourceEntry)}
+                                    onClick={() => openEditModal(entry)}
                                     style={styles.tableIconButton}
                                     title="Edit item detail"
                                     aria-label="Edit item detail"
@@ -7145,7 +7157,7 @@ export default function StorageOverviewPage() {
                                 {canTakeStorageItem ? (
                                   <button
                                     type="button"
-                                    onClick={() => openTakeModal(singleSourceEntry)}
+                                    onClick={() => openTakeModal(entry)}
                                     style={{ ...styles.tableIconButton, ...styles.tableIconButtonDark }}
                                     title="Take out item"
                                     aria-label="Take out item"
@@ -7157,71 +7169,10 @@ export default function StorageOverviewPage() {
                                     </svg>
                                   </button>
                                 ) : null}
-                              </div>
-                            ) : <span style={styles.cellMeta}>Expand rows for actions</span>}
-                          </td>
-                        ) : null}
-                      </tr>
-                      {isExpanded ? sourceEntries.map((sourceEntry) => (
-                        <tr key={sourceEntry.id} style={{ background: '#f8fafc' }}>
-                          {canSelectCurrentStockRows ? (
-                            <td style={{ ...styles.td, ...styles.selectTd }}>
-                              <input
-                                type="checkbox"
-                                checked={selectedTemporarySourceIdSet.has(String(sourceEntry.id))}
-                                onChange={(event) => toggleTemporarySourceSelection(sourceEntry.id, event.target.checked)}
-                                style={styles.rowCheckbox}
-                                aria-label={`Select ${getStorageItemDisplayName(sourceEntry)}`}
-                              />
-                            </td>
-                          ) : null}
-                          <td style={{ ...styles.td, paddingLeft: 28 }}>{getLocationLabel(sourceEntry.location)}</td>
-                          <td style={{ ...styles.td, paddingLeft: 28 }}>
-                            <div style={styles.cellStack}>
-                              <span>{getStorageItemDisplayName(sourceEntry)}</span>
-                              <span style={styles.cellMeta}>{sourceEntry.category ? getCategoryDisplayName(sourceEntry.category) : 'Uncategorized'}</span>
                             </div>
                           </td>
-                          <td style={styles.td}>{sourceEntry.size || '-'}</td>
-                          <td style={styles.td}>{sourceEntry.qty}</td>
-                          {canShowStorageLocationActions ? (
-                            <td style={{ ...styles.td, ...styles.actionTd }}>
-                              <div style={styles.actionGroup}>
-                                {canEditStorageItem ? (
-                                  <button
-                                    type="button"
-                                    onClick={() => openEditModal(sourceEntry)}
-                                    style={styles.tableIconButton}
-                                    title="Edit item detail"
-                                    aria-label="Edit item detail"
-                                  >
-                                    <svg viewBox="0 0 24 24" style={styles.tableActionIcon} aria-hidden="true">
-                                      <path d="M12 20h9" />
-                                      <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5Z" />
-                                    </svg>
-                                  </button>
-                                ) : null}
-                                {canTakeStorageItem ? (
-                                  <button
-                                    type="button"
-                                    onClick={() => openTakeModal(sourceEntry)}
-                                    style={{ ...styles.tableIconButton, ...styles.tableIconButtonDark }}
-                                    title="Take out item"
-                                    aria-label="Take out item"
-                                  >
-                                    <svg viewBox="0 0 24 24" style={styles.tableActionIcon} aria-hidden="true">
-                                      <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
-                                      <path d="M16 17l5-5-5-5" />
-                                      <path d="M21 12H9" />
-                                    </svg>
-                                  </button>
-                                ) : null}
-                              </div>
-                            </td>
-                          ) : null}
-                        </tr>
-                      )) : null}
-                    </Fragment>
+                        ) : null}
+                    </tr>
                   )
                 })}
               </tbody>
@@ -10260,13 +10211,13 @@ const styles = {
     gridTemplateColumns: 'minmax(0, 1fr) 44px minmax(0, 1fr) minmax(0, 1fr) auto',
   },
   stockSearchToolbar: {
-    gridTemplateColumns: 'minmax(0, 1fr) minmax(120px, 150px) 44px',
+    gridTemplateColumns: 'minmax(0, 1fr) minmax(96px, 112px)',
   },
   stockSearchToolbarWithAction: {
-    gridTemplateColumns: 'minmax(0, 1fr) minmax(120px, 150px) repeat(4, 44px)',
+    gridTemplateColumns: 'minmax(0, 1fr) minmax(96px, 112px) repeat(3, 44px)',
   },
   stockSearchToolbarCompact: {
-    gridTemplateColumns: 'minmax(0, 1fr) minmax(120px, 150px) repeat(4, 44px)',
+    gridTemplateColumns: 'minmax(0, 1fr) minmax(96px, 112px) repeat(3, 44px)',
   },
   mobileStockSearchToolbarCompact: {
     display: 'flex',
@@ -10408,6 +10359,12 @@ const styles = {
     gap: '10px',
     minWidth: 0,
   },
+  searchLabelActions: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '8px',
+    minWidth: 0,
+  },
   inlineUncategorizedControl: {
     display: 'inline-flex',
     alignItems: 'center',
@@ -10418,6 +10375,21 @@ const styles = {
     fontWeight: '800',
     whiteSpace: 'nowrap',
     cursor: 'pointer',
+  },
+  textResetButton: {
+    minHeight: '28px',
+    padding: '0 10px',
+    border: '1px solid #d1d5db',
+    borderRadius: '8px',
+    background: '#fff',
+    color: '#334155',
+    fontSize: '11px',
+    fontWeight: '800',
+    cursor: 'pointer',
+    whiteSpace: 'nowrap',
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   registerInlineButton: {
     height: '44px',
@@ -10582,10 +10554,10 @@ const styles = {
   },
   filteredQtyCard: {
     minHeight: '44px',
-    minWidth: '120px',
+    minWidth: '96px',
     width: '100%',
-    maxWidth: '150px',
-    padding: '7px 12px',
+    maxWidth: '112px',
+    padding: '7px 10px',
     borderRadius: '10px',
     border: '1px solid #dbe4ef',
     background: '#fff',
@@ -10663,7 +10635,6 @@ const styles = {
   },
   typeField: {
     gap: '6px',
-    maxWidth: '190px',
   },
   checkboxFilter: {
     display: 'inline-flex',
@@ -10692,23 +10663,23 @@ const styles = {
     alignItems: 'center',
     alignSelf: 'flex-start',
     gap: '3px',
-    minHeight: '32px',
+    minHeight: '28px',
     width: '100%',
-    padding: '2px',
+    padding: '3px',
     border: '1px solid #dbe4ef',
-    borderRadius: '999px',
+    borderRadius: '10px',
     background: '#fff',
   },
   typeToggleButton: {
-    minHeight: '26px',
+    minHeight: '20px',
     minWidth: 0,
     flex: '1 1 0',
-    padding: '0 7px',
+    padding: '0 6px',
     border: 'none',
-    borderRadius: '999px',
+    borderRadius: '7px',
     background: 'transparent',
     color: '#64748b',
-    fontSize: '11px',
+    fontSize: '10px',
     fontWeight: '800',
     cursor: 'pointer',
     whiteSpace: 'nowrap',

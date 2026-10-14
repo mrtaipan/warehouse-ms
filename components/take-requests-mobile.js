@@ -75,6 +75,24 @@ function getLocationLabel(location) {
     .join(' / ') || 'Location is not found'
 }
 
+function buildLocationSummary(options = []) {
+  const uniqueLocations = Array.from(
+    new Set(
+      options
+        .map((option) => String(option?.label || '').trim())
+        .filter((label) => label && label !== 'Location is not found')
+    )
+  )
+
+  if (uniqueLocations.length === 0) {
+    return null
+  }
+
+  return `${uniqueLocations.length} Registered Location${uniqueLocations.length === 1 ? '' : 's'} - ${uniqueLocations
+    .slice(0, 2)
+    .join(', ')}${uniqueLocations.length > 2 ? ' ...' : ''}`
+}
+
 function formatTakeFromLabel(value) {
   const label = String(value || '').trim()
 
@@ -182,9 +200,18 @@ function normalizeSizeValue(value) {
   return normalizeText(value).replace(/\s+/g, '')
 }
 
+function isUnspecifiedSize(value) {
+  const normalizedValue = normalizeSizeValue(value)
+  return normalizedValue === '' || normalizedValue === '-'
+}
+
 function matchesRequestedSize(entrySize, requestedSize) {
   if (!requestedSize) {
     return true
+  }
+
+  if (isUnspecifiedSize(requestedSize)) {
+    return isUnspecifiedSize(entrySize)
   }
 
   return normalizeSizeValue(entrySize) === normalizeSizeValue(requestedSize)
@@ -302,6 +329,43 @@ async function fetchSourceOptions(row) {
   return Array.from(new Map(rawOptions.map((item) => [String(item.storageId), item])).values())
 }
 
+async function refreshMissingRequestLocations(rows = []) {
+  const staleRows = rows.filter(
+    (row) =>
+      /^Location is not found$/i.test(String(row?.take_from || '').trim()) &&
+      String(row?.search_term || row?.item_name || '').trim()
+  )
+
+  if (staleRows.length === 0) {
+    return rows
+  }
+
+  const refreshedRows = await Promise.all(
+    staleRows.map(async (row) => {
+      try {
+        const options = await fetchSourceOptions(row)
+        const takeFrom = buildLocationSummary(options)
+
+        if (!takeFrom) {
+          return row
+        }
+
+        await supabase
+          .from(TAKE_REQUESTS_TABLE)
+          .update({ take_from: takeFrom })
+          .eq('id', row.id)
+
+        return { ...row, take_from: takeFrom }
+      } catch {
+        return row
+      }
+    })
+  )
+
+  const refreshedById = new Map(refreshedRows.map((row) => [String(row.id), row]))
+  return rows.map((row) => refreshedById.get(String(row.id)) || row)
+}
+
 async function getCurrentUserEmail() {
   const {
     data: { user },
@@ -337,7 +401,7 @@ export default function TakeRequestsMobile() {
 
     try {
       const rows = await fetchOpenRequests()
-      setRequests(rows)
+      setRequests(await refreshMissingRequestLocations(rows))
     } catch (loadError) {
       setError(loadError.message || 'Failed to load request list.')
     } finally {
@@ -354,7 +418,7 @@ export default function TakeRequestsMobile() {
 
       try {
         const rows = await fetchOpenRequests()
-        setRequests(rows)
+        setRequests(await refreshMissingRequestLocations(rows))
         setLoading(false)
       } catch (loadError) {
         setError(
@@ -388,6 +452,14 @@ export default function TakeRequestsMobile() {
       const options = await fetchSourceOptions(row)
       setSourceOptions(options)
       setSelectedSourceValue(options[0]?.storageId ? String(options[0].storageId) : 'unrecorded')
+      const refreshedTakeFrom = buildLocationSummary(options)
+      if (refreshedTakeFrom) {
+        setSelectedRequest((currentRequest) =>
+          currentRequest?.id === row.id
+            ? { ...currentRequest, take_from: refreshedTakeFrom }
+            : currentRequest
+        )
+      }
     } catch (loadError) {
       setError(loadError.message || 'Failed to load source options.')
     } finally {
