@@ -133,7 +133,13 @@ begin
     v_size_key := coalesce(nullif(v_source_size_key, ''), v_size_key);
 
     if v_source.qty = p_fulfilled_qty then
-      delete from public.warehouse_storage where id = v_source.id;
+      if upper(trim(coalesce(v_source_location.location_type, ''))) = 'SHELVING' then
+        update public.warehouse_storage
+        set qty = 0, updated_by = v_actor, updated_at = now()
+        where id = v_source.id;
+      else
+        delete from public.warehouse_storage where id = v_source.id;
+      end if;
     else
       update public.warehouse_storage
       set qty = qty - p_fulfilled_qty, updated_by = v_actor, updated_at = now()

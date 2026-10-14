@@ -135,17 +135,22 @@ async function fetchLocationMapByIds(rackIds = []) {
   return { data: locationMap, error: null }
 }
 
-async function fetchStorageRowsByQuery(query, limit = 80) {
+async function fetchStorageRowsByQuery(query, limit = 80, exactSku = false) {
   const normalizedQuery = getSearchQuery(query)
 
   if (!normalizedQuery) {
     return { rows: [], error: null }
   }
 
-  const { data: storageRows, error: storageError } = await supabase
+  let storageQuery = supabase
     .from('warehouse_storage')
     .select('id, rack_location_id, sku_id, item_name, size, qty')
-    .or(`item_name.ilike.%${normalizedQuery}%,sku_id.ilike.%${normalizedQuery}%`)
+
+  storageQuery = exactSku
+    ? storageQuery.ilike('sku_id', normalizedQuery)
+    : storageQuery.or(`item_name.ilike.%${normalizedQuery}%,sku_id.ilike.%${normalizedQuery}%`)
+
+  const { data: storageRows, error: storageError } = await storageQuery
     .order('item_name', { ascending: true })
     .limit(limit)
 
@@ -257,7 +262,7 @@ export default function ItemSearchShortcutButton() {
     resetSearchState()
   }
 
-  async function executeSearch(queryValue = searchTerm) {
+  async function executeSearch(queryValue = searchTerm, exactSku = false) {
     const query = getSearchQuery(queryValue)
     setError('')
     setResults([])
@@ -271,7 +276,7 @@ export default function ItemSearchShortcutButton() {
 
     setIsSearching(true)
 
-    const { rows, error: storageError } = await fetchStorageRowsByQuery(query, 80)
+    const { rows, error: storageError } = await fetchStorageRowsByQuery(query, 80, exactSku)
 
     if (storageError) {
       setError(storageError.message || 'Failed to search warehouse item.')
@@ -288,7 +293,7 @@ export default function ItemSearchShortcutButton() {
     const selectedProduct = groupFilter === 'ARKLINE'
       ? arklineProducts.find((product) => getArklineProductLabel(product) === searchTerm)
       : null
-    await executeSearch(selectedProduct?.sku || selectedProduct?.name || searchTerm)
+    await executeSearch(selectedProduct?.sku || selectedProduct?.name || searchTerm, Boolean(selectedProduct?.sku))
   }
 
   function handleSearchTermChange(event) {
@@ -319,7 +324,7 @@ export default function ItemSearchShortcutButton() {
   async function handleArklineProductSelect(product) {
     setSearchTerm(getArklineProductLabel(product))
     setIsArklineDropdownOpen(false)
-    await executeSearch(product.sku || product.name)
+    await executeSearch(product.sku || product.name, Boolean(product.sku))
   }
 
   return (

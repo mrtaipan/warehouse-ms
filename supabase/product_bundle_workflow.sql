@@ -6,6 +6,7 @@ create table if not exists public.product_bundles (
   bundle_name text not null,
   storing_type text not null,
   bundle_unit_qty integer not null default 1,
+  is_size_dependent boolean not null default true,
   status text not null default 'draft',
   released_at timestamptz null,
   released_by text null,
@@ -25,7 +26,8 @@ alter table public.product_bundles
   add column if not exists released_at timestamptz null,
   add column if not exists released_by text null,
   add column if not exists release_count integer not null default 0,
-  add column if not exists release_history jsonb not null default '[]'::jsonb;
+  add column if not exists release_history jsonb not null default '[]'::jsonb,
+  add column if not exists is_size_dependent boolean not null default true;
 
 alter table public.product_bundles
   drop constraint if exists product_bundles_release_count_check;

@@ -434,15 +434,26 @@ begin
         storage_row.qty,
         -take_qty,
         storage_row.qty - take_qty,
-        storage_row.qty = take_qty,
+        storage_row.qty = take_qty
+          and not (
+            upper(trim(coalesce(storage_row.location_snapshot->>'location_type', ''))) = 'SHELVING'
+            and upper(trim(coalesce(storage_row.location_snapshot->>'group_code', ''))) = 'ARKLINE'
+          ),
         import_line.order_number,
         actor_email,
         'Daily shelving sales upload'
       );
 
       if storage_row.qty = take_qty then
-        delete from public.warehouse_storage
-        where id = storage_row.id;
+        if upper(trim(coalesce(storage_row.location_snapshot->>'location_type', ''))) = 'SHELVING'
+           and upper(trim(coalesce(storage_row.location_snapshot->>'group_code', ''))) = 'ARKLINE' then
+          update public.warehouse_storage
+          set qty = 0, updated_by = actor_email, updated_at = now()
+          where id = storage_row.id;
+        else
+          delete from public.warehouse_storage
+          where id = storage_row.id;
+        end if;
       else
         update public.warehouse_storage
         set
@@ -798,12 +809,24 @@ begin
         'upload_sales_import', p_batch_id, import_line.id, 'OUT',
         storage_row.id, storage_row.rack_location_id, storage_row.location_snapshot,
         storage_row.sku_id, storage_row.item_name, storage_row.size, storage_row.qty,
-        -take_qty, storage_row.qty - take_qty, storage_row.qty = take_qty,
+        -take_qty, storage_row.qty - take_qty,
+        storage_row.qty = take_qty
+          and not (
+            upper(trim(coalesce(storage_row.location_snapshot->>'location_type', ''))) = 'SHELVING'
+            and upper(trim(coalesce(storage_row.location_snapshot->>'group_code', ''))) = 'ARKLINE'
+          ),
         import_line.order_number, actor_email, 'Retry skipped sales quantity from shelving'
       );
 
       if storage_row.qty = take_qty then
-        delete from public.warehouse_storage where id = storage_row.id;
+        if upper(trim(coalesce(storage_row.location_snapshot->>'location_type', ''))) = 'SHELVING'
+           and upper(trim(coalesce(storage_row.location_snapshot->>'group_code', ''))) = 'ARKLINE' then
+          update public.warehouse_storage
+          set qty = 0, updated_by = actor_email, updated_at = now()
+          where id = storage_row.id;
+        else
+          delete from public.warehouse_storage where id = storage_row.id;
+        end if;
       else
         update public.warehouse_storage
         set

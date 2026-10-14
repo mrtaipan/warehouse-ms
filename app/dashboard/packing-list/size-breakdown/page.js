@@ -321,6 +321,18 @@ const styles = {
     overflowX: 'auto',
     paddingBottom: '2px',
   },
+  filterControls: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '8px',
+    width: '100%',
+    minWidth: 0,
+  },
+  breakdownSearchRow: {
+    display: 'flex',
+    width: '100%',
+    minWidth: 0,
+  },
   editFilterBar: {
     display: 'flex',
     flexWrap: 'nowrap',
@@ -386,6 +398,11 @@ const styles = {
   modelVariantFilterField: {
     flex: '0 0 230px',
     minWidth: '190px',
+  },
+  breakdownSearchField: {
+    flex: '1 1 340px',
+    minWidth: '260px',
+    maxWidth: '520px',
   },
   editCategoryFilterField: {
     flex: '0 0 390px',
@@ -1841,6 +1858,17 @@ function matchesModelVariantQuery(card = {}, query = '') {
     .join(' ')
 
   return haystack.includes(needle)
+}
+
+function matchesBreakdownSearch(query = '', values = []) {
+  const needle = normalize(query)
+  if (!needle) return true
+
+  return values
+    .filter(Boolean)
+    .map((value) => normalize(value))
+    .join(' ')
+    .includes(needle)
 }
 
 function getCategoryPath(category = {}, categoryById = new Map()) {
@@ -3550,6 +3578,7 @@ export default function PackingListSizeBreakdownPage() {
     brand: '',
     categoryPath: '',
     model: '',
+    search: '',
   })
   const [canEditSizeBreakdown, setCanEditSizeBreakdown] = useState(false)
   const [accessReady, setAccessReady] = useState(false)
@@ -4000,6 +4029,7 @@ export default function PackingListSizeBreakdownPage() {
   const visibleMultipageGroups = multipageGroups.filter((group) =>
     group.cards.some((card) => {
       if (!matchesModelFilter(card, effectiveModelFilters)) return false
+      if (!matchesCardBreakdownSearch(card, effectiveModelFilters.search)) return false
       return overviewMode === 'koli' ? cardHasVisibleKoliQty(card) : cardHasVisibleModelQty(card)
     })
   )
@@ -4029,9 +4059,8 @@ export default function PackingListSizeBreakdownPage() {
     }
   }, [effectiveModelFilters, filterBaseCards])
 
-  const displayCards = useMemo(
-    () => filterBaseCards.filter((card) => matchesModelFilter(card, effectiveModelFilters)),
-    [effectiveModelFilters, filterBaseCards]
+  const displayCards = filterBaseCards.filter(
+    (card) => matchesModelFilter(card, effectiveModelFilters) && matchesCardBreakdownSearch(card, effectiveModelFilters.search)
   )
 
   const summaryCards = useMemo(
@@ -4073,7 +4102,38 @@ export default function PackingListSizeBreakdownPage() {
       brand: '',
       categoryPath: '',
       model: '',
+      search: '',
     })
+  }
+
+  function matchesCardBreakdownSearch(card, query) {
+    if (!String(query || '').trim()) return true
+
+    const detailNames = buildRowsForCard(card).map((row) => row.pl_name)
+
+    return matchesBreakdownSearch(query, [
+      card.source_variant_code,
+      card.variant_code,
+      card.model_name,
+      card.catalogName,
+      getOverviewModelVariantLabel(card),
+      ...detailNames,
+    ])
+  }
+
+  function matchesPackingBreakdownSearch(row, sourceBreakdown, displayInfo, query) {
+    return matchesBreakdownSearch(query, [
+      row.source_variant_code,
+      row.variant_code,
+      row.pl_name,
+      row.model_name,
+      row.variant_name,
+      sourceBreakdown.source_variant_code,
+      sourceBreakdown.pl_name,
+      sourceBreakdown.model_name,
+      sourceBreakdown.variant_name,
+      displayInfo.item_name,
+    ])
   }
 
   function buildRowsForCard(card, sourceBreakdownRows = breakdownRows, sourceReturnRows = plReturnRows) {
@@ -4622,20 +4682,34 @@ export default function PackingListSizeBreakdownPage() {
   }
 
   function removeSizeRow(plRowId, sizeRowId) {
+    const sizeRow = plRows
+      .find((row) => row.id === plRowId)
+      ?.sizeRows.find((row) => row.id === sizeRowId)
+    const postedQty = getPostedQtyForSizeRow(sizeRow)
+
+    if (postedQty > 0) return
+
     setPlRows((prev) =>
       prev.map((row) =>
         row.id === plRowId
           ? {
               ...row,
-              sizeRows:
-                row.sizeRows.length <= 1
-                  ? row.sizeRows
-                  : row.sizeRows
-                      .filter((sizeRow) => sizeRow.id !== sizeRowId)
-                      .map((sizeRow, index) => ({ ...sizeRow, size_order: index + 1 })),
+              sizeRows: row.sizeRows
+                .filter((sizeRow) => sizeRow.id !== sizeRowId)
+                .map((sizeRow, index) => ({ ...sizeRow, size_order: index + 1 })),
             }
           : row
       )
+    )
+  }
+
+  function getPostedQtyForSizeRow(sizeRow = {}) {
+    const breakdownId = Number(sizeRow.breakdown_row_id || 0)
+    if (!breakdownId) return 0
+
+    return ['MOB', 'OI'].reduce(
+      (sum, storingType) => sum + (packedQtyByTargetKey.get(getTargetKey(breakdownId, storingType)) || 0),
+      0
     )
   }
 
@@ -5909,7 +5983,8 @@ export default function PackingListSizeBreakdownPage() {
     }
 
     const hasBlankSizeRow = plRows.some((row) => (row.sizeRows || []).some((sizeRow) => isBlankSizeBreakdownRow(sizeRow)))
-    if (hasBlankSizeRow && remainingQty !== 0) {
+    const hasEmptySizeRow = plRows.some((row) => !(row.sizeRows || []).length)
+    if ((hasBlankSizeRow || hasEmptySizeRow) && remainingQty !== 0) {
       setError('Complete size breakdown or PL Return until Remaining is 0 before saving.')
       setSuccess('')
       return
@@ -6293,6 +6368,9 @@ export default function PackingListSizeBreakdownPage() {
         if (!Number(row.inbound_id || 0) || !breakdownById.has(breakdownId)) return false
         if (filteredBreakdownIds.size && !filteredBreakdownIds.has(breakdownId)) return false
         if (qtyMode !== 'all' && normalize(row.storing_type) !== normalize(qtyMode)) return false
+        const sourceBreakdown = breakdownById.get(breakdownId) || {}
+        const displayInfo = breakdownDisplayById.get(breakdownId) || {}
+        if (!matchesPackingBreakdownSearch(row, sourceBreakdown, displayInfo, effectiveModelFilters.search)) return false
         return true
       })
       .reduce((result, row) => {
@@ -6822,7 +6900,18 @@ export default function PackingListSizeBreakdownPage() {
 
         {viewMode === 'table' ? (
           <div style={styles.section}>
-            <div style={styles.filterBar}>
+            <div style={styles.filterControls}>
+              <label style={styles.breakdownSearchRow}>
+                <input
+                  type="search"
+                  value={modelFilters.search}
+                  onChange={(event) => updateModelFilter('search', event.target.value)}
+                  placeholder="Search SKU or Item Name"
+                  aria-label="Search SKU or Item Name"
+                  style={styles.filterInput}
+                />
+              </label>
+              <div style={styles.filterBar}>
               <div style={styles.segmentedToggle} role="tablist" aria-label="Packing List overview mode">
                 <button
                   type="button"
@@ -6925,6 +7014,7 @@ export default function PackingListSizeBreakdownPage() {
               <button type="button" onClick={resetModelFilters} style={styles.compactResetButton} title="Reset filters" aria-label="Reset filters">
                 &#8634;
               </button>
+              </div>
             </div>
             <div style={pageMode === 'multipage' ? styles.multipageTableShell : undefined}>
               {pageMode === 'multipage' && visibleMultipageGroups.length ? (
@@ -7399,7 +7489,10 @@ export default function PackingListSizeBreakdownPage() {
                               <span style={styles.sizeHeaderCell}>Checker</span>
                               <span style={{ ...styles.sizeHeaderCell, textAlign: 'center' }}>Action</span>
                             </div>
-                            {plRow.sizeRows.map((sizeRow, sizeRowIndex) => (
+                            {plRow.sizeRows.map((sizeRow, sizeRowIndex) => {
+                              const removeDisabled = getPostedQtyForSizeRow(sizeRow) > 0
+
+                              return (
                               <div key={sizeRow.id} style={styles.sizeInputRow}>
                                 <input
                                   data-size-field="size"
@@ -7484,19 +7577,21 @@ export default function PackingListSizeBreakdownPage() {
                                   <button
                                     type="button"
                                     onClick={() => removeSizeRow(plRow.id, sizeRow.id)}
-                                    disabled={plRow.sizeRows.length <= 1}
+                                    disabled={removeDisabled}
                                     style={
-                                      plRow.sizeRows.length <= 1
+                                      removeDisabled
                                         ? { ...styles.compactDangerButton, ...styles.disabledButton }
                                         : styles.compactDangerButton
                                     }
-                                    title="Remove size"
+                                    title={removeDisabled ? 'Cannot remove a size already added to a koli' : 'Remove size'}
+                                    aria-label={removeDisabled ? 'Cannot remove a size already added to a koli' : 'Remove size'}
                                   >
                                     X
                                   </button>
                                 </div>
                               </div>
-                            ))}
+                              )
+                            })}
                             {(plRow.lockedReturnRows || []).map((returnRow) => (
                               <div key={returnRow.id} style={styles.sizeInputRow}>
                                 <div style={{ ...styles.readonlyBox, fontWeight: 950 }}>

@@ -26,12 +26,13 @@ declare
   v_sku text;
   v_storage_id bigint;
   v_stored_sizes integer := 0;
+  v_is_size_dependent boolean := true;
 begin
   if p_bundle_qty is null or p_bundle_qty <= 0 then
     raise exception 'Bundle quantity must be greater than zero';
   end if;
 
-  select id, bundle_code, bundle_name, bundle_unit_qty, status
+  select id, bundle_code, bundle_name, bundle_unit_qty, status, is_size_dependent
     into v_bundle
   from public.product_bundles
   where id = p_bundle_id
@@ -41,6 +42,8 @@ begin
   if not found then
     raise exception 'Bundle was not found or is cancelled';
   end if;
+
+  v_is_size_dependent := coalesce(v_bundle.is_size_dependent, true);
 
   if p_items is null or jsonb_typeof(p_items) <> 'array' or jsonb_array_length(p_items) = 0 then
     raise exception 'At least one temporary item is required';
@@ -68,17 +71,27 @@ begin
       raise exception 'Bundle requirement quantity must be greater than zero';
     end if;
 
-    select coalesce(sum((i.qty)::numeric), 0)
-      into v_allocated
-    from jsonb_to_recordset(p_items) as i(temporary_item_id bigint, qty numeric)
-    join public.warehouse_temporary_sales_items t on t.id = i.temporary_item_id
-    where t.status = 'IN_TEMPORARY_AREA'
-      and coalesce(t.area_type, 'SALES') = 'SALES'
-      and regexp_replace(upper(coalesce(t.sku_id, t.source_variant_code, '')), '[^A-Z0-9]', '', 'g') = regexp_replace(upper(coalesce(v_requirement.sku, '')), '[^A-Z0-9]', '', 'g')
-      and coalesce(nullif(trim(t.size), ''), '-') = coalesce(nullif(trim(v_requirement.size), ''), '-');
+    if v_is_size_dependent then
+      select coalesce(sum((i.qty)::numeric), 0)
+        into v_allocated
+      from jsonb_to_recordset(p_items) as i(temporary_item_id bigint, qty numeric)
+      join public.warehouse_temporary_sales_items t on t.id = i.temporary_item_id
+      where t.status = 'IN_TEMPORARY_AREA'
+        and coalesce(t.area_type, 'SALES') = 'SALES'
+        and regexp_replace(upper(coalesce(t.sku_id, t.source_variant_code, '')), '[^A-Z0-9]', '', 'g') = regexp_replace(upper(coalesce(v_requirement.sku, '')), '[^A-Z0-9]', '', 'g')
+        and coalesce(nullif(trim(t.size), ''), '-') = coalesce(nullif(trim(v_requirement.size), ''), '-');
+    else
+      select coalesce(sum((i.qty)::numeric), 0)
+        into v_allocated
+      from jsonb_to_recordset(p_items) as i(temporary_item_id bigint, qty numeric)
+      join public.warehouse_temporary_sales_items t on t.id = i.temporary_item_id
+      where t.status = 'IN_TEMPORARY_AREA'
+        and coalesce(t.area_type, 'SALES') = 'SALES'
+        and regexp_replace(upper(coalesce(t.sku_id, t.source_variant_code, '')), '[^A-Z0-9]', '', 'g') = regexp_replace(upper(coalesce(v_requirement.sku, '')), '[^A-Z0-9]', '', 'g');
+    end if;
 
     if v_allocated <> v_required then
-      raise exception 'Selected temporary quantities do not match the bundle recipe for SKU % size %', v_requirement.sku, v_requirement.size;
+      raise exception 'Selected temporary quantities do not match the bundle recipe for SKU % size %', v_requirement.sku, coalesce(v_requirement.size, '-');
     end if;
   end loop;
 
@@ -132,15 +145,78 @@ begin
     );
   end loop;
 
-  for v_size in
-    select distinct coalesce(nullif(trim(r.size), ''), '-')
-    from jsonb_to_recordset(p_requirements) as r(sku text, size text, qty numeric)
-  loop
+  if v_is_size_dependent then
+    for v_size in
+      select distinct coalesce(nullif(trim(r.size), ''), '-')
+      from jsonb_to_recordset(p_requirements) as r(sku text, size text, qty numeric)
+    loop
+      select id, qty into v_existing
+      from public.warehouse_storage
+      where rack_location_id = p_destination_rack_location_id
+        and regexp_replace(upper(coalesce(sku_id, '')), '[^A-Z0-9]', '', 'g') = regexp_replace(upper(v_bundle.bundle_code), '[^A-Z0-9]', '', 'g')
+        and coalesce(nullif(trim(size), ''), '-') = v_size
+      for update;
+
+      if found then
+        update public.warehouse_storage
+        set qty = coalesce(qty, 0) + p_bundle_qty,
+            updated_by = p_actor,
+            updated_at = now()
+        where id = v_existing.id
+        returning id into v_storage_id;
+      else
+        insert into public.warehouse_storage (
+          rack_location_id,
+          sku_id,
+          source_variant_code,
+          item_name,
+          size,
+          qty,
+          notes,
+          updated_by
+        ) values (
+          p_destination_rack_location_id,
+          v_bundle.bundle_code,
+          v_bundle.bundle_code,
+          coalesce(v_bundle.bundle_name, v_bundle.bundle_code),
+          nullif(v_size, '-'),
+          p_bundle_qty,
+          'Stored as bundle ' || v_bundle.bundle_code,
+          p_actor
+        ) returning id into v_storage_id;
+      end if;
+
+      insert into public.warehouse_storage_movements (
+        warehouse_storage_id,
+        temporary_sales_item_id,
+        movement_type,
+        qty,
+        from_location_label,
+        to_location_label,
+        item_name,
+        size,
+        sku_id,
+        created_by
+      ) values (
+        v_storage_id,
+        null,
+        'TEMPORARY_RETURN',
+        p_bundle_qty,
+        'Temporary Sales Area',
+        coalesce(p_destination_label, 'Warehouse Storage'),
+        coalesce(v_bundle.bundle_name, v_bundle.bundle_code),
+        nullif(v_size, '-'),
+        v_bundle.bundle_code,
+        p_actor
+      );
+      v_stored_sizes := v_stored_sizes + 1;
+    end loop;
+  else
     select id, qty into v_existing
     from public.warehouse_storage
     where rack_location_id = p_destination_rack_location_id
       and regexp_replace(upper(coalesce(sku_id, '')), '[^A-Z0-9]', '', 'g') = regexp_replace(upper(v_bundle.bundle_code), '[^A-Z0-9]', '', 'g')
-      and coalesce(nullif(trim(size), ''), '-') = v_size
+      and size is null
     for update;
 
     if found then
@@ -165,7 +241,7 @@ begin
         v_bundle.bundle_code,
         v_bundle.bundle_code,
         coalesce(v_bundle.bundle_name, v_bundle.bundle_code),
-        nullif(v_size, '-'),
+        null,
         p_bundle_qty,
         'Stored as bundle ' || v_bundle.bundle_code,
         p_actor
@@ -191,12 +267,12 @@ begin
       'Temporary Sales Area',
       coalesce(p_destination_label, 'Warehouse Storage'),
       coalesce(v_bundle.bundle_name, v_bundle.bundle_code),
-      nullif(v_size, '-'),
+      null,
       v_bundle.bundle_code,
       p_actor
     );
-    v_stored_sizes := v_stored_sizes + 1;
-  end loop;
+    v_stored_sizes := 1;
+  end if;
 
   return jsonb_build_object(
     'bundle_id', v_bundle.id,

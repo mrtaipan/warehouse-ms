@@ -699,6 +699,10 @@ function matchesWarehouse(location, warehouseKey) {
 }
 
 function matchesZone(location, zone, warehouseKey) {
+  if (getStorageType(location?.location_type) === 'SHELVING') {
+    return false
+  }
+
   if (isArklineZone(zone, warehouseKey)) {
     return isArklineLocation(location) && getArklineLocationBaseNumber(location) === getArklineRackNumber(zone.code)
   }

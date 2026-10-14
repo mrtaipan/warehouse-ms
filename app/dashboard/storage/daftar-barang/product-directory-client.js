@@ -47,7 +47,7 @@ const PACKING_ITEM_SELECT_COLUMNS = [
   'packed_by',
 ].join(', ')
 const GROUP_TRANSFER_SELECT_COLUMNS = 'id, source_pl_packing_item_id, product_bundle_component_id, source_type, target_type, transfer_qty, source_qty_before, source_qty_after, created_by, created_at'
-const BUNDLE_SELECT_COLUMNS = 'id, bundle_code, bundle_name, bundle_unit_qty, storing_type, status, released_at, released_by, release_count, release_history, created_by, created_at'
+const BUNDLE_SELECT_COLUMNS = 'id, bundle_code, bundle_name, bundle_unit_qty, storing_type, is_size_dependent, status, released_at, released_by, release_count, release_history, created_by, created_at'
 const BUNDLE_COMPONENT_SELECT_COLUMNS = 'id, bundle_id, source_pl_packing_item_id, source_type, grn_number, sku, product_name, size_label, allocated_qty, available_qty_snapshot, created_at'
 const BREAKDOWN_SELECT_COLUMNS = [
   'id',
@@ -1687,6 +1687,7 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
       if (!components.length) return []
 
       const bundleUnitQty = Math.max(1, Number(bundle.bundle_unit_qty || 1))
+      const isSizeDependent = bundle.is_size_dependent !== false
       const buckets = new Map()
       const bundlePhotoUrls = new Set()
       components.forEach((component) => {
@@ -1837,13 +1838,24 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
           bundleId: Number(bundle.id || 0),
         }))
 
+      const aggregateBundleQty = (groupType = '') => Math.floor(
+        visibleBuckets
+          .filter((bucket) => !groupType || bucket.groupType === groupType)
+          .reduce((sum, bucket) => sum + Number(bucket.qty || 0), 0) / bundleUnitQty
+      )
       const detailItemList = sizeDetailItems.length ? [{
         ...sizeDetailItems[0],
         key: `bundle:${bundle.id}:${filters.type}`,
         size: '-',
-        qty: sizeDetailItems.reduce((sum, item) => sum + item.qty, 0),
-        mobQty: sizeDetailItems.reduce((sum, item) => sum + item.mobQty, 0),
-        oiQty: sizeDetailItems.reduce((sum, item) => sum + item.oiQty, 0),
+        qty: isSizeDependent
+          ? sizeDetailItems.reduce((sum, item) => sum + item.qty, 0)
+          : aggregateBundleQty(filters.type === 'all' ? '' : 'MOB') + (filters.type === 'all' ? aggregateBundleQty('OI') : 0),
+        mobQty: isSizeDependent
+          ? sizeDetailItems.reduce((sum, item) => sum + item.mobQty, 0)
+          : aggregateBundleQty('MOB'),
+        oiQty: isSizeDependent
+          ? sizeDetailItems.reduce((sum, item) => sum + item.oiQty, 0)
+          : aggregateBundleQty('OI'),
         bundleComponentIds: Array.from(new Set(
           sizeDetailItems.flatMap((item) => item.bundleComponentIds || [])
         )).filter(Boolean),
@@ -1903,6 +1915,7 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
         grnList: ['GRN Bundle'],
         plDateList: bundle.created_at ? [getDateValue(bundle.created_at)] : [],
         isBundle: true,
+        isSizeDependent,
         bundleId: Number(bundle.id || 0),
       }]
     })
