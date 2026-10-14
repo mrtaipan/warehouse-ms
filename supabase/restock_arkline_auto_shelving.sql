@@ -148,9 +148,12 @@ begin
   end if;
 
   if v_excess > 0 then
-    if p_source_storage_id is not null
-       and upper(coalesce(v_source_location.location_type, '')) = 'PALLET'
-       and v_sku_key is not null and v_source_size_key <> '' then
+    -- The selected Take From row is the only row whose stock is deducted.
+    -- If no source row was found, we can still place the fulfilled excess
+    -- directly into the one matching Arkline shelving location.
+    if (p_source_storage_id is null
+        or upper(coalesce(v_source_location.location_type, '')) = 'PALLET')
+       and v_sku_key is not null and v_size_key <> '' then
       select count(distinct storage.rack_location_id)
       into v_location_count
       from public.warehouse_storage storage
@@ -203,7 +206,10 @@ begin
           nullif(trim(v_destination_location.location_code), ''),
           nullif(trim(v_destination_location.sub_location), '')
         ),
-        v_source.item_name, v_source.size, v_source_sku, v_actor
+        coalesce(v_source.item_name, v_request.item_name),
+        coalesce(v_source.size, v_request.size),
+        coalesce(v_source_sku, v_request.search_term),
+        v_actor
       );
       v_destination_type := 'SHELVING';
     else

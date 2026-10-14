@@ -265,6 +265,49 @@ function sortStorageEntries(rows = []) {
   return [...rows].sort((left, right) => new Date(right.created_at || 0) - new Date(left.created_at || 0))
 }
 
+function getStorageDisplayGroupKey(entry = {}) {
+  return [
+    String(entry.rack_location_id || ''),
+    normalizeStorageSku(entry.sku_id || entry.source_variant_code || ''),
+    normalizeStorageSku(entry.source_variant_code || ''),
+    normalizeFilterValue(entry.item_name),
+    normalizeSizeValue(entry.size),
+    String(entry.category_id || ''),
+    normalizeFilterValue(entry.brand_code),
+  ].join('|')
+}
+
+function aggregateStorageDisplayRows(rows = []) {
+  const groups = new Map()
+
+  rows.forEach((entry) => {
+    const key = getStorageDisplayGroupKey(entry)
+    const existing = groups.get(key)
+
+    if (existing) {
+      existing.sourceEntries.push(entry)
+      existing.sourceRowIds.push(String(entry.id))
+      existing.qty += Number(entry.qty || 0)
+      return
+    }
+
+    groups.set(key, {
+      ...entry,
+      id: `storage-group:${key}`,
+      aggregateKey: key,
+      sourceEntries: [entry],
+      sourceRowIds: [String(entry.id)],
+      sourceRowCount: 1,
+      qty: Number(entry.qty || 0),
+    })
+  })
+
+  return Array.from(groups.values()).map((entry) => ({
+    ...entry,
+    sourceRowCount: entry.sourceEntries.length,
+  }))
+}
+
 function setWarehouseStorageCache(rows = []) {
   warehouseStorageCache.rows = sortStorageEntries(rows)
   warehouseStorageCache.expiresAt = Date.now() + STORAGE_DATA_CACHE_TTL_MS
@@ -1103,6 +1146,7 @@ export default function StorageOverviewPage() {
   const [selectedCategoryRowIds, setSelectedCategoryRowIds] = useState([])
   const [selectedQueueKeys, setSelectedQueueKeys] = useState([])
   const [selectedTemporarySourceIds, setSelectedTemporarySourceIds] = useState([])
+  const [expandedStorageGroupKeys, setExpandedStorageGroupKeys] = useState([])
   const [selectedTemporarySalesIds, setSelectedTemporarySalesIds] = useState([])
   const [selectedRejectKoliNumbers, setSelectedRejectKoliNumbers] = useState([])
   const [expandedRejectKoliNumbers, setExpandedRejectKoliNumbers] = useState([])
@@ -1155,6 +1199,13 @@ export default function StorageOverviewPage() {
     size: '',
     qty: '',
     notes: '',
+  })
+  const [lastRegisterLocationContext, setLastRegisterLocationContext] = useState({
+    group: '',
+    locationType: '',
+    locationId: '',
+    locationCode: '',
+    subLocation: '',
   })
   const [queueForm, setQueueForm] = useState({
     locationType: 'PALLET',
@@ -2442,16 +2493,20 @@ export default function StorageOverviewPage() {
         .filter(Boolean)
     )
   ).sort((left, right) => naturalSort.compare(String(left), String(right)))
-  const totalStockPages = Math.max(1, Math.ceil(filteredRows.length / STOCK_PAGE_SIZE))
+  const aggregatedFilteredRows = useMemo(
+    () => aggregateStorageDisplayRows(filteredRows),
+    [filteredRows]
+  )
+  const totalStockPages = Math.max(1, Math.ceil(aggregatedFilteredRows.length / STOCK_PAGE_SIZE))
   const safeStockPage = Math.min(stockPage, totalStockPages)
   const stockPageStartIndex = (safeStockPage - 1) * STOCK_PAGE_SIZE
-  const stockPageEndIndex = Math.min(stockPageStartIndex + STOCK_PAGE_SIZE, filteredRows.length)
-  const visibleStockRows = filteredRows.slice(stockPageStartIndex, stockPageStartIndex + STOCK_PAGE_SIZE)
+  const stockPageEndIndex = Math.min(stockPageStartIndex + STOCK_PAGE_SIZE, aggregatedFilteredRows.length)
+  const visibleStockRows = aggregatedFilteredRows.slice(stockPageStartIndex, stockPageStartIndex + STOCK_PAGE_SIZE)
   const selectedTemporarySourceIdSet = useMemo(
     () => new Set(selectedTemporarySourceIds.map((id) => String(id))),
     [selectedTemporarySourceIds]
   )
-  const visibleTemporarySourceIds = visibleStockRows.map((entry) => String(entry.id))
+  const visibleTemporarySourceIds = visibleStockRows.flatMap((entry) => entry.sourceRowIds || [String(entry.id)])
   const allVisibleTemporarySourcesSelected =
     visibleTemporarySourceIds.length > 0 &&
     visibleTemporarySourceIds.every((id) => selectedTemporarySourceIdSet.has(id))
@@ -2468,7 +2523,7 @@ export default function StorageOverviewPage() {
     () => storageRows.filter((entry) => selectedCategoryRowIdSet.has(String(entry.id))),
     [selectedCategoryRowIdSet, storageRows]
   )
-  const visibleCategoryRowIds = visibleStockRows.map((entry) => String(entry.id))
+  const visibleCategoryRowIds = visibleStockRows.flatMap((entry) => entry.sourceRowIds || [String(entry.id)])
   const allVisibleCategoryRowsSelected =
     canCategorizeStorageItem &&
     visibleCategoryRowIds.length > 0 &&
@@ -2710,6 +2765,31 @@ export default function StorageOverviewPage() {
       else next.delete(normalizedId)
       return Array.from(next)
     })
+  }
+
+  function toggleStorageDisplayGroupSelection(entry, checked) {
+    const sourceIds = entry?.sourceRowIds || []
+
+    if (sourceIds.length === 0) return
+
+    setSelectedTemporarySourceIds((current) => {
+      const next = new Set(current.map((value) => String(value)))
+      sourceIds.forEach((id) => (checked ? next.add(String(id)) : next.delete(String(id))))
+      return Array.from(next)
+    })
+    setSelectedCategoryRowIds((current) => {
+      const next = new Set(current.map((value) => String(value)))
+      sourceIds.forEach((id) => (checked ? next.add(String(id)) : next.delete(String(id))))
+      return Array.from(next)
+    })
+  }
+
+  function toggleStorageDisplayGroupExpanded(groupKey) {
+    setExpandedStorageGroupKeys((current) => (
+      current.includes(groupKey)
+        ? current.filter((key) => key !== groupKey)
+        : [...current, groupKey]
+    ))
   }
 
   function toggleVisibleTemporarySourceSelection(checked) {
@@ -3646,12 +3726,15 @@ export default function StorageOverviewPage() {
 
   function openRegisterModal() {
     if (!canRegisterStorageItem) return
-    setRegisterGroup(lockedStorageGroup || '')
+    const savedContext = lastRegisterLocationContext
+    const nextGroup = lockedStorageGroup || savedContext.group || ''
+
+    setRegisterGroup(nextGroup)
     setRegisterForm({
-      locationType: '',
-      locationId: '',
-      locationCode: '',
-      subLocation: '',
+      locationType: savedContext.locationType || '',
+      locationId: savedContext.locationId || '',
+      locationCode: savedContext.locationCode || '',
+      subLocation: savedContext.subLocation || '',
       skuId: '',
       itemName: '',
       size: '',
@@ -5138,6 +5221,13 @@ export default function StorageOverviewPage() {
       return
     }
 
+    setLastRegisterLocationContext({
+      group: registerGroup,
+      locationType: registerForm.locationType,
+      locationId: registerForm.locationId,
+      locationCode: registerForm.locationCode,
+      subLocation: registerForm.subLocation,
+    })
     setStorageEntries((currentRows) => mergeWarehouseStorageRows(currentRows, insertedRows || []))
     setRegisterForm((prev) => ({
       ...prev,
@@ -6724,7 +6814,7 @@ export default function StorageOverviewPage() {
 
             <div style={styles.filterFooter}>
               <p style={styles.summary}>
-                Showing {filteredRows.length ? stockPageStartIndex + 1 : 0}-{stockPageEndIndex} of {filteredRows.length} item record(s)
+                Showing {aggregatedFilteredRows.length ? stockPageStartIndex + 1 : 0}-{stockPageEndIndex} of {aggregatedFilteredRows.length} item group(s)
               </p>
               <div style={styles.paginationControls}>
                 <button
@@ -6960,7 +7050,7 @@ export default function StorageOverviewPage() {
           </div>
         ) : null}
 
-        {visibleListMode === 'stock' ? filteredRows.length === 0 ? (
+        {visibleListMode === 'stock' ? aggregatedFilteredRows.length === 0 ? (
           <div style={styles.emptyState}>
             <p style={{ margin: 0 }}>No stored items found for the selected filters.</p>
           </div>
@@ -6988,65 +7078,152 @@ export default function StorageOverviewPage() {
                 </tr>
               </thead>
               <tbody>
-                {visibleStockRows.map((entry) => (
-                  <tr key={entry.id}>
-                    {canSelectCurrentStockRows ? (
-                      <td style={{ ...styles.td, ...styles.selectTd }}>
-                        <input
-                          type="checkbox"
-                          checked={selectedTemporarySourceIdSet.has(String(entry.id))}
-                          onChange={(event) => toggleTemporarySourceSelection(entry.id, event.target.checked)}
-                          style={styles.rowCheckbox}
-                          aria-label={`Select ${getStorageItemDisplayName(entry)}`}
-                        />
-                      </td>
-                    ) : null}
-                    <td style={styles.td}>{getLocationLabel(entry.location)}</td>
-                    <td style={styles.td}>
-                      <div style={styles.cellStack}>
-                        <span>{getStorageItemDisplayName(entry)}</span>
-                        <span style={styles.cellMeta}>{entry.category ? getCategoryDisplayName(entry.category) : 'Uncategorized'}</span>
-                      </div>
-                    </td>
-                    <td style={styles.td}>{entry.size || '-'}</td>
-                    <td style={styles.td}>{entry.qty}</td>
-                    {canShowStorageLocationActions ? (
-                      <td style={{ ...styles.td, ...styles.actionTd }}>
-                        <div style={styles.actionGroup}>
-                          {canEditStorageItem ? (
-                            <button
-                              type="button"
-                              onClick={() => openEditModal(entry)}
-                              style={styles.tableIconButton}
-                              title="Edit item detail"
-                              aria-label="Edit item detail"
-                            >
-                              <svg viewBox="0 0 24 24" style={styles.tableActionIcon} aria-hidden="true">
-                                <path d="M12 20h9" />
-                                <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5Z" />
-                              </svg>
-                            </button>
-                          ) : null}
-                          {canTakeStorageItem ? (
-                          <button
-                            type="button"
-                            onClick={() => openTakeModal(entry)}
-                            style={{ ...styles.tableIconButton, ...styles.tableIconButtonDark }}
-                            title="Take out item"
-                            aria-label="Take out item"
-                          >
-                            <svg viewBox="0 0 24 24" style={styles.tableActionIcon} aria-hidden="true">
-                              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
-                              <path d="M16 17l5-5-5-5" />
-                              <path d="M21 12H9" />
-                            </svg>
-                          </button>
+                {visibleStockRows.map((entry) => {
+                  const sourceEntries = entry.sourceEntries || [entry]
+                  const sourceIds = entry.sourceRowIds || [String(entry.id)]
+                  const isExpanded = expandedStorageGroupKeys.includes(entry.aggregateKey)
+                  const allGroupRowsSelected = sourceIds.length > 0 && sourceIds.every((id) => selectedTemporarySourceIdSet.has(String(id)))
+                  const singleSourceEntry = sourceEntries.length === 1 ? sourceEntries[0] : null
+
+                  return (
+                    <Fragment key={entry.aggregateKey || entry.id}>
+                      <tr>
+                        {canSelectCurrentStockRows ? (
+                          <td style={{ ...styles.td, ...styles.selectTd }}>
+                            <input
+                              type="checkbox"
+                              checked={allGroupRowsSelected}
+                              onChange={(event) => toggleStorageDisplayGroupSelection(entry, event.target.checked)}
+                              style={styles.rowCheckbox}
+                              aria-label={`Select ${getStorageItemDisplayName(entry)}`}
+                            />
+                          </td>
                         ) : null}
-                        </div>
-                      </td>
-                    ) : null}
-                  </tr>
-                ))}
+                        <td style={styles.td}>{getLocationLabel(entry.location)}</td>
+                        <td style={styles.td}>
+                          <div style={styles.cellStack}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                              {sourceEntries.length > 1 ? (
+                                <button
+                                  type="button"
+                                  onClick={() => toggleStorageDisplayGroupExpanded(entry.aggregateKey)}
+                                  style={styles.tableIconButton}
+                                  title={isExpanded ? 'Hide source rows' : 'Show source rows'}
+                                  aria-label={isExpanded ? 'Hide source rows' : 'Show source rows'}
+                                >
+                                  <span aria-hidden="true">{isExpanded ? '−' : '+'}</span>
+                                </button>
+                              ) : null}
+                              <span>{getStorageItemDisplayName(entry)}</span>
+                            </div>
+                            <span style={styles.cellMeta}>
+                              {entry.category ? getCategoryDisplayName(entry.category) : 'Uncategorized'}
+                              {sourceEntries.length > 1 ? ` · ${sourceEntries.length} source rows` : ''}
+                            </span>
+                          </div>
+                        </td>
+                        <td style={styles.td}>{entry.size || '-'}</td>
+                        <td style={styles.td}>{entry.qty}</td>
+                        {canShowStorageLocationActions ? (
+                          <td style={{ ...styles.td, ...styles.actionTd }}>
+                            {singleSourceEntry ? (
+                              <div style={styles.actionGroup}>
+                                {canEditStorageItem ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => openEditModal(singleSourceEntry)}
+                                    style={styles.tableIconButton}
+                                    title="Edit item detail"
+                                    aria-label="Edit item detail"
+                                  >
+                                    <svg viewBox="0 0 24 24" style={styles.tableActionIcon} aria-hidden="true">
+                                      <path d="M12 20h9" />
+                                      <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5Z" />
+                                    </svg>
+                                  </button>
+                                ) : null}
+                                {canTakeStorageItem ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => openTakeModal(singleSourceEntry)}
+                                    style={{ ...styles.tableIconButton, ...styles.tableIconButtonDark }}
+                                    title="Take out item"
+                                    aria-label="Take out item"
+                                  >
+                                    <svg viewBox="0 0 24 24" style={styles.tableActionIcon} aria-hidden="true">
+                                      <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+                                      <path d="M16 17l5-5-5-5" />
+                                      <path d="M21 12H9" />
+                                    </svg>
+                                  </button>
+                                ) : null}
+                              </div>
+                            ) : <span style={styles.cellMeta}>Expand rows for actions</span>}
+                          </td>
+                        ) : null}
+                      </tr>
+                      {isExpanded ? sourceEntries.map((sourceEntry) => (
+                        <tr key={sourceEntry.id} style={{ background: '#f8fafc' }}>
+                          {canSelectCurrentStockRows ? (
+                            <td style={{ ...styles.td, ...styles.selectTd }}>
+                              <input
+                                type="checkbox"
+                                checked={selectedTemporarySourceIdSet.has(String(sourceEntry.id))}
+                                onChange={(event) => toggleTemporarySourceSelection(sourceEntry.id, event.target.checked)}
+                                style={styles.rowCheckbox}
+                                aria-label={`Select ${getStorageItemDisplayName(sourceEntry)}`}
+                              />
+                            </td>
+                          ) : null}
+                          <td style={{ ...styles.td, paddingLeft: 28 }}>{getLocationLabel(sourceEntry.location)}</td>
+                          <td style={{ ...styles.td, paddingLeft: 28 }}>
+                            <div style={styles.cellStack}>
+                              <span>{getStorageItemDisplayName(sourceEntry)}</span>
+                              <span style={styles.cellMeta}>{sourceEntry.category ? getCategoryDisplayName(sourceEntry.category) : 'Uncategorized'}</span>
+                            </div>
+                          </td>
+                          <td style={styles.td}>{sourceEntry.size || '-'}</td>
+                          <td style={styles.td}>{sourceEntry.qty}</td>
+                          {canShowStorageLocationActions ? (
+                            <td style={{ ...styles.td, ...styles.actionTd }}>
+                              <div style={styles.actionGroup}>
+                                {canEditStorageItem ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => openEditModal(sourceEntry)}
+                                    style={styles.tableIconButton}
+                                    title="Edit item detail"
+                                    aria-label="Edit item detail"
+                                  >
+                                    <svg viewBox="0 0 24 24" style={styles.tableActionIcon} aria-hidden="true">
+                                      <path d="M12 20h9" />
+                                      <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5Z" />
+                                    </svg>
+                                  </button>
+                                ) : null}
+                                {canTakeStorageItem ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => openTakeModal(sourceEntry)}
+                                    style={{ ...styles.tableIconButton, ...styles.tableIconButtonDark }}
+                                    title="Take out item"
+                                    aria-label="Take out item"
+                                  >
+                                    <svg viewBox="0 0 24 24" style={styles.tableActionIcon} aria-hidden="true">
+                                      <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+                                      <path d="M16 17l5-5-5-5" />
+                                      <path d="M21 12H9" />
+                                    </svg>
+                                  </button>
+                                ) : null}
+                              </div>
+                            </td>
+                          ) : null}
+                        </tr>
+                      )) : null}
+                    </Fragment>
+                  )
+                })}
               </tbody>
             </table>
           </div>

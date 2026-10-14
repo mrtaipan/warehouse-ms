@@ -742,6 +742,41 @@ function normalizeSizeValue(value) {
   return String(value || '').trim().toUpperCase().replace(/\s+/g, '')
 }
 
+function normalizeStorageDisplayToken(value) {
+  return String(value || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '')
+}
+
+function aggregateStorageDisplayEntries(entries = []) {
+  const groups = new Map()
+
+  entries.forEach((entry) => {
+    const key = [
+      String(entry.rack_location_id || ''),
+      normalizeStorageDisplayToken(entry.sku_id || entry.source_variant_code || ''),
+      normalizeStorageDisplayToken(entry.source_variant_code || ''),
+      String(entry.item_name || '').trim().toUpperCase(),
+      normalizeSizeValue(entry.size),
+      String(entry.category_id || ''),
+      String(entry.brand_code || '').trim().toUpperCase(),
+    ].join('|')
+    const existing = groups.get(key)
+
+    if (existing) {
+      existing.qty += Number(entry.qty || 0)
+      existing.sourceEntries.push(entry)
+      return
+    }
+
+    groups.set(key, {
+      ...entry,
+      qty: Number(entry.qty || 0),
+      sourceEntries: [entry],
+    })
+  })
+
+  return Array.from(groups.values())
+}
+
 function splitSkuItemName(value) {
   const text = String(value || '').trim()
   const separatorIndex = text.indexOf('|')
@@ -1220,7 +1255,7 @@ function groupShelvingEntriesByLevel(entries) {
     .map(([key, groupEntries]) => ({
       key,
       label: `Level ${key}`,
-      entries: groupEntries,
+      entries: aggregateStorageDisplayEntries(groupEntries),
       qty: groupEntries.reduce((sum, entry) => sum + Number(entry.qty || 0), 0),
     }))
 }
@@ -1241,7 +1276,7 @@ function groupEntriesBySubLocation(entries) {
     return {
       key,
       label: key,
-      entries: groupEntries,
+      entries: aggregateStorageDisplayEntries(groupEntries),
       qty: groupEntries.reduce((sum, entry) => sum + Number(entry.qty || 0), 0),
     }
   }).filter((group) => group.entries.length > 0)
@@ -1252,7 +1287,7 @@ function groupEntriesBySubLocation(entries) {
     orderedGroups.push({
       key: UNASSIGNED_SUBLOCATION_KEY,
       label: getSubLocationLabel(UNASSIGNED_SUBLOCATION_KEY),
-      entries: unassignedEntries,
+      entries: aggregateStorageDisplayEntries(unassignedEntries),
       qty: unassignedEntries.reduce((sum, entry) => sum + Number(entry.qty || 0), 0),
     })
   }
@@ -1685,7 +1720,7 @@ export default function WarehouseMapClient({ canEditMap = false, canUseRegistry 
         ? [{
             key: selectedSlotCode || 'ARKLINE_SLOT',
             label: selectedSlotCode,
-            entries,
+            entries: aggregateStorageDisplayEntries(entries),
             qty: entries.reduce((sum, entry) => sum + Number(entry.qty || 0), 0),
           }]
         : []
@@ -1705,7 +1740,7 @@ export default function WarehouseMapClient({ canEditMap = false, canUseRegistry 
       ? [{
           key: selectedSubLocationKey,
           label: getSubLocationLabel(selectedSubLocationKey),
-          entries,
+          entries: aggregateStorageDisplayEntries(entries),
           qty: entries.reduce((sum, entry) => sum + Number(entry.qty || 0), 0),
         }]
       : []
