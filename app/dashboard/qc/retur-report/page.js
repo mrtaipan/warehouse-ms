@@ -55,6 +55,7 @@ async function loadArklineReturnData(supabase) {
     storageBatchResult,
     storageLineResult,
     poResult,
+    poItemResult,
     poSizeResult,
   ] = await Promise.all([
     supabase.from('arkline_qc_reject_details').select('*').order('created_at', { ascending: false }),
@@ -75,6 +76,7 @@ async function loadArklineReturnData(supabase) {
     supabase.from('arkline_qc_rejection_storage_batches').select('*').order('created_at', { ascending: false }),
     supabase.from('arkline_qc_rejection_storage_lines').select('*'),
     supabase.from('arkline_pos').select('po_id, supplier_name'),
+    supabase.from('arkline_po_items').select('id, po_id, sku_induk, nama_produk, kategori_produk, status').order('nama_produk', { ascending: true }),
     supabase.from('arkline_po_item_sizes').select('arkline_po_item_id, size, qty'),
   ])
 
@@ -89,6 +91,7 @@ async function loadArklineReturnData(supabase) {
     storageBatchResult,
     storageLineResult,
     poResult,
+    poItemResult,
     poSizeResult,
   ].find(
     (result) => result.error
@@ -180,6 +183,43 @@ async function loadArklineReturnData(supabase) {
     if (!poItemKey || !size) return
     sizeOptionsByPoItem.set(poItemKey, Array.from(new Set([...(sizeOptionsByPoItem.get(poItemKey) || []), size])))
   })
+
+  const registrationProductMap = new Map()
+  ;(poItemResult.data || []).forEach((item) => {
+    const skuInduk = String(item.sku_induk || '').trim()
+    const productName = String(item.nama_produk || 'Arkline Product').trim()
+    const key = [skuInduk.toUpperCase(), productName.toUpperCase()].filter(Boolean).join('|||') || String(item.id)
+    const current = registrationProductMap.get(key)
+    if (current) {
+      current.poIds = Array.from(new Set([...current.poIds, item.po_id].filter(Boolean)))
+      current.supplierNames = Array.from(new Set([...current.supplierNames, supplierByPo.get(String(item.po_id || ''))].filter(Boolean)))
+      return
+    }
+
+    registrationProductMap.set(key, {
+      id: item.id,
+      poId: item.po_id || '',
+      poIds: [item.po_id].filter(Boolean),
+      skuInduk,
+      productName,
+      categoryName: item.kategori_produk || '',
+      supplierName: supplierByPo.get(String(item.po_id || '')) || '',
+      supplierNames: [supplierByPo.get(String(item.po_id || ''))].filter(Boolean),
+      status: item.status || '',
+    })
+  })
+
+  const registrationProducts = Array.from(registrationProductMap.values())
+    .sort((a, b) => a.productName.localeCompare(b.productName, undefined, { numeric: true }))
+
+  const rejectReasons = (reasonResult.data || [])
+    .filter((reason) => reason.is_active !== false)
+    .map((reason) => ({
+      id: reason.id,
+      name: reason.reason_name || 'Reject reason',
+      isRepairable: reason.is_repairable === true,
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }))
   const linesByBatch = new Map()
   ;(lineResult.data || []).forEach((line) => {
     const reason = reasonById.get(String(line.reject_reason_id)) || {}
@@ -247,6 +287,7 @@ async function loadArklineReturnData(supabase) {
       grade: line.grade,
       size: String(line.size || 'No size').trim().toUpperCase(),
       qty: Number(line.qty || 0),
+      sourceType: line.reject_detail_id ? 'QC_REJECT' : 'PACKING_REJECT',
     }
     const key = String(line.storage_batch_id)
     storageLinesByBatch.set(key, [...(storageLinesByBatch.get(key) || []), normalized])
@@ -265,12 +306,13 @@ async function loadArklineReturnData(supabase) {
     updatedAt: batch.updated_at,
     storedQty: Number(batch.stored_qty || 0),
     status: batch.status,
+    sourceType: batch.source_type || 'QC_REJECT',
     notes: batch.notes || '',
     createdBy: batch.created_by || '',
     lines: storageLinesByBatch.get(String(batch.id)) || [],
   }))
 
-  return { eligibleRows, batches, storages }
+  return { eligibleRows, batches, storages, registrationProducts, rejectReasons }
 }
 
 export default async function QcReturReportPage({ searchParams }) {
@@ -306,13 +348,15 @@ export default async function QcReturReportPage({ searchParams }) {
           {arklineError ? (
             <div className={reportStyles.card}>
               <p className={reportStyles.error}>Arkline return data could not be loaded: {arklineError.message}</p>
-              <p className={reportStyles.notice}>Run `supabase/arkline_qc_return_rework.sql` and `supabase/arkline_qc_rejection_storage.sql` in Supabase before using this flow.</p>
+              <p className={reportStyles.notice}>Run `supabase/arkline_qc_return_rework.sql`, `supabase/arkline_qc_rejection_storage.sql`, and `supabase/arkline_rejection_storage_item_registration.sql` in Supabase before using this flow.</p>
             </div>
           ) : (
             <ArklineReturReportClient
               eligibleRows={arklineData?.eligibleRows || []}
               batches={arklineData?.batches || []}
               storages={arklineData?.storages || []}
+              registrationProducts={arklineData?.registrationProducts || []}
+              rejectReasons={arklineData?.rejectReasons || []}
               userEmail={user.email || ''}
               canAdd={canAdd}
               canEdit={canEdit}

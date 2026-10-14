@@ -510,9 +510,162 @@
   margin-top: 18px;
 }
 
+.storageModeToggle {
+  display: inline-flex;
+  width: 160px;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid #dbe2ea;
+  border-radius: 12px;
+  background: #f1f5f9;
+}
+
+.storageModeButton {
+  flex: 1;
+  min-width: 0;
+  height: 32px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 850;
+  cursor: pointer;
+}
+
+.storageModeButtonActive {
+  background: #fff;
+  color: #111827;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08);
+}
+
+.storageSizeField {
+  width: 160px;
+}
+
 .storageSearchField {
   flex: 1;
   min-width: 260px;
+}
+
+.storageTable {
+  min-width: 920px;
+}
+
+.storageParentRow td {
+  background: #fff;
+}
+
+.storageKoliCell,
+.storageTextToggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.storageKoliCell strong {
+  color: #111827;
+  font-size: 13px;
+}
+
+.storageTableToggle {
+  width: 28px;
+  height: 28px;
+  border: 1px solid #cbd5e1;
+  border-radius: 7px;
+  background: #fff;
+  color: #111827;
+  font-size: 15px;
+  font-weight: 850;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.storageTableToggle:hover {
+  border-color: #94a3b8;
+  background: #f8fafc;
+}
+
+.storageExpandedRow > td,
+.storageNestedRow > td {
+  padding: 0;
+  background: #f8fafc;
+}
+
+.storageNestedPanel {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border-top: 1px solid #dbe4ee;
+}
+
+.storageProductTable,
+.storageSizeTable,
+.storageDetailTable {
+  min-width: 0;
+  border: 1px solid #dbe4ee;
+  border-radius: 10px;
+  overflow: hidden;
+  background: #fff;
+}
+
+.storageProductTable th,
+.storageSizeTable th,
+.storageDetailTable th {
+  background: #f3f6fa;
+  color: #475569;
+}
+
+.storageProductTable td,
+.storageSizeTable td,
+.storageDetailTable td {
+  border-top-color: #dbe4ee;
+}
+
+.storageSizeTable,
+.storageDetailTable {
+  margin: 10px 12px 12px;
+  width: calc(100% - 24px);
+}
+
+.storageTextToggle {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: #111827;
+  cursor: pointer;
+  text-align: left;
+}
+
+.storageTextToggle > span:first-child {
+  width: 24px;
+  height: 24px;
+  border: 1px solid #cbd5e1;
+  border-radius: 7px;
+  background: #fff;
+  color: #111827;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  font-size: 14px;
+  font-weight: 850;
+}
+
+.storageProductName {
+  overflow: hidden;
+  color: #111827;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.storageTextToggle small {
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 750;
 }
 
 .batchCard {
@@ -710,6 +863,36 @@
   border: 1px solid #dbe2ea;
   background: #f8fafc;
   color: #334155;
+}
+
+.modalIconActions {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.iconSaveButton {
+  width: 36px;
+  height: 36px;
+  border: 1px solid #0f766e;
+  border-radius: 9px;
+  background: #0f766e;
+  color: #fff;
+  font-size: 17px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.iconSaveButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.dangerCloseButton {
+  border-color: #fecaca;
+  background: #fff5f5;
+  color: #dc2626;
+  font-weight: 900;
 }
 
 .formGrid {
@@ -983,6 +1166,18 @@
   .storageToolbar {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .storageModeToggle {
+    width: 100%;
+  }
+
+  .storageModeButton {
+    flex: 1;
+  }
+
+  .storageSizeField {
+    width: 100%;
   }
 
   .storageSearchField {

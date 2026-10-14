@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useMemo, useState } from 'react'
+import { Fragment, useCallback, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/utils/supabase/browser'
 import styles from './retur-report.module.css'
@@ -23,6 +23,22 @@ function formatDate(value) {
 function formatStatus(value) {
   return String(value || 'SENT').replaceAll('_', ' ')
 }
+
+function formatStorageSourceType(value) {
+  const normalized = String(value || 'QC_REJECT').toUpperCase()
+  if (normalized === 'PACKING_REJECT') return 'Packing Reject'
+  return 'QC Reject'
+}
+
+function getRegistrationProductLabel(product) {
+  return String(product?.productName || '').trim()
+}
+
+function getRegistrationReasonLabel(reason) {
+  return String(reason?.name || '').trim()
+}
+
+const REGISTRATION_SIZE_OPTIONS = ['XS', 'S', 'M', 'L', 'XL', 'XXL']
 
 function getStatusBadgeClass(status) {
   const normalized = String(status || 'SENT').toUpperCase()
@@ -199,15 +215,20 @@ function matchesStorageSearch(searchText, query) {
 }
 
 function getStorageProductKey(line) {
-  return String(line.modelName || 'No product').trim().toUpperCase()
+  return [
+    String(line.skuInduk || '').trim().toUpperCase(),
+    String(line.modelName || 'No product').trim().toUpperCase(),
+  ].join('|||')
+}
+
+function getStorageSizeKey(line) {
+  return String(line.size || 'No size').trim().toUpperCase()
 }
 
 function getStorageRejectLineKey(line) {
   return [
-    String(line.poId || '').trim().toUpperCase(),
-    String(line.modelName || '').trim().toUpperCase(),
+    String(line.sourceType || 'QC_REJECT').trim().toUpperCase(),
     String(line.grade || '').trim().toUpperCase(),
-    String(line.size || '').trim().toUpperCase(),
     String(line.reasonId || line.reasonName || '').trim().toUpperCase(),
   ].join('|||')
 }
@@ -220,56 +241,96 @@ function buildStorageProductGroups(lines = []) {
     const currentProduct = productMap.get(productKey) || {
       key: `product:${productKey}`,
       productName: line.modelName || 'No product',
+      skuInduk: line.skuInduk || '',
       qty: 0,
-      lines: new Map(),
+      sizeGroups: new Map(),
       searchTextParts: [],
     }
     const qty = Number(line.qty || 0)
-    const lineKey = getStorageRejectLineKey(line)
-    const currentLine = currentProduct.lines.get(lineKey) || {
-      ...line,
-      rowKey: lineKey,
+    const sizeKey = getStorageSizeKey(line)
+    const currentSize = currentProduct.sizeGroups.get(sizeKey) || {
+      key: `size:${productKey}:${sizeKey}`,
+      size: line.size || 'No size',
       qty: 0,
+      details: new Map(),
+      searchTextParts: [],
+    }
+    const detailKey = getStorageRejectLineKey(line)
+    const currentDetail = currentSize.details.get(detailKey) || {
+      ...line,
+      rowKey: detailKey,
+      qty: 0,
+      poIds: new Set(),
       sourceLineCount: 0,
       searchTextParts: [],
     }
 
-    currentLine.qty += qty
-    currentLine.sourceLineCount += 1
-    currentLine.searchTextParts.push(line.searchText)
+    currentDetail.qty += qty
+    currentDetail.sourceLineCount += 1
+    if (line.poId) currentDetail.poIds.add(line.poId)
+    currentDetail.searchTextParts.push(line.searchText)
+    currentSize.qty += qty
+    currentSize.searchTextParts.push(line.searchText)
     currentProduct.qty += qty
     currentProduct.searchTextParts.push(line.searchText)
-    currentProduct.lines.set(lineKey, currentLine)
+    currentSize.details.set(detailKey, currentDetail)
+    currentProduct.sizeGroups.set(sizeKey, currentSize)
     productMap.set(productKey, currentProduct)
   })
 
   return Array.from(productMap.values())
     .map((product) => {
-      const linesList = Array.from(product.lines.values())
-        .map((line) => ({
-          ...line,
-          searchText: buildStorageSearchText(line.searchTextParts),
-        }))
-        .sort((a, b) => {
-          const poCompare = String(a.poId || '').localeCompare(String(b.poId || ''), undefined, { numeric: true })
-          if (poCompare) return poCompare
-          const gradeCompare = String(a.grade || '').localeCompare(String(b.grade || ''), undefined, { numeric: true })
-          if (gradeCompare) return gradeCompare
-          const sizeCompare = String(a.size || '').localeCompare(String(b.size || ''), undefined, { numeric: true })
-          if (sizeCompare) return sizeCompare
-          return String(a.reasonName || '').localeCompare(String(b.reasonName || ''), undefined, { numeric: true })
+      const sizeGroups = Array.from(product.sizeGroups.values())
+        .map((sizeGroup) => {
+          const details = Array.from(sizeGroup.details.values())
+            .map((detail) => {
+              const poIds = Array.from(detail.poIds).sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true }))
+              return {
+                ...detail,
+                poIds,
+                poLabel: poIds.length ? poIds.join(', ') : '-',
+                searchText: buildStorageSearchText([
+                  ...poIds,
+                  detail.grade,
+                  detail.reasonName,
+                  detail.sourceType,
+                  detail.qty,
+                  ...detail.searchTextParts,
+                ]),
+              }
+            })
+            .sort((a, b) => {
+              const reasonCompare = String(a.reasonName || '').localeCompare(String(b.reasonName || ''), undefined, { numeric: true })
+              if (reasonCompare) return reasonCompare
+              return String(a.grade || '').localeCompare(String(b.grade || ''), undefined, { numeric: true })
+            })
+
+          return {
+            ...sizeGroup,
+            details,
+            searchText: buildStorageSearchText([sizeGroup.size, sizeGroup.qty, ...details.map((detail) => detail.searchText), ...sizeGroup.searchTextParts]),
+          }
         })
+        .sort((a, b) => String(a.size || '').localeCompare(String(b.size || ''), undefined, { numeric: true }))
+
+      const detailLines = sizeGroups.flatMap((sizeGroup) => sizeGroup.details)
 
       return {
         ...product,
-        lines: linesList,
-        searchText: buildStorageSearchText([product.productName, product.qty, ...product.searchTextParts]),
+        sizeGroups,
+        lines: detailLines,
+        searchText: buildStorageSearchText([
+          product.skuInduk,
+          product.productName,
+          product.qty,
+          ...sizeGroups.map((sizeGroup) => sizeGroup.searchText),
+          ...product.searchTextParts,
+        ]),
       }
     })
     .sort((a, b) => String(a.productName || '').localeCompare(String(b.productName || ''), undefined, { numeric: true }))
 }
-
-export default function ArklineReturReportClient({ eligibleRows, batches, storages = [], userEmail, canAdd = false, canEdit = false }) {
+export default function ArklineReturReportClient({ eligibleRows, batches, storages = [], registrationProducts = [], rejectReasons = [], userEmail, canAdd = false, canEdit = false }) {
   const router = useRouter()
   const supabase = createClient()
   const [selectedIds, setSelectedIds] = useState([])
@@ -286,11 +347,14 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
   const [progressProductFilter, setProgressProductFilter] = useState('')
   const [progressRejectReasonFilter, setProgressRejectReasonFilter] = useState('')
   const [progressStatusFilter, setProgressStatusFilter] = useState('')
+  const [storageViewMode, setStorageViewMode] = useState('koli')
   const [storageSearch, setStorageSearch] = useState('')
+  const [storageSizeFilter, setStorageSizeFilter] = useState('')
   const [collapsedStorageKeys, setCollapsedStorageKeys] = useState([])
   const [collapsedStorageProductKeys, setCollapsedStorageProductKeys] = useState([])
   const [returnModalOpen, setReturnModalOpen] = useState(false)
   const [storageModalOpen, setStorageModalOpen] = useState(false)
+  const [registrationModalOpen, setRegistrationModalOpen] = useState(false)
   const [receiptBatch, setReceiptBatch] = useState(null)
   const [returnDate, setReturnDate] = useState(todayValue())
   const [shippingMethod, setShippingMethod] = useState('')
@@ -298,6 +362,18 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
   const [storageDate, setStorageDate] = useState(todayValue())
   const [storageNumber, setStorageNumber] = useState('')
   const [storageNotes, setStorageNotes] = useState('')
+  const [registrationDraft, setRegistrationDraft] = useState({
+    storageNumber: '',
+    storageDate: todayValue(),
+    productId: '',
+    productSearch: '',
+    size: '',
+    rejectReasonId: '',
+    rejectReasonSearch: '',
+    grade: 'C',
+    qty: '',
+    notes: '',
+  })
   const [returnQtyById, setReturnQtyById] = useState({})
   const [receiptDate, setReceiptDate] = useState(todayValue())
   const [receiptNotes, setReceiptNotes] = useState('')
@@ -528,20 +604,25 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
           ...line,
           rowKey: `${storage.id}-${line.id}`,
           poId: storage.poId,
+          skuInduk: storage.skuInduk,
           modelName: storage.modelName,
           supplierName: storage.supplierName,
           storageDate: storage.storageDate,
           updatedAt: storage.updatedAt,
           storageNumber: storage.storageNumber,
+          sourceType: storage.sourceType || line.sourceType || 'QC_REJECT',
         }
         current.lines.push({
           ...enrichedLine,
           searchText: buildStorageSearchText([
             storage.storageNumber,
             storage.poId,
+            storage.skuInduk,
             storage.modelName,
             storage.supplierName,
+            storage.sourceType,
             storage.updatedAt,
+            line.sourceType,
             line.reasonName,
             line.grade,
             line.size,
@@ -569,6 +650,7 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
           ...products,
           ...suppliers,
           ...statuses,
+          ...Array.from(new Set(group.lines.map((line) => line.sourceType).filter(Boolean))),
           ...group.notes,
           ...group.lines.map((line) => line.searchText),
         ])
@@ -600,9 +682,14 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
         return String(a.storageNumber || '').localeCompare(String(b.storageNumber || ''), undefined, { numeric: true })
       })
   }, [storages])
+  const storageSizeOptions = useMemo(
+    () =>
+      Array.from(new Set(groupedStorages.flatMap((group) => group.lines.map((line) => line.size).filter(Boolean))))
+        .sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true })),
+    [groupedStorages]
+  )
   const filteredStorageGroups = useMemo(() => {
     const query = storageSearch.trim()
-    if (!query) return groupedStorages
 
     return groupedStorages
       .filter((group) => matchesStorageSearch(group.searchText, query))
@@ -610,19 +697,68 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
         const matchingProductGroups = group.productGroups
           .filter((product) => matchesStorageSearch(product.searchText, query))
           .map((product) => {
-            const matchingLines = product.lines.filter((line) => matchesStorageSearch(line.searchText, query))
-            return {
-              ...product,
-              displayLines: matchingLines.length ? matchingLines : product.lines,
-            }
+            const matchingSizeGroups = product.sizeGroups
+              .filter((sizeGroup) => !storageSizeFilter || String(sizeGroup.size || '') === storageSizeFilter)
+              .filter((sizeGroup) => matchesStorageSearch(sizeGroup.searchText, query))
+              .map((sizeGroup) => {
+                const matchingDetails = sizeGroup.details.filter((detail) => matchesStorageSearch(detail.searchText, query))
+                return {
+                  ...sizeGroup,
+                  displayDetails: matchingDetails.length ? matchingDetails : sizeGroup.details,
+                }
+              })
+            return matchingSizeGroups.length
+              ? {
+                  ...product,
+                  displaySizeGroups: matchingSizeGroups,
+                }
+              : null
           })
+          .filter(Boolean)
 
-        return {
-          ...group,
-          displayProductGroups: matchingProductGroups.length ? matchingProductGroups : group.productGroups,
-        }
+        return matchingProductGroups.length
+          ? {
+              ...group,
+              displayProductGroups: matchingProductGroups,
+            }
+          : null
       })
-  }, [groupedStorages, storageSearch])
+      .filter(Boolean)
+  }, [groupedStorages, storageSearch, storageSizeFilter])
+  const storageModelGroups = useMemo(() => {
+    const modelMap = new Map()
+
+    filteredStorageGroups.forEach((storage) => {
+      const displayProductGroups = storage.displayProductGroups || storage.productGroups
+      displayProductGroups.forEach((product) => {
+        const current = modelMap.get(product.key) || {
+          key: `model:${product.key}`,
+          productName: product.productName,
+          skuInduk: product.skuInduk,
+          qty: 0,
+          koliNumbers: new Set(),
+          sizeGroups: new Map(),
+        }
+        current.koliNumbers.add(storage.storageNumber)
+        ;(product.displaySizeGroups || product.sizeGroups).forEach((sizeGroup) => {
+          const sizeKey = String(sizeGroup.size || 'No size').trim().toUpperCase()
+          const currentSize = current.sizeGroups.get(sizeKey) || { key: `${current.key}:size:${sizeKey}`, size: sizeGroup.size, qty: 0 }
+          currentSize.qty += Number(sizeGroup.qty || 0)
+          current.qty += Number(sizeGroup.qty || 0)
+          current.sizeGroups.set(sizeKey, currentSize)
+        })
+        modelMap.set(product.key, current)
+      })
+    })
+
+    return Array.from(modelMap.values())
+      .map((model) => ({
+        ...model,
+        koliNumbers: Array.from(model.koliNumbers).sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true })),
+        sizeGroups: Array.from(model.sizeGroups.values()).sort((a, b) => String(a.size || '').localeCompare(String(b.size || ''), undefined, { numeric: true })),
+      }))
+      .sort((a, b) => String(a.productName || '').localeCompare(String(b.productName || ''), undefined, { numeric: true }))
+  }, [filteredStorageGroups])
   const selectedSummary = useMemo(() => {
     const sizeMap = new Map()
     const gradeMap = new Map()
@@ -645,6 +781,20 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
   }, [returnQtyById, selectedRows])
   const receiptSummary = useMemo(() => buildReceiptSummary(receiptBatch), [receiptBatch])
   const correctableSizeLines = useMemo(() => getCorrectableSizeLines(receiptBatch), [receiptBatch])
+  const selectedRegistrationProduct = useMemo(
+    () =>
+      registrationProducts.find((product) => String(product.id) === String(registrationDraft.productId)) ||
+      registrationProducts.find((product) => getRegistrationProductLabel(product).toLowerCase() === registrationDraft.productSearch.trim().toLowerCase()) ||
+      null,
+    [registrationDraft.productId, registrationDraft.productSearch, registrationProducts]
+  )
+  const selectedRegistrationReason = useMemo(
+    () =>
+      rejectReasons.find((reason) => String(reason.id) === String(registrationDraft.rejectReasonId)) ||
+      rejectReasons.find((reason) => getRegistrationReasonLabel(reason).toLowerCase() === registrationDraft.rejectReasonSearch.trim().toLowerCase()) ||
+      null,
+    [registrationDraft.rejectReasonId, registrationDraft.rejectReasonSearch, rejectReasons]
+  )
   const selectedCorrectionLine = useMemo(
     () => correctableSizeLines.find((line) => String(line.id) === String(sizeCorrectionDraft.fromLineId)) || null,
     [correctableSizeLines, sizeCorrectionDraft.fromLineId]
@@ -768,6 +918,57 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
     setStorageNumber('')
     setStorageNotes('')
     setError('')
+  }
+
+  function getEmptyRegistrationDraft() {
+    return {
+      storageNumber: '',
+      storageDate: todayValue(),
+      productId: '',
+      productSearch: '',
+      size: '',
+      rejectReasonId: '',
+      rejectReasonSearch: '',
+      grade: 'C',
+      qty: '',
+      notes: '',
+    }
+  }
+
+  function openRegistrationModal() {
+    setRegistrationDraft(getEmptyRegistrationDraft())
+    setError('')
+    setRegistrationModalOpen(true)
+  }
+
+  function closeRegistrationModal() {
+    setRegistrationModalOpen(false)
+    setRegistrationDraft(getEmptyRegistrationDraft())
+    setError('')
+  }
+
+  function updateRegistrationDraft(patch) {
+    setRegistrationDraft((current) => ({ ...current, ...patch }))
+  }
+
+  function handleRegistrationProductSearchChange(value) {
+    const normalized = value.trim().toLowerCase()
+    const nextProduct = registrationProducts.find((product) => getRegistrationProductLabel(product).toLowerCase() === normalized)
+    setRegistrationDraft((current) => ({
+      ...current,
+      productSearch: value,
+      productId: nextProduct?.id || '',
+    }))
+  }
+
+  function handleRegistrationReasonSearchChange(value) {
+    const normalized = value.trim().toLowerCase()
+    const nextReason = rejectReasons.find((reason) => getRegistrationReasonLabel(reason).toLowerCase() === normalized)
+    setRegistrationDraft((current) => ({
+      ...current,
+      rejectReasonSearch: value,
+      rejectReasonId: nextReason?.id || '',
+    }))
   }
 
   function openReceiptModal(batch) {
@@ -936,6 +1137,71 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
     setReturnQtyById({})
     setSaving(false)
     closeStorageModal()
+    setActiveReturnTab('storage')
+    router.refresh()
+  }
+
+  async function saveRegistrationStorageItem() {
+    const trimmedStorageNumber = registrationDraft.storageNumber.trim()
+    const qty = Number(registrationDraft.qty || 0)
+
+    if (!trimmedStorageNumber) {
+      setError('Storage number is required.')
+      return
+    }
+
+    if (!selectedRegistrationProduct) {
+      setError('Choose an Arkline product first.')
+      return
+    }
+
+    if (!registrationDraft.size) {
+      setError('Choose the reject size first.')
+      return
+    }
+
+    if (!selectedRegistrationReason) {
+      setError('Choose the reject reason first.')
+      return
+    }
+
+    if (qty <= 0) {
+      setError('Qty must be greater than zero.')
+      return
+    }
+
+    setSaving(true)
+    setError('')
+
+    const { error: saveError } = await supabase.rpc('create_arkline_qc_rejection_storage_batch', {
+      p_storage_number: trimmedStorageNumber,
+      p_po_id: selectedRegistrationProduct.poId,
+      p_arkline_po_item_id: selectedRegistrationProduct.id,
+      p_sku_induk: selectedRegistrationProduct.skuInduk,
+      p_model_name: selectedRegistrationProduct.productName,
+      p_supplier_name: selectedRegistrationProduct.supplierName || '',
+      p_source_qc_cycle_id: null,
+      p_round_number: 1,
+      p_storage_date: registrationDraft.storageDate,
+      p_notes: registrationDraft.notes.trim(),
+      p_created_by: userEmail || '',
+      p_lines: [{
+        reject_detail_id: null,
+        reject_reason_id: selectedRegistrationReason.id,
+        grade: 'C',
+        size: registrationDraft.size,
+        qty,
+      }],
+    })
+
+    if (saveError) {
+      setError(saveError.message)
+      setSaving(false)
+      return
+    }
+
+    setSaving(false)
+    closeRegistrationModal()
     setActiveReturnTab('storage')
     router.refresh()
   }
@@ -1281,7 +1547,7 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
           </div>
         </div>
 
-        {error && !returnModalOpen && !storageModalOpen && !receiptBatch ? <p className={styles.error}>{error}</p> : null}
+        {error && !returnModalOpen && !storageModalOpen && !registrationModalOpen && !receiptBatch ? <p className={styles.error}>{error}</p> : null}
 
         {!filteredEligibleRows.length ? (
           <div className={styles.empty}>No Arkline reject qty matches the selected filters.</div>
@@ -1478,21 +1744,59 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
             <p className={styles.eyebrow}>Arkline</p>
             <h2 className={styles.sectionTitle}>Rejection Storage</h2>
           </div>
+          <button type="button" className={styles.primaryButton} onClick={openRegistrationModal} disabled={!canAdd || !registrationProducts.length || !rejectReasons.length}>
+            Item Registration
+          </button>
         </div>
 
         <div className={styles.storageToolbar}>
+          <div className={styles.storageModeToggle} role="tablist" aria-label="Rejection storage view mode">
+            <button
+              type="button"
+              className={`${styles.storageModeButton} ${storageViewMode === 'koli' ? styles.storageModeButtonActive : ''}`.trim()}
+              onClick={() => setStorageViewMode('koli')}
+            >
+              Koli
+            </button>
+            <button
+              type="button"
+              className={`${styles.storageModeButton} ${storageViewMode === 'model' ? styles.storageModeButtonActive : ''}`.trim()}
+              onClick={() => setStorageViewMode('model')}
+            >
+              Model
+            </button>
+          </div>
+          <div className={`${styles.field} ${styles.storageSizeField}`.trim()}>
+            <label htmlFor="storage-size-filter">Size</label>
+            <select
+              id="storage-size-filter"
+              className={styles.input}
+              value={storageSizeFilter}
+              onChange={(event) => setStorageSizeFilter(event.target.value)}
+            >
+              <option value="">All sizes</option>
+              {storageSizeOptions.map((size) => <option key={size} value={size}>{size}</option>)}
+            </select>
+          </div>
           <div className={`${styles.field} ${styles.storageSearchField}`.trim()}>
-            <label htmlFor="storage-search">Search storage, product, size, PO, or reject reason</label>
+            <label htmlFor="storage-search">Search storage, product, PO, or reject reason</label>
             <input
               id="storage-search"
               className={styles.input}
               value={storageSearch}
               onChange={(event) => setStorageSearch(event.target.value)}
-              placeholder="Search product, size, storage no, PO..."
+              placeholder="Search product, storage no, PO..."
             />
           </div>
-          {storageSearch ? (
-            <button type="button" className={styles.secondaryButton} onClick={() => setStorageSearch('')}>
+          {storageSearch || storageSizeFilter ? (
+            <button
+              type="button"
+              className={styles.secondaryButton}
+              onClick={() => {
+                setStorageSearch('')
+                setStorageSizeFilter('')
+              }}
+            >
               Clear
             </button>
           ) : null}
@@ -1502,112 +1806,245 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
           <div className={styles.empty}>No Arkline rejection storage batch has been created.</div>
         ) : !filteredStorageGroups.length ? (
           <div className={styles.empty}>No rejection storage matches this search.</div>
-        ) : (
-          <div className={styles.batchList}>
-            {filteredStorageGroups.map((storage) => {
-              const isCollapsed = collapsedStorageKeys.includes(storage.key)
-              const displayProductGroups = storage.displayProductGroups || storage.productGroups
-              const visibleLineCount = displayProductGroups.reduce((sum, product) => sum + Number((product.displayLines || product.lines).length || 0), 0)
-              const totalLineCount = storage.productGroups.reduce((sum, product) => sum + Number(product.lines.length || 0), 0)
-              const lineBadgeLabel = storageSearch.trim() ? `${visibleLineCount}/${totalLineCount} row(s)` : `${totalLineCount} row(s)`
-              const dateLabel =
-                storage.dates.length > 1
-                  ? `${formatDate(storage.dates[0])} - ${formatDate(storage.dates[storage.dates.length - 1])}`
-                  : formatDate(storage.dates[0])
-              return (
-              <article key={storage.key} className={styles.batchCard}>
-                <div className={styles.batchHeader}>
-                  <div className={styles.batchTitle}>
-                    <strong>{storage.storageNumber}</strong>
-                    <span className={`${styles.badge} ${storage.status === 'MIXED' ? styles.badgeWarning : styles.badgeCompleted}`.trim()}>
-                      {storage.status || 'STORED'}
-                    </span>
-                    <span className={styles.badge}>{lineBadgeLabel}</span>
-                  </div>
-                  <button
-                    type="button"
-                    className={styles.batchToggleButton}
-                    onClick={() => toggleStorageGroup(storage.key)}
-                    aria-expanded={!isCollapsed}
-                    aria-label={`${isCollapsed ? 'Expand' : 'Collapse'} ${storage.storageNumber}`}
-                  >
-                    {isCollapsed ? '+' : '-'}
-                  </button>
-                </div>
-                <div className={styles.batchMeta}>
-                  <div className={styles.metric}><span>Stored Qty</span><strong>{storage.storedQty}</strong></div>
-                  <div className={styles.metric}><span>Updated Date</span><strong>{dateLabel}</strong></div>
-                  <div className={styles.metric}><span>Size</span><strong>{Array.from(new Set(displayProductGroups.flatMap((product) => (product.displayLines || product.lines).map((line) => line.size)))).length} size(s)</strong></div>
-                </div>
-                {storage.notes.length ? <p className={styles.notice}>{storage.notes.join(' | ')}</p> : null}
-                {!isCollapsed ? (
-                  <div className={styles.storageProductList}>
-                    {displayProductGroups.map((product) => {
-                      const productCollapseKey = `${storage.key}::${product.key}`
-                      const isProductCollapsed = collapsedStorageProductKeys.includes(productCollapseKey)
-                      const productLines = product.displayLines || product.lines
-                      const productQty = productLines.reduce((sum, line) => sum + Number(line.qty || 0), 0)
-                      return (
-                        <div key={productCollapseKey} className={styles.storageProductCard}>
+        ) : storageViewMode === 'model' ? (
+          <div className={styles.tableWrap}>
+            <table className={`${styles.table} ${styles.storageTable}`.trim()}>
+              <thead>
+                <tr>
+                  <th>SKU / Product</th>
+                  <th className={styles.centerNumberCell}>Stored Qty</th>
+                  <th className={styles.centerNumberCell}>Number of Sizes</th>
+                  <th>Koli Info</th>
+                </tr>
+              </thead>
+              <tbody>
+                {storageModelGroups.map((model) => {
+                  const isModelCollapsed = !collapsedStorageProductKeys.includes(model.key)
+                  return (
+                    <Fragment key={model.key}>
+                      <tr className={styles.storageParentRow}>
+                        <td>
                           <button
                             type="button"
-                            className={styles.storageProductHeader}
-                            onClick={() => toggleStorageProductGroup(productCollapseKey)}
-                            aria-expanded={!isProductCollapsed}
+                            className={styles.storageTextToggle}
+                            onClick={() => toggleStorageProductGroup(model.key)}
+                            aria-expanded={!isModelCollapsed}
                           >
-                            <span>
-                              <strong>{product.productName}</strong>
-                              <small>{productLines.length} reject row(s)</small>
-                            </span>
-                            <span>
-                              <strong>{productQty}</strong>
-                              <small>Qty</small>
-                            </span>
-                            <b>{isProductCollapsed ? '+' : '-'}</b>
+                            <span>{isModelCollapsed ? '+' : '-'}</span>
+                            <span className={styles.storageProductName}>{model.productName}</span>
+                            <small>{model.skuInduk || '-'}</small>
                           </button>
-                          {!isProductCollapsed ? (
-                            <div className={styles.tableWrap}>
-                              <table className={styles.table}>
+                        </td>
+                        <td className={styles.centerNumberCell}><strong>{model.qty}</strong></td>
+                        <td className={styles.centerNumberCell}>{model.sizeGroups.length}</td>
+                        <td>{model.koliNumbers.join(', ') || '-'}</td>
+                      </tr>
+                      {!isModelCollapsed ? (
+                        <tr className={styles.storageExpandedRow}>
+                          <td colSpan={4}>
+                            <div className={styles.storageNestedPanel}>
+                              <table className={`${styles.table} ${styles.storageSizeTable}`.trim()}>
                                 <thead>
                                   <tr>
-                                    <th>PO</th>
-                                    <th>Product</th>
-                                    <th>Grade</th>
                                     <th>Size</th>
-                                    <th>Reject Reason</th>
-                                    <th className={styles.centerNumberCell}>Qty</th>
+                                    <th className={styles.centerNumberCell}>Stored Qty</th>
                                   </tr>
                                 </thead>
                                 <tbody>
-                                  {productLines.map((line) => (
-                                    <tr key={line.rowKey}>
-                                      <td>{line.poId}</td>
-                                      <td>{line.modelName}</td>
-                                      <td>{line.grade}</td>
-                                      <td>{line.size}</td>
-                                      <td>{line.reasonName}</td>
-                                      <td className={styles.centerNumberCell}>{line.qty}</td>
+                                  {model.sizeGroups.map((sizeGroup) => (
+                                    <tr key={sizeGroup.key}>
+                                      <td><strong>{sizeGroup.size}</strong></td>
+                                      <td className={styles.centerNumberCell}><strong>{sizeGroup.qty}</strong></td>
                                     </tr>
                                   ))}
                                 </tbody>
                               </table>
                             </div>
-                          ) : null}
-                        </div>
-                      )
-                    })}
-                  </div>
-                ) : null}
-              </article>
-              )
-            })}
+                          </td>
+                        </tr>
+                      ) : null}
+                    </Fragment>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className={styles.tableWrap}>
+            <table className={`${styles.table} ${styles.storageTable}`.trim()}>
+              <thead>
+                <tr>
+                  <th>Koli Number</th>
+                  <th className={styles.centerNumberCell}>Stored Qty</th>
+                  <th>Updated Date</th>
+                  <th className={styles.centerNumberCell}>Number of Products</th>
+                  <th className={styles.centerNumberCell}>Number of Sizes</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredStorageGroups.map((storage) => {
+                  const isCollapsed = !collapsedStorageKeys.includes(storage.key)
+                  const displayProductGroups = storage.displayProductGroups || storage.productGroups
+                  const dateLabel =
+                    storage.dates.length > 1
+                      ? `${formatDate(storage.dates[0])} - ${formatDate(storage.dates[storage.dates.length - 1])}`
+                      : formatDate(storage.dates[0])
+                  const visibleSizeCount = new Set(
+                    displayProductGroups.flatMap((product) => (product.displaySizeGroups || product.sizeGroups).map((sizeGroup) => sizeGroup.size))
+                  ).size
+
+                  return (
+                    <Fragment key={storage.key}>
+                      <tr className={styles.storageParentRow}>
+                        <td>
+                          <div className={styles.storageKoliCell}>
+                            <button
+                              type="button"
+                              className={styles.storageTableToggle}
+                              onClick={() => toggleStorageGroup(storage.key)}
+                              aria-expanded={!isCollapsed}
+                              aria-label={`${isCollapsed ? 'Expand' : 'Collapse'} ${storage.storageNumber}`}
+                            >
+                              {isCollapsed ? '+' : '-'}
+                            </button>
+                            <strong>{storage.storageNumber}</strong>
+                          </div>
+                        </td>
+                        <td className={styles.centerNumberCell}><strong>{storage.storedQty}</strong></td>
+                        <td>{dateLabel}</td>
+                        <td className={styles.centerNumberCell}>{displayProductGroups.length}</td>
+                        <td className={styles.centerNumberCell}>{visibleSizeCount}</td>
+                      </tr>
+                      {!isCollapsed ? (
+                        <tr className={styles.storageExpandedRow}>
+                          <td colSpan={5}>
+                            <div className={styles.storageNestedPanel}>
+                              {storage.notes.length ? <p className={styles.notice}>{storage.notes.join(' | ')}</p> : null}
+                              <table className={`${styles.table} ${styles.storageProductTable}`.trim()}>
+                                <thead>
+                                  <tr>
+                                    <th>SKU / Product</th>
+                                    <th className={styles.centerNumberCell}>Stored Qty</th>
+                                    <th className={styles.centerNumberCell}>Number of Sizes</th>
+                                    <th className={styles.centerNumberCell}>Reject Details</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {displayProductGroups.map((product) => {
+                                    const productCollapseKey = `${storage.key}::${product.key}`
+                                    const isProductCollapsed = !collapsedStorageProductKeys.includes(productCollapseKey)
+                                    const displaySizeGroups = product.displaySizeGroups || product.sizeGroups
+                                    const detailCount = displaySizeGroups.reduce((sum, sizeGroup) => sum + Number((sizeGroup.displayDetails || sizeGroup.details).length || 0), 0)
+
+                                    return (
+                                      <Fragment key={productCollapseKey}>
+                                        <tr className={styles.storageProductRow}>
+                                          <td>
+                                            <button
+                                              type="button"
+                                              className={styles.storageTextToggle}
+                                              onClick={() => toggleStorageProductGroup(productCollapseKey)}
+                                              aria-expanded={!isProductCollapsed}
+                                            >
+                                              <span>{isProductCollapsed ? '+' : '-'}</span>
+                                              <span className={styles.storageProductName}>{product.productName}</span>
+                                              <small>{product.skuInduk || '-'}</small>
+                                            </button>
+                                          </td>
+                                          <td className={styles.centerNumberCell}><strong>{displaySizeGroups.reduce((sum, sizeGroup) => sum + Number(sizeGroup.qty || 0), 0)}</strong></td>
+                                          <td className={styles.centerNumberCell}>{displaySizeGroups.length}</td>
+                                          <td className={styles.centerNumberCell}>{detailCount}</td>
+                                        </tr>
+                                        {!isProductCollapsed ? (
+                                          <tr className={styles.storageNestedRow}>
+                                            <td colSpan={4}>
+                                              <table className={`${styles.table} ${styles.storageSizeTable}`.trim()}>
+                                                <thead>
+                                                  <tr>
+                                                    <th>Size</th>
+                                                    <th className={styles.centerNumberCell}>Stored Qty</th>
+                                                    <th className={styles.centerNumberCell}>Reject Details</th>
+                                                  </tr>
+                                                </thead>
+                                                <tbody>
+                                                  {displaySizeGroups.map((sizeGroup) => {
+                                                    const sizeCollapseKey = `${productCollapseKey}::${sizeGroup.key}`
+                                                    const isSizeCollapsed = !collapsedStorageProductKeys.includes(sizeCollapseKey)
+                                                    const displayDetails = sizeGroup.displayDetails || sizeGroup.details
+
+                                                    return (
+                                                      <Fragment key={sizeCollapseKey}>
+                                                        <tr className={styles.storageSizeRow}>
+                                                          <td>
+                                                            <button
+                                                              type="button"
+                                                              className={styles.storageTextToggle}
+                                                              onClick={() => toggleStorageProductGroup(sizeCollapseKey)}
+                                                              aria-expanded={!isSizeCollapsed}
+                                                            >
+                                                              <span>{isSizeCollapsed ? '+' : '-'}</span>
+                                                              <strong>{sizeGroup.size}</strong>
+                                                            </button>
+                                                          </td>
+                                                          <td className={styles.centerNumberCell}><strong>{sizeGroup.qty}</strong></td>
+                                                          <td className={styles.centerNumberCell}>{displayDetails.length}</td>
+                                                        </tr>
+                                                        {!isSizeCollapsed ? (
+                                                          <tr className={styles.storageNestedRow}>
+                                                            <td colSpan={3}>
+                                                              <table className={`${styles.table} ${styles.storageDetailTable}`.trim()}>
+                                                                <thead>
+                                                                  <tr>
+                                                                    <th>PO Info</th>
+                                                                    <th>Source</th>
+                                                                    <th>Grade</th>
+                                                                    <th>Reject Reason</th>
+                                                                    <th className={styles.centerNumberCell}>Qty</th>
+                                                                  </tr>
+                                                                </thead>
+                                                                <tbody>
+                                                                  {displayDetails.map((detail) => (
+                                                                    <tr key={detail.rowKey}>
+                                                                      <td>{detail.poLabel}</td>
+                                                                      <td>{formatStorageSourceType(detail.sourceType)}</td>
+                                                                      <td>{detail.grade}</td>
+                                                                      <td>{detail.reasonName}</td>
+                                                                      <td className={styles.centerNumberCell}>{detail.qty}</td>
+                                                                    </tr>
+                                                                  ))}
+                                                                </tbody>
+                                                              </table>
+                                                            </td>
+                                                          </tr>
+                                                        ) : null}
+                                                      </Fragment>
+                                                    )
+                                                  })}
+                                                </tbody>
+                                              </table>
+                                            </td>
+                                          </tr>
+                                        ) : null}
+                                      </Fragment>
+                                    )
+                                  })}
+                                </tbody>
+                              </table>
+                            </div>
+                          </td>
+                        </tr>
+                      ) : null}
+                    </Fragment>
+                  )
+                })}
+              </tbody>
+            </table>
           </div>
         )}
       </section>
       ) : null}
         </div>
       </div>
-
       {returnModalOpen ? (
         <div className={styles.overlay} role="presentation">
           <div className={styles.modal} role="dialog" aria-modal="true" aria-labelledby="create-return-title">
@@ -1684,6 +2121,114 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
         </div>
       ) : null}
 
+      {registrationModalOpen ? (
+        <div className={styles.overlay} role="presentation">
+          <div className={styles.modal} role="dialog" aria-modal="true" aria-labelledby="item-registration-title">
+            <div className={styles.modalHeader}>
+              <div>
+                <h2 id="item-registration-title">Item Registration</h2>
+                <p>Register Arkline packing reject into a rejection storage koli.</p>
+              </div>
+              <div className={styles.modalIconActions}>
+                <button type="button" className={styles.iconSaveButton} onClick={saveRegistrationStorageItem} disabled={saving} aria-label="Save item">✓</button>
+                <button type="button" className={`${styles.closeButton} ${styles.dangerCloseButton}`.trim()} onClick={closeRegistrationModal} aria-label="Close">X</button>
+              </div>
+            </div>
+            <div className={styles.formGrid}>
+              <div className={styles.field}>
+                <label htmlFor="registration-storage-number">Storage Number</label>
+                <input
+                  id="registration-storage-number"
+                  className={styles.input}
+                  value={registrationDraft.storageNumber}
+                  onChange={(event) => updateRegistrationDraft({ storageNumber: event.target.value.toUpperCase() })}
+                  placeholder="Storage number"
+                />
+              </div>
+              <div className={styles.field}>
+                <label htmlFor="registration-storage-date">Storage Date</label>
+                <input
+                  id="registration-storage-date"
+                  className={styles.input}
+                  type="date"
+                  value={registrationDraft.storageDate}
+                  onChange={(event) => updateRegistrationDraft({ storageDate: event.target.value })}
+                />
+              </div>
+              <div className={`${styles.field} ${styles.fieldFull}`}>
+                <label htmlFor="registration-product">Arkline Product</label>
+                <input
+                  id="registration-product"
+                  className={styles.input}
+                  value={registrationDraft.productSearch}
+                  onChange={(event) => handleRegistrationProductSearchChange(event.target.value)}
+                  placeholder="Type or choose Arkline product"
+                  list="registration-product-options"
+                />
+                <datalist id="registration-product-options">
+                  {registrationProducts.map((product) => (
+                    <option key={product.id} value={getRegistrationProductLabel(product)} label={product.skuInduk || ''} />
+                  ))}
+                </datalist>
+              </div>
+              <div className={styles.field}>
+                <label htmlFor="registration-sku">SKU</label>
+                <input id="registration-sku" className={styles.input} value={selectedRegistrationProduct?.skuInduk || ''} readOnly placeholder="Auto" />
+              </div>
+              <div className={styles.field}>
+                <label htmlFor="registration-size">Size</label>
+                <select
+                  id="registration-size"
+                  className={styles.input}
+                  value={registrationDraft.size}
+                  onChange={(event) => updateRegistrationDraft({ size: event.target.value })}
+                >
+                  <option value="">Choose size</option>
+                  {REGISTRATION_SIZE_OPTIONS.map((size) => <option key={size} value={size}>{size}</option>)}
+                </select>
+              </div>
+              <div className={styles.field}>
+                <label htmlFor="registration-reason">Reject Reason</label>
+                <input
+                  id="registration-reason"
+                  className={styles.input}
+                  value={registrationDraft.rejectReasonSearch}
+                  onChange={(event) => handleRegistrationReasonSearchChange(event.target.value)}
+                  placeholder="Type or choose reject reason"
+                  list="registration-reason-options"
+                />
+                <datalist id="registration-reason-options">
+                  {rejectReasons.map((reason) => <option key={reason.id} value={getRegistrationReasonLabel(reason)} />)}
+                </datalist>
+              </div>
+              <div className={styles.field}>
+                <label htmlFor="registration-qty">Qty</label>
+                <input
+                  id="registration-qty"
+                  className={styles.input}
+                  type="number"
+                  min="1"
+                  value={registrationDraft.qty}
+                  onChange={(event) => updateRegistrationDraft({ qty: event.target.value })}
+                  placeholder="0"
+                />
+              </div>
+              <div className={`${styles.field} ${styles.fieldFull}`}>
+                <label htmlFor="registration-notes">Notes</label>
+                <textarea id="registration-notes" className={styles.textarea} value={registrationDraft.notes} onChange={(event) => updateRegistrationDraft({ notes: event.target.value })} />
+              </div>
+            </div>
+            {selectedRegistrationProduct ? (
+              <div className={styles.modalSummaryBox}>
+                <div className={styles.modalSummaryTotal}>
+                  {selectedRegistrationProduct.productName} / <strong>{selectedRegistrationProduct.skuInduk || '-'}</strong>
+                </div>
+              </div>
+            ) : null}
+            {error ? <p className={styles.error}>{error}</p> : null}
+          </div>
+        </div>
+      ) : null}
       {storageModalOpen ? (
         <div className={styles.overlay} role="presentation">
           <div className={styles.modal} role="dialog" aria-modal="true" aria-labelledby="create-storage-title">
