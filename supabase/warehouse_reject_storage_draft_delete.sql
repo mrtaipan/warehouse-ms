@@ -15,13 +15,11 @@ using (
     from public.dir_user_profiles as profile
     where profile.authenticated_id = (select auth.uid())
       and (
-        profile.role in ('admin', 'qc_coordinator', 'storage_coordinator')
-        or exists (
-          select 1
-          from public.dir_user_roles as permission
-          where permission.role = profile.role
-            and permission.permission_code in ('storage.location.add', 'storage.location.edit')
-        )
+        -- A draft owner may remove their own draft. Older rows store the
+        -- creator email, while newer rows may store the Auth UUID as text.
+        lower(trim(coalesce(warehouse_reject_storage.created_by, ''))) = lower(trim(coalesce(profile.email, '')))
+        or warehouse_reject_storage.created_by = (select auth.uid())::text
+        or profile.role in ('admin')
       )
   )
 );

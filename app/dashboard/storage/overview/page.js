@@ -1034,6 +1034,8 @@ const EMPTY_STORAGE_ACCESS = {
   categoryManage: false,
   lockedGroup: '',
   isAdmin: false,
+  currentUserId: '',
+  currentUserEmail: '',
 }
 
 async function fetchCurrentStorageAccess() {
@@ -1077,6 +1079,8 @@ async function fetchCurrentStorageAccess() {
     ),
     lockedGroup: getRoleLockedGroup(role),
     isAdmin,
+    currentUserId: user.id || '',
+    currentUserEmail: user.email || '',
   }
 }
 
@@ -1515,6 +1519,21 @@ export default function StorageOverviewPage() {
   const canViewRejectStorage = Boolean(storageAccess.location)
   const canAddRejectStorage = Boolean(storageAccess.rejectStorageAdd || storageAccess.locationAdd)
   const canEditRejectStorage = Boolean(storageAccess.rejectStorageEdit || storageAccess.locationEdit || storageAccess.locationAdd)
+  const canDeleteRejectStorageEntry = useCallback((entry) => {
+    if (!entry || !canEditRejectStorage || normalizeRejectStatus(entry.status) !== 'DRAFT') return false
+    if (storageAccess.isAdmin) return true
+
+    const createdBy = normalizeFilterValue(entry.created_by).toLowerCase()
+    const currentUserEmail = normalizeFilterValue(storageAccess.currentUserEmail).toLowerCase()
+    const currentUserId = normalizeFilterValue(storageAccess.currentUserId).toLowerCase()
+
+    return Boolean(
+      createdBy && (
+        (currentUserEmail && createdBy === currentUserEmail) ||
+        (currentUserId && createdBy === currentUserId)
+      )
+    )
+  }, [canEditRejectStorage, storageAccess.currentUserEmail, storageAccess.currentUserId, storageAccess.isAdmin])
   const rejectToolbarButtonCount = (canAddRejectStorage ? 1 : 0) + (canEditRejectStorage ? 1 : 0) + 2
   const queueToolbarActionCount = (canStoreQueueItem ? 1 : 0) + (canTakeStorageItem ? 1 : 0)
   const storageLocationTabItems = useMemo(
@@ -1925,8 +1944,10 @@ export default function StorageOverviewPage() {
     )
     .sort((left, right) => naturalSort.compare(String(left.sub_location), String(right.sub_location)))
 
-  const isMoveArklineLocation = moveSourceGroupCode === 'ARKLINE'
-  const isMoveShelvingLocation = moveForm.locationType === 'SHELVING'
+  const isMoveArklineLocation = normalizeFilterValue(moveSourceGroupCode) === 'ARKLINE'
+  const isMoveShelvingLocation = normalizeFilterValue(moveForm.locationType) === 'SHELVING'
+  const isMoveSubLocationRequired = isMoveShelvingLocation || !isMoveArklineLocation
+  const isMoveSubLocationEnabled = Boolean(moveForm.locationCode) && isMoveSubLocationRequired
   const selectedMoveLocation =
     moveSubLocationOptions.find((item) => item.sub_location === moveForm.subLocation) ||
     (
@@ -3565,7 +3586,7 @@ export default function StorageOverviewPage() {
   }
 
   function openRejectDeleteConfirmation(entry) {
-    if (!canEditRejectStorage || normalizeRejectStatus(entry?.status) !== 'DRAFT') return
+    if (!canDeleteRejectStorageEntry(entry)) return
     setRejectDeleteEntry(entry)
     setRejectDeleteError('')
   }
@@ -3578,7 +3599,7 @@ export default function StorageOverviewPage() {
 
   async function handleRejectDelete() {
     const entry = rejectDeleteEntry
-    if (!entry?.id || deletingReject || !canEditRejectStorage || normalizeRejectStatus(entry.status) !== 'DRAFT') return
+    if (!entry?.id || deletingReject || !canDeleteRejectStorageEntry(entry)) return
 
     setDeletingReject(true)
     setRejectDeleteError('')
@@ -7402,7 +7423,7 @@ export default function StorageOverviewPage() {
                                                 <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5Z" />
                                               </svg>
                                             </button>
-                                            {isEntryDraft ? (
+                                            {canDeleteRejectStorageEntry(entry) ? (
                                               <button
                                                 type="button"
                                                 onClick={() => openRejectDeleteConfirmation(entry)}
@@ -9085,16 +9106,24 @@ export default function StorageOverviewPage() {
                 </div>
 
                 <div style={styles.field}>
-                  <label style={styles.label}>{isMoveShelvingLocation ? (isMoveArklineLocation ? 'ARKLINE Level' : 'Level') : 'Carton / Level'}</label>
+                  <label style={styles.label}>
+                    {isMoveShelvingLocation
+                      ? (isMoveArklineLocation ? 'ARKLINE Level' : 'Level')
+                      : isMoveArklineLocation ? 'Carton Number (Optional)' : 'Carton Number'}
+                  </label>
                   <select
                     name="subLocation"
-                      value={moveForm.subLocation}
+                    value={moveForm.subLocation}
                     onChange={handleMoveSelectChange}
-                      style={isMoveShelvingLocation && moveForm.locationCode ? styles.select : { ...styles.select, ...styles.controlDisabled }}
-                      disabled={!isMoveShelvingLocation || !moveForm.locationCode}
-                      required={isMoveShelvingLocation}
+                    style={isMoveSubLocationEnabled ? styles.select : { ...styles.select, ...styles.controlDisabled }}
+                    disabled={!isMoveSubLocationEnabled}
+                    required={isMoveSubLocationRequired}
                   >
-                      <option value="">{isMoveShelvingLocation ? 'Select level' : 'Not required for pallet'}</option>
+                    <option value="">
+                      {isMoveShelvingLocation
+                        ? 'Select level'
+                        : isMoveArklineLocation ? 'Not required for Arkline pallet' : 'Select carton number'}
+                    </option>
                     {moveSubLocationOptions.map((option) => (
                       <option key={option.id} value={option.sub_location}>
                         {option.sub_location}
