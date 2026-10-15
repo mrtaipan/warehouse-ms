@@ -88,9 +88,7 @@ function buildLocationSummary(options = []) {
     return null
   }
 
-  return `${uniqueLocations.length} Registered Location${uniqueLocations.length === 1 ? '' : 's'} - ${uniqueLocations
-    .slice(0, 2)
-    .join(', ')}${uniqueLocations.length > 2 ? ' ...' : ''}`
+  return `${uniqueLocations.length} Registered Location${uniqueLocations.length === 1 ? '' : 's'} - ${uniqueLocations.join(', ')}`
 }
 
 function formatTakeFromLabel(value) {
@@ -185,12 +183,6 @@ async function fetchStorageMatches(searchTerm, requestedSize = '', allowedRackLo
       rowsById.set(row.id, row)
     })
 
-    const currentRows = Array.from(rowsById.values())
-    const matchingSizeRows = selectRowsForRequestedSize(currentRows, requestedSize)
-
-    if (matchingSizeRows.length > 0 || (!requestedSize && currentRows.length > 0)) {
-      break
-    }
   }
 
   return Array.from(rowsById.values())
@@ -330,30 +322,27 @@ async function fetchSourceOptions(row) {
 }
 
 async function refreshMissingRequestLocations(rows = []) {
-  const staleRows = rows.filter(
-    (row) =>
-      /^Location is not found$/i.test(String(row?.take_from || '').trim()) &&
-      String(row?.search_term || row?.item_name || '').trim()
-  )
+  const staleRows = rows.filter((row) => String(row?.search_term || row?.item_name || '').trim())
 
   if (staleRows.length === 0) {
     return rows
   }
 
+  const optionsByRequest = new Map()
   const refreshedRows = await Promise.all(
     staleRows.map(async (row) => {
       try {
-        const options = await fetchSourceOptions(row)
-        const takeFrom = buildLocationSummary(options)
+        const cacheKey = [normalizeRequestSource(row.source_type), normalizeText(row.search_term || row.item_name), normalizeSizeValue(row.size)].join('|')
+        if (!optionsByRequest.has(cacheKey)) optionsByRequest.set(cacheKey, fetchSourceOptions(row))
+        const options = await optionsByRequest.get(cacheKey)
+        const takeFrom = buildLocationSummary(options) || 'Location is not found'
+        if (takeFrom === String(row.take_from || '').trim()) return row
 
-        if (!takeFrom) {
-          return row
-        }
-
-        await supabase
+        const { error } = await supabase
           .from(TAKE_REQUESTS_TABLE)
           .update({ take_from: takeFrom })
           .eq('id', row.id)
+        if (error) return row
 
         return { ...row, take_from: takeFrom }
       } catch {

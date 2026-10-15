@@ -86,9 +86,7 @@ function buildLocationSummary(labels = []) {
     return null
   }
 
-  return `${uniqueLocations.length} Registered Location${uniqueLocations.length === 1 ? '' : 's'} - ${uniqueLocations
-    .slice(0, 2)
-    .join(', ')}${uniqueLocations.length > 2 ? ' ...' : ''}`
+  return `${uniqueLocations.length} Registered Location${uniqueLocations.length === 1 ? '' : 's'} - ${uniqueLocations.join(', ')}`
 }
 
 function normalizeText(value) {
@@ -251,12 +249,6 @@ async function fetchStorageMatches(searchTerm, requestedSize = '', allowedRackLo
       rowsById.set(row.id, row)
     })
 
-    const currentRows = Array.from(rowsById.values())
-    const matchingSizeRows = selectRowsForRequestedSize(currentRows, requestedSize)
-
-    if (matchingSizeRows.length > 0 || (!requestedSize && currentRows.length > 0)) {
-      break
-    }
   }
 
   return Array.from(rowsById.values())
@@ -380,13 +372,7 @@ function buildRequestRows(matches, rackLocations, form, requesterName) {
     }
   })
 
-  const locationCount = uniqueLocations.length
-  const takeFromSummary =
-    locationCount > 0
-      ? `${locationCount} Registered Location${locationCount === 1 ? '' : 's'}${
-          uniqueLocations.length > 0 ? ` - ${uniqueLocations.slice(0, 2).join(', ')}` : ''
-        }${uniqueLocations.length > 2 ? ' ...' : ''}`
-      : 'Location is not found'
+  const takeFromSummary = buildLocationSummary(uniqueLocations) || 'Location is not found'
   return [
     {
       requester_name: requesterName.trim(),
@@ -426,13 +412,7 @@ function buildArklineRequestRows(product, matches, rackLocations, form, requeste
     }
   })
 
-  const locationCount = uniqueLocations.length
-  const takeFromSummary =
-    locationCount > 0
-      ? `${locationCount} Registered Location${locationCount === 1 ? '' : 's'}${
-          uniqueLocations.length > 0 ? ` - ${uniqueLocations.slice(0, 2).join(', ')}` : ''
-        }${uniqueLocations.length > 2 ? ' ...' : ''}`
-      : 'Location is not found'
+  const takeFromSummary = buildLocationSummary(uniqueLocations) || 'Location is not found'
 
   return [
     {
@@ -493,26 +473,23 @@ async function fetchOpenRequests() {
 }
 
 async function refreshMissingRequestLocations(rows = [], rackLocations = []) {
-  const staleRows = rows.filter(
-    (row) =>
-      /^Location is not found$/i.test(String(row?.take_from || '').trim()) &&
-      String(row?.search_term || row?.item_name || '').trim()
-  )
+  const staleRows = rows.filter((row) => String(row?.search_term || row?.item_name || '').trim())
 
   if (staleRows.length === 0 || rackLocations.length === 0) {
     return rows
   }
 
   const locationById = new Map(rackLocations.map((item) => [getLocationKey(item.id), item]))
+  const matchesByRequest = new Map()
   const refreshedRows = await Promise.all(
     staleRows.map(async (row) => {
       try {
         const allowedRackLocationIds = getAllowedRackLocationIds(rackLocations, row.source_type)
-        const matches = await fetchStorageMatches(
-          row.search_term || row.item_name,
-          row.size,
-          allowedRackLocationIds
-        )
+        const cacheKey = [normalizeRequestSource(row.source_type), normalizeText(row.search_term || row.item_name), normalizeSizeValue(row.size)].join('|')
+        if (!matchesByRequest.has(cacheKey)) {
+          matchesByRequest.set(cacheKey, fetchStorageMatches(row.search_term || row.item_name, row.size, allowedRackLocationIds))
+        }
+        const matches = await matchesByRequest.get(cacheKey)
         const matchedRows = selectRowsForRequestedSize(matches || [], row.size)
         const labels = matchedRows
           .filter(
@@ -523,16 +500,16 @@ async function refreshMissingRequestLocations(rows = [], rackLocations = []) {
           .map((entry) => getLocationLabel(locationById.get(getLocationKey(entry.rack_location_id))))
         const takeFrom = buildLocationSummary(labels)
 
-        if (!takeFrom) {
-          return row
-        }
+        const nextTakeFrom = takeFrom || 'Location is not found'
+        if (nextTakeFrom === String(row.take_from || '').trim()) return row
 
-        await supabase
+        const { error } = await supabase
           .from(TAKE_REQUESTS_TABLE)
-          .update({ take_from: takeFrom })
+          .update({ take_from: nextTakeFrom })
           .eq('id', row.id)
+        if (error) return row
 
-        return { ...row, take_from: takeFrom }
+        return { ...row, take_from: nextTakeFrom }
       } catch {
         return row
       }
