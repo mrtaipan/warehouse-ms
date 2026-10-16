@@ -111,6 +111,29 @@ function getBirthDateValue(row = {}) {
   return row.date_of_birth || row.birthdate || row.birth_date || null
 }
 
+function hasResigned(row = {}) {
+  return Boolean(String(row?.resign_date || '').trim())
+}
+
+function matchesProfileSnapshot(row = {}, profile = {}) {
+  const rowId = String(row?.employee_authenticated_id || row?.authenticated_id || '').trim().toLowerCase()
+  const profileId = String(profile?.authenticated_id || profile?.id || '').trim().toLowerCase()
+  if (rowId && profileId && rowId === profileId) return true
+
+  const rowEmail = String(row?.employee_email_snapshot || row?.email || '').trim().toLowerCase()
+  const profileEmail = String(profile?.email || '').trim().toLowerCase()
+  if (rowEmail && profileEmail && rowEmail === profileEmail) return true
+
+  const rowName = String(row?.employee_name_snapshot || '').trim().toLowerCase()
+  const profileName = String(profile?.display_name || '').trim().toLowerCase()
+  return Boolean(rowName && profileName && rowName === profileName)
+}
+
+function isBirthdayRowFromResignedPerson(row = {}, profiles = []) {
+  const matchedProfile = (profiles || []).find((profile) => matchesProfileSnapshot(row, profile))
+  return Boolean(matchedProfile && hasResigned(matchedProfile))
+}
+
 function getUpcomingBirthdayOffset(value) {
   if (!value) return null
 
@@ -921,7 +944,9 @@ export default async function DashboardPage({ searchParams }) {
           : `${item.start_date} to ${item.end_date}`
         : 'Active now',
   }))
-  const birthdayGiftAnnouncements = filterVisibleBirthdayGiftRows(sortRowsByRecent(birthdayGiftRequestRows || [])).map((item) => {
+  const birthdayGiftAnnouncements = filterVisibleBirthdayGiftRows(sortRowsByRecent(birthdayGiftRequestRows || []))
+    .filter((item) => !isBirthdayRowFromResignedPerson(item, announcementRows || []))
+    .map((item) => {
     const status = String(item.status || 'SUBMITTED').toUpperCase()
     const name = formatDashboardName(item.employee_name_snapshot || item.employee_email_snapshot || 'Team')
     const itemName = String(item.item_name || item.notes || 'Birthday gift').trim()
@@ -935,6 +960,7 @@ export default async function DashboardPage({ searchParams }) {
     }
   })
   const birthdayReminderAnnouncements = (announcementRows || [])
+    .filter((person) => !hasResigned(person))
     .map((person) => {
       const offset = getUpcomingBirthdayOffset(getBirthDateValue(person))
       if (offset == null || offset < 0 || offset > 3) {

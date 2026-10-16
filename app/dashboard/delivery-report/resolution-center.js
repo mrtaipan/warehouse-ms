@@ -1,6 +1,7 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 
 import { deliverySupabase } from '@/lib/delivery-supabase'
 import { ADMIN_EMAIL } from '@/utils/permissions'
@@ -18,10 +19,10 @@ const TABS = [
 ]
 
 const RETURN_FINANCIAL_FIELDS = [
-  ['ongkir_masuk', 'Inbound Shipping Cost'],
-  ['ongkir_keluar', 'Outbound Shipping Cost'],
   ['nilai_refund_kompensasi', 'Loss Value'],
   ['total_retur', 'Returned Item Value'],
+  ['ongkir_masuk', 'Inbound Shipping Cost'],
+  ['ongkir_keluar', 'Outbound Shipping Cost'],
 ]
 
 const RETURN_FINANCIAL_HELP = {
@@ -52,6 +53,308 @@ const RETURN_STATUS_OPTIONS = {
 }
 
 const ACTIVE_RETURN_STATUSES = new Set(['Pending', 'Sending'])
+const PRODUCT_FIELD_SEPARATOR = ' || '
+
+function emptyProductEntry() {
+  return { productName: '', size: '', qty: '', sku: '' }
+}
+
+function parseProductEntries(value) {
+  return String(value || '')
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const entry = { ...emptyProductEntry(), raw: line }
+      line.replace(/^>\s*/, '').split(PRODUCT_FIELD_SEPARATOR).forEach((field) => {
+        const separatorIndex = field.indexOf(':')
+        if (separatorIndex < 0) return
+        const key = field.slice(0, separatorIndex).trim().toUpperCase()
+        const fieldValue = field.slice(separatorIndex + 1).trim()
+        if (key === 'SKU') entry.sku = fieldValue
+        if (key === 'PRODUCT') entry.productName = fieldValue
+        if (key === 'SIZE') entry.size = fieldValue
+        if (key === 'QTY') entry.qty = fieldValue
+      })
+
+      if (!entry.productName && !entry.sku && !entry.size && !entry.qty) {
+        entry.productName = line.replace(/^>\s*/, '')
+      }
+      return entry
+    })
+}
+
+function buildReceivingInspectionCases(rows) {
+  return rows.map((row) => ({
+    caseId: row.id,
+    code: row.kode_kejadian || '-',
+    group: cleanUpper(row.group_order),
+    row,
+    lines: parseProductEntries(row.produk_diretur).map((entry, index) => ({
+      key: `${row.id}-${index}`,
+      sku: cleanUpper(entry.sku),
+      skuLocked: Boolean(cleanText(entry.sku)),
+      productName: cleanText(entry.productName || entry.raw),
+      size: cleanUpper(entry.size),
+      sizeLocked: Boolean(cleanText(entry.size)),
+      expectedQty: entry.qty ? Number(entry.qty) : 1,
+      storedQty: '',
+      rejectQty: '',
+      lostQty: '',
+      rejectReason: '',
+      lostReason: '',
+      shelvingLocation: '',
+      shelvingLocationStatus: '',
+    })),
+  }))
+}
+
+function inspectReceivingDecisions(cases, { requireShelvingLookup = false } = {}) {
+  if (!cases.length) return 'Select at least one Sending case.'
+  for (const inspectedCase of cases) {
+    for (const line of inspectedCase.lines) {
+      const quantities = [line.storedQty, line.rejectQty, line.lostQty].map((value) => value === '' ? 0 : Number(value))
+      if (!Number.isInteger(line.expectedQty) || line.expectedQty <= 0) {
+        return `${inspectedCase.code}: check the return quantity for ${line.productName}.`
+      }
+      if (quantities.some((value) => !Number.isInteger(value) || value < 0)) {
+        return `${inspectedCase.code}: quantities must be whole numbers of zero or more.`
+      }
+      const totalQty = quantities.reduce((sum, value) => sum + value, 0)
+      if (totalQty !== line.expectedQty) {
+        return `${inspectedCase.code}: allocate all ${line.expectedQty} unit(s) of ${line.productName}.`
+      }
+      if (quantities[0] > 0 && !cleanText(line.sku)) {
+        return `${inspectedCase.code}: SKU is required to store ${line.productName}.`
+      }
+      if (quantities[0] > 0 && inspectedCase.group === 'ARKLINE' && !cleanText(line.size)) {
+        return `${inspectedCase.code}: size is required to find Arkline shelving for ${line.productName}.`
+      }
+      if (quantities[0] > 0 && inspectedCase.group === 'ARKLINE' && !arklineSkuKey(line.sku)) {
+        return `${inspectedCase.code}: enter a valid Arkline SKU for ${line.productName}.`
+      }
+      if (quantities[1] > 0 && !cleanText(line.rejectReason)) {
+        return `${inspectedCase.code}: enter the reject reason for ${line.productName}.`
+      }
+      if (quantities[2] > 0 && !cleanText(line.lostReason)) {
+        return `${inspectedCase.code}: enter the lost reason for ${line.productName}.`
+      }
+      if (requireShelvingLookup && quantities[0] > 0 && inspectedCase.group === 'ARKLINE' && line.shelvingLocationStatus !== 'FOUND') {
+        return `${inspectedCase.code}: one Arkline shelving location must be found for ${line.sku} / ${line.size}.`
+      }
+    }
+  }
+  return ''
+}
+
+function serializeProductEntries(entries) {
+  return (entries || [])
+    .map((entry) => {
+      if (entry.raw && !entry.productName && !entry.size && !entry.qty && !entry.sku) return entry.raw
+      if (entry.raw && !entry.size && !entry.qty && !entry.sku) return entry.raw
+
+      return [
+        entry.sku ? `SKU: ${cleanUpper(entry.sku)}` : null,
+        entry.productName ? `PRODUCT: ${cleanUpper(entry.productName)}` : null,
+        entry.size ? `SIZE: ${cleanUpper(entry.size)}` : null,
+        entry.qty ? `QTY: ${String(entry.qty).trim()}` : null,
+      ]
+        .filter(Boolean)
+        .join(PRODUCT_FIELD_SEPARATOR)
+    })
+    .filter(Boolean)
+    .join('\n')
+}
+
+function formatProductEntries(value) {
+  return parseProductEntries(value)
+    .map((entry) => {
+      if (entry.raw && !entry.size && !entry.qty && !entry.sku) return entry.raw
+      return [
+        entry.sku,
+        entry.productName,
+        entry.size ? `Size ${entry.size}` : null,
+        entry.qty ? `Qty ${entry.qty}` : null,
+      ]
+        .filter(Boolean)
+        .join(' | ')
+    })
+    .join('\n') || '-'
+}
+
+function arklineSkuKey(value) {
+  return cleanUpper(value).replace(/[^A-Z0-9]/g, '').match(/^ARK\d{2}[A-Z]{3}\d{3}/)?.[0] || ''
+}
+
+function normalizedStockSize(value) {
+  return cleanUpper(value).replace(/[^A-Z0-9]/g, '')
+}
+
+function formatShelvingLocation(location) {
+  if (!location) return ''
+  return [location.location_id, location.location_code, location.sub_location].filter(Boolean).join(' / ')
+}
+
+function normalizeArklineProductOption(row) {
+  const sku = cleanUpper(row?.sku_induk)
+  const productName = cleanUpper(row?.nama_produk)
+  return {
+    isActive: row?.is_active !== false,
+    label: sku && productName ? `${sku} | ${productName}` : sku || productName,
+    productName,
+    sku,
+  }
+}
+
+function ProductBreakdownEditor({ arklineProducts = [], arklineEnabled = false, label, onChange, required = false, value = '' }) {
+  const productInputRef = useRef(null)
+  const entries = useMemo(() => parseProductEntries(value), [value])
+  const [draft, setDraft] = useState(emptyProductEntry)
+  const [error, setError] = useState('')
+  const [suggestionsOpen, setSuggestionsOpen] = useState(false)
+  const [suggestionBounds, setSuggestionBounds] = useState(null)
+
+  const filteredProducts = useMemo(() => {
+    if (!arklineEnabled) return []
+    const query = cleanUpper(draft.productName)
+    if (!query) return []
+    return arklineProducts
+      .filter((item) => `${item.sku} ${item.productName}`.includes(query))
+  }, [arklineEnabled, arklineProducts, draft.productName])
+
+  useEffect(() => {
+    if (!suggestionsOpen || !filteredProducts.length) return undefined
+
+    const updateBounds = () => {
+      const rect = productInputRef.current?.getBoundingClientRect()
+      if (!rect) return
+      const spaceBelow = window.innerHeight - rect.bottom - 12
+      const placeAbove = spaceBelow < 180 && rect.top > spaceBelow
+      const maxHeight = Math.max(120, Math.min(360, placeAbove ? rect.top - 16 : spaceBelow))
+      const width = Math.min(Math.max(rect.width, 560), window.innerWidth - 32)
+      const left = Math.max(16, Math.min(rect.left, window.innerWidth - width - 16))
+      setSuggestionBounds({ left, top: placeAbove ? rect.top - maxHeight - 6 : rect.bottom + 6, width, maxHeight })
+    }
+
+    let animationFrame = window.requestAnimationFrame(updateBounds)
+    const scheduleBoundsUpdate = () => {
+      window.cancelAnimationFrame(animationFrame)
+      animationFrame = window.requestAnimationFrame(updateBounds)
+    }
+    window.addEventListener('resize', scheduleBoundsUpdate)
+    window.addEventListener('scroll', scheduleBoundsUpdate, true)
+    return () => {
+      window.cancelAnimationFrame(animationFrame)
+      window.removeEventListener('resize', scheduleBoundsUpdate)
+      window.removeEventListener('scroll', scheduleBoundsUpdate, true)
+    }
+  }, [filteredProducts.length, suggestionsOpen])
+
+  function addEntry() {
+    const productName = cleanUpper(draft.productName)
+    const size = cleanUpper(draft.size)
+    const qty = Number(draft.qty)
+    if (!productName) {
+      setError('Product name is required.')
+      return
+    }
+    if (arklineEnabled && !draft.sku) {
+      setError('Select the Arkline product from the dropdown.')
+      return
+    }
+    if (!size) {
+      setError('Size is required. Use - when the product has no size.')
+      return
+    }
+    if (!Number.isInteger(qty) || qty <= 0) {
+      setError('Qty must be a whole number greater than 0.')
+      return
+    }
+
+    onChange(serializeProductEntries([...entries, { ...draft, productName, size, qty: String(qty) }]))
+    setDraft(emptyProductEntry())
+    setError('')
+    setSuggestionsOpen(false)
+  }
+
+  function removeEntry(index) {
+    onChange(serializeProductEntries(entries.filter((_, entryIndex) => entryIndex !== index)))
+  }
+
+  return (
+    <div className={styles.productBreakdownField}>
+      <div className={styles.productBreakdownEditor}>
+        <div className={styles.productBreakdownInputs}>
+          <label>
+            <span>{label}{required ? <span className={styles.requiredStar}>*</span> : null}</span>
+            <div className={styles.productAutocomplete}>
+              <input
+                ref={productInputRef}
+                value={draft.productName}
+                onChange={(event) => {
+                  setDraft((current) => ({ ...current, productName: event.target.value.toUpperCase(), sku: '' }))
+                  setSuggestionsOpen(true)
+                }}
+                onFocus={() => setSuggestionsOpen(true)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Escape') setSuggestionsOpen(false)
+                }}
+                placeholder={arklineEnabled ? 'TYPE SKU OR PRODUCT NAME' : 'TYPE PRODUCT NAME'}
+                autoComplete="off"
+              />
+              {suggestionsOpen && filteredProducts.length && suggestionBounds && typeof document !== 'undefined' ? createPortal(
+                <div className={styles.productAutocompleteMenu} style={{ position: 'fixed', left: suggestionBounds.left, right: 'auto', top: suggestionBounds.top, bottom: 'auto', width: suggestionBounds.width, maxHeight: suggestionBounds.maxHeight, zIndex: 10000 }}>
+                  {filteredProducts.map((product) => (
+                    <button
+                      key={product.sku || product.productName}
+                      type="button"
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={() => {
+                        setDraft((current) => ({ ...current, productName: product.productName, sku: product.sku }))
+                        setSuggestionsOpen(false)
+                      }}
+                    >
+                      <strong>{product.sku}</strong>
+                      <span>{product.productName}</span>
+                    </button>
+                  ))}
+                </div>,
+                document.body
+              ) : null}
+            </div>
+          </label>
+          <label>
+            <span>SIZE</span>
+            {arklineEnabled ? (
+              <select value={draft.size} onChange={(event) => setDraft((current) => ({ ...current, size: event.target.value }))}>
+                <option value="">SELECT SIZE</option>
+                {['XS', 'S', 'M', 'L', 'XL', 'XXL'].map((size) => <option key={size}>{size}</option>)}
+              </select>
+            ) : (
+              <input value={draft.size} onChange={(event) => setDraft((current) => ({ ...current, size: event.target.value.toUpperCase() }))} placeholder="SIZE / -" />
+            )}
+          </label>
+          <label><span>QTY</span><input type="number" min="1" step="1" inputMode="numeric" value={draft.qty} onChange={(event) => setDraft((current) => ({ ...current, qty: event.target.value }))} placeholder="QTY" /></label>
+          <button type="button" className={styles.productBreakdownAddButton} onClick={addEntry}>Add</button>
+        </div>
+        {error ? <p className={styles.productBreakdownError}>{error}</p> : null}
+        {entries.length ? (
+          <div className={styles.productBreakdownList}>
+            {entries.map((entry, index) => (
+              <div className={styles.productBreakdownRow} key={`${entry.raw || entry.productName}-${index}`}>
+                <div>
+                  <strong>{entry.sku ? `${entry.sku} | ` : ''}{entry.productName || entry.raw}</strong>
+                  <span>{entry.size ? `Size ${entry.size}` : 'Size not specified'}{entry.qty ? ` • Qty ${entry.qty}` : ''}</span>
+                </div>
+                <button type="button" className={styles.productBreakdownRemoveButton} onClick={() => removeEntry(index)} aria-label={`Remove ${entry.productName || 'product'}`}>×</button>
+              </div>
+            ))}
+          </div>
+        ) : <p className={styles.productBreakdownHint}>Add one or more products. Each line is stored separately for reliable reading.</p>}
+      </div>
+    </div>
+  )
+}
 
 function addDays(date, days) {
   const value = new Date(`${date}T00:00:00+07:00`)
@@ -63,20 +366,229 @@ function countByValue(rows, key, expected) {
   return rows.filter((row) => String(row?.[key] || '').trim().toLowerCase() === String(expected).trim().toLowerCase()).length
 }
 
-function getTopCounts(rows, key, limit = 3) {
-  const counts = new Map()
+const RETURN_CHART_GROUPS = ['ARKLINE', 'MOB', 'OI']
+const RETURN_CHART_TYPES = ['INTERNAL', 'EXTERNAL']
+const RETURN_CHART_SERIES = [...RETURN_CHART_GROUPS, ...RETURN_CHART_TYPES]
+const RETURN_CHART_COLORS = { ARKLINE: '#2563eb', MOB: '#16834a', OI: '#c47a12', INTERNAL: '#c02673', EXTERNAL: '#7551c8' }
+const RETURN_CHART_LABELS = { ARKLINE: 'ARKLINE', MOB: 'MOB', OI: 'OI', INTERNAL: 'Internal', EXTERNAL: 'External' }
 
+function buildReturnTimeline(rows, period) {
+  const buckets = new Map()
   rows.forEach((row) => {
-    const value = String(row?.[key] || '').trim()
-    if (!value) return
-    counts.set(value, (counts.get(value) || 0) + 1)
+    const dateValue = String(row.tanggal_pengajuan || row.created_at || '').slice(0, 10)
+    const date = new Date(`${dateValue}T00:00:00`)
+    if (!dateValue || Number.isNaN(date.getTime())) return
+    const key = period === 'year' ? dateValue.slice(0, 4) : period === 'month' ? dateValue.slice(0, 7) : dateValue
+    const label = period === 'year'
+      ? key
+      : date.toLocaleDateString('id-ID', period === 'month' ? { month: 'short', year: 'numeric' } : { day: '2-digit', month: 'short' })
+    if (!buckets.has(key)) buckets.set(key, { label, values: Object.fromEntries(RETURN_CHART_SERIES.map((series) => [series, 0])) })
+    const group = cleanUpper(row.group_order)
+    if (RETURN_CHART_GROUPS.includes(group)) buckets.get(key).values[group] += 1
+    const type = cleanUpper(row.internal_external)
+    if (RETURN_CHART_TYPES.includes(type)) buckets.get(key).values[type] += 1
   })
 
-  return [...counts.entries()]
-    .sort((first, second) => second[1] - first[1] || first[0].localeCompare(second[0]))
-    .slice(0, limit)
-    .map(([label, count]) => `${label} (${count})`)
+  return Array.from(buckets.entries())
+    .sort(([first], [second]) => first.localeCompare(second))
+    .map(([key, bucket]) => ({ key, ...bucket }))
 }
+
+function buildReturnBars(rows, key) {
+  const counts = new Map()
+  rows.forEach((row) => {
+    const label = String(row[key] || '').trim() || 'Not specified'
+    counts.set(label, (counts.get(label) || 0) + 1)
+  })
+  return Array.from(counts.entries())
+    .map(([label, value]) => ({ label, value }))
+    .sort((first, second) => second.value - first.value || first.label.localeCompare(second.label))
+    .slice(0, 8)
+}
+
+function normalizeReturnProductName(value) {
+  return cleanUpper(value).replace(/\s+/g, ' ')
+}
+
+function buildTopReturnProducts(rows, catalog = [], identityRows = rows) {
+  const skusByName = new Map()
+  const catalogNamesBySku = new Map()
+  const addAlias = (group, name, sku) => {
+    if (!name || !sku) return
+    const key = `${group}:${name}`
+    if (!skusByName.has(key)) skusByName.set(key, new Set())
+    skusByName.get(key).add(sku)
+  }
+
+  catalog.forEach((item) => {
+    const sku = cleanUpper(item.sku)
+    const name = normalizeReturnProductName(item.productName)
+    if (!sku || !name) return
+    addAlias('ARKLINE', name, sku)
+    addAlias('ARKLINE', `ARKLINE ${name}`, sku)
+    catalogNamesBySku.set(sku, name)
+  })
+  identityRows.forEach((row) => {
+    const group = cleanUpper(row.group_order)
+    parseProductEntries(row.produk_diretur).forEach((entry) => {
+      addAlias(group, normalizeReturnProductName(entry.productName), cleanUpper(entry.sku))
+    })
+  })
+
+  const products = new Map()
+  rows.forEach((row) => {
+    const productsInCase = new Set()
+    parseProductEntries(row.produk_diretur).forEach((entry) => {
+      const qty = Number(entry.qty)
+      const group = cleanUpper(row.group_order)
+      const name = normalizeReturnProductName(entry.productName)
+      const aliasSkus = skusByName.get(`${group}:${name}`)
+      const sku = cleanUpper(entry.sku) || (aliasSkus?.size === 1 ? aliasSkus.values().next().value : '')
+      if ((!sku && !name) || !Number.isInteger(qty) || qty <= 0) return
+      const key = sku ? `sku:${sku}` : `name:${group}:${name}`
+      const labelName = catalogNamesBySku.get(sku) || name
+      if (!products.has(key)) products.set(key, { label: sku && labelName ? `${sku} | ${labelName}` : sku || name, value: 0, caseCount: 0 })
+      products.get(key).value += qty
+      productsInCase.add(key)
+    })
+    productsInCase.forEach((key) => { products.get(key).caseCount += 1 })
+  })
+  return Array.from(products.values())
+    .sort((first, second) => second.value - first.value || first.label.localeCompare(second.label))
+    .slice(0, 8)
+}
+
+function buildSmoothChartPath(points) {
+  if (!points.length) return ''
+  if (points.length === 1) return `M ${points[0].x} ${points[0].y}`
+
+  return points.reduce((path, point, index) => {
+    if (index === 0) return `M ${point.x} ${point.y}`
+    const previous = points[index - 1]
+    const beforePrevious = points[index - 2] || previous
+    const next = points[index + 1] || point
+    const controlOneX = previous.x + (point.x - beforePrevious.x) / 6
+    const controlOneY = previous.y + (point.y - beforePrevious.y) / 6
+    const controlTwoX = point.x - (next.x - previous.x) / 6
+    const controlTwoY = point.y - (next.y - previous.y) / 6
+    return `${path} C ${controlOneX} ${controlOneY}, ${controlTwoX} ${controlTwoY}, ${point.x} ${point.y}`
+  }, '')
+}
+
+function ResolutionReturnChart({ bars, groups = RETURN_CHART_SERIES, mode, timeline, types = RETURN_CHART_TYPES }) {
+  const [hover, setHover] = useState(null)
+  const isTimelineMode = mode === 'groups' || mode === 'types'
+  const activeSeries = mode === 'types' ? types : groups
+  const hasChartData = isTimelineMode ? timeline.length > 0 : bars.length > 0
+
+  const setHoverFromPointer = (event, title, detail) => {
+    const targetBounds = event.currentTarget.getBoundingClientRect()
+    const anchorX = event.clientX > 0 ? event.clientX : targetBounds.left + targetBounds.width / 2
+    const anchorY = event.clientY > 0 ? event.clientY : targetBounds.top + targetBounds.height / 2
+    const tooltipWidth = mode === 'product' ? 360 : 230
+    const tooltipHeight = 70
+    const left = anchorX + tooltipWidth + 24 <= window.innerWidth
+      ? anchorX + 12
+      : Math.max(12, anchorX - tooltipWidth - 12)
+    const top = Math.max(12, Math.min(anchorY - tooltipHeight / 2, window.innerHeight - tooltipHeight - 12))
+    setHover({ left, top, title, detail })
+  }
+
+  const hoverTooltip = hover && typeof document !== 'undefined'
+    ? createPortal(<div className={`${styles.returnChartTooltip} ${mode === 'product' ? styles.returnChartProductTooltip : ''}`} style={{ left: hover.left, top: hover.top }} role="tooltip"><strong>{hover.title}</strong><span>{hover.detail}</span></div>, document.body)
+    : null
+
+  if (isTimelineMode) {
+    const width = 920
+    const height = 290
+    const left = 48
+    const right = 20
+    const top = 18
+    const bottom = 50
+    const plotWidth = width - left - right
+    const plotHeight = height - top - bottom
+    const maxValue = Math.max(1, ...timeline.flatMap((point) => activeSeries.map((series) => point.values[series])))
+    const yMax = Math.max(4, Math.ceil(maxValue / 4) * 4)
+    const x = (index) => timeline.length === 1 ? left + plotWidth / 2 : left + (index / (timeline.length - 1)) * plotWidth
+    const y = (value) => top + plotHeight - (value / yMax) * plotHeight
+    const labelStep = Math.max(1, Math.ceil(timeline.length / 10))
+
+    return (
+      <div className={styles.returnChartViewport}>
+        {hasChartData ? <svg className={styles.returnChartSvg} viewBox={`0 0 ${width} ${height}`} role="img" aria-label={mode === 'groups' ? 'Return cases by group over time' : 'Return cases by internal or external over time'}>
+          <defs>
+            {activeSeries.map((series) => <linearGradient key={series} id={`returnLine-${series}`} x1="0" x2="1" y1="0" y2="0"><stop offset="0%" stopColor={RETURN_CHART_COLORS[series]} stopOpacity=".55" /><stop offset="55%" stopColor={RETURN_CHART_COLORS[series]} /><stop offset="100%" stopColor={RETURN_CHART_COLORS[series]} stopOpacity=".78" /></linearGradient>)}
+            {activeSeries.map((series) => <linearGradient key={`area-${series}`} id={`returnArea-${series}`} x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stopColor={RETURN_CHART_COLORS[series]} stopOpacity=".2" /><stop offset="100%" stopColor={RETURN_CHART_COLORS[series]} stopOpacity=".015" /></linearGradient>)}
+            <filter id="returnLineGlow" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur stdDeviation="3" result="blur" /><feComposite in="SourceGraphic" in2="blur" operator="over" /></filter>
+          </defs>
+          {Array.from({ length: 5 }, (_, index) => {
+            const value = (yMax / 4) * index
+            const yPos = y(value)
+            return <g key={index}><line x1={left} x2={width - right} y1={yPos} y2={yPos} className={styles.returnChartGridLine} /><text x={left - 10} y={yPos + 4} textAnchor="end" className={styles.returnChartAxisLabel}>{Math.round(value)}</text></g>
+          })}
+          {activeSeries.map((series) => {
+            const coordinates = timeline.map((item, index) => ({ x: x(index), y: y(item.values[series]) }))
+            const linePath = buildSmoothChartPath(coordinates)
+            const baseline = height - bottom
+            const areaPath = coordinates.length ? `${linePath} L ${coordinates[coordinates.length - 1].x} ${baseline} L ${coordinates[0].x} ${baseline} Z` : ''
+            return <g key={series}>
+              <path d={areaPath} fill={`url(#returnArea-${series})`} />
+              <path d={linePath} fill="none" stroke={RETURN_CHART_COLORS[series]} strokeWidth="7" strokeLinejoin="round" strokeLinecap="round" opacity=".13" filter="url(#returnLineGlow)" />
+              <path d={linePath} fill="none" stroke={`url(#returnLine-${series})`} strokeWidth="2.8" strokeLinejoin="round" strokeLinecap="round" />
+              {timeline.map((item, index) => <g key={`${series}-${item.key}`} tabIndex="0" onMouseEnter={(event) => setHoverFromPointer(event, `${RETURN_CHART_LABELS[series]} · ${item.label}`, `${item.values[series]} return case(s)`)} onMouseMove={(event) => setHoverFromPointer(event, `${RETURN_CHART_LABELS[series]} · ${item.label}`, `${item.values[series]} return case(s)`)} onMouseLeave={() => setHover(null)} onFocus={(event) => setHoverFromPointer(event, `${RETURN_CHART_LABELS[series]} · ${item.label}`, `${item.values[series]} return case(s)`)} onBlur={() => setHover(null)}>
+                <circle cx={x(index)} cy={y(item.values[series])} r="8" fill={RETURN_CHART_COLORS[series]} opacity=".15" />
+                <circle cx={x(index)} cy={y(item.values[series])} r="4" fill="#fff" stroke={RETURN_CHART_COLORS[series]} strokeWidth="2.5"><title>{`${RETURN_CHART_LABELS[series]}: ${item.values[series]} · ${item.label}`}</title></circle>
+              </g>)}
+            </g>
+          })}
+          {timeline.map((item, index) => index % labelStep === 0 || index === timeline.length - 1
+            ? <text key={item.key} x={x(index)} y={height - 16} textAnchor="middle" className={styles.returnChartAxisLabel}>{item.label}</text>
+            : null)}
+        </svg> : <div className={styles.returnChartEmpty}>No return cases in the selected date range.</div>}
+        {hoverTooltip}
+      </div>
+    )
+  }
+
+  const width = 880
+  const left = 220
+  const right = 38
+  const top = 16
+  const rowHeight = 34
+  const bottom = 36
+  const height = top + bars.length * rowHeight + bottom
+  const plotWidth = width - left - right
+  const maxValue = Math.max(1, ...bars.map((item) => item.value))
+  const xMax = Math.max(4, Math.ceil(maxValue / 4) * 4)
+  const barWidth = (value) => (value / xMax) * plotWidth
+
+  return (
+    <div className={styles.returnChartViewport}>
+      {hasChartData ? <svg className={styles.returnChartSvg} viewBox={`0 0 ${width} ${height}`} role="img" aria-label={mode === 'reason' ? 'Top return reasons' : mode === 'product' ? 'Top returned products by quantity' : 'Top follow-up actions'}>
+        <defs><linearGradient id="returnBarGradient" x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stopColor="#dbeafe" stopOpacity=".96" /><stop offset="22%" stopColor="#93b4fb" stopOpacity=".94" /><stop offset="100%" stopColor="#596ff0" /></linearGradient><filter id="returnBarGlow" x="-10%" y="-50%" width="130%" height="200%"><feGaussianBlur stdDeviation="2" result="blur" /><feComposite in="SourceGraphic" in2="blur" operator="over" /></filter></defs>
+        {Array.from({ length: 5 }, (_, index) => {
+          const value = (xMax / 4) * index
+          const xPos = left + (index / 4) * plotWidth
+          return <g key={index}><line x1={xPos} x2={xPos} y1={top - 4} y2={height - bottom} className={styles.returnChartGridLine} /><text x={xPos} y={height - 10} textAnchor="middle" className={styles.returnChartAxisLabel}>{Math.round(value)}</text></g>
+        })}
+        {bars.map((item, index) => {
+          const yPos = top + index * rowHeight
+          const label = item.label.length > 30 ? `${item.label.slice(0, 27)}...` : item.label
+          const detail = mode === 'product' ? `${item.value} unit(s) · ${item.caseCount} case(s)` : `${item.value} return case(s)`
+          return <g key={item.label} onMouseEnter={(event) => setHoverFromPointer(event, item.label, detail)} onMouseMove={(event) => setHoverFromPointer(event, item.label, detail)} onMouseLeave={() => setHover(null)}>
+            <text x={left - 12} y={yPos + 16} textAnchor="end" className={styles.returnChartBarLabel}><title>{item.label}</title>{label}</text>
+            <rect x={left} y={yPos + 2} width={Math.max(item.value ? 3 : 0, barWidth(item.value))} height="22" rx="7" className={styles.returnChartBar} filter="url(#returnBarGlow)" />
+            <rect x={left + 1} y={yPos + 3} width={Math.max(item.value ? 1 : 0, barWidth(item.value) - 2)} height="7" rx="5" fill="#ffffff" opacity=".24" pointerEvents="none" />
+            <text x={left + barWidth(item.value) + 8} y={yPos + 17} className={styles.returnChartValue}>{item.value}</text>
+          </g>
+        })}
+      </svg> : <div className={styles.returnChartEmpty}>{mode === 'product' ? 'No returned products with recorded quantities in the selected date range.' : 'No return cases in the selected date range.'}</div>}
+      {hoverTooltip}
+    </div>
+  )
+}
+
+const MemoizedResolutionReturnChart = memo(ResolutionReturnChart)
 
 function formatMoney(value) {
   return new Intl.NumberFormat('id-ID', {
@@ -430,14 +942,22 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
   const lockedGroup = useMemo(() => normalizeLockedGroup(lockedGroupProp), [lockedGroupProp])
   const groupOptions = useMemo(() => (lockedGroup ? [lockedGroup] : GROUPS), [lockedGroup])
   const [activeTab, setActiveTab] = useState('registration')
+  const [returnFormOpen, setReturnFormOpen] = useState(false)
+  const [returnFormStep, setReturnFormStep] = useState(0)
+  const [returnFormStatus, setReturnFormStatus] = useState(null)
+  const [returnChartMode, setReturnChartMode] = useState('groups')
+  const [returnChartPeriod, setReturnChartPeriod] = useState('day')
   const [pic, setPic] = useState('')
   const [caseListAccess, setCaseListAccess] = useState({ isAdmin: false, name: '', ready: false })
   const [status, setStatus] = useState(null)
   const [busy, setBusy] = useState(false)
-  const [filters, setFilters] = useState({ courier: '', from: addDays(today, -6), group: lockedGroup, search: '', to: today, warningOnly: false })
+  const [filters, setFilters] = useState({ courier: '', from: addDays(today, -6), group: lockedGroup, search: '', status: '', to: today, type: '', warningOnly: false })
   const [cases, setCases] = useState([])
   const [issues, setIssues] = useState([])
   const [masters, setMasters] = useState({ actions: [], barcodeRules: [], couriers: [], issueActions: [], issueReasons: [], reasons: [], services: [] })
+  const [arklineProducts, setArklineProducts] = useState([])
+  const [arklineCatalog, setArklineCatalog] = useState([])
+  const [productEditorResetNonce, setProductEditorResetNonce] = useState(0)
   const [returnForm, setReturnForm] = useState({ ...blankReturn(today), group_order: lockedGroup || 'MOB' })
   const [issueForm, setIssueForm] = useState({ ...blankIssue(), group_order: lockedGroup || 'ARKLINE' })
   const [editingIssueId, setEditingIssueId] = useState(null)
@@ -450,6 +970,10 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
   const [detailDraft, setDetailDraft] = useState(null)
   const [detailMode, setDetailMode] = useState('view')
   const [detailReadonly, setDetailReadonly] = useState(false)
+  const [detailSectionsOpen, setDetailSectionsOpen] = useState({ overview: false, subject: false, returns: false, status: false })
+  const [cancelTarget, setCancelTarget] = useState(null)
+  const [cancelError, setCancelError] = useState('')
+  const cancelInFlightRef = useRef(false)
   const [receivingAddOpen, setReceivingAddOpen] = useState(false)
   const [receivingAddSearch, setReceivingAddSearch] = useState('')
   const [receivingAddSelectedIds, setReceivingAddSelectedIds] = useState([])
@@ -457,7 +981,12 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
   const [receivingReprintSearch, setReceivingReprintSearch] = useState('')
   const [receivingSelectedIds, setReceivingSelectedIds] = useState([])
   const [receivingReprintSelectedIds, setReceivingReprintSelectedIds] = useState([])
-  const [receivingFilters, setReceivingFilters] = useState({ courier: '', group: lockedGroup, search: '' })
+  const [receivingFilters, setReceivingFilters] = useState({ courier: '', group: lockedGroup, search: '', status: '' })
+  const [receivingConfirmOpen, setReceivingConfirmOpen] = useState(false)
+  const [receivingConfirmError, setReceivingConfirmError] = useState('')
+  const [receivingConfirmStep, setReceivingConfirmStep] = useState('inspect')
+  const [receivingLookupBusy, setReceivingLookupBusy] = useState(false)
+  const [receivingInspectionCases, setReceivingInspectionCases] = useState([])
   const [productSearch, setProductSearch] = useState('')
   const [productSearchFilters, setProductSearchFilters] = useState({ group: lockedGroup, scope: '', type: '' })
 
@@ -532,6 +1061,28 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
   }, [caseListAccess.ready])
 
   useEffect(() => {
+    let ignore = false
+
+    async function loadArklineProducts() {
+      const { data, error } = await deliverySupabase
+        .from('arkline_dir_products')
+        .select('sku_induk, nama_produk, is_active')
+        .order('nama_produk', { ascending: true })
+        .limit(5000)
+
+      if (ignore || error) return
+      const products = (data || []).map(normalizeArklineProductOption).filter((item) => item.sku || item.productName)
+      setArklineCatalog(products)
+      setArklineProducts(products.filter((item) => item.isActive))
+    }
+
+    loadArklineProducts()
+    return () => {
+      ignore = true
+    }
+  }, [])
+
+  useEffect(() => {
     const timer = window.setTimeout(() => {
       loadMasters()
       loadCases()
@@ -584,6 +1135,7 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
   }, [today])
 
   useEffect(() => {
+    if (!returnFormOpen) return undefined
     let ignore = false
     const timer = window.setTimeout(() => {
       generateNextCaseCode(returnForm.group_order, returnForm.tanggal_pengajuan)
@@ -591,7 +1143,7 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
           if (!ignore) setCaseCode(nextCode)
         })
         .catch((error) => {
-          if (!ignore) setStatus({ type: 'error', message: `Failed to generate case code: ${error.message}` })
+          if (!ignore) setReturnFormStatus({ type: 'error', message: `Failed to generate case code: ${error.message}` })
         })
     }, 250)
 
@@ -599,7 +1151,7 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
       ignore = true
       window.clearTimeout(timer)
     }
-  }, [generateNextCaseCode, returnForm.group_order, returnForm.tanggal_pengajuan])
+  }, [generateNextCaseCode, returnForm.group_order, returnForm.tanggal_pengajuan, returnFormOpen])
 
   const accessibleCases = useMemo(() => {
     if (!caseListAccess.ready) return []
@@ -615,22 +1167,33 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
       if (filters.to && submissionDate && submissionDate > filters.to) return false
       if (filters.group && row.group_order !== filters.group) return false
       if (filters.courier && row.courier_name !== filters.courier) return false
+      if (filters.type && cleanUpper(row.internal_external) !== cleanUpper(filters.type)) return false
       return true
     })
-  }, [accessibleCases, filters.courier, filters.from, filters.group, filters.to])
+  }, [accessibleCases, filters.courier, filters.from, filters.group, filters.to, filters.type])
+
+  const returnChartTimeline = useMemo(() => buildReturnTimeline(summaryCases, returnChartPeriod), [returnChartPeriod, summaryCases])
+  const returnChartBars = useMemo(() => {
+    if (returnChartMode === 'reason') return buildReturnBars(summaryCases, 'retur_reason')
+    if (returnChartMode === 'action') return buildReturnBars(summaryCases, 'retur_action')
+    if (returnChartMode === 'product') return buildTopReturnProducts(summaryCases, arklineCatalog, accessibleCases)
+    return []
+  }, [accessibleCases, arklineCatalog, returnChartMode, summaryCases])
+  const returnChartGroups = useMemo(
+    () => filters.group ? [filters.group] : lockedGroup ? [lockedGroup] : RETURN_CHART_GROUPS,
+    [filters.group, lockedGroup]
+  )
+  const returnChartTypes = useMemo(() => filters.type ? [cleanUpper(filters.type)] : RETURN_CHART_TYPES, [filters.type])
 
   const visibleCases = useMemo(() => {
     const keyword = filters.search.trim().toLowerCase()
     return summaryCases.filter((row) => {
       if (filters.warningOnly && getCaseWarningMeta(row, today).rank <= 0) return false
+      if (filters.status && cleanUpper(row.status_barang) !== cleanUpper(filters.status)) return false
       if (!keyword) return true
       return [row.kode_kejadian, row.order_id, row.no_resi_pengiriman, row.nama_customer].some((value) => String(value || '').toLowerCase().includes(keyword))
     })
-  }, [filters.search, filters.warningOnly, summaryCases, today])
-
-  const casesWithWarningMeta = useMemo(() => {
-    return summaryCases.map((row) => ({ meta: getCaseWarningMeta(row, today), row }))
-  }, [summaryCases, today])
+  }, [filters.search, filters.status, filters.warningOnly, summaryCases, today])
 
   const caseListStats = useMemo(() => {
     const visibleWithWarningMeta = visibleCases.map((row) => ({ meta: getCaseWarningMeta(row, today), row }))
@@ -642,78 +1205,13 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
   const courierOptions = useMemo(() => {
     return Array.from(new Set(accessibleCases.map((row) => cleanUpper(row.courier_name)).filter(Boolean))).sort()
   }, [accessibleCases])
+  const caseStatusOptions = useMemo(() => Array.from(new Set(accessibleCases.map((row) => row.status_barang).filter(Boolean))).sort(), [accessibleCases])
 
   const stats = useMemo(() => {
-    const warning = casesWithWarningMeta.filter(({ meta }) => meta.rank === 1).length
-    const overdue = casesWithWarningMeta.filter(({ meta }) => meta.rank === 2).length
     const internal = countByValue(summaryCases, 'internal_external', 'Internal')
     const external = countByValue(summaryCases, 'internal_external', 'External')
-    return { external, internal, overdue, warning }
-  }, [casesWithWarningMeta, summaryCases])
-
-  const warningRows = useMemo(() => {
-    return casesWithWarningMeta
-      .filter(({ meta }) => meta.rank > 0)
-      .sort((first, second) => {
-        if (second.meta.rank !== first.meta.rank) return second.meta.rank - first.meta.rank
-        return String(first.row.batas_tanggal_retur || '').localeCompare(String(second.row.batas_tanggal_retur || ''))
-      })
-      .slice(0, 6)
-  }, [casesWithWarningMeta])
-
-  const quickInsights = useMemo(() => {
-    if (!summaryCases.length) {
-      return [
-        {
-          detail: 'Insights will appear after case data is available in the selected period.',
-          title: 'No data yet',
-        },
-      ]
-    }
-
-    const statusBreakdown = getTopCounts(summaryCases, 'status_barang', 4)
-    const topCreator = getTopCounts(summaryCases, 'created_by', 3)
-    const topGroups = getTopCounts(summaryCases, 'group_order', 3)
-    const topReasons = getTopCounts(summaryCases, 'retur_reason', 3)
-    const topActions = getTopCounts(summaryCases, 'retur_action', 3)
-    const totalLoss = summaryCases.reduce((sum, row) => sum + safeNumber(row.nilai_refund_kompensasi), 0)
-    const outboundCost = summaryCases.reduce((sum, row) => sum + safeNumber(row.ongkir_keluar), 0)
-    const inboundCost = summaryCases.reduce((sum, row) => sum + safeNumber(row.ongkir_masuk), 0)
-    const attentionCase = warningRows[0]?.row || summaryCases.find((row) => ACTIVE_RETURN_STATUSES.has(row.status_barang)) || summaryCases[0]
-
-    return [
-      {
-        detail: attentionCase
-          ? `${attentionCase.nama_customer || '-'} • ${attentionCase.status_barang || '-'} • Deadline ${formatShortDate(attentionCase.batas_tanggal_retur)}`
-          : 'No active case data yet.',
-        title: formatHandledCaseLabel(attentionCase),
-      },
-      {
-        detail: statusBreakdown.join(', ') || 'No status data yet.',
-        title: 'Status Breakdown',
-      },
-      {
-        detail: topCreator.join(', ') || 'No creator data yet.',
-        title: 'Top Creator',
-      },
-      {
-        detail: topGroups.join(', ') || 'No group data yet.',
-        title: 'Most Affected Group',
-      },
-      {
-        detail: topReasons.join(', ') || 'No return reason data yet.',
-        title: 'Top Return Reason',
-      },
-      {
-        detail: topActions.join(', ') || 'No follow-up action data yet.',
-        title: 'Most Common Follow-up',
-      },
-      {
-        detail: `Loss: ${formatMoney(totalLoss)} | Outbound: ${formatMoney(outboundCost)} | Inbound: ${formatMoney(inboundCost)}`,
-        title: 'Nominal Summary',
-      },
-    ]
-  }, [summaryCases, warningRows])
+    return { external, internal }
+  }, [summaryCases])
 
   const accessibleIssues = useMemo(() => {
     if (!caseListAccess.ready) return []
@@ -877,6 +1375,7 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
     setDetail(row)
     setDetailDraft(row?.kode_kejadian ? createDetailDraft(row) : null)
     setDetailMode('view')
+    setDetailSectionsOpen({ overview: false, subject: false, returns: false, status: false })
   }
 
   function closeCaseDetail() {
@@ -892,7 +1391,7 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
   }
 
   async function saveDetailEdit() {
-    if (!detail || !detailDraft) return
+    if (!detail || !detailDraft || !ACTIVE_RETURN_STATUSES.has(detail.status_barang)) return
     setBusy(true)
     let actorName = pic
     try {
@@ -919,10 +1418,10 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
       updated_at: new Date().toISOString(),
       updated_by: actorName,
     }
-    const { data, error } = await deliverySupabase.from('delivery_error_retur_cases').update(updatePayload).eq('id', detail.id).select('*').single()
+    const { data, error } = await deliverySupabase.from('delivery_error_retur_cases').update(updatePayload).eq('id', detail.id).eq('status_barang', detail.status_barang).select('*').maybeSingle()
     setBusy(false)
-    if (error) {
-      setStatus({ type: 'error', message: `Failed to update case: ${error.message}` })
+    if (error || !data) {
+      setStatus({ type: 'error', message: error ? `Failed to update case: ${error.message}` : 'This case is no longer editable. Refresh the list and try again.' })
       return
     }
     setStatus({ type: 'success', message: `${nextCaseCode || detail.kode_kejadian || 'Case'} was updated successfully.` })
@@ -953,7 +1452,7 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
 
     const missingField = checks.find(([value]) => !String(value || '').trim())
     if (missingField) {
-      setStatus({ type: 'error', message: missingField[1] })
+      setReturnFormStatus({ type: 'error', message: missingField[1] })
       return
     }
     setBusy(true)
@@ -962,7 +1461,7 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
       actorName = await resolveActorName()
     } catch (error) {
       setBusy(false)
-      setStatus({ type: 'error', message: error.message || 'Failed to load signed-in user.' })
+      setReturnFormStatus({ type: 'error', message: error.message || 'Failed to load signed-in user.' })
       return
     }
 
@@ -998,12 +1497,45 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
     }
 
     setBusy(false)
-    if (saveError) setStatus({ type: 'error', message: `Failed to save case: ${saveError.message}` })
+    if (saveError) setReturnFormStatus({ type: 'error', message: `Failed to save case: ${saveError.message}` })
     else {
       setStatus({ type: 'success', message: `Case ${savedCaseCode} was saved successfully.` })
+      setReturnFormStatus(null)
       setReturnForm({ ...blankReturn(today), group_order: lockedGroup || 'MOB' })
+      setProductEditorResetNonce((current) => current + 1)
+      setReturnFormStep(0)
+      setReturnFormOpen(false)
       await loadCases()
     }
+  }
+
+  function advanceReturnForm() {
+    const checks = returnFormStep === 0
+      ? [
+          [returnForm.order_id, 'Order ID is required.'],
+          [returnForm.nama_customer, 'Customer name is required.'],
+          [returnForm.no_handphone, 'Phone number is required.'],
+          [returnForm.alamat, 'Address is required.'],
+          [returnForm.no_resi_pengiriman, 'Shipment AWB is required.'],
+        ]
+      : [
+          [returnForm.retur_reason, 'Return reason is required.'],
+          [returnForm.retur_action, 'Follow-up action is required.'],
+        ]
+
+    if (returnFormStep === 1) {
+      if (returnActionRules.replacementRequired === true) checks.push([returnForm.produk_pengganti, 'Replacement product is required for this follow-up action.'])
+      if (returnActionRules.requiresReturn === true) checks.push([returnForm.produk_diretur, 'Returned / problem product is required for this follow-up action.'])
+    }
+
+    const missingField = checks.find(([value]) => !String(value || '').trim())
+    if (missingField) {
+      setReturnFormStatus({ type: 'error', message: missingField[1] })
+      return
+    }
+
+    setReturnFormStatus(null)
+    setReturnFormStep((current) => Math.min(current + 1, 2))
   }
 
   async function saveIssue() {
@@ -1047,19 +1579,29 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
     }
   }
 
-  async function updateStatus(row, nextStatus) {
-    let actorName = pic
+  async function cancelCase() {
+    if (!cancelTarget || !ACTIVE_RETURN_STATUSES.has(cancelTarget.status_barang) || cancelInFlightRef.current) return
+    cancelInFlightRef.current = true
+    setBusy(true)
     try {
-      actorName = await resolveActorName()
-    } catch (error) {
-      setStatus({ type: 'error', message: error.message || 'Failed to load signed-in user.' })
-      return
-    }
-    const { error } = await deliverySupabase.from('delivery_error_retur_cases').update({ status_barang: nextStatus, updated_at: new Date().toISOString(), updated_by: actorName }).eq('id', row.id)
-    if (error) setStatus({ type: 'error', message: `Failed to update status: ${error.message}` })
-    else {
-      setStatus({ type: 'success', message: `${row.kode_kejadian} was updated to ${nextStatus}.` })
+      const actorName = await resolveActorName()
+      const { data, error } = await deliverySupabase.from('delivery_error_retur_cases')
+        .update({ status_barang: 'Cancel', updated_at: new Date().toISOString(), updated_by: actorName })
+        .eq('id', cancelTarget.id)
+        .eq('status_barang', cancelTarget.status_barang)
+        .select('id')
+        .maybeSingle()
+      if (error) throw error
+      if (!data) throw new Error('This case has changed. Refresh the list and try again.')
+      setStatus({ type: 'success', message: `${cancelTarget.kode_kejadian} was cancelled.` })
+      setCancelTarget(null)
+      setCancelError('')
       await loadCases()
+    } catch (error) {
+      setCancelError(`Failed to cancel case: ${error.message || 'Unknown error.'}`)
+    } finally {
+      cancelInFlightRef.current = false
+      setBusy(false)
     }
   }
 
@@ -1084,6 +1626,26 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
   function resetIssueForm() {
     setIssueForm({ ...blankIssue(), group_order: lockedGroup || 'ARKLINE' })
     setEditingIssueId(null)
+  }
+
+  function resetReturnForm() {
+    setReturnForm({ ...blankReturn(today), group_order: lockedGroup || 'MOB' })
+    setProductEditorResetNonce((current) => current + 1)
+    setReturnFormStep(0)
+  }
+
+  function openReturnForm() {
+    resetReturnForm()
+    setCaseCode('')
+    setReturnFormStatus(null)
+    setReturnFormOpen(true)
+  }
+
+  function closeReturnForm() {
+    resetReturnForm()
+    setCaseCode('')
+    setReturnFormStatus(null)
+    setReturnFormOpen(false)
   }
 
   function openIssueDetail(rowOrId, options = {}) {
@@ -1203,7 +1765,15 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
   }, [cases, issues, productSearch, productSearchFilters.group, productSearchFilters.scope, productSearchFilters.type])
 
   const detailStatusOption = RETURN_STATUS_OPTIONS[detailDraft?.status_barang] || RETURN_STATUS_OPTIONS.Pending
-  const canEditDetail = Boolean(detailDraft) && !detailReadonly && activeTab !== 'receiving'
+  const canEditDetail = Boolean(detailDraft) && !detailReadonly && activeTab !== 'receiving' && ACTIVE_RETURN_STATUSES.has(detail?.status_barang)
+
+  const renderDetailSectionHeading = (key, label) => (
+    <h3 className={detailSectionsOpen[key] ? '' : styles.resolutionDetailSectionHeadingClosed}>
+      <button type="button" className={styles.resolutionDetailSectionToggle} aria-expanded={detailSectionsOpen[key]} aria-controls={`return-case-${key}`} onClick={() => setDetailSectionsOpen((current) => ({ ...current, [key]: !current[key] }))}>
+        <span>{label}</span><span className={styles.resolutionDetailChevron} aria-hidden="true">▾</span>
+      </button>
+    </h3>
+  )
 
   const renderGroupBadge = (group) => <span className={`${styles.casePill} ${styles[`casePill${cleanUpper(group).charAt(0)}${cleanUpper(group).slice(1).toLowerCase()}`] || ''}`}>{group || '-'}</span>
   const renderTypeBadge = (type) => <span className={`${styles.casePill} ${type === 'Internal' ? styles.casePillInternal : type === 'External' ? styles.casePillExternal : ''}`}>{type || '-'}</span>
@@ -1218,10 +1788,12 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
     const keyword = cleanUpper(receivingFilters.search)
     return cases
       .filter((row) => ['Sending', 'Completed'].includes(row.status_barang))
+      .filter((row) => row.status_barang !== 'Completed' || receivingFilters.status === 'Completed' || dateOnly(row.updated_at) >= addDays(today, -2))
+      .filter((row) => !receivingFilters.status || row.status_barang === receivingFilters.status)
       .filter((row) => !receivingFilters.group || row.group_order === receivingFilters.group)
       .filter((row) => !receivingFilters.courier || row.courier_name === receivingFilters.courier)
       .filter((row) => !keyword || [row.kode_kejadian, row.nama_customer, row.order_id, row.no_resi_pengiriman].some((value) => cleanUpper(value).includes(keyword)))
-  }, [cases, receivingFilters.courier, receivingFilters.group, receivingFilters.search])
+  }, [cases, receivingFilters.courier, receivingFilters.group, receivingFilters.search, receivingFilters.status, today])
 
   const receivingCourierOptions = useMemo(() => {
     return Array.from(new Set(cases.filter((row) => ['Sending', 'Completed'].includes(row.status_barang)).map((row) => cleanUpper(row.courier_name)).filter(Boolean))).sort()
@@ -1293,67 +1865,191 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
   function buildReceivingLabelHtml(rows) {
     return `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Print Return Label</title><link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Libre+Barcode+39+Extended+Text&display=swap" rel="stylesheet"><style>@page{size:A6;margin:6mm}body{font-family:Inter,ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:0;color:#111827;background:#fff}.sheet{display:grid;gap:6mm}.label{page-break-after:always;border:1.5px solid #0f172a;border-radius:10px;padding:10px}.label:last-child{page-break-after:auto}.top{border-bottom:1.5px solid #0f172a;padding-bottom:8px;margin-bottom:10px}.title{font-size:17px;font-weight:900;letter-spacing:.08em;text-align:center}.meta{margin-top:6px;display:flex;justify-content:space-between;gap:10px;font-size:11px;font-weight:800;text-transform:uppercase}.block{border:1px solid #cbd5e1;border-radius:8px;padding:7px 8px;margin-top:7px}.k{font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:#475569}.v{margin-top:4px;font-size:12px;line-height:1.35;font-weight:600;white-space:pre-wrap;word-break:break-word}.v.big{font-size:14px;font-weight:800}.double{display:grid;grid-template-columns:1fr 1fr;gap:7px;align-items:start}.barcode-wrap{margin-top:10px;border:1.5px dashed #94a3b8;border-radius:10px;padding:10px 6px;overflow:hidden}.barcode{font-family:"Libre Barcode 39 Extended Text",cursive;font-size:46px;line-height:1;text-align:center;white-space:nowrap}</style></head><body><div class="sheet">${rows.map((row) => {
       const barcodeValue = `*${row.barcode_source || `R${cleanUpper(row.kode_kejadian)}${row.barcode_pattern || ''}`}*`
-      return `<div class="label"><div class="top"><div class="title">FORM RETUR</div><div class="meta"><span>${escapeHtml(row.group_order || '-')}</span><span>${escapeHtml(`${row.courier_name || '-'}${row.courier_service ? ` - ${row.courier_service}` : ''}`)}</span></div></div><div class="double"><div class="block"><div class="k">Customer Name</div><div class="v big">${escapeHtml(row.nama_customer || '-')}</div></div><div class="block"><div class="k">Phone Number</div><div class="v">${escapeHtml(row.no_handphone || '-')}</div></div></div><div class="block"><div class="k">Address</div><div class="v">${escapeHtml(row.alamat || '-')}</div></div><div class="block"><div class="k">Replacement Product</div><div class="v">${escapeHtml(row.produk_pengganti || '-')}</div></div><div class="block"><div class="k">Item Value</div><div class="v">${escapeHtml(formatMoney(row.total_retur))}</div></div><div class="barcode-wrap"><div class="barcode">${escapeHtml(barcodeValue)}</div></div></div>`
+      return `<div class="label"><div class="top"><div class="title">FORM RETUR</div><div class="meta"><span>${escapeHtml(row.group_order || '-')}</span><span>${escapeHtml(`${row.courier_name || '-'}${row.courier_service ? ` - ${row.courier_service}` : ''}`)}</span></div></div><div class="double"><div class="block"><div class="k">Customer Name</div><div class="v big">${escapeHtml(row.nama_customer || '-')}</div></div><div class="block"><div class="k">Phone Number</div><div class="v">${escapeHtml(row.no_handphone || '-')}</div></div></div><div class="block"><div class="k">Address</div><div class="v">${escapeHtml(row.alamat || '-')}</div></div><div class="block"><div class="k">Replacement Product</div><div class="v">${escapeHtml(formatProductEntries(row.produk_pengganti))}</div></div><div class="block"><div class="k">Item Value</div><div class="v">${escapeHtml(formatMoney(row.total_retur))}</div></div><div class="barcode-wrap"><div class="barcode">${escapeHtml(barcodeValue)}</div></div></div>`
     }).join('')}</div></body></html>`
   }
 
-  function printReceivingRows(rows) {
+  function printReceivingRows(rows, preparedWindow) {
     const printableRows = rows.filter((row) => !isRefundOnlyCase(row))
     if (!printableRows.length) {
       setStatus({ type: 'error', message: rows.length ? 'Refund follow-up cases cannot be printed.' : 'Select at least one case to print.' })
-      return
+      return false
     }
     const preparedRows = prepareReceivingPrintRows(printableRows)
-    const printWindow = window.open('', '_blank', 'width=900,height=700')
+    const printWindow = preparedWindow === undefined ? window.open('', '_blank', 'width=900,height=700') : preparedWindow
     if (!printWindow) {
       setStatus({ type: 'error', message: 'Print popup was blocked. Please allow popups and try again.' })
-      return
+      return false
     }
     printWindow.document.open()
     printWindow.document.write(buildReceivingLabelHtml(preparedRows))
     printWindow.document.close()
     printWindow.focus()
     window.setTimeout(() => printWindow.print(), 500)
+    return true
   }
 
-  async function completeReceivingRows(rows) {
-    if (!rows.length) {
-      setStatus({ type: 'error', message: 'Select at least one Sending case to complete.' })
-      return
+  function openReceivingInspection() {
+    setReceivingInspectionCases(buildReceivingInspectionCases(selectedReceivingRows))
+    setReceivingConfirmStep('inspect')
+    setReceivingConfirmError('')
+    setReceivingConfirmOpen(true)
+  }
+
+  function closeReceivingInspection() {
+    if (busy || receivingLookupBusy) return
+    setReceivingConfirmOpen(false)
+    setReceivingInspectionCases([])
+    setReceivingConfirmStep('inspect')
+    setReceivingConfirmError('')
+  }
+
+  function updateReceivingInspectionLine(caseId, lineKey, patch) {
+    setReceivingInspectionCases((current) => current.map((inspectedCase) => (
+      String(inspectedCase.caseId) !== String(caseId)
+        ? inspectedCase
+        : { ...inspectedCase, lines: inspectedCase.lines.map((line) => line.key === lineKey ? { ...line, ...patch } : line) }
+    )))
+    setReceivingConfirmError('')
+  }
+
+  function updateReceivingInspectionQty(inspectedCase, line, field, rawValue) {
+    const otherFields = ['storedQty', 'rejectQty', 'lostQty'].filter((key) => key !== field)
+    const remaining = Math.max(0, line.expectedQty - otherFields.reduce((sum, key) => sum + Number(line[key] || 0), 0))
+    const value = rawValue === '' ? '' : String(Math.min(remaining, Math.max(0, Math.trunc(Number(rawValue) || 0))))
+    updateReceivingInspectionLine(inspectedCase.caseId, line.key, { [field]: value })
+  }
+
+  function receivingQtyRemaining(line, field) {
+    return Math.max(0, line.expectedQty - ['storedQty', 'rejectQty', 'lostQty']
+      .filter((key) => key !== field)
+      .reduce((sum, key) => sum + Number(line[key] || 0), 0))
+  }
+
+  async function findArklineShelvingLocations(casesToResolve) {
+    const requiredLines = casesToResolve.flatMap((inspectedCase) => (
+      inspectedCase.group === 'ARKLINE'
+        ? inspectedCase.lines.filter((line) => Number(line.storedQty || 0) > 0).map((line) => ({ ...line, caseId: inspectedCase.caseId }))
+        : []
+    ))
+    if (!requiredLines.length) return casesToResolve
+
+    const prefixes = [...new Set(requiredLines.map((line) => arklineSkuKey(line.sku)).filter(Boolean))]
+    if (!prefixes.length) {
+      throw new Error('Could not identify an Arkline SKU for shelving lookup.')
     }
 
-    const printableRows = rows.filter((row) => !isRefundOnlyCase(row))
-    if (printableRows.length) printReceivingRows(printableRows)
-
-    setBusy(true)
-    let actorName = pic
-    try {
-      actorName = await resolveActorName()
-    } catch (error) {
-      setBusy(false)
-      setStatus({ type: 'error', message: error.message || 'Failed to load signed-in user.' })
-      return
+    const storageRows = []
+    const lookupFilter = prefixes.flatMap((prefix) => [`sku_id.ilike.${prefix}%`, `source_variant_code.ilike.${prefix}%`]).join(',')
+    for (let offset = 0; ; offset += 1000) {
+      const { data, error } = await deliverySupabase
+        .from('warehouse_storage')
+        .select('id, rack_location_id, sku_id, source_variant_code, size')
+        .or(lookupFilter)
+        .order('id', { ascending: true })
+        .range(offset, offset + 999)
+      if (error) throw error
+      storageRows.push(...(data || []))
+      if (!data || data.length < 1000) break
     }
 
-    const ids = rows.map((row) => row.id).filter(Boolean)
-    const { error } = await deliverySupabase
-      .from('delivery_error_retur_cases')
-      .update({ status_barang: 'Completed', updated_at: new Date().toISOString(), updated_by: actorName })
-      .in('id', ids)
-
-    setBusy(false)
-    if (error) {
-      setStatus({ type: 'error', message: `Failed to complete receiving: ${error.message}` })
-      return
-    }
-
-    const refundCount = rows.length - printableRows.length
-    setReceivingSelectedIds([])
-    setStatus({
-      type: 'success',
-      message: `${rows.length} receiving case${rows.length > 1 ? 's' : ''} completed.${printableRows.length ? ' Return label print was opened.' : ''}${refundCount ? ` ${refundCount} refund case${refundCount > 1 ? 's' : ''} skipped printing.` : ''}`,
+    const matchesByLine = requiredLines.map((line) => {
+      const skuKey = arklineSkuKey(line.sku)
+      const sizeKey = normalizedStockSize(line.size)
+      const rows = storageRows.filter((stock) => (
+        String(stock.sku_id ?? stock.source_variant_code ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '').startsWith(skuKey) &&
+        normalizedStockSize(stock.size) === sizeKey && stock.rack_location_id != null
+      ))
+      return { line, locationIds: [...new Set(rows.map((stock) => String(stock.rack_location_id)))] }
     })
-    await loadCases()
+    const locationIds = [...new Set(matchesByLine.flatMap((match) => match.locationIds))]
+    const { data: locations, error: locationError } = locationIds.length
+      ? await deliverySupabase.from('dir_rack_locations').select('id, location_type, location_id, location_code, sub_location, group_code').in('id', locationIds)
+      : { data: [], error: null }
+    if (locationError) throw locationError
+    const locationById = new Map((locations || []).map((location) => [String(location.id), location]))
+
+    return casesToResolve.map((inspectedCase) => ({
+      ...inspectedCase,
+      lines: inspectedCase.lines.map((line) => {
+        const match = matchesByLine.find((item) => item.line.key === line.key && String(item.line.caseId) === String(inspectedCase.caseId))
+        if (!match) return line
+        const shelvingLocations = match.locationIds
+          .map((id) => locationById.get(id))
+          .filter((location) => location && cleanUpper(location.group_code) === 'ARKLINE' && cleanUpper(location.location_type) === 'SHELVING')
+        const distinct = [...new Map(shelvingLocations.map((location) => [String(location.id), location])).values()]
+        return {
+          ...line,
+          shelvingLocation: distinct.length === 1 ? formatShelvingLocation(distinct[0]) : '',
+          shelvingLocationStatus: distinct.length === 1 ? 'FOUND' : distinct.length ? 'MULTIPLE' : 'MISSING',
+        }
+      }),
+    }))
+  }
+
+  async function continueReceivingInspection() {
+    const error = inspectReceivingDecisions(receivingInspectionCases)
+    if (error) {
+      setReceivingConfirmError(error)
+      return
+    }
+    setReceivingLookupBusy(true)
+    setReceivingConfirmError('')
+    try {
+      const casesWithLocations = await findArklineShelvingLocations(receivingInspectionCases)
+      setReceivingInspectionCases(casesWithLocations)
+      setReceivingConfirmStep('review')
+    } catch (lookupError) {
+      setReceivingConfirmError(lookupError.message || 'Failed to find Arkline shelving locations.')
+    } finally {
+      setReceivingLookupBusy(false)
+    }
+  }
+
+  async function completeReceivingRows() {
+    const validationError = inspectReceivingDecisions(receivingInspectionCases, { requireShelvingLookup: true })
+    if (validationError) {
+      setReceivingConfirmError(validationError)
+      return
+    }
+    const printableRows = receivingInspectionCases.map((item) => item.row).filter((row) => !isRefundOnlyCase(row))
+    const printWindow = printableRows.length ? window.open('', '_blank', 'width=900,height=700') : null
+    setBusy(true)
+    try {
+      const payload = receivingInspectionCases.map((inspectedCase) => ({
+        case_id: inspectedCase.caseId,
+        lines: inspectedCase.lines.map((line) => ({
+          sku: cleanUpper(line.sku),
+          product_name: cleanText(line.productName),
+          size: cleanUpper(line.size),
+          expected_qty: line.expectedQty,
+          stored_qty: Number(line.storedQty || 0),
+          reject_qty: Number(line.rejectQty || 0),
+          lost_qty: Number(line.lostQty || 0),
+          reject_reason: cleanText(line.rejectReason),
+          lost_reason: cleanText(line.lostReason),
+        })),
+      }))
+      const { error } = await deliverySupabase.rpc('complete_delivery_return_cases', { p_cases: payload })
+      if (error) throw error
+
+      const printed = printableRows.length ? printReceivingRows(printableRows, printWindow) : false
+      const completedCount = receivingInspectionCases.length
+      setReceivingConfirmOpen(false)
+      setReceivingInspectionCases([])
+      setReceivingConfirmError('')
+      setReceivingSelectedIds([])
+      setStatus({
+        type: 'success',
+        message: `${completedCount} receiving case${completedCount > 1 ? 's' : ''} completed.${printed ? ' Return labels opened for printing.' : printableRows.length ? ' Use Reprint if the browser blocked the print window.' : ''}`,
+      })
+      await loadCases()
+    } catch (error) {
+      if (printWindow && !printWindow.closed) printWindow.close()
+      setReceivingConfirmError(error.message || 'Failed to complete receiving.')
+    } finally {
+      setBusy(false)
+    }
   }
 
   async function addRowsToReceiving(rows) {
@@ -1462,6 +2158,31 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
     return <div key={key} className={styles.resolutionDetailValue}><span>{labelNode}</span><strong>{displayDetailValue(key, value)}</strong></div>
   }
 
+  const renderDetailProductField = ({ key, label }) => {
+    const value = detailDraft?.[key] ?? ''
+    const actionMeta = masters.actions.find((item) => String(item.name || '').trim() === String(detailDraft?.retur_action || '').trim()) || null
+    const actionRules = getReturnActionRules(actionMeta)
+    const required = key === 'produk_diretur' ? actionRules.requiresReturn === true : actionRules.replacementRequired === true
+
+    if (canEditDetail && detailMode === 'edit') {
+      return (
+        <div key={key} className={styles.fullField}>
+          <ProductBreakdownEditor
+            key={`detail-product-${key}-${value || 'empty'}`}
+            arklineEnabled={cleanUpper(detailDraft?.group_order) === 'ARKLINE'}
+            arklineProducts={arklineProducts}
+            label={label}
+            onChange={(nextValue) => setDetailDraft((current) => ({ ...current, [key]: nextValue }))}
+            required={required}
+            value={value}
+          />
+        </div>
+      )
+    }
+
+    return <div key={key} className={`${styles.resolutionDetailValue} ${styles.fullField}`}><span>{label}</span><strong className={styles.preformattedDetailValue}>{formatProductEntries(value)}</strong></div>
+  }
+
   return (
     <div className={styles.modulePage}>
       <ModuleHeader
@@ -1470,31 +2191,48 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
         title="Resolution Monitoring Center"
       />
       <div className={styles.resolutionTabs}>{TABS.map(([id, label]) => <button key={id} className={activeTab === id ? styles.active : ''} onClick={() => setActiveTab(id)}>{label}</button>)}</div>
-      <StatusMessage status={status} />
+      <div className={styles.resolutionTabPanel}>
+      {!returnFormOpen ? <StatusMessage status={status} /> : null}
 
       {activeTab === 'registration' ? (
         <>
-          <section className={`${styles.dataCard} ${styles.resolutionSummaryPanel}`}>
-            <div className={styles.resolutionSummaryControls}>
-              <label><span>DATE FROM</span><input type="date" value={filters.from} onChange={(event) => setFilters({ ...filters, from: event.target.value })} /></label>
-              <label><span>DATE TO</span><input type="date" value={filters.to} onChange={(event) => setFilters({ ...filters, to: event.target.value })} /></label>
-              <button className={styles.primaryButton} onClick={loadCases}>Apply Summary</button>
-            </div>
-            <div className={styles.resolutionMetricGrid}>
-              <div className={styles.resolutionMetricCard}><span>CASES</span><strong>{summaryCases.length}</strong><p>Total cases in the selected date range.</p></div>
-              <div className={styles.resolutionMetricCard}><span>WARNING H-1</span><strong>{stats.warning}</strong><p>Cases approaching the return deadline.</p></div>
-              <div className={styles.resolutionMetricCard}><span>OVERDUE</span><strong>{stats.overdue}</strong><p>Cases past the return deadline and still active.</p></div>
-              <div className={styles.resolutionMetricCard}><span>INTERNAL / EXTERNAL</span><strong>{stats.internal} / {stats.external}</strong><p>Case type split for the active period.</p></div>
-            </div>
-          </section>
-
-          <section className={styles.resolutionRegistrationGrid}>
+          <section className={styles.resolutionRegistrationSurface}>
+            <Modal
+              open={returnFormOpen}
+              title="Input New Case"
+              description="Register a return case with customer, shipment, product, and follow-up details."
+              hideHeader
+              portal
+              className={styles.returnWizardModal}
+              onClose={closeReturnForm}
+            >
             <article className={styles.formPanel}>
-              <div className={styles.panelHeader}><h2>INPUT NEW CASE</h2><span>Case Registration</span></div>
+              <div className={styles.returnWizardTopbar}>
+                <div className={styles.returnWizardCaseCode}>
+                  <span>CASE CODE</span>
+                  <div className={styles.returnWizardCodeLine}>
+                    <strong>{caseCode || '...'}</strong>
+                    <label className={styles.returnWizardPriorityField}><input type="checkbox" checked={returnForm.need_prioritized} onChange={returnField('need_prioritized')} /><span>Priority case</span></label>
+                  </div>
+                </div>
+                <div className={styles.returnWizardProgress}>
+                  <div className={styles.returnWizardProgressMeta}><strong>Step {returnFormStep + 1} of 3</strong></div>
+                  <div className={styles.returnWizardProgressTrack}><span style={{ width: `${((returnFormStep + 1) / 3) * 100}%` }} /></div>
+                  <div className={styles.returnWizardStepLabels} role="group" aria-label="Return case form steps">
+                    {['Subject Identity', 'Return Details', 'Shipping'].map((label, index) => (
+                      <button key={label} type="button" className={index === returnFormStep ? styles.active : ''} aria-current={index === returnFormStep ? 'step' : undefined} onClick={() => { setReturnFormStatus(null); setReturnFormStep(index) }}>
+                        {String(index + 1).padStart(2, '0')} {label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
               <div className={styles.panelBody}>
+                <StatusMessage status={returnFormStatus} />
+                {returnFormStep === 0 ? (
+                  <>
                 <section className={styles.resolutionCaseHeaderCompact}>
                   <div className={styles.resolutionDateRow}>
-                    <div className={styles.caseCode}><span>CASE CODE</span><strong>{caseCode || '...'}</strong></div>
                     <label><span>SUBMISSION DATE</span><input type="date" value={returnForm.tanggal_pengajuan} onChange={(event) => setReturnForm({ ...returnForm, batas_tanggal_retur: addDays(event.target.value, 14), tanggal_pengajuan: event.target.value })} /></label>
                     <label><span>RETURN DEADLINE</span><input type="date" value={returnForm.batas_tanggal_retur} onChange={returnField('batas_tanggal_retur')} /></label>
                   </div>
@@ -1504,49 +2242,72 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
                   </div>
                 </section>
 
-                <details className={styles.resolutionFormSection} open>
-                  <summary className={styles.resolutionFormSectionHeader}>
-                    <div>
-                      <h3>Subject Identity</h3>
-                      <p>Customer, shipment, and team information tied to the case.</p>
-                    </div>
-                    <span aria-hidden="true">−</span>
-                  </summary>
+                <section className={styles.returnWizardStepBody}>
                   <div className={`${styles.formGrid} ${styles.resolutionIdentityGrid}`}>
                     <label><span>{labelText('ORDER ID', true)}</span><input value={returnForm.order_id} onChange={returnField('order_id')} /></label>
                     <label><span>{labelText('CUSTOMER NAME', true)}</span><input value={returnForm.nama_customer} onChange={returnField('nama_customer')} /></label>
-                    <label><span>{labelText('PHONE NUMBER', true)}</span><input value={returnForm.no_handphone} onChange={returnField('no_handphone')} /></label>
+                    <label><span>{labelText('PHONE NUMBER', true)}</span><input type="tel" inputMode="numeric" value={returnForm.no_handphone} onChange={(event) => setReturnForm((current) => ({ ...current, no_handphone: cleanDigits(event.target.value) }))} /></label>
                     <label className={styles.fullField}><span>{labelText('ADDRESS', true)}</span><textarea value={returnForm.alamat} onChange={returnField('alamat')} /></label>
                     <label><span>{labelText('SHIPMENT AWB', true)}</span><input value={returnForm.no_resi_pengiriman} onChange={returnField('no_resi_pengiriman')} /></label>
                     <label><span>PACKING TEAM</span><input readOnly placeholder="Auto-filled from shipment AWB" value={returnForm.nomor_tim} /></label>
                   </div>
-                </details>
+                </section>
+                  </>
+                ) : null}
 
-                <details className={styles.resolutionFormSection} open>
-                  <summary className={styles.resolutionFormSectionHeader}>
-                    <div>
-                      <h3>Returns Detail</h3>
-                      <p>Reason, action, products, courier, cost, and notes.</p>
-                    </div>
-                    <span aria-hidden="true">−</span>
-                  </summary>
+                {returnFormStep === 1 ? <section className={`${styles.resolutionFormSection} ${styles.returnWizardDetailsStep}`}>
                   <div className={styles.formGrid}>
                     <label><span>{labelText('RETURN REASON', true)}</span><select value={returnForm.retur_reason} onChange={returnField('retur_reason')}><option value="">SELECT REASON</option>{masters.reasons.filter((item) => !item.reasoning_type || item.reasoning_type.toLowerCase() === returnForm.internal_external.toLowerCase()).map((item) => <option key={item.id}>{item.name}</option>)}</select></label>
-                    <label><span>{labelText('FOLLOW-UP ACTION', true)}</span><select value={returnForm.retur_action} onChange={returnField('retur_action')}><option value="">SELECT FOLLOW-UP</option>{masters.actions.map((item) => <option key={item.id}>{item.name}</option>)}</select></label>
-                    <label className={styles.fullField}><span>{labelText('RETURN / FAULTY PRODUCT', returnActionRules.requiresReturn === true)}</span><textarea placeholder="> " value={returnForm.produk_diretur} onChange={returnField('produk_diretur')} /></label>
-                    <label className={styles.fullField}><span>{labelText('REPLACEMENT PRODUCT', returnActionRules.replacementRequired === true)}</span><textarea placeholder="> " value={returnForm.produk_pengganti} onChange={returnField('produk_pengganti')} /></label>
-                    <label><span>{labelText('SHIPPING COURIER', returnActionRules.replacementRequired === true)}</span><select value={returnForm.courier_name} onChange={(event) => setReturnForm({ ...returnForm, courier_name: event.target.value, courier_service: '' })}><option value="">SELECT COURIER</option>{masters.couriers.map((item) => <option key={item.id}>{item.nama}</option>)}</select></label>
-                    <label><span>SHIPPING SERVICE</span><select value={returnForm.courier_service} onChange={returnField('courier_service')}><option value="">SELECT SERVICE</option>{serviceOptions.map((item) => <option key={item.id}>{item.courier_service}</option>)}</select></label>
-                    {RETURN_FINANCIAL_FIELDS.map(([key, label]) => {
-                      const required = (key === 'nilai_refund_kompensasi' && returnActionRules.requireRefundValue === true) || (key === 'total_retur' && returnActionRules.replacementRequired === true)
-                      return <label key={key}><span>{labelWithInfo(label.toUpperCase(), RETURN_FINANCIAL_HELP[key], required)}</span><input inputMode="numeric" value={returnForm[key]} onChange={returnField(key)} /></label>
-                    })}
-                    <label><span>INTERNAL ADDITIONAL NOTES</span><textarea value={returnForm.keterangan_tambahan} onChange={returnField('keterangan_tambahan')} /></label>
-                    <label><span>CUSTOMER NOTES</span><textarea value={returnForm.note_konsumen} onChange={returnField('note_konsumen')} /></label>
+                    <div className={styles.returnWizardFollowUpGroup}>
+                      <div className={styles.returnWizardFollowUpHead}>
+                        <label htmlFor="return-wizard-follow-up">{labelText('FOLLOW-UP ACTION', true)}</label>
+                      </div>
+                      <select id="return-wizard-follow-up" value={returnForm.retur_action} onChange={returnField('retur_action')}><option value="">SELECT FOLLOW-UP</option>{masters.actions.map((item) => <option key={item.id}>{item.name}</option>)}</select>
+                    </div>
+                    <div className={styles.returnWizardProductGrid}>
+                      <ProductBreakdownEditor
+                        key={`return-product-${productEditorResetNonce}-${returnForm.produk_diretur || 'empty'}`}
+                        arklineEnabled={cleanUpper(returnForm.group_order) === 'ARKLINE'}
+                        arklineProducts={arklineProducts}
+                        label="RETURN / FAULTY PRODUCT"
+                        onChange={(value) => setReturnForm((current) => ({ ...current, produk_diretur: value }))}
+                        required={returnActionRules.requiresReturn === true}
+                        value={returnForm.produk_diretur}
+                      />
+                      <div className={styles.returnWizardProductDivider} aria-hidden="true"><span /></div>
+                      <ProductBreakdownEditor
+                        key={`replacement-product-${productEditorResetNonce}-${returnForm.produk_pengganti || 'empty'}`}
+                        arklineEnabled={cleanUpper(returnForm.group_order) === 'ARKLINE'}
+                        arklineProducts={arklineProducts}
+                        label="REPLACEMENT PRODUCT"
+                        onChange={(value) => setReturnForm((current) => ({ ...current, produk_pengganti: value }))}
+                        required={returnActionRules.replacementRequired === true}
+                        value={returnForm.produk_pengganti}
+                      />
+                    </div>
                   </div>
-                </details>
+                </section>
+                : null}
 
-                <section className={`${styles.resolutionFormSection} ${styles.resolutionStatusSection}`}>
+                {returnFormStep === 2 ? (
+                  <div className={styles.returnWizardFinalLayout}>
+                  <section className={`${styles.resolutionFormSection} ${styles.returnWizardShippingStep}`}>
+                    <div className={styles.returnWizardShippingLayout}>
+                      <div className={`${styles.formGrid} ${styles.returnWizardShippingFields}`}>
+                        <label><span>{labelText('SHIPPING COURIER', returnActionRules.replacementRequired === true)}</span><select value={returnForm.courier_name} onChange={(event) => setReturnForm({ ...returnForm, courier_name: event.target.value, courier_service: '' })}><option value="">SELECT COURIER</option>{masters.couriers.map((item) => <option key={item.id}>{item.nama}</option>)}</select></label>
+                        <label><span>SHIPPING SERVICE</span><select value={returnForm.courier_service} onChange={returnField('courier_service')}><option value="">SELECT SERVICE</option>{serviceOptions.map((item) => <option key={item.id}>{item.courier_service}</option>)}</select></label>
+                        {RETURN_FINANCIAL_FIELDS.map(([key, label]) => {
+                          const required = (key === 'nilai_refund_kompensasi' && returnActionRules.requireRefundValue === true) || (key === 'total_retur' && returnActionRules.replacementRequired === true)
+                          return <label key={key}><span>{labelWithInfo(label.toUpperCase(), RETURN_FINANCIAL_HELP[key], required)}</span><input inputMode="numeric" value={returnForm[key]} onChange={returnField(key)} /></label>
+                        })}
+                      </div>
+                      <div className={styles.returnWizardShippingNotes}>
+                        <label className={styles.returnWizardNoteField}><span>INTERNAL ADDITIONAL NOTES</span><textarea value={returnForm.keterangan_tambahan} onChange={returnField('keterangan_tambahan')} /></label>
+                        <label className={styles.returnWizardNoteField}><span>CUSTOMER NOTES</span><textarea value={returnForm.note_konsumen} onChange={returnField('note_konsumen')} /></label>
+                      </div>
+                    </div>
+                  </section>
+                  <section className={`${styles.resolutionFormSection} ${styles.resolutionStatusSection} ${styles.returnWizardStatusStep}`}>
                   <div className={styles.resolutionStaticSectionTitle}>Status</div>
                   <div className={styles.resolutionStatusPanel}>
                     <div className={`${styles.resolutionStatusPreview} ${RETURN_STATUS_OPTIONS[returnForm.status_barang]?.className || ''}`}>
@@ -1556,7 +2317,7 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
                     </div>
                     <div className={styles.resolutionStatusControls}>
                       <div className={styles.resolutionStatusButtons}>
-                        {Object.entries(RETURN_STATUS_OPTIONS).map(([value, option]) => (
+                        {Object.entries(RETURN_STATUS_OPTIONS).filter(([value]) => value === 'Sending' || value === 'Pending').map(([value, option]) => (
                           <button
                             key={value}
                             className={`${returnForm.status_barang === value ? styles.active : ''} ${option.className}`}
@@ -1566,55 +2327,68 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
                           </button>
                         ))}
                       </div>
-                      <label className={styles.resolutionPriorityToggle}>
-                        <input type="checkbox" checked={returnForm.need_prioritized} onChange={returnField('need_prioritized')} />
-                        <span>Priority case / needs special attention</span>
-                      </label>
                     </div>
                   </div>
-                </section>
+                  </section>
+                  </div>
+                ) : null}
 
-                <div className={styles.formActions}><button className={styles.primaryButton} disabled={busy} onClick={saveReturn}>{busy ? 'Saving...' : 'Save'}</button><button className={styles.softButton} onClick={() => setReturnForm({ ...blankReturn(today), group_order: lockedGroup || 'MOB' })}>Reset Form</button></div>
+                <div className={styles.returnWizardFooter}>
+                  <span className={styles.returnWizardMeta}>Step {returnFormStep + 1} of 3</span>
+                  <div className={styles.returnWizardActions}>
+                    {returnFormStep > 0 ? <button type="button" className={styles.softButton} onClick={() => { setReturnFormStatus(null); setReturnFormStep((current) => current - 1) }}>Back</button> : <button type="button" className={styles.softButton} onClick={resetReturnForm}>Reset Form</button>}
+                    {returnFormStep < 2 ? <button type="button" className={styles.primaryButton} onClick={advanceReturnForm}>Next</button> : <button type="button" className={styles.primaryButton} disabled={busy} onClick={saveReturn}>{busy ? 'Saving...' : 'Save Case'}</button>}
+                  </div>
+                </div>
               </div>
             </article>
+            </Modal>
 
-            <aside className={styles.resolutionSideStack}>
               <article className={styles.resolutionInsightCard}>
-                <div className={styles.cardTitleRow}>
-                  <div>
-                    <h2>WARNING PANEL</h2>
-                    <p className={styles.cardHint}>Prioritized, H-1, and overdue cases that need faster follow-up.</p>
+                <div className={`${styles.cardTitleRow} ${styles.returnChartHeader}`}>
+                  <div className={styles.returnChartTitleGroup}>
+                    <h2>RETURN ANALYTICS</h2>
+                    <button type="button" className={styles.inputNewCaseButton} onClick={openReturnForm} aria-label="Input New Case" title="Input New Case">+</button>
+                  </div>
+                  <div className={styles.returnChartControls}>
+                    <label className={styles.returnChartDateField}><span>DATE FROM</span><input type="date" value={filters.from} onChange={(event) => setFilters({ ...filters, from: event.target.value })} /></label>
+                    <label className={styles.returnChartDateField}><span>DATE TO</span><input type="date" value={filters.to} onChange={(event) => setFilters({ ...filters, to: event.target.value })} /></label>
+                    <label className={styles.returnChartModeSelectWrap}>
+                      <select className={styles.returnChartModeSelect} aria-label="Return chart view" value={returnChartMode} onChange={(event) => setReturnChartMode(event.target.value)}>
+                        <option value="groups">Group</option>
+                        <option value="types">Internal / External</option>
+                        <option value="reason">Top Return Reason</option>
+                        <option value="action">Top Follow Up</option>
+                        <option value="product">Top Return Product</option>
+                      </select>
+                    </label>
+                    <label className={styles.returnChartGroupSelectWrap}>
+                      <select className={styles.returnChartGroupSelect} aria-label="Group" value={filters.group} onChange={(event) => setFilters({ ...filters, group: lockedGroup || event.target.value })} disabled={Boolean(lockedGroup)}>{lockedGroup ? null : <option value="">All Groups</option>}{groupOptions.map((group) => <option key={group}>{group}</option>)}</select>
+                    </label>
+                    {returnChartMode === 'groups' || returnChartMode === 'types' ? (
+                      <div className={styles.returnChartPeriodToggle} role="group" aria-label="Chart interval">
+                        {[
+                          ['day', 'Day'],
+                          ['month', 'Month'],
+                          ['year', 'Year'],
+                        ].map(([value, label]) => <button key={value} type="button" className={returnChartPeriod === value ? styles.active : ''} aria-pressed={returnChartPeriod === value} onClick={() => setReturnChartPeriod(value)}>{label}</button>)}
+                      </div>
+                    ) : null}
                   </div>
                 </div>
-                <div className={styles.resolutionWarningList}>
-                  {!warningRows.length ? (
-                    <div className={styles.resolutionEmptyBox}><strong>No attention cases</strong><span>No prioritized, H-1, or overdue cases in this period.</span></div>
-                  ) : warningRows.map(({ meta, row }) => (
-                    <button key={row.id} className={`${styles.resolutionWarningCard} ${meta.tone}`} onClick={() => openCaseDetail(row)}>
-                      <span>{meta.label}</span>
-                      <strong>{row.kode_kejadian || row.order_id || '-'}</strong>
-                      <small>{row.nama_customer || '-'} • Deadline {formatShortDate(row.batas_tanggal_retur)}</small>
-                    </button>
-                  ))}
-                </div>
-              </article>
-              <article className={styles.resolutionInsightCard}>
-                <div className={styles.cardTitleRow}>
-                  <div>
-                    <h2>QUICK INSIGHT</h2>
-                    <p className={styles.cardHint}>Auto-generated highlights from the loaded case data.</p>
+                <div className={styles.returnChartMetaRow}>
+                  <div className={styles.returnChartMetrics}>
+                    <div className={styles.returnChartTotal}><span>Total Cases</span><strong>{summaryCases.length}</strong></div>
+                    <div className={styles.returnChartTotal}><span>Internal / External</span><strong>{stats.internal} / {stats.external}</strong></div>
                   </div>
-                </div>
-                <div className={styles.resolutionQuickList}>
-                  {quickInsights.map((item) => (
-                    <div key={item.title} className={styles.resolutionQuickItem}>
-                      <strong>{item.title}</strong>
-                      <span>{item.detail}</span>
+                  {returnChartMode === 'groups' || returnChartMode === 'types' ? (
+                    <div className={styles.returnChartLegend}>
+                      {(returnChartMode === 'types' ? returnChartTypes : returnChartGroups).map((series) => <span key={series}><i style={{ background: RETURN_CHART_COLORS[series] }} />{RETURN_CHART_LABELS[series]}</span>)}
                     </div>
-                  ))}
+                  ) : <div />}
                 </div>
+                <MemoizedResolutionReturnChart bars={returnChartBars} groups={returnChartGroups} mode={returnChartMode} timeline={returnChartTimeline} types={returnChartTypes} />
               </article>
-            </aside>
           </section>
 
           <section className={`${styles.tablePanel} ${styles.resolutionCaseListPanel}`}>
@@ -1629,12 +2403,10 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
                 <p>Monitor cases quickly with filters, detail views, edits, and direct status updates.</p>
               </div>
               <div className={styles.resolutionCaseFilters}>
-                <label><span>DATE FROM</span><input type="date" value={filters.from} onChange={(event) => setFilters({ ...filters, from: event.target.value })} /></label>
-                <label><span>DATE TO</span><input type="date" value={filters.to} onChange={(event) => setFilters({ ...filters, to: event.target.value })} /></label>
-                <label><span>GROUP</span><select value={filters.group} onChange={(event) => setFilters({ ...filters, group: lockedGroup || event.target.value })} disabled={Boolean(lockedGroup)}>{lockedGroup ? null : <option value="">ALL GROUPS</option>}{groupOptions.map((group) => <option key={group}>{group}</option>)}</select></label>
                 <label><span>COURIER</span><select value={filters.courier} onChange={(event) => setFilters({ ...filters, courier: event.target.value })}><option value="">ALL COURIERS</option>{courierOptions.map((item) => <option key={item}>{item}</option>)}</select></label>
+                <label><span>INTERNAL / EXTERNAL</span><select value={filters.type} onChange={(event) => setFilters({ ...filters, type: event.target.value })}><option value="">ALL TYPES</option><option value="Internal">Internal</option><option value="External">External</option></select></label>
+                <label><span>STATUS</span><select value={filters.status} onChange={(event) => setFilters({ ...filters, status: event.target.value })}><option value="">ALL STATUSES</option>{caseStatusOptions.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
                 <label className={styles.searchField}><span>SEARCH</span><input placeholder="Search case code, order ID, AWB, or customer name" value={filters.search} onChange={(event) => setFilters({ ...filters, search: event.target.value })} /></label>
-                <button className={styles.softButton} onClick={loadCases}>Refresh</button>
                 <button className={`${styles.warningOnlyButton} ${filters.warningOnly ? styles.active : ''}`} onClick={() => setFilters({ ...filters, warningOnly: !filters.warningOnly })} aria-pressed={filters.warningOnly}>Warning Only</button>
               </div>
             </div>
@@ -1643,7 +2415,7 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
                 {!visibleCases.length ? <tr><td colSpan="11"><EmptyState label="No data yet" /></td></tr> : visibleCases.map((row) => {
                   const meta = getCaseWarningMeta(row, today)
                   const rowTone = meta.rank === 2 ? styles.caseRowOverdue : meta.rank > 0 ? styles.caseRowWarning : ''
-                  return <tr key={row.id} className={rowTone}><td>{formatShortDate(row.tanggal_pengajuan)}</td><td><strong>{row.kode_kejadian}</strong></td><td>{renderGroupBadge(row.group_order)}</td><td>{renderTypeBadge(row.internal_external)}</td><td><strong>{row.nama_customer || '-'}</strong><small>{row.nomor_tim || row.created_by || '-'}</small></td><td>{row.order_id}</td><td>{row.no_resi_pengiriman}</td><td>{row.retur_reason || '-'}</td><td>{row.retur_action || '-'}</td><td>{renderReturnStatusBadge(row.status_barang)}</td><td><button className={styles.iconActionButton} aria-label={`Open detail for ${row.kode_kejadian || row.order_id}`} onClick={() => openCaseDetail(row)}>🔍</button></td></tr>
+                  return <tr key={row.id} className={rowTone}><td>{formatShortDate(row.tanggal_pengajuan)}</td><td><strong>{row.kode_kejadian}</strong></td><td>{renderGroupBadge(row.group_order)}</td><td>{renderTypeBadge(row.internal_external)}</td><td><strong>{row.nama_customer || '-'}</strong><small>{row.nomor_tim || row.created_by || '-'}</small></td><td>{row.order_id}</td><td>{row.no_resi_pengiriman}</td><td>{row.retur_reason || '-'}</td><td>{row.retur_action || '-'}</td><td>{renderReturnStatusBadge(row.status_barang)}</td><td><div className={styles.rowActions}><button type="button" className={styles.iconActionButton} aria-label={`Open detail for ${row.kode_kejadian || row.order_id}`} onClick={() => openCaseDetail(row)}>🔍</button><button type="button" className={styles.cancelCaseActionButton} disabled={!ACTIVE_RETURN_STATUSES.has(row.status_barang)} aria-label={`Cancel case ${row.kode_kejadian || row.order_id}`} title={ACTIVE_RETURN_STATUSES.has(row.status_barang) ? 'Cancel case' : `Cannot cancel a ${row.status_barang || 'closed'} case`} onClick={() => { setCancelError(''); setCancelTarget(row) }}>×</button></div></td></tr>
                 })}
               </tbody></table></div>
             </div>
@@ -1654,18 +2426,18 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
       {activeTab === 'receiving' ? (
         <section className={`${styles.dataCard} ${styles.receivingConfirmationPanel}`}>
           <div className={styles.cardTitleRow}>
-            <div><h2>RECEIVING CONFIRMATION</h2><p className={styles.cardHint}>Sending cases are confirmed here for return receiving and return-label printing.</p></div>
-            <button className={styles.softButton} onClick={loadCases}>Refresh</button>
+            <h2>RECEIVING CONFIRMATION</h2>
           </div>
           <div className={styles.receivingToolbar}>
-            <span className={styles.caseCountPill}>{receivingRows.filter((row) => row.status_barang === 'Sending').length} Sending</span>
+            <span className={styles.caseCountPill}>{receivingRows.length} Cases</span>
             <span className={styles.selectedCountPill}>{selectedReceivingRows.length} Selected</span>
             <label className={styles.inlineCheck}><input className={styles.compactCheckbox} type="checkbox" checked={allReceivingSelected} onChange={(event) => setReceivingSelectedIds(event.target.checked ? receivingRows.filter((row) => row.status_barang === 'Sending').map((row) => String(row.id)) : [])} /> Select All</label>
+            <select className={styles.receivingSelect} aria-label="Status" value={receivingFilters.status} onChange={(event) => { setReceivingSelectedIds([]); setReceivingFilters({ ...receivingFilters, status: event.target.value }) }}><option value="">ALL STATUS</option><option value="Sending">SENDING</option><option value="Completed">COMPLETED</option></select>
             <select className={styles.receivingSelect} aria-label="Group Order" value={receivingFilters.group} onChange={(event) => setReceivingFilters({ ...receivingFilters, group: lockedGroup || event.target.value })} disabled={Boolean(lockedGroup)}>{lockedGroup ? null : <option value="">ALL GROUPS</option>}{groupOptions.map((group) => <option key={group}>{group}</option>)}</select>
             <select className={styles.receivingSelect} aria-label="Courier" value={receivingFilters.courier} onChange={(event) => setReceivingFilters({ ...receivingFilters, courier: event.target.value })}><option value="">ALL COURIERS</option>{receivingCourierOptions.map((courier) => <option key={courier}>{courier}</option>)}</select>
             <input className={styles.receivingToolbarSearch} aria-label="Search receiving cases" placeholder="SEARCH CODE / CUSTOMER / ORDER ID / AWB" value={receivingFilters.search} onChange={(event) => setReceivingFilters({ ...receivingFilters, search: event.target.value })} />
             <button className={styles.softButton} onClick={() => setReceivingAddOpen(true)}>Add by Case Code</button>
-            <button className={styles.primaryButton} onClick={() => completeReceivingRows(selectedReceivingRows)}>✓ Complete & Print</button>
+            <button className={styles.darkButton} disabled={!selectedReceivingRows.length || busy} onClick={openReceivingInspection}>Resolve</button>
           </div>
           <div className={styles.tableWrap}><table><thead><tr><th>Select</th><th>Code</th><th>Customer</th><th>Order ID</th><th>AWB</th><th>Group</th><th>Courier</th><th>Deadline</th><th>Status</th><th>Action</th></tr></thead><tbody>
             {!receivingRows.length ? <tr><td colSpan="10"><EmptyState label="No receiving cases yet" /></td></tr> : receivingRows.map((row) => {
@@ -1880,7 +2652,79 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
         </section>
       ) : null}
 
-      <Modal open={receivingAddOpen} title="Add by Case Code" description="Search Pending cases, tick the checkbox, then use the Add button." onClose={() => { setReceivingAddOpen(false); setReceivingAddSelectedIds([]) }}>
+      </div>
+      <Modal
+        open={receivingConfirmOpen}
+        title="Resolve Returns"
+        className={styles.receivingConfirmModal}
+        portal
+        onClose={closeReceivingInspection}
+        actions={receivingConfirmStep === 'review' ? <>
+          <button type="button" className={styles.softButton} disabled={busy} onClick={() => { setReceivingConfirmStep('inspect'); setReceivingConfirmError('') }}>Back to Decisions</button>
+          <button type="button" className={styles.darkButton} disabled={busy || receivingLookupBusy || !receivingInspectionCases.length} onClick={completeReceivingRows}>{busy ? 'Resolving...' : 'Confirm Resolution'}</button>
+        </> : null}
+      >
+        <div className={styles.receivingInspectionProgressRow}>
+          <div className={styles.receivingInspectionSteps} aria-label="Completion progress">
+            <span className={receivingConfirmStep === 'inspect' ? styles.receivingInspectionStepActive : ''}>1. Inspect Returns</span>
+            <span className={receivingConfirmStep === 'review' ? styles.receivingInspectionStepActive : ''}>2. Review & Resolve</span>
+          </div>
+          {receivingConfirmStep === 'inspect' ? <div className={styles.receivingInspectionTopActions}>
+            <button type="button" className={styles.darkButton} disabled={busy || receivingLookupBusy || !receivingInspectionCases.length} onClick={continueReceivingInspection}>{receivingLookupBusy ? 'Finding Shelving...' : 'Review Decisions'}</button>
+          </div> : null}
+        </div>
+        {receivingConfirmStep === 'inspect' ? (
+          <div className={styles.receivingInspectionBody}>
+            {receivingInspectionCases.map((inspectedCase) => (
+              <section className={styles.receivingInspectionCase} key={inspectedCase.caseId}>
+                <div className={styles.receivingInspectionCaseHeader}><strong>{inspectedCase.code}</strong><span>{inspectedCase.group} · {inspectedCase.lines.length} product{inspectedCase.lines.length === 1 ? '' : 's'}</span></div>
+                {cleanText(inspectedCase.row.produk_pengganti) ? <div className={styles.receivingInspectionReplacement}><span>Replacement Product</span><strong>{formatProductEntries(inspectedCase.row.produk_pengganti)}</strong></div> : null}
+                {!inspectedCase.lines.length ? <p className={styles.receivingInspectionEmpty}>No returned products are recorded for this case.</p> : inspectedCase.lines.map((line) => {
+                  const assignedQty = Number(line.storedQty || 0) + Number(line.rejectQty || 0) + Number(line.lostQty || 0)
+                  return (
+                    <div className={styles.receivingInspectionLine} key={line.key}>
+                      <div className={styles.receivingInspectionProduct}>
+                        <strong>{line.productName}</strong>
+                        <span>Expected: {line.expectedQty} unit{line.expectedQty === 1 ? '' : 's'}</span>
+                        <span className={assignedQty === line.expectedQty ? styles.receivingInspectionAssigned : styles.receivingInspectionUnassigned}>{assignedQty} / {line.expectedQty} assigned</span>
+                      </div>
+                      <div className={styles.receivingInspectionIdentity}>
+                        {line.skuLocked ? <div className={styles.receivingInspectionReadonly}><span>SKU</span><strong>{line.sku}</strong></div> : <label><span>SKU</span><input value={line.sku} onChange={(event) => updateReceivingInspectionLine(inspectedCase.caseId, line.key, { sku: cleanUpper(event.target.value) })} placeholder="Enter SKU" /></label>}
+                        {line.sizeLocked ? <div className={styles.receivingInspectionReadonly}><span>Size</span><strong>{line.size}</strong></div> : <label><span>Size</span><input value={line.size} onChange={(event) => updateReceivingInspectionLine(inspectedCase.caseId, line.key, { size: cleanUpper(event.target.value) })} placeholder="Enter size" /></label>}
+                      </div>
+                      <div className={styles.receivingInspectionQuantities}>
+                        {[['storedQty', 'Store'], ['rejectQty', 'Reject'], ['lostQty', 'Lost']].map(([field, label]) => (
+                          <label key={field}><span className={styles.receivingQtyLabel}>{label}{field === 'storedQty' ? <button type="button" onClick={() => updateReceivingInspectionQty(inspectedCase, line, field, String(receivingQtyRemaining(line, field)))} aria-label={`Store all remaining ${line.expectedQty} units for ${line.productName}`}>ALL</button> : null}</span><input type="number" min="0" max={receivingQtyRemaining(line, field)} step="1" inputMode="numeric" value={line[field]} onChange={(event) => updateReceivingInspectionQty(inspectedCase, line, field, event.target.value)} placeholder="0" /></label>
+                        ))}
+                      </div>
+                      {Number(line.rejectQty || 0) > 0 ? <label className={styles.receivingInspectionReason}><span>Reject Reason *</span><input value={line.rejectReason} onChange={(event) => updateReceivingInspectionLine(inspectedCase.caseId, line.key, { rejectReason: event.target.value })} placeholder="Reason for rejection" /></label> : null}
+                      {Number(line.lostQty || 0) > 0 ? <label className={styles.receivingInspectionReason}><span>Lost Reason / Item Actually Received *</span><input value={line.lostReason} onChange={(event) => updateReceivingInspectionLine(inspectedCase.caseId, line.key, { lostReason: event.target.value })} placeholder="Enter the reason and what was actually received" /></label> : null}
+                    </div>
+                  )
+                })}
+              </section>
+            ))}
+          </div>
+        ) : (
+          <div className={styles.receivingInspectionBody}>
+            {receivingInspectionCases.map((inspectedCase) => (
+              <section className={styles.receivingInspectionCase} key={inspectedCase.caseId}>
+                <div className={styles.receivingInspectionCaseHeader}><strong>{inspectedCase.code}</strong><span>{inspectedCase.group}</span></div>
+                {!inspectedCase.lines.length ? <p className={styles.receivingInspectionEmpty}>No returned products to route.</p> : inspectedCase.lines.map((line) => (
+                  <div className={styles.receivingInspectionReviewLine} key={line.key}>
+                    <div><strong>{line.productName}</strong><span>{line.sku || 'No SKU'} · Size {line.size || '-'} · {line.expectedQty} unit{line.expectedQty === 1 ? '' : 's'}</span></div>
+                    <div className={styles.receivingInspectionReviewQuantities}>{Number(line.storedQty || 0) > 0 ? <span>Store {line.storedQty} to {inspectedCase.group === 'ARKLINE' ? `Shelving ${line.shelvingLocation || (line.shelvingLocationStatus === 'MULTIPLE' ? 'has multiple matches' : 'location not found')}` : 'Shelving Queue'}</span> : null}{Number(line.rejectQty || 0) > 0 ? <span>Reject {line.rejectQty} pending arrangement</span> : null}{Number(line.lostQty || 0) > 0 ? <span>Lost {line.lostQty} recorded</span> : null}</div>
+                  </div>
+                ))}
+                {cleanText(inspectedCase.row.produk_pengganti) ? <div className={styles.receivingInspectionReplacement}><span>Replacement Product</span><strong>{formatProductEntries(inspectedCase.row.produk_pengganti)}</strong></div> : null}
+              </section>
+            ))}
+            {receivingInspectionCases.some((item) => cleanText(item.row.produk_pengganti)) ? <p className={styles.receivingInspectionNotice}>Replacement product stock is not deducted by this inspection. Its stock processing remains pending.</p> : null}
+          </div>
+        )}
+        {receivingConfirmError ? <p className={styles.cancelCaseError} role="alert">{receivingConfirmError}</p> : null}
+      </Modal>
+      <Modal open={receivingAddOpen} title="Add by Case Code" description="Search Pending cases, tick the checkbox, then use the Add button." className={styles.receivingAddModal} portal onClose={() => { setReceivingAddOpen(false); setReceivingAddSelectedIds([]) }}>
         <div className={`${styles.receivingModalBody} ${styles.receivingAddModalBody}`}>
           <div className={styles.inputWithAction}>
             <input value={receivingAddSearch} onChange={(event) => setReceivingAddSearch(cleanUpper(event.target.value))} placeholder="TYPE CASE CODE" />
@@ -1965,7 +2809,11 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
         ) : null}
       </Modal>
 
-      <Modal open={Boolean(detail)} title={detail?.kode_kejadian ? 'Case Details' : `Order ${detail?.order_id || ''}`} description={detail?.kode_kejadian ? 'Review return case data without leaving the monitoring page.' : (detail?.nama || detail?.nama_customer || '')} onClose={closeCaseDetail}>
+      <Modal open={Boolean(cancelTarget)} title="Cancel Return Case" description={`Cancel ${cancelTarget?.kode_kejadian || 'this case'} for ${cancelTarget?.nama_customer || 'this customer'}? Its status will change to Cancel.`} className={styles.cancelCaseConfirmModal} portal onClose={() => { if (!busy) { setCancelTarget(null); setCancelError('') } }} actions={<><button type="button" className={styles.softButton} disabled={busy} onClick={() => { setCancelTarget(null); setCancelError('') }}>Keep Case</button><button type="button" className={styles.cancelCaseConfirmButton} disabled={busy} onClick={cancelCase}>{busy ? 'Cancelling...' : 'Confirm Cancel'}</button></>}>
+        {cancelError ? <p className={styles.cancelCaseError} role="alert">{cancelError}</p> : null}
+      </Modal>
+
+      <Modal open={Boolean(detail)} title={detail?.kode_kejadian ? 'Case Details' : `Order ${detail?.order_id || ''}`} description={detail?.kode_kejadian ? 'Review return case data without leaving the monitoring page.' : (detail?.nama || detail?.nama_customer || '')} className={styles.returnCaseDetailModal} onClose={closeCaseDetail}>
         {detailDraft ? (
           <div className={styles.resolutionDetailModalBody}>
             <div className={styles.resolutionModalToolbar}>
@@ -1976,12 +2824,13 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
                   <button className={styles.primaryButton} disabled={busy} onClick={saveDetailEdit}>{busy ? 'Saving...' : 'Save Changes'}</button>
                 </div>
               ) : canEditDetail ? (
-                <button className={styles.primaryButton} onClick={() => setDetailMode('edit')}>Edit</button>
+                <button className={`${styles.primaryButton} ${styles.caseDetailEditButton}`} onClick={() => setDetailMode('edit')}>Edit</button>
               ) : null}
             </div>
 
             <section className={`${styles.resolutionDetailSection} ${styles.resolutionDetailCaseOverview}`}>
-              <h3>Case Overview</h3>
+              {renderDetailSectionHeading('overview', 'Case Overview')}
+              <div id="return-case-overview" hidden={!detailSectionsOpen.overview}>
               <div className={styles.resolutionDetailGrid}>
                 <div className={styles.resolutionDetailValue}><span>Case Code</span><strong>{formatHandledCaseLabel(detailDraft)}</strong></div>
                 {renderDetailField({ key: 'tanggal_pengajuan', label: 'Submission Date', type: 'date' })}
@@ -1990,10 +2839,12 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
                 {renderDetailField({ key: 'internal_external', label: 'Internal / External', options: ['Internal', 'External'] })}
                 <div className={styles.resolutionDetailValue}><span>Warning</span><strong><span className={`${styles.statusBadge} ${getCaseWarningMeta(detailDraft, today).tone}`}>{getCaseWarningMeta(detailDraft, today).label}</span></strong></div>
               </div>
+              </div>
             </section>
 
             <section className={`${styles.resolutionDetailSection} ${styles.resolutionDetailSubject}`}>
-              <h3>Subject Identity</h3>
+              {renderDetailSectionHeading('subject', 'Subject Identity')}
+              <div id="return-case-subject" hidden={!detailSectionsOpen.subject}>
               <div className={styles.resolutionDetailGrid}>
                 {renderDetailField({ key: 'order_id', label: 'Order ID' })}
                 {renderDetailField({ key: 'nama_customer', label: 'Customer Name' })}
@@ -2002,10 +2853,12 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
                 {renderDetailField({ key: 'no_resi_pengiriman', label: 'Shipment AWB' })}
                 {renderDetailField({ key: 'nomor_tim', label: 'Packing Team', readonly: true })}
               </div>
+              </div>
             </section>
 
             <section className={`${styles.resolutionDetailSection} ${styles.resolutionDetailReturns}`}>
-              <h3>Returns Detail</h3>
+              {renderDetailSectionHeading('returns', 'Returns Detail')}
+              <div id="return-case-returns" hidden={!detailSectionsOpen.returns}>
               <div className={styles.resolutionDetailGrid}>
                 {renderDetailField({ key: 'retur_reason', label: 'Return Reason', options: masters.reasons.filter((item) => !item.reasoning_type || item.reasoning_type.toLowerCase() === detailDraft.internal_external.toLowerCase()).map((item) => item.name) })}
                 {renderDetailField({ key: 'retur_action', label: 'Follow-up Action', options: masters.actions.map((item) => item.name) })}
@@ -2015,15 +2868,17 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
                 {renderDetailField({ key: 'nilai_refund_kompensasi', label: 'Loss Value', type: 'number' })}
                 {renderDetailField({ key: 'total_retur', label: 'Returned Item Value', type: 'number' })}
                 {renderDetailField({ key: 'courier_service', label: 'Shipping Service', options: detailServiceOptions.map((item) => item.courier_service) })}
-                {renderDetailField({ key: 'produk_diretur', label: 'Return / Faulty Product', textarea: true })}
-                {renderDetailField({ key: 'produk_pengganti', label: 'Replacement Product', textarea: true })}
+                {renderDetailProductField({ key: 'produk_diretur', label: 'Return / Faulty Product' })}
+                {renderDetailProductField({ key: 'produk_pengganti', label: 'Replacement Product' })}
                 {renderDetailField({ key: 'keterangan_tambahan', label: 'Internal Additional Notes', textarea: true })}
                 {renderDetailField({ key: 'note_konsumen', label: 'Customer Notes', textarea: true })}
+              </div>
               </div>
             </section>
 
             <section className={`${styles.resolutionDetailSection} ${styles.resolutionDetailStatus}`}>
-              <h3>Status</h3>
+              {renderDetailSectionHeading('status', 'Status')}
+              <div id="return-case-status" hidden={!detailSectionsOpen.status}>
               <div className={styles.resolutionStatusPanel}>
                 <div className={`${styles.resolutionStatusPreview} ${detailStatusOption.className}`}>
                   <span>ACTIVE STATUS</span>
@@ -2040,6 +2895,7 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
                   ) : null}
                   <label className={styles.resolutionPriorityToggle}><input type="checkbox" checked={Boolean(detailDraft.need_prioritized)} disabled={detailMode !== 'edit'} onChange={detailField('need_prioritized')} /> Priority case / needs special attention</label>
                 </div>
+              </div>
               </div>
             </section>
           </div>

@@ -2,6 +2,7 @@
 
 import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
+import { createPortal } from 'react-dom'
 
 import BarcodeScanner from './barcode-scanner'
 import DeliveryOrder from './delivery-order'
@@ -131,23 +132,24 @@ export function StatusMessage({ status }) {
   )
 }
 
-export function Modal({ open, title, description, children, actions, onClose }) {
+export function Modal({ open, title, description, children, actions, onClose, hideHeader = false, portal = false, className = '' }) {
   if (!open) return null
-  return (
+  const modal = (
     <div className={styles.modalBackdrop} onMouseDown={(event) => event.target === event.currentTarget && onClose?.()}>
-      <section className={styles.modalCard} role="dialog" aria-modal="true" aria-label={title}>
+      <section className={`${styles.modalCard} ${className}`} role="dialog" aria-modal="true" aria-label={title}>
         {onClose ? (
           <button type="button" className={styles.modalCloseButton} onClick={onClose} aria-label="Close modal">
             ×
           </button>
         ) : null}
-        <h2>{title}</h2>
-        {description ? <p>{description}</p> : null}
+        {!hideHeader ? <h2>{title}</h2> : null}
+        {!hideHeader && description ? <p>{description}</p> : null}
         {children}
         {actions ? <div className={styles.modalActions}>{actions}</div> : null}
       </section>
     </div>
   )
+  return portal && typeof document !== 'undefined' ? createPortal(modal, document.body) : modal
 }
 
 export default function DeliveryReportClient({ lockedGroup = '' }) {
