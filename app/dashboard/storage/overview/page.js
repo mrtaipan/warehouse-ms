@@ -3570,7 +3570,7 @@ export default function StorageOverviewPage() {
         }
 
         setRejectStorageRows((currentRows) => [data, ...currentRows])
-        setSuccess('Reject koli added successfully.')
+        setSuccess(`Reject koli ${data.koli_number} added successfully.`)
       }
 
       closeRejectModal()

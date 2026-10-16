@@ -77,8 +77,32 @@ begin
   end if;
 end $$;
 
+create or replace function public.next_warehouse_reject_koli_number()
+returns text
+language plpgsql
+volatile
+security invoker
+set search_path = ''
+as $$
+declare
+  next_number bigint;
+begin
+  perform pg_catalog.pg_advisory_xact_lock(8253194701);
+
+  select coalesce(max((pg_catalog.regexp_match(koli_number, '^R(?:JK)?-([0-9]+)$'))[1]::bigint), 0) + 1
+    into next_number
+  from public.warehouse_reject_storage
+  where koli_number ~ '^R(?:JK)?-[0-9]+$';
+
+  return 'R-' || pg_catalog.lpad(next_number::text, 3, '0');
+end;
+$$;
+
+revoke execute on function public.next_warehouse_reject_koli_number() from public, anon;
+grant execute on function public.next_warehouse_reject_koli_number() to authenticated;
+
 alter table public.warehouse_reject_storage
-  alter column koli_number set default ('R-' || lpad(nextval('public.warehouse_reject_storage_koli_seq')::text, 3, '0'));
+  alter column koli_number set default public.next_warehouse_reject_koli_number();
 
 alter table public.warehouse_reject_storage
   alter column status set default 'DRAFT';
