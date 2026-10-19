@@ -108,7 +108,7 @@ function formatDashboardName(value = '') {
 }
 
 function getBirthDateValue(row = {}) {
-  return row.date_of_birth || row.birthdate || row.birth_date || null
+  return row.birthdate || null
 }
 
 function hasResigned(row = {}) {
@@ -183,8 +183,8 @@ function filterVisibleBirthdayGiftRows(rows) {
 
 function sortRowsByRecent(rows) {
   return [...(rows || [])].sort((left, right) => {
-    const leftValue = new Date(left?.submitted_at || left?.created_at || 0).getTime()
-    const rightValue = new Date(right?.submitted_at || right?.created_at || 0).getTime()
+    const leftValue = new Date(left?.created_at || 0).getTime()
+    const rightValue = new Date(right?.created_at || 0).getTime()
     return rightValue - leftValue
   })
 }
@@ -447,28 +447,12 @@ async function loadInboundUnloadRowsForDashboard(supabase, inboundId) {
       full_name
     )
   `
-  const selectCandidates = [
-    `${relationSelect}, model_color, variant_name, variant_label, variant_code`,
-    `${relationSelect}, variant_name, variant_label, variant_code`,
-    `${relationSelect}, model_color`,
-    relationSelect,
-  ]
-  let lastError = null
+  const { data, error } = await supabase
+    .from('inbound_unload')
+    .select(`${relationSelect}, variant_name`)
+    .eq('inbound_id', inboundId)
 
-  for (const selectColumns of selectCandidates) {
-    const { data, error } = await supabase
-      .from('inbound_unload')
-      .select(selectColumns)
-      .eq('inbound_id', inboundId)
-
-    if (!error) {
-      return { data: data || [], error: null }
-    }
-
-    lastError = error
-  }
-
-  return { data: [], error: lastError }
+  return { data: data || [], error }
 }
 
 async function loadAdminGrnSummary(supabase, selectedGrn = '') {
@@ -901,9 +885,14 @@ export default async function DashboardPage({ searchParams }) {
   const canAddPenaltyPoints = hasPermission(permissions, 'hrga.penalty_points.add', isAdmin)
   const showBirthdayGiftRequestAnnouncements = isAdmin || role === 'leader' || role === 'warehouse_leader' || role === 'mob_cs'
 
-  const { data: announcementRows } = await supabase
-    .from('dir_user_profiles')
-    .select('id, authenticated_id, display_name, email, date_of_birth, resign_date, "group", role')
+  let announcementRows = []
+  if (showBirthdayGiftRequestAnnouncements || showPenaltyPointsButton) {
+    const profileClient = showBirthdayGiftRequestAnnouncements ? createAdminClient() : supabase
+    const { data } = await profileClient
+      .from('dir_user_profiles')
+      .select('id, authenticated_id, display_name, email, birthdate, resign_date, "group", role')
+    announcementRows = data || []
+  }
   const { data: currentPenaltyRows } = showPenaltyPointsButton
     ? await supabase.from('hrga_penalty_points_current').select('employee_profile_id, total_points, entry_count')
     : { data: [] }
@@ -923,7 +912,7 @@ export default async function DashboardPage({ searchParams }) {
       const adminSupabase = createAdminClient()
       const { data } = await adminSupabase
         .from('hrga_birthday_gift')
-        .select('id, status, approved_at, submitted_at, created_at, employee_authenticated_id, employee_name_snapshot, employee_email_snapshot, item_name, size')
+        .select('id, status, approved_at, request_date, created_at, employee_authenticated_id, employee_name_snapshot, employee_email_snapshot, item_name, size')
       birthdayGiftRequestRows = data || []
     } catch {
       birthdayGiftRequestRows = []

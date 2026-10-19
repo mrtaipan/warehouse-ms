@@ -37,13 +37,8 @@ const PACKING_ITEM_SELECT_COLUMNS = [
   'release_status',
   'released_at',
   'released_by',
-  'release_count',
-  'release_history',
   'pl_detail_seq',
   'detail_order',
-  'pl_photo_url',
-  'photo_url',
-  'variant_photo_url',
   'packed_by',
 ].join(', ')
 const GROUP_TRANSFER_SELECT_COLUMNS = 'id, source_pl_packing_item_id, product_bundle_component_id, source_type, target_type, transfer_qty, source_qty_before, source_qty_after, created_by, created_at'
@@ -59,15 +54,12 @@ const BREAKDOWN_SELECT_COLUMNS = [
   'model_name',
   'variant_name',
   'size_label',
-  'category_id',
   'pl_detail_seq',
   'detail_order',
   'pl_photo_url',
-  'photo_url',
-  'variant_photo_url',
   'pl_notes',
 ].join(', ')
-const PRODUCT_MODEL_SELECT_COLUMNS = 'id, brand_id, category_id, model_name, model_code, photo_url'
+const PRODUCT_MODEL_SELECT_COLUMNS = 'id, brand_id, category_id, model_name, model_code'
 const PRODUCT_VARIANT_SELECT_COLUMNS = [
   'id',
   'product_model_id',
@@ -77,7 +69,6 @@ const PRODUCT_VARIANT_SELECT_COLUMNS = [
   'merged_into_variant_id',
   'variant_notes',
   'variant_photo_url',
-  'photo_url',
 ].join(', ')
 const IDENTITY_EVENT_SELECT_COLUMNS = 'id, event_type, source_variant_ids, target_variant_id, detail_assignments, created_at'
 const RELEASE_STATE_SELECT_COLUMNS = [
@@ -92,7 +83,7 @@ const RELEASE_STATE_SELECT_COLUMNS = [
   'updated_at',
 ].join(', ')
 const BRAND_SELECT_COLUMNS = 'id, brand_code, brand_name, is_active'
-const CATEGORY_SELECT_COLUMNS = 'id, parent_id, category_name, name, full_name, full_code'
+const CATEGORY_SELECT_COLUMNS = 'id, parent_id, category_name, full_name, full_code'
 const APPAREL_SIZE_ORDER = ['XXXS', 'XXS', 'XS', 'S', 'M', 'L', 'XL', 'XXL', 'XXXL', 'XXXXL', '4XL', '5XL', '6XL']
 
 function normalize(value) {
@@ -534,17 +525,6 @@ async function fetchAllRows(tableName, selectColumns = '*', orderColumn = 'id') 
 }
 
 async function fetchWarehouseStorageSkuTotals() {
-  try {
-    const rows = await fetchAllRows('warehouse_storage_sku_totals', 'sku_id, group_code, total_qty', 'sku_id')
-    if ((rows || []).some((row) => Object.prototype.hasOwnProperty.call(row, 'group_code'))) {
-      return rows
-    }
-  } catch (fetchError) {
-    if (!isMissingSchemaObjectError(fetchError)) {
-      throw fetchError
-    }
-  }
-
   const [storageRows, rackRows] = await Promise.all([
     fetchAllRows('warehouse_storage', 'sku_id, qty, rack_location_id', 'created_at'),
     fetchAllRows('dir_rack_locations', 'id, group_code', 'id'),

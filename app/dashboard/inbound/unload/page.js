@@ -2673,45 +2673,37 @@ export default function UnloadPage() {
       const [
         { error: unloadProductModelError },
         { error: unloadProductModelVariantError },
-        { error: unloadVariantError },
-        { error: unloadVariantCodeError },
         { error: unloadVariantNameError },
         { error: unloadTemporarySampleError },
         { error: unloadSampleResolutionError },
         { error: sampleBreakdownSupportError },
         { error: returnProductModelError },
         { error: returnProductModelVariantError },
-        { error: returnVariantError },
-        { error: returnVariantCodeError },
         { error: returnVariantNameError },
       ] = await Promise.all([
         supabase.from('inbound_unload').select('product_model_id').limit(1),
         supabase.from('inbound_unload').select('product_model_variant_id').limit(1),
-        supabase.from('inbound_unload').select('variant_label').limit(1),
-        supabase.from('inbound_unload').select('variant_code').limit(1),
         supabase.from('inbound_unload').select('variant_name').limit(1),
         supabase.from('inbound_unload').select('is_product_temporary').limit(1),
         supabase.from('inbound_unload').select('sample_resolved_at, sample_resolved_by').limit(1),
         supabase.from('inbound_sample_model_breakdowns').select('id').limit(1),
         supabase.from('warehouse_returns').select('product_model_id').limit(1),
         supabase.from('warehouse_returns').select('product_model_variant_id').limit(1),
-        supabase.from('warehouse_returns').select('variant_label').limit(1),
-        supabase.from('warehouse_returns').select('variant_code').limit(1),
         supabase.from('warehouse_returns').select('variant_name').limit(1),
       ])
 
       setSupportsUnloadProductModel(!unloadProductModelError)
       setSupportsUnloadProductModelVariant(!unloadProductModelVariantError)
-      setSupportsUnloadVariant(!unloadVariantError)
-      setSupportsUnloadVariantCode(!unloadVariantCodeError)
+      setSupportsUnloadVariant(false)
+      setSupportsUnloadVariantCode(false)
       setSupportsUnloadVariantName(!unloadVariantNameError)
       setSupportsUnloadTemporarySample(!unloadTemporarySampleError)
       setSupportsUnloadSampleResolution(!unloadSampleResolutionError)
       setSupportsSampleBreakdowns(!sampleBreakdownSupportError)
       setSupportsReturnProductModel(!returnProductModelError)
       setSupportsReturnProductModelVariant(!returnProductModelVariantError)
-      setSupportsReturnVariant(!returnVariantError)
-      setSupportsReturnVariantCode(!returnVariantCodeError)
+      setSupportsReturnVariant(false)
+      setSupportsReturnVariantCode(false)
       setSupportsReturnVariantName(!returnVariantNameError)
       setLoading(false)
     }

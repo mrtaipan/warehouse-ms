@@ -20,6 +20,7 @@ set requester_user_id = owner.user_id
 from unique_owners owner
 where request.request_status = 'open'
   and request.requester_user_id is null
+  and to_jsonb(request) ->> 'return_case_id' is null
   and upper(btrim(request.requester_name)) = owner.display_name;
 
 create or replace function public.restock_request_guard_mutation()
@@ -32,8 +33,14 @@ declare
   actor_id uuid := auth.uid();
   can_manage_upload boolean;
   can_manage_restock boolean;
+  sync_case_id text := current_setting('warehouse.priority_return_case_id', true);
 begin
   if actor_id is null then
+    if current_user = 'postgres' and tg_op = 'INSERT'
+      and current_setting('warehouse.priority_return_backfill', true) = 'on'
+      and to_jsonb(new) ->> 'destination_area' = 'RETUR_KEEPING' then
+      return new;
+    end if;
     if current_user = 'postgres' and tg_op = 'UPDATE' then
       if old.request_status = 'completed'
         and new.request_status = 'completed'
@@ -45,7 +52,22 @@ begin
     raise exception 'Authentication is required for restock request changes.' using errcode = '42501';
   end if;
 
+  if pg_trigger_depth() > 1 and sync_case_id is not null then
+    if tg_op = 'DELETE' and sync_case_id = to_jsonb(old) ->> 'return_case_id'
+      and to_jsonb(old) ->> 'destination_area' = 'RETUR_KEEPING' then
+      return old;
+    end if;
+    if tg_op <> 'DELETE' and sync_case_id = to_jsonb(new) ->> 'return_case_id'
+      and to_jsonb(new) ->> 'destination_area' = 'RETUR_KEEPING' then
+      return new;
+    end if;
+  end if;
+
   if tg_op = 'INSERT' then
+    if coalesce(to_jsonb(new) ->> 'destination_area', 'PICKER') <> 'PICKER'
+      or to_jsonb(new) ->> 'return_case_id' is not null then
+      raise exception 'Only a priority return case can create a linked request.' using errcode = '42501';
+    end if;
     new.requester_user_id := coalesce(new.requester_user_id, actor_id);
     if new.requester_user_id is distinct from actor_id or new.request_status <> 'open' then
       raise exception 'A restock request must be created by its owner as open.' using errcode = '42501';
@@ -54,13 +76,18 @@ begin
   end if;
 
   if tg_op = 'DELETE' then
-    if old.request_status <> 'open' or old.requester_user_id is distinct from actor_id then
+    if coalesce(to_jsonb(old) ->> 'destination_area', 'PICKER') <> 'PICKER'
+      or old.request_status <> 'open'
+      or old.requester_user_id is distinct from actor_id then
       raise exception 'Only the requester can delete an open request.' using errcode = '42501';
     end if;
     return old;
   end if;
 
   if old.request_status = 'open' and new.request_status = 'open' then
+    if to_jsonb(old) ->> 'destination_area' = 'RETUR_KEEPING' then
+      raise exception 'Edit the return case to change a linked priority request.' using errcode = '42501';
+    end if;
     select exists (
       select 1 from public.dir_user_profiles profile
       left join public.dir_user_roles role_map on role_map.role = profile.role
@@ -84,6 +111,10 @@ begin
   end if;
 
   if old.request_status = 'open' and new.request_status = 'completed' then
+    if to_jsonb(old) ->> 'destination_area' = 'RETUR_KEEPING'
+      and current_setting('warehouse.priority_completion_request_id', true) is distinct from old.id::text then
+      raise exception 'Use priority return completion to stage the replacement stock.' using errcode = '42501';
+    end if;
     if to_jsonb(new) - array['request_status', 'take_from', 'storage_id', 'completed_at', 'completed_by', 'source_sku_id', 'fulfilled_qty']
       is distinct from
       to_jsonb(old) - array['request_status', 'take_from', 'storage_id', 'completed_at', 'completed_by', 'source_sku_id', 'fulfilled_qty'] then
@@ -130,8 +161,8 @@ create policy restock_request_owner_insert
 -- The trigger narrows edits to owner-only changes, picker completion, and upload credits.
 create policy restock_request_authenticated_mutation
   on public.restock_request for update to authenticated
-  using (request_status in ('open', 'completed'))
-  with check (request_status in ('open', 'completed'));
+  using (request_status in ('open', 'completed', 'cancelled'))
+  with check (request_status in ('open', 'completed', 'cancelled'));
 
 create policy restock_request_owner_delete
   on public.restock_request for delete to authenticated

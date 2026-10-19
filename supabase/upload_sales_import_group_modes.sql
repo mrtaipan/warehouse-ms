@@ -15,6 +15,9 @@ alter table public.upload_sales_import_batches
   alter column group_code set default 'MOB';
 
 alter table public.upload_sales_import_batches
+  alter column valid_statuses set default array['packaged', 'ship', 'shipped', 'completed'];
+
+alter table public.upload_sales_import_batches
   alter column group_code set not null;
 
 do $$
@@ -651,6 +654,11 @@ declare
   total_applied integer := 0;
   total_skipped integer := 0;
   shortage_lines integer := 0;
+  v_included_lines integer := 0;
+  v_excluded_lines integer := 0;
+  v_requested_qty integer := 0;
+  v_reclassified_lines integer := 0;
+  v_duplicate_lines integer := 0;
   actor_email text := nullif(trim(coalesce(p_actor_email, '')), '');
   normalized_sku text;
   normalized_size text;
@@ -668,6 +676,25 @@ begin
 
   if target_batch.status <> 'posted' then
     raise exception 'Only posted shelving import batches can retry skipped quantities. Current status: %', target_batch.status;
+  end if;
+
+  if target_batch.group_code = 'MOB' then
+    update public.upload_sales_import_lines line
+    set included = true,
+        skipped_qty = line.qty,
+        exclusion_reason = null
+    where line.batch_id = p_batch_id
+      and line.included = false
+      and lower(btrim(coalesce(line.order_status, ''))) = 'completed'
+      and line.exclusion_reason = 'Status completed is not included'
+      and coalesce(line.applied_qty, 0) = 0
+      and line.qty > 0
+      and nullif(btrim(line.sku_id), '') is not null
+      and (
+        regexp_replace(upper(line.sku_id), '[^A-Z0-9]', '', 'g') !~ '^ARK[0-9]{2}[A-Z]{3}[0-9]{3}$'
+        or line.order_date is not null
+      );
+    get diagnostics v_reclassified_lines = row_count;
   end if;
 
   perform public.expand_upload_bundle_lines(p_batch_id);
@@ -880,10 +907,36 @@ begin
     and included = true
     and coalesce(skipped_qty, 0) > 0;
 
+  select count(*) filter (where included),
+         count(*) filter (where not included),
+         coalesce(sum(qty) filter (where included), 0)
+  into v_included_lines, v_excluded_lines, v_requested_qty
+  from public.upload_sales_import_lines
+  where batch_id = p_batch_id;
+
+  select coalesce(sum(line_count - 1), 0)
+  into v_duplicate_lines
+  from (
+    select count(*) as line_count
+    from public.upload_sales_import_lines
+    where batch_id = p_batch_id and included = true
+      and nullif(btrim(order_number), '') is not null
+      and nullif(btrim(sku_id), '') is not null
+      and nullif(btrim(size), '') is not null
+    group by order_number, sku_id, size
+    having count(*) > 1
+  ) duplicates;
+
   update public.upload_sales_import_batches
   set
     applied_qty = total_applied,
     skipped_qty = total_skipped,
+    included_lines = v_included_lines,
+    excluded_lines = v_excluded_lines,
+    requested_qty = v_requested_qty,
+    duplicate_order_count = v_duplicate_lines,
+    valid_statuses = case when target_batch.group_code = 'MOB' and not ('completed' = any(valid_statuses))
+      then array_append(valid_statuses, 'completed') else valid_statuses end,
     shortage_line_count = shortage_lines,
     updated_at = now()
   where id = p_batch_id;
@@ -891,7 +944,8 @@ begin
   return jsonb_build_object(
     'batch_id', p_batch_id,
     'status', 'posted',
-    'retried_skipped_only', true,
+    'retried_skipped_only', v_reclassified_lines = 0,
+    'newly_included_lines', v_reclassified_lines,
     'applied_qty', total_applied,
     'skipped_qty', total_skipped,
     'shortage_line_count', shortage_lines

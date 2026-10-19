@@ -7,7 +7,8 @@ function normalize(value) {
 
 export function stockSizeAliases(value) {
   const raw = normalize(value)
-  const key = raw.replace(/[^A-Z0-9]/g, '') || '-'
+  const normalized = raw.replace(/[^A-Z0-9]/g, '')
+  const key = normalized === 'NS' ? '-' : normalized || '-'
   const pair = raw.match(PAIRED_SIZE)
   return pair ? [...new Set([key, pair[1], pair[2]])] : [key]
 }

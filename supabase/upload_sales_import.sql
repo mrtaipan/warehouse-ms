@@ -16,7 +16,7 @@ create table if not exists public.upload_sales_import_batches (
   source_channel text not null default 'jubelio',
   group_code text not null default 'MOB',
   status text not null default 'draft',
-  valid_statuses text[] not null default array['packaged', 'ship', 'shipped'],
+  valid_statuses text[] not null default array['packaged', 'ship', 'shipped', 'completed'],
   uploaded_by text,
   uploaded_at timestamp with time zone not null default now(),
   posted_by text,

@@ -187,7 +187,7 @@ begin
        or normalized_size = ''
        or import_line.order_date is null
        or (target_batch.group_code = 'ARKLINE' and upper(coalesce(import_line.order_status, '')) not in ('PROCESSING', 'SHIPPED'))
-       or (target_batch.group_code = 'MOB' and lower(coalesce(import_line.order_status, '')) not in ('packaged', 'ship', 'shipped')) then
+       or (target_batch.group_code = 'MOB' and lower(coalesce(import_line.order_status, '')) not in ('packaged', 'ship', 'shipped', 'completed')) then
       raise exception 'Invalid Arkline line %: SKU, size, date and status are required', import_line.row_number;
     end if;
     perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext(normalized_sku), pg_catalog.hashtext(normalized_size));

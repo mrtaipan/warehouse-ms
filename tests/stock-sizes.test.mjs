@@ -29,3 +29,10 @@ test('does not invent letter to number conversions or split pants dimensions', (
   assert.equal(stockSizesMatch('-', 'S/95'), false)
   assert.equal(resolveUploadSize('BLACK / XL'), 'XL')
 })
+
+test('NS and dash are the same unsized stock, not a wildcard', () => {
+  assert.equal(stockSizesMatch('NS', '-'), true)
+  assert.equal(stockSizesMatch('-', 'NS'), true)
+  assert.equal(stockSizesMatch('NS', 'M'), false)
+  assert.equal(stockSizesMatch('S', '-'), false)
+})

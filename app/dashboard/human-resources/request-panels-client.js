@@ -158,7 +158,7 @@ function buildBirthdayItem(row) {
     dateLabel: formatDateValue(row.request_date),
     note: row.item_name || row.notes || '-',
     status: row.status || 'SUBMITTED',
-    submittedAt: row.submitted_at || row.created_at || '',
+    submittedAt: row.created_at || '',
     row,
   }
 }
@@ -281,7 +281,7 @@ function buildCalendarEvents({ leaveRowsAll, peopleRows, publicHolidayRows }) {
   }
 
   for (const person of activePeopleRows) {
-    const birthdayValue = person?.date_of_birth || person?.birthdate || person?.birth_date
+    const birthdayValue = person?.birthdate
     if (!birthdayValue) continue
     const parsed = new Date(birthdayValue)
     if (Number.isNaN(parsed.getTime())) continue

@@ -113,7 +113,13 @@ as $$
     where regexp_replace(upper(token), '[^A-Z0-9]', '', 'g') = regexp_replace(upper(p_sku), '[^A-Z0-9]', '', 'g')
   ) else
     nullif(regexp_replace(upper(p_stock_name), '[^A-Z0-9]', '', 'g'), '') =
-    nullif(regexp_replace(upper(p_name), '[^A-Z0-9]', '', 'g'), '')
+      nullif(regexp_replace(upper(p_name), '[^A-Z0-9]', '', 'g'), '')
+    or (
+      split_part(btrim(coalesce(p_name, '')), ' ', 1) ~ '^[A-Za-z0-9-]*[0-9][A-Za-z0-9-]*$'
+      and length(regexp_replace(split_part(btrim(p_name), ' ', 1), '[^A-Za-z0-9]', '', 'g')) >= 6
+      and regexp_replace(upper(coalesce(p_stock_sku, '')), '[^A-Z0-9]', '', 'g') =
+        regexp_replace(upper(split_part(btrim(p_name), ' ', 1)), '[^A-Z0-9]', '', 'g')
+    )
   end;
 $$;
 
@@ -156,6 +162,7 @@ declare
   v_destination record;
   v_replacement record;
   v_stock record;
+  v_area_type text;
   v_remaining numeric;
   v_take numeric;
   v_external_replacement_notes text;
@@ -367,33 +374,38 @@ begin
     -- The case row remains locked until both the return and replacement commit.
     for v_replacement in select * from public.delivery_return_product_lines(v_case.produk_pengganti) loop
       v_remaining := v_replacement.qty;
-      for v_stock in
-        select t.* from public.warehouse_temporary_sales_items t
-        where t.status = 'IN_TEMPORARY_AREA' and coalesce(t.area_type, 'SALES') = 'SALES'
-          and upper(btrim(coalesce(t.group_code, 'MOB'))) = v_group
-          and t.qty_in_area > 0
-          and public.delivery_stock_product_matches(t.sku_id, t.source_variant_code, t.item_name,
-            v_replacement.sku, v_replacement.product_name)
-          and public.warehouse_sizes_match(t.size, v_replacement.size)
-        order by t.entered_at, t.id
-        for update of t
-      loop
-        exit when v_remaining <= 0;
-        v_take := least(v_remaining, v_stock.qty_in_area);
-        update public.warehouse_temporary_sales_items
-        set qty_in_area = qty_in_area - v_take,
-            status = case when qty_in_area = v_take then 'COMPLETED' else 'IN_TEMPORARY_AREA' end,
-            updated_at = now()
-        where id = v_stock.id;
-        insert into public.warehouse_storage_movements (
-          temporary_sales_item_id, movement_type, qty, from_location_label, to_location_label,
-          item_name, size, sku_id, created_by
-        ) values (
-          v_stock.id, 'CUSTOMER_REPLACEMENT_OUT', v_take, 'TEMPORARY SALES AREA',
-          'CUSTOMER REPLACEMENT / ' || v_case.kode_kejadian,
-          v_stock.item_name, v_stock.size, v_stock.sku_id, v_actor
-        );
-        v_remaining := v_remaining - v_take;
+      foreach v_area_type in array array['RETUR_KEEPING', 'SALES'] loop
+        for v_stock in
+          select t.* from public.warehouse_temporary_sales_items t
+          where t.status = 'IN_TEMPORARY_AREA'
+            and coalesce(t.area_type, 'SALES') = v_area_type
+            and upper(btrim(coalesce(t.group_code, 'MOB'))) = v_group
+            and t.qty_in_area > 0
+            and public.delivery_stock_product_matches(t.sku_id, t.source_variant_code, t.item_name,
+              v_replacement.sku, v_replacement.product_name)
+            and public.warehouse_sizes_match(t.size, v_replacement.size)
+          order by t.entered_at, t.id
+          for update of t
+        loop
+          exit when v_remaining <= 0;
+          v_take := least(v_remaining, v_stock.qty_in_area);
+          update public.warehouse_temporary_sales_items
+          set qty_in_area = qty_in_area - v_take,
+              status = case when qty_in_area = v_take then 'COMPLETED' else 'IN_TEMPORARY_AREA' end,
+              updated_at = now()
+          where id = v_stock.id;
+          insert into public.warehouse_storage_movements (
+            temporary_sales_item_id, movement_type, qty, from_location_label, to_location_label,
+            item_name, size, sku_id, created_by
+          ) values (
+            v_stock.id, 'CUSTOMER_REPLACEMENT_OUT', v_take,
+            case when v_area_type = 'RETUR_KEEPING' then 'TEMP. RETUR KEEPING'
+              else 'TEMPORARY SALES AREA' end,
+            'CUSTOMER REPLACEMENT / ' || v_case.kode_kejadian,
+            v_stock.item_name, v_stock.size, v_stock.sku_id, v_actor
+          );
+          v_remaining := v_remaining - v_take;
+        end loop;
       end loop;
 
       if v_remaining > 0 then

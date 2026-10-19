@@ -12,6 +12,9 @@ declare
   v_pair text[];
 begin
   v_key := coalesce(nullif(regexp_replace(v_raw, '[^A-Z0-9]', '', 'g'), ''), '-');
+  if v_key = 'NS' then
+    v_key := '-';
+  end if;
   v_pair := regexp_match(v_raw,
     '(?:^|[^A-Z0-9])((?:[2-8]XL|X{0,3}[SML]))[[:space:]]*/[[:space:]]*([0-9]{2,3})(?:$|[^A-Z0-9])');
   if v_pair is not null then

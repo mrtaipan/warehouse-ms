@@ -30,7 +30,7 @@ async function getActorContext() {
 }
 
 function getBirthdayDateValue(profile = {}) {
-  return profile?.date_of_birth || profile?.birthdate || profile?.birth_date || null
+  return profile?.birthdate || null
 }
 
 function getBirthdayWindow(value) {

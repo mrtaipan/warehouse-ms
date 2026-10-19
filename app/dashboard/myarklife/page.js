@@ -27,8 +27,8 @@ function filterActiveLeaveRows(rows) {
 
 function sortRowsByRecent(rows) {
   return [...(rows || [])].sort((left, right) => {
-    const leftValue = new Date(left?.submitted_at || left?.created_at || 0).getTime()
-    const rightValue = new Date(right?.submitted_at || right?.created_at || 0).getTime()
+    const leftValue = new Date(left?.created_at || 0).getTime()
+    const rightValue = new Date(right?.created_at || 0).getTime()
     return rightValue - leftValue
   })
 }

@@ -644,40 +644,14 @@ async function loadInboundRowsForCalendar(supabase, start, end) {
 }
 
 async function loadInboundUnloadRowsForCalendar(supabase, start, end) {
-  const selectOptions = [
-    'id, inbound_id, product_model_id, product_model_variant_id, model_name, variant_name, variant_label, variant_code, qty, created_at',
-    'id, inbound_id, product_model_id, model_name, variant_name, variant_label, variant_code, qty, created_at',
-    'id, inbound_id, model_name, variant_name, variant_label, variant_code, qty, created_at',
-    'id, inbound_id, model_name, variant_name, qty, created_at',
-    'id, inbound_id, model_name, qty, created_at',
-    'id, inbound_id, qty, created_at',
-  ]
+  const result = await supabase
+    .from('inbound_unload')
+    .select('id, inbound_id, product_model_id, product_model_variant_id, model_name, variant_name, qty, created_at')
+    .gte('created_at', `${start}T00:00:00`)
+    .lt('created_at', `${end}T00:00:00`)
+    .order('created_at', { ascending: true })
 
-  let lastError = null
-
-  for (const selectColumns of selectOptions) {
-    const result = await supabase
-      .from('inbound_unload')
-      .select(selectColumns)
-      .gte('created_at', `${start}T00:00:00`)
-      .lt('created_at', `${end}T00:00:00`)
-      .order('created_at', { ascending: true })
-
-    if (!result.error) {
-      return result
-    }
-
-    lastError = result.error
-    if (!isNonBlockingCalendarError(result.error)) {
-      return result
-    }
-
-    if (result.error.code !== '42703' && result.error.code !== 'PGRST204') {
-      return normalizeCalendarResult(result, 'inbound sorting')
-    }
-  }
-
-  return normalizeCalendarResult({ data: null, error: lastError }, 'inbound sorting')
+  return normalizeCalendarResult(result, 'inbound sorting')
 }
 
 async function loadArklineReceiptRowsForCalendar(supabase, start, end) {

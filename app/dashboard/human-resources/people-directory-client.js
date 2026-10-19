@@ -128,7 +128,7 @@ function buildEditableFields(people) {
       'email',
       'gender',
       'phone_number',
-      'date_of_birth',
+      'birthdate',
       'address',
       'reimbursement_bank_name',
       'reimbursement_account_name',

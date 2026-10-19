@@ -18,7 +18,7 @@ const REQUEST_FILTER_OPTIONS = [
 async function fetchOpenRequests() {
   const { data, error } = await supabase
     .from(TAKE_REQUESTS_TABLE)
-    .select('id, requester_name, item_name, size, qty, take_from, storage_id, search_term, source_type, note, created_at')
+    .select('id, requester_name, item_name, size, qty, take_from, storage_id, search_term, source_type, note, created_at, destination_area, return_case_id')
     .eq('request_status', 'open')
     .order('created_at', { ascending: false })
 
@@ -322,7 +322,7 @@ async function fetchSourceOptions(row) {
 }
 
 async function refreshMissingRequestLocations(rows = []) {
-  const staleRows = rows.filter((row) => String(row?.search_term || row?.item_name || '').trim())
+  const staleRows = rows.filter((row) => row.destination_area !== 'RETUR_KEEPING' && String(row?.search_term || row?.item_name || '').trim())
 
   if (staleRows.length === 0) {
     return rows
@@ -432,12 +432,25 @@ export default function TakeRequestsMobile() {
     setSelectedRequest(row)
     setActualQty(String(row.qty || ''))
     setSourceOptions([])
-    setSelectedSourceValue('unrecorded')
+    setSelectedSourceValue(row.destination_area === 'RETUR_KEEPING' ? '' : 'unrecorded')
     setLoadingSourceOptions(true)
     setError('')
     setSuccess('')
 
     try {
+      if (row.destination_area === 'RETUR_KEEPING') {
+        const { data, error: sourceError } = await supabase.rpc('priority_return_source_options', { p_request_id: row.id })
+        if (sourceError) throw sourceError
+        const options = Array.isArray(data) ? data.map((item) => ({
+          sourceKind: item.source_kind,
+          sourceId: Number(item.source_id),
+          label: item.label,
+          qty: Number(item.qty || 0),
+        })) : []
+        setSourceOptions(options)
+        setSelectedSourceValue(options[0] ? `${options[0].sourceKind}:${options[0].sourceId}` : '')
+        return
+      }
       const options = await fetchSourceOptions(row)
       setSourceOptions(options)
       setSelectedSourceValue(options[0]?.storageId ? String(options[0].storageId) : 'unrecorded')
@@ -482,6 +495,32 @@ export default function TakeRequestsMobile() {
     if (fulfilledQty <= 0) {
       setError('Qty yang diambil harus lebih dari 0.')
       setCompletingId('')
+      return
+    }
+
+    if (selectedRequest.destination_area === 'RETUR_KEEPING') {
+      const source = sourceOptions.find((option) => `${option.sourceKind}:${option.sourceId}` === selectedSourceValue)
+      if (!source || fulfilledQty > source.qty) {
+        setError('Choose an available Pallet, Shelving, or Temp. Sales source with enough quantity.')
+        setCompletingId('')
+        return
+      }
+      try {
+        const { error: completeError } = await supabase.rpc('complete_priority_return_restock_request', {
+          p_request_id: selectedRequest.id,
+          p_source_kind: source.sourceKind,
+          p_source_id: source.sourceId,
+          p_qty: fulfilledQty,
+        })
+        if (completeError) throw completeError
+        await refreshRequests(false)
+        setSuccess(`${fulfilledQty} item(s) moved to Temp. Retur Keeping.`)
+        closeCompleteModal()
+      } catch (completeError) {
+        setError(completeError.message || 'Failed to move replacement stock to Temp. Retur Keeping.')
+      } finally {
+        setCompletingId('')
+      }
       return
     }
 
@@ -708,7 +747,7 @@ export default function TakeRequestsMobile() {
               <div key={row.id} style={styles.requestCard}>
                 <div style={styles.ownerCard}>
                   <span style={styles.ownerLabel}>For</span>
-                  <strong style={styles.ownerValue}>{row.requester_name}</strong>
+                  <strong style={styles.ownerValue}>{row.destination_area === 'RETUR_KEEPING' ? 'Temp. Retur Keeping' : row.requester_name}</strong>
                   <span style={styles.timeText}>{new Date(row.created_at).toLocaleString('id-ID')}</span>
                 </div>
 
@@ -765,7 +804,7 @@ export default function TakeRequestsMobile() {
               </div>
 
               <p style={styles.modalText}>
-                <strong>For:</strong> {selectedRequest.requester_name}
+                <strong>For:</strong> {selectedRequest.destination_area === 'RETUR_KEEPING' ? 'Temp. Retur Keeping' : selectedRequest.requester_name}
               </p>
               <p style={styles.modalText}>
                 <strong>Item:</strong> {selectedRequest.item_name}
@@ -795,12 +834,12 @@ export default function TakeRequestsMobile() {
                     ) : (
                       <>
                         {sourceOptions.map((option, index) => (
-                          <label key={`${option.storageId}-${index}`} style={styles.sourceOption}>
+                          <label key={`${option.sourceKind || 'warehouse'}-${option.sourceId || option.storageId}-${index}`} style={styles.sourceOption}>
                             <input
                               type="radio"
                               name="takeSource"
-                              value={String(option.storageId)}
-                              checked={selectedSourceValue === String(option.storageId)}
+                              value={selectedRequest.destination_area === 'RETUR_KEEPING' ? `${option.sourceKind}:${option.sourceId}` : String(option.storageId)}
+                              checked={selectedSourceValue === (selectedRequest.destination_area === 'RETUR_KEEPING' ? `${option.sourceKind}:${option.sourceId}` : String(option.storageId))}
                               onChange={(event) => setSelectedSourceValue(event.target.value)}
                             />
                             <span style={styles.sourceOptionText}>
@@ -809,7 +848,11 @@ export default function TakeRequestsMobile() {
                           </label>
                         ))}
 
-                        <label style={styles.sourceOption}>
+                        {selectedRequest.destination_area === 'RETUR_KEEPING' && sourceOptions.length === 0 ? (
+                          <div style={styles.sourceLoadingBox}>No matching stock in Pallet, Shelving, or Temp. Sales Area.</div>
+                        ) : null}
+
+                        {selectedRequest.destination_area !== 'RETUR_KEEPING' ? <label style={styles.sourceOption}>
                           <input
                             type="radio"
                             name="takeSource"
@@ -818,7 +861,7 @@ export default function TakeRequestsMobile() {
                             onChange={(event) => setSelectedSourceValue(event.target.value)}
                           />
                           <span style={styles.sourceOptionText}>Location is not found</span>
-                        </label>
+                        </label> : null}
                       </>
                     )}
                   </div>
@@ -833,7 +876,7 @@ export default function TakeRequestsMobile() {
                     inputMode="numeric"
                     required
                   />
-                  {Number(actualQty || 0) > requestedQtyForDisplay(selectedRequest) ? (
+                  {selectedRequest.destination_area !== 'RETUR_KEEPING' && Number(actualQty || 0) > requestedQtyForDisplay(selectedRequest) ? (
                     <span style={styles.helperText}>
                       Excess for shelving: {Number(actualQty || 0) - requestedQtyForDisplay(selectedRequest)}
                     </span>
@@ -844,7 +887,11 @@ export default function TakeRequestsMobile() {
                   <button type="button" onClick={closeCompleteModal} style={styles.modalSecondaryButton}>
                     Cancel
                   </button>
-                  <button type="submit" style={styles.completeButton} disabled={completingId === selectedRequest.id}>
+                  <button
+                    type="submit"
+                    style={styles.completeButton}
+                    disabled={completingId === selectedRequest.id || (selectedRequest.destination_area === 'RETUR_KEEPING' && (loadingSourceOptions || !selectedSourceValue))}
+                  >
                     {completingId === selectedRequest.id ? 'Completing...' : 'Complete'}
                   </button>
                 </div>

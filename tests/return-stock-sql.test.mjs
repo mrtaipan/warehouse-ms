@@ -113,6 +113,15 @@ async function addCase(id, group, replacement = null, sku = 'ARK01SSP002', size 
     [id, `TEST-${id}`, group, `SKU: ${sku} || PRODUCT: RETURN ITEM || SIZE: ${size} || QTY: 2`, replacement])
   return [{ case_id: id, lines: [{ sku, product_name: 'RETURN ITEM', size, expected_qty: 2, stored_qty: 2, reject_qty: 0, lost_qty: 0 }] }]
 }
+
+await test('legacy product text with a leading SKU matches stock even when names differ', () => isolated(async () => {
+  assert.equal(await scalar(`select delivery_stock_product_matches(
+    'KOL01SST001-002', null, 'SS TEE / ICE GREY', null,
+    'KOL01SST001-002 KOLON X LEE KYU-TAE EVERGREEN TREE SS TEE GREIGE')`), true)
+  assert.equal(await scalar(`select delivery_stock_product_matches(
+    'KOL01SST001-001', null, 'SS TEE / BABY PINK', null,
+    'KOL01SST001-002 KOLON X LEE KYU-TAE EVERGREEN TREE SS TEE GREIGE')`), false)
+}))
 const complete = (payload) => db.query('select complete_delivery_return_cases($1::jsonb)', [JSON.stringify(payload)])
 
 await test('SQL matches paired upload sizes and old saved S + raw S/95', async () => {
@@ -166,7 +175,7 @@ await test('MOB/OI returns queue even when their shelving already exists', () =>
   assert.equal(await scalar('select count(*)::int from warehouse_shelving_queue'), 2)
 }))
 
-await test('replacement uses Temporary Sales before shelving and excludes pallets, other groups and Retur Keeping', () => isolated(async () => {
+await test('replacement uses Retur Keeping before Temporary Sales and shelving, excluding pallets and other groups', () => isolated(async () => {
   await db.exec(`
     insert into dir_rack_locations (id,group_code,location_type) values (1,'MOB','SHELVING'),(2,'MOB','PALLET'),(3,'OI','SHELVING');
     insert into warehouse_storage (id,rack_location_id,sku_id,item_name,size,qty) values
@@ -175,10 +184,9 @@ await test('replacement uses Temporary Sales before shelving and excludes pallet
       (1,'KOL01SST001-001','REPLACEMENT','95',2,'MOB','SALES'),(2,'KOL01SST001-001','REPLACEMENT','95',50,'MOB','RETUR_KEEPING');
   `)
   await complete(await addCase(1, 'MOB', 'SKU: KOL01SST001001 || PRODUCT: REPLACEMENT || SIZE: S/95 || QTY: 4'))
-  assert.equal(await scalar('select qty_in_area::int from warehouse_temporary_sales_items where id=1'), 0)
-  assert.equal(await scalar('select status from warehouse_temporary_sales_items where id=1'), 'COMPLETED')
-  assert.equal(await scalar('select qty_in_area::int from warehouse_temporary_sales_items where id=2'), 50)
-  assert.equal(await scalar('select qty from warehouse_storage where id=1'), 1)
+  assert.equal(await scalar('select qty_in_area::int from warehouse_temporary_sales_items where id=1'), 2)
+  assert.equal(await scalar('select qty_in_area::int from warehouse_temporary_sales_items where id=2'), 46)
+  assert.equal(await scalar('select qty from warehouse_storage where id=1'), 3)
   assert.equal(await scalar('select sum(qty)::int from warehouse_storage where id in (2,3)'), 100)
   assert.equal(await scalar("select sum(qty)::int from warehouse_storage_movements where movement_type='CUSTOMER_REPLACEMENT_OUT'"), 4)
   assert.equal(await scalar('select count(*)::int from restock_request'), 0)
@@ -248,7 +256,7 @@ await test('Arkline settlement still credits normal completed picks', () => isol
     insert into warehouse_storage (rack_location_id,sku_id,item_name,size,qty) values (1,'ARK01SST001','SHIRT','M',10);
     insert into upload_sales_import_batches (id,group_code,status) values ('10000000-0000-0000-0000-000000000001','MOB','pending_settlement');
     insert into upload_sales_import_lines (batch_id,row_number,sku_id,size,qty,included,order_status,order_date)
-      values ('10000000-0000-0000-0000-000000000001',2,'ARK01SST001','M',5,true,'shipped',(now() at time zone 'Asia/Jakarta')::date);
+      values ('10000000-0000-0000-0000-000000000001',2,'ARK01SST001','M',5,true,'completed',(now() at time zone 'Asia/Jakarta')::date);
     select settle_arkline_sales_import_batch('10000000-0000-0000-0000-000000000001','Test');
   `)
   assert.equal(await scalar('select qty from warehouse_storage'), 6)
@@ -297,6 +305,76 @@ await test('upload settlement and retry consume explicit numeric aliases only on
   assert.deepEqual((await db.query('select applied_qty,skipped_qty from upload_sales_import_lines')).rows, [{ applied_qty: 3, skipped_qty: 0 }])
   assert.equal(await scalar('select qty from warehouse_storage where id=1'), 3)
   assert.equal(await scalar('select sum(-qty_delta)::int from upload_warehouse_storage_movements'), 3)
+}))
+
+await test('MOB upload deducts an unsized NS bag from Temporary Sales exactly once', () => isolated(async () => {
+  await db.exec(`
+    insert into warehouse_temporary_sales_items (id,sku_id,item_name,size,qty_in_area,group_code)
+      values (1,'ADS03BAG001-001','BACKPACK / BLACK','NS',3,'MOB');
+    insert into upload_sales_import_batches (id,group_code,status)
+      values ('10000000-0000-0000-0000-000000000001','MOB','pending_settlement');
+    insert into upload_sales_import_lines (id,batch_id,row_number,sku_id,size,qty,included)
+      values ('20000000-0000-0000-0000-000000000001',
+        '10000000-0000-0000-0000-000000000001',2,'ADS03BAG001001','-',2,true);
+    select settle_mob_sales_import_batch('10000000-0000-0000-0000-000000000001','Test');
+    select retry_upload_sales_import_batch('10000000-0000-0000-0000-000000000001','Test');
+  `)
+  assert.deepEqual((await db.query('select applied_qty,skipped_qty from upload_sales_import_lines')).rows,
+    [{ applied_qty: 2, skipped_qty: 0 }])
+  assert.equal(await scalar('select qty_in_area::int from warehouse_temporary_sales_items where id=1'), 1)
+  assert.equal(await scalar('select sum(-qty_delta)::int from upload_warehouse_storage_movements'), 2)
+}))
+
+await test('Retry includes legacy Completed MOB lines without deducting applied stock twice', () => isolated(async () => {
+  await db.exec(`
+    insert into warehouse_temporary_sales_items (id,sku_id,item_name,size,qty_in_area,group_code)
+      values (1,'ADS03BAG001-001','BACKPACK / BLACK','NS',3,'MOB');
+    insert into upload_sales_import_batches (id,group_code,status,valid_statuses,included_lines,excluded_lines,requested_qty)
+      values ('10000000-0000-0000-0000-000000000001','MOB','posted',array['packaged','ship','shipped'],0,1,0);
+    insert into upload_sales_import_lines (id,batch_id,row_number,order_status,sku_id,size,qty,included,exclusion_reason,applied_qty,skipped_qty)
+      values ('20000000-0000-0000-0000-000000000001','10000000-0000-0000-0000-000000000001',2,
+        'completed','ADS03BAG001001','-',2,false,'Status completed is not included',0,0);
+    select retry_upload_sales_import_batch('10000000-0000-0000-0000-000000000001','Test');
+    select retry_upload_sales_import_batch('10000000-0000-0000-0000-000000000001','Test');
+  `)
+  assert.deepEqual((await db.query('select included,exclusion_reason,applied_qty,skipped_qty from upload_sales_import_lines')).rows,
+    [{ included: true, exclusion_reason: null, applied_qty: 2, skipped_qty: 0 }])
+  assert.equal(await scalar('select qty_in_area::int from warehouse_temporary_sales_items where id=1'), 1)
+  assert.equal(await scalar('select sum(-qty_delta)::int from upload_warehouse_storage_movements'), 2)
+  assert.deepEqual((await db.query('select included_lines,excluded_lines,requested_qty,applied_qty,skipped_qty,valid_statuses from upload_sales_import_batches')).rows,
+    [{ included_lines: 1, excluded_lines: 0, requested_qty: 2, applied_qty: 2, skipped_qty: 0,
+      valid_statuses: ['packaged', 'ship', 'shipped', 'completed'] }])
+}))
+
+await test('partial Temporary Sales staging blocks duplicate Waiting but allows the remaining stock later', () => isolated(async () => {
+  await db.exec('alter table warehouse_temporary_sales_items add column source_warehouse_storage_id bigint, add column source_pl_packing_item_id bigint;')
+  const temporarySql = await sql('warehouse_temporary_sales.sql')
+  for (const name of ['warehouse_temporary_sales_active_storage_source_uidx', 'warehouse_temporary_sales_active_pl_source_uidx']) {
+    const definition = temporarySql.match(new RegExp(`create unique index ${name}[\\s\\S]*?;`))?.[0]
+    assert.ok(definition, name)
+    await db.exec(definition)
+  }
+
+  await db.exec(`
+    insert into warehouse_temporary_sales_items (source_warehouse_storage_id,source_pl_packing_item_id,item_name,qty_in_area,status)
+      values (10,20,'SHIRT',2,'WAITING');
+  `)
+  await db.exec('savepoint duplicate_stock;')
+  await assert.rejects(db.exec(`insert into warehouse_temporary_sales_items (source_warehouse_storage_id,source_pl_packing_item_id,item_name,qty_in_area,status)
+    values (10,20,'SHIRT',2,'WAITING')`), /warehouse_temporary_sales_active_storage_source_uidx/)
+  await db.exec('rollback to savepoint duplicate_stock;')
+  await db.exec(`
+    update warehouse_temporary_sales_items set status='IN_TEMPORARY_AREA' where source_warehouse_storage_id=10;
+    insert into warehouse_temporary_sales_items (source_warehouse_storage_id,source_pl_packing_item_id,item_name,qty_in_area,status)
+      values (10,20,'SHIRT',3,'WAITING'),(11,20,'SHIRT',1,'WAITING');
+    insert into warehouse_temporary_sales_items (source_pl_packing_item_id,item_name,qty_in_area,status)
+      values (30,'QUEUE ITEM',4,'WAITING');
+  `)
+  await db.exec('savepoint duplicate_queue;')
+  await assert.rejects(db.exec(`insert into warehouse_temporary_sales_items (source_pl_packing_item_id,item_name,qty_in_area,status)
+    values (30,'QUEUE ITEM',4,'WAITING')`), /warehouse_temporary_sales_active_pl_source_uidx/)
+  await db.exec('rollback to savepoint duplicate_queue;')
+  assert.equal(await scalar('select count(*)::int from warehouse_temporary_sales_items'), 4)
 }))
 
 await db.close()

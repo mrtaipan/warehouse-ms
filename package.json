@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test:stock": "node --test tests/stock-sizes.test.mjs tests/arkline-upload.test.mjs tests/return-stock-sql.test.mjs"
+    "test:stock": "node --test tests/stock-sizes.test.mjs tests/arkline-upload.test.mjs tests/return-stock-sql.test.mjs tests/priority-return-restock.test.mjs"
   },
   "dependencies": {
     "@supabase/ssr": "^0.10.2",

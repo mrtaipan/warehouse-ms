@@ -107,8 +107,8 @@ function filterVisibleBirthdayGiftRows(rows) {
 
 function sortRowsByRecent(rows) {
   return [...(rows || [])].sort((left, right) => {
-    const leftValue = new Date(left?.submitted_at || left?.created_at || 0).getTime()
-    const rightValue = new Date(right?.submitted_at || right?.created_at || 0).getTime()
+    const leftValue = new Date(left?.created_at || 0).getTime()
+    const rightValue = new Date(right?.created_at || 0).getTime()
     return rightValue - leftValue
   })
 }
@@ -516,12 +516,12 @@ export default async function HumanResourcesPage() {
                     title={item.employee_name_snapshot || item.employee_email_snapshot || '-'}
                     eyebrow={item.status === 'SUBMITTED' ? 'Birthday Gift' : `Birthday Gift · ${item.status}`}
                     meta={`Requested: ${formatDateValue(item.request_date)}`}
-                    note={item.notes || 'Standard corporate gift set'}
+                    note={item.item_name || 'Standard corporate gift set'}
                     detailRows={[
                       { label: 'Status', value: item.status || '-' },
                       { label: 'Employee Email', value: item.employee_email_snapshot || '-' },
                       { label: 'Request Date', value: formatDateValue(item.request_date) },
-                      { label: 'Submitted At', value: formatDateValue(item.submitted_at) },
+                      { label: 'Submitted At', value: formatDateValue(item.created_at) },
                       { label: 'Approved At', value: formatDateValue(item.approved_at) },
                       { label: 'Approved By', value: item.approved_by || '-' },
                     ]}

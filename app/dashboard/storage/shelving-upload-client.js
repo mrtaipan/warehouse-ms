@@ -7,7 +7,14 @@ import { buildArklineImportPreview, parseArklineDate, parseArklineSku, parseArkl
 import { resolveUploadSize as resolveSize, stockSizeAliases, stockSizesMatch } from './stock-sizes'
 
 const supabase = createClient()
-const VALID_STATUSES = ['packaged', 'ship', 'shipped']
+const VALID_STATUSES = ['packaged', 'ship', 'shipped', 'completed']
+
+function canRetryBatch(batch) {
+  if (!batch || batch.status !== 'posted') return false
+  if (Number(batch.skipped_qty || 0) > 0) return true
+  return batch.group_code === 'MOB' && Number(batch.excluded_lines || 0) > 0 &&
+    !batch.valid_statuses?.includes('completed')
+}
 const SIZE_TOKENS = ['8XL', '7XL', '6XL', '5XL', '4XL', '3XL', 'XXXL', '2XL', 'XXL', 'XL', 'XXS', 'XS', 'L', 'M', 'S']
 const LINE_INSERT_CHUNK_SIZE = 500
 const UPLOAD_GROUP_CODES = ['MOB', 'ARKLINE']
@@ -903,7 +910,7 @@ export default function ShelvingUploadClient({
   }
 
   async function handleRetryBatch(batch = selectedBatch) {
-    if (!canRetry || !canManage || !batch?.id || batch.status !== 'posted' || Number(batch.skipped_qty || 0) <= 0 || retryingId) return
+    if (!canRetry || !canManage || !batch?.id || !canRetryBatch(batch) || retryingId) return
 
     setRetryingId(batch.id)
     setError('')
@@ -1177,15 +1184,15 @@ export default function ShelvingUploadClient({
               <button
                 type="button"
                 onClick={() => handleRetryBatch(selectedBatch)}
-                disabled={!canManage || !selectedBatch || selectedBatch.status !== 'posted' || Number(selectedBatch.skipped_qty || 0) <= 0 || Boolean(retryingId)}
-                style={!canManage || !selectedBatch || selectedBatch.status !== 'posted' || Number(selectedBatch.skipped_qty || 0) <= 0 || Boolean(retryingId) ? styles.primaryButtonDisabled : styles.secondaryButton}
+                disabled={!canManage || !canRetryBatch(selectedBatch) || Boolean(retryingId)}
+                style={!canManage || !canRetryBatch(selectedBatch) || Boolean(retryingId) ? styles.primaryButtonDisabled : styles.secondaryButton}
               >
-                {retryingId === selectedBatch?.id ? 'Retrying...' : 'Retry Skipped'}
+                {retryingId === selectedBatch?.id ? 'Retrying...' : 'Retry'}
               </button>
             ) : null}
             <span style={styles.mutedText}>
               {canRetry
-                ? 'Posted batches settle at 21:00 WIB unless settled now. Retry only reprocesses skipped quantities.'
+                ? 'Posted batches settle at 21:00 WIB unless settled now. Retry processes skipped quantities and eligible older Completed lines without repeating applied deductions.'
                 : 'Posted batches settle at 21:00 WIB unless settled now.'}
             </span>
           </div>
@@ -1275,8 +1282,8 @@ export default function ShelvingUploadClient({
                             <button
                               type="button"
                               onClick={() => handleRetryBatch(batch)}
-                              disabled={!canManage || batch.status !== 'posted' || Number(batch.skipped_qty || 0) <= 0 || Boolean(retryingId)}
-                              style={canManage && batch.status === 'posted' && Number(batch.skipped_qty || 0) > 0 && !retryingId ? styles.smallButton : styles.smallButtonDisabled}
+                              disabled={!canManage || !canRetryBatch(batch) || Boolean(retryingId)}
+                              style={canManage && canRetryBatch(batch) && !retryingId ? styles.smallButton : styles.smallButtonDisabled}
                             >
                               {retryingId === batch.id ? 'Retrying...' : 'Retry'}
                             </button>
