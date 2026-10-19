@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createClient } from '@/utils/supabase/browser'
 import { read, utils } from 'xlsx'
 import { buildArklineImportPreview, parseArklineDate, parseArklineSku, parseArklineWorkbookRows } from './arkline-upload'
+import { resolveUploadSize as resolveSize, stockSizeAliases, stockSizesMatch } from './stock-sizes'
 
 const supabase = createClient()
 const VALID_STATUSES = ['packaged', 'ship', 'shipped']
@@ -142,33 +143,6 @@ function parseCsv(text) {
   return rows
 }
 
-function resolveSize(variationRaw) {
-  const normalized = normalizeUpper(variationRaw)
-  if (!normalized) return ''
-
-  const direct = normalizeSize(normalized)
-  if (SIZE_TOKENS.includes(direct)) return direct
-
-  const tokens = normalized
-    .split(/[-/|,;:()\s]+/)
-    .map((item) => normalizeSize(item))
-    .filter(Boolean)
-
-  for (let index = tokens.length - 1; index >= 0; index -= 1) {
-    if (SIZE_TOKENS.includes(tokens[index])) {
-      return tokens[index]
-    }
-  }
-
-  for (const size of SIZE_TOKENS) {
-    if (direct.endsWith(size)) {
-      return size
-    }
-  }
-
-  return direct
-}
-
 function parseQty(value) {
   const parsed = Number.parseInt(String(value || '').replace(/[^\d-]/g, ''), 10)
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 0
@@ -274,8 +248,9 @@ function buildImportPreview(csvRows, storageRows, temporarySalesRows = [], bundl
     const parsedArklineSku = groupCode === 'MOB' ? arklineCandidates.map(parseArklineSku).find(Boolean) : null
     const baseArklineSku = arklineCandidates.find((candidate) => /^ARK\d{2}[A-Z]{3}\d{3}$/.test(candidate))
     const variationSize = resolveSize(variationRaw)
-    const arklineSku = parsedArklineSku || (groupCode === 'MOB' && baseArklineSku && SIZE_TOKENS.includes(variationSize)
-      ? { sku: baseArklineSku, size: variationSize }
+    const arklineVariationSize = stockSizeAliases(variationSize).find((size) => SIZE_TOKENS.includes(size))
+    const arklineSku = parsedArklineSku || (groupCode === 'MOB' && baseArklineSku && arklineVariationSize
+      ? { sku: baseArklineSku, size: arklineVariationSize }
       : null)
     const skuId = arklineSku?.sku || skuCandidates[0] || normalizeUpper(variantCode || productCode)
     let size = arklineSku?.size || variationSize
@@ -293,8 +268,11 @@ function buildImportPreview(csvRows, storageRows, temporarySalesRows = [], bundl
     else if (arklineSku && !orderDate) exclusionReason = 'Missing Arkline transaction date'
 
     const included = !exclusionReason
-    const key = getStorageKey(skuId, size)
-    let availableQty = included && !arklineSku ? Math.max(0, Number(availability.get(key) || 0)) : 0
+    const matchingStockKeys = included && !arklineSku ? Array.from(availability.keys()).filter((stockKey) => {
+      const [stockSku, stockSize] = stockKey.split('::')
+      return stockSku === normalizeSku(skuId) && stockSizesMatch(stockSize, size, variationRaw)
+    }) : []
+    let availableQty = matchingStockKeys.reduce((sum, key) => sum + Math.max(0, Number(availability.get(key) || 0)), 0)
     let appliedQty = included ? Math.min(qty, availableQty) : 0
     let skippedQty = included ? Math.max(0, qty - appliedQty) : 0
 
@@ -386,7 +364,13 @@ function buildImportPreview(csvRows, storageRows, temporarySalesRows = [], bundl
           }
         })
     } else if (included && !arklineSku) {
-      availability.set(key, Math.max(0, availableQty - appliedQty))
+      let remaining = appliedQty
+      matchingStockKeys.forEach((stockKey) => {
+        const available = Math.max(0, Number(availability.get(stockKey) || 0))
+        const taken = Math.min(remaining, available)
+        availability.set(stockKey, available - taken)
+        remaining -= taken
+      })
     }
 
     if (included && resolvedOrderNumber && skuId && size) {

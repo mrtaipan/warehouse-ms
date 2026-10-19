@@ -510,7 +510,8 @@ declare
   line_balance integer;
   actor_email text := nullif(trim(coalesce(p_actor_email, '')), '');
 begin
-  if not public.arkline_upload_can_manage() then
+  -- Database-admin maintenance uses the same trusted role as scheduled settlement.
+  if current_user <> 'postgres' and not public.arkline_upload_can_manage() then
     raise exception 'Not allowed to manage Arkline uploads';
   end if;
 

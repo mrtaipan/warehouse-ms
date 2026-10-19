@@ -1245,6 +1245,10 @@
 .receivingInspectionReviewQuantities { display: flex; justify-content: flex-end; gap: 12px; flex-wrap: wrap; flex-shrink: 0; }
 .receivingInspectionReviewQuantities span { color: #334155; font-size: 13px; font-weight: 750; }
 .receivingInspectionNotice { margin: 12px 0 0; padding: 10px 12px; border-left: 3px solid #b45309; background: #fffbeb; color: #713f12; font-size: 13px; line-height: 1.45; }
+.externalReplacementNotice { display: grid; gap: 8px; margin: 0 0 16px; padding: 16px; overflow-wrap: anywhere; }
+.externalReplacementNotice > strong { font-size: 14px; font-weight: 700; }
+.externalReplacementNotice > span { white-space: pre-wrap; }
+.externalReplacementNotice > small { font-size: 12px; }
 .receivingConfirmModal .modalActions { flex-shrink: 0; }
 .receivingConfirmModal .modalCloseButton { color: #991b1b; background: #fef2f2; }
 .receivingConfirmModal .modalCloseButton:hover { color: #7f1d1d; background: #fee2e2; }

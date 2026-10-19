@@ -1,3 +1,4 @@
+-- Requires warehouse_stock_size_matching.sql.
 create extension if not exists pgcrypto;
 
 create sequence if not exists public.upload_sales_import_batch_seq;
@@ -450,7 +451,7 @@ begin
           )
           and (
             allow_any_size
-            or coalesce(nullif(regexp_replace(upper(coalesce(temporary_item.size, '')), '[^A-Z0-9]', '', 'g'), ''), '-') = normalized_size
+            or public.warehouse_sizes_match(temporary_item.size, import_line.size, import_line.variation_raw)
           )
         order by temporary_item.entered_at asc nulls first, temporary_item.id asc
         for update of temporary_item
@@ -554,7 +555,7 @@ begin
         )
         and (
           allow_any_size
-          or coalesce(nullif(regexp_replace(upper(coalesce(storage.size, '')), '[^A-Z0-9]', '', 'g'), ''), '-') = normalized_size
+          or public.warehouse_sizes_match(storage.size, import_line.size, import_line.variation_raw)
         )
       order by storage.created_at asc nulls first, storage.id asc
       for update of storage
@@ -770,7 +771,7 @@ begin
         )
         and (
           allow_any_size
-          or coalesce(nullif(regexp_replace(upper(coalesce(temporary_item.size, '')), '[^A-Z0-9]', '', 'g'), ''), '-') = normalized_size
+          or public.warehouse_sizes_match(temporary_item.size, import_line.size, import_line.variation_raw)
         )
       order by temporary_item.entered_at asc nulls first, temporary_item.id asc
       for update of temporary_item
@@ -842,7 +843,7 @@ begin
         )
         and (
           allow_any_size
-          or coalesce(nullif(regexp_replace(upper(coalesce(storage.size, '')), '[^A-Z0-9]', '', 'g'), ''), '-') = normalized_size
+          or public.warehouse_sizes_match(storage.size, import_line.size, import_line.variation_raw)
         )
       order by storage.created_at asc nulls first, storage.id asc
       for update of storage

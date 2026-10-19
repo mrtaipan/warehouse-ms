@@ -1,4 +1,5 @@
 -- Separate shelving sales uploads by warehouse group.
+-- Requires warehouse_stock_size_matching.sql.
 -- Existing batches are treated as MOB for backward compatibility.
 -- For MOB 21:00 settlement and ARK rows, run upload_sales_import_arkline_workflow.sql
 -- before using the functions below, then schedule upload_sales_import_arkline_2100_cron.sql.
@@ -39,6 +40,34 @@ create unique index if not exists upload_sales_import_batches_group_file_hash_ke
 
 create index if not exists upload_sales_import_batches_group_idx
   on public.upload_sales_import_batches (group_code, uploaded_at desc);
+
+-- Index the same SKU tokens previously parsed once per stock row per upload line.
+create or replace function public.upload_stock_sku_tokens(p_sku text, p_variant text, p_name text)
+returns text[]
+language sql
+immutable
+parallel safe
+security invoker
+set search_path = ''
+as $$
+  select coalesce(array_agg(distinct upper(regexp_replace(raw_value, '[^A-Z0-9]', '', 'g'))), array[]::text[])
+  from regexp_split_to_table(
+    coalesce(p_sku, '') || ' ' || coalesce(p_variant, '') || ' ' || coalesce(p_name, ''),
+    '[[:space:]|,;/]+'
+  ) as token(raw_value);
+$$;
+
+revoke all on function public.upload_stock_sku_tokens(text, text, text) from public, anon;
+grant execute on function public.upload_stock_sku_tokens(text, text, text) to authenticated, service_role;
+
+create index if not exists warehouse_storage_upload_sku_tokens_idx
+  on public.warehouse_storage using gin (public.upload_stock_sku_tokens(sku_id, source_variant_code, item_name))
+  where coalesce(qty, 0) > 0;
+
+create index if not exists warehouse_temporary_upload_sku_tokens_idx
+  on public.warehouse_temporary_sales_items using gin (public.upload_stock_sku_tokens(sku_id, source_variant_code, item_name))
+  where status = 'IN_TEMPORARY_AREA' and coalesce(area_type, 'SALES') = 'SALES'
+    and coalesce(qty_in_area, 0) > 0;
 
 create or replace function public.expand_upload_bundle_lines(p_batch_id uuid)
 returns void
@@ -276,17 +305,11 @@ begin
           and coalesce(temporary_item.area_type, 'SALES') = 'SALES'
           and coalesce(nullif(upper(trim(temporary_item.group_code)), ''), 'MOB') = coalesce(nullif(upper(trim(target_batch.group_code)), ''), 'MOB')
           and coalesce(temporary_item.qty_in_area, 0) > 0
-          and exists (
-            select 1
-            from regexp_split_to_table(
-              concat_ws(' ', temporary_item.sku_id, temporary_item.source_variant_code, temporary_item.item_name),
-              '[[:space:]|,;/]+'
-            ) as sku_token(raw_value)
-            where upper(regexp_replace(coalesce(sku_token.raw_value, ''), '[^A-Z0-9]', '', 'g')) = normalized_sku
-          )
+          and public.upload_stock_sku_tokens(temporary_item.sku_id, temporary_item.source_variant_code, temporary_item.item_name)
+            @> array[normalized_sku]
           and (
             allow_any_size
-            or coalesce(nullif(regexp_replace(upper(coalesce(temporary_item.size, '')), '[^A-Z0-9]', '', 'g'), ''), '-') = normalized_size
+            or public.warehouse_sizes_match(temporary_item.size, import_line.size, import_line.variation_raw)
           )
         order by temporary_item.entered_at asc nulls first, temporary_item.id asc
         for update of temporary_item
@@ -383,14 +406,11 @@ begin
       where upper(trim(coalesce(location.location_type, ''))) = 'SHELVING'
         and coalesce(nullif(upper(trim(location.group_code)), ''), 'MOB') = coalesce(nullif(upper(trim(target_batch.group_code)), ''), 'MOB')
         and coalesce(storage.qty, 0) > 0
-        and exists (
-          select 1
-          from regexp_split_to_table(concat_ws(' ', storage.sku_id, storage.source_variant_code, storage.item_name), '[[:space:]|,;/]+') as sku_token(raw_value)
-          where upper(regexp_replace(coalesce(sku_token.raw_value, ''), '[^A-Z0-9]', '', 'g')) = normalized_sku
-        )
+        and public.upload_stock_sku_tokens(storage.sku_id, storage.source_variant_code, storage.item_name)
+          @> array[normalized_sku]
         and (
           allow_any_size
-          or coalesce(nullif(regexp_replace(upper(coalesce(storage.size, '')), '[^A-Z0-9]', '', 'g'), ''), '-') = normalized_size
+          or public.warehouse_sizes_match(storage.size, import_line.size, import_line.variation_raw)
         )
       order by storage.created_at asc nulls first, storage.id asc
       for update of storage
@@ -706,17 +726,11 @@ begin
           and coalesce(temporary_item.area_type, 'SALES') = 'SALES'
           and coalesce(nullif(upper(trim(temporary_item.group_code)), ''), 'MOB') = coalesce(nullif(upper(trim(target_batch.group_code)), ''), 'MOB')
         and coalesce(temporary_item.qty_in_area, 0) > 0
-        and exists (
-          select 1
-          from regexp_split_to_table(
-            concat_ws(' ', temporary_item.sku_id, temporary_item.source_variant_code, temporary_item.item_name),
-            '[[:space:]|,;/]+'
-          ) as sku_token(raw_value)
-          where upper(regexp_replace(coalesce(sku_token.raw_value, ''), '[^A-Z0-9]', '', 'g')) = normalized_sku
-        )
+        and public.upload_stock_sku_tokens(temporary_item.sku_id, temporary_item.source_variant_code, temporary_item.item_name)
+          @> array[normalized_sku]
         and (
           allow_any_size
-          or coalesce(nullif(regexp_replace(upper(coalesce(temporary_item.size, '')), '[^A-Z0-9]', '', 'g'), ''), '-') = normalized_size
+          or public.warehouse_sizes_match(temporary_item.size, import_line.size, import_line.variation_raw)
         )
       order by temporary_item.entered_at asc nulls first, temporary_item.id asc
       for update of temporary_item
@@ -781,14 +795,11 @@ begin
       where upper(trim(coalesce(location.location_type, ''))) = 'SHELVING'
         and coalesce(nullif(upper(trim(location.group_code)), ''), 'MOB') = coalesce(nullif(upper(trim(target_batch.group_code)), ''), 'MOB')
         and coalesce(storage.qty, 0) > 0
-        and exists (
-          select 1
-          from regexp_split_to_table(concat_ws(' ', storage.sku_id, storage.source_variant_code, storage.item_name), '[[:space:]|,;/]+') as sku_token(raw_value)
-          where upper(regexp_replace(coalesce(sku_token.raw_value, ''), '[^A-Z0-9]', '', 'g')) = normalized_sku
-        )
+        and public.upload_stock_sku_tokens(storage.sku_id, storage.source_variant_code, storage.item_name)
+          @> array[normalized_sku]
         and (
           allow_any_size
-          or coalesce(nullif(regexp_replace(upper(coalesce(storage.size, '')), '[^A-Z0-9]', '', 'g'), ''), '-') = normalized_size
+          or public.warehouse_sizes_match(storage.size, import_line.size, import_line.variation_raw)
         )
       order by storage.created_at asc nulls first, storage.id asc
       for update of storage

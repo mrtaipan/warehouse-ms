@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test:stock": "node --test tests/stock-sizes.test.mjs tests/arkline-upload.test.mjs tests/return-stock-sql.test.mjs"
   },
   "dependencies": {
     "@supabase/ssr": "^0.10.2",
@@ -20,6 +21,7 @@
     "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "0.3.14",
     "@tailwindcss/postcss": "^4",
     "eslint": "^9",
     "eslint-config-next": "16.2.4",

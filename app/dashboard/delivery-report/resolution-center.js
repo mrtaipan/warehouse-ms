@@ -9,6 +9,8 @@ import { createClient } from '@/utils/supabase/browser'
 import { getProfileByAuthenticatedUser } from '@/utils/user-profiles'
 import { EmptyState, Modal, ModuleHeader, StatusMessage } from './delivery-report-client'
 import { GROUPS, formatDate, romanMonth, safeNumber, todayIso } from './delivery-report-helpers'
+import { stockSizesMatch } from '../storage/stock-sizes'
+import { getExternalReplacementLines } from './replacement-stock'
 import styles from './delivery-report.module.css'
 
 const TABS = [
@@ -139,8 +141,8 @@ function inspectReceivingDecisions(cases, { requireShelvingLookup = false } = {}
       if (quantities[2] > 0 && !cleanText(line.lostReason)) {
         return `${inspectedCase.code}: enter the lost reason for ${line.productName}.`
       }
-      if (requireShelvingLookup && quantities[0] > 0 && inspectedCase.group === 'ARKLINE' && line.shelvingLocationStatus !== 'FOUND') {
-        return `${inspectedCase.code}: one Arkline shelving location must be found for ${line.sku} / ${line.size}.`
+      if (requireShelvingLookup && quantities[0] > 0 && inspectedCase.group === 'ARKLINE' && !line.shelvingLocationStatus) {
+        return `${inspectedCase.code}: review the storage destination for ${line.sku} / ${line.size}.`
       }
     }
   }
@@ -184,10 +186,6 @@ function formatProductEntries(value) {
 
 function arklineSkuKey(value) {
   return cleanUpper(value).replace(/[^A-Z0-9]/g, '').match(/^ARK\d{2}[A-Z]{3}\d{3}/)?.[0] || ''
-}
-
-function normalizedStockSize(value) {
-  return cleanUpper(value).replace(/[^A-Z0-9]/g, '')
 }
 
 function formatShelvingLocation(location) {
@@ -1955,10 +1953,9 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
 
     const matchesByLine = requiredLines.map((line) => {
       const skuKey = arklineSkuKey(line.sku)
-      const sizeKey = normalizedStockSize(line.size)
       const rows = storageRows.filter((stock) => (
         String(stock.sku_id ?? stock.source_variant_code ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '').startsWith(skuKey) &&
-        normalizedStockSize(stock.size) === sizeKey && stock.rack_location_id != null
+        stockSizesMatch(stock.size, line.size) && stock.rack_location_id != null
       ))
       return { line, locationIds: [...new Set(rows.map((stock) => String(stock.rack_location_id)))] }
     })
@@ -2713,13 +2710,12 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
                 {!inspectedCase.lines.length ? <p className={styles.receivingInspectionEmpty}>No returned products to route.</p> : inspectedCase.lines.map((line) => (
                   <div className={styles.receivingInspectionReviewLine} key={line.key}>
                     <div><strong>{line.productName}</strong><span>{line.sku || 'No SKU'} · Size {line.size || '-'} · {line.expectedQty} unit{line.expectedQty === 1 ? '' : 's'}</span></div>
-                    <div className={styles.receivingInspectionReviewQuantities}>{Number(line.storedQty || 0) > 0 ? <span>Store {line.storedQty} to {inspectedCase.group === 'ARKLINE' ? `Shelving ${line.shelvingLocation || (line.shelvingLocationStatus === 'MULTIPLE' ? 'has multiple matches' : 'location not found')}` : 'Shelving Queue'}</span> : null}{Number(line.rejectQty || 0) > 0 ? <span>Reject {line.rejectQty} pending arrangement</span> : null}{Number(line.lostQty || 0) > 0 ? <span>Lost {line.lostQty} recorded</span> : null}</div>
+                    <div className={styles.receivingInspectionReviewQuantities}>{Number(line.storedQty || 0) > 0 ? <span>Store {line.storedQty} to {inspectedCase.group === 'ARKLINE' && line.shelvingLocationStatus === 'FOUND' ? `Shelving ${line.shelvingLocation}` : 'Shelving Queue'}</span> : null}{Number(line.rejectQty || 0) > 0 ? <span>Reject {line.rejectQty} pending arrangement</span> : null}{Number(line.lostQty || 0) > 0 ? <span>Lost {line.lostQty} recorded</span> : null}</div>
                   </div>
                 ))}
                 {cleanText(inspectedCase.row.produk_pengganti) ? <div className={styles.receivingInspectionReplacement}><span>Replacement Product</span><strong>{formatProductEntries(inspectedCase.row.produk_pengganti)}</strong></div> : null}
               </section>
             ))}
-            {receivingInspectionCases.some((item) => cleanText(item.row.produk_pengganti)) ? <p className={styles.receivingInspectionNotice}>Replacement product stock is not deducted by this inspection. Its stock processing remains pending.</p> : null}
           </div>
         )}
         {receivingConfirmError ? <p className={styles.cancelCaseError} role="alert">{receivingConfirmError}</p> : null}
@@ -2772,6 +2768,14 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
               <div><strong>{issueDetail.order_id || '-'}</strong><span>{issueDetail.nama || '-'}</span></div>
               {!issueDetailReadonly ? <button className={styles.primaryButton} onClick={() => loadIssueEditState(issueDetail)}>Edit</button> : null}
             </div>
+
+            {getExternalReplacementLines(detail?.keterangan_tambahan).length > 0 ? (
+              <div className={`${styles.receivingInspectionNotice} ${styles.externalReplacementNotice}`} role="status">
+                <strong>Replacement from outside Temp. Sales / Shelving</strong>
+                <span>{formatProductEntries(getExternalReplacementLines(detail.keterangan_tambahan).join('\n'))}</span>
+                <small>No additional stock deduction. External source not verified.</small>
+              </div>
+            ) : null}
 
             <section className={`${styles.resolutionDetailSection} ${styles.resolutionDetailCaseOverview}`}>
               <h3>Issue Overview</h3>
