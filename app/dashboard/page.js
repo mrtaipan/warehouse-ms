@@ -901,9 +901,11 @@ export default async function DashboardPage({ searchParams }) {
   const canAddPenaltyPoints = hasPermission(permissions, 'hrga.penalty_points.add', isAdmin)
   const showBirthdayGiftRequestAnnouncements = isAdmin || role === 'leader' || role === 'warehouse_leader' || role === 'mob_cs'
 
-  const { data: announcementRows } = await supabase.from('dir_user_profiles').select('*')
+  const { data: announcementRows } = await supabase
+    .from('dir_user_profiles')
+    .select('id, authenticated_id, display_name, email, date_of_birth, resign_date, "group", role')
   const { data: currentPenaltyRows } = showPenaltyPointsButton
-    ? await supabase.from('hrga_penalty_points_current').select('*')
+    ? await supabase.from('hrga_penalty_points_current').select('employee_profile_id, total_points, entry_count')
     : { data: [] }
   const penaltyPeriod = getPenaltyPeriodRange()
   const { data: penaltyDetailRows } = showPenaltyPointsButton
@@ -919,7 +921,9 @@ export default async function DashboardPage({ searchParams }) {
   if (showBirthdayGiftRequestAnnouncements) {
     try {
       const adminSupabase = createAdminClient()
-      const { data } = await adminSupabase.from('hrga_birthday_gift').select('*')
+      const { data } = await adminSupabase
+        .from('hrga_birthday_gift')
+        .select('id, status, approved_at, submitted_at, created_at, employee_authenticated_id, employee_name_snapshot, employee_email_snapshot, item_name, size')
       birthdayGiftRequestRows = data || []
     } catch {
       birthdayGiftRequestRows = []
@@ -949,7 +953,7 @@ export default async function DashboardPage({ searchParams }) {
     .map((item) => {
     const status = String(item.status || 'SUBMITTED').toUpperCase()
     const name = formatDashboardName(item.employee_name_snapshot || item.employee_email_snapshot || 'Team')
-    const itemName = String(item.item_name || item.notes || 'Birthday gift').trim()
+    const itemName = String(item.item_name || 'Birthday gift').trim()
     const sizeLabel = item.size ? ` • Size ${item.size}` : ''
 
     return {
