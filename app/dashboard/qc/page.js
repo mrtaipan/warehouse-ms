@@ -4430,7 +4430,7 @@ export default function QcDashboardPage() {
               <th style={styles.th}>Grade</th>
               <th style={styles.th}>Qty</th>
               <th style={styles.th}>Notes</th>
-              <th style={styles.th}>Date</th>
+              <th style={styles.th}>Created At</th>
             </tr>
           </thead>
           <tbody>
@@ -4441,7 +4441,7 @@ export default function QcDashboardPage() {
                   <td style={styles.td}>{getArklineAdjustmentGradeLabel(item)}</td>
                   <td style={styles.td}>{item.qty}</td>
                   <td style={styles.td}>{item.notes || '-'}</td>
-                  <td style={styles.td}>{String(getArklineAdjustmentDateValue(item) || '-').slice(0, 10)}</td>
+                  <td style={styles.td}>{formatDisplayDate(item.created_at)}</td>
                 </tr>
               ))
             ) : (
