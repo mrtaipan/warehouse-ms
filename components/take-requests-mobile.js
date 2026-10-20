@@ -43,6 +43,12 @@ function requestedQtyForDisplay(row) {
   return Number(row?.qty || 0)
 }
 
+function getRequestForLabel(row) {
+  if (row?.destination_area !== 'RETUR_KEEPING') return row?.requester_name || '-'
+  const picFirstName = String(row?.requester_name || '').trim().split(/\s+/)[0]
+  return `Temp. Retur Keeping${picFirstName ? ` (PIC: ${picFirstName})` : ''}`
+}
+
 function getRequestSourceCounts(rows = []) {
   return rows.reduce(
     (counts, row) => {
@@ -747,7 +753,7 @@ export default function TakeRequestsMobile() {
               <div key={row.id} style={styles.requestCard}>
                 <div style={styles.ownerCard}>
                   <span style={styles.ownerLabel}>For</span>
-                  <strong style={styles.ownerValue}>{row.destination_area === 'RETUR_KEEPING' ? 'Temp. Retur Keeping' : row.requester_name}</strong>
+                  <strong style={styles.ownerValue}>{getRequestForLabel(row)}</strong>
                   <span style={styles.timeText}>{new Date(row.created_at).toLocaleString('id-ID')}</span>
                 </div>
 
@@ -804,7 +810,7 @@ export default function TakeRequestsMobile() {
               </div>
 
               <p style={styles.modalText}>
-                <strong>For:</strong> {selectedRequest.destination_area === 'RETUR_KEEPING' ? 'Temp. Retur Keeping' : selectedRequest.requester_name}
+                <strong>For:</strong> {getRequestForLabel(selectedRequest)}
               </p>
               <p style={styles.modalText}>
                 <strong>Item:</strong> {selectedRequest.item_name}

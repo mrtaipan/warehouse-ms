@@ -2713,7 +2713,15 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
                     <div className={styles.receivingInspectionReviewQuantities}>{Number(line.storedQty || 0) > 0 ? <span>Store {line.storedQty} to {inspectedCase.group === 'ARKLINE' && line.shelvingLocationStatus === 'FOUND' ? `Shelving ${line.shelvingLocation}` : 'Shelving Queue'}</span> : null}{Number(line.rejectQty || 0) > 0 ? <span>Reject {line.rejectQty} pending arrangement</span> : null}{Number(line.lostQty || 0) > 0 ? <span>Lost {line.lostQty} recorded</span> : null}</div>
                   </div>
                 ))}
-                {cleanText(inspectedCase.row.produk_pengganti) ? <div className={styles.receivingInspectionReplacement}><span>Replacement Product</span><strong>{formatProductEntries(inspectedCase.row.produk_pengganti)}</strong></div> : null}
+                {cleanText(inspectedCase.row.produk_pengganti) ? (
+                  <>
+                    <div className={styles.receivingInspectionReplacement}><span>Replacement Product</span><strong>{formatProductEntries(inspectedCase.row.produk_pengganti)}</strong></div>
+                    <div className={`${styles.receivingInspectionNotice} ${styles.externalReplacementNotice}`} role="note">
+                      <strong>Replacement stock does not need to be in Shelving or Temp. Sales Area.</strong>
+                      <span>Available quantity is deducted. Any remaining quantity is recorded as coming from outside stock in the case notes.</span>
+                    </div>
+                  </>
+                ) : null}
               </section>
             ))}
           </div>
@@ -2831,6 +2839,14 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
                 <button className={`${styles.primaryButton} ${styles.caseDetailEditButton}`} onClick={() => setDetailMode('edit')}>Edit</button>
               ) : null}
             </div>
+
+            {detailMode === 'view' && getExternalReplacementLines(detailDraft.keterangan_tambahan).length > 0 ? (
+              <div className={`${styles.receivingInspectionNotice} ${styles.externalReplacementNotice}`} role="status">
+                <strong>Replacement from outside Temp. Sales / Shelving</strong>
+                <span>{formatProductEntries(getExternalReplacementLines(detailDraft.keterangan_tambahan).join('\n'))}</span>
+                <small>Only available stock was deducted; the remaining quantity is recorded as external.</small>
+              </div>
+            ) : null}
 
             <section className={`${styles.resolutionDetailSection} ${styles.resolutionDetailCaseOverview}`}>
               {renderDetailSectionHeading('overview', 'Case Overview')}
