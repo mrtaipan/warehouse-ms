@@ -31,7 +31,9 @@ function formatStorageSourceType(value) {
 }
 
 function getRegistrationProductLabel(product) {
-  return String(product?.productName || '').trim()
+  const productName = String(product?.productName || '').trim()
+  const skuInduk = String(product?.skuInduk || '').trim()
+  return productName && skuInduk ? `${productName} - ${skuInduk}` : productName
 }
 
 function getRegistrationReasonLabel(reason) {
@@ -1175,8 +1177,8 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
 
     const { error: saveError } = await supabase.rpc('create_arkline_qc_rejection_storage_batch', {
       p_storage_number: trimmedStorageNumber,
-      p_po_id: selectedRegistrationProduct.poId,
-      p_arkline_po_item_id: selectedRegistrationProduct.id,
+      p_po_id: null,
+      p_arkline_po_item_id: null,
       p_sku_induk: selectedRegistrationProduct.skuInduk,
       p_model_name: selectedRegistrationProduct.productName,
       p_supplier_name: selectedRegistrationProduct.supplierName || '',

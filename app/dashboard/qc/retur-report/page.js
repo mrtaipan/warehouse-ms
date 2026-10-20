@@ -55,7 +55,7 @@ async function loadArklineReturnData(supabase) {
     storageBatchResult,
     storageLineResult,
     poResult,
-    poItemResult,
+    directoryProductResult,
     poSizeResult,
   ] = await Promise.all([
     supabase.from('arkline_qc_reject_details').select('*').order('created_at', { ascending: false }),
@@ -76,7 +76,7 @@ async function loadArklineReturnData(supabase) {
     supabase.from('arkline_qc_rejection_storage_batches').select('*').order('created_at', { ascending: false }),
     supabase.from('arkline_qc_rejection_storage_lines').select('*'),
     supabase.from('arkline_pos').select('po_id, supplier_name'),
-    supabase.from('arkline_po_items').select('id, po_id, sku_induk, nama_produk, kategori_produk, status').order('nama_produk', { ascending: true }),
+    supabase.from('arkline_dir_products').select('sku_induk, kategori_produk, nama_produk, is_active').order('nama_produk', { ascending: true }),
     supabase.from('arkline_po_item_sizes').select('arkline_po_item_id, size, qty'),
   ])
 
@@ -91,7 +91,7 @@ async function loadArklineReturnData(supabase) {
     storageBatchResult,
     storageLineResult,
     poResult,
-    poItemResult,
+    directoryProductResult,
     poSizeResult,
   ].find(
     (result) => result.error
@@ -184,32 +184,17 @@ async function loadArklineReturnData(supabase) {
     sizeOptionsByPoItem.set(poItemKey, Array.from(new Set([...(sizeOptionsByPoItem.get(poItemKey) || []), size])))
   })
 
-  const registrationProductMap = new Map()
-  ;(poItemResult.data || []).forEach((item) => {
-    const skuInduk = String(item.sku_induk || '').trim()
-    const productName = String(item.nama_produk || 'Arkline Product').trim()
-    const key = [skuInduk.toUpperCase(), productName.toUpperCase()].filter(Boolean).join('|||') || String(item.id)
-    const current = registrationProductMap.get(key)
-    if (current) {
-      current.poIds = Array.from(new Set([...current.poIds, item.po_id].filter(Boolean)))
-      current.supplierNames = Array.from(new Set([...current.supplierNames, supplierByPo.get(String(item.po_id || ''))].filter(Boolean)))
-      return
-    }
-
-    registrationProductMap.set(key, {
-      id: item.id,
-      poId: item.po_id || '',
-      poIds: [item.po_id].filter(Boolean),
-      skuInduk,
-      productName,
-      categoryName: item.kategori_produk || '',
-      supplierName: supplierByPo.get(String(item.po_id || '')) || '',
-      supplierNames: [supplierByPo.get(String(item.po_id || ''))].filter(Boolean),
-      status: item.status || '',
-    })
-  })
-
-  const registrationProducts = Array.from(registrationProductMap.values())
+  const registrationProducts = (directoryProductResult.data || [])
+    .map((product) => ({
+      id: String(product.sku_induk || '').trim(),
+      skuInduk: String(product.sku_induk || '').trim(),
+      productName: String(product.nama_produk || 'Arkline Product').trim(),
+      categoryName: product.kategori_produk || '',
+      isActive: product.is_active !== false,
+      poId: '',
+      supplierName: '',
+    }))
+    .filter((product) => product.skuInduk)
     .sort((a, b) => a.productName.localeCompare(b.productName, undefined, { numeric: true }))
 
   const rejectReasons = (reasonResult.data || [])

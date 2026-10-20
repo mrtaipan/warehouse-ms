@@ -14,6 +14,11 @@ alter table if exists public.arkline_qc_rejection_storage_batches
 alter table if exists public.arkline_qc_rejection_storage_batches
   alter column source_qc_cycle_id drop not null;
 
+-- Packing-reject registrations come from the product directory, not a PO line.
+alter table if exists public.arkline_qc_rejection_storage_batches
+  alter column po_id drop not null,
+  alter column arkline_po_item_id drop not null;
+
 alter table if exists public.arkline_qc_rejection_storage_lines
   alter column reject_detail_id drop not null;
 
