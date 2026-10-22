@@ -89,6 +89,11 @@ function normalizeSize(value) {
   return size || 'NO SIZE'
 }
 
+function getStorageCategory(product, lookup) {
+  return lookup.bySku.get(String(product.skuInduk || '').trim().toUpperCase()) ||
+    lookup.byName.get(String(product.productName || '').trim().toUpperCase()) || ''
+}
+
 function getReceiptSizeKey(size) {
   return `size:${normalizeSize(size)}`
 }
@@ -368,6 +373,8 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
   const [progressRejectReasonFilter, setProgressRejectReasonFilter] = useState('')
   const [progressStatusFilter, setProgressStatusFilter] = useState('')
   const [storageViewMode, setStorageViewMode] = useState('koli')
+  const [storageMatrixSort, setStorageMatrixSort] = useState({ key: 'name', direction: 'asc' })
+  const [storageCategoryFilter, setStorageCategoryFilter] = useState('')
   const [storageSearch, setStorageSearch] = useState('')
   const [storageSizeFilter, setStorageSizeFilter] = useState('')
   const [storageSourceFilter, setStorageSourceFilter] = useState('')
@@ -717,6 +724,21 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
         .sort(compareStorageSizes),
     [groupedStorages]
   )
+  const storageCategoryLookup = useMemo(() => {
+    const bySku = new Map()
+    const byName = new Map()
+    registrationProducts.forEach((product) => {
+      const category = String(product.categoryName || '').trim()
+      if (!category) return
+      if (product.skuInduk) bySku.set(String(product.skuInduk).trim().toUpperCase(), category)
+      if (product.productName) byName.set(String(product.productName).trim().toUpperCase(), category)
+    })
+    return { bySku, byName }
+  }, [registrationProducts])
+  const storageCategoryOptions = useMemo(() => {
+    const categories = groupedStorages.flatMap((group) => group.productGroups.map((product) => getStorageCategory(product, storageCategoryLookup)))
+    return Array.from(new Set(categories)).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
+  }, [groupedStorages, storageCategoryLookup])
   const filteredStorageGroups = useMemo(() => {
     const query = storageSearch.trim()
 
@@ -724,6 +746,9 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
       .filter((group) => matchesStorageSearch(group.searchText, query))
       .map((group) => {
         const matchingProductGroups = group.productGroups
+          .filter((product) => !storageCategoryFilter || (storageCategoryFilter === '__uncategorized__'
+            ? !getStorageCategory(product, storageCategoryLookup)
+            : getStorageCategory(product, storageCategoryLookup) === storageCategoryFilter))
           .filter((product) => matchesStorageSearch(product.searchText, query))
           .map((product) => {
             const matchingSizeGroups = product.sizeGroups
@@ -759,7 +784,7 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
           : null
       })
       .filter(Boolean)
-  }, [groupedStorages, storageSearch, storageSizeFilter, storageSourceFilter])
+  }, [groupedStorages, storageSearch, storageSizeFilter, storageSourceFilter, storageCategoryFilter, storageCategoryLookup])
   const storageModelGroups = useMemo(() => {
     const modelMap = new Map()
 
@@ -800,6 +825,31 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
       }))
       .sort((a, b) => String(a.productName || '').localeCompare(String(b.productName || ''), undefined, { numeric: true }))
   }, [filteredStorageGroups])
+  const storageMatrixSizes = useMemo(() => [
+    ...REGISTRATION_SIZE_OPTIONS,
+    ...Array.from(new Set(storageModelGroups.flatMap((model) => model.sizeGroups.map((group) => normalizeSize(group.size)))))
+      .filter((size) => !STORAGE_SIZE_ORDER.has(size))
+      .sort(compareStorageSizes),
+  ], [storageModelGroups])
+  const storageMatrixTotals = useMemo(() => {
+    const totals = new Map(storageMatrixSizes.map((size) => [size, 0]))
+    storageModelGroups.forEach((model) => model.sizeGroups.forEach((group) => {
+      const size = normalizeSize(group.size)
+      totals.set(size, Number(totals.get(size) || 0) + Number(group.qty || 0))
+    }))
+    return totals
+  }, [storageMatrixSizes, storageModelGroups])
+  const sortedStorageModelGroups = useMemo(() => [...storageModelGroups].sort((a, b) => {
+    const comparison = storageMatrixSort.key === 'total'
+      ? Number(a.qty || 0) - Number(b.qty || 0)
+      : String(a.productName || '').localeCompare(String(b.productName || ''), undefined, { numeric: true })
+    if (comparison) return storageMatrixSort.direction === 'asc' ? comparison : -comparison
+    return String(a.productName || '').localeCompare(String(b.productName || ''), undefined, { numeric: true })
+  }), [storageModelGroups, storageMatrixSort])
+  const changeStorageMatrixSort = (key) => setStorageMatrixSort((current) => ({
+    key,
+    direction: current.key === key ? (current.direction === 'asc' ? 'desc' : 'asc') : (key === 'total' ? 'desc' : 'asc'),
+  }))
   const selectedSummary = useMemo(() => {
     const sizeMap = new Map()
     const gradeMap = new Map()
@@ -1871,31 +1921,43 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
       {storageOnly ? (
       <section className={`${styles.card} ${styles.subPageCard}`.trim()}>
         <div className={styles.sectionHeader}>
-          <div>
+          <div className={styles.storageHeading}>
             <p className={styles.eyebrow}>Arkline</p>
             <h2 className={styles.sectionTitle}>Reject Storage</h2>
+            <div className={styles.storageModeToggle} role="group" aria-label="Reject storage view mode">
+              <button
+                type="button"
+                className={`${styles.storageModeButton} ${storageViewMode === 'koli' ? styles.storageModeButtonActive : ''}`.trim()}
+                onClick={() => setStorageViewMode('koli')}
+                aria-pressed={storageViewMode === 'koli'}
+              >
+                Koli
+              </button>
+              <button
+                type="button"
+                className={`${styles.storageModeButton} ${storageViewMode === 'model' ? styles.storageModeButtonActive : ''}`.trim()}
+                onClick={() => setStorageViewMode('model')}
+                aria-pressed={storageViewMode === 'model'}
+              >
+                Model
+              </button>
+            </div>
           </div>
-          <button type="button" className={styles.primaryButton} onClick={openRegistrationModal} disabled={!canAdd || !registrationProducts.length || !rejectReasons.length}>
-            Item Registration
-          </button>
         </div>
 
         <div className={styles.storageToolbar}>
-          <div className={styles.storageModeToggle} role="tablist" aria-label="Reject storage view mode">
-            <button
-              type="button"
-              className={`${styles.storageModeButton} ${storageViewMode === 'koli' ? styles.storageModeButtonActive : ''}`.trim()}
-              onClick={() => setStorageViewMode('koli')}
+          <div className={`${styles.field} ${styles.storageCategoryField}`.trim()}>
+            <label htmlFor="storage-category-filter">Category</label>
+            <select
+              id="storage-category-filter"
+              className={styles.input}
+              value={storageCategoryFilter}
+              onChange={(event) => setStorageCategoryFilter(event.target.value)}
             >
-              Koli
-            </button>
-            <button
-              type="button"
-              className={`${styles.storageModeButton} ${storageViewMode === 'model' ? styles.storageModeButtonActive : ''}`.trim()}
-              onClick={() => setStorageViewMode('model')}
-            >
-              Model
-            </button>
+              <option value="">All categories</option>
+              {storageCategoryOptions.filter(Boolean).map((category) => <option key={category} value={category}>{category}</option>)}
+              {storageCategoryOptions.includes('') ? <option value="__uncategorized__">Uncategorized</option> : null}
+            </select>
           </div>
           <div className={`${styles.field} ${styles.storageSizeField}`.trim()}>
             <label htmlFor="storage-size-filter">Size</label>
@@ -1932,7 +1994,7 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
               placeholder="Search product, storage no, PO..."
             />
           </div>
-          {storageSearch || storageSizeFilter || storageSourceFilter ? (
+          {storageSearch || storageSizeFilter || storageSourceFilter || storageCategoryFilter ? (
             <button
               type="button"
               className={styles.secondaryButton}
@@ -1940,9 +2002,22 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
                 setStorageSearch('')
                 setStorageSizeFilter('')
                 setStorageSourceFilter('')
+                setStorageCategoryFilter('')
               }}
             >
               Clear
+            </button>
+          ) : null}
+          {canAdd ? (
+            <button
+              type="button"
+              className={styles.storageAddButton}
+              onClick={openRegistrationModal}
+              disabled={!registrationProducts.length || !rejectReasons.length}
+              title="Item Registration"
+              aria-label="Open Item Registration"
+            >
+              +
             </button>
           ) : null}
         </div>
@@ -1953,67 +2028,46 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
           <div className={styles.empty}>No reject storage matches this search.</div>
         ) : storageViewMode === 'model' ? (
           <div className={styles.tableWrap}>
-            <table className={`${styles.table} ${styles.storageTable}`.trim()}>
+            <table className={`${styles.table} ${styles.storageMatrixTable}`.trim()}>
               <thead>
                 <tr>
-                  <th>SKU / Product</th>
-                  <th className={styles.centerNumberCell}>Stored Qty</th>
-                  <th className={styles.centerNumberCell}>Number of Sizes</th>
-                  <th>Koli Info</th>
+                  <th scope="col" aria-sort={storageMatrixSort.key === 'name' ? (storageMatrixSort.direction === 'asc' ? 'ascending' : 'descending') : 'none'}>
+                    <button type="button" className={styles.storageMatrixSortButton} onClick={() => changeStorageMatrixSort('name')}>
+                      Product Name <span aria-hidden="true">{storageMatrixSort.key === 'name' ? (storageMatrixSort.direction === 'asc' ? 'A-Z' : 'Z-A') : 'Sort'}</span>
+                    </button>
+                  </th>
+                  {storageMatrixSizes.map((size) => <th key={size} scope="col" className={styles.numberCell}>{size}</th>)}
+                  <th scope="col" aria-sort={storageMatrixSort.key === 'total' ? (storageMatrixSort.direction === 'asc' ? 'ascending' : 'descending') : 'none'} className={`${styles.centerNumberCell} ${styles.storageMatrixTotalCell}`.trim()}>
+                    <button type="button" className={styles.storageMatrixSortButton} onClick={() => changeStorageMatrixSort('total')}>
+                      Total <span aria-hidden="true">{storageMatrixSort.key === 'total' ? (storageMatrixSort.direction === 'asc' ? 'Low-High' : 'High-Low') : 'Sort'}</span>
+                    </button>
+                  </th>
                 </tr>
               </thead>
               <tbody>
-                {storageModelGroups.map((model) => {
-                  const isModelCollapsed = !collapsedStorageProductKeys.includes(model.key)
+                {sortedStorageModelGroups.map((model) => {
+                  const qtyBySize = new Map(model.sizeGroups.map((group) => [normalizeSize(group.size), Number(group.qty || 0)]))
                   return (
-                    <Fragment key={model.key}>
-                      <tr className={styles.storageParentRow}>
-                        <td>
-                          <button
-                            type="button"
-                            className={styles.storageTextToggle}
-                            onClick={() => toggleStorageProductGroup(model.key)}
-                            aria-expanded={!isModelCollapsed}
-                          >
-                            <span>{isModelCollapsed ? '+' : '-'}</span>
-                            <span className={styles.storageProductName}>{model.productName}</span>
-                            <small>{model.skuInduk || '-'}</small>
-                          </button>
-                        </td>
-                        <td className={styles.centerNumberCell}><strong>{model.qty}</strong></td>
-                        <td className={styles.centerNumberCell}>{model.sizeGroups.length}</td>
-                        <td>{model.koliNumbers.join(', ') || '-'}</td>
-                      </tr>
-                      {!isModelCollapsed ? (
-                        <tr className={styles.storageExpandedRow}>
-                          <td colSpan={4}>
-                            <div className={styles.storageNestedPanel}>
-                              <table className={`${styles.table} ${styles.storageSizeTable}`.trim()}>
-                                <thead>
-                                  <tr>
-                                    <th>Size</th>
-                                    <th className={styles.centerNumberCell}>Stored Qty</th>
-                                    <th>Koli Info</th>
-                                  </tr>
-                                </thead>
-                                <tbody>
-                                  {model.sizeGroups.map((sizeGroup) => (
-                                    <tr key={sizeGroup.key}>
-                                      <td><strong>{sizeGroup.size}</strong></td>
-                                      <td className={styles.centerNumberCell}><strong>{sizeGroup.qty}</strong></td>
-                                      <td>{sizeGroup.koliNumbers.join(', ') || '-'}</td>
-                                    </tr>
-                                  ))}
-                                </tbody>
-                              </table>
-                            </div>
-                          </td>
-                        </tr>
-                      ) : null}
-                    </Fragment>
+                    <tr key={model.key}>
+                      <th scope="row" className={styles.storageMatrixProduct}>
+                        {model.productName}
+                      </th>
+                      {storageMatrixSizes.map((size) => {
+                        const qty = qtyBySize.get(size) || 0
+                        return <td key={size} className={styles.numberCell}>{qty || null}</td>
+                      })}
+                      <td className={`${styles.centerNumberCell} ${styles.storageMatrixTotalCell}`.trim()}>{model.qty || null}</td>
+                    </tr>
                   )
                 })}
               </tbody>
+              <tfoot>
+                <tr>
+                  <th scope="row">Total</th>
+                  {storageMatrixSizes.map((size) => <td key={size} className={styles.numberCell}>{storageMatrixTotals.get(size) || null}</td>)}
+                  <td className={`${styles.centerNumberCell} ${styles.storageMatrixTotalCell}`.trim()}>{storageModelGroups.reduce((sum, model) => sum + Number(model.qty || 0), 0) || null}</td>
+                </tr>
+              </tfoot>
             </table>
           </div>
         ) : (

@@ -302,7 +302,8 @@ async function refreshMissingRequestLocations(rows = []) {
         .from(TAKE_REQUESTS_TABLE)
         .update({ take_from: nextTakeFrom })
         .eq('id', row.id)
-      if (error) return row
+      // Viewers may read stock even when they cannot edit this request.
+      if (error) return { ...row, take_from: nextTakeFrom }
 
       return { ...row, take_from: nextTakeFrom }
     } catch {

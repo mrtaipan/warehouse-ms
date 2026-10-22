@@ -523,34 +523,48 @@
   margin-top: 18px;
 }
 
+.storageHeading {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+}
+
+.storageHeading .eyebrow {
+  width: 100%;
+}
+
 .storageModeToggle {
   display: inline-flex;
-  width: 160px;
-  gap: 4px;
-  padding: 4px;
-  border: 1px solid #dbe2ea;
-  border-radius: 12px;
-  background: #f1f5f9;
+  flex: none;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid #cbd7dc;
+  border-radius: 8px;
+  background: #e8eff1;
 }
 
 .storageModeButton {
-  flex: 1;
-  min-width: 0;
-  height: 32px;
-  padding: 0 10px;
+  min-width: 52px;
+  height: 28px;
+  padding: 0 8px;
   border: 0;
-  border-radius: 9px;
+  border-radius: 5px;
   background: transparent;
-  color: #64748b;
-  font-size: 12px;
-  font-weight: 850;
+  color: #50636c;
+  font-size: 11px;
+  font-weight: 700;
   cursor: pointer;
 }
 
 .storageModeButtonActive {
-  background: #fff;
-  color: #111827;
-  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08);
+  background: #c7e1dd;
+  color: #164e49;
+}
+
+.storageModeButton:focus-visible {
+  outline: 2px solid #0f766e;
+  outline-offset: 2px;
 }
 
 .registrationSourceToggle {
@@ -634,13 +648,146 @@
   width: 160px;
 }
 
+.storageCategoryField {
+  width: 208px;
+}
+
 .storageSearchField {
   flex: 1;
   min-width: 260px;
 }
 
+.storageAddButton {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border: 1px solid #111827;
+  border-radius: 8px;
+  background: #111827;
+  color: #fff;
+  font: inherit;
+  font-size: 27px;
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.storageAddButton:hover:not(:disabled) {
+  background: #263244;
+}
+
+.storageAddButton:focus-visible {
+  outline: 2px solid #0f766e;
+  outline-offset: 2px;
+}
+
+.storageAddButton:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 .storageTable {
   min-width: 920px;
+}
+
+.storageMatrixTable {
+  min-width: 820px;
+}
+
+.storageMatrixTable thead th {
+  background: #dce7ec;
+  color: #273b46;
+}
+
+.storageMatrixTable th:first-child {
+  min-width: 260px;
+}
+
+.storageMatrixTable th:not(:first-child),
+.storageMatrixTable td {
+  min-width: 64px;
+}
+
+.storageMatrixTable tbody tr:nth-child(even) {
+  background: #fbfcfd;
+}
+
+.storageMatrixTable .storageMatrixProduct {
+  padding: 9px 12px;
+  border-top: 1px solid #eef2f7;
+  background: transparent;
+  color: #111827;
+  font-size: 13px;
+  font-weight: 400;
+  letter-spacing: 0;
+  text-align: left;
+  text-transform: none;
+  white-space: normal;
+}
+
+.storageMatrixProduct {
+  overflow-wrap: anywhere;
+}
+
+.storageMatrixSortButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  cursor: pointer;
+}
+
+.storageMatrixSortButton span {
+  font-size: 10px;
+  font-weight: 600;
+  opacity: 0.7;
+}
+
+.storageMatrixSortButton:focus-visible {
+  outline: 2px solid #0f766e;
+  outline-offset: 3px;
+}
+
+.storageMatrixTable .storageMatrixTotalCell {
+  border-left: 1px solid #dbe4ee;
+  background: #263643;
+  color: #fff;
+  font-weight: 600;
+  text-align: center !important;
+  vertical-align: middle;
+}
+
+.storageMatrixTable tbody tr:nth-child(even) .storageMatrixTotalCell {
+  background: #304553;
+}
+
+.storageMatrixTable thead .storageMatrixTotalCell {
+  background: #172733;
+}
+
+.storageMatrixTable tfoot th,
+.storageMatrixTable tfoot td {
+  padding: 12px;
+  border-top: 2px solid #cbd5e1;
+  background: #eef2f7;
+  color: #111827;
+  font-size: 13px;
+  font-weight: 750;
+  font-variant-numeric: tabular-nums;
+}
+
+.storageMatrixTable tfoot .storageMatrixTotalCell {
+  background: #111827;
+  color: #fff;
 }
 
 .storageParentRow td {
@@ -1269,20 +1416,17 @@
     flex-direction: column;
   }
 
-  .storageModeToggle {
-    width: 100%;
-  }
-
-  .storageModeButton {
-    flex: 1;
-  }
-
-  .storageSizeField {
+  .storageSizeField,
+  .storageCategoryField {
     width: 100%;
   }
 
   .storageSearchField {
     min-width: 0;
+  }
+
+  .storageAddButton {
+    align-self: flex-end;
   }
 
   .regularArrangementPanel .filterGrid {

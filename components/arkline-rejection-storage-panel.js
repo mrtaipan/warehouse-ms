@@ -39,7 +39,7 @@ export default function ArklineRejectionStoragePanel({ userEmail, canAdd = false
         current.push({
           id: line.id,
           reasonId: line.reject_reason_id,
-          reasonName: reason?.reason_name || 'Reject reason',
+          reasonName: reason?.reason_name || 'Not recorded',
           grade: line.grade,
           size: String(line.size || 'No size').trim().toUpperCase(),
           qty: Number(line.qty || 0),

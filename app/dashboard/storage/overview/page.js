@@ -6042,9 +6042,7 @@ export default function StorageOverviewPage() {
                   )).length
                 : mode === 'putaway-queue'
                   ? filteredPutawayRows.length
-                : mode === 'reject-storage'
-                  ? rejectKoliGroups.length
-                  : null
+                : null
 
               return (
                 <button

@@ -164,7 +164,7 @@ async function refreshMissingRequestLocations(rows = []) {
         .from(TAKE_REQUESTS_TABLE)
         .update({ take_from: takeFrom })
         .eq('id', row.id)
-      if (error) return row
+      if (error) return { ...row, take_from: takeFrom }
 
       return { ...row, take_from: takeFrom }
     } catch {

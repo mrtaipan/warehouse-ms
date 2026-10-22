@@ -213,7 +213,7 @@ async function loadArklineReturnData(supabase) {
     const normalized = {
       id: line.id,
       reasonId: line.reject_reason_id,
-      reasonName: reason.reason_name || 'Reject reason',
+      reasonName: reason.reason_name || 'Not recorded',
       grade: line.grade,
       size,
       qty: Number(line.qty || 0),

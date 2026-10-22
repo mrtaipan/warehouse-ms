@@ -22,6 +22,9 @@ alter table if exists public.arkline_qc_rejection_storage_batches
 alter table if exists public.arkline_qc_rejection_storage_lines
   alter column reject_detail_id drop not null;
 
+alter table if exists public.arkline_qc_rejection_storage_lines
+  alter column reject_reason_id drop not null;
+
 create index if not exists arkline_qc_rejection_storage_batches_source_type_idx
   on public.arkline_qc_rejection_storage_batches (source_type, storage_date desc);
 
