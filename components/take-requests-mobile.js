@@ -284,7 +284,7 @@ export default function TakeRequestsMobile() {
         )
       }
     } catch (loadError) {
-      setError(loadError.message || 'Failed to load source options.')
+      setError(`Failed to load source locations: ${loadError.message || 'Please try again.'}`)
     } finally {
       setLoadingSourceOptions(false)
     }
@@ -296,6 +296,7 @@ export default function TakeRequestsMobile() {
     setSourceOptions([])
     setSelectedSourceValue('unrecorded')
     setLoadingSourceOptions(false)
+    setError('')
   }
 
   async function handleComplete(event) {
@@ -558,7 +559,7 @@ export default function TakeRequestsMobile() {
           </div>
         </div>
 
-        {error ? <p style={styles.error}>{error}</p> : null}
+        {error && !selectedRequest ? <p style={styles.error} role="alert">{error}</p> : null}
         {success ? <p style={styles.success}>{success}</p> : null}
 
         {visibleRequests.length === 0 ? (
@@ -624,8 +625,8 @@ export default function TakeRequestsMobile() {
             <div style={styles.modalCard}>
               <div style={styles.modalHeader}>
                 <h2 style={styles.modalTitle}>Complete Request</h2>
-                <button type="button" onClick={closeCompleteModal} style={styles.modalCloseButton}>
-                  Close
+                <button type="button" onClick={closeCompleteModal} style={styles.modalCloseButton} aria-label="Close request" title="Close request" disabled={completingId === selectedRequest.id}>
+                  ×
                 </button>
               </div>
 
@@ -650,6 +651,7 @@ export default function TakeRequestsMobile() {
                   <strong style={styles.noteValue}>{selectedRequest.note}</strong>
                 </div>
               ) : null}
+              {error ? <p style={styles.error} role="alert">{error}</p> : null}
 
               <form onSubmit={handleComplete} style={styles.modalForm}>
                 <div style={styles.requestCell}>
@@ -674,7 +676,7 @@ export default function TakeRequestsMobile() {
                           </label>
                         ))}
 
-                        {selectedRequest.destination_area === 'RETUR_KEEPING' && sourceOptions.length === 0 ? (
+                        {selectedRequest.destination_area === 'RETUR_KEEPING' && sourceOptions.length === 0 && !error ? (
                           <div style={styles.sourceLoadingBox}>No matching stock in Pallet, Shelving, or Temp. Sales Area.</div>
                         ) : null}
 
@@ -713,15 +715,17 @@ export default function TakeRequestsMobile() {
                 </div>
 
                 <div style={styles.modalActions}>
-                  <button type="button" onClick={closeCompleteModal} style={styles.modalSecondaryButton}>
-                    Cancel
+                  <button type="button" onClick={closeCompleteModal} style={styles.modalSecondaryButton} aria-label="Cancel completion" title="Cancel" disabled={completingId === selectedRequest.id}>
+                    ×
                   </button>
                   <button
                     type="submit"
-                    style={styles.completeButton}
+                    style={styles.modalCompleteButton}
                     disabled={completingId === selectedRequest.id || ((selectedRequest.destination_area === 'RETUR_KEEPING' || normalizeRequestSource(selectedRequest.source_type) === 'ARKLINE') && (loadingSourceOptions || !selectedSourceValue))}
+                    aria-label={completingId === selectedRequest.id ? 'Completing request' : 'Complete request'}
+                    title="Complete request"
                   >
-                    {completingId === selectedRequest.id ? 'Completing...' : 'Complete'}
+                    {completingId === selectedRequest.id ? '…' : '✓'}
                   </button>
                 </div>
               </form>
@@ -1049,13 +1053,16 @@ const styles = {
     color: '#111827',
   },
   modalCloseButton: {
+    width: '42px',
+    height: '42px',
     border: '1px solid #d1d5db',
     background: '#fff',
     color: '#111827',
-    borderRadius: '10px',
-    padding: '8px 12px',
+    borderRadius: '8px',
+    padding: 0,
     cursor: 'pointer',
-    fontWeight: '600',
+    fontSize: '24px',
+    lineHeight: 1,
   },
   modalText: {
     margin: 0,
@@ -1092,13 +1099,26 @@ const styles = {
     gap: '12px',
   },
   modalSecondaryButton: {
+    width: '46px',
     height: '46px',
-    padding: '0 16px',
-    borderRadius: '16px',
+    padding: 0,
+    borderRadius: '8px',
     border: '1px solid #d1d5db',
     background: '#fff',
     color: '#111827',
-    fontSize: '14px',
+    fontSize: '25px',
+    fontWeight: '700',
+    cursor: 'pointer',
+  },
+  modalCompleteButton: {
+    width: '46px',
+    height: '46px',
+    padding: 0,
+    border: 'none',
+    borderRadius: '8px',
+    background: '#111827',
+    color: '#fff',
+    fontSize: '24px',
     fontWeight: '700',
     cursor: 'pointer',
   },
