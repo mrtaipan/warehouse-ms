@@ -1,5 +1,6 @@
 -- Run after upload_sales_import.sql, upload_sales_import_group_modes.sql,
--- and the updated restock_request_owner_edit.sql. Schedule the 21:00 job separately.
+-- restock_request_owner_edit.sql, and arkline_reject_source_workflow.sql.
+-- Schedule the 21:00 job separately.
 -- Arkline daily sales files use SKU + size and offset direct picker handoffs.
 alter table public.restock_request
   add column if not exists source_sku_id text,
@@ -13,7 +14,7 @@ alter table public.restock_request
   check (
     (fulfilled_qty is null or fulfilled_qty > 0)
     and sales_upload_credited_qty >= 0
-    and sales_upload_credited_qty <= least(qty, coalesce(fulfilled_qty, qty))
+    and sales_upload_credited_qty <= least(qty, coalesce(fulfilled_qty, qty)) - rejected_qty
   );
 
 alter table public.upload_sales_import_batches
@@ -171,7 +172,7 @@ begin
       and regexp_replace(upper(coalesce(sku_id, '')), '[^A-Z0-9]', '', 'g') ~ '^ARK[0-9]{2}[A-Z]{3}[0-9]{3}$'
     order by sku_id, size
   loop
-    perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext(lock_key.sku_id), pg_catalog.hashtext(lock_key.size));
+    perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext(lock_key.sku_id), pg_catalog.hashtext((public.warehouse_size_aliases(lock_key.size))[1]));
   end loop;
 
   for import_line in
@@ -182,9 +183,9 @@ begin
     for update
   loop
     normalized_sku := regexp_replace(upper(coalesce(import_line.sku_id, '')), '[^A-Z0-9]', '', 'g');
-    normalized_size := regexp_replace(upper(coalesce(import_line.size, '')), '[^A-Z0-9]', '', 'g');
+    normalized_size := (public.warehouse_size_aliases(import_line.size))[1];
     if normalized_sku !~ '^ARK[0-9]{2}[A-Z]{3}[0-9]{3}$'
-       or normalized_size = ''
+       or normalized_size = '-'
        or import_line.order_date is null
        or (target_batch.group_code = 'ARKLINE' and upper(coalesce(import_line.order_status, '')) not in ('PROCESSING', 'SHIPPED'))
        or (target_batch.group_code = 'MOB' and lower(coalesce(import_line.order_status, '')) not in ('packaged', 'ship', 'shipped', 'completed')) then
@@ -200,7 +201,7 @@ begin
       and upper(coalesce(location.location_type, '')) = 'SHELVING'
       and substring(regexp_replace(upper(coalesce(storage.sku_id, storage.source_variant_code, '')), '[^A-Z0-9]', '', 'g')
         from '^ARK[0-9]{2}[A-Z]{3}[0-9]{3}') = normalized_sku
-      and regexp_replace(upper(coalesce(storage.size, '')), '[^A-Z0-9]', '', 'g') = normalized_size;
+      and (public.warehouse_size_aliases(storage.size))[1] = normalized_size;
     pick_credit := 0;
     for pick_row in
       select request.*
@@ -212,15 +213,15 @@ begin
           regexp_replace(upper(coalesce(nullif(trim(request.source_sku_id), ''), request.search_term)), '[^A-Z0-9]', '', 'g')
           from '^ARK[0-9]{2}[A-Z]{3}[0-9]{3}'
         ) = normalized_sku
-        and regexp_replace(upper(coalesce(request.size, '')), '[^A-Z0-9]', '', 'g') = normalized_size
-        and request.sales_upload_credited_qty < least(request.qty, coalesce(request.fulfilled_qty, request.qty))
+        and (public.warehouse_size_aliases(request.size))[1] = normalized_size
+        and request.sales_upload_credited_qty < least(request.qty, coalesce(request.fulfilled_qty, request.qty)) - request.rejected_qty
       order by request.completed_at, request.id
       for update of request
     loop
       exit when pick_credit >= import_line.qty;
       available_credit := greatest(
         0,
-        least(pick_row.qty, coalesce(pick_row.fulfilled_qty, pick_row.qty))
+        least(pick_row.qty, coalesce(pick_row.fulfilled_qty, pick_row.qty)) - pick_row.rejected_qty
           - pick_row.sales_upload_credited_qty
       );
       take_qty := least(import_line.qty - pick_credit, available_credit);
@@ -261,7 +262,7 @@ begin
         and storage.qty > 0
         and substring(regexp_replace(upper(coalesce(storage.sku_id, storage.source_variant_code, '')), '[^A-Z0-9]', '', 'g')
           from '^ARK[0-9]{2}[A-Z]{3}[0-9]{3}') = normalized_sku
-        and regexp_replace(upper(coalesce(storage.size, '')), '[^A-Z0-9]', '', 'g') = normalized_size
+        and (public.warehouse_size_aliases(storage.size))[1] = normalized_size
       order by storage.created_at, storage.id
       for update of storage
     loop
@@ -308,7 +309,7 @@ begin
         and upper(coalesce(location.location_type, '')) = 'SHELVING'
         and substring(regexp_replace(upper(coalesce(storage.sku_id, storage.source_variant_code, '')), '[^A-Z0-9]', '', 'g')
           from '^ARK[0-9]{2}[A-Z]{3}[0-9]{3}') = normalized_sku
-        and regexp_replace(upper(coalesce(storage.size, '')), '[^A-Z0-9]', '', 'g') = normalized_size
+        and (public.warehouse_size_aliases(storage.size))[1] = normalized_size
       order by storage.qty asc, storage.created_at, storage.id
       limit 1
       for update of storage;
@@ -529,7 +530,7 @@ begin
       and regexp_replace(upper(coalesce(sku_id, '')), '[^A-Z0-9]', '', 'g') ~ '^ARK[0-9]{2}[A-Z]{3}[0-9]{3}$'
     order by sku_id, size
   loop
-    perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext(lock_key.sku_id), pg_catalog.hashtext(lock_key.size));
+    perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext(lock_key.sku_id), pg_catalog.hashtext((public.warehouse_size_aliases(lock_key.size))[1]));
   end loop;
 
   for import_line in
@@ -560,7 +561,7 @@ begin
         and storage.qty > 0
         and substring(regexp_replace(upper(coalesce(storage.sku_id, storage.source_variant_code, '')), '[^A-Z0-9]', '', 'g')
           from '^ARK[0-9]{2}[A-Z]{3}[0-9]{3}') = import_line.sku_id
-        and regexp_replace(upper(coalesce(storage.size, '')), '[^A-Z0-9]', '', 'g') = import_line.size
+        and (public.warehouse_size_aliases(storage.size))[1] = (public.warehouse_size_aliases(import_line.size))[1]
       order by storage.created_at, storage.id
       for update of storage
     loop
@@ -605,7 +606,7 @@ begin
         and upper(coalesce(location.location_type, '')) = 'SHELVING'
         and substring(regexp_replace(upper(coalesce(storage.sku_id, storage.source_variant_code, '')), '[^A-Z0-9]', '', 'g')
           from '^ARK[0-9]{2}[A-Z]{3}[0-9]{3}') = import_line.sku_id
-        and regexp_replace(upper(coalesce(storage.size, '')), '[^A-Z0-9]', '', 'g') = import_line.size
+        and (public.warehouse_size_aliases(storage.size))[1] = (public.warehouse_size_aliases(import_line.size))[1]
       order by storage.qty asc, storage.created_at, storage.id
       limit 1
       for update of storage;
@@ -639,7 +640,7 @@ begin
         and upper(coalesce(location.location_type, '')) = 'SHELVING'
         and substring(regexp_replace(upper(coalesce(storage.sku_id, storage.source_variant_code, '')), '[^A-Z0-9]', '', 'g')
           from '^ARK[0-9]{2}[A-Z]{3}[0-9]{3}') = import_line.sku_id
-        and regexp_replace(upper(coalesce(storage.size, '')), '[^A-Z0-9]', '', 'g') = import_line.size;
+        and (public.warehouse_size_aliases(storage.size))[1] = (public.warehouse_size_aliases(import_line.size))[1];
       total_retried := total_retried + import_line.skipped_qty - remaining_qty;
       update public.upload_sales_import_lines
       set applied_qty = applied_qty + skipped_qty - remaining_qty,

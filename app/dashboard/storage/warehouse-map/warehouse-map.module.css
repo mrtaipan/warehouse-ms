@@ -1419,6 +1419,7 @@
 
 .segmentedControl {
   display: inline-flex;
+  flex-wrap: wrap;
   width: fit-content;
   max-width: 100%;
   gap: 6px;
@@ -1450,6 +1451,125 @@
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+
+.movementPanel {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.movementToolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.movementToolbar input {
+  flex: 1 1 220px;
+  min-width: 0;
+  min-height: 38px;
+  padding: 8px 12px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #0f172a;
+  font: inherit;
+}
+
+.movementToolbar button {
+  min-height: 38px;
+  padding: 8px 12px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #334155;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.movementToolbar button:disabled {
+  color: #94a3b8;
+  cursor: not-allowed;
+}
+
+.movementFilters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.movementDateField {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.movementDateField input {
+  width: 148px;
+  min-height: 38px;
+  padding: 6px 8px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #0f172a;
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+}
+
+.movementDirection {
+  display: inline-flex;
+  flex-wrap: wrap;
+  max-width: 100%;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.movementDirection button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 30px;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.movementDirection button strong {
+  min-width: 24px;
+  padding: 2px 5px;
+  border-radius: 999px;
+  background: #e2e8f0;
+  color: #0f172a;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.movementDirection .movementDirectionActive {
+  background: #0f172a;
+  color: #ffffff;
+}
+
+.movementDirection .movementDirectionActive strong {
+  background: #334155;
+  color: #ffffff;
 }
 
 .storageGroup {
@@ -1643,6 +1763,14 @@
   color: #0f172a;
   font-size: 14px;
   font-variant-numeric: tabular-nums;
+}
+
+.historyRow .movementIn {
+  color: #15803d;
+}
+
+.historyRow .movementOut {
+  color: #9f1239;
 }
 
 .emptyState {

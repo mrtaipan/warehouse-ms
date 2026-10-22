@@ -5,6 +5,7 @@ import Link from 'next/link'
 
 import { createClient } from '@/utils/supabase/browser'
 import embeddedMapLayouts from './embedded-layout.json'
+import { buildMovementScope, combineWarehouseMovements, getJakartaDateOffset, getJakartaDateRange, getMovementTotals } from './warehouse-map-movements.mjs'
 import styles from './warehouse-map.module.css'
 
 const supabase = createClient()
@@ -804,7 +805,7 @@ function getStorageItemDisplayName(entry = {}) {
   return itemName ? `${skuId} | ${itemName}` : skuId
 }
 
-function formatDateTime(value) {
+function formatDateTime(value, timeZone) {
   if (!value) {
     return '-'
   }
@@ -812,6 +813,7 @@ function formatDateTime(value) {
   return new Intl.DateTimeFormat('en-US', {
     dateStyle: 'medium',
     timeStyle: 'short',
+    ...(timeZone ? { timeZone } : {}),
   }).format(new Date(value))
 }
 
@@ -955,6 +957,73 @@ async function fetchAllRestockHistory() {
   }
 
   return allRows
+}
+
+async function fetchPagedMovementRows(createQuery, dateColumn) {
+  const rows = []
+  let from = 0
+
+  while (true) {
+    const { data, error } = await createQuery()
+      .order(dateColumn, { ascending: false })
+      .order('id', { ascending: false })
+      .range(from, from + BATCH_SIZE - 1)
+
+    if (error) throw error
+    rows.push(...(data || []))
+    if (!data || data.length < BATCH_SIZE) break
+    from += BATCH_SIZE
+  }
+
+  return rows
+}
+
+async function fetchLocationUploadMovements(locationIds, range) {
+  if (locationIds.length === 0) return []
+
+  const columns = 'id, movement_type, rack_location_id, location_snapshot, sku_id, item_name_snapshot, size, qty_delta, created_by, created_at'
+  return fetchPagedMovementRows(
+    () => supabase.from('upload_warehouse_storage_movements').select(columns)
+      .in('rack_location_id', locationIds).gte('created_at', range.start).lt('created_at', range.end),
+    'created_at'
+  )
+}
+
+async function fetchLocationMovements(scope, day) {
+  if (scope.labels.length === 0) return []
+
+  const range = getJakartaDateRange(day)
+  const movementColumns = 'id, movement_type, qty, from_location_label, to_location_label, item_name, size, sku_id, created_by, created_at'
+  const restockColumns = 'id, requester_name, item_name, size, qty, fulfilled_qty, take_from, storage_id, source_sku_id, request_status, destination_area, created_at, completed_at, completed_by'
+  const [fromRows, toRows, restockRows, uploads] = await Promise.all([
+    fetchPagedMovementRows(
+      () => supabase.from('warehouse_storage_movements').select(movementColumns)
+        .in('from_location_label', scope.labels).gte('created_at', range.start).lt('created_at', range.end),
+      'created_at'
+    ),
+    fetchPagedMovementRows(
+      () => supabase.from('warehouse_storage_movements').select(movementColumns)
+        .in('to_location_label', scope.labels).gte('created_at', range.start).lt('created_at', range.end),
+      'created_at'
+    ),
+    fetchPagedMovementRows(
+      () => supabase.from('restock_request').select(restockColumns)
+        .eq('request_status', 'completed').in('take_from', scope.labels)
+        .gte('completed_at', range.start).lt('completed_at', range.end),
+      'completed_at'
+    ),
+    fetchLocationUploadMovements(scope.locationIds, range),
+  ])
+
+  const movements = new Map()
+  ;[...fromRows, ...toRows].forEach((row) => movements.set(row.id, row))
+
+  return combineWarehouseMovements({
+    movements: [...movements.values()],
+    restocks: restockRows.filter((row) => !row.destination_area || row.destination_area === 'PICKER'),
+    uploads,
+    scope,
+  })
 }
 
 async function fetchUserProfiles() {
@@ -1347,6 +1416,89 @@ function getDisplayNameByEmail(email, userProfilesByEmail) {
   return userProfilesByEmail[normalizedEmail] || email
 }
 
+function MovementPanel({ rows, loading, error, selectedDate, onDateChange, onRefresh, userProfilesByEmail }) {
+  const [search, setSearch] = useState('')
+  const [direction, setDirection] = useState('')
+  const term = search.trim().toUpperCase()
+  const searchedRows = term
+    ? rows.filter((row) => [row.sku_id, row.item_name, row.size, row.label, row.detail].some(
+        (value) => String(value || '').toUpperCase().includes(term)
+      ))
+    : rows
+  const { inbound: inboundQty, outbound: outboundQty } = getMovementTotals(loading ? [] : searchedRows)
+  const visibleRows = searchedRows.filter((row) =>
+    !direction || (direction === 'inbound' ? row.qty > 0 : row.qty < 0)
+  )
+
+  return (
+    <div className={styles.movementPanel}>
+      <div className={styles.movementToolbar}>
+        <input
+          type="search"
+          value={search}
+          onChange={(event) => setSearch(event.target.value)}
+          placeholder="Search SKU or product"
+          aria-label="Search movements"
+        />
+        <button type="button" onClick={onRefresh} disabled={loading}>Refresh</button>
+      </div>
+      <div className={styles.movementFilters}>
+        <label className={styles.movementDateField}>
+          <span>Date (WIB)</span>
+          <input
+            type="date"
+            value={selectedDate}
+            onChange={(event) => { if (event.target.value) onDateChange(event.target.value) }}
+          />
+        </label>
+        <div className={styles.movementDirection} aria-label="Movement direction">
+          <button
+            type="button"
+            className={direction === 'inbound' ? styles.movementDirectionActive : ''}
+            aria-pressed={direction === 'inbound'}
+            title="Total inbound quantity"
+            onClick={() => setDirection((current) => current === 'inbound' ? '' : 'inbound')}
+          >
+            Inbound <strong>{loading ? '...' : formatNumber(inboundQty)}</strong>
+          </button>
+          <button
+            type="button"
+            className={direction === 'outbound' ? styles.movementDirectionActive : ''}
+            aria-pressed={direction === 'outbound'}
+            title="Total outbound quantity"
+            onClick={() => setDirection((current) => current === 'outbound' ? '' : 'outbound')}
+          >
+            Outbound <strong>{loading ? '...' : formatNumber(outboundQty)}</strong>
+          </button>
+        </div>
+      </div>
+      {loading ? (
+        <div className={styles.emptyState}><p>Loading movements...</p></div>
+      ) : error ? (
+        <div className={styles.emptyState} role="alert"><p>{error}</p></div>
+      ) : visibleRows.length === 0 ? (
+        <div className={styles.emptyState}><p>{term || direction ? 'No movements match these filters.' : 'No recorded movements for this location and date.'}</p></div>
+      ) : (
+        <div className={styles.storageList}>
+          {visibleRows.map((row) => (
+            <article key={row.id} className={styles.historyRow}>
+              <span>{row.dateLabel || formatDateTime(row.date, 'Asia/Jakarta')}</span>
+              <div>
+                <h4>{getStorageItemDisplayName(row)}{row.size ? ` / ${row.size}` : ''}</h4>
+                <p>{row.label} / {row.detail}</p>
+                <p>By {getDisplayNameByEmail(row.actor, userProfilesByEmail)}</p>
+              </div>
+              <strong className={row.qty > 0 ? styles.movementIn : styles.movementOut}>
+                {row.qty > 0 ? '+' : ''}{formatNumber(row.qty)}
+              </strong>
+            </article>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function WarehouseMapClient({ canEditMap = false, canUseRegistry = false }) {
   const canvasRef = useRef(null)
   const interactionRef = useRef(null)
@@ -1367,6 +1519,11 @@ export default function WarehouseMapClient({ canEditMap = false, canUseRegistry 
   const [rackLocations, setRackLocations] = useState([])
   const [storageEntries, setStorageEntries] = useState([])
   const [restockHistoryRows, setRestockHistoryRows] = useState([])
+  const [movementRows, setMovementRows] = useState([])
+  const [movementDate, setMovementDate] = useState(() => getJakartaDateOffset(-1))
+  const [movementLoading, setMovementLoading] = useState(false)
+  const [movementError, setMovementError] = useState('')
+  const [movementRefreshKey, setMovementRefreshKey] = useState(0)
   const [userProfilesByEmail, setUserProfilesByEmail] = useState({})
   const [arklineProducts, setArklineProducts] = useState([])
   const [registrySaving, setRegistrySaving] = useState(false)
@@ -1541,9 +1698,15 @@ export default function WarehouseMapClient({ canEditMap = false, canUseRegistry 
   const flowArrowElements = activeMapElements.filter((element) => element.type === 'arrow')
   const textElements = activeMapElements.filter((element) => element.type === 'text')
   const palletElements = activeMapElements.filter((element) => element.type === 'pallet')
-  const assignedPalletElements = palletElements.filter((element) => element.code)
+  const assignedPalletElements = useMemo(
+    () => activeMapElements.filter((element) => element.type === 'pallet' && element.code),
+    [activeMapElements]
+  )
   const shelvingElements = activeMapElements.filter((element) => element.type === 'shelving')
-  const assignedShelvingElements = shelvingElements.filter((element) => element.code)
+  const assignedShelvingElements = useMemo(
+    () => activeMapElements.filter((element) => element.type === 'shelving' && element.code),
+    [activeMapElements]
+  )
   const selectedElement = activeMapElements.find((element) => element.id === selectedElementId) || null
   const selectedWarehouseIndex = WAREHOUSE_ORDER.indexOf(selectedWarehouseKey)
   const canGoPreviousWarehouse = selectedWarehouseIndex > 0
@@ -1645,7 +1808,7 @@ export default function WarehouseMapClient({ canEditMap = false, canUseRegistry 
       ? [{
           key: selectedShelvingLevelKey,
           label: `Level ${selectedShelvingLevelKey}`,
-          entries,
+          entries: aggregateStorageDisplayEntries(entries),
           qty: entries.reduce((sum, entry) => sum + Number(entry.qty || 0), 0),
         }]
       : []
@@ -1774,6 +1937,52 @@ export default function WarehouseMapClient({ canEditMap = false, canUseRegistry 
     storageEntryById,
     warehouse.key,
   ])
+  const movementScope = useMemo(() => {
+    if (selectedLocationKind === 'shelving') {
+      const locations = (selectedShelvingData?.locations || []).filter((location) =>
+        selectedShelvingLevelKey === SUBLOCATION_ALL_KEY ||
+        String(location.sub_location || '').trim().toUpperCase() === selectedShelvingLevelKey
+      )
+      const entries = (selectedShelvingData?.entries || []).filter((entry) =>
+        selectedShelvingLevelKey === SUBLOCATION_ALL_KEY ||
+        String(entry.location?.sub_location || '').trim().toUpperCase() === selectedShelvingLevelKey
+      )
+      return buildMovementScope(locations, entries)
+    }
+
+    const locations = (selectedSlot?.locations || []).filter((location) =>
+      selectedZoneIsArkline || selectedSubLocationKey === SUBLOCATION_ALL_KEY ||
+      getLocationSubLocationKey(location) === selectedSubLocationKey
+    )
+    const entries = (selectedSlot?.entries || []).filter((entry) =>
+      selectedZoneIsArkline || selectedSubLocationKey === SUBLOCATION_ALL_KEY ||
+      getEntrySubLocationKey(entry) === selectedSubLocationKey
+    )
+    return buildMovementScope(locations, entries)
+  }, [selectedLocationKind, selectedShelvingData, selectedShelvingLevelKey, selectedSlot, selectedSubLocationKey, selectedZoneIsArkline])
+
+  useEffect(() => {
+    if (!isRackOpen || activePanel !== 'movement') return
+
+    let cancelled = false
+    setMovementLoading(true)
+    setMovementError('')
+    setMovementRows([])
+
+    fetchLocationMovements(movementScope, movementDate)
+      .then((rows) => {
+        if (!cancelled) setMovementRows(rows)
+      })
+      .catch((loadError) => {
+        if (!cancelled) setMovementError(loadError.message || 'Failed to load movements.')
+      })
+      .finally(() => {
+        if (!cancelled) setMovementLoading(false)
+      })
+
+    return () => { cancelled = true }
+  }, [activePanel, isRackOpen, movementDate, movementRefreshKey, movementScope])
+
   const warehouseRackCodes = useMemo(() => {
     const codes = new Set()
 
@@ -2904,6 +3113,13 @@ export default function WarehouseMapClient({ canEditMap = false, canUseRegistry 
                 >
                   Current Goods
                 </button>
+                <button
+                  type="button"
+                  className={activePanel === 'movement' ? styles.segmentActive : ''}
+                  onClick={() => setActivePanel('movement')}
+                >
+                  Movement
+                </button>
                 {canUseRegistry ? (
                   <button
                     type="button"
@@ -2944,6 +3160,18 @@ export default function WarehouseMapClient({ canEditMap = false, canUseRegistry 
                   ))
                 )}
               </div> : null}
+
+              {activePanel === 'movement' ? (
+                <MovementPanel
+                  rows={movementRows}
+                  loading={movementLoading}
+                  error={movementError}
+                  selectedDate={movementDate}
+                  onDateChange={(date) => { setMovementLoading(true); setMovementDate(date) }}
+                  onRefresh={() => setMovementRefreshKey((key) => key + 1)}
+                  userProfilesByEmail={userProfilesByEmail}
+                />
+              ) : null}
 
               {activePanel === 'registry' && canUseRegistry ? (
                 <form className={styles.registryForm} onSubmit={handleRegistrySubmit}>
@@ -3153,6 +3381,13 @@ export default function WarehouseMapClient({ canEditMap = false, canUseRegistry 
                     >
                       History
                     </button>
+                    <button
+                      type="button"
+                      className={activePanel === 'movement' ? styles.segmentActive : ''}
+                      onClick={() => setActivePanel('movement')}
+                    >
+                      Movement
+                    </button>
                     {canUseRegistry ? (
                       <button
                         type="button"
@@ -3212,6 +3447,16 @@ export default function WarehouseMapClient({ canEditMap = false, canUseRegistry 
                           <strong>{formatNumber(row.qty)}</strong>
                         </article>
                       ))
+                    ) : activePanel === 'movement' ? (
+                      <MovementPanel
+                        rows={movementRows}
+                        loading={movementLoading}
+                        error={movementError}
+                        selectedDate={movementDate}
+                        onDateChange={(date) => { setMovementLoading(true); setMovementDate(date) }}
+                        onRefresh={() => setMovementRefreshKey((key) => key + 1)}
+                        userProfilesByEmail={userProfilesByEmail}
+                      />
                     ) : activePanel === 'registry' && canUseRegistry ? (
                       <form className={styles.registryForm} onSubmit={handleRegistrySubmit}>
                         <div className={styles.registryHeader}>

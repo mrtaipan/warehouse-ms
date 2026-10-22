@@ -10,6 +10,8 @@ import { getProfileByAuthenticatedUser } from '@/utils/user-profiles'
 import { useRealtimeRefresh } from '@/utils/supabase/use-realtime-refresh'
 import ProductDirectoryClient from '../daftar-barang/product-directory-client'
 import ShelvingUploadClient from '../shelving-upload-client'
+import ArklineRejectionStoragePanel from '@/components/arkline-rejection-storage-panel'
+import arklineReportStyles from '@/app/dashboard/qc/retur-report/retur-report.module.css'
 
 const supabase = createClient()
 const BATCH_SIZE = 1000
@@ -1095,12 +1097,14 @@ async function getCurrentUserEmail() {
 export default function StorageOverviewPage() {
   const searchParams = useSearchParams()
   const initialMode = String(searchParams.get('mode') || '').trim().toLowerCase()
+  const initialRejectStorageSource = searchParams.get('source') === 'arkline' ? 'arkline' : 'regular'
   const initialListMode = ['history', 'movement-history', 'queue', 'temporary-sales', 'temporary-retur', 'putaway-queue', 'product-directory', 'reject-storage'].includes(initialMode) ? initialMode : 'stock'
   const initialRegisterOpen = searchParams.get('register') === '1'
   const initialProductSearch = String(searchParams.get('q') || searchParams.get('search') || '').trim().toUpperCase()
   const [rackLocations, setRackLocations] = useState([])
   const [storageEntries, setStorageEntries] = useState([])
   const [rejectStorageRows, setRejectStorageRows] = useState([])
+  const [rejectStorageSource, setRejectStorageSource] = useState(initialRejectStorageSource)
   const [restockHistoryRows, setRestockHistoryRows] = useState([])
   const [storageQueueRows, setStorageQueueRows] = useState([])
   const [temporarySalesRows, setTemporarySalesRows] = useState([])
@@ -1126,6 +1130,10 @@ export default function StorageOverviewPage() {
   const [success, setSuccess] = useState('')
   const [takeModalError, setTakeModalError] = useState('')
   const [moveModalError, setMoveModalError] = useState('')
+  const [reqcEntries, setReqcEntries] = useState([])
+  const [reqcQtys, setReqcQtys] = useState({})
+  const [reqcError, setReqcError] = useState('')
+  const [movingToReqc, setMovingToReqc] = useState(false)
   const [categoryModalError, setCategoryModalError] = useState('')
   const [rejectModalError, setRejectModalError] = useState('')
   const [queueModalError, setQueueModalError] = useState('')
@@ -1507,7 +1515,7 @@ export default function StorageOverviewPage() {
   const canTakeStorageItem = Boolean(storageAccess.locationEdit)
   const canMoveStorageItem = Boolean(storageAccess.locationEdit)
   const canCategorizeStorageItem = Boolean(storageAccess.categoryManage)
-  const canSelectCurrentStockRows = canTakeStorageItem || canCategorizeStorageItem
+  const canSelectCurrentStockRows = canTakeStorageItem || canCategorizeStorageItem || canMoveStorageItem
   const canStoreQueueItem = Boolean(storageAccess.queueEdit)
   const canManageProductDirectory = Boolean(storageAccess.productDirectoryAdd || storageAccess.productDirectoryEdit)
   const canViewShelvingUpload = Boolean(storageAccess.shelvingUpload)
@@ -2575,10 +2583,23 @@ export default function StorageOverviewPage() {
     () => storageRows.filter((entry) => selectedTemporarySourceIdSet.has(String(entry.id))),
     [selectedTemporarySourceIdSet, storageRows]
   )
+  const selectedStockGroupCount = useMemo(
+    () => aggregateStorageDisplayRows(selectedMoveRows).length,
+    [selectedMoveRows]
+  )
+  const canActOnSelectedStockGroup = selectedMoveRows.length > 0 &&
+    new Set(selectedMoveRows.map((entry) => getLocationStorageGroup(entry.location))).size === 1
+  const canMoveSelectionToReqc = selectedMoveRows.length > 0 && selectedMoveRows.every((entry) => getLocationStorageGroup(entry.location) !== 'ARKLINE')
   const selectedCategoryRows = useMemo(
     () => storageRows.filter((entry) => selectedCategoryRowIdSet.has(String(entry.id))),
     [selectedCategoryRowIdSet, storageRows]
   )
+  const selectedCategoryGroupCount = useMemo(
+    () => aggregateStorageDisplayRows(selectedCategoryRows).length,
+    [selectedCategoryRows]
+  )
+  const canCategorizeSelectedStockGroup = selectedCategoryRows.length > 0 &&
+    new Set(selectedCategoryRows.map((entry) => getLocationStorageGroup(entry.location))).size === 1
   const visibleCategoryRowIds = visibleStockRows.flatMap((entry) => entry.sourceRowIds || [String(entry.id)])
   const allVisibleCategoryRowsSelected =
     canCategorizeStorageItem &&
@@ -4644,6 +4665,57 @@ export default function StorageOverviewPage() {
     setSuccess('')
   }
 
+  function openReqcModal(entries) {
+    if (!canMoveStorageItem || !entries.length) return
+    if (entries.length > 100) {
+      setError('Select up to 100 stock rows for one Re-QC move.')
+      return
+    }
+    const invalid = entries.find((row) => getLocationStorageGroup(row.location) === 'ARKLINE')
+    if (invalid) {
+      setError('Re-QC Reguler only accepts regular stock. Deselect Arkline items first.')
+      return
+    }
+    setReqcEntries(entries)
+    setReqcQtys(Object.fromEntries(entries.map((row) => [String(row.id), String(Math.floor(Number(row.qty || 0)))])))
+    setReqcError('')
+  }
+
+  async function moveToRegularReqc(event) {
+    event.preventDefault()
+    const uncategorized = reqcEntries.find((row) => !row.category_id)
+    if (uncategorized) {
+      setReqcError('Set the item category before moving it to Re-QC.')
+      return
+    }
+    const items = reqcEntries.map((row) => ({ warehouse_storage_id: Number(row.id), qty: Number(reqcQtys[String(row.id)]) }))
+    if (!items.length || items.some((item, index) => !Number.isInteger(item.qty) || item.qty < 1 || item.qty > Math.floor(Number(reqcEntries[index].qty || 0)))) {
+      setReqcError('Enter a whole-number quantity within the available stock for every item.')
+      return
+    }
+    setMovingToReqc(true)
+    setReqcError('')
+    try {
+      const userEmail = await getCurrentUserEmail()
+      const { error: moveError } = await supabase.rpc('move_warehouse_storage_selection_to_reqc_queue', {
+        p_items: items,
+        p_created_by: userEmail,
+      })
+      if (moveError) {
+        setReqcError(moveError.message)
+      } else {
+        setReqcEntries([])
+        setSelectedTemporarySourceIds((current) => current.filter((id) => !items.some((item) => String(item.warehouse_storage_id) === String(id))))
+        setSuccess(`${items.reduce((sum, item) => sum + item.qty, 0)} pcs moved to the Re-QC Reguler queue.`)
+        await refreshInventoryData({ forceStorage: true })
+      }
+    } catch (moveError) {
+      setReqcError(moveError?.message || 'Could not move the selected items to Re-QC.')
+    } finally {
+      setMovingToReqc(false)
+    }
+  }
+
   function openEditModal(entry) {
     if (!canEditStorageItem) return
     const sourceEntries = getStorageSourceEntries(entry)
@@ -4667,10 +4739,7 @@ export default function StorageOverviewPage() {
     const selectedEntries = entries.filter(Boolean)
     if (selectedEntries.length === 0) return
     const groups = new Set(selectedEntries.map((entry) => getLocationStorageGroup(entry.location)))
-    if (groups.size !== 1) {
-      setError('Select items from one storage group to move together.')
-      return
-    }
+    if (groups.size !== 1) return
     setMoveModalEntry(selectedEntries[0])
     setMoveModalEntries(selectedEntries)
     setMoveQtys(Object.fromEntries(selectedEntries.map((entry) => [String(entry.id), String(entry.qty || '')])))
@@ -5862,18 +5931,18 @@ export default function StorageOverviewPage() {
                 style={{
                   ...styles.iconActionButton,
                   ...styles.iconActionButtonWithBadge,
-                  ...(selectedCategoryRows.length === 0 ? styles.iconActionButtonDisabled : {}),
+                  ...(!canCategorizeSelectedStockGroup ? styles.iconActionButtonDisabled : {}),
                 }}
-                title="Set Item Category"
+                title={canCategorizeSelectedStockGroup ? 'Set Item Category' : selectedCategoryRows.length ? 'Select items from one storage group' : 'Select stock items first'}
                 aria-label="Set Item Category"
-                disabled={selectedCategoryRows.length === 0}
+                disabled={!canCategorizeSelectedStockGroup}
               >
                 <svg viewBox="0 0 24 24" style={styles.actionIcon} aria-hidden="true">
                   <path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8Z" />
                   <path d="M7.5 7.5h.01" />
                 </svg>
-                {selectedCategoryRows.length > 0 ? (
-                  <span style={styles.actionBadge}>{selectedCategoryRows.length}</span>
+                {canCategorizeSelectedStockGroup ? (
+                  <span style={styles.actionBadge}>{selectedCategoryGroupCount}</span>
                 ) : null}
               </button>
               ) : null}
@@ -5951,7 +6020,10 @@ export default function StorageOverviewPage() {
             ))}
           </div>
 
-          <div style={styles.storageTabPanel}>
+          <div style={{
+            ...styles.storageTabPanel,
+            ...(visibleListMode === 'reject-storage' && rejectStorageSource === 'arkline' ? styles.arklineRejectTabPanel : {}),
+          }}>
         {isStorageLocationMode ? (
           <div
             style={styles.storageWorkspaceTabs}
@@ -6030,6 +6102,27 @@ export default function StorageOverviewPage() {
             ))}
           </div>
         ) : null}
+        {visibleListMode === 'reject-storage' ? (
+          <div style={styles.rejectSourceToggle} role="group" aria-label="Reject storage source">
+            {[
+              ['regular', 'Reguler'],
+              ['arkline', 'Arkline'],
+            ].map(([source, label]) => (
+              <button
+                key={source}
+                type="button"
+                aria-pressed={rejectStorageSource === source}
+                onClick={() => setRejectStorageSource(source)}
+                style={{
+                  ...styles.rejectSourceToggleButton,
+                  ...(rejectStorageSource === source ? styles.rejectSourceToggleButtonActive : {}),
+                }}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        ) : null}
         {visibleListMode === 'product-directory' ? (
           <ProductDirectoryClient
             embedded
@@ -6037,8 +6130,18 @@ export default function StorageOverviewPage() {
             canManage={canManageProductDirectory}
             lockedGroup={lockedStorageGroup}
           />
+        ) : visibleListMode === 'reject-storage' && rejectStorageSource === 'arkline' ? (
+          <ArklineRejectionStoragePanel userEmail={storageAccess.currentUserEmail} canAdd={canAddRejectStorage} />
         ) : (
           <>
+        {visibleListMode === 'reject-storage' ? (
+          <div className={arklineReportStyles.sectionHeader}>
+            <div>
+              <p className={arklineReportStyles.eyebrow}>Reguler</p>
+              <h2 className={arklineReportStyles.sectionTitle}>Reject Storage</h2>
+            </div>
+          </div>
+        ) : null}
         {isTemporaryAreaMode ? (
           <div style={styles.temporarySalesShell}>
             <div
@@ -6211,7 +6314,7 @@ export default function StorageOverviewPage() {
         >
           <div style={visibleListMode === 'stock' && isCompactLayout ? styles.mobileProductSearchField : styles.field}>
             <div style={styles.searchLabelRow}>
-              <label style={styles.label}>{visibleListMode === 'reject-storage' ? 'Reject Search' : 'Product Search'}</label>
+              <label style={styles.label}>{visibleListMode === 'reject-storage' ? 'Search' : 'Product Search'}</label>
               {visibleListMode === 'stock' ? (
                 <div style={styles.searchLabelActions}>
                   <label style={styles.inlineUncategorizedControl}>
@@ -6407,12 +6510,12 @@ export default function StorageOverviewPage() {
               <button
                 type="button"
                 onClick={() => openTemporaryDestinationModal('stock')}
-                style={selectedTemporarySourceIds.length > 0
+                style={canActOnSelectedStockGroup
                   ? { ...styles.iconChecklistButton, ...styles.iconActionButtonWithBadge }
                   : { ...styles.iconChecklistButton, ...styles.iconActionButtonWithBadge, ...styles.iconActionButtonDisabled }}
-                title="Add selected items to Temp. Sales Area"
+                title={canActOnSelectedStockGroup ? 'Add selected items to Temp. Sales Area' : selectedMoveRows.length ? 'Select items from one storage group' : 'Select stock items first'}
                 aria-label="Add selected items to Temp. Sales Area"
-                disabled={selectedTemporarySourceIds.length === 0}
+                disabled={!canActOnSelectedStockGroup}
               >
                 <svg viewBox="0 0 24 24" style={styles.resetIcon} aria-hidden="true">
                   <path d="M8 3h8" />
@@ -6421,7 +6524,7 @@ export default function StorageOverviewPage() {
                   <path d="m7 12 2 2 4-4" />
                   <path d="M7 17h8" />
                 </svg>
-                {selectedTemporarySourceIds.length > 0 ? <span style={styles.actionBadge}>{selectedTemporarySourceIds.length}</span> : null}
+                {canActOnSelectedStockGroup ? <span style={styles.actionBadge}>{selectedStockGroupCount}</span> : null}
               </button>
             </div>
           ) : null}
@@ -6436,11 +6539,11 @@ export default function StorageOverviewPage() {
                   height: '44px',
                   borderRadius: '10px',
                   ...styles.iconActionButtonWithBadge,
-                  ...(selectedMoveRows.length === 0 ? styles.iconActionButtonDisabled : {}),
+                  ...(!canActOnSelectedStockGroup ? styles.iconActionButtonDisabled : {}),
                 }}
-                title="Move selected items to one location"
+                title={canActOnSelectedStockGroup ? 'Move selected items to one location' : selectedMoveRows.length ? 'Select items from one storage group' : 'Select stock items first'}
                 aria-label="Move selected items to one location"
-                disabled={selectedMoveRows.length === 0}
+                disabled={!canActOnSelectedStockGroup}
               >
                 <svg viewBox="0 0 24 24" style={styles.actionIcon} aria-hidden="true">
                   <path d="M4 12h16" />
@@ -6448,7 +6551,27 @@ export default function StorageOverviewPage() {
                   <path d="M4 6h8" />
                   <path d="M4 18h8" />
                 </svg>
-                {selectedMoveRows.length > 0 ? <span style={styles.actionBadge}>{selectedMoveRows.length}</span> : null}
+                {canActOnSelectedStockGroup ? <span style={styles.actionBadge}>{selectedStockGroupCount}</span> : null}
+              </button>
+            </div>
+          ) : null}
+          {visibleListMode === 'stock' && canMoveStorageItem ? (
+            <div style={styles.toolbarActionField}>
+              <button
+                type="button"
+                onClick={() => openReqcModal(selectedMoveRows)}
+                style={{ ...styles.iconActionButton, width: '44px', height: '44px', borderRadius: '10px', ...styles.iconActionButtonWithBadge, ...(!canMoveSelectionToReqc ? styles.iconActionButtonDisabled : {}) }}
+                title={canMoveSelectionToReqc ? 'Move selected items to Re-QC Reguler' : selectedMoveRows.length ? 'Deselect Arkline items to use Re-QC Reguler' : 'Select stock items first'}
+                aria-label="Move selected items to Re-QC Reguler"
+                disabled={!canMoveSelectionToReqc}
+              >
+                <svg viewBox="0 0 24 24" style={styles.actionIcon} aria-hidden="true">
+                  <path d="M4 12a8 8 0 0 1 14-5" />
+                  <path d="m18 3 1 4-4 1" />
+                  <path d="M20 12a8 8 0 0 1-14 5" />
+                  <path d="m6 21-1-4 4-1" />
+                </svg>
+                {canMoveSelectionToReqc ? <span style={styles.actionBadge}>{selectedStockGroupCount}</span> : null}
               </button>
             </div>
           ) : null}
@@ -6504,7 +6627,7 @@ export default function StorageOverviewPage() {
           ) : null}
           {visibleListMode === 'reject-storage' ? (
             <div style={styles.rejectToolbarIconField}>
-              <button type="button" onClick={clearRejectFilters} style={styles.iconResetButton} title="Clear Reject Search" aria-label="Clear Reject Search">
+              <button type="button" onClick={clearRejectFilters} style={styles.iconResetButton} title="Clear Search" aria-label="Clear Search">
                 <svg viewBox="0 0 24 24" style={styles.resetIcon} aria-hidden="true">
                   <path d="M3 12a9 9 0 0 1 15.4-6.4L21 8" />
                   <path d="M21 3v5h-5" />
@@ -7486,12 +7609,25 @@ export default function StorageOverviewPage() {
                 <p style={styles.modalEyebrow}>Warehouse</p>
                 <h2 style={styles.modalTitle}>{rejectModalEntry ? 'Edit Reject Koli' : 'Reject Storage'}</h2>
               </div>
-              <div style={styles.modalHeaderActions}>
-                <button type="button" onClick={closeRejectModal} style={styles.modalCancelButton}>
-                  Cancel
+              <div className={arklineReportStyles.modalIconActions}>
+                <button
+                  type="submit"
+                  form="reject-storage-form"
+                  className={arklineReportStyles.iconSaveButton}
+                  disabled={savingReject}
+                  aria-label="Save Reject Koli"
+                  title="Save Reject Koli"
+                >
+                  ✓
                 </button>
-                <button type="submit" form="reject-storage-form" style={styles.editButton} disabled={savingReject}>
-                  {savingReject ? 'Saving...' : 'Save Reject Koli'}
+                <button
+                  type="button"
+                  onClick={closeRejectModal}
+                  className={`${arklineReportStyles.closeButton} ${arklineReportStyles.dangerCloseButton}`}
+                  aria-label="Close"
+                  title="Close"
+                >
+                  X
                 </button>
               </div>
             </div>
@@ -8814,6 +8950,45 @@ export default function StorageOverviewPage() {
         </div>
       ) : null}
 
+      {reqcEntries.length > 0 && canMoveStorageItem ? (
+        <div style={styles.modalOverlay}>
+          <div style={styles.modalCardWide} role="dialog" aria-modal="true" aria-label="Move to Re-QC Reguler">
+            <form onSubmit={moveToRegularReqc} style={{ display: 'grid', gap: '16px' }}>
+              <div style={styles.modalHeader}>
+                <div style={styles.modalTitleGroup}>
+                  <p style={styles.modalEyebrow}>Current Stock</p>
+                  <h2 style={styles.modalTitle}>Move to Re-QC Reguler</h2>
+                </div>
+                <div style={styles.modalHeaderActions}>
+                  <button type="button" onClick={() => setReqcEntries([])} style={styles.modalCancelButton} disabled={movingToReqc}>Cancel</button>
+                  <button type="submit" style={styles.takeButton} disabled={movingToReqc}>{movingToReqc ? 'Moving...' : 'Move to Re-QC'}</button>
+                </div>
+              </div>
+              <div style={{ maxHeight: 'min(56vh, 460px)', overflowY: 'auto', display: 'grid', gap: '8px' }}>
+                {reqcEntries.map((entry) => (
+                  <div key={entry.id} style={{ ...styles.takeModalItemCard, display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(84px, 120px)', alignItems: 'end', gap: isCompactLayout ? '8px' : '16px' }}>
+                    <div style={{ minWidth: 0 }}>
+                      <strong style={{ ...styles.takeModalItemName, overflowWrap: 'anywhere' }}>{getStorageItemDisplayName(entry)}</strong>
+                      <div style={styles.moveMetaRow}>
+                        <span style={styles.moveMetaPill}>Size {entry.size || '-'}</span>
+                        <span style={styles.moveMetaPill}>Available {entry.qty}</span>
+                        <span style={styles.moveMetaPill}>{getLocationLabel(entry.location)}</span>
+                      </div>
+                    </div>
+                    <label style={{ ...styles.moveQtyField, flexDirection: 'column', alignItems: 'stretch' }}>
+                      <span style={styles.moveQtyLabel}>Move Qty</span>
+                      <input type="number" min="1" max={Math.floor(Number(entry.qty || 0))} step="1" inputMode="numeric" value={reqcQtys[String(entry.id)] ?? ''} onChange={(event) => setReqcQtys((current) => ({ ...current, [String(entry.id)]: event.target.value }))} style={{ ...styles.moveQtyInput, width: '100%', minWidth: 0 }} required />
+                    </label>
+                  </div>
+                ))}
+              </div>
+              <strong style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>Total {reqcEntries.reduce((sum, entry) => sum + (Number(reqcQtys[String(entry.id)]) || 0), 0)} pcs</strong>
+              {reqcError ? <p style={styles.modalInlineError} role="alert">{reqcError}</p> : null}
+            </form>
+          </div>
+        </div>
+      ) : null}
+
       {takeModalEntry && canTakeStorageItem ? (
         <div style={styles.modalOverlay}>
           <div style={styles.modalCard}>
@@ -9736,6 +9911,40 @@ const styles = {
     background: 'rgba(248, 250, 252, 0.98)',
     boxShadow: '0 16px 34px rgba(15, 23, 42, 0.05)',
   },
+  arklineRejectTabPanel: {
+    border: 0,
+    borderRadius: 0,
+    background: 'transparent',
+    boxShadow: 'none',
+  },
+  rejectSourceToggle: {
+    display: 'inline-flex',
+    alignSelf: 'flex-start',
+    gap: '4px',
+    marginTop: '12px',
+    marginBottom: '8px',
+    padding: '4px',
+    border: '1px solid #dbe2ea',
+    borderRadius: '8px',
+    background: '#f1f5f9',
+  },
+  rejectSourceToggleButton: {
+    minHeight: '36px',
+    minWidth: '96px',
+    padding: '0 14px',
+    border: 0,
+    borderRadius: '5px',
+    background: 'transparent',
+    color: '#64748b',
+    fontSize: '13px',
+    fontWeight: '700',
+    cursor: 'pointer',
+  },
+  rejectSourceToggleButtonActive: {
+    background: '#fff',
+    color: '#111827',
+    boxShadow: '0 1px 3px rgba(15, 23, 42, 0.08)',
+  },
   storageWorkspaceTabs: {
     display: 'flex',
     alignItems: 'center',
@@ -10213,10 +10422,10 @@ const styles = {
     gridTemplateColumns: 'minmax(0, 1fr) minmax(96px, 112px)',
   },
   stockSearchToolbarWithAction: {
-    gridTemplateColumns: 'minmax(0, 1fr) minmax(96px, 112px) repeat(3, 44px)',
+    gridTemplateColumns: 'minmax(0, 1fr) minmax(96px, 112px) repeat(4, 44px)',
   },
   stockSearchToolbarCompact: {
-    gridTemplateColumns: 'minmax(0, 1fr) minmax(96px, 112px) repeat(3, 44px)',
+    gridTemplateColumns: 'minmax(0, 1fr) minmax(96px, 112px) repeat(4, 44px)',
   },
   mobileStockSearchToolbarCompact: {
     display: 'flex',

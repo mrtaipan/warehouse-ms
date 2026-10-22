@@ -7,6 +7,7 @@ import { createClient } from '@/utils/supabase/browser'
 import { ADMIN_EMAIL } from '@/utils/permissions'
 import { getRolesForPermissionCode } from '@/utils/role-permissions'
 import { readFileAsDataUrl } from '../shared'
+import RegularReQcWorkflow from '@/components/regular-reqc-workflow'
 
 const supabase = createClient()
 const PRODUCT_PHOTOS_BUCKET = 'product-photos'
@@ -294,6 +295,40 @@ const styles = {
     display: 'flex',
     gap: '12px',
     flexWrap: 'wrap',
+  },
+  modeSwitchRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    flexWrap: 'wrap',
+  },
+  reQcMenu: {
+    position: 'absolute',
+    top: 'calc(100% + 6px)',
+    left: 0,
+    zIndex: 20,
+    minWidth: '100%',
+    padding: '4px',
+    border: '1px solid #d1d5db',
+    borderRadius: '8px',
+    background: '#fff',
+    boxShadow: '0 8px 20px rgba(17, 24, 39, 0.1)',
+  },
+  reQcMenuOption: {
+    display: 'block',
+    width: '100%',
+    padding: '10px 12px',
+    border: 0,
+    borderRadius: '4px',
+    background: 'transparent',
+    color: '#111827',
+    fontSize: '13px',
+    fontWeight: '600',
+    textAlign: 'left',
+    cursor: 'pointer',
+  },
+  reQcMenuOptionActive: {
+    background: '#f3f4f6',
   },
   modeButton: {
     minHeight: '40px',
@@ -1519,6 +1554,81 @@ function buildModelRowsForSource(source, unloadRows, qcItems) {
   return Array.from(rowMap.values()).sort((a, b) => getModelKey(a.model_name, a.model_color).localeCompare(getModelKey(b.model_name, b.model_color)))
 }
 
+function ReceivingModePicker({ qcMode, reQcSource, isMobileLayout, onModeChange, onReQcSourceChange }) {
+  const [menuOpen, setMenuOpen] = useState(false)
+  const menuRef = useRef(null)
+
+  useEffect(() => {
+    if (!menuOpen) return undefined
+    function closeOnOutsideClick(event) {
+      if (!menuRef.current?.contains(event.target)) setMenuOpen(false)
+    }
+    function closeOnEscape(event) {
+      if (event.key === 'Escape') setMenuOpen(false)
+    }
+    document.addEventListener('pointerdown', closeOnOutsideClick)
+    document.addEventListener('keydown', closeOnEscape)
+    return () => {
+      document.removeEventListener('pointerdown', closeOnOutsideClick)
+      document.removeEventListener('keydown', closeOnEscape)
+    }
+  }, [menuOpen])
+
+  return (
+    <div style={styles.modeSwitchRow}>
+      <div style={{ ...styles.modeRow, width: isMobileLayout ? '100%' : 'auto' }}>
+        {[
+          ['regular', 'QC Reguler'],
+          ['arkline', 'QC Arkline'],
+        ].map(([mode, label]) => (
+          <button
+            key={mode}
+            type="button"
+            onClick={() => { setMenuOpen(false); onModeChange(mode) }}
+            style={{ ...styles.modeButton, ...(qcMode === mode ? styles.modeButtonActive : {}), ...(isMobileLayout ? { flex: 1 } : {}) }}
+          >
+            {label}
+          </button>
+        ))}
+        <div ref={menuRef} style={{ position: 'relative', display: 'flex', ...(isMobileLayout ? { flex: 1 } : {}) }}>
+          <button
+            type="button"
+            aria-haspopup="menu"
+            aria-expanded={menuOpen}
+            onClick={() => setMenuOpen((open) => !open)}
+            style={{ ...styles.modeButton, ...(qcMode === 're_qc' ? styles.modeButtonActive : {}), ...(isMobileLayout ? { width: '100%' } : {}) }}
+          >
+            {qcMode === 're_qc' ? `Re-QC ${reQcSource === 'regular' ? 'Reguler' : 'Arkline'}` : 'Re-QC'}
+          </button>
+          {menuOpen ? (
+            <div role="menu" aria-label="Re-QC mode" style={styles.reQcMenu}>
+              {[
+                ['arkline', 'Re-QC Arkline'],
+                ['regular', 'Re-QC Reguler'],
+              ].map(([source, label]) => (
+                <button
+                  key={source}
+                  type="button"
+                  role="menuitemradio"
+                  aria-checked={qcMode === 're_qc' && reQcSource === source}
+                  onClick={() => {
+                    onReQcSourceChange(source)
+                    if (qcMode !== 're_qc') onModeChange('re_qc')
+                    setMenuOpen(false)
+                  }}
+                  style={{ ...styles.reQcMenuOption, ...(qcMode === 're_qc' && reQcSource === source ? styles.reQcMenuOptionActive : {}) }}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function QcReceivingPage() {
   const pathname = usePathname()
   const sourceListRef = useRef(null)
@@ -1540,6 +1650,7 @@ export default function QcReceivingPage() {
   const [qcItems, setQcItems] = useState([])
   const [qcMembers, setQcMembers] = useState([])
   const [qcMode, setQcMode] = useState('regular')
+  const [reQcSource, setReQcSource] = useState('arkline')
   const [arklinePlannerMode, setArklinePlannerMode] = useState('product')
   const [grnSearch, setGrnSearch] = useState('')
   const [showGrnOptions, setShowGrnOptions] = useState(false)
@@ -3476,48 +3587,24 @@ export default function QcReceivingPage() {
     return <p style={styles.emptyText}>Loading QC receiving setup...</p>
   }
 
+  if (qcMode === 're_qc' && reQcSource === 'regular') {
+    return (
+      <div style={styles.wrapper}>
+        <div style={shellCardStyle}>
+          <h2 style={styles.sectionTitle}>QC Receiving & Allocation</h2>
+          <ReceivingModePicker qcMode={qcMode} reQcSource={reQcSource} isMobileLayout={isMobileLayout} onModeChange={handleQcModeChange} onReQcSourceChange={setReQcSource} />
+          <RegularReQcWorkflow view="queue" />
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div style={{ ...styles.wrapper, paddingBottom: isMobileLayout ? '20px' : 0 }}>
       <div style={shellCardStyle}>
-        <div>
-          <h2 style={styles.sectionTitle}>QC Receiving & Allocation</h2>
-        </div>
+        <h2 style={styles.sectionTitle}>QC Receiving & Allocation</h2>
 
-        <div style={{ ...styles.modeRow, width: isMobileLayout ? '100%' : 'auto' }}>
-          <button
-            type="button"
-            onClick={() => handleQcModeChange('regular')}
-            style={{
-              ...styles.modeButton,
-              ...(qcMode === 'regular' ? styles.modeButtonActive : {}),
-              ...(isMobileLayout ? { flex: 1 } : {}),
-            }}
-          >
-            QC Reguler
-          </button>
-          <button
-            type="button"
-            onClick={() => handleQcModeChange('arkline')}
-            style={{
-              ...styles.modeButton,
-              ...(qcMode === 'arkline' ? styles.modeButtonActive : {}),
-              ...(isMobileLayout ? { flex: 1 } : {}),
-            }}
-          >
-            QC Arkline
-          </button>
-          <button
-            type="button"
-            onClick={() => handleQcModeChange('re_qc')}
-            style={{
-              ...styles.modeButton,
-              ...(qcMode === 're_qc' ? styles.modeButtonActive : {}),
-              ...(isMobileLayout ? { flex: 1 } : {}),
-            }}
-          >
-            Re-QC
-          </button>
-        </div>
+        <ReceivingModePicker qcMode={qcMode} reQcSource={reQcSource} isMobileLayout={isMobileLayout} onModeChange={handleQcModeChange} onReQcSourceChange={setReQcSource} />
 
         {qcMode === 'arkline' || qcMode === 're_qc' ? (
           <>

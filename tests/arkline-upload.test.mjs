@@ -32,6 +32,7 @@ const pick = (requested = 1, fulfilled = 4) => ({
   size: 'L',
   qty: requested,
   fulfilled_qty: fulfilled,
+  rejected_qty: 0,
   sales_upload_credited_qty: 0,
   completed_at: '2026-10-09T05:00:00Z',
 })
@@ -89,6 +90,15 @@ test('credits only the actually fulfilled picker quantity', () => {
   const preview = buildArklineImportPreview([line()], [shelf(7)], [pick(3, 1)])
   assert.equal(preview.pickOffsetQty, 1)
   assert.equal(preview.appliedQty, 4)
+})
+
+test('reject from pallet restock is not credited against sales upload', () => {
+  const preview = buildArklineImportPreview([line(12)], [shelf(13)], [
+    { ...pick(2, 5), rejected_qty: 1 },
+  ])
+  assert.equal(preview.pickOffsetQty, 1)
+  assert.equal(preview.appliedQty, 11)
+  assert.equal(preview.lines[0].balanceAfter, 2)
 })
 
 test('one picker handoff cannot credit two sales lines', () => {

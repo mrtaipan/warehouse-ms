@@ -10,15 +10,20 @@ declare
   v_raw text := upper(btrim(coalesce(p_size, '')));
   v_key text;
   v_pair text[];
+  v_repeated_x text[];
 begin
   v_key := coalesce(nullif(regexp_replace(v_raw, '[^A-Z0-9]', '', 'g'), ''), '-');
   if v_key = 'NS' then
     v_key := '-';
   end if;
+  v_repeated_x := regexp_match(v_key, '^(X{2,8})L(TALL|SHORT|REGULAR|LONG)?$');
+  if v_repeated_x is not null then
+    v_key := length(v_repeated_x[1])::text || 'XL' || coalesce(v_repeated_x[2], '');
+  end if;
   v_pair := regexp_match(v_raw,
-    '(?:^|[^A-Z0-9])((?:[2-8]XL|X{0,3}[SML]))[[:space:]]*/[[:space:]]*([0-9]{2,3})(?:$|[^A-Z0-9])');
+    '(?:^|[^A-Z0-9])((?:[2-8]XL|X{0,8}[SML]))[[:space:]]*/[[:space:]]*([0-9]{2,3})(?:$|[^A-Z0-9])');
   if v_pair is not null then
-    return array[v_key, v_pair[1], v_pair[2]];
+    return array[v_key, (public.warehouse_size_aliases(v_pair[1]))[1], v_pair[2]];
   end if;
   return array[v_key];
 end;

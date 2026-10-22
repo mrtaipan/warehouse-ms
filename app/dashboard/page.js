@@ -4,6 +4,8 @@ import { createClient } from '@/utils/supabase/server'
 import { createAdminClient } from '@/utils/supabase/admin'
 import { canAccessOperationsCalendar, getAllowedMenus, getStorageFeatureAccess, hasPermission } from '@/utils/permissions'
 import { loadAccessContext } from '@/utils/access-control'
+import { getJakartaTodayDateString, getUpcomingBirthdayOffset } from '@/utils/birthday-reminders.mjs'
+import { getGrnRejectionRemaining } from '@/utils/grn-rejection-remaining.mjs'
 import RestockShortcutButton from './restock-shortcut-client'
 import ItemSearchShortcutButton from './item-search-shortcut-client'
 import GrnSummaryCopyButton from './grn-summary-copy-button'
@@ -134,34 +136,13 @@ function isBirthdayRowFromResignedPerson(row = {}, profiles = []) {
   return Boolean(matchedProfile && hasResigned(matchedProfile))
 }
 
-function getUpcomingBirthdayOffset(value) {
-  if (!value) return null
-
-  const parsed = new Date(value)
-  if (Number.isNaN(parsed.getTime())) return null
-
-  const today = new Date()
-  const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate())
-  let upcoming = new Date(today.getFullYear(), parsed.getMonth(), parsed.getDate())
-
-  if (upcoming < todayStart) {
-    upcoming = new Date(today.getFullYear() + 1, parsed.getMonth(), parsed.getDate())
-  }
-
-  return Math.floor((upcoming.getTime() - todayStart.getTime()) / (1000 * 60 * 60 * 24))
-}
-
 function getUpcomingBirthdayLabel(offset) {
   if (offset === 0) return 'Today'
   return `H-${offset}`
 }
 
 function getTodayDateString() {
-  const now = new Date()
-  const year = now.getFullYear()
-  const month = String(now.getMonth() + 1).padStart(2, '0')
-  const day = String(now.getDate()).padStart(2, '0')
-  return `${year}-${month}-${day}`
+  return getJakartaTodayDateString()
 }
 
 function filterVisibleBirthdayGiftRows(rows) {
@@ -368,6 +349,10 @@ function buildGrnSummaryCopyText(selectedInbound, summary, options = {}) {
   if (summary.totalReturQty > 0) {
     lines.push(`*Total Reject:* ${formatNumber(summary.totalReturQty)} pcs.`)
 
+    summary.rejectionRemainingGrades.forEach((item) => {
+      lines.push(`\t- Grade ${item.grade}: ${formatNumber(item.qty)} pcs remaining.`)
+    })
+
     if (useGradeACategorySummary && (summary.rejectCategorySummaryLines || []).length) {
       summary.rejectCategorySummaryLines.forEach((item) => {
         lines.push(`${'\t'.repeat(Number(item.depth || 0))}${item.label || item.text} = ${formatNumber(item.qty)} pcs.`)
@@ -529,6 +514,8 @@ async function loadAdminGrnSummary(supabase, selectedGrn = '') {
     { data: plReceivingRows, error: plReceivingError },
     { data: plBreakdownRows, error: plBreakdownError },
     { data: returnRows, error: returnError },
+    { data: sampleBreakdownRows, error: sampleBreakdownError },
+    { data: qcSampleRows, error: qcSampleError },
   ] = await Promise.all([
     loadInboundUnloadRowsForDashboard(supabase, selectedInbound.id),
     supabase
@@ -540,6 +527,9 @@ async function loadAdminGrnSummary(supabase, selectedGrn = '') {
           brand_id,
           category_id,
           model_name,
+          variant_name,
+          is_sample,
+          is_product_temporary,
           brands:dir_brands!brand_id (
             id,
             brand_name
@@ -552,6 +542,8 @@ async function loadAdminGrnSummary(supabase, selectedGrn = '') {
         ),
         product_model:product_model_id (
           id,
+          brand_id,
+          category_id,
           brands:dir_brands!brand_id (
             id,
             brand_name
@@ -566,7 +558,7 @@ async function loadAdminGrnSummary(supabase, selectedGrn = '') {
       .eq('inbound_id', selectedInbound.id),
     supabase
       .from('qc_confirm')
-      .select('id, qty, grade')
+      .select('id, qty, grade, source_grade, adjustment_type, is_adjustment, brand_id, category_id, model_name, variant_name')
       .eq('inbound_id', selectedInbound.id),
     supabase
       .from('pl_receiving')
@@ -594,6 +586,10 @@ async function loadAdminGrnSummary(supabase, selectedGrn = '') {
         id,
         qty,
         source_phase,
+        grade,
+        is_adjustment,
+        adjustment_type,
+        brand_id,
         category_id,
         model_name,
         variant_name,
@@ -614,9 +610,20 @@ async function loadAdminGrnSummary(supabase, selectedGrn = '') {
       `)
       .eq('inbound_id', selectedInbound.id)
       .limit(5000),
+    supabase
+      .from('inbound_sample_model_breakdowns')
+      .select('id, inbound_unload_id, resolution_status, brand_id, category_id, model_name, variant_name')
+      .eq('inbound_id', selectedInbound.id)
+      .limit(5000),
+    supabase
+      .from('qc_sample_breakdowns')
+      .select('qc_item_id, sample_breakdown_id, qty_b, qty_c, qc_item:qc_item_id!inner(inbound_id, status)')
+      .eq('qc_item.inbound_id', selectedInbound.id)
+      .eq('qc_item.status', 'done')
+      .limit(5000),
   ])
 
-  const firstError = unloadError || qcError || qcConfirmError || plReceivingError || plBreakdownError || returnError
+  const firstError = unloadError || qcError || qcConfirmError || plReceivingError || plBreakdownError || returnError || sampleBreakdownError || qcSampleError
   if (firstError) {
     return { grnOptions, selectedGrn, selectedInbound, summary: null, error: firstError.message }
   }
@@ -646,7 +653,18 @@ async function loadAdminGrnSummary(supabase, selectedGrn = '') {
   const returPlQty = (returnRows || [])
     .filter((item) => ['packing list', 'packing_list'].includes(String(item.source_phase || '').trim().toLowerCase()))
     .reduce((sum, item) => sum + Number(item.qty || 0), 0)
-  const totalReturQty = returBongkarQty + returQcQty + returPlQty
+  const rejectionRemaining = getGrnRejectionRemaining({
+    qcRows,
+    qcSampleRows,
+    sampleBreakdownRows,
+    qcConfirmRows,
+    returnRows,
+  })
+  const rejectionRemainingQty = rejectionRemaining.total
+  const rejectionRemainingGrades = ['A', 'B', 'C']
+    .filter((grade) => rejectionRemaining.byGrade[grade] > 0)
+    .map((grade) => ({ grade, qty: rejectionRemaining.byGrade[grade] }))
+  const totalReturQty = returBongkarQty + returQcQty + returPlQty + rejectionRemainingQty
   const totalQcProcessedQty = totalQcConfirm + returQcQty
   const displayGradeAQty = plBreakdownQty
   const displayGradeBQty = qcConfirmGradeBQty
@@ -680,6 +698,8 @@ async function loadAdminGrnSummary(supabase, selectedGrn = '') {
       returBongkarQty,
       returQcQty,
       returPlQty,
+      rejectionRemainingQty,
+      rejectionRemainingGrades,
       totalReturQty,
       totalSummaryQty,
       sjQty,
@@ -769,6 +789,11 @@ function AdminGrnSummaryCard({
                 Total Allocated {formatNumber(summary.totalAllocatedQty)}<br />
                 QC Confirm {formatNumber(summary.totalQcConfirm)}<br />
                 Reject QC {formatNumber(summary.returQcQty)}
+                {summary.rejectionRemainingQty > 0 ? (
+                  <>
+                    <br />Rejection Grade Remaining {formatNumber(summary.rejectionRemainingQty)}
+                  </>
+                ) : null}
               </small>
             </div>
             <div className={styles.grnMetricCard}>
@@ -786,6 +811,11 @@ function AdminGrnSummaryCard({
                 Retur Bongkar {formatNumber(summary.returBongkarQty)}<br />
                 Retur QC {formatNumber(summary.returQcQty)}<br />
                 Retur Packing List {formatNumber(summary.returPlQty)}
+                {summary.rejectionRemainingQty > 0 ? (
+                  <>
+                    <br />Pending Rejection Grade {formatNumber(summary.rejectionRemainingQty)}
+                  </>
+                ) : null}
               </small>
             </div>
           </div>
@@ -823,6 +853,13 @@ function AdminGrnSummaryCard({
               {summary.totalReturQty > 0 ? (
                 <div className={styles.grnSummaryRejectBlock}>
                   <p className={styles.grnSummaryStrongLine}>Total Reject: {formatNumber(summary.totalReturQty)} pcs.</p>
+                  {summary.rejectionRemainingGrades.length ? (
+                    <div className={styles.grnSummarySubLines}>
+                      {summary.rejectionRemainingGrades.map((item) => (
+                        <p key={item.grade}>- Grade {item.grade}: {formatNumber(item.qty)} pcs remaining.</p>
+                      ))}
+                    </div>
+                  ) : null}
                   {useGradeACategorySummary && (summary.rejectCategorySummaryLines || []).length ? (
                     <div className={styles.grnSummaryCategoryTree}>
                       {summary.rejectCategorySummaryLines.map((item, index) => (
@@ -885,14 +922,10 @@ export default async function DashboardPage({ searchParams }) {
   const canAddPenaltyPoints = hasPermission(permissions, 'hrga.penalty_points.add', isAdmin)
   const showBirthdayGiftRequestAnnouncements = isAdmin || role === 'leader' || role === 'warehouse_leader' || role === 'mob_cs'
 
-  let announcementRows = []
-  if (showBirthdayGiftRequestAnnouncements || showPenaltyPointsButton) {
-    const profileClient = showBirthdayGiftRequestAnnouncements ? createAdminClient() : supabase
-    const { data } = await profileClient
-      .from('dir_user_profiles')
-      .select('id, authenticated_id, display_name, email, birthdate, resign_date, "group", role')
-    announcementRows = data || []
-  }
+  const adminSupabase = createAdminClient()
+  const { data: announcementRows } = await adminSupabase
+    .from('dir_user_profiles')
+    .select('id, authenticated_id, display_name, email, birthdate, resign_date, "group", role')
   const { data: currentPenaltyRows } = showPenaltyPointsButton
     ? await supabase.from('hrga_penalty_points_current').select('employee_profile_id, total_points, entry_count')
     : { data: [] }
@@ -909,7 +942,6 @@ export default async function DashboardPage({ searchParams }) {
   let birthdayGiftRequestRows = []
   if (showBirthdayGiftRequestAnnouncements) {
     try {
-      const adminSupabase = createAdminClient()
       const { data } = await adminSupabase
         .from('hrga_birthday_gift')
         .select('id, status, approved_at, request_date, created_at, employee_authenticated_id, employee_name_snapshot, employee_email_snapshot, item_name, size')

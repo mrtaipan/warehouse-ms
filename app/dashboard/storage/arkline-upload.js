@@ -111,7 +111,7 @@ export function buildArklineImportPreview(parsedLines, storageRows = [], pickRow
     const day = jakartaDate(row.completed_at)
     if (!sku || !day) return
     const handoff = Math.min(Number(row.qty || 0), Number(row.fulfilled_qty ?? row.qty ?? 0))
-    const credit = Math.max(0, handoff - Number(row.sales_upload_credited_qty || 0))
+    const credit = Math.max(0, handoff - Number(row.rejected_qty || 0) - Number(row.sales_upload_credited_qty || 0))
     if (credit <= 0) return
     const key = arklineKey(sku, row.size || '-', day)
     picks.set(key, Number(picks.get(key) || 0) + credit)

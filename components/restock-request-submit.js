@@ -6,10 +6,12 @@ import Link from 'next/link'
 import { createClient } from '@/utils/supabase/browser'
 import { getProfileByAuthenticatedUser } from '@/utils/user-profiles'
 import { useRealtimeRefresh } from '@/utils/supabase/use-realtime-refresh'
+import { fetchStorageMatches, mapWithConcurrency } from '@/utils/restock-storage-search.mjs'
+import { selectStockRowsForSize } from '@/app/dashboard/storage/stock-sizes'
 
 const supabase = createClient()
-const RACK_LOCATION_BATCH_SIZE = 1000
 const TAKE_REQUESTS_TABLE = 'restock_request'
+const STORAGE_MATCH_COLUMNS = 'id,rack_location_id,item_name,size,qty'
 const SOURCE_OPTIONS = [
   { value: 'MOB', label: 'MOB' },
   { value: 'ARKLINE', label: 'ARKLINE' },
@@ -17,41 +19,6 @@ const SOURCE_OPTIONS = [
 ]
 const REQUEST_FILTER_OPTIONS = SOURCE_OPTIONS
 const DEFAULT_SOURCE_TYPE = 'MOB'
-
-async function fetchAllRackLocations() {
-  const allRows = []
-  let from = 0
-
-  while (true) {
-    const to = from + RACK_LOCATION_BATCH_SIZE - 1
-    const { data, error } = await supabase
-      .from('dir_rack_locations')
-      .select('id, location_type, location_id, location_code, sub_location, group_code')
-      .order('location_type', { ascending: true })
-      .order('location_id', { ascending: true })
-      .order('location_code', { ascending: true })
-      .order('sub_location', { ascending: true })
-      .range(from, to)
-
-    if (error) {
-      throw error
-    }
-
-    if (!data || data.length === 0) {
-      break
-    }
-
-    allRows.push(...data)
-
-    if (data.length < RACK_LOCATION_BATCH_SIZE) {
-      break
-    }
-
-    from += RACK_LOCATION_BATCH_SIZE
-  }
-
-  return allRows
-}
 
 function getLocationLabel(location) {
   if (!location) {
@@ -67,10 +34,6 @@ function getLocationLabel(location) {
     .map((item) => String(item || '').trim())
     .filter(Boolean)
     .join(' / ') || 'Location is not found'
-}
-
-function getLocationKey(value) {
-  return String(value || '').trim()
 }
 
 function buildLocationSummary(labels = []) {
@@ -114,21 +77,6 @@ function getRequestSourceCounts(rows = []) {
 function isSourceTypeConstraintError(error) {
   const message = normalizeText(`${error?.message || ''} ${error?.details || ''}`)
   return message.includes('RESTOCK_REQUEST_SOURCE_TYPE_CHECK')
-}
-
-function getRackLocationGroup(location) {
-  return normalizeText(location?.group_code)
-}
-
-function getAllowedRackLocationIds(rackLocations = [], sourceType = DEFAULT_SOURCE_TYPE) {
-  const requestedGroup = normalizeRequestSource(sourceType)
-
-  return new Set(
-    (rackLocations || [])
-      .filter((location) => getRackLocationGroup(location) === requestedGroup)
-      .map((location) => getLocationKey(location.id))
-      .filter(Boolean)
-  )
 }
 
 function normalizeSearchTermInput(value) {
@@ -180,145 +128,8 @@ async function fetchArklineProducts() {
   return (data || []).map(normalizeArklineProduct).filter((item) => item.isActive && (item.sku || item.name))
 }
 
-function getStorageSearchCandidates(value) {
-  const rawValue = String(value || '').trim()
-  const normalizedValue = normalizeText(rawValue)
-  const tokens = normalizedValue
-    .split(/[\s,/|;]+/)
-    .map((item) => item.trim())
-    .filter(Boolean)
-  const skuToken = tokens.find((token) => /[A-Z]/.test(token) && /\d/.test(token) && token.length >= 4)
-  const candidates = [
-    rawValue,
-    skuToken,
-    tokens[0],
-  ]
-    .map((item) => String(item || '').trim())
-    .filter(Boolean)
-
-  return Array.from(new Set(candidates))
-}
-
-async function fetchStorageMatches(searchTerm, requestedSize = '', allowedRackLocationIds = null) {
-  const rowsById = new Map()
-  const candidates = getStorageSearchCandidates(searchTerm)
-  const allowedIds = allowedRackLocationIds instanceof Set ? allowedRackLocationIds : null
-
-  if (allowedIds && allowedIds.size === 0) {
-    return []
-  }
-
-  for (const candidate of candidates) {
-    const query = supabase
-      .from('warehouse_storage')
-      .select('id, rack_location_id, item_name, size, qty')
-      .order('qty', { ascending: false })
-      .limit(200)
-
-    if (allowedIds && allowedIds.size > 0) {
-      query.in('rack_location_id', Array.from(allowedIds))
-    }
-
-    const { data: itemNameRows, error } = await query.ilike('item_name', `%${candidate}%`)
-
-    if (error) {
-      throw error
-    }
-
-    ;(itemNameRows || []).forEach((row) => {
-      rowsById.set(row.id, row)
-    })
-
-    const skuQuery = supabase
-      .from('warehouse_storage')
-      .select('id, rack_location_id, item_name, size, qty')
-      .order('qty', { ascending: false })
-      .limit(200)
-
-    if (allowedIds && allowedIds.size > 0) {
-      skuQuery.in('rack_location_id', Array.from(allowedIds))
-    }
-
-    const { data: skuRows, error: skuError } = await skuQuery.ilike('sku_id', `%${candidate}%`)
-
-    if (skuError) {
-      throw skuError
-    }
-
-    ;(skuRows || []).forEach((row) => {
-      rowsById.set(row.id, row)
-    })
-
-  }
-
-  return Array.from(rowsById.values())
-}
-
 function normalizeSizeValue(value) {
   return normalizeText(value).replace(/\s+/g, '')
-}
-
-function isUnspecifiedSize(value) {
-  const normalizedValue = normalizeSizeValue(value)
-  return normalizedValue === '' || normalizedValue === '-'
-}
-
-function matchesRequestedSize(entrySize, requestedSize) {
-  if (!requestedSize) {
-    return true
-  }
-
-  if (isUnspecifiedSize(requestedSize)) {
-    return isUnspecifiedSize(entrySize)
-  }
-
-  return normalizeSizeValue(entrySize) === normalizeSizeValue(requestedSize)
-}
-
-function getSizeTokens(value) {
-  return normalizeSizeValue(value)
-    .split(/[\s,/|;-]+/)
-    .map((item) => item.trim())
-    .filter(Boolean)
-}
-
-function sharesRequestedSizeToken(entrySize, requestedSize) {
-  if (!requestedSize) {
-    return true
-  }
-
-  const requestedTokens = getSizeTokens(requestedSize)
-  const entryTokens = getSizeTokens(entrySize)
-
-  if (requestedTokens.length === 0 || entryTokens.length === 0) {
-    return false
-  }
-
-  return requestedTokens.some((token) => entryTokens.includes(token))
-}
-
-function selectRowsForRequestedSize(rows, requestedSize) {
-  if (!requestedSize) {
-    return rows
-  }
-
-  const exactSizeRows = rows.filter((entry) =>
-    matchesRequestedSize(entry.size, requestedSize)
-  )
-
-  if (exactSizeRows.length > 0) {
-    return exactSizeRows
-  }
-
-  const partialSizeRows = rows.filter((entry) =>
-    sharesRequestedSizeToken(entry.size, requestedSize)
-  )
-
-  if (partialSizeRows.length > 0) {
-    return partialSizeRows
-  }
-
-  return []
 }
 
 function rankMatches(rows, searchTerm, size) {
@@ -350,21 +161,16 @@ function rankMatches(rows, searchTerm, size) {
   })
 }
 
-function buildRequestRows(matches, rackLocations, form, requesterName) {
+function buildRequestRows(matches, form, requesterName) {
   const requestedQty = Number(form.qty || 0)
   const submittedNote = String(form.note || '').trim()
-  const allowedRackLocationIds = getAllowedRackLocationIds(rackLocations, form.sourceType)
-  const locationById = new Map(rackLocations.map((item) => [getLocationKey(item.id), item]))
   const rankedMatches = rankMatches(matches, form.searchTerm, form.size)
-  const availableRows = rankedMatches.filter((entry) =>
-    Number(entry.qty || 0) > 0 && allowedRackLocationIds.has(getLocationKey(entry.rack_location_id))
-  )
+  const availableRows = rankedMatches.filter((entry) => Number(entry.qty || 0) > 0)
   const uniqueLocations = []
   const seenLocations = new Set()
 
   availableRows.forEach((entry) => {
-    const location = locationById.get(getLocationKey(entry.rack_location_id)) || null
-    const label = getLocationLabel(location)
+    const label = getLocationLabel(entry.rack_location)
 
     if (label !== 'Location is not found' && !seenLocations.has(label)) {
       seenLocations.add(label)
@@ -389,22 +195,17 @@ function buildRequestRows(matches, rackLocations, form, requesterName) {
   ]
 }
 
-function buildArklineRequestRows(product, matches, rackLocations, form, requesterName) {
+function buildArklineRequestRows(product, matches, form, requesterName) {
   const requestedQty = Number(form.qty || 0)
   const submittedNote = String(form.note || '').trim()
   const itemLabel = getArklineProductLabel(product) || form.searchTerm.trim()
-  const allowedRackLocationIds = getAllowedRackLocationIds(rackLocations, form.sourceType)
-  const locationById = new Map(rackLocations.map((item) => [getLocationKey(item.id), item]))
   const rankedMatches = rankMatches(matches, product?.sku || itemLabel, form.size)
-  const availableRows = rankedMatches.filter((entry) =>
-    Number(entry.qty || 0) > 0 && allowedRackLocationIds.has(getLocationKey(entry.rack_location_id))
-  )
+  const availableRows = rankedMatches.filter((entry) => Number(entry.qty || 0) > 0)
   const uniqueLocations = []
   const seenLocations = new Set()
 
   availableRows.forEach((entry) => {
-    const location = locationById.get(getLocationKey(entry.rack_location_id)) || null
-    const label = getLocationLabel(location)
+    const label = getLocationLabel(entry.rack_location)
 
     if (label !== 'Location is not found' && !seenLocations.has(label)) {
       seenLocations.add(label)
@@ -472,49 +273,42 @@ async function fetchOpenRequests() {
   return result.data || []
 }
 
-async function refreshMissingRequestLocations(rows = [], rackLocations = []) {
+async function refreshMissingRequestLocations(rows = []) {
   const staleRows = rows.filter((row) => String(row?.search_term || row?.item_name || '').trim())
 
-  if (staleRows.length === 0 || rackLocations.length === 0) {
+  if (staleRows.length === 0) {
     return rows
   }
 
-  const locationById = new Map(rackLocations.map((item) => [getLocationKey(item.id), item]))
   const matchesByRequest = new Map()
-  const refreshedRows = await Promise.all(
-    staleRows.map(async (row) => {
-      try {
-        const allowedRackLocationIds = getAllowedRackLocationIds(rackLocations, row.source_type)
-        const cacheKey = [normalizeRequestSource(row.source_type), normalizeText(row.search_term || row.item_name), normalizeSizeValue(row.size)].join('|')
-        if (!matchesByRequest.has(cacheKey)) {
-          matchesByRequest.set(cacheKey, fetchStorageMatches(row.search_term || row.item_name, row.size, allowedRackLocationIds))
-        }
-        const matches = await matchesByRequest.get(cacheKey)
-        const matchedRows = selectRowsForRequestedSize(matches || [], row.size)
-        const labels = matchedRows
-          .filter(
-            (entry) =>
-              Number(entry.qty || 0) > 0 &&
-              allowedRackLocationIds.has(getLocationKey(entry.rack_location_id))
-          )
-          .map((entry) => getLocationLabel(locationById.get(getLocationKey(entry.rack_location_id))))
-        const takeFrom = buildLocationSummary(labels)
-
-        const nextTakeFrom = takeFrom || 'Location is not found'
-        if (nextTakeFrom === String(row.take_from || '').trim()) return row
-
-        const { error } = await supabase
-          .from(TAKE_REQUESTS_TABLE)
-          .update({ take_from: nextTakeFrom })
-          .eq('id', row.id)
-        if (error) return row
-
-        return { ...row, take_from: nextTakeFrom }
-      } catch {
-        return row
+  const refreshedRows = await mapWithConcurrency(staleRows, 4, async (row) => {
+    try {
+      const sourceType = normalizeRequestSource(row.source_type)
+      const cacheKey = [sourceType, normalizeText(row.search_term || row.item_name), normalizeSizeValue(row.size)].join('|')
+      if (!matchesByRequest.has(cacheKey)) {
+        matchesByRequest.set(cacheKey, fetchStorageMatches(supabase, row.search_term || row.item_name, sourceType, STORAGE_MATCH_COLUMNS))
       }
-    })
-  )
+      const matches = await matchesByRequest.get(cacheKey)
+      const matchedRows = selectStockRowsForSize(matches || [], row.size)
+      const labels = matchedRows
+        .filter((entry) => Number(entry.qty || 0) > 0)
+        .map((entry) => getLocationLabel(entry.rack_location))
+      const takeFrom = buildLocationSummary(labels)
+
+      const nextTakeFrom = takeFrom || 'Location is not found'
+      if (nextTakeFrom === String(row.take_from || '').trim()) return row
+
+      const { error } = await supabase
+        .from(TAKE_REQUESTS_TABLE)
+        .update({ take_from: nextTakeFrom })
+        .eq('id', row.id)
+      if (error) return row
+
+      return { ...row, take_from: nextTakeFrom }
+    } catch {
+      return row
+    }
+  })
 
   const refreshedById = new Map(refreshedRows.map((row) => [String(row.id), row]))
   return rows.map((row) => refreshedById.get(String(row.id)) || row)
@@ -530,7 +324,6 @@ export default function RestockRequestSubmit({
   backHref = '/dashboard/storage',
   backLabel = 'Back to Storage',
 }) {
-  const [rackLocations, setRackLocations] = useState([])
   const [requests, setRequests] = useState([])
   const [requesterName, setRequesterName] = useState('')
   const [requesterUserId, setRequesterUserId] = useState('')
@@ -605,7 +398,7 @@ export default function RestockRequestSubmit({
 
     try {
       const rows = await fetchOpenRequests()
-      setRequests(await refreshMissingRequestLocations(rows, rackLocations))
+      setRequests(await refreshMissingRequestLocations(rows))
     } catch (loadError) {
       setError(loadError.message || 'Failed to load request list.')
     } finally {
@@ -621,8 +414,7 @@ export default function RestockRequestSubmit({
       setError('')
 
       try {
-        const [rackData, requestRows, currentRequester, productRows] = await Promise.all([
-          fetchAllRackLocations(),
+        const [requestRows, currentRequester, productRows] = await Promise.all([
           fetchOpenRequests(),
           fetchRequesterIdentity(),
           fetchArklineProducts().catch((productError) => {
@@ -631,22 +423,7 @@ export default function RestockRequestSubmit({
           }),
         ])
 
-        const normalizedRackLocations = (rackData || []).map((item) => ({
-          ...item,
-          location_type:
-            typeof item.location_type === 'string' ? item.location_type.trim() : item.location_type,
-          location_id:
-            typeof item.location_id === 'string' ? item.location_id.trim() : item.location_id,
-          location_code:
-            typeof item.location_code === 'string' ? item.location_code.trim() : item.location_code,
-          sub_location:
-            typeof item.sub_location === 'string' ? item.sub_location.trim() : item.sub_location,
-          group_code:
-            typeof item.group_code === 'string' ? item.group_code.trim() : item.group_code,
-        }))
-
-        setRackLocations(normalizedRackLocations)
-        setRequests(await refreshMissingRequestLocations(requestRows, normalizedRackLocations))
+        setRequests(await refreshMissingRequestLocations(requestRows))
         setRequesterName(currentRequester.name)
         setRequesterUserId(currentRequester.userId)
         setArklineProducts(productRows)
@@ -846,32 +623,29 @@ export default function RestockRequestSubmit({
       }
 
       let data = []
-      const allowedRackLocationIds = getAllowedRackLocationIds(rackLocations, form.sourceType)
-
       try {
-        data = await fetchStorageMatches(selectedProduct.sku || getArklineProductLabel(selectedProduct), form.size.trim(), allowedRackLocationIds)
+        data = await fetchStorageMatches(supabase, selectedProduct.sku || getArklineProductLabel(selectedProduct), form.sourceType, STORAGE_MATCH_COLUMNS)
       } catch (searchError) {
         setError(searchError.message)
         setSubmitting(false)
         return
       }
 
-      const matchedRows = selectRowsForRequestedSize(data || [], form.size.trim())
-      payload = buildArklineRequestRows(selectedProduct, matchedRows, rackLocations, form, requesterName)
+      const matchedRows = selectStockRowsForSize(data || [], form.size.trim())
+      payload = buildArklineRequestRows(selectedProduct, matchedRows, form, requesterName)
     } else {
       let data = []
-      const allowedRackLocationIds = getAllowedRackLocationIds(rackLocations, form.sourceType)
 
       try {
-        data = await fetchStorageMatches(form.searchTerm.trim(), form.size.trim(), allowedRackLocationIds)
+        data = await fetchStorageMatches(supabase, form.searchTerm.trim(), form.sourceType, STORAGE_MATCH_COLUMNS)
       } catch (searchError) {
         setError(searchError.message)
         setSubmitting(false)
         return
       }
 
-      const matchedRows = selectRowsForRequestedSize(data || [], form.size.trim())
-      payload = buildRequestRows(matchedRows, rackLocations, form, requesterName)
+      const matchedRows = selectStockRowsForSize(data || [], form.size.trim())
+      payload = buildRequestRows(matchedRows, form, requesterName)
     }
 
     if (!requesterUserId) {

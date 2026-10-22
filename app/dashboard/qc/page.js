@@ -5,6 +5,7 @@ import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
 import { createClient } from '@/utils/supabase/browser'
 import { ADMIN_EMAIL } from '@/utils/permissions'
 import { useRealtimeRefresh } from '@/utils/supabase/use-realtime-refresh'
+import RegularReQcWorkflow from '@/components/regular-reqc-workflow'
 
 const supabase = createClient()
 const QC_GRADE_OPTIONS = ['A', 'B', 'C']
@@ -149,6 +150,24 @@ const styles = {
     borderRadius: '10px',
     background: 'rgba(255, 255, 255, 0.9)',
     boxShadow: 'inset 0 1px 0 rgba(255, 255, 255, 0.8)',
+  },
+  modeSwitchRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    flexWrap: 'wrap',
+  },
+  reQcSourceSelect: {
+    height: '38px',
+    minWidth: '156px',
+    padding: '0 32px 0 12px',
+    border: '1px solid #dbe4f0',
+    borderRadius: '9px',
+    background: '#fff',
+    color: '#0f172a',
+    fontSize: '12px',
+    fontWeight: '700',
+    cursor: 'pointer',
   },
   modeButton: {
     minHeight: '30px',
@@ -1715,6 +1734,7 @@ export default function QcDashboardPage() {
   const [showPauseConfirm, setShowPauseConfirm] = useState(false)
   const [previewPhoto, setPreviewPhoto] = useState(null)
   const [qcMode, setQcMode] = useState('regular')
+  const [reQcSource, setReQcSource] = useState('arkline')
   const [summaryTab, setSummaryTab] = useState('result-summary')
   const [qcItems, setQcItems] = useState([])
   const [arklineQcItems, setArklineQcItems] = useState([])
@@ -2127,6 +2147,7 @@ export default function QcDashboardPage() {
 
   const hasInvalidDateRange = Boolean(dateFrom && dateTo && dateFrom > dateTo)
   const matchesRegularFilterValues = useCallback((item, ignoredFilter = '') => {
+    if (String(item?.qc_type || 'INITIAL').toUpperCase() === 'RE_QC') return false
     const matchesDate = hasInvalidDateRange ? true : isWithinDateRange(getQcWorkDateValue(item), dateFrom, dateTo)
     const matchesGrn = ignoredFilter === 'grn' || !grnFilter || item.inbound?.grn_number === grnFilter
     const matchesBrand = ignoredFilter === 'brand' || !brandFilter || getBrandLabel(item) === brandFilter
@@ -4660,6 +4681,34 @@ export default function QcDashboardPage() {
     return <p style={styles.emptyText}>Loading QC summary...</p>
   }
 
+  if (qcMode === 're_qc' && reQcSource === 'regular') {
+    return (
+      <div style={styles.wrapper}>
+        <div style={styles.flatSection}>
+          <p style={styles.eyebrow}>Quality Control</p>
+          <h1 style={styles.title}>Summary</h1>
+          <div style={styles.modeSwitchRow}>
+            <div style={styles.modeRow}>
+              <button type="button" style={styles.modeButton} onClick={() => setQcMode('regular')}>Reguler</button>
+              <button type="button" style={styles.modeButton} onClick={() => setQcMode('arkline')}>Arkline</button>
+              <button type="button" style={{ ...styles.modeButton, ...styles.modeButtonActive }}>Re-QC</button>
+            </div>
+            <select
+              aria-label="Re-QC source"
+              value={reQcSource}
+              onChange={(event) => setReQcSource(event.target.value)}
+              style={styles.reQcSourceSelect}
+            >
+              <option value="arkline">Re-QC Arkline</option>
+              <option value="regular">Re-QC Reguler</option>
+            </select>
+          </div>
+          <RegularReQcWorkflow view="results" />
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div style={styles.wrapper}>
       <div style={styles.flatSection}>
@@ -4688,53 +4737,66 @@ export default function QcDashboardPage() {
               </div>
             </div>
 
-            <div style={styles.modeRow}>
-              <button
-                type="button"
-                style={{ ...styles.modeButton, ...(qcMode === 'regular' ? styles.modeButtonActive : {}) }}
-                onClick={() => {
-                  setQcMode('regular')
-                  setPauseDetailInspector('')
-                  setPoFilter('')
-                  setArklineProductFilter('')
-                }}
-              >
-                Reguler
-              </button>
-              <button
-                type="button"
-                style={{ ...styles.modeButton, ...(qcMode === 'arkline' ? styles.modeButtonActive : {}) }}
-                onClick={() => {
-                  setQcMode('arkline')
-                  setPauseDetailInspector('')
-                  setGrnFilter('')
-                  setBrandFilter('')
-                  setCategoryFilter('')
-                  setRegularModelVariantFilter('')
-                  setRegularGradeFilter('')
-                  setSampleFilter('')
-                }}
-              >
-                Arkline
-              </button>
-              <button
-                type="button"
-                style={{ ...styles.modeButton, ...(qcMode === 're_qc' ? styles.modeButtonActive : {}) }}
-                onClick={() => {
-                  setQcMode('re_qc')
-                  setPauseDetailInspector('')
-                  setGrnFilter('')
-                  setPoFilter('')
-                  setArklineProductFilter('')
-                  setBrandFilter('')
-                  setCategoryFilter('')
-                  setRegularModelVariantFilter('')
-                  setRegularGradeFilter('')
-                  setSampleFilter('')
-                }}
-              >
-                Re-QC
-              </button>
+            <div style={styles.modeSwitchRow}>
+              <div style={styles.modeRow}>
+                <button
+                  type="button"
+                  style={{ ...styles.modeButton, ...(qcMode === 'regular' ? styles.modeButtonActive : {}) }}
+                  onClick={() => {
+                    setQcMode('regular')
+                    setPauseDetailInspector('')
+                    setPoFilter('')
+                    setArklineProductFilter('')
+                  }}
+                >
+                  Reguler
+                </button>
+                <button
+                  type="button"
+                  style={{ ...styles.modeButton, ...(qcMode === 'arkline' ? styles.modeButtonActive : {}) }}
+                  onClick={() => {
+                    setQcMode('arkline')
+                    setPauseDetailInspector('')
+                    setGrnFilter('')
+                    setBrandFilter('')
+                    setCategoryFilter('')
+                    setRegularModelVariantFilter('')
+                    setRegularGradeFilter('')
+                    setSampleFilter('')
+                  }}
+                >
+                  Arkline
+                </button>
+                <button
+                  type="button"
+                  style={{ ...styles.modeButton, ...(qcMode === 're_qc' ? styles.modeButtonActive : {}) }}
+                  onClick={() => {
+                    setQcMode('re_qc')
+                    setPauseDetailInspector('')
+                    setGrnFilter('')
+                    setPoFilter('')
+                    setArklineProductFilter('')
+                    setBrandFilter('')
+                    setCategoryFilter('')
+                    setRegularModelVariantFilter('')
+                    setRegularGradeFilter('')
+                    setSampleFilter('')
+                  }}
+                >
+                  Re-QC
+                </button>
+              </div>
+              {qcMode === 're_qc' ? (
+                <select
+                  aria-label="Re-QC source"
+                  value={reQcSource}
+                  onChange={(event) => setReQcSource(event.target.value)}
+                  style={styles.reQcSourceSelect}
+                >
+                  <option value="arkline">Re-QC Arkline</option>
+                  <option value="regular">Re-QC Reguler</option>
+                </select>
+              ) : null}
             </div>
           </div>
 

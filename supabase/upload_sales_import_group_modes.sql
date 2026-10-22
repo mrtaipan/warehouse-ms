@@ -237,6 +237,16 @@ begin
     raise exception 'Only pending MOB import batches can be settled. Current status: %', target_batch.status;
   end if;
 
+  update public.upload_sales_import_lines line
+  set size = regexp_replace(upper(line.variation_raw), '[^A-Z0-9]', '', 'g')
+  where line.batch_id = p_batch_id
+    and line.included = true
+    and coalesce(line.applied_qty, 0) = 0
+    and regexp_replace(upper(coalesce(line.variation_raw, '')), '[^A-Z0-9]', '', 'g')
+      ~ '^(?:[2-8]XL|X{0,4}[SML]|[0-9]{2,3}[SML])(?:TALL|SHORT|REGULAR|LONG)?$'
+    and regexp_replace(upper(coalesce(line.size, '')), '[^A-Z0-9]', '', 'g')
+      is distinct from regexp_replace(upper(line.variation_raw), '[^A-Z0-9]', '', 'g');
+
   perform public.expand_upload_bundle_lines(p_batch_id);
 
   if exists (
@@ -696,6 +706,17 @@ begin
       );
     get diagnostics v_reclassified_lines = row_count;
   end if;
+
+  update public.upload_sales_import_lines line
+  set size = regexp_replace(upper(line.variation_raw), '[^A-Z0-9]', '', 'g')
+  where line.batch_id = p_batch_id
+    and line.included = true
+    and coalesce(line.applied_qty, 0) = 0
+    and coalesce(line.skipped_qty, 0) > 0
+    and regexp_replace(upper(coalesce(line.variation_raw, '')), '[^A-Z0-9]', '', 'g')
+      ~ '^(?:[2-8]XL|X{0,4}[SML]|[0-9]{2,3}[SML])(?:TALL|SHORT|REGULAR|LONG)?$'
+    and regexp_replace(upper(coalesce(line.size, '')), '[^A-Z0-9]', '', 'g')
+      is distinct from regexp_replace(upper(line.variation_raw), '[^A-Z0-9]', '', 'g');
 
   perform public.expand_upload_bundle_lines(p_batch_id);
 

@@ -461,7 +461,7 @@ async function fetchArklinePickRows(lines) {
   for (let from = 0; ; from += 500) {
     const { data, error } = await supabase
       .from('restock_request')
-      .select('id, search_term, source_sku_id, size, qty, fulfilled_qty, sales_upload_credited_qty, completed_at, request_status')
+      .select('id, search_term, source_sku_id, size, qty, fulfilled_qty, rejected_qty, sales_upload_credited_qty, completed_at, request_status')
       .eq('source_type', 'ARKLINE')
       .eq('request_status', 'completed')
       .gte('completed_at', start)

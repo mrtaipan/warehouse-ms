@@ -4,10 +4,12 @@ import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { createClient } from '@/utils/supabase/browser'
 import { useRealtimeRefresh } from '@/utils/supabase/use-realtime-refresh'
+import { fetchStorageMatches, mapWithConcurrency } from '@/utils/restock-storage-search.mjs'
+import { selectStockRowsForSize } from '@/app/dashboard/storage/stock-sizes'
 
 const supabase = createClient()
 const TAKE_REQUESTS_TABLE = 'restock_request'
-const RACK_LOCATION_BATCH_SIZE = 1000
+const STORAGE_MATCH_COLUMNS = 'id,rack_location_id,sku_id,source_pl_packing_item_id,source_variant_code,item_name,size,qty'
 const DEFAULT_SOURCE_TYPE = 'MOB'
 const REQUEST_FILTER_OPTIONS = [
   { value: 'MOB', label: 'MOB' },
@@ -59,10 +61,6 @@ function getRequestSourceCounts(rows = []) {
     },
     { all: 0, MOB: 0, OI: 0, ARKLINE: 0 }
   )
-}
-
-function getLocationKey(value) {
-  return String(value || '').trim()
 }
 
 function getLocationLabel(location) {
@@ -120,202 +118,21 @@ function formatTakeFromLabel(value) {
   return label
 }
 
-function getStorageSearchCandidates(value) {
-  const rawValue = String(value || '').trim()
-  const normalizedValue = normalizeText(rawValue)
-  const tokens = normalizedValue
-    .split(/[\s,/|;]+/)
-    .map((item) => item.trim())
-    .filter(Boolean)
-  const skuToken = tokens.find((token) => /[A-Z]/.test(token) && /\d/.test(token) && token.length >= 4)
-  const candidates = [
-    rawValue,
-    skuToken,
-    tokens[0],
-  ]
-    .map((item) => String(item || '').trim())
-    .filter(Boolean)
-
-  return Array.from(new Set(candidates))
-}
-
-async function fetchStorageMatches(searchTerm, requestedSize = '', allowedRackLocationIds = null) {
-  const rowsById = new Map()
-  const candidates = getStorageSearchCandidates(searchTerm)
-  const allowedIds = allowedRackLocationIds instanceof Set ? allowedRackLocationIds : null
-
-  if (allowedIds && allowedIds.size === 0) {
-    return []
-  }
-
-  for (const candidate of candidates) {
-    const query = supabase
-      .from('warehouse_storage')
-      .select('id, rack_location_id, sku_id, source_pl_packing_item_id, source_variant_code, item_name, size, qty')
-      .order('qty', { ascending: false })
-      .limit(200)
-
-    if (allowedIds && allowedIds.size > 0) {
-      query.in('rack_location_id', Array.from(allowedIds))
-    }
-
-    const { data: itemNameRows, error } = await query.ilike('item_name', `%${candidate}%`)
-
-    if (error) {
-      throw error
-    }
-
-    ;(itemNameRows || []).forEach((row) => {
-      rowsById.set(row.id, row)
-    })
-
-    const skuQuery = supabase
-      .from('warehouse_storage')
-      .select('id, rack_location_id, sku_id, source_pl_packing_item_id, source_variant_code, item_name, size, qty')
-      .order('qty', { ascending: false })
-      .limit(200)
-
-    if (allowedIds && allowedIds.size > 0) {
-      skuQuery.in('rack_location_id', Array.from(allowedIds))
-    }
-
-    const { data: skuRows, error: skuError } = await skuQuery.ilike('sku_id', `%${candidate}%`)
-
-    if (skuError) {
-      throw skuError
-    }
-
-    ;(skuRows || []).forEach((row) => {
-      rowsById.set(row.id, row)
-    })
-
-  }
-
-  return Array.from(rowsById.values())
-}
-
 function normalizeSizeValue(value) {
   return normalizeText(value).replace(/\s+/g, '')
 }
 
-function isUnspecifiedSize(value) {
-  const normalizedValue = normalizeSizeValue(value)
-  return normalizedValue === '' || normalizedValue === '-'
-}
-
-function matchesRequestedSize(entrySize, requestedSize) {
-  if (!requestedSize) {
-    return true
-  }
-
-  if (isUnspecifiedSize(requestedSize)) {
-    return isUnspecifiedSize(entrySize)
-  }
-
-  return normalizeSizeValue(entrySize) === normalizeSizeValue(requestedSize)
-}
-
-function getSizeTokens(value) {
-  return normalizeSizeValue(value)
-    .split(/[\s,/|;-]+/)
-    .map((item) => item.trim())
-    .filter(Boolean)
-}
-
-function sharesRequestedSizeToken(entrySize, requestedSize) {
-  if (!requestedSize) {
-    return true
-  }
-
-  const requestedTokens = getSizeTokens(requestedSize)
-  const entryTokens = getSizeTokens(entrySize)
-
-  if (requestedTokens.length === 0 || entryTokens.length === 0) {
-    return false
-  }
-
-  return requestedTokens.some((token) => entryTokens.includes(token))
-}
-
-function selectRowsForRequestedSize(rows, requestedSize) {
-  if (!requestedSize) {
-    return rows
-  }
-
-  const exactSizeRows = rows.filter((entry) => matchesRequestedSize(entry.size, requestedSize))
-  if (exactSizeRows.length > 0) {
-    return exactSizeRows
-  }
-
-  const partialSizeRows = rows.filter((entry) => sharesRequestedSizeToken(entry.size, requestedSize))
-  if (partialSizeRows.length > 0) {
-    return partialSizeRows
-  }
-
-  return []
-}
-
-async function fetchRackLocations() {
-  const allRows = []
-  let from = 0
-
-  while (true) {
-    const to = from + RACK_LOCATION_BATCH_SIZE - 1
-    const { data, error } = await supabase
-      .from('dir_rack_locations')
-      .select('id, location_type, location_id, location_code, sub_location, group_code')
-      .range(from, to)
-
-    if (error) {
-      throw error
-    }
-
-    if (!data || data.length === 0) {
-      break
-    }
-
-    allRows.push(...data)
-
-    if (data.length < RACK_LOCATION_BATCH_SIZE) {
-      break
-    }
-
-    from += RACK_LOCATION_BATCH_SIZE
-  }
-
-  return allRows
-}
-
-function getAllowedRackLocationIds(rackLocations = [], sourceType = DEFAULT_SOURCE_TYPE) {
-  const requestedGroup = normalizeRequestSource(sourceType)
-
-  return new Set(
-    (rackLocations || [])
-      .filter((location) => normalizeText(location?.group_code) === requestedGroup)
-      .map((location) => getLocationKey(location.id))
-      .filter(Boolean)
-  )
-}
-
 async function fetchSourceOptions(row) {
   const searchTerm = row.search_term || row.item_name
-  const rackLocations = await fetchRackLocations()
-  const allowedRackLocationIds = getAllowedRackLocationIds(rackLocations, row.source_type)
-  const locationMap = new Map(
-    rackLocations.map((item) => [
-      getLocationKey(item.id),
-      getLocationLabel(item),
-    ])
-  )
-  const data = await fetchStorageMatches(searchTerm, row.size, allowedRackLocationIds)
+  const data = await fetchStorageMatches(supabase, searchTerm, normalizeRequestSource(row.source_type), STORAGE_MATCH_COLUMNS)
 
-  const matchedRows = selectRowsForRequestedSize(data || [], row.size)
+  const matchedRows = selectStockRowsForSize(data || [], row.size)
 
   const rawOptions = matchedRows
-    .filter((entry) => Number(entry.qty || 0) > 0 && allowedRackLocationIds.has(getLocationKey(entry.rack_location_id)))
+    .filter((entry) => Number(entry.qty || 0) > 0)
     .map((entry) => ({
       storageId: entry.id,
-      label: locationMap.get(getLocationKey(entry.rack_location_id)) || 'Location is not found',
+      label: getLocationLabel(entry.rack_location),
       qty: Number(entry.qty || 0),
       skuId: entry.sku_id || null,
       sourcePlPackingItemId: entry.source_pl_packing_item_id || null,
@@ -335,27 +152,25 @@ async function refreshMissingRequestLocations(rows = []) {
   }
 
   const optionsByRequest = new Map()
-  const refreshedRows = await Promise.all(
-    staleRows.map(async (row) => {
-      try {
-        const cacheKey = [normalizeRequestSource(row.source_type), normalizeText(row.search_term || row.item_name), normalizeSizeValue(row.size)].join('|')
-        if (!optionsByRequest.has(cacheKey)) optionsByRequest.set(cacheKey, fetchSourceOptions(row))
-        const options = await optionsByRequest.get(cacheKey)
-        const takeFrom = buildLocationSummary(options) || 'Location is not found'
-        if (takeFrom === String(row.take_from || '').trim()) return row
+  const refreshedRows = await mapWithConcurrency(staleRows, 4, async (row) => {
+    try {
+      const cacheKey = [normalizeRequestSource(row.source_type), normalizeText(row.search_term || row.item_name), normalizeSizeValue(row.size)].join('|')
+      if (!optionsByRequest.has(cacheKey)) optionsByRequest.set(cacheKey, fetchSourceOptions(row))
+      const options = await optionsByRequest.get(cacheKey)
+      const takeFrom = buildLocationSummary(options) || 'Location is not found'
+      if (takeFrom === String(row.take_from || '').trim()) return row
 
-        const { error } = await supabase
-          .from(TAKE_REQUESTS_TABLE)
-          .update({ take_from: takeFrom })
-          .eq('id', row.id)
-        if (error) return row
+      const { error } = await supabase
+        .from(TAKE_REQUESTS_TABLE)
+        .update({ take_from: takeFrom })
+        .eq('id', row.id)
+      if (error) return row
 
-        return { ...row, take_from: takeFrom }
-      } catch {
-        return row
-      }
-    })
-  )
+      return { ...row, take_from: takeFrom }
+    } catch {
+      return row
+    }
+  })
 
   const refreshedById = new Map(refreshedRows.map((row) => [String(row.id), row]))
   return rows.map((row) => refreshedById.get(String(row.id)) || row)
@@ -438,7 +253,7 @@ export default function TakeRequestsMobile() {
     setSelectedRequest(row)
     setActualQty(String(row.qty || ''))
     setSourceOptions([])
-    setSelectedSourceValue(row.destination_area === 'RETUR_KEEPING' ? '' : 'unrecorded')
+    setSelectedSourceValue(row.destination_area === 'RETUR_KEEPING' || normalizeRequestSource(row.source_type) === 'ARKLINE' ? '' : 'unrecorded')
     setLoadingSourceOptions(true)
     setError('')
     setSuccess('')
@@ -459,7 +274,7 @@ export default function TakeRequestsMobile() {
       }
       const options = await fetchSourceOptions(row)
       setSourceOptions(options)
-      setSelectedSourceValue(options[0]?.storageId ? String(options[0].storageId) : 'unrecorded')
+      setSelectedSourceValue(options[0]?.storageId ? String(options[0].storageId) : normalizeRequestSource(row.source_type) === 'ARKLINE' ? '' : 'unrecorded')
       const refreshedTakeFrom = buildLocationSummary(options)
       if (refreshedTakeFrom) {
         setSelectedRequest((currentRequest) =>
@@ -534,6 +349,11 @@ export default function TakeRequestsMobile() {
       selectedSourceValue && selectedSourceValue !== 'unrecorded' ? Number(selectedSourceValue) : null
 
     if (normalizeRequestSource(selectedRequest.source_type) === 'ARKLINE') {
+      if (!selectedSourceStorageId) {
+        setError('Choose an Arkline pallet with enough stock.')
+        setCompletingId('')
+        return
+      }
       try {
         const { data, error: completeError } = await supabase.rpc('complete_arkline_restock_request', {
           p_request_id: selectedRequest.id,
@@ -858,7 +678,7 @@ export default function TakeRequestsMobile() {
                           <div style={styles.sourceLoadingBox}>No matching stock in Pallet, Shelving, or Temp. Sales Area.</div>
                         ) : null}
 
-                        {selectedRequest.destination_area !== 'RETUR_KEEPING' ? <label style={styles.sourceOption}>
+                        {selectedRequest.destination_area !== 'RETUR_KEEPING' && normalizeRequestSource(selectedRequest.source_type) !== 'ARKLINE' ? <label style={styles.sourceOption}>
                           <input
                             type="radio"
                             name="takeSource"
@@ -868,6 +688,9 @@ export default function TakeRequestsMobile() {
                           />
                           <span style={styles.sourceOptionText}>Location is not found</span>
                         </label> : null}
+                        {selectedRequest.destination_area !== 'RETUR_KEEPING' && normalizeRequestSource(selectedRequest.source_type) === 'ARKLINE' && sourceOptions.length === 0 ? (
+                          <div style={styles.sourceLoadingBox}>No matching Arkline pallet stock.</div>
+                        ) : null}
                       </>
                     )}
                   </div>
@@ -896,7 +719,7 @@ export default function TakeRequestsMobile() {
                   <button
                     type="submit"
                     style={styles.completeButton}
-                    disabled={completingId === selectedRequest.id || (selectedRequest.destination_area === 'RETUR_KEEPING' && (loadingSourceOptions || !selectedSourceValue))}
+                    disabled={completingId === selectedRequest.id || ((selectedRequest.destination_area === 'RETUR_KEEPING' || normalizeRequestSource(selectedRequest.source_type) === 'ARKLINE') && (loadingSourceOptions || !selectedSourceValue))}
                   >
                     {completingId === selectedRequest.id ? 'Completing...' : 'Complete'}
                   </button>

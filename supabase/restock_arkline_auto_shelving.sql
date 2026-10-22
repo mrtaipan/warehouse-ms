@@ -16,7 +16,8 @@ alter table public.warehouse_storage_movements
   add constraint warehouse_storage_movements_type_check
   check (movement_type in (
     'STORE_QUEUE', 'MOVE', 'TAKE_OUT', 'TEMPORARY_IN', 'TEMPORARY_RETURN',
-    'TEMPORARY_ADJUSTMENT_IN', 'TEMPORARY_ADJUSTMENT_OUT', 'PUTAWAY_IN'
+    'TEMPORARY_ADJUSTMENT_IN', 'TEMPORARY_ADJUSTMENT_OUT', 'PUTAWAY_IN',
+    'CUSTOMER_RETURN_IN', 'CUSTOMER_REPLACEMENT_OUT', 'QC_RECHECK_OUT', 'REJECT_OUT'
   ));
 
 create or replace function public.complete_arkline_restock_request(
@@ -52,6 +53,9 @@ begin
   if p_fulfilled_qty is null or p_fulfilled_qty <= 0 then
     raise exception 'Actual take qty must be greater than zero';
   end if;
+  if p_source_storage_id is null then
+    raise exception 'Choose an Arkline pallet as the restock source';
+  end if;
 
   select * into v_request
   from public.restock_request
@@ -70,10 +74,7 @@ begin
     pg_catalog.regexp_replace(upper(coalesce(v_source_sku, v_request.search_term, '')), '[^A-Z0-9]', '', 'g')
     from '^ARK[0-9]{2}[A-Z]{3}[0-9]{3}'
   );
-  v_size_key := pg_catalog.regexp_replace(
-    upper(coalesce(nullif(trim(v_request.size), ''), v_source_size, '')),
-    '[^A-Z0-9]', '', 'g'
-  );
+  v_size_key := (public.warehouse_size_aliases(coalesce(nullif(trim(v_request.size), ''), v_source_size)))[1];
 
   -- Use the same SKU/size lock as upload settlement before touching stock.
   perform pg_catalog.pg_advisory_xact_lock(
@@ -112,6 +113,9 @@ begin
     if upper(coalesce(v_source_location.group_code, '')) <> 'ARKLINE' then
       raise exception 'Selected source is not an Arkline location';
     end if;
+    if upper(coalesce(v_source_location.location_type, '')) <> 'PALLET' then
+      raise exception 'Arkline restock can only take from a pallet';
+    end if;
     if v_source.qty < p_fulfilled_qty then
       raise exception 'Source storage quantity is no longer enough';
     end if;
@@ -126,20 +130,14 @@ begin
       pg_catalog.regexp_replace(upper(coalesce(v_source_sku, '')), '[^A-Z0-9]', '', 'g')
       from '^ARK[0-9]{2}[A-Z]{3}[0-9]{3}'
     );
-    v_source_size_key := pg_catalog.regexp_replace(upper(coalesce(v_source.size, '')), '[^A-Z0-9]', '', 'g');
+    v_source_size_key := (public.warehouse_size_aliases(v_source.size))[1];
     if v_source_size_key <> '' and v_size_key <> '' and v_source_size_key <> v_size_key then
       raise exception 'Selected source size does not match the request';
     end if;
     v_size_key := coalesce(nullif(v_source_size_key, ''), v_size_key);
 
     if v_source.qty = p_fulfilled_qty then
-      if upper(trim(coalesce(v_source_location.location_type, ''))) = 'SHELVING' then
-        update public.warehouse_storage
-        set qty = 0, updated_by = v_actor, updated_at = now()
-        where id = v_source.id;
-      else
-        delete from public.warehouse_storage where id = v_source.id;
-      end if;
+      delete from public.warehouse_storage where id = v_source.id;
     else
       update public.warehouse_storage
       set qty = qty - p_fulfilled_qty, updated_by = v_actor, updated_at = now()
@@ -164,7 +162,7 @@ begin
           pg_catalog.regexp_replace(upper(coalesce(storage.sku_id, storage.source_variant_code, '')), '[^A-Z0-9]', '', 'g')
           from '^ARK[0-9]{2}[A-Z]{3}[0-9]{3}'
         ) = v_sku_key
-        and pg_catalog.regexp_replace(upper(coalesce(storage.size, '')), '[^A-Z0-9]', '', 'g') = v_size_key;
+        and (public.warehouse_size_aliases(storage.size))[1] = v_size_key;
 
       if v_location_count = 1 then
         select storage.*
@@ -177,7 +175,7 @@ begin
             pg_catalog.regexp_replace(upper(coalesce(storage.sku_id, storage.source_variant_code, '')), '[^A-Z0-9]', '', 'g')
             from '^ARK[0-9]{2}[A-Z]{3}[0-9]{3}'
           ) = v_sku_key
-          and pg_catalog.regexp_replace(upper(coalesce(storage.size, '')), '[^A-Z0-9]', '', 'g') = v_size_key
+          and (public.warehouse_size_aliases(storage.size))[1] = v_size_key
         order by storage.id
         limit 1
         for update of storage;

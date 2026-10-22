@@ -36,6 +36,10 @@ function getTaskSourceLabel(task) {
     return 'Arkline Product'
   }
 
+  if (String(task?.qc_type || '').toUpperCase() === 'RE_QC' || task?.reqc_queue_id) {
+    return ['Re-QC Reguler', task?.reqc_queue?.size].filter(Boolean).join(' · ')
+  }
+
   if (isRegularSampleTask(task)) {
     const sampleLabel = getRegularSampleLabel(task)
     return task?.inbound?.grn_number ? `${task.inbound.grn_number} - ${sampleLabel}` : sampleLabel
@@ -630,17 +634,16 @@ async function createPauseLog({ taskId, sourceType, pausedBy, pauseReason, pause
 async function closeOpenPauseLog({ taskId, sourceType, resumedBy, resumedAt }) {
   let openLogQuery = supabase
     .from('qc_pause_logs')
-    .select('id')
+    .select('id, paused_at')
     .is('resumed_at', null)
-    .order('paused_at', { ascending: false })
-    .limit(1)
+    .order('paused_at', { ascending: true })
 
   openLogQuery =
     sourceType === 'arkline'
       ? openLogQuery.eq('arkline_qc_id', taskId).is('qc_item_id', null)
       : openLogQuery.eq('qc_item_id', taskId).is('arkline_qc_id', null)
 
-  const { data: openLog, error: openLogError } = await openLogQuery.maybeSingle()
+  const { data: openLogs, error: openLogError } = await openLogQuery
 
   if (sourceType === 'arkline' && openLogError) {
     const errorText = `${openLogError.code || ''} ${openLogError.message || ''} ${openLogError.details || ''}`.toLowerCase()
@@ -649,7 +652,7 @@ async function closeOpenPauseLog({ taskId, sourceType, resumedBy, resumedAt }) {
     }
   }
 
-  if (openLogError || !openLog) {
+  if (openLogError || !openLogs?.length) {
     return { error: openLogError || null, skipped: false }
   }
 
@@ -659,9 +662,18 @@ async function closeOpenPauseLog({ taskId, sourceType, resumedBy, resumedAt }) {
       resumed_at: resumedAt,
       resumed_by: resumedBy || null,
     })
-    .eq('id', openLog.id)
+    .eq('id', openLogs[0].id)
 
-  return { error: updateError || null, skipped: false }
+  if (updateError) return { error: updateError, skipped: false }
+
+  // Extra open rows are duplicate interruptions, not separate idle periods.
+  const duplicateIds = openLogs.slice(1).map((row) => row.id)
+  if (duplicateIds.length) {
+    const { error: deleteError } = await supabase.from('qc_pause_logs').delete().in('id', duplicateIds)
+    if (deleteError) return { error: deleteError, skipped: false }
+  }
+
+  return { error: null, skipped: false }
 }
 
 async function findOtherRunningTask(task, normalizedEmail) {
@@ -731,6 +743,8 @@ export default function QcInspectionTaskPage() {
   const [historyError, setHistoryError] = useState('')
   const submittingTaskIdsRef = useRef(new Set())
   const [submittingTaskIds, setSubmittingTaskIds] = useState({})
+  const interruptingTaskIdsRef = useRef(new Set())
+  const [interruptingTaskIds, setInterruptingTaskIds] = useState({})
 
   useEffect(() => {
     let isMounted = true
@@ -816,6 +830,7 @@ export default function QcInspectionTaskPage() {
           .from('qc_items')
           .select(`
             *,
+            reqc_queue:reqc_queue_id (size, item_name, sku_id, source_variant_code),
             inbound:inbound_id (
               id,
               grn_number
@@ -1300,6 +1315,10 @@ export default function QcInspectionTaskPage() {
   }
 
   async function handleInterrupt(task) {
+    if (!task?.id || interruptingTaskIdsRef.current.has(task.id)) return
+    interruptingTaskIdsRef.current.add(task.id)
+    setInterruptingTaskIds((prev) => ({ ...prev, [task.id]: true }))
+    try {
     setError('')
     setSuccess('')
 
@@ -1312,21 +1331,6 @@ export default function QcInspectionTaskPage() {
     const pausedAt = new Date().toISOString()
     const shouldTrackTime = shouldTrackTaskTime(task)
     const finalStopwatchSeconds = shouldTrackTime ? getFinalStopwatchSeconds(task, runningSeconds, pausedAt) : 0
-    const pauseLogResult = shouldTrackTime
-      ? await createPauseLog({
-          taskId: task.id,
-          sourceType: task.source_type,
-          pausedBy: userEmail,
-          pauseReason: interruptReason,
-          pausedAt,
-        })
-      : { error: null }
-
-    if (pauseLogResult.error) {
-      setError(pauseLogResult.error.message)
-      return
-    }
-
     const { data, error: updateError } = await supabase
       .from(getTaskTableName(task))
       .update({
@@ -1337,6 +1341,7 @@ export default function QcInspectionTaskPage() {
       })
       .eq('id', task.id)
       .eq('assigned_to', normalizedEmail)
+      .eq('status', 'in_progress')
       .select(task.source_type === 'arkline' ? '*' : `
         *,
         inbound:inbound_id (
@@ -1363,10 +1368,38 @@ export default function QcInspectionTaskPage() {
           )
         )
       `)
-      .single()
+      .maybeSingle()
 
     if (updateError) {
       setError(updateError.message)
+      return
+    }
+    if (!data) {
+      setError('QC task is no longer running. Refreshing the task list.')
+      setRefreshKey((prev) => prev + 1)
+      return
+    }
+
+    const pauseLogResult = shouldTrackTime
+      ? await createPauseLog({
+          taskId: task.id,
+          sourceType: task.source_type,
+          pausedBy: userEmail,
+          pauseReason: interruptReason,
+          pausedAt,
+        })
+      : { error: null }
+    if (pauseLogResult.error) {
+      const { error: rollbackError } = await supabase
+        .from(getTaskTableName(task))
+        .update({ status: 'in_progress', paused_at: null, pause_reason: null })
+        .eq('id', task.id)
+        .eq('assigned_to', normalizedEmail)
+        .eq('status', 'paused')
+        .eq('paused_at', pausedAt)
+      setError(pauseLogResult.error.message)
+      if (rollbackError) setError(`${pauseLogResult.error.message} Task status could not be restored: ${rollbackError.message}`)
+      setRefreshKey((prev) => prev + 1)
       return
     }
 
@@ -1378,6 +1411,14 @@ export default function QcInspectionTaskPage() {
     setSuccess(`QC task interrupted: ${interruptReason}.`)
     setShowInterruptModal(false)
     setActiveTaskId(null)
+    } finally {
+      interruptingTaskIdsRef.current.delete(task.id)
+      setInterruptingTaskIds((prev) => {
+        const next = { ...prev }
+        delete next[task.id]
+        return next
+      })
+    }
   }
 
   async function handleFinish(task) {
@@ -1888,8 +1929,8 @@ export default function QcInspectionTaskPage() {
               <button type="button" onClick={() => setShowInterruptModal(false)} style={styles.secondaryButton}>
                 Cancel
               </button>
-              <button type="button" onClick={() => handleInterrupt(activeTask)} style={styles.primaryButton}>
-                OK
+              <button type="button" onClick={() => handleInterrupt(activeTask)} style={{ ...styles.primaryButton, ...(interruptingTaskIds[activeTask.id] ? styles.buttonDisabled : {}) }} disabled={Boolean(interruptingTaskIds[activeTask.id])}>
+                {interruptingTaskIds[activeTask.id] ? 'Saving...' : 'OK'}
               </button>
             </div>
           </div>

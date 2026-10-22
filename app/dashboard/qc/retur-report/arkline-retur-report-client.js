@@ -1,8 +1,10 @@
 'use client'
 
-import { Fragment, useCallback, useMemo, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/utils/supabase/browser'
+import { getEligibleRejectSources, getJakartaDayRange, requiresRejectSourceChoice, resolveRejectSource } from '@/utils/arkline-reject-registration.mjs'
 import styles from './retur-report.module.css'
 
 function todayValue() {
@@ -24,9 +26,13 @@ function formatStatus(value) {
   return String(value || 'SENT').replaceAll('_', ' ')
 }
 
-function formatStorageSourceType(value) {
+function formatStorageSourceType(value, inventorySource) {
   const normalized = String(value || 'QC_REJECT').toUpperCase()
-  if (normalized === 'PACKING_REJECT') return 'Packing Reject'
+  if (normalized === 'PACKING_REJECT') {
+    if (inventorySource === 'SHELVING') return 'Shelving Reject'
+    if (inventorySource === 'PALLET_RESTOCK') return 'Pallet Restock Reject'
+    return 'Packing Reject'
+  }
   return 'QC Reject'
 }
 
@@ -41,6 +47,18 @@ function getRegistrationReasonLabel(reason) {
 }
 
 const REGISTRATION_SIZE_OPTIONS = ['XS', 'S', 'M', 'L', 'XL', 'XXL']
+const STORAGE_SIZE_ORDER = new Map(REGISTRATION_SIZE_OPTIONS.map((size, index) => [size, index]))
+
+function compareStorageSizes(left, right) {
+  const leftSize = normalizeSize(left)
+  const rightSize = normalizeSize(right)
+  const leftRank = STORAGE_SIZE_ORDER.get(leftSize)
+  const rightRank = STORAGE_SIZE_ORDER.get(rightSize)
+  if (leftRank !== undefined || rightRank !== undefined) {
+    return (leftRank ?? Number.MAX_SAFE_INTEGER) - (rightRank ?? Number.MAX_SAFE_INTEGER)
+  }
+  return leftSize.localeCompare(rightSize, undefined, { numeric: true })
+}
 
 function getStatusBadgeClass(status) {
   const normalized = String(status || 'SENT').toUpperCase()
@@ -313,7 +331,7 @@ function buildStorageProductGroups(lines = []) {
             searchText: buildStorageSearchText([sizeGroup.size, sizeGroup.qty, ...details.map((detail) => detail.searchText), ...sizeGroup.searchTextParts]),
           }
         })
-        .sort((a, b) => String(a.size || '').localeCompare(String(b.size || ''), undefined, { numeric: true }))
+        .sort((a, b) => compareStorageSizes(a.size, b.size))
 
       const detailLines = sizeGroups.flatMap((sizeGroup) => sizeGroup.details)
 
@@ -332,11 +350,11 @@ function buildStorageProductGroups(lines = []) {
     })
     .sort((a, b) => String(a.productName || '').localeCompare(String(b.productName || ''), undefined, { numeric: true }))
 }
-export default function ArklineReturReportClient({ eligibleRows, batches, storages = [], registrationProducts = [], rejectReasons = [], userEmail, canAdd = false, canEdit = false }) {
+export default function ArklineReturReportClient({ eligibleRows, batches, storages = [], registrationProducts = [], rejectReasons = [], userEmail, canAdd = false, canEdit = false, storageOnly = false, onStorageChanged }) {
   const router = useRouter()
-  const supabase = createClient()
+  const supabase = useMemo(() => createClient(), [])
   const [selectedIds, setSelectedIds] = useState([])
-  const [activeReturnTab, setActiveReturnTab] = useState('arrangement')
+  const [activeReturnTab, setActiveReturnTab] = useState(storageOnly ? 'storage' : 'arrangement')
   const [repairabilityFilter, setRepairabilityFilter] = useState('all')
   const [rejectReasonFilter, setRejectReasonFilter] = useState('')
   const [sizeFilter, setSizeFilter] = useState('')
@@ -352,6 +370,7 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
   const [storageViewMode, setStorageViewMode] = useState('koli')
   const [storageSearch, setStorageSearch] = useState('')
   const [storageSizeFilter, setStorageSizeFilter] = useState('')
+  const [storageSourceFilter, setStorageSourceFilter] = useState('')
   const [collapsedStorageKeys, setCollapsedStorageKeys] = useState([])
   const [collapsedStorageProductKeys, setCollapsedStorageProductKeys] = useState([])
   const [returnModalOpen, setReturnModalOpen] = useState(false)
@@ -374,8 +393,15 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
     rejectReasonSearch: '',
     grade: 'C',
     qty: '',
+    inventorySource: '',
+    sourceId: '',
     notes: '',
   })
+  const [registrationSourceOptions, setRegistrationSourceOptions] = useState([])
+  const [registrationSourcesLoading, setRegistrationSourcesLoading] = useState(false)
+  const [registrationSourcesError, setRegistrationSourcesError] = useState('')
+  const [registrationProductOpen, setRegistrationProductOpen] = useState(false)
+  const [registrationProductCursor, setRegistrationProductCursor] = useState(-1)
   const [returnQtyById, setReturnQtyById] = useState({})
   const [receiptDate, setReceiptDate] = useState(todayValue())
   const [receiptNotes, setReceiptNotes] = useState('')
@@ -613,6 +639,7 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
           updatedAt: storage.updatedAt,
           storageNumber: storage.storageNumber,
           sourceType: storage.sourceType || line.sourceType || 'QC_REJECT',
+          inventorySource: storage.inventorySource || null,
         }
         current.lines.push({
           ...enrichedLine,
@@ -687,7 +714,7 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
   const storageSizeOptions = useMemo(
     () =>
       Array.from(new Set(groupedStorages.flatMap((group) => group.lines.map((line) => line.size).filter(Boolean))))
-        .sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true })),
+        .sort(compareStorageSizes),
     [groupedStorages]
   )
   const filteredStorageGroups = useMemo(() => {
@@ -703,15 +730,20 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
               .filter((sizeGroup) => !storageSizeFilter || String(sizeGroup.size || '') === storageSizeFilter)
               .filter((sizeGroup) => matchesStorageSearch(sizeGroup.searchText, query))
               .map((sizeGroup) => {
-                const matchingDetails = sizeGroup.details.filter((detail) => matchesStorageSearch(detail.searchText, query))
-                return {
+                const matchingDetails = sizeGroup.details.filter((detail) =>
+                  (!storageSourceFilter || detail.sourceType === storageSourceFilter) && matchesStorageSearch(detail.searchText, query)
+                )
+                return matchingDetails.length ? {
                   ...sizeGroup,
-                  displayDetails: matchingDetails.length ? matchingDetails : sizeGroup.details,
-                }
+                  qty: matchingDetails.reduce((sum, detail) => sum + Number(detail.qty || 0), 0),
+                  displayDetails: matchingDetails,
+                } : null
               })
+              .filter(Boolean)
             return matchingSizeGroups.length
               ? {
                   ...product,
+                  qty: matchingSizeGroups.reduce((sum, sizeGroup) => sum + sizeGroup.qty, 0),
                   displaySizeGroups: matchingSizeGroups,
                 }
               : null
@@ -721,12 +753,13 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
         return matchingProductGroups.length
           ? {
               ...group,
+              storedQty: matchingProductGroups.reduce((sum, product) => sum + product.qty, 0),
               displayProductGroups: matchingProductGroups,
             }
           : null
       })
       .filter(Boolean)
-  }, [groupedStorages, storageSearch, storageSizeFilter])
+  }, [groupedStorages, storageSearch, storageSizeFilter, storageSourceFilter])
   const storageModelGroups = useMemo(() => {
     const modelMap = new Map()
 
@@ -744,8 +777,9 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
         current.koliNumbers.add(storage.storageNumber)
         ;(product.displaySizeGroups || product.sizeGroups).forEach((sizeGroup) => {
           const sizeKey = String(sizeGroup.size || 'No size').trim().toUpperCase()
-          const currentSize = current.sizeGroups.get(sizeKey) || { key: `${current.key}:size:${sizeKey}`, size: sizeGroup.size, qty: 0 }
+          const currentSize = current.sizeGroups.get(sizeKey) || { key: `${current.key}:size:${sizeKey}`, size: sizeGroup.size, qty: 0, koliNumbers: new Set() }
           currentSize.qty += Number(sizeGroup.qty || 0)
+          currentSize.koliNumbers.add(storage.storageNumber)
           current.qty += Number(sizeGroup.qty || 0)
           current.sizeGroups.set(sizeKey, currentSize)
         })
@@ -757,7 +791,12 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
       .map((model) => ({
         ...model,
         koliNumbers: Array.from(model.koliNumbers).sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true })),
-        sizeGroups: Array.from(model.sizeGroups.values()).sort((a, b) => String(a.size || '').localeCompare(String(b.size || ''), undefined, { numeric: true })),
+        sizeGroups: Array.from(model.sizeGroups.values())
+          .map((sizeGroup) => ({
+            ...sizeGroup,
+            koliNumbers: Array.from(sizeGroup.koliNumbers).sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true })),
+          }))
+          .sort((a, b) => compareStorageSizes(a.size, b.size)),
       }))
       .sort((a, b) => String(a.productName || '').localeCompare(String(b.productName || ''), undefined, { numeric: true }))
   }, [filteredStorageGroups])
@@ -790,6 +829,17 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
       null,
     [registrationDraft.productId, registrationDraft.productSearch, registrationProducts]
   )
+  const registrationProductMatches = useMemo(() => {
+    const query = registrationDraft.productSearch.trim().toLowerCase()
+    return registrationProducts
+      .filter((product) => !query || getRegistrationProductLabel(product).toLowerCase().includes(query))
+      .slice(0, 40)
+  }, [registrationDraft.productSearch, registrationProducts])
+  const eligibleRegistrationSources = useMemo(
+    () => getEligibleRejectSources(registrationSourceOptions, registrationDraft.qty),
+    [registrationDraft.qty, registrationSourceOptions]
+  )
+  const registrationNeedsSourceChoice = requiresRejectSourceChoice(eligibleRegistrationSources, registrationDraft.inventorySource)
   const selectedRegistrationReason = useMemo(
     () =>
       rejectReasons.find((reason) => String(reason.id) === String(registrationDraft.rejectReasonId)) ||
@@ -797,6 +847,75 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
       null,
     [registrationDraft.rejectReasonId, registrationDraft.rejectReasonSearch, rejectReasons]
   )
+
+  useEffect(() => {
+    const sku = selectedRegistrationProduct?.skuInduk
+    const size = registrationDraft.size
+    const source = registrationDraft.inventorySource
+    if (!registrationModalOpen || !sku || !size || !source) {
+      setRegistrationSourceOptions([])
+      setRegistrationSourcesError('')
+      setRegistrationSourcesLoading(false)
+      return
+    }
+
+    let cancelled = false
+    setRegistrationSourcesLoading(true)
+    setRegistrationSourcesError('')
+    setRegistrationSourceOptions([])
+
+    async function loadSources() {
+      try {
+        let options
+        if (source === 'SHELVING') {
+          const { data, error: sourceError } = await supabase
+            .from('warehouse_storage')
+            .select('id,sku_id,size,qty,rack_location:dir_rack_locations!inner(location_type,location_id,location_code,sub_location,group_code)')
+            .eq('rack_location.group_code', 'ARKLINE')
+            .eq('rack_location.location_type', 'SHELVING')
+            .or(`sku_id.ilike.${sku}%,source_variant_code.ilike.${sku}%`)
+            .eq('size', size)
+            .gt('qty', 0)
+            .order('qty', { ascending: false })
+            .limit(50)
+          if (sourceError) throw sourceError
+          options = (data || []).map((row) => ({
+            id: String(row.id),
+            qty: Number(row.qty || 0),
+            label: [row.rack_location?.location_id, row.rack_location?.location_code, row.rack_location?.sub_location].filter(Boolean).join(' / '),
+          }))
+        } else {
+          const dayRange = getJakartaDayRange(registrationDraft.storageDate)
+          if (!dayRange) throw new Error('Choose a valid Storage Date first.')
+          const { data, error: sourceError } = await supabase
+            .from('restock_request')
+            .select('id,qty,fulfilled_qty,rejected_qty,sales_upload_credited_qty,take_from,completed_at,requester_name')
+            .eq('source_type', 'ARKLINE')
+            .eq('request_status', 'completed')
+            .or(`source_sku_id.ilike.${sku}%,search_term.ilike.${sku}%`)
+            .eq('size', size)
+            .ilike('take_from', 'PALLET%')
+            .gte('completed_at', dayRange.start)
+            .lt('completed_at', dayRange.end)
+            .order('completed_at', { ascending: false })
+            .limit(100)
+          if (sourceError) throw sourceError
+          options = (data || []).map((row) => ({
+            id: String(row.id),
+            qty: Math.max(0, Math.min(Number(row.qty || 0), Number(row.fulfilled_qty ?? row.qty ?? 0)) - Number(row.rejected_qty || 0) - Number(row.sales_upload_credited_qty || 0)),
+            label: `${row.requester_name || 'Unknown requester'} / ${row.completed_at ? new Date(row.completed_at).toLocaleString('id-ID') : 'Completed'}`,
+          })).filter((row) => row.qty > 0)
+        }
+        if (!cancelled) setRegistrationSourceOptions(options)
+      } catch (sourceError) {
+        if (!cancelled) setRegistrationSourcesError(sourceError.message || 'Could not load reject sources.')
+      } finally {
+        if (!cancelled) setRegistrationSourcesLoading(false)
+      }
+    }
+    void loadSources()
+    return () => { cancelled = true }
+  }, [registrationModalOpen, registrationDraft.inventorySource, registrationDraft.size, registrationDraft.storageDate, selectedRegistrationProduct?.skuInduk, supabase])
   const selectedCorrectionLine = useMemo(
     () => correctableSizeLines.find((line) => String(line.id) === String(sizeCorrectionDraft.fromLineId)) || null,
     [correctableSizeLines, sizeCorrectionDraft.fromLineId]
@@ -933,12 +1052,15 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
       rejectReasonSearch: '',
       grade: 'C',
       qty: '',
+      inventorySource: '',
+      sourceId: '',
       notes: '',
     }
   }
 
   function openRegistrationModal() {
     setRegistrationDraft(getEmptyRegistrationDraft())
+    setRegistrationProductOpen(false)
     setError('')
     setRegistrationModalOpen(true)
   }
@@ -946,6 +1068,7 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
   function closeRegistrationModal() {
     setRegistrationModalOpen(false)
     setRegistrationDraft(getEmptyRegistrationDraft())
+    setRegistrationProductOpen(false)
     setError('')
   }
 
@@ -960,7 +1083,20 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
       ...current,
       productSearch: value,
       productId: nextProduct?.id || '',
+      sourceId: '',
     }))
+    setRegistrationProductCursor(-1)
+    setRegistrationProductOpen(true)
+  }
+
+  function selectRegistrationProduct(product) {
+    setRegistrationDraft((current) => ({
+      ...current,
+      productId: product.id,
+      productSearch: getRegistrationProductLabel(product),
+      sourceId: '',
+    }))
+    setRegistrationProductOpen(false)
   }
 
   function handleRegistrationReasonSearchChange(value) {
@@ -1139,11 +1275,11 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
     setReturnQtyById({})
     setSaving(false)
     closeStorageModal()
-    setActiveReturnTab('storage')
-    router.refresh()
+    router.push('/dashboard/storage/overview?mode=reject-storage&source=arkline')
   }
 
   async function saveRegistrationStorageItem() {
+    if (saving) return
     const trimmedStorageNumber = registrationDraft.storageNumber.trim()
     const qty = Number(registrationDraft.qty || 0)
 
@@ -1167,33 +1303,33 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
       return
     }
 
-    if (qty <= 0) {
-      setError('Qty must be greater than zero.')
+    if (!Number.isInteger(qty) || qty <= 0) {
+      setError('Qty must be a whole number greater than zero.')
+      return
+    }
+
+    const selectedSource = resolveRejectSource(eligibleRegistrationSources, registrationDraft.inventorySource, registrationDraft.sourceId)
+    if (!selectedSource || registrationSourcesLoading || qty > selectedSource.qty) {
+      setError(registrationNeedsSourceChoice ? 'Choose the matching reject source.' : 'No matching source has enough available quantity.')
       return
     }
 
     setSaving(true)
     setError('')
 
-    const { error: saveError } = await supabase.rpc('create_arkline_qc_rejection_storage_batch', {
+    const { error: saveError } = await supabase.rpc('register_arkline_rejection_storage_item', {
       p_storage_number: trimmedStorageNumber,
-      p_po_id: null,
-      p_arkline_po_item_id: null,
       p_sku_induk: selectedRegistrationProduct.skuInduk,
       p_model_name: selectedRegistrationProduct.productName,
-      p_supplier_name: selectedRegistrationProduct.supplierName || '',
-      p_source_qc_cycle_id: null,
-      p_round_number: 1,
+      p_size: registrationDraft.size,
+      p_reject_reason_id: selectedRegistrationReason.id,
+      p_qty: qty,
       p_storage_date: registrationDraft.storageDate,
       p_notes: registrationDraft.notes.trim(),
       p_created_by: userEmail || '',
-      p_lines: [{
-        reject_detail_id: null,
-        reject_reason_id: selectedRegistrationReason.id,
-        grade: 'C',
-        size: registrationDraft.size,
-        qty,
-      }],
+      p_inventory_source: registrationDraft.inventorySource,
+      p_source_warehouse_storage_id: registrationDraft.inventorySource === 'SHELVING' ? Number(selectedSource.id) : null,
+      p_source_restock_request_id: registrationDraft.inventorySource === 'PALLET_RESTOCK' ? selectedSource.id : null,
     })
 
     if (saveError) {
@@ -1205,6 +1341,7 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
     setSaving(false)
     closeRegistrationModal()
     setActiveReturnTab('storage')
+    onStorageChanged?.()
     router.refresh()
   }
 
@@ -1350,7 +1487,8 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
 
   return (
     <>
-      <div className={styles.subPageTabsPage}>
+      <div className={`${styles.subPageTabsPage} ${storageOnly ? styles.storageEmbeddedPage : ''}`.trim()}>
+        {!storageOnly ? (
         <div className={styles.subPageTabsShell}>
           <div className={styles.subPageTabsBar} role="tablist" aria-label="Arkline return workflow">
             <button
@@ -1373,20 +1511,11 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
               <span className={styles.subPageTabLabel}>Return Progress</span>
               <span className={styles.subPageTabUnderline} />
             </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={activeReturnTab === 'storage'}
-              className={`${styles.subPageTabLink} ${activeReturnTab === 'storage' ? styles.subPageTabLinkActive : ''}`.trim()}
-              onClick={() => setActiveReturnTab('storage')}
-            >
-              <span className={styles.subPageTabLabel}>Rejection Storage</span>
-              <span className={styles.subPageTabUnderline} />
-            </button>
           </div>
         </div>
+        ) : null}
 
-        <div className={styles.subPageTabsPanel}>
+        <div className={`${styles.subPageTabsPanel} ${storageOnly ? styles.storageEmbeddedPanel : ''}`.trim()}>
           {activeReturnTab === 'arrangement' ? (
       <section className={`${styles.card} ${styles.subPageCard}`.trim()}>
         <div className={styles.sectionHeader}>
@@ -1396,7 +1525,7 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
           </div>
           <div className={styles.modalHeaderActions}>
             <button type="button" className={styles.secondaryButton} onClick={openStorageModal} disabled={!canAdd || !selectedRows.length}>
-              Move to Rejection Storage
+              Move to Reject Storage
             </button>
             <button type="button" className={styles.primaryButton} onClick={openReturnModal} disabled={!canAdd || !selectedRows.length}>
               Create Return Batch
@@ -1739,12 +1868,12 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
       </section>
       ) : null}
 
-      {activeReturnTab === 'storage' ? (
+      {storageOnly ? (
       <section className={`${styles.card} ${styles.subPageCard}`.trim()}>
         <div className={styles.sectionHeader}>
           <div>
             <p className={styles.eyebrow}>Arkline</p>
-            <h2 className={styles.sectionTitle}>Rejection Storage</h2>
+            <h2 className={styles.sectionTitle}>Reject Storage</h2>
           </div>
           <button type="button" className={styles.primaryButton} onClick={openRegistrationModal} disabled={!canAdd || !registrationProducts.length || !rejectReasons.length}>
             Item Registration
@@ -1752,7 +1881,7 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
         </div>
 
         <div className={styles.storageToolbar}>
-          <div className={styles.storageModeToggle} role="tablist" aria-label="Rejection storage view mode">
+          <div className={styles.storageModeToggle} role="tablist" aria-label="Reject storage view mode">
             <button
               type="button"
               className={`${styles.storageModeButton} ${storageViewMode === 'koli' ? styles.storageModeButtonActive : ''}`.trim()}
@@ -1780,6 +1909,19 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
               {storageSizeOptions.map((size) => <option key={size} value={size}>{size}</option>)}
             </select>
           </div>
+          <div className={`${styles.field} ${styles.storageSizeField}`.trim()}>
+            <label htmlFor="storage-source-filter">Source</label>
+            <select
+              id="storage-source-filter"
+              className={styles.input}
+              value={storageSourceFilter}
+              onChange={(event) => setStorageSourceFilter(event.target.value)}
+            >
+              <option value="">All sources</option>
+              <option value="QC_REJECT">QC Reject</option>
+              <option value="PACKING_REJECT">Packing Reject</option>
+            </select>
+          </div>
           <div className={`${styles.field} ${styles.storageSearchField}`.trim()}>
             <label htmlFor="storage-search">Search storage, product, PO, or reject reason</label>
             <input
@@ -1790,13 +1932,14 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
               placeholder="Search product, storage no, PO..."
             />
           </div>
-          {storageSearch || storageSizeFilter ? (
+          {storageSearch || storageSizeFilter || storageSourceFilter ? (
             <button
               type="button"
               className={styles.secondaryButton}
               onClick={() => {
                 setStorageSearch('')
                 setStorageSizeFilter('')
+                setStorageSourceFilter('')
               }}
             >
               Clear
@@ -1805,9 +1948,9 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
         </div>
 
         {!storages.length ? (
-          <div className={styles.empty}>No Arkline rejection storage batch has been created.</div>
+          <div className={styles.empty}>No Arkline reject storage batch has been created.</div>
         ) : !filteredStorageGroups.length ? (
-          <div className={styles.empty}>No rejection storage matches this search.</div>
+          <div className={styles.empty}>No reject storage matches this search.</div>
         ) : storageViewMode === 'model' ? (
           <div className={styles.tableWrap}>
             <table className={`${styles.table} ${styles.storageTable}`.trim()}>
@@ -1850,6 +1993,7 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
                                   <tr>
                                     <th>Size</th>
                                     <th className={styles.centerNumberCell}>Stored Qty</th>
+                                    <th>Koli Info</th>
                                   </tr>
                                 </thead>
                                 <tbody>
@@ -1857,6 +2001,7 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
                                     <tr key={sizeGroup.key}>
                                       <td><strong>{sizeGroup.size}</strong></td>
                                       <td className={styles.centerNumberCell}><strong>{sizeGroup.qty}</strong></td>
+                                      <td>{sizeGroup.koliNumbers.join(', ') || '-'}</td>
                                     </tr>
                                   ))}
                                 </tbody>
@@ -1921,7 +2066,6 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
                         <tr className={styles.storageExpandedRow}>
                           <td colSpan={5}>
                             <div className={styles.storageNestedPanel}>
-                              {storage.notes.length ? <p className={styles.notice}>{storage.notes.join(' | ')}</p> : null}
                               <table className={`${styles.table} ${styles.storageProductTable}`.trim()}>
                                 <thead>
                                   <tr>
@@ -2008,7 +2152,7 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
                                                                   {displayDetails.map((detail) => (
                                                                     <tr key={detail.rowKey}>
                                                                       <td>{detail.poLabel}</td>
-                                                                      <td>{formatStorageSourceType(detail.sourceType)}</td>
+                                                                      <td>{formatStorageSourceType(detail.sourceType, detail.inventorySource)}</td>
                                                                       <td>{detail.grade}</td>
                                                                       <td>{detail.reasonName}</td>
                                                                       <td className={styles.centerNumberCell}>{detail.qty}</td>
@@ -2123,13 +2267,13 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
         </div>
       ) : null}
 
-      {registrationModalOpen ? (
+      {registrationModalOpen ? createPortal(
         <div className={styles.overlay} role="presentation">
           <div className={styles.modal} role="dialog" aria-modal="true" aria-labelledby="item-registration-title">
             <div className={styles.modalHeader}>
               <div>
                 <h2 id="item-registration-title">Item Registration</h2>
-                <p>Register Arkline packing reject into a rejection storage koli.</p>
+                <p>Register Arkline reject into a reject storage koli.</p>
               </div>
               <div className={styles.modalIconActions}>
                 <button type="button" className={styles.iconSaveButton} onClick={saveRegistrationStorageItem} disabled={saving} aria-label="Save item">✓</button>
@@ -2154,24 +2298,64 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
                   className={styles.input}
                   type="date"
                   value={registrationDraft.storageDate}
-                  onChange={(event) => updateRegistrationDraft({ storageDate: event.target.value })}
+                    onChange={(event) => updateRegistrationDraft({ storageDate: event.target.value, sourceId: '' })}
                 />
               </div>
-              <div className={`${styles.field} ${styles.fieldFull}`}>
+              <div
+                className={`${styles.field} ${styles.fieldFull} ${styles.registrationProductField}`}
+                onBlur={(event) => {
+                  if (!event.currentTarget.contains(event.relatedTarget)) setRegistrationProductOpen(false)
+                }}
+              >
                 <label htmlFor="registration-product">Arkline Product</label>
                 <input
                   id="registration-product"
                   className={styles.input}
                   value={registrationDraft.productSearch}
                   onChange={(event) => handleRegistrationProductSearchChange(event.target.value)}
+                  onFocus={() => setRegistrationProductOpen(true)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Escape') setRegistrationProductOpen(false)
+                    if (event.key === 'ArrowDown' && registrationProductMatches.length) {
+                      event.preventDefault()
+                      setRegistrationProductOpen(true)
+                      setRegistrationProductCursor((current) => (current + 1) % registrationProductMatches.length)
+                    }
+                    if (event.key === 'ArrowUp' && registrationProductMatches.length) {
+                      event.preventDefault()
+                      setRegistrationProductOpen(true)
+                      setRegistrationProductCursor((current) => (current - 1 + registrationProductMatches.length) % registrationProductMatches.length)
+                    }
+                    if (event.key === 'Enter' && registrationProductOpen && registrationProductMatches.length) {
+                      event.preventDefault()
+                      selectRegistrationProduct(registrationProductMatches[Math.max(0, registrationProductCursor)])
+                    }
+                  }}
                   placeholder="Type or choose Arkline product"
-                  list="registration-product-options"
+                  autoComplete="off"
+                  role="combobox"
+                  aria-autocomplete="list"
+                  aria-expanded={registrationProductOpen}
+                  aria-controls="registration-product-options"
                 />
-                <datalist id="registration-product-options">
-                  {registrationProducts.map((product) => (
-                    <option key={product.id} value={getRegistrationProductLabel(product)} label={product.skuInduk || ''} />
-                  ))}
-                </datalist>
+                {registrationProductOpen && registrationProductMatches.length ? (
+                  <div id="registration-product-options" className={styles.registrationProductOptions} role="listbox" aria-label="Arkline products">
+                    {registrationProductMatches.map((product, index) => (
+                      <button
+                        key={product.id}
+                        type="button"
+                        role="option"
+                        aria-selected={index === registrationProductCursor}
+                        className={`${styles.registrationProductOption} ${index === registrationProductCursor ? styles.registrationProductOptionActive : ''}`.trim()}
+                        onMouseDown={(event) => event.preventDefault()}
+                        onClick={() => selectRegistrationProduct(product)}
+                      >
+                        <span>{product.productName}</span>
+                        <small>{product.skuInduk}</small>
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
               </div>
               <div className={styles.field}>
                 <label htmlFor="registration-sku">SKU</label>
@@ -2183,12 +2367,57 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
                   id="registration-size"
                   className={styles.input}
                   value={registrationDraft.size}
-                  onChange={(event) => updateRegistrationDraft({ size: event.target.value })}
+                  onChange={(event) => updateRegistrationDraft({ size: event.target.value, sourceId: '' })}
                 >
                   <option value="">Choose size</option>
                   {REGISTRATION_SIZE_OPTIONS.map((size) => <option key={size} value={size}>{size}</option>)}
                 </select>
               </div>
+              <div className={`${styles.field} ${styles.fieldFull}`}>
+                <label>Reject From</label>
+                <div className={styles.registrationSourceToggle} role="group" aria-label="Reject source">
+                  {[
+                    ['SHELVING', 'Shelving'],
+                    ['PALLET_RESTOCK', 'Restock Pallet'],
+                  ].map(([value, label]) => (
+                    <button
+                      key={value}
+                      type="button"
+                      className={`${styles.storageModeButton} ${registrationDraft.inventorySource === value ? styles.storageModeButtonActive : ''}`.trim()}
+                      aria-pressed={registrationDraft.inventorySource === value}
+                      onClick={() => updateRegistrationDraft({ inventorySource: value, sourceId: '' })}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {registrationDraft.inventorySource && registrationNeedsSourceChoice ? (
+                <div className={`${styles.field} ${styles.fieldFull}`}>
+                  <label htmlFor="registration-source-location">{registrationDraft.inventorySource === 'SHELVING' ? 'Shelving Location' : 'Restock For'}</label>
+                  <select
+                    id="registration-source-location"
+                    className={styles.input}
+                    value={registrationDraft.sourceId}
+                    onChange={(event) => updateRegistrationDraft({ sourceId: event.target.value })}
+                    disabled={registrationSourcesLoading || Boolean(registrationSourcesError)}
+                  >
+                    <option value="">Choose source</option>
+                    {eligibleRegistrationSources.map((option) => (
+                      <option key={option.id} value={option.id}>{option.label} / {option.qty} available</option>
+                    ))}
+                  </select>
+                </div>
+              ) : null}
+              {registrationDraft.inventorySource && selectedRegistrationProduct && registrationDraft.size && (registrationSourcesError || registrationSourcesLoading || !eligibleRegistrationSources.length) ? (
+                <div className={`${styles.field} ${styles.fieldFull}`} aria-live="polite">
+                  {registrationSourcesError ? <span className={styles.registrationSourceError}>{registrationSourcesError}</span> : null}
+                  {!registrationSourcesError && registrationSourcesLoading ? <span className={styles.registrationSourceHint}>Checking available source...</span> : null}
+                  {!registrationSourcesError && !registrationSourcesLoading && !eligibleRegistrationSources.length ? (
+                    <span className={styles.registrationSourceError}>No matching {registrationDraft.inventorySource === 'SHELVING' ? 'shelving stock' : 'pallet restock completed on this Storage Date'} has enough quantity.</span>
+                  ) : null}
+                </div>
+              ) : null}
               <div className={styles.field}>
                 <label htmlFor="registration-reason">Reject Reason</label>
                 <input
@@ -2210,8 +2439,9 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
                   className={styles.input}
                   type="number"
                   min="1"
+                  step="1"
                   value={registrationDraft.qty}
-                  onChange={(event) => updateRegistrationDraft({ qty: event.target.value })}
+                  onChange={(event) => updateRegistrationDraft({ qty: event.target.value, sourceId: '' })}
                   placeholder="0"
                 />
               </div>
@@ -2229,14 +2459,15 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
             ) : null}
             {error ? <p className={styles.error}>{error}</p> : null}
           </div>
-        </div>
+        </div>,
+        document.body
       ) : null}
       {storageModalOpen ? (
         <div className={styles.overlay} role="presentation">
           <div className={styles.modal} role="dialog" aria-modal="true" aria-labelledby="create-storage-title">
             <div className={styles.modalHeader}>
               <div>
-                <h2 id="create-storage-title">Move to Rejection Storage</h2>
+                <h2 id="create-storage-title">Move to Reject Storage</h2>
                 <p>{selectedRows.length} reject line(s) selected. Multiple PO products will be split into separate storage batches.</p>
               </div>
               <button type="button" className={styles.closeButton} onClick={closeStorageModal} aria-label="Close">X</button>

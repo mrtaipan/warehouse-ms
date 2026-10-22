@@ -34,6 +34,7 @@ declare
   can_manage_upload boolean;
   can_manage_restock boolean;
   sync_case_id text := current_setting('warehouse.priority_return_case_id', true);
+  reject_batch_id text := current_setting('warehouse.arkline_reject_batch_id', true);
 begin
   if actor_id is null then
     if current_user = 'postgres' and tg_op = 'INSERT'
@@ -71,6 +72,9 @@ begin
     new.requester_user_id := coalesce(new.requester_user_id, actor_id);
     if new.requester_user_id is distinct from actor_id or new.request_status <> 'open' then
       raise exception 'A restock request must be created by its owner as open.' using errcode = '42501';
+    end if;
+    if new.rejected_qty <> 0 or new.sales_upload_credited_qty <> 0 then
+      raise exception 'Restock credits and rejects cannot be set when creating a request.' using errcode = '42501';
     end if;
     return new;
   end if;
@@ -124,6 +128,19 @@ begin
   end if;
 
   if old.request_status = 'completed' and new.request_status = 'completed' then
+    if reject_batch_id is not null then
+      if to_jsonb(new) - 'rejected_qty' is not distinct from to_jsonb(old) - 'rejected_qty'
+        and exists (
+          select 1 from public.arkline_qc_rejection_storage_batches batch
+          where batch.id::text = reject_batch_id
+            and batch.inventory_source = 'PALLET_RESTOCK'
+            and batch.source_restock_request_id = old.id
+            and batch.stock_applied_at is not null
+            and new.rejected_qty = old.rejected_qty + batch.stored_qty
+        ) then
+        return new;
+      end if;
+    end if;
     select exists (
       select 1 from public.dir_user_profiles profile
       left join public.dir_user_roles role_map on role_map.role = profile.role
