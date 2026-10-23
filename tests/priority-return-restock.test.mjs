@@ -148,6 +148,57 @@ test('source choices include matching pallet, shelving, and Temp. Sales only', a
   await db.exec("update warehouse_temporary_sales_items set qty_in_area=0,status='COMPLETED' where id=11")
 })
 
+test('MOB priority return with an Arkline SKU takes stock from Arkline locations', async () => {
+  await db.exec(`
+    insert into dir_rack_locations values
+      (5,'ARKLINE','PALLET','LV83','ARK.5C',null),
+      (6,'MOB','PALLET','LV83','24E','K9');
+    insert into warehouse_storage (id,rack_location_id,sku_id,item_name,size,qty)
+    values (6,5,'ARK01SSP023','Cerniera Polo Shirt SS Rich Black','L',3),
+      (7,6,'ARK01SSP023','Cerniera Polo Shirt SS Rich Black','L',5);
+    insert into warehouse_temporary_sales_items
+      (id,sku_id,item_name,size,group_code,area_type,qty_in_area,status)
+    values (12,'ARK01SSP023','Cerniera Polo Shirt SS Rich Black','L','ARKLINE','SALES',2,'IN_TEMPORARY_AREA');
+    insert into delivery_error_retur_cases
+      (id,kode_kejadian,created_by,group_order,status_barang,need_prioritized,produk_pengganti)
+    values (105,'MX-105','Customer Service','MOB','Sending',true,
+      'PRODUCT: ARK01SSP023 CERNIERA POLO SS SHIRT RICH BLACK || SIZE: L || QTY: 1');
+  `)
+  const requestId = await scalar('select id from restock_request where return_case_id=105')
+  const options = await scalar(`select priority_return_source_options('${requestId}')`)
+  assert.deepEqual(options.map((option) => Number(option.source_id)).sort((a, b) => a - b), [6, 12])
+  await assert.rejects(
+    () => db.query('select complete_priority_return_restock_request($1,$2,$3,$4)', [requestId, 'WAREHOUSE', 7, 1]),
+    /no longer available/,
+  )
+  await db.query('select complete_priority_return_restock_request($1,$2,$3,$4)', [requestId, 'WAREHOUSE', 6, 1])
+  assert.equal(await scalar('select qty from warehouse_storage where id=6'), 2)
+  assert.equal(await scalar(`select group_code from warehouse_temporary_sales_items where restock_request_id='${requestId}'`), 'MOB')
+})
+
+test('cross-group priority return can stage Arkline Temp. Sales and Resolve the MOB case', async () => {
+  await db.exec(`
+    insert into delivery_error_retur_cases
+      (id,kode_kejadian,created_by,group_order,status_barang,need_prioritized,produk_pengganti)
+    values (106,'MX-106','Customer Service','MOB','Sending',true,
+      'SKU: ARK01SSP023 || PRODUCT: Cerniera Polo Shirt SS Rich Black || SIZE: L || QTY: 1');
+  `)
+  const requestId = await scalar('select id from restock_request where return_case_id=106')
+  const options = await scalar(`select priority_return_source_options('${requestId}')`)
+  assert.ok(options.some((option) => option.source_kind === 'TEMP_SALES' && Number(option.source_id) === 12))
+  await db.query('select complete_priority_return_restock_request($1,$2,$3,$4)', [requestId, 'TEMP_SALES', 12, 1])
+  assert.equal(Number(await scalar('select qty_in_area from warehouse_temporary_sales_items where id=12')), 1)
+  assert.equal(await scalar(`
+    select count(*) from warehouse_temporary_sales_items t
+    where t.restock_request_id='${requestId}' and t.group_code='MOB'
+      and delivery_stock_product_matches(t.sku_id,t.source_variant_code,t.item_name,
+        'ARK01SSP023','Cerniera Polo Shirt SS Rich Black')
+  `), 1)
+  await db.query('select complete_delivery_return_cases($1::jsonb)', [JSON.stringify([{ case_id: 106, lines: [] }])])
+  assert.equal(Number(await scalar(`select qty_in_area from warehouse_temporary_sales_items where restock_request_id='${requestId}'`)), 0)
+  assert.equal(Number(await scalar('select qty_in_area from warehouse_temporary_sales_items where restock_request_id in (select id from restock_request where return_case_id=105)')), 1)
+})
+
 test('completion from pallet stages stock once and Resolve consumes Retur Keeping first', async () => {
   const requestId = await scalar('select id from restock_request where return_case_id=101 and return_line_no=1')
   await db.query('select complete_priority_return_restock_request($1, $2, $3, $4)', [requestId, 'WAREHOUSE', 1, 2])
@@ -159,7 +210,7 @@ test('completion from pallet stages stock once and Resolve consumes Retur Keepin
   await db.query('select complete_delivery_return_cases($1::jsonb)', [JSON.stringify([{ case_id: 101, lines: [] }])])
   assert.equal(Number(await scalar(`select qty_in_area from warehouse_temporary_sales_items where restock_request_id='${requestId}'`)), 0)
   assert.equal(Number(await scalar('select qty_in_area from warehouse_temporary_sales_items where id=10')), 1)
-  assert.equal(await scalar("select count(*) from warehouse_storage_movements where movement_type='CUSTOMER_REPLACEMENT_OUT' and from_location_label='TEMP. RETUR KEEPING'"), 1)
+  assert.equal(await scalar("select count(*) from warehouse_storage_movements where movement_type='CUSTOMER_REPLACEMENT_OUT' and from_location_label='TEMP. RETUR KEEPING' and to_location_label='CUSTOMER REPLACEMENT / AX-101'"), 1)
   assert.equal(await scalar("select request_status from restock_request where return_case_id=101 and return_line_no=2"), 'cancelled')
 })
 

@@ -630,6 +630,8 @@ export default function TakeRequestsMobile() {
                 </button>
               </div>
 
+              <form onSubmit={handleComplete} style={styles.modalForm}>
+                <div style={styles.modalScrollContent}>
               <p style={styles.modalText}>
                 <strong>For:</strong> {getRequestForLabel(selectedRequest)}
               </p>
@@ -653,7 +655,6 @@ export default function TakeRequestsMobile() {
               ) : null}
               {error ? <p style={styles.error} role="alert">{error}</p> : null}
 
-              <form onSubmit={handleComplete} style={styles.modalForm}>
                 <div style={styles.requestCell}>
                   <label style={styles.requestLabel}>Take Source</label>
                   <div style={styles.sourceOptionList}>
@@ -714,6 +715,7 @@ export default function TakeRequestsMobile() {
                   ) : null}
                 </div>
 
+                </div>
                 <div style={styles.modalActions}>
                   <button type="button" onClick={closeCompleteModal} style={styles.modalSecondaryButton} aria-label="Cancel completion" title="Cancel" disabled={completingId === selectedRequest.id}>
                     ×
@@ -954,9 +956,6 @@ const styles = {
     display: 'flex',
     flexDirection: 'column',
     gap: '10px',
-    maxHeight: 'min(34vh, 280px)',
-    overflowY: 'auto',
-    overscrollBehavior: 'contain',
     padding: '12px',
     borderRadius: '14px',
     border: '1px solid #fed7aa',
@@ -1033,12 +1032,15 @@ const styles = {
   modalCard: {
     width: '100%',
     maxWidth: '520px',
+    maxHeight: 'calc(100dvh - 40px)',
+    boxSizing: 'border-box',
     background: '#fff',
     borderRadius: '20px',
     padding: '20px',
     display: 'flex',
     flexDirection: 'column',
     gap: '14px',
+    overflow: 'hidden',
     boxShadow: '0 20px 50px rgba(0,0,0,0.15)',
   },
   modalHeader: {
@@ -1081,7 +1083,18 @@ const styles = {
   modalForm: {
     display: 'flex',
     flexDirection: 'column',
-    gap: '16px',
+    gap: '12px',
+    minHeight: 0,
+    overflow: 'hidden',
+  },
+  modalScrollContent: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '14px',
+    minHeight: 0,
+    overflowY: 'auto',
+    overscrollBehavior: 'contain',
+    paddingRight: '4px',
   },
   modalInput: {
     height: '46px',
@@ -1097,6 +1110,9 @@ const styles = {
     display: 'flex',
     justifyContent: 'flex-end',
     gap: '12px',
+    flexShrink: 0,
+    borderTop: '1px solid #e5e7eb',
+    paddingTop: '12px',
   },
   modalSecondaryButton: {
     width: '46px',

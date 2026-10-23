@@ -252,6 +252,7 @@ declare
   v_request public.restock_request%rowtype;
   v_case public.delivery_error_retur_cases%rowtype;
   v_item record;
+  v_source_group text;
   v_options jsonb;
 begin
   if auth.uid() is null then
@@ -277,6 +278,11 @@ begin
   select * into v_item from public.delivery_return_product_lines(v_case.produk_pengganti)
   where line_no = v_request.return_line_no;
   if not found then raise exception 'Replacement line is no longer available'; end if;
+  v_source_group := case
+    when upper(btrim(coalesce(nullif(v_item.sku, ''), v_item.product_name))) ~ '^ARK[0-9]'
+      then 'ARKLINE'
+    else upper(btrim(v_case.group_order))
+  end;
 
   select coalesce(jsonb_agg(to_jsonb(option_row) order by option_row.source_kind, option_row.label), '[]'::jsonb)
   into v_options
@@ -287,7 +293,7 @@ begin
       stock.qty as qty, stock.sku_id, stock.item_name, stock.size
     from public.warehouse_storage stock
     join public.dir_rack_locations location on location.id = stock.rack_location_id
-    where upper(btrim(location.group_code)) = upper(btrim(v_case.group_order))
+    where upper(btrim(location.group_code)) = v_source_group
       and upper(btrim(location.location_type)) in ('PALLET', 'SHELVING')
       and stock.qty > 0
       and public.delivery_stock_product_matches(stock.sku_id, stock.source_variant_code,
@@ -299,7 +305,7 @@ begin
       temp.qty_in_area, temp.sku_id, temp.item_name, temp.size
     from public.warehouse_temporary_sales_items temp
     where temp.area_type = 'SALES' and temp.status = 'IN_TEMPORARY_AREA'
-      and upper(btrim(temp.group_code)) = upper(btrim(v_case.group_order))
+      and upper(btrim(temp.group_code)) = v_source_group
       and temp.qty_in_area > 0
       and public.delivery_stock_product_matches(temp.sku_id, temp.source_variant_code,
         temp.item_name, v_item.sku, v_item.product_name)
@@ -324,6 +330,7 @@ declare
   v_request public.restock_request%rowtype;
   v_case public.delivery_error_retur_cases%rowtype;
   v_item record;
+  v_source_group text;
   v_stock public.warehouse_storage%rowtype;
   v_temp public.warehouse_temporary_sales_items%rowtype;
   v_location public.dir_rack_locations%rowtype;
@@ -368,13 +375,18 @@ begin
   select * into v_item from public.delivery_return_product_lines(v_case.produk_pengganti)
   where line_no = v_request.return_line_no;
   if not found then raise exception 'Replacement line is no longer available'; end if;
+  v_source_group := case
+    when upper(btrim(coalesce(nullif(v_item.sku, ''), v_item.product_name))) ~ '^ARK[0-9]'
+      then 'ARKLINE'
+    else upper(btrim(v_case.group_order))
+  end;
 
   if p_source_kind = 'WAREHOUSE' then
     select * into v_stock from public.warehouse_storage where id = p_source_id for update;
     select * into v_location from public.dir_rack_locations where id = v_stock.rack_location_id;
     if v_stock.id is null or v_location.id is null
       or upper(btrim(v_location.location_type)) not in ('PALLET', 'SHELVING')
-      or upper(btrim(v_location.group_code)) <> upper(btrim(v_case.group_order))
+      or upper(btrim(v_location.group_code)) <> v_source_group
       or v_stock.qty < p_qty
       or not public.delivery_stock_product_matches(v_stock.sku_id, v_stock.source_variant_code,
         v_stock.item_name, v_item.sku, v_item.product_name)
@@ -403,7 +415,7 @@ begin
     where id = p_source_id for update;
     if v_temp.id is null or v_temp.area_type <> 'SALES'
       or v_temp.status <> 'IN_TEMPORARY_AREA'
-      or upper(btrim(v_temp.group_code)) <> upper(btrim(v_case.group_order))
+      or upper(btrim(v_temp.group_code)) <> v_source_group
       or v_temp.qty_in_area < p_qty
       or not public.delivery_stock_product_matches(v_temp.sku_id, v_temp.source_variant_code,
         v_temp.item_name, v_item.sku, v_item.product_name)

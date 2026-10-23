@@ -377,6 +377,7 @@ begin
       foreach v_area_type in array array['RETUR_KEEPING', 'SALES'] loop
         for v_stock in
           select t.* from public.warehouse_temporary_sales_items t
+          left join public.restock_request linked_request on linked_request.id = t.restock_request_id
           where t.status = 'IN_TEMPORARY_AREA'
             and coalesce(t.area_type, 'SALES') = v_area_type
             and upper(btrim(coalesce(t.group_code, 'MOB'))) = v_group
@@ -384,7 +385,9 @@ begin
             and public.delivery_stock_product_matches(t.sku_id, t.source_variant_code, t.item_name,
               v_replacement.sku, v_replacement.product_name)
             and public.warehouse_sizes_match(t.size, v_replacement.size)
-          order by t.entered_at, t.id
+          order by case when linked_request.return_case_id = v_case.id
+              and linked_request.return_line_no = v_replacement.line_no then 0 else 1 end,
+            t.entered_at, t.id
           for update of t
         loop
           exit when v_remaining <= 0;
