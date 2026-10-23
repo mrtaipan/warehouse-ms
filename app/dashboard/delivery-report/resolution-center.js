@@ -986,7 +986,7 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
   const [receivingLookupBusy, setReceivingLookupBusy] = useState(false)
   const [receivingInspectionCases, setReceivingInspectionCases] = useState([])
   const [productSearch, setProductSearch] = useState('')
-  const [productSearchFilters, setProductSearchFilters] = useState({ group: lockedGroup, scope: '', type: '' })
+  const [productSearchFilters, setProductSearchFilters] = useState({ group: lockedGroup, scope: '', type: '', size: '' })
 
   const loadMasters = useCallback(async () => {
     const results = await Promise.all([
@@ -1703,11 +1703,8 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
     }
   }, [returnForm.no_resi_pengiriman])
 
-  const searchResults = useMemo(() => {
-    const keyword = productSearch.trim().toLowerCase()
-    if (!keyword) return []
-    const returnRows = cases
-      .map((row) => ({
+  const productSearchRows = useMemo(() => {
+    const returnRows = cases.map((row) => ({
         action: row.retur_action || '-',
         code: row.kode_kejadian || '-',
         customer: row.nama_customer || '-',
@@ -1720,9 +1717,10 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
         row,
         sourceLabel: 'Return',
         sourceType: 'return',
+        returnedEntries: parseProductEntries(row.produk_diretur),
+        replacementEntries: parseProductEntries(row.produk_pengganti),
       }))
-    const issueRows = issues
-      .map((row) => ({
+    const issueRows = issues.map((row) => ({
         action: row.tindak_lanjut || '-',
         code: row.order_id || '-',
         customer: row.nama || '-',
@@ -1735,34 +1733,70 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
         row,
         sourceLabel: 'Order Issue',
         sourceType: 'issue',
+        returnedEntries: parseProductEntries(row.produk_bermasalah),
+        replacementEntries: parseProductEntries(row.produk_pengganti),
       }))
-
     return [...returnRows, ...issueRows]
+  }, [cases, issues])
+
+  const productSizeOptions = useMemo(() => {
+    const sizes = new Set()
+    const keyword = productSearch.trim().toLowerCase()
+    for (const row of productSearchRows) {
+      if (productSearchFilters.type && row.sourceType !== productSearchFilters.type) continue
+      if (productSearchFilters.group && cleanUpper(row.groupOrder) !== productSearchFilters.group) continue
+      const entries = productSearchFilters.scope === 'returned' ? row.returnedEntries
+        : productSearchFilters.scope === 'replacement' ? row.replacementEntries
+          : [...row.returnedEntries, ...row.replacementEntries]
+      for (const entry of entries) {
+        if (entry.size && (!keyword || entry.raw.toLowerCase().includes(keyword))) sizes.add(cleanUpper(entry.size))
+      }
+    }
+    return [...sizes].sort(new Intl.Collator('en', { numeric: true, sensitivity: 'base' }).compare)
+  }, [productSearchRows, productSearch, productSearchFilters.group, productSearchFilters.scope, productSearchFilters.type])
+
+  useEffect(() => {
+    if (productSearchFilters.size && !productSizeOptions.includes(productSearchFilters.size)) {
+      setProductSearchFilters((current) => ({ ...current, size: '' }))
+    }
+  }, [productSearchFilters.size, productSizeOptions])
+
+  const searchResults = useMemo(() => {
+    const keyword = productSearch.trim().toLowerCase()
+    const selectedSize = productSearchFilters.size
+    if (!keyword && !selectedSize) return []
+    const matchesProduct = (entries) => entries.some((entry) =>
+      (!selectedSize || cleanUpper(entry.size) === selectedSize)
+      && (!keyword || entry.raw.toLowerCase().includes(keyword))
+    )
+
+    return productSearchRows
+      .map((row) => ({
+        ...row,
+        inReturned: matchesProduct(row.returnedEntries),
+        inReplacement: matchesProduct(row.replacementEntries),
+      }))
       .filter((row) => {
-        const returnedText = String(row.returnedProduct || '').toLowerCase()
-        const replacementText = String(row.replacementProduct || '').toLowerCase()
-        const inReturned = returnedText.includes(keyword)
-        const inReplacement = replacementText.includes(keyword)
         const matchType = !productSearchFilters.type || row.sourceType === productSearchFilters.type
         const matchGroup = !productSearchFilters.group || cleanUpper(row.groupOrder) === productSearchFilters.group
 
         if (!matchType || !matchGroup) return false
-        if (productSearchFilters.scope === 'returned') return inReturned
-        if (productSearchFilters.scope === 'replacement') return inReplacement
-        return inReturned || inReplacement
+        if (productSearchFilters.scope === 'returned') return row.inReturned
+        if (productSearchFilters.scope === 'replacement') return row.inReplacement
+        return row.inReturned || row.inReplacement
       })
       .map((row) => {
-        const returnedText = String(row.returnedProduct || '').toLowerCase()
-        const replacementText = String(row.replacementProduct || '').toLowerCase()
         const foundIn = []
-        if (returnedText.includes(keyword)) foundIn.push(row.returnedLabel)
-        if (replacementText.includes(keyword)) foundIn.push('Replacement Product')
+        if (row.inReturned && productSearchFilters.scope !== 'replacement') foundIn.push(row.returnedLabel)
+        if (row.inReplacement && productSearchFilters.scope !== 'returned') foundIn.push('Replacement Product')
         return { ...row, foundIn }
       })
       .sort((first, second) => String(second.dateValue || '').localeCompare(String(first.dateValue || '')))
-  }, [cases, issues, productSearch, productSearchFilters.group, productSearchFilters.scope, productSearchFilters.type])
+  }, [productSearchRows, productSearch, productSearchFilters.group, productSearchFilters.scope, productSearchFilters.type, productSearchFilters.size])
 
-  const detailStatusOption = RETURN_STATUS_OPTIONS[detailDraft?.status_barang] || RETURN_STATUS_OPTIONS.Pending
+  const detailStatusOption = detailDraft?.status_barang === 'Completed'
+    ? { className: styles.resolutionStatusCompleted, description: 'This return case has been completed.', label: 'Completed' }
+    : RETURN_STATUS_OPTIONS[detailDraft?.status_barang] || RETURN_STATUS_OPTIONS.Pending
   const canEditDetail = Boolean(detailDraft) && !detailReadonly && activeTab !== 'receiving' && ACTIVE_RETURN_STATUSES.has(detail?.status_barang)
 
   const renderDetailSectionHeading = (key, label) => (
@@ -1779,6 +1813,13 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
     const value = cleanText(statusValue) || '-'
     const optionClass = RETURN_STATUS_OPTIONS[value]?.className || (value === 'Completed' ? styles.statusCompletedBadge : '')
     return <span className={`${styles.statusBadge} ${optionClass}`}>{value}</span>
+  }
+  const renderIssueStatusBadge = (row) => {
+    const action = normalizeIssueHandlingKey(row?.tindak_lanjut)
+    const meta = masters.issueActions.find((item) => normalizeIssueHandlingKey(item.name) === action)
+    if (!meta) return <span className={`${styles.statusBadge} ${styles.productIssueUnknown}`}>Status Unavailable</span>
+    const pending = isTruthyFlag(meta.is_pending)
+    return <span className={`${styles.statusBadge} ${pending ? styles.productIssuePending : styles.productIssueRecorded}`}>{pending ? 'Needs Handling' : 'No Pending Handling'}</span>
   }
   const getGroupFillClass = (group) => styles[`orderIssueFill${cleanUpper(group).charAt(0)}${cleanUpper(group).slice(1).toLowerCase()}`] || ''
 
@@ -2608,27 +2649,28 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
 
       {activeTab === 'search' ? (
         <section className={`${styles.dataCard} ${styles.productSearchPanel}`}>
-          <div className={styles.cardTitleRow}>
-            <div><h2>PRODUCT SEARCH</h2><p className={styles.cardHint}>Search product history from Return Registration and Order Issues.</p></div>
-            <span className={styles.caseCountPill}>{searchResults.length} Results</span>
-          </div>
+          <h2>Product Search</h2>
           <div className={styles.productSearchToolbar}>
             <label className={styles.searchField}><span>PRODUCT SEARCH</span><input autoFocus placeholder="EXAMPLE: BLACK OVERSIZE T-SHIRT" value={productSearch} onChange={(event) => setProductSearch(cleanUpper(event.target.value))} /></label>
-            <label><span>TYPE</span><select value={productSearchFilters.type} onChange={(event) => setProductSearchFilters({ ...productSearchFilters, type: event.target.value })}><option value="">ALL TYPES</option><option value="return">RETURN</option><option value="issue">ORDER ISSUE</option></select></label>
-            <label><span>ITEM TYPE</span><select value={productSearchFilters.scope} onChange={(event) => setProductSearchFilters({ ...productSearchFilters, scope: event.target.value })}><option value="">ALL ITEM TYPES</option><option value="returned">RETURN / FAULTY PRODUCT</option><option value="replacement">REPLACEMENT PRODUCT</option></select></label>
-            <label><span>GROUP ORDER</span><select value={productSearchFilters.group} onChange={(event) => setProductSearchFilters({ ...productSearchFilters, group: lockedGroup || event.target.value })} disabled={Boolean(lockedGroup)}>{lockedGroup ? null : <option value="">ALL GROUPS</option>}{groupOptions.map((group) => <option key={group}>{group}</option>)}</select></label>
-            <button className={styles.softButton} onClick={() => { setProductSearch(''); setProductSearchFilters({ group: lockedGroup, scope: '', type: '' }) }}>Reset</button>
+            <label><span>TYPE</span><select value={productSearchFilters.type} onChange={(event) => setProductSearchFilters({ ...productSearchFilters, type: event.target.value, size: '' })}><option value="">ALL TYPES</option><option value="return">RETURN</option><option value="issue">ORDER ISSUE</option></select></label>
+            <label><span>ITEM TYPE</span><select value={productSearchFilters.scope} onChange={(event) => setProductSearchFilters({ ...productSearchFilters, scope: event.target.value, size: '' })}><option value="">ALL ITEM TYPES</option><option value="returned">RETURN / FAULTY PRODUCT</option><option value="replacement">REPLACEMENT PRODUCT</option></select></label>
+            <label><span>GROUP ORDER</span><select value={productSearchFilters.group} onChange={(event) => setProductSearchFilters({ ...productSearchFilters, group: lockedGroup || event.target.value, size: '' })} disabled={Boolean(lockedGroup)}>{lockedGroup ? null : <option value="">ALL GROUPS</option>}{groupOptions.map((group) => <option key={group}>{group}</option>)}</select></label>
+            <label><span>SIZE</span><select value={productSearchFilters.size} onChange={(event) => setProductSearchFilters({ ...productSearchFilters, size: event.target.value })}><option value="">ALL SIZES</option>{productSizeOptions.map((size) => <option key={size} value={size}>{size}</option>)}</select></label>
+            <button className={styles.softButton} onClick={() => { setProductSearch(''); setProductSearchFilters({ group: lockedGroup, scope: '', type: '', size: '' }) }}>Reset</button>
           </div>
           <div className={styles.productSearchResults}>
-            {!productSearch ? (
-              <div className={styles.productSearchEmpty}><strong>No data yet</strong><span>Enter a product name to view related case history.</span></div>
+            {!productSearch.trim() && !productSearchFilters.size ? (
+              <div className={styles.productSearchEmpty}><strong>No data yet</strong><span>Enter a product name or select a size to view related case history.</span></div>
             ) : !searchResults.length ? (
               <div className={styles.productSearchEmpty}><strong>No data found</strong><span>This product was not found in faulty/returned products or replacement products.</span></div>
             ) : searchResults.map((result) => (
               <article key={`${result.sourceType}-${result.row.id}`} className={styles.productResultCard}>
                 <div className={styles.productResultHeader}>
                   <div>
-                    <strong>{result.code}</strong>
+                    <div className={styles.productResultIdentity}>
+                      <strong>{result.code}</strong>
+                      {result.sourceType === 'return' ? renderReturnStatusBadge(result.row.status_barang) : renderIssueStatusBadge(result.row)}
+                    </div>
                     <span>{result.sourceLabel} • Found in: {result.foundIn.join(' & ') || '-'}</span>
                   </div>
                   <button className={styles.iconActionButton} onClick={() => result.sourceType === 'issue' ? openIssueDetail(result.row, { readonly: true }) : openCaseDetail(result.row, { readonly: true })} aria-label={`Open detail for ${result.code}`}>🔍</button>

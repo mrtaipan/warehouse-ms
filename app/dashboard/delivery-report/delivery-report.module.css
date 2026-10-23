@@ -749,8 +749,8 @@
 .orderIssueListPanel .rowActions { justify-content: center; }
 .orderIssueWideDetail { grid-column: span 3; }
 .orderIssueWideDetail strong { white-space: pre-line; }
-.productSearchPanel { min-height: 620px; }
-.productSearchToolbar { display: grid; grid-template-columns: minmax(280px, 1.4fr) minmax(150px, .75fr) minmax(220px, 1fr) minmax(160px, .8fr) auto; gap: 12px; align-items: end; margin: 16px 0 18px; padding: 14px; border: 1px solid #edf1f5; border-radius: 20px; background: #f8fafc; }
+.productSearchPanel { min-height: 620px; padding: 24px; }
+.productSearchToolbar { display: grid; grid-template-columns: minmax(220px, 1.4fr) minmax(130px, .7fr) minmax(190px, 1fr) minmax(150px, .8fr) minmax(110px, .6fr) auto; gap: 12px; align-items: end; margin: 16px 0 18px; padding: 14px; border: 1px solid #edf1f5; border-radius: 20px; background: #f8fafc; }
 .productSearchToolbar label { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 .productSearchToolbar label span { color: #475569; font-size: 12px; font-weight: 950; letter-spacing: .05em; text-transform: uppercase; }
 .productSearchToolbar input,
@@ -764,6 +764,15 @@
 .productResultHeader { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding-bottom: 14px; border-bottom: 1px solid #edf1f5; }
 .productResultHeader strong { display: block; color: #0f172a; font-size: 18px; font-weight: 950; }
 .productResultHeader span { display: block; margin-top: 6px; color: #64748b; font-size: 13px; font-weight: 750; }
+.productResultIdentity { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.productResultIdentity .statusBadge { display: inline-flex; min-height: 26px; align-items: center; margin-top: 0; padding: 4px 10px; font-size: 11px; line-height: 1; }
+.productResultIdentity .statusBadge.resolutionStatusPending { background: #dbeafe; color: #1d4ed8; }
+.productResultIdentity .statusBadge.resolutionStatusSending { background: #e2e8f0; color: #475569; }
+.productResultIdentity .statusBadge.resolutionStatusCancel { background: #fee2e2; color: #991b1b; }
+.productResultIdentity .statusBadge.statusCompletedBadge,
+.productResultIdentity .statusBadge.productIssueRecorded { background: #dcfce7; color: #15803d; }
+.productResultIdentity .statusBadge.productIssuePending { background: #fef3c7; color: #b45309; }
+.productResultIdentity .statusBadge.productIssueUnknown { background: #f1f5f9; color: #475569; }
 .productResultGrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 14px; }
 .productResultGrid div { min-width: 0; padding: 12px; border: 1px solid #e2e8f0; border-radius: 14px; background: #f8fafc; }
 .productResultGrid span { display: block; color: #64748b; font-size: 11px; font-weight: 950; letter-spacing: .05em; text-transform: uppercase; }
@@ -940,6 +949,7 @@
 .resolutionStatusPreview p { margin: 16px 0 0; max-width: 360px; color: rgba(255,255,255,.9); font-size: 14px; line-height: 1.45; }
 .resolutionStatusPreview.resolutionStatusSending { background: #64748b; }
 .resolutionStatusPreview.resolutionStatusCancel { background: #8f1d25; }
+.resolutionStatusPreview.resolutionStatusCompleted { background: #166534; }
 .resolutionStatusControls { display: grid; gap: 18px; }
 .resolutionStatusButtons { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .resolutionStatusButtons button { min-height: 50px; border: 1px solid var(--line); border-radius: 17px; background: #ffffff; color: #0f172a; font-size: 16px; font-weight: 900; box-shadow: 0 10px 20px rgba(15,23,42,.04); }
@@ -1271,6 +1281,12 @@
   .receivingInspectionTopActions button { flex: 1 1 0; }
 }
 
+.productSearchPanel .productSearchToolbar input,
+.productSearchPanel .productSearchToolbar select { font-size: 11.2px; }
+.productSearchPanel .productSearchToolbar input::placeholder { font-size: 11.2px; }
+@media (max-width: 760px) {
+  .productSearchPanel { min-height: 0; padding: 16px; }
+}
 @media print {
   :global(body) * { visibility:hidden!important; }
   .printArea,.printArea *{visibility:visible!important}.printArea{display:block;position:absolute;inset:0;background:#fff;color:#000}.printArea article{page-break-after:always;padding:24px}.printArea h1{text-align:center;font-size:22px}.printArea dl{display:grid;gap:10px}.printArea dl div{display:grid;grid-template-columns:130px 1fr;border-bottom:1px solid #ddd;padding:8px 0}.printArea dt{font-weight:700}.printArea dd{margin:0}
