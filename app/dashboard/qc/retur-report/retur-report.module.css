@@ -1300,6 +1300,22 @@
   text-decoration: none;
 }
 
+.rejectStorageButton {
+  border-color: #7f1d3a;
+  background: #7f1d3a;
+  color: #fff;
+}
+
+.rejectStorageButton:hover:not(:disabled) {
+  border-color: #68152e;
+  background: #68152e;
+}
+
+.rejectStorageButton:focus-visible {
+  outline: 2px solid #7f1d3a;
+  outline-offset: 2px;
+}
+
 .primaryButton:disabled,
 .secondaryButton:disabled {
   cursor: not-allowed;

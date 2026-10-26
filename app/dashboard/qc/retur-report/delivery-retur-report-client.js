@@ -21,6 +21,7 @@ export default function DeliveryReturReportClient({ rows = [], draftRejectKoliNu
   const [note, setNote] = useState('')
   const [editingReasonId, setEditingReasonId] = useState(null)
   const [reasonDraft, setReasonDraft] = useState('')
+  const [reasonSearch, setReasonSearch] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
@@ -192,17 +193,34 @@ export default function DeliveryReturReportClient({ rows = [], draftRejectKoliNu
                       <td>
                         {activeTab === 'arkline' && editingReasonId === row.id ? (
                           <form className={styles.deliveryReasonEditor} onSubmit={saveReason}>
-                            <select className={styles.input} value={reasonDraft} onChange={(event) => setReasonDraft(event.target.value)} aria-label="Arkline reject reason" required autoFocus>
-                              <option value="">Choose reject reason</option>
-                              {rejectReasons.map((reason) => <option key={reason.id} value={reason.id}>{reason.reason_name}</option>)}
-                            </select>
+                            <input
+                              className={styles.input}
+                              type="text"
+                              list={`arkline-reject-reasons-${row.id}`}
+                              value={reasonSearch}
+                              onChange={(event) => {
+                                const value = event.target.value
+                                const match = rejectReasons.find((reason) => reason.reason_name?.trim().toLowerCase() === value.trim().toLowerCase())
+                                setReasonSearch(value)
+                                setReasonDraft(match?.id || '')
+                                setError('')
+                              }}
+                              placeholder="Type to choose a reject reason"
+                              aria-label="Arkline reject reason"
+                              autoComplete="off"
+                              required
+                              autoFocus
+                            />
+                            <datalist id={`arkline-reject-reasons-${row.id}`}>
+                              {rejectReasons.map((reason) => <option key={reason.id} value={reason.reason_name} />)}
+                            </datalist>
                             <button type="submit" className={styles.deliveryReasonAction} disabled={busy} title="Save reason">Save</button>
                             <button type="button" className={styles.deliveryReasonAction} onClick={() => { setEditingReasonId(null); setError('') }} disabled={busy} title="Cancel editing">Cancel</button>
                           </form>
                         ) : (
                           <div className={styles.deliveryReasonCell}>
                             <span>{row.reason || '-'}</span>
-                            {activeTab === 'arkline' && canEdit ? <button type="button" className={`${styles.deliveryReasonAction} ${styles.deliveryReasonIcon}`} onClick={() => { setEditingReasonId(row.id); setReasonDraft(rejectReasons.find((reason) => reason.reason_name?.trim().toLowerCase() === row.reason?.trim().toLowerCase())?.id || ''); setError('') }} disabled={busy} title="Edit reject reason" aria-label={`Edit reject reason for ${row.product_name}`}><span aria-hidden="true">&#9998;</span></button> : null}
+                            {activeTab === 'arkline' && canEdit ? <button type="button" className={`${styles.deliveryReasonAction} ${styles.deliveryReasonIcon}`} onClick={() => { const currentReason = rejectReasons.find((reason) => reason.reason_name?.trim().toLowerCase() === row.reason?.trim().toLowerCase()); setEditingReasonId(row.id); setReasonDraft(currentReason?.id || ''); setReasonSearch(currentReason?.reason_name || row.reason || ''); setError('') }} disabled={busy} title="Edit reject reason" aria-label={`Edit reject reason for ${row.product_name}`}><span aria-hidden="true">&#9998;</span></button> : null}
                           </div>
                         )}
                       </td>

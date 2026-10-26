@@ -434,7 +434,7 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
     const matchesSize = ignoredFilter === 'size' || !sizeFilter || String(row.size || '') === sizeFilter
     const matchesGrade = ignoredFilter === 'grade' || !gradeFilter || String(row.grade || '') === gradeFilter
     const matchesQcCycle = ignoredFilter === 'qcCycle' || !qcCycleFilter || getArrangementCycleKey(row) === qcCycleFilter
-    const matchesPo = ignoredFilter === 'po' || !poFilter || row.poId === poFilter
+    const matchesPo = ignoredFilter === 'po' || !poFilter || (row.poId || '__NO_PO__') === poFilter
     const matchesProduct = ignoredFilter === 'product' || !productFilter || row.modelName === productFilter
 
     return matchesRepairability && matchesRejectReason && matchesSize && matchesGrade && matchesQcCycle && matchesPo && matchesProduct
@@ -442,7 +442,7 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
 
   const poOptions = useMemo(
     () =>
-      Array.from(new Set(eligibleRows.filter((row) => matchesArrangementFilters(row, 'po')).map((row) => row.poId).filter(Boolean))).sort((a, b) =>
+      Array.from(new Set(eligibleRows.filter((row) => matchesArrangementFilters(row, 'po')).map((row) => row.poId || '__NO_PO__'))).sort((a, b) =>
         a.localeCompare(b, undefined, { numeric: true })
       ),
     [eligibleRows, matchesArrangementFilters]
@@ -1223,7 +1223,7 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
     }
 
     const groupedRows = selectedRows.reduce((groups, row) => {
-      const key = `${row.poItemId || row.poId}-${row.qcCycleId || row.id}`
+      const key = `${row.poItemId || row.poId || row.skuInduk}-${row.qcCycleId || row.id}`
       if (!groups.has(key)) groups.set(key, [])
       groups.get(key).push(row)
       return groups
@@ -1242,8 +1242,8 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
         qty: Number(returnQtyById[row.id] ?? row.availableQty),
       }))
       const { error: saveError } = await supabase.rpc('create_arkline_qc_return_batch', {
-        p_po_id: first.poId,
-        p_arkline_po_item_id: first.poItemId,
+        p_po_id: first.poId || null,
+        p_arkline_po_item_id: first.poItemId || null,
         p_sku_induk: first.skuInduk,
         p_model_name: first.modelName,
         p_supplier_name: first.supplierName || '',
@@ -1289,7 +1289,7 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
     }
 
     const groupedRows = selectedRows.reduce((groups, row) => {
-      const key = `${row.poItemId || row.poId}-${row.qcCycleId || row.id}`
+      const key = `${row.poItemId || row.poId || row.skuInduk}-${row.qcCycleId || row.id}`
       if (!groups.has(key)) groups.set(key, [])
       groups.get(key).push(row)
       return groups
@@ -1582,7 +1582,7 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
             <h2 className={styles.sectionTitle}>Return Arrangement</h2>
           </div>
           <div className={styles.modalHeaderActions}>
-            <button type="button" className={styles.secondaryButton} onClick={openStorageModal} disabled={!canAdd || !selectedRows.length}>
+            <button type="button" className={`${styles.secondaryButton} ${styles.rejectStorageButton}`} onClick={openStorageModal} disabled={!canAdd || !selectedRows.length}>
               Move to Reject Storage
             </button>
             <button type="button" className={styles.primaryButton} onClick={openReturnModal} disabled={!canAdd || !selectedRows.length}>
@@ -1681,7 +1681,7 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
               }}
             >
               <option value="">All PO</option>
-              {poOptions.map((po) => <option key={po} value={po}>{po}</option>)}
+              {poOptions.map((po) => <option key={po} value={po}>{po === '__NO_PO__' ? 'No PO' : po}</option>)}
             </select>
           </div>
           <div className={styles.field}>
@@ -1776,7 +1776,7 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
                         onChange={() => toggleRow(row)}
                       />
                     </td>
-                    <td>{row.poId}</td>
+                    <td>{row.poId || 'No PO'}</td>
                     <td>{row.modelName}</td>
                     <td>Round {row.qcRoundNumber}</td>
                     <td>{row.grade}</td>
@@ -2260,7 +2260,7 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
             <div className={styles.modalHeader}>
               <div>
                 <h2 id="create-return-title">Create Arkline Return</h2>
-                <p>{selectedRows.length} reject line(s) selected. Multiple PO products will be split into separate return batches.</p>
+                <p>{selectedRows.length} reject line(s) selected. Different products will be split into separate return batches.</p>
               </div>
               <button type="button" className={styles.closeButton} onClick={closeReturnModal} aria-label="Close">X</button>
             </div>

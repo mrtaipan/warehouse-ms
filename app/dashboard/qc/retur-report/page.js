@@ -154,7 +154,7 @@ async function loadArklineReturnData(supabase) {
         supplierName: supplierByPo.get(String(poId)) || '',
       }
     })
-    .filter((row) => row.poId && row.poItemId && row.availableQty > 0)
+    .filter((row) => row.availableQty > 0 && ((row.poId && row.poItemId) || (row.skuInduk && row.qcCycleId)))
 
   const receiptsByLine = new Map()
   const receiptsByLineSize = new Map()
@@ -251,7 +251,7 @@ async function loadArklineReturnData(supabase) {
   const batches = (batchResult.data || []).map((batch) => ({
     id: batch.id,
     returnNumber: batch.return_number,
-    poId: batch.po_id,
+    poId: batch.po_id || 'No PO',
     poItemId: batch.arkline_po_item_id,
     skuInduk: batch.sku_induk,
     modelName: batch.model_name_snapshot,
