@@ -3,11 +3,12 @@
 import Link from 'next/link'
 import { Chart as ChartJS, registerables } from 'chart.js'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 
 import { deliverySupabase } from '@/lib/delivery-supabase'
 import { EmptyState, Modal, StatusMessage } from './delivery-report-client'
+import { buildOrderTrend } from './delivery-summary-chart.mjs'
 import {
-  COURIER_COLORS,
   GROUPS,
   formatDate,
   jakartaEnd,
@@ -28,6 +29,8 @@ const PROGRESS_COLORS = {
 const SUMMARY_PAGE_SIZE = 1000
 const SUMMARY_ORDER_COLUMNS = 'id,delivery_date,delivery_category,group_order,courier,quantity'
 const SUMMARY_BARCODE_COLUMNS = 'barcode,timestamp_delivery,timestamp_packing,group_order,courier,is_defined,is_packed,is_delivered,packing_team'
+const SERIES_COLORS = { TOTAL: '#2563eb', ARKLINE: '#2563eb', MOB: '#0f766e', OI: '#d97706' }
+const TOTAL_SERIES = ['TOTAL']
 
 function getProgressColor(percentage) {
   if (percentage > 80) return PROGRESS_COLORS.success
@@ -37,6 +40,17 @@ function getProgressColor(percentage) {
 
 function formatCount(value) {
   return safeNumber(value).toLocaleString('id-ID')
+}
+
+function endOfMonth(month) {
+  const [year, number] = month.split('-').map(Number)
+  return new Date(Date.UTC(year, number, 0)).toISOString().slice(0, 10)
+}
+
+function chartRangeDate(value, period, edge) {
+  if (period === 'MONTH') return edge === 'from' ? `${value}-01` : endOfMonth(value)
+  if (period === 'YEAR') return edge === 'from' ? `${value}-01-01` : `${value}-12-31`
+  return value
 }
 
 function normalizeBarcode(value) {
@@ -91,8 +105,8 @@ function CourierComposition({ values }) {
             <div className={styles.courierCompositionTrack}>
               <span
                 style={{
-                  width: `${Math.max(2, percentage)}%`,
-                  backgroundColor: COURIER_COLORS[index % COURIER_COLORS.length],
+                  width: `${total ? (safeNumber(item.value) / total) * 100 : 0}%`,
+                  backgroundColor: index === 0 ? '#2563eb' : '#94a3b8',
                 }}
               />
             </div>
@@ -103,92 +117,103 @@ function CourierComposition({ values }) {
   )
 }
 
-function BarChart({ values, series }) {
+function LineChart({ values, series, selectedSeries, onSelectSeries }) {
   const canvasRef = useRef(null)
   const chartRef = useRef(null)
+  const [hover, setHover] = useState(null)
 
   useEffect(() => {
     const canvas = canvasRef.current
     if (!canvas) return
-    const totals = values.map((item) => series.reduce((sum, name) => sum + safeNumber(item[name]), 0))
-
     chartRef.current?.destroy()
     chartRef.current = new ChartJS(canvas, {
-      type: 'bar',
+      type: 'line',
       data: {
         labels: values.map((item) => item.label),
-        datasets: series.map((name, index) => ({
+        datasets: series.map((name) => ({
           label: name,
           data: values.map((item) => safeNumber(item[name])),
-          backgroundColor: COURIER_COLORS[index % COURIER_COLORS.length],
-          borderColor: COURIER_COLORS[index % COURIER_COLORS.length],
-          borderWidth: 1,
-          stack: 'order',
-          borderRadius: 3,
-          borderSkipped: false,
+          backgroundColor(context) {
+            const { chart } = context
+            const area = chart.chartArea
+            const muted = selectedSeries && selectedSeries !== name
+            if (!area) return `${SERIES_COLORS[name]}${muted ? '08' : '22'}`
+            const gradient = chart.ctx.createLinearGradient(0, area.top, 0, area.bottom)
+            gradient.addColorStop(0, `${SERIES_COLORS[name]}${muted ? '0d' : '40'}`)
+            gradient.addColorStop(1, `${SERIES_COLORS[name]}00`)
+            return gradient
+          },
+          borderColor: selectedSeries && selectedSeries !== name ? '#cbd5e1' : SERIES_COLORS[name],
+          borderWidth: selectedSeries && selectedSeries !== name ? 1.5 : 3,
+          pointBackgroundColor: '#ffffff',
+          pointBorderColor: selectedSeries && selectedSeries !== name ? '#cbd5e1' : SERIES_COLORS[name],
+          pointRadius: values.length > 60 ? 0 : (selectedSeries && selectedSeries !== name ? 2 : 4),
+          pointBorderWidth: 2.5,
+          pointHoverRadius: 7,
+          pointHoverBorderWidth: 3,
+          pointHitRadius: 14,
+          tension: .36,
+          cubicInterpolationMode: 'monotone',
+          fill: 'origin',
         })),
       },
       options: {
         responsive: true,
         maintainAspectRatio: false,
-        layout: { padding: { top: 22 } },
+        interaction: { mode: 'nearest', intersect: true },
+        layout: { padding: { top: 20, right: 20, bottom: 4 } },
         plugins: {
           legend: { display: false },
           tooltip: {
-            callbacks: {
-              footer(items) {
-                const index = items?.[0]?.dataIndex ?? -1
-                return index >= 0 ? `Total: ${totals[index].toLocaleString('id-ID')}` : ''
-              },
+            enabled: false,
+            external({ chart, tooltip }) {
+              const point = tooltip.dataPoints?.[0]
+              if (!point || tooltip.opacity === 0) {
+                setHover(null)
+                return
+              }
+              const bounds = chart.canvas.getBoundingClientRect()
+              const anchorX = bounds.left + tooltip.caretX * (bounds.width / chart.width)
+              const anchorY = bounds.top + tooltip.caretY * (bounds.height / chart.height)
+              const width = 230
+              const height = 70
+              setHover({
+                title: `${point.dataset.label === 'TOTAL' ? 'TOTAL' : point.dataset.label} · ${point.label}`,
+                detail: `${formatCount(point.parsed.y)} order(s)`,
+                left: anchorX + width + 24 <= window.innerWidth ? anchorX + 12 : Math.max(12, anchorX - width - 12),
+                top: Math.max(12, Math.min(anchorY - height / 2, window.innerHeight - height - 12)),
+              })
             },
           },
         },
         scales: {
           x: {
-            stacked: true,
+            border: { display: false },
             grid: { display: false },
-            ticks: { color: '#6b7280', font: { family: 'Arial', size: 11 } },
+            ticks: { color: '#64748b', maxRotation: 0, maxTicksLimit: 10, font: { size: 12 } },
           },
           y: {
-            stacked: true,
             beginAtZero: true,
             border: { display: false },
             grid: { color: '#edf0f5' },
-            ticks: { color: '#6b7280', precision: 0, font: { family: 'Arial', size: 11 } },
+            title: { display: true, text: 'Order quantity', color: '#64748b' },
+            ticks: { color: '#64748b', precision: 0, maxTicksLimit: 6, font: { size: 12 }, callback: (value) => new Intl.NumberFormat('en', { notation: 'compact' }).format(value) },
           },
+        },
+        onClick(_event, elements) {
+          const index = elements?.[0]?.datasetIndex
+          if (Number.isInteger(index)) onSelectSeries(series[index])
         },
       },
-      plugins: [
-        {
-          id: 'stackedTotalLabels',
-          afterDatasetsDraw(chart) {
-            const context = chart.ctx
-            const xScale = chart.scales.x
-            const yScale = chart.scales.y
-            context.save()
-            context.font = 'bold 11px Arial'
-            context.fillStyle = '#111827'
-            context.textAlign = 'center'
-            totals.forEach((total, index) => {
-              if (total <= 0) return
-              context.fillText(
-                total.toLocaleString('id-ID'),
-                xScale.getPixelForValue(index),
-                Math.max(yScale.getPixelForValue(total) - 9, 16)
-              )
-            })
-            context.restore()
-          },
-        },
-      ],
     })
 
     return () => chartRef.current?.destroy()
-  }, [series, values])
+  }, [onSelectSeries, selectedSeries, series, values])
 
   return (
     <div className={styles.barChart}>
-      <canvas ref={canvasRef} aria-label="Stacked order chart" />
+      <canvas ref={canvasRef} role="img" aria-label={`Order quantity trend by ${series.join(', ')}. Total ${formatCount(values.reduce((sum, item) => sum + item.TOTAL, 0))} orders.`} />
+      {hover && typeof document !== 'undefined' ? createPortal(<div className={styles.returnChartTooltip} style={{ left: hover.left, top: hover.top }} role="tooltip"><strong>{hover.title}</strong><span>{hover.detail}</span></div>, document.body) : null}
     </div>
   )
 }
@@ -197,8 +222,31 @@ export default function DeliverySummary({ lockedGroup: lockedGroupProp = '' }) {
   const today = useMemo(() => todayIso(), [])
   const lockedGroup = useMemo(() => normalizeLockedGroup(lockedGroupProp), [lockedGroupProp])
   const visibleGroups = useMemo(() => (lockedGroup ? [lockedGroup] : GROUPS), [lockedGroup])
-  const [filters, setFilters] = useState({ mode: 'DAY', from: today, to: today, group: lockedGroup || 'ALL', category: 'ALL' })
-  const [applied, setApplied] = useState(filters)
+  const [filters, setFilters] = useState({ from: today, to: today, group: lockedGroup || 'ALL', category: 'ALL' })
+  const applied = filters
+  const [chartPeriod, setChartPeriod] = useState('DAY')
+  const yearOptions = useMemo(() => Array.from({ length: Math.max(12, Number(today.slice(0, 4)) - 2018 + 3) }, (_, index) => String(2019 + index)), [today])
+  const changeChartPeriod = (period) => {
+    setChartPeriod(period)
+    setFilters((current) => ({
+      ...current,
+      from: chartRangeDate(current.from.slice(0, period === 'YEAR' ? 4 : period === 'MONTH' ? 7 : 10), period, 'from'),
+      to: chartRangeDate(current.to.slice(0, period === 'YEAR' ? 4 : period === 'MONTH' ? 7 : 10), period, 'to'),
+    }))
+  }
+  const changeChartRange = (edge, value) => {
+    if (!value) return
+    setFilters((current) => {
+      const next = { ...current, [edge]: chartRangeDate(value, chartPeriod, edge) }
+      if (next.from > next.to) next[edge === 'from' ? 'to' : 'from'] = chartRangeDate(value, chartPeriod, edge === 'from' ? 'to' : 'from')
+      return next
+    })
+  }
+  const [chartView, setChartView] = useState('TOTAL')
+  const [highlightedSeries, setHighlightedSeries] = useState('')
+  const selectChartSeries = useCallback((name) => {
+    setHighlightedSeries((current) => current === name ? '' : name)
+  }, [])
   const [orders, setOrders] = useState([])
   const [packingRows, setPackingRows] = useState([])
   const [deliveryRows, setDeliveryRows] = useState([])
@@ -208,9 +256,17 @@ export default function DeliverySummary({ lockedGroup: lockedGroupProp = '' }) {
   const [status, setStatus] = useState(null)
   const [issueModal, setIssueModal] = useState(null)
 
-  const loadData = useCallback(async () => {
+  const loadData = useCallback(async (signal) => {
     setLoading(true)
     setStatus(null)
+    setOrders([])
+    setPackingRows([])
+    setDeliveryRows([])
+    if (!applied.from || !applied.to || applied.from > applied.to) {
+      setStatus({ type: 'error', message: 'Choose a valid date range. Date From must be on or before Date To.' })
+      setLoading(false)
+      return
+    }
     const createOrderQuery = () => {
       let query = deliverySupabase
         .from('delivery_order')
@@ -219,6 +275,7 @@ export default function DeliverySummary({ lockedGroup: lockedGroupProp = '' }) {
         .lte('delivery_date', applied.to)
         .order('delivery_date', { ascending: true })
         .order('id', { ascending: true })
+        .abortSignal(signal)
 
       if (applied.group !== 'ALL') query = query.eq('group_order', applied.group)
       return query
@@ -231,6 +288,7 @@ export default function DeliverySummary({ lockedGroup: lockedGroupProp = '' }) {
         .gte('timestamp_packing', jakartaStart(applied.from))
         .lte('timestamp_packing', jakartaEnd(applied.to))
         .order('barcode', { ascending: true })
+        .abortSignal(signal)
 
       if (applied.group !== 'ALL') query = query.eq('group_order', applied.group)
       return query
@@ -243,31 +301,43 @@ export default function DeliverySummary({ lockedGroup: lockedGroupProp = '' }) {
         .gte('timestamp_delivery', jakartaStart(applied.from))
         .lte('timestamp_delivery', jakartaEnd(applied.to))
         .order('barcode', { ascending: true })
+        .abortSignal(signal)
 
       if (applied.group !== 'ALL') query = query.eq('group_order', applied.group)
       return query
     }
 
-    const [ordersResult, packingResult, deliveryResult] = await Promise.all([
-      fetchAllSummaryRows(createOrderQuery),
-      fetchAllSummaryRows(createPackingQuery),
-      fetchAllSummaryRows(createDeliveryQuery),
-    ])
+    try {
+      const [ordersResult, packingResult, deliveryResult] = await Promise.all([
+        fetchAllSummaryRows(createOrderQuery),
+        fetchAllSummaryRows(createPackingQuery),
+        fetchAllSummaryRows(createDeliveryQuery),
+      ])
+      if (signal.aborted) return
 
-    const error = ordersResult.error || packingResult.error || deliveryResult.error
-    if (error) {
+      const error = ordersResult.error || packingResult.error || deliveryResult.error
+      if (error) {
+        setStatus({ type: 'error', message: `Failed to load summary: ${error.message}` })
+      } else {
+        setOrders(ordersResult.data || [])
+        setPackingRows(packingResult.data || [])
+        setDeliveryRows(deliveryResult.data || [])
+      }
+      setLoading(false)
+    } catch (error) {
+      if (signal.aborted) return
       setStatus({ type: 'error', message: `Failed to load summary: ${error.message}` })
-    } else {
-      setOrders(ordersResult.data || [])
-      setPackingRows(packingResult.data || [])
-      setDeliveryRows(deliveryResult.data || [])
+      setLoading(false)
     }
-    setLoading(false)
-  }, [applied])
+  }, [applied.from, applied.to, applied.group])
 
   useEffect(() => {
-    const timer = window.setTimeout(loadData, 0)
-    return () => window.clearTimeout(timer)
+    const controller = new AbortController()
+    const timer = window.setTimeout(() => loadData(controller.signal), 200)
+    return () => {
+      window.clearTimeout(timer)
+      controller.abort()
+    }
   }, [loadData])
 
   const categoryFilteredOrders = useMemo(
@@ -341,26 +411,12 @@ export default function DeliverySummary({ lockedGroup: lockedGroupProp = '' }) {
       .sort((a, b) => b.total - a.total)
   }, [categoryFilteredDeliveryRows, categoryFilteredOrders, matrixMode, visibleGroups])
 
-  const chartSeries = visibleGroups
+  const chartSeries = chartView === 'TOTAL' ? TOTAL_SERIES : visibleGroups
 
-  const barValues = useMemo(() => {
-    const map = new Map()
-    categoryFilteredOrders.forEach((row) => {
-      const date = new Date(`${row.delivery_date}T00:00:00+07:00`)
-      const key =
-        applied.mode === 'YEAR'
-          ? String(date.getFullYear())
-          : applied.mode === 'MONTH'
-            ? new Intl.DateTimeFormat('id-ID', { month: 'short', year: '2-digit' }).format(date)
-            : new Intl.DateTimeFormat('id-ID', { day: '2-digit', month: 'short' }).format(date)
-      if (!map.has(key)) map.set(key, { label: key, ...Object.fromEntries(visibleGroups.map((group) => [group, 0])) })
-      const bucket = map.get(key)
-      if (visibleGroups.includes(row.group_order)) {
-        bucket[row.group_order] += safeNumber(row.quantity)
-      }
-    })
-    return [...map.values()]
-  }, [applied.mode, categoryFilteredOrders, visibleGroups])
+  const chartValues = useMemo(
+    () => buildOrderTrend(categoryFilteredOrders, chartPeriod, visibleGroups),
+    [chartPeriod, categoryFilteredOrders, visibleGroups]
+  )
 
   const categories = useMemo(() => {
     const values = new Set(orders.map((row) => row.delivery_category).filter(Boolean))
@@ -433,28 +489,11 @@ export default function DeliverySummary({ lockedGroup: lockedGroupProp = '' }) {
               <Link href="/dashboard/delivery-report" className={styles.summaryBackButton}>← Back to Home</Link>
             </div>
             <h1>DELIVERY SUMMARY</h1>
-            <p>Dashboard progress, matrix, group chart, and courier composition.</p>
           </div>
 
           <section className={styles.filterBar}>
             <label>
-              <span>PERIOD</span>
-              <select value={filters.mode} onChange={(event) => setFilters({ ...filters, mode: event.target.value })}>
-                <option>DAY</option>
-                <option>MONTH</option>
-                <option>YEAR</option>
-              </select>
-            </label>
-            <label>
-              <span>DATE FROM</span>
-              <input type="date" value={filters.from} onChange={(event) => setFilters({ ...filters, from: event.target.value })} />
-            </label>
-            <label>
-              <span>DATE TO</span>
-              <input type="date" value={filters.to} onChange={(event) => setFilters({ ...filters, to: event.target.value })} />
-            </label>
-            <label>
-              <span>KATEGORI</span>
+              <span>CATEGORY</span>
               <select value={filters.category} onChange={(event) => setFilters({ ...filters, category: event.target.value })}>
                 {categories.map((category) => <option key={category}>{category}</option>)}
               </select>
@@ -466,7 +505,6 @@ export default function DeliverySummary({ lockedGroup: lockedGroupProp = '' }) {
                 {visibleGroups.map((group) => <option key={group}>{group}</option>)}
               </select>
             </label>
-            <button className={styles.darkButton} onClick={() => setApplied(filters)} disabled={loading}>APPLY</button>
           </section>
         </header>
 
@@ -513,7 +551,7 @@ export default function DeliverySummary({ lockedGroup: lockedGroupProp = '' }) {
         </section>
 
         <section className={styles.summaryGrid}>
-        <article className={styles.dataCard}>
+        <article className={`${styles.dataCard} ${styles.summaryMatrix}`}>
           <div className={styles.cardTitleRow}>
             <h2>{matrixMode} MATRIX</h2>
             <div className={styles.cardToolbar}>
@@ -531,7 +569,7 @@ export default function DeliverySummary({ lockedGroup: lockedGroupProp = '' }) {
                   title="Show details"
                   onClick={() => setIssueModal('undefined')}
                 >
-                  ⓘ
+                  <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="8" /><path d="M10 9v5m0-8h.01" /></svg>
                 </button>
               ) : null}
               <span className={styles.infoPill}>Missing Barcode: {formatCount(missingBarcode)}</span>
@@ -543,7 +581,7 @@ export default function DeliverySummary({ lockedGroup: lockedGroupProp = '' }) {
                   title="Show details"
                   onClick={() => setIssueModal('missing')}
                 >
-                  ⓘ
+                  <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="8" /><path d="M10 9v5m0-8h.01" /></svg>
                 </button>
               ) : null}
             </div>
@@ -560,13 +598,13 @@ export default function DeliverySummary({ lockedGroup: lockedGroupProp = '' }) {
                 {matrixRows.length ? matrixRows.map((row) => (
                   <tr key={row.courier}>
                     <td><strong>{row.courier}</strong></td>
-                    {visibleGroups.map((group) => <td key={group}>{row[group]}</td>)}
-                    <td><strong>{row.total}</strong></td>
+                    {visibleGroups.map((group) => <td key={group}>{formatCount(row[group])}</td>)}
+                    <td><strong>{formatCount(row.total)}</strong></td>
                   </tr>
-                )) : <tr><td colSpan="5"><EmptyState /></td></tr>}
+                )) : <tr><td colSpan={visibleGroups.length + 2}><EmptyState /></td></tr>}
               </tbody>
               {matrixRows.length ? (
-                <tfoot><tr><td><strong>TOTAL</strong></td>{visibleGroups.map((group) => <td key={group}><strong>{matrixRows.reduce((sum, row) => sum + row[group], 0)}</strong></td>)}<td><strong>{matrixRows.reduce((sum, row) => sum + row.total, 0)}</strong></td></tr></tfoot>
+                <tfoot><tr><td><strong>TOTAL</strong></td>{visibleGroups.map((group) => <td key={group}><strong>{formatCount(matrixRows.reduce((sum, row) => sum + row[group], 0))}</strong></td>)}<td><strong>{formatCount(matrixRows.reduce((sum, row) => sum + row.total, 0))}</strong></td></tr></tfoot>
               ) : null}
             </table>
           </div>
@@ -578,12 +616,26 @@ export default function DeliverySummary({ lockedGroup: lockedGroupProp = '' }) {
         </article>
 
         <article className={`${styles.dataCard} ${styles.fullWidth}`}>
-          <div className={styles.cardTitleRow}>
-            <div><h2>ORDER CHART</h2><p className={styles.cardHint}>One bar per period, stacked by group.</p></div>
-            <span className={styles.darkPill}>Mode: {applied.mode}</span>
+          <div className={`${styles.cardTitleRow} ${styles.summaryChartHeader}`}>
+            <h2>Order Chart</h2>
+            <div className={styles.summaryChartControls}>
+              <div className={styles.segmentedControl} role="group" aria-label="Chart period">
+                {['DAY', 'MONTH', 'YEAR'].map((period) => (
+                  <button type="button" key={period} aria-pressed={chartPeriod === period} className={chartPeriod === period ? styles.active : ''} onClick={() => changeChartPeriod(period)}>{period[0] + period.slice(1).toLowerCase()}</button>
+                ))}
+              </div>
+              {['from', 'to'].map((edge) => <label className={styles.summaryChartDateField} key={edge}>
+                <span>{chartPeriod === 'DAY' ? 'DATE' : chartPeriod === 'MONTH' ? 'MONTH' : 'YEAR'} {edge.toUpperCase()}</span>
+                {chartPeriod === 'YEAR' ? <select aria-label={`Year ${edge}`} value={filters[edge].slice(0, 4)} onChange={(event) => changeChartRange(edge, event.target.value)}>{yearOptions.map((year) => <option key={year} value={year}>{year}</option>)}</select>
+                  : <input aria-label={`${chartPeriod === 'DAY' ? 'Date' : 'Month'} ${edge}`} type={chartPeriod === 'DAY' ? 'date' : 'month'} value={filters[edge].slice(0, chartPeriod === 'DAY' ? 10 : 7)} onChange={(event) => changeChartRange(edge, event.target.value)} />}
+              </label>)}
+              <div className={styles.segmentedControl} role="group" aria-label="Chart breakdown">
+                {[['TOTAL', 'Total'], ['GROUP', 'Per Group']].map(([view, label]) => <button type="button" key={view} aria-pressed={chartView === view} className={chartView === view ? styles.active : ''} onClick={() => { setChartView(view); setHighlightedSeries('') }}>{label}</button>)}
+              </div>
+            </div>
           </div>
-          {barValues.length && chartSeries.length ? <BarChart values={barValues} series={chartSeries} /> : <EmptyState />}
-          <div className={styles.chartLegend}>{chartSeries.map((name, index) => <span key={name}><i style={{ backgroundColor: COURIER_COLORS[index % COURIER_COLORS.length] }} />{name}</span>)}</div>
+          {chartValues.length && chartSeries.length ? <LineChart values={chartValues} series={chartSeries} selectedSeries={highlightedSeries} onSelectSeries={selectChartSeries} /> : <EmptyState />}
+          <div className={styles.chartLegend} role="group" aria-label="Highlight chart series">{chartSeries.map((name) => <button type="button" key={name} aria-pressed={highlightedSeries === name} onClick={() => selectChartSeries(name)} className={highlightedSeries && highlightedSeries !== name ? styles.chartLegendMuted : ''}><i style={{ backgroundColor: SERIES_COLORS[name] }} />{name === 'TOTAL' ? 'Total orders' : name}</button>)}</div>
         </article>
         </section>
 

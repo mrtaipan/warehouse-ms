@@ -28,6 +28,7 @@ function formatStatus(value) {
 
 function formatStorageSourceType(value, inventorySource, stockAppliedAt) {
   const normalized = String(value || 'QC_REJECT').toUpperCase()
+  if (normalized === 'DELIVERY_REJECT') return 'Delivery Reject'
   if (normalized === 'PACKING_REJECT') {
     if (inventorySource === 'SHELVING' && !stockAppliedAt) return 'Shelving Reject (Unregistered)'
     if (inventorySource === 'SHELVING') return 'Shelving Reject'
@@ -1989,6 +1990,7 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
               <option value="">All sources</option>
               <option value="QC_REJECT">QC Reject</option>
               <option value="PACKING_REJECT">Packing Reject</option>
+              <option value="DELIVERY_REJECT">Delivery Reject</option>
             </select>
           </div>
           <div className={`${styles.field} ${styles.storageSearchField}`.trim()}>
@@ -2214,7 +2216,7 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
                                                                     <tr key={detail.rowKey}>
                                                                       <td>{detail.poLabel}</td>
                                                                       <td>{formatStorageSourceType(detail.sourceType, detail.inventorySource, detail.stockAppliedAt)}</td>
-                                                                      <td>{detail.grade}</td>
+                                                                      <td>{detail.grade || '-'}</td>
                                                                       <td>{detail.reasonName}</td>
                                                                       <td className={styles.centerNumberCell}>{detail.qty}</td>
                                                                     </tr>

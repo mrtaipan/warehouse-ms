@@ -39,11 +39,11 @@ export default function ArklineRejectionStoragePanel({ userEmail, canAdd = false
         current.push({
           id: line.id,
           reasonId: line.reject_reason_id,
-          reasonName: reason?.reason_name || 'Not recorded',
+          reasonName: reason?.reason_name || line.reason_snapshot || 'Not recorded',
           grade: line.grade,
           size: String(line.size || 'No size').trim().toUpperCase(),
           qty: Number(line.qty || 0),
-          sourceType: line.reject_detail_id ? 'QC_REJECT' : 'PACKING_REJECT',
+          sourceType: line.delivery_return_item_id ? 'DELIVERY_REJECT' : line.reject_detail_id ? 'QC_REJECT' : 'PACKING_REJECT',
         })
         linesByBatch.set(key, current)
       })

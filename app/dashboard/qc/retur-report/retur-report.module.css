@@ -291,7 +291,97 @@
 .preparationSourceFilter button.preparationSourceActive span { color: #dbeafe; opacity: 1; }
 .preparationSourceFilter button:focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; }
 
-.deliveryRouteToggle { margin: 0; }
+.deliveryReasonCell,
+.deliveryReasonEditor {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 190px;
+}
+
+.deliveryHeaderActions {
+  flex-wrap: wrap;
+}
+
+.deliveryApproveButton {
+  padding: 10px 15px;
+  border: 1px solid #0f766e;
+  border-radius: 9px;
+  background: #0f766e;
+  color: #fff;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.deliveryApproveButton:disabled {
+  cursor: not-allowed;
+  opacity: .45;
+}
+
+.deliveryTable th,
+.deliveryTable td {
+  text-align: left;
+}
+
+.deliveryTable th.centerNumberCell,
+.deliveryTable td.centerNumberCell {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.deliveryReasonCell span {
+  overflow-wrap: anywhere;
+}
+
+.deliveryReasonEditor .input {
+  min-width: 150px;
+  flex: 1;
+}
+
+.deliveryReasonAction {
+  flex: none;
+  padding: 5px 7px;
+  border: 1px solid #dbe4f0;
+  border-radius: 6px;
+  background: #fff;
+  color: #334155;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.deliveryReasonAction:disabled {
+  cursor: not-allowed;
+  opacity: .5;
+}
+
+.deliveryReasonIcon {
+  display: inline-grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  font-size: 19px;
+  line-height: 1;
+}
+
+.deliveryReasonIcon:hover:not(:disabled) {
+  background: #f1f5f9;
+}
+
+.deliveryReasonIcon:focus-visible {
+  outline: 2px solid #0f766e;
+  outline-offset: 2px;
+}
+
+.deliveryDialogHint {
+  margin: 0;
+  color: #475569;
+  font-size: 13px;
+  line-height: 1.5;
+}
 
 .deliveryRejectModalHeader {
   display: flex;
@@ -1483,6 +1573,18 @@
 }
 
 @media (max-width: 820px) {
+  .deliveryHeaderActions {
+    justify-content: flex-start;
+  }
+
+  .regularHeaderActions {
+    flex-wrap: wrap;
+  }
+
+  .deliveryReasonEditor {
+    flex-wrap: wrap;
+  }
+
   .registrationProductOption {
     align-items: flex-start;
     flex-direction: column;

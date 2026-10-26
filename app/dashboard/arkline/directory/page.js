@@ -202,6 +202,9 @@ export default function ArklineDirectoryPage() {
           <div>
             <p className={styles.eyebrow}>Arkline</p>
             <h1 className={styles.sectionTitle}>Product Directory</h1>
+            <p className={styles.sectionHeaderNote}>
+              {loading ? 'Loading SKU count...' : `${products.length.toLocaleString('en-US')} SKUs in total`}
+            </p>
           </div>
 
           <div className={styles.buttonRow}>

@@ -57,6 +57,26 @@ const RETURN_STATUS_OPTIONS = {
 const ACTIVE_RETURN_STATUSES = new Set(['Pending', 'Sending'])
 const PRODUCT_FIELD_SEPARATOR = ' || '
 
+function IssueTrendChart({ series, metric, label, money = false }) {
+  const max = Math.max(1, ...series.map((item) => item[metric]))
+  const width = 320
+  const step = (width - 40) / Math.max(1, series.length)
+  return <div className={styles.issueTrendChart}>
+    <svg viewBox={`0 0 ${width} 130`} role="img" aria-label={label}>
+      <title>{label}</title>
+      {[0, 1, 2].map((tick) => <line key={tick} x1="30" y1={20 + tick * 40} x2={width} y2={20 + tick * 40} stroke="#e2e8f0" />)}
+      <text x="2" y="17" fontSize="9" fill="#64748b">{new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 }).format(max)}</text>
+      {series.map((item, index) => {
+        const height = item[metric] / max * 80
+        const barWidth = Math.max(1, Math.min(32, step * .7))
+        const center = 30 + (index + .5) * step
+        return <g key={item.label}><title>{item.label}: {money ? formatMoney(item[metric]) : item[metric]}</title><rect x={center - barWidth / 2} y={100 - height} width={barWidth} height={height} rx="2" fill="#2563eb" />{index % Math.max(1, Math.ceil(series.length / 7)) === 0 ? <text x={center} y="118" textAnchor="middle" fontSize="9" fill="#64748b">{item.label}</text> : null}</g>
+      })}
+    </svg>
+    {!series.some((item) => item[metric]) ? <small>No recorded data for this period.</small> : null}
+  </div>
+}
+
 function emptyProductEntry() {
   return { productName: '', size: '', qty: '', sku: '' }
 }
@@ -204,7 +224,7 @@ function normalizeArklineProductOption(row) {
   }
 }
 
-function ProductBreakdownEditor({ arklineProducts = [], arklineEnabled = false, label, onChange, required = false, value = '' }) {
+function ProductBreakdownEditor({ arklineProducts = [], arklineEnabled = false, disabled = false, label, onChange, required = false, value = '' }) {
   const productInputRef = useRef(null)
   const entries = useMemo(() => parseProductEntries(value), [value])
   const [draft, setDraft] = useState(emptyProductEntry)
@@ -213,12 +233,12 @@ function ProductBreakdownEditor({ arklineProducts = [], arklineEnabled = false, 
   const [suggestionBounds, setSuggestionBounds] = useState(null)
 
   const filteredProducts = useMemo(() => {
-    if (!arklineEnabled) return []
+    if (!arklineEnabled || disabled) return []
     const query = cleanUpper(draft.productName)
     if (!query) return []
     return arklineProducts
       .filter((item) => `${item.sku} ${item.productName}`.includes(query))
-  }, [arklineEnabled, arklineProducts, draft.productName])
+  }, [arklineEnabled, arklineProducts, disabled, draft.productName])
 
   useEffect(() => {
     if (!suggestionsOpen || !filteredProducts.length) return undefined
@@ -280,7 +300,7 @@ function ProductBreakdownEditor({ arklineProducts = [], arklineEnabled = false, 
   }
 
   return (
-    <div className={styles.productBreakdownField}>
+    <div className={`${styles.productBreakdownField} ${disabled ? styles.productBreakdownDisabled : ''}`}>
       <div className={styles.productBreakdownEditor}>
         <div className={styles.productBreakdownInputs}>
           <label>
@@ -288,6 +308,7 @@ function ProductBreakdownEditor({ arklineProducts = [], arklineEnabled = false, 
             <div className={styles.productAutocomplete}>
               <input
                 ref={productInputRef}
+                disabled={disabled}
                 value={draft.productName}
                 onChange={(event) => {
                   setDraft((current) => ({ ...current, productName: event.target.value.toUpperCase(), sku: '' }))
@@ -324,16 +345,16 @@ function ProductBreakdownEditor({ arklineProducts = [], arklineEnabled = false, 
           <label>
             <span>SIZE</span>
             {arklineEnabled ? (
-              <select value={draft.size} onChange={(event) => setDraft((current) => ({ ...current, size: event.target.value }))}>
+              <select disabled={disabled} value={draft.size} onChange={(event) => setDraft((current) => ({ ...current, size: event.target.value }))}>
                 <option value="">SELECT SIZE</option>
                 {['XS', 'S', 'M', 'L', 'XL', 'XXL'].map((size) => <option key={size}>{size}</option>)}
               </select>
             ) : (
-              <input value={draft.size} onChange={(event) => setDraft((current) => ({ ...current, size: event.target.value.toUpperCase() }))} placeholder="SIZE / -" />
+              <input disabled={disabled} value={draft.size} onChange={(event) => setDraft((current) => ({ ...current, size: event.target.value.toUpperCase() }))} placeholder="SIZE / -" />
             )}
           </label>
-          <label><span>QTY</span><input type="number" min="1" step="1" inputMode="numeric" value={draft.qty} onChange={(event) => setDraft((current) => ({ ...current, qty: event.target.value }))} placeholder="QTY" /></label>
-          <button type="button" className={styles.productBreakdownAddButton} onClick={addEntry}>Add</button>
+          <label><span>QTY</span><input disabled={disabled} type="number" min="1" step="1" inputMode="numeric" value={draft.qty} onChange={(event) => setDraft((current) => ({ ...current, qty: event.target.value }))} placeholder="QTY" /></label>
+          <button type="button" disabled={disabled} className={styles.productBreakdownAddButton} onClick={addEntry} aria-label={`Add ${label.toLowerCase()}`} title="Add product">Add</button>
         </div>
         {error ? <p className={styles.productBreakdownError}>{error}</p> : null}
         {entries.length ? (
@@ -344,7 +365,7 @@ function ProductBreakdownEditor({ arklineProducts = [], arklineEnabled = false, 
                   <strong>{entry.sku ? `${entry.sku} | ` : ''}{entry.productName || entry.raw}</strong>
                   <span>{entry.size ? `Size ${entry.size}` : 'Size not specified'}{entry.qty ? ` • Qty ${entry.qty}` : ''}</span>
                 </div>
-                <button type="button" className={styles.productBreakdownRemoveButton} onClick={() => removeEntry(index)} aria-label={`Remove ${entry.productName || 'product'}`}>×</button>
+                <button type="button" disabled={disabled} className={styles.productBreakdownRemoveButton} onClick={() => removeEntry(index)} aria-label={`Remove ${entry.productName || 'product'}`}>×</button>
               </div>
             ))}
           </div>
@@ -473,7 +494,7 @@ function buildSmoothChartPath(points) {
   }, '')
 }
 
-function ResolutionReturnChart({ bars, groups = RETURN_CHART_SERIES, mode, timeline, types = RETURN_CHART_TYPES }) {
+function ResolutionReturnChart({ bars, groups = RETURN_CHART_SERIES, mode, timeline, types = RETURN_CHART_TYPES, highlightedSeries, onHighlightSeries }) {
   const [hover, setHover] = useState(null)
   const isTimelineMode = mode === 'groups' || mode === 'types'
   const activeSeries = mode === 'types' ? types : groups
@@ -529,14 +550,21 @@ function ResolutionReturnChart({ bars, groups = RETURN_CHART_SERIES, mode, timel
             const linePath = buildSmoothChartPath(coordinates)
             const baseline = height - bottom
             const areaPath = coordinates.length ? `${linePath} L ${coordinates[coordinates.length - 1].x} ${baseline} L ${coordinates[0].x} ${baseline} Z` : ''
-            return <g key={series}>
-              <path d={areaPath} fill={`url(#returnArea-${series})`} />
-              <path d={linePath} fill="none" stroke={RETURN_CHART_COLORS[series]} strokeWidth="7" strokeLinejoin="round" strokeLinecap="round" opacity=".13" filter="url(#returnLineGlow)" />
-              <path d={linePath} fill="none" stroke={`url(#returnLine-${series})`} strokeWidth="2.8" strokeLinejoin="round" strokeLinecap="round" />
-              {timeline.map((item, index) => <g key={`${series}-${item.key}`} tabIndex="0" onMouseEnter={(event) => setHoverFromPointer(event, `${RETURN_CHART_LABELS[series]} · ${item.label}`, `${item.values[series]} return case(s)`)} onMouseMove={(event) => setHoverFromPointer(event, `${RETURN_CHART_LABELS[series]} · ${item.label}`, `${item.values[series]} return case(s)`)} onMouseLeave={() => setHover(null)} onFocus={(event) => setHoverFromPointer(event, `${RETURN_CHART_LABELS[series]} · ${item.label}`, `${item.values[series]} return case(s)`)} onBlur={() => setHover(null)}>
-                <circle cx={x(index)} cy={y(item.values[series])} r="8" fill={RETURN_CHART_COLORS[series]} opacity=".15" />
-                <circle cx={x(index)} cy={y(item.values[series])} r="4" fill="#fff" stroke={RETURN_CHART_COLORS[series]} strokeWidth="2.5"><title>{`${RETURN_CHART_LABELS[series]}: ${item.values[series]} · ${item.label}`}</title></circle>
-              </g>)}
+            const dimmed = Boolean(highlightedSeries && highlightedSeries !== series)
+            const toggleSeries = () => onHighlightSeries((current) => current === series ? '' : series)
+            return <g key={series} opacity={dimmed ? .18 : 1}>
+              <path d={areaPath} fill={`url(#returnArea-${series})`} pointerEvents="none" />
+              <path d={linePath} fill="none" stroke={RETURN_CHART_COLORS[series]} strokeWidth="12" strokeLinejoin="round" strokeLinecap="round" opacity=".13" filter="url(#returnLineGlow)" className={styles.returnChartInteractiveLine} onClick={toggleSeries} />
+              <path d={linePath} fill="none" stroke={`url(#returnLine-${series})`} strokeWidth="3" strokeLinejoin="round" strokeLinecap="round" className={styles.returnChartInteractiveLine} onClick={toggleSeries} />
+              {timeline.map((item, index) => {
+                const title = `${RETURN_CHART_LABELS[series]} · ${item.label}`
+                const detail = `${item.values[series]} return case(s)`
+                return <g key={`${series}-${item.key}`}>
+                <circle className={styles.returnChartHitTarget} cx={x(index)} cy={y(item.values[series])} r="12" fill="transparent" pointerEvents="all" tabIndex={0} role="button" aria-label={`${title}: ${detail}`} onMouseEnter={(event) => setHoverFromPointer(event, title, detail)} onMouseMove={(event) => setHoverFromPointer(event, title, detail)} onMouseLeave={() => setHover(null)} onFocus={(event) => setHoverFromPointer(event, title, detail)} onBlur={() => setHover(null)} onClick={() => toggleSeries()} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); toggleSeries() } }} />
+                <circle cx={x(index)} cy={y(item.values[series])} r="8" fill={RETURN_CHART_COLORS[series]} opacity=".15" pointerEvents="none" />
+                <circle cx={x(index)} cy={y(item.values[series])} r="4" fill="#fff" stroke={RETURN_CHART_COLORS[series]} strokeWidth="2.5" pointerEvents="none"><title>{`${RETURN_CHART_LABELS[series]}: ${item.values[series]} · ${item.label}`}</title></circle>
+              </g>
+              })}
             </g>
           })}
           {timeline.map((item, index) => index % labelStep === 0 || index === timeline.length - 1
@@ -671,14 +699,6 @@ function sanitizeBarcodePattern(value) {
 
 function isRefundOnlyCase(row) {
   return String(row?.retur_action || '').toLowerCase().includes('refund')
-}
-
-function ensureBulletText(value) {
-  const lines = String(value || '')
-    .split(/\r?\n/)
-    .map((line) => line.replace(/^>\s*/, '').trim())
-    .filter(Boolean)
-  return lines.length ? lines.map((line) => `> ${line}`).join('\n') : ''
 }
 
 function hasMeaningfulBulletText(value) {
@@ -871,10 +891,10 @@ function normalizeIssuePayload(form) {
     group_order: cleanUpper(form.group_order),
     keterangan: cleanNullableText(form.keterangan),
     nama: cleanUpper(form.nama),
-    no_hp: cleanDigits(form.no_hp),
+    no_hp: cleanNullableText(form.no_hp),
     order_id: cleanUpper(form.order_id),
-    produk_bermasalah: ensureBulletText(form.produk_bermasalah),
-    produk_pengganti: cleanNullableText(ensureBulletText(form.produk_pengganti)),
+    produk_bermasalah: serializeProductEntries(parseProductEntries(form.produk_bermasalah)),
+    produk_pengganti: cleanNullableText(serializeProductEntries(parseProductEntries(form.produk_pengganti))),
     tim: cleanNullableUpper(form.tim),
     tindak_lanjut: cleanNullableText(form.tindak_lanjut),
   }
@@ -944,6 +964,7 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
   const [returnFormStep, setReturnFormStep] = useState(0)
   const [returnFormStatus, setReturnFormStatus] = useState(null)
   const [returnChartMode, setReturnChartMode] = useState('groups')
+  const [returnChartHighlight, setReturnChartHighlight] = useState('')
   const [returnChartPeriod, setReturnChartPeriod] = useState('day')
   const [pic, setPic] = useState('')
   const [caseListAccess, setCaseListAccess] = useState({ isAdmin: false, name: '', ready: false })
@@ -963,6 +984,11 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
   const [issueDetailReadonly, setIssueDetailReadonly] = useState(false)
   const [issueFilters, setIssueFilters] = useState({ from: addDays(today, -6), group: lockedGroup, search: '', to: today })
   const [issueSummaryMonth, setIssueSummaryMonth] = useState(today.slice(0, 7))
+  const [issuePeriodMode, setIssuePeriodMode] = useState('all')
+  const [issueYearFrom, setIssueYearFrom] = useState(today.slice(0, 4))
+  const [issueYearTo, setIssueYearTo] = useState(today.slice(0, 4))
+  const [issueFormOpen, setIssueFormOpen] = useState(false)
+  const [issueConfirmOpen, setIssueConfirmOpen] = useState(false)
   const [caseCode, setCaseCode] = useState('')
   const [detail, setDetail] = useState(null)
   const [detailDraft, setDetailDraft] = useState(null)
@@ -980,6 +1006,9 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
   const [receivingSelectedIds, setReceivingSelectedIds] = useState([])
   const [receivingReprintSelectedIds, setReceivingReprintSelectedIds] = useState([])
   const [receivingFilters, setReceivingFilters] = useState({ courier: '', group: lockedGroup, search: '', status: '' })
+  const [outcomePeriod, setOutcomePeriod] = useState('all')
+  const [outcomeMonth, setOutcomeMonth] = useState(today.slice(0, 7))
+  const [outcomeYear, setOutcomeYear] = useState(today.slice(0, 4))
   const [receivingConfirmOpen, setReceivingConfirmOpen] = useState(false)
   const [receivingConfirmError, setReceivingConfirmError] = useState('')
   const [receivingConfirmStep, setReceivingConfirmStep] = useState('inspect')
@@ -1044,7 +1073,7 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
     if (!caseListAccess.ready) return
     const { data, error } = await deliverySupabase
       .from('delivery_error_retur_cases')
-      .select('*')
+      .select('*,return_items:delivery_return_items(outcome,qty)')
       .order('tanggal_pengajuan', { ascending: false })
       .limit(5000)
     if (error) setStatus({ type: 'error', message: `Failed to load return cases: ${error.message}` })
@@ -1053,9 +1082,16 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
 
   const loadIssues = useCallback(async () => {
     if (!caseListAccess.ready) return
-    const { data, error } = await deliverySupabase.from('delivery_order_issue_cases').select('*').order('created_at', { ascending: false }).limit(5000)
-    if (error) setStatus({ type: 'error', message: `Failed to load order issues: ${error.message}` })
-    else setIssues(data || [])
+    const allRows = []
+    for (let offset = 0; ; offset += 1000) {
+      const { data, error } = await deliverySupabase.from('delivery_order_issue_cases')
+        .select('id,created_at,updated_at,created_by,updated_by,group_order,order_id,nama,no_hp,tim,alasan_bermasalah,tindak_lanjut,biaya_timbul,produk_bermasalah,produk_pengganti,keterangan')
+        .order('created_at', { ascending: false }).order('id', { ascending: false }).range(offset, offset + 999)
+      if (error) { setStatus({ type: 'error', message: `Failed to load order issues: ${error.message}` }); return }
+      allRows.push(...(data || []))
+      if (!data || data.length < 1000) break
+    }
+    setIssues(allRows)
   }, [caseListAccess.ready])
 
   useEffect(() => {
@@ -1186,10 +1222,15 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
   const visibleCases = useMemo(() => {
     const keyword = filters.search.trim().toLowerCase()
     return summaryCases.filter((row) => {
+      if (row.status_barang === 'Completed' && dateOnly(row.updated_at) < addDays(today, -1)) return false
       if (filters.warningOnly && getCaseWarningMeta(row, today).rank <= 0) return false
       if (filters.status && cleanUpper(row.status_barang) !== cleanUpper(filters.status)) return false
       if (!keyword) return true
       return [row.kode_kejadian, row.order_id, row.no_resi_pengiriman, row.nama_customer].some((value) => String(value || '').toLowerCase().includes(keyword))
+    }).sort((a, b) => {
+      const rank = { Pending: 0, Sending: 1, Completed: 2, Cancel: 3 }
+      const statusOrder = (rank[a.status_barang] ?? 99) - (rank[b.status_barang] ?? 99)
+      return statusOrder || String(b.tanggal_pengajuan || '').localeCompare(String(a.tanggal_pengajuan || ''))
     })
   }, [filters.search, filters.status, filters.warningOnly, summaryCases, today])
 
@@ -1224,6 +1265,7 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
   }, [issueForm.tindak_lanjut, masters.issueActions])
 
   const issueNeedsCost = isTruthyFlag(selectedIssueHandlingMeta?.add_cost)
+  const issueNeedsReplacement = selectedIssueHandlingMeta?.need_replacement !== false
 
   const isIssuePending = useCallback((row) => {
     const selected = normalizeIssueHandlingKey(row?.tindak_lanjut)
@@ -1232,13 +1274,17 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
     return isTruthyFlag(meta?.is_pending)
   }, [masters.issueActions])
 
-  const issueSummaryRange = useMemo(() => getMonthDateRange(issueSummaryMonth, today), [issueSummaryMonth, today])
+  const issueSummaryRange = useMemo(() => {
+    if (issuePeriodMode === 'all') return { from: '', to: '' }
+    if (issuePeriodMode === 'annual') return { from: `${issueYearFrom}-01-01`, to: `${issueYearTo}-12-31` }
+    return getMonthDateRange(issueSummaryMonth, today)
+  }, [issuePeriodMode, issueSummaryMonth, issueYearFrom, issueYearTo, today])
 
   const issueSummaryRows = useMemo(() => {
     return accessibleIssues.filter((row) => {
       const createdDate = dateOnly(row.created_at)
-      if (createdDate && createdDate < issueSummaryRange.from) return false
-      if (createdDate && createdDate > issueSummaryRange.to) return false
+      if (issueSummaryRange.from && createdDate && createdDate < issueSummaryRange.from) return false
+      if (issueSummaryRange.to && createdDate && createdDate > issueSummaryRange.to) return false
       return true
     })
   }, [accessibleIssues, issueSummaryRange.from, issueSummaryRange.to])
@@ -1284,6 +1330,7 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
 
     return {
       costTotal,
+      handlingTotal: issueSummaryRows.filter((row) => cleanText(row.tindak_lanjut)).length,
       groups,
       pendingRows,
       topHandling,
@@ -1291,15 +1338,35 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
     }
   }, [groupOptions, isIssuePending, issueSummaryRows])
 
-  const issueQuickInsights = useMemo(() => {
-    const pendingRows = issueSummaryStats.pendingRows
-    return pendingRows.slice(0, 8).map((row) => ({
-      detail: `${row.nama || '-'} • ${row.group_order || '-'} • ${formatIssueTeamLabel(row.tim)} | ${row.alasan_bermasalah || '-'} → ${row.tindak_lanjut || '-'}`,
-      id: row.id,
-      row,
-      title: row.order_id || '-',
-    }))
-  }, [issueSummaryStats.pendingRows])
+  const issueTrendSeries = useMemo(() => {
+    const buckets = new Map()
+    issueSummaryRows.forEach((row) => {
+      const date = dateOnly(row.created_at)
+      if (!date) return
+      const label = issuePeriodMode === 'monthly' ? date.slice(8, 10) : date.slice(0, 4)
+      const item = buckets.get(label) || { label, count: 0, cost: 0, pending: 0 }
+      item.count += 1
+      item.cost += safeNumber(row.biaya_timbul)
+      item.pending += isIssuePending(row) ? 1 : 0
+      buckets.set(label, item)
+    })
+    if (issuePeriodMode === 'monthly' && issueSummaryMonth) {
+      const [year, month] = issueSummaryMonth.split('-').map(Number)
+      for (let day = 1; day <= new Date(year, month, 0).getDate(); day += 1) {
+        const label = String(day).padStart(2, '0')
+        if (!buckets.has(label)) buckets.set(label, { label, count: 0, cost: 0, pending: 0 })
+      }
+    }
+    if (issuePeriodMode === 'annual') {
+      const start = Math.max(2000, Number(issueYearFrom))
+      const end = Math.min(2100, Number(issueYearTo))
+      for (let year = start; year <= end; year += 1) {
+        const label = String(year)
+        if (!buckets.has(label)) buckets.set(label, { label, count: 0, cost: 0, pending: 0 })
+      }
+    }
+    return [...buckets.values()].sort((a, b) => a.label.localeCompare(b.label))
+  }, [issueSummaryRows, issuePeriodMode, issueSummaryMonth, issueYearFrom, issueYearTo, isIssuePending])
 
   const renderIssueMetricRows = (items, formatter = (value) => `${value} cases`) => {
     const safeItems = (items || []).filter((item) => safeNumber(item.value) > 0)
@@ -1536,11 +1603,10 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
     setReturnFormStep((current) => Math.min(current + 1, 2))
   }
 
-  async function saveIssue() {
+  function saveIssue() {
     const checks = [
       [issueForm.order_id, 'Order ID is required.'],
       [issueForm.nama, 'Customer name is required.'],
-      [issueForm.no_hp, 'Phone number is required.'],
       [issueForm.alasan_bermasalah, 'Issue reason is required.'],
       [issueForm.tindak_lanjut, 'Handling action is required.'],
       [hasMeaningfulBulletText(issueForm.produk_bermasalah), 'Faulty product is required.'],
@@ -1552,6 +1618,12 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
       setStatus({ type: 'error', message: missingField[1] })
       return
     }
+    setStatus(null)
+    setIssueConfirmOpen(true)
+  }
+
+  async function confirmSaveIssue() {
+    setIssueConfirmOpen(false)
     setBusy(true)
     let actorName = pic
     try {
@@ -1573,6 +1645,7 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
       setStatus({ type: 'success', message: editingIssueId ? 'Order issue was updated successfully.' : 'Order issue was saved successfully.' })
       setIssueForm({ ...blankIssue(), group_order: lockedGroup || 'ARKLINE' })
       setEditingIssueId(null)
+      setIssueFormOpen(false)
       await loadIssues()
     }
   }
@@ -1617,13 +1690,15 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
     const rawValue = event.target.value
     let value = rawValue
     if (['group_order', 'order_id', 'nama', 'tim'].includes(key)) value = cleanUpper(rawValue)
-    if (key === 'no_hp') value = cleanDigits(rawValue)
+    if (key === 'biaya_timbul') value = rawValue.replace(/[^\d.]/g, '').replace(/(\..*)\./g, '$1')
     setIssueForm((current) => ({ ...current, [key]: value }))
   }
 
   function resetIssueForm() {
     setIssueForm({ ...blankIssue(), group_order: lockedGroup || 'ARKLINE' })
     setEditingIssueId(null)
+    setIssueConfirmOpen(false)
+    setProductEditorResetNonce((current) => current + 1)
   }
 
   function resetReturnForm() {
@@ -1665,14 +1740,15 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
       group_order: lockedGroup || cleanUpper(row.group_order || 'ARKLINE'),
       keterangan: row.keterangan || '',
       nama: cleanUpper(row.nama),
-      no_hp: cleanDigits(row.no_hp),
+      no_hp: row.no_hp || '',
       order_id: cleanUpper(row.order_id),
-      produk_bermasalah: ensureBulletText(row.produk_bermasalah),
-      produk_pengganti: ensureBulletText(row.produk_pengganti),
+      produk_bermasalah: row.produk_bermasalah || '',
+      produk_pengganti: row.produk_pengganti || '',
       tim: cleanUpper(row.tim || 'TIM 1'),
       tindak_lanjut: row.tindak_lanjut || '',
     })
     setActiveTab('issues')
+    setIssueFormOpen(true)
     setStatus({ type: 'info', message: `Editing order issue ${row.order_id || '-'}.` })
   }
   const serviceOptions = masters.services.filter((item) => item.courier_name === returnForm.courier_name)
@@ -1837,6 +1913,26 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
   const receivingCourierOptions = useMemo(() => {
     return Array.from(new Set(cases.filter((row) => ['Sending', 'Completed'].includes(row.status_barang)).map((row) => cleanUpper(row.courier_name)).filter(Boolean))).sort()
   }, [cases])
+
+  const outcomeRows = useMemo(() => cases
+    .filter((row) => ['Sending', 'Completed'].includes(row.status_barang))
+    .filter((row) => !receivingFilters.group || row.group_order === receivingFilters.group)
+    .filter((row) => !receivingFilters.courier || row.courier_name === receivingFilters.courier)
+    .filter((row) => {
+      const date = dateOnly(row.tanggal_pengajuan)
+      if (!date) return false
+      if (outcomePeriod === 'month') return date.startsWith(outcomeMonth)
+      if (outcomePeriod === 'year') return date.startsWith(outcomeYear)
+      return true
+    }), [cases, outcomeMonth, outcomePeriod, outcomeYear, receivingFilters.courier, receivingFilters.group])
+
+  const receivingOutcomeCounts = useMemo(() => {
+    const counts = { LOST: 0, STORED: 0, REJECT: 0 }
+    outcomeRows.forEach((row) => (row.return_items || []).forEach((item) => {
+      if (Object.hasOwn(counts, item.outcome)) counts[item.outcome] += safeNumber(item.qty)
+    }))
+    return counts
+  }, [outcomeRows])
 
   const receivingAddRows = useMemo(() => {
     const keyword = cleanUpper(receivingAddSearch)
@@ -2230,7 +2326,7 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
       />
       <div className={styles.resolutionTabs}>{TABS.map(([id, label]) => <button key={id} className={activeTab === id ? styles.active : ''} onClick={() => setActiveTab(id)}>{label}</button>)}</div>
       <div className={styles.resolutionTabPanel}>
-      {!returnFormOpen ? <StatusMessage status={status} /> : null}
+      {!returnFormOpen && !issueFormOpen ? <StatusMessage status={status} /> : null}
 
       {activeTab === 'registration' ? (
         <>
@@ -2421,11 +2517,11 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
                   </div>
                   {returnChartMode === 'groups' || returnChartMode === 'types' ? (
                     <div className={styles.returnChartLegend}>
-                      {(returnChartMode === 'types' ? returnChartTypes : returnChartGroups).map((series) => <span key={series}><i style={{ background: RETURN_CHART_COLORS[series] }} />{RETURN_CHART_LABELS[series]}</span>)}
+                      {(returnChartMode === 'types' ? returnChartTypes : returnChartGroups).map((series) => <button type="button" key={series} aria-pressed={returnChartHighlight === series} className={`${styles.returnChartLegendButton} ${returnChartHighlight && returnChartHighlight !== series ? styles.returnChartLegendMuted : ''}`} onClick={() => setReturnChartHighlight((current) => current === series ? '' : series)}><i style={{ background: RETURN_CHART_COLORS[series] }} />{RETURN_CHART_LABELS[series]}</button>)}
                     </div>
                   ) : <div />}
                 </div>
-                <MemoizedResolutionReturnChart bars={returnChartBars} groups={returnChartGroups} mode={returnChartMode} timeline={returnChartTimeline} types={returnChartTypes} />
+                <MemoizedResolutionReturnChart bars={returnChartBars} groups={returnChartGroups} mode={returnChartMode} timeline={returnChartTimeline} types={returnChartTypes} highlightedSeries={returnChartHighlight} onHighlightSeries={setReturnChartHighlight} />
               </article>
           </section>
 
@@ -2466,6 +2562,10 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
           <div className={styles.cardTitleRow}>
             <h2>RECEIVING CONFIRMATION</h2>
           </div>
+          <div className={styles.receivingOutcomeChart} aria-label="Inspection outcome quantities">
+            <div className={styles.receivingOutcomeHeader}><div><strong>Inspection Outcomes</strong><small>Units by case submission date</small></div><div className={styles.receivingOutcomeFilters}><div className={styles.issuePeriodToggle} role="group" aria-label="Inspection outcome period">{[['all', 'All time'], ['month', 'Monthly'], ['year', 'Annually']].map(([value, label]) => <button key={value} type="button" aria-pressed={outcomePeriod === value} onClick={() => setOutcomePeriod(value)}>{label}</button>)}</div>{outcomePeriod === 'month' ? <input aria-label="Inspection outcome month" type="month" value={outcomeMonth} onChange={(event) => setOutcomeMonth(event.target.value)} /> : null}{outcomePeriod === 'year' ? <select aria-label="Inspection outcome year" value={outcomeYear} onChange={(event) => setOutcomeYear(event.target.value)}>{Array.from({ length: new Date().getFullYear() - 1999 }, (_, index) => String(2000 + index)).reverse().map((year) => <option key={year}>{year}</option>)}</select> : null}</div></div>
+            {[['LOST', 'Lost'], ['STORED', 'Stored'], ['REJECT', 'Reject']].map(([key, label]) => <div className={styles.receivingOutcomeBar} key={key}><span>{label}</span><div><i data-outcome={key} style={{ width: `${receivingOutcomeCounts[key] / Math.max(1, ...Object.values(receivingOutcomeCounts)) * 100}%` }} /></div><strong>{receivingOutcomeCounts[key].toLocaleString()}</strong></div>)}
+          </div>
           <div className={styles.receivingToolbar}>
             <span className={styles.caseCountPill}>{receivingRows.length} Cases</span>
             <span className={styles.selectedCountPill}>{selectedReceivingRows.length} Selected</span>
@@ -2490,16 +2590,18 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
         <>
           <section className={`${styles.dataCard} ${styles.orderIssueSummaryPanel}`}>
             <div className={styles.cardTitleRow}>
-              <div><h2>ORDER ISSUE SUMMARY</h2><p className={styles.cardHint}>Monthly overview from issue cases, pending handling, additional cost, and handling frequency.</p></div>
+              <div className={styles.orderIssueHeading}><h2>Order Issue</h2><button type="button" className={styles.inputNewCaseButton} aria-label="Input New Issue" title="Input New Issue" onClick={() => { resetIssueForm(); setStatus(null); setIssueFormOpen(true) }}>+</button></div>
               <div className={styles.orderIssueMonthControl}>
-                <label><span>MONTH</span><input type="month" value={issueSummaryMonth} onChange={(event) => setIssueSummaryMonth(event.target.value)} /></label>
-                <button className={styles.softButton} onClick={loadIssues}>Refresh</button>
+                <div className={styles.issuePeriodToggle} role="group" aria-label="Summary period">{[['all', 'All time'], ['annual', 'Annually'], ['monthly', 'Monthly']].map(([value, label]) => <button key={value} type="button" aria-pressed={issuePeriodMode === value} onClick={() => setIssuePeriodMode(value)}>{label}</button>)}</div>
+                {issuePeriodMode === 'monthly' ? <label><span>YEAR / MONTH</span><input type="month" value={issueSummaryMonth} onChange={(event) => setIssueSummaryMonth(event.target.value)} /></label> : null}
+                {issuePeriodMode === 'annual' ? <><label><span>FROM YEAR</span><select value={issueYearFrom} onChange={(event) => { setIssueYearFrom(event.target.value); if (event.target.value > issueYearTo) setIssueYearTo(event.target.value) }}>{Array.from({ length: Number(today.slice(0, 4)) - 1999 }, (_, index) => 2000 + index).map((year) => <option key={year}>{year}</option>)}</select></label><label><span>TO YEAR</span><select value={issueYearTo} onChange={(event) => { setIssueYearTo(event.target.value); if (event.target.value < issueYearFrom) setIssueYearFrom(event.target.value) }}>{Array.from({ length: Number(today.slice(0, 4)) - 1999 }, (_, index) => 2000 + index).map((year) => <option key={year}>{year}</option>)}</select></label></> : null}
               </div>
             </div>
             <div className={styles.orderIssueSummaryGrid}>
               <article className={styles.resolutionMetricCard}>
                 <span>Total Cases</span>
                 <strong>{issueSummaryStats.total}</strong>
+                <IssueTrendChart series={issueTrendSeries} metric="count" label={issuePeriodMode === 'monthly' ? 'Cases by day' : 'Cases by year'} />
                 {renderIssueMetricRows(issueSummaryStats.groups.map((item) => ({
                   className: getGroupFillClass(item.group),
                   key: item.group,
@@ -2511,6 +2613,7 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
               <article className={styles.resolutionMetricCard}>
                 <span>Need Handling</span>
                 <strong>{issueSummaryStats.pendingRows.length}</strong>
+                <IssueTrendChart series={issueTrendSeries} metric="pending" label="Cases needing handling over time" />
                 {renderIssueMetricRows(issueSummaryStats.groups.map((item) => ({
                   className: getGroupFillClass(item.group),
                   key: item.group,
@@ -2522,6 +2625,7 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
               <article className={styles.resolutionMetricCard}>
                 <span>Additional Cost</span>
                 <strong>{formatMoney(issueSummaryStats.costTotal)}</strong>
+                <IssueTrendChart series={issueTrendSeries} metric="cost" label="Additional cost over time" money />
                 {renderIssueMetricRows(issueSummaryStats.groups.map((item) => ({
                   className: getGroupFillClass(item.group),
                   key: item.group,
@@ -2532,7 +2636,8 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
               </article>
               <article className={styles.resolutionMetricCard}>
                 <span>Handling Frequency</span>
-                <strong>{issueSummaryStats.topHandling[0]?.label || '-'}</strong>
+                <strong>{issueSummaryStats.handlingTotal}</strong>
+                <p>Top handling actions</p>
                 {renderIssueMetricRows(issueSummaryStats.topHandling.map((item) => ({
                   className: styles.orderIssueFillArkline,
                   key: item.key,
@@ -2544,11 +2649,12 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
             </div>
           </section>
 
-          <section className={styles.orderIssueMainGrid}>
+          <Modal open={issueFormOpen} title={editingIssueId ? 'Edit Issue' : 'Input New Issue'} hideHeader={!editingIssueId} className={`${styles.issueEntryModal} ${styles.returnWizardModal}`} portal onClose={() => { if (!busy) setIssueFormOpen(false) }}>
+            <StatusMessage status={status} />
             <article className={styles.formPanel}>
-              <div className={styles.panelHeader}><h2>{editingIssueId ? 'EDIT ISSUE' : 'INPUT NEW ISSUE'}</h2><span>Order Issue</span></div>
               <div className={styles.panelBody}>
-                <section className={styles.resolutionCaseHeaderCompact}>
+                <section className={styles.issueFormSection}>
+                  <h3>Case Routing</h3>
                   <div className={styles.resolutionChoiceRow}>
                     <div>
                       <span className={styles.fieldTitle}>GROUP ORDER</span>
@@ -2569,43 +2675,38 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
                   </div>
                 </section>
 
+                <section className={styles.issueFormSection}>
+                <h3>Subject Identity</h3>
                 <div className={`${styles.formGrid} ${styles.orderIssueFormGrid}`}>
                   <label><span>{labelText('ORDER ID', true)}</span><input value={issueForm.order_id} onChange={issueField('order_id')} /></label>
                   <label><span>{labelText('CUSTOMER NAME', true)}</span><input value={issueForm.nama} onChange={issueField('nama')} /></label>
-                  <label><span>{labelText('PHONE NUMBER', true)}</span><input inputMode="numeric" value={issueForm.no_hp} onChange={issueField('no_hp')} /></label>
+                  <label><span>PHONE NUMBER</span><input type="tel" inputMode="tel" value={issueForm.no_hp} onChange={issueField('no_hp')} /></label>
+                </div>
+                </section>
+                <section className={styles.issueFormSection}>
+                <h3>Issue &amp; Handling</h3>
+                <div className={`${styles.formGrid} ${styles.orderIssueFormGrid}`}>
                   <label><span>{labelText('ISSUE REASON', true)}</span><select value={issueForm.alasan_bermasalah} onChange={issueField('alasan_bermasalah')}><option value="">SELECT ISSUE REASON</option>{masters.issueReasons.map((item) => <option key={item.id || item.name}>{item.name}</option>)}</select></label>
                   <label><span>{labelText('HANDLING ACTION', true)}</span><select value={issueForm.tindak_lanjut} onChange={issueField('tindak_lanjut')}><option value="">SELECT HANDLING</option>{masters.issueActions.map((item) => <option key={item.id || item.name}>{item.name}</option>)}</select></label>
-                  <label><span>{labelWithInfo('ADDITIONAL COST', ORDER_ISSUE_COST_HELP, issueNeedsCost)}</span><input inputMode="numeric" value={issueForm.biaya_timbul} onChange={issueField('biaya_timbul')} /></label>
-                  <label className={styles.fullField}><span>{labelText('FAULTY PRODUCT', true)}</span><textarea placeholder="> " value={issueForm.produk_bermasalah} onBlur={(event) => setIssueForm((current) => ({ ...current, produk_bermasalah: ensureBulletText(event.target.value) }))} onChange={issueField('produk_bermasalah')} /></label>
-                  <label className={styles.fullField}><span>REPLACEMENT PRODUCT</span><textarea placeholder="> " value={issueForm.produk_pengganti} onBlur={(event) => setIssueForm((current) => ({ ...current, produk_pengganti: ensureBulletText(event.target.value) }))} onChange={issueField('produk_pengganti')} /></label>
+                  <label><span>{labelWithInfo('ADDITIONAL COST', ORDER_ISSUE_COST_HELP, issueNeedsCost)}</span><input type="text" inputMode="decimal" value={issueForm.biaya_timbul} onChange={issueField('biaya_timbul')} /></label>
+                  <div className={styles.issueProductGrid}>
+                    <ProductBreakdownEditor key={`issue-faulty-${editingIssueId}-${issueForm.group_order}-${productEditorResetNonce}`} arklineEnabled={issueForm.group_order === 'ARKLINE'} arklineProducts={arklineProducts} label="FAULTY PRODUCT" required value={issueForm.produk_bermasalah} onChange={(value) => setIssueForm((current) => ({ ...current, produk_bermasalah: value }))} />
+                    <div className={styles.returnWizardProductDivider} aria-hidden="true"><span /></div>
+                    <ProductBreakdownEditor key={`issue-replacement-${editingIssueId}-${issueForm.group_order}-${productEditorResetNonce}`} disabled={!issueNeedsReplacement} arklineEnabled={issueForm.group_order === 'ARKLINE'} arklineProducts={arklineProducts} label="REPLACEMENT PRODUCT" value={issueForm.produk_pengganti} onChange={(value) => setIssueForm((current) => ({ ...current, produk_pengganti: value }))} />
+                  </div>
                   <label className={styles.fullField}><span>NOTES</span><textarea value={issueForm.keterangan} onChange={issueField('keterangan')} /></label>
                 </div>
-                <div className={styles.formActions}>
-                  <button className={styles.primaryButton} disabled={busy} onClick={saveIssue}>{busy ? 'Saving...' : editingIssueId ? 'Update Issue' : 'Save Issue'}</button>
-                  <button className={styles.softButton} onClick={resetIssueForm}>{editingIssueId ? 'Cancel Edit' : 'Reset Form'}</button>
-                </div>
+                </section>
+              </div>
+              <div className={`${styles.returnWizardActions} ${styles.issueActions}`}>
+                <button className={styles.softButton} onClick={resetIssueForm}>{editingIssueId ? 'Cancel Edit' : 'Reset Form'}</button>
+                <button className={styles.primaryButton} disabled={busy} onClick={saveIssue}>{busy ? 'Saving...' : editingIssueId ? 'Update Issue' : 'Submit'}</button>
               </div>
             </article>
 
-            <aside className={styles.resolutionSideStack}>
-              <article className={styles.resolutionInsightCard}>
-                <div className={styles.cardTitleRow}><div><h2>QUICK INSIGHT</h2></div></div>
-                <div className={styles.resolutionQuickList}>
-                  {!issueQuickInsights.length ? (
-                    <div className={styles.resolutionQuickItem}>
-                      <strong>Tidak ada kasus yang membutuhkan perhatian khusus.</strong>
-                    </div>
-                  ) : issueQuickInsights.map((item) => (
-                    <div key={item.id || item.title} className={styles.resolutionQuickItem}>
-                      <strong>{item.title}</strong>
-                      <span>{item.detail}</span>
-                      {item.row ? <div className={styles.orderIssueQuickActions}><button className={styles.iconActionButton} onClick={() => openIssueDetail(item.row)} aria-label={`Open issue ${item.title}`}>🔍</button><button className={styles.iconActionButton} onClick={() => loadIssueEditState(item.row)} aria-label={`Edit issue ${item.title}`}>✎</button></div> : null}
-                    </div>
-                  ))}
-                </div>
-              </article>
-            </aside>
-          </section>
+          </Modal>
+
+          <Modal open={issueConfirmOpen} title={editingIssueId ? 'Confirm Issue Update' : 'Confirm Issue Submission'} description={editingIssueId ? 'Save the changes made to this issue?' : 'Submit this new order issue with the details entered?'} className={styles.issueSubmitConfirmModal} portal onClose={() => { if (!busy) setIssueConfirmOpen(false) }} actions={<><button type="button" className={styles.softButton} disabled={busy} onClick={() => setIssueConfirmOpen(false)}>Back to Form</button><button type="button" className={styles.issueSubmitConfirmButton} disabled={busy} onClick={confirmSaveIssue}>{busy ? 'Saving...' : editingIssueId ? 'Confirm Update' : 'Confirm Submit'}</button></>} />
 
           <section className={`${styles.tablePanel} ${styles.orderIssueListPanel}`}>
             <div className={styles.resolutionCaseListHeader}>
@@ -2621,7 +2722,6 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
                 <label><span>DATE TO</span><input type="date" value={issueFilters.to} onChange={(event) => setIssueFilters({ ...issueFilters, to: event.target.value })} /></label>
                 <label><span>GROUP</span><select value={issueFilters.group} onChange={(event) => setIssueFilters({ ...issueFilters, group: lockedGroup || event.target.value })} disabled={Boolean(lockedGroup)}>{lockedGroup ? null : <option value="">ALL GROUPS</option>}{groupOptions.map((group) => <option key={group}>{group}</option>)}</select></label>
                 <label className={styles.searchField}><span>SEARCH</span><input placeholder="Search order ID, customer, reason, handling, product, or team" value={issueFilters.search} onChange={(event) => setIssueFilters({ ...issueFilters, search: event.target.value })} /></label>
-                <button className={styles.softButton} onClick={loadIssues}>Refresh</button>
               </div>
             </div>
             <div className={styles.panelBody}>
@@ -2632,7 +2732,7 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
                     <td>{renderGroupBadge(row.group_order)}</td>
                     <td><strong>{row.order_id || '-'}</strong></td>
                     <td>{row.nama || '-'}</td>
-                    <td>{row.produk_bermasalah || '-'}</td>
+                    <td>{formatProductEntries(row.produk_bermasalah)}</td>
                     <td>{row.alasan_bermasalah || '-'}</td>
                     <td>{row.tindak_lanjut || '-'}</td>
                     <td>{formatIssueTeamLabel(row.tim)}</td>
@@ -2773,7 +2873,7 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
       <Modal open={receivingAddOpen} title="Add by Case Code" description="Search Pending cases, tick the checkbox, then use the Add button." className={styles.receivingAddModal} portal onClose={() => { setReceivingAddOpen(false); setReceivingAddSelectedIds([]) }}>
         <div className={`${styles.receivingModalBody} ${styles.receivingAddModalBody}`}>
           <div className={styles.inputWithAction}>
-            <input value={receivingAddSearch} onChange={(event) => setReceivingAddSearch(cleanUpper(event.target.value))} placeholder="TYPE CASE CODE" />
+            <input className={styles.receivingCaseCodeInput} aria-label="Case code" autoFocus value={receivingAddSearch} onChange={(event) => setReceivingAddSearch(cleanUpper(event.target.value))} placeholder="TYPE CASE CODE" />
             <button disabled={busy} onClick={addCaseByCode}>{busy ? 'Adding...' : 'Add'}</button>
           </div>
           <div className={styles.receivingAddMeta}><span className={styles.caseCountPill}>{receivingAddRows.length} Pending</span><span className={styles.selectedCountPill}>{selectedReceivingAddRows.length} Selected</span></div>
@@ -2854,8 +2954,8 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
                 <div className={styles.resolutionDetailValue}><span>Issue Reason</span><strong>{issueDetail.alasan_bermasalah || '-'}</strong></div>
                 <div className={styles.resolutionDetailValue}><span>Handling Action</span><strong>{issueDetail.tindak_lanjut || '-'}</strong></div>
                 <div className={styles.resolutionDetailValue}><span>Additional Cost</span><strong>{formatMoney(issueDetail.biaya_timbul)}</strong></div>
-                <div className={`${styles.resolutionDetailValue} ${styles.orderIssueWideDetail}`}><span>Faulty Product</span><strong>{issueDetail.produk_bermasalah || '-'}</strong></div>
-                <div className={`${styles.resolutionDetailValue} ${styles.orderIssueWideDetail}`}><span>Replacement Product</span><strong>{issueDetail.produk_pengganti || '-'}</strong></div>
+                <div className={`${styles.resolutionDetailValue} ${styles.orderIssueWideDetail}`}><span>Faulty Product</span><strong>{formatProductEntries(issueDetail.produk_bermasalah)}</strong></div>
+                <div className={`${styles.resolutionDetailValue} ${styles.orderIssueWideDetail}`}><span>Replacement Product</span><strong>{formatProductEntries(issueDetail.produk_pengganti)}</strong></div>
                 <div className={`${styles.resolutionDetailValue} ${styles.orderIssueWideDetail}`}><span>Notes</span><strong>{issueDetail.keterangan || '-'}</strong></div>
               </div>
             </section>

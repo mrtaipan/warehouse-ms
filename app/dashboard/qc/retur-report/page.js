@@ -276,11 +276,11 @@ async function loadArklineReturnData(supabase) {
     const normalized = {
       id: line.id,
       reasonId: line.reject_reason_id,
-      reasonName: reason.reason_name || 'Reject reason',
+      reasonName: reason.reason_name || line.reason_snapshot || 'Reject reason',
       grade: line.grade,
       size: String(line.size || 'No size').trim().toUpperCase(),
       qty: Number(line.qty || 0),
-      sourceType: line.reject_detail_id ? 'QC_REJECT' : 'PACKING_REJECT',
+      sourceType: line.delivery_return_item_id ? 'DELIVERY_REJECT' : line.reject_detail_id ? 'QC_REJECT' : 'PACKING_REJECT',
     }
     const key = String(line.storage_batch_id)
     storageLinesByBatch.set(key, [...(storageLinesByBatch.get(key) || []), normalized])
@@ -363,7 +363,7 @@ export default async function QcReturReportPage({ searchParams }) {
   }
 
   if (activeMode === 'delivery') {
-    const [deliveryRejectResult, rejectKoliResult, directoryResult] = await Promise.all([
+    const [deliveryRejectResult, rejectKoliResult, arklineKoliResult, directoryResult, reasonResult] = await Promise.all([
       supabase.from('delivery_return_items')
         .select('id, case_id, group_code, sku, product_name, size, qty, reason, created_at, return_case:delivery_error_retur_cases!case_id(kode_kejadian)')
         .eq('outcome', 'REJECT')
@@ -374,9 +374,18 @@ export default async function QcReturReportPage({ searchParams }) {
         .select('koli_number, status')
         .order('created_at', { ascending: false })
         .limit(5000),
+      supabase.from('arkline_qc_rejection_storage_batches')
+        .select('storage_number')
+        .eq('status', 'STORED')
+        .order('created_at', { ascending: false })
+        .limit(5000),
       supabase.from('arkline_dir_products').select('sku_induk').limit(5000),
+      supabase.from('arkline_qc_reject_reasons')
+        .select('id, reason_name')
+        .eq('is_active', true)
+        .order('reason_name', { ascending: true }),
     ])
-    const deliveryError = deliveryRejectResult.error || rejectKoliResult.error || directoryResult.error
+    const deliveryError = deliveryRejectResult.error || rejectKoliResult.error || arklineKoliResult.error || directoryResult.error || reasonResult.error
     const directorySkus = new Set((directoryResult.data || []).map((row) => normalizeDeliverySku(row.sku_induk)).filter(Boolean))
     const deliveryRows = (deliveryRejectResult.data || []).map((row) => ({
       ...row,
@@ -394,6 +403,9 @@ export default async function QcReturReportPage({ searchParams }) {
       .filter(([number, statuses]) => /^R-\d+$/.test(number) && statuses.size === 1 && statuses.has('DRAFT'))
       .map(([number]) => number)
       .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
+    const arklineStorageNumbers = Array.from(new Set((arklineKoliResult.data || [])
+      .map((row) => String(row.storage_number || '').trim()).filter(Boolean)))
+      .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
 
     return (
       <div className={reportStyles.page}>
@@ -403,7 +415,7 @@ export default async function QcReturReportPage({ searchParams }) {
               <p className={reportStyles.error}>Delivery return data could not be loaded: {deliveryError.message}</p>
             </section>
           ) : (
-            <DeliveryReturReportClient rows={deliveryRows} draftRejectKoliNumbers={draftRejectKoliNumbers} canAdd={canAdd} />
+            <DeliveryReturReportClient rows={deliveryRows} draftRejectKoliNumbers={draftRejectKoliNumbers} arklineStorageNumbers={arklineStorageNumbers} rejectReasons={reasonResult.data || []} canAdd={canAdd} canEdit={canEdit} />
           )}
         </ReturnReportShell>
       </div>

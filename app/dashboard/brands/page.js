@@ -51,6 +51,7 @@ async function toggleBrandStatus(formData) {
 
 export default async function BrandsPage({ searchParams }) {
   const supabase = await createClient()
+  const params = await searchParams
 
   const {
     data: { user },
@@ -60,31 +61,40 @@ export default async function BrandsPage({ searchParams }) {
     redirect('/login')
   }
 
-  const query = (getSingleValue(searchParams?.q) || '').trim()
-  const pageSize = getPageSize(searchParams?.pageSize)
-  const currentPage = getPage(searchParams?.page)
+  const query = (getSingleValue(params?.q) || '').trim()
+  const pageSize = getPageSize(params?.pageSize)
+  const currentPage = getPage(params?.page)
   const from = (currentPage - 1) * pageSize
   const to = from + pageSize - 1
 
-  let brandsQuery = supabase
-    .from('dir_brands')
-    .select('*', { count: 'exact' })
-    .order('id', { ascending: true })
+  const loadBrands = (start, end) => {
+    let request = supabase
+      .from('dir_brands')
+      .select('*', { count: 'exact' })
+      .order('id', { ascending: true })
 
-  if (query) {
-    brandsQuery = brandsQuery.or(
-      `brand_code.ilike.%${query}%,brand_name.ilike.%${query}%,description.ilike.%${query}%`
-    )
+    if (query) {
+      request = request.or(
+        `brand_code.ilike.%${query}%,brand_name.ilike.%${query}%,description.ilike.%${query}%`
+      )
+    }
+
+    return request.range(start, end)
   }
 
-  const { data: brands, error, count } = await brandsQuery.range(from, to)
+  let { data: brands, error, count } = await loadBrands(from, to)
   const totalItems = count || 0
   const totalPages = totalItems > 0 ? Math.ceil(totalItems / pageSize) : 1
   const safeCurrentPage = Math.min(currentPage, totalPages)
+  if (safeCurrentPage !== currentPage) {
+    const safeFrom = (safeCurrentPage - 1) * pageSize
+    ;({ data: brands, error } = await loadBrands(safeFrom, safeFrom + pageSize - 1))
+  }
   const hasPreviousPage = safeCurrentPage > 1
   const hasNextPage = safeCurrentPage < totalPages
-  const showingFrom = totalItems === 0 ? 0 : from + 1
-  const showingTo = totalItems === 0 ? 0 : Math.min(from + (brands?.length || 0), totalItems)
+  const safeFrom = (safeCurrentPage - 1) * pageSize
+  const showingFrom = totalItems === 0 ? 0 : safeFrom + 1
+  const showingTo = totalItems === 0 ? 0 : Math.min(safeFrom + (brands?.length || 0), totalItems)
 
   return (
     <div>
@@ -224,16 +234,20 @@ export default async function BrandsPage({ searchParams }) {
 const styles = {
   title: {
     marginTop: 0,
-    marginBottom: '8px',
-    fontSize: '28px',
+    marginBottom: '4px',
+    fontSize: '30px',
+    lineHeight: 1.2,
+    letterSpacing: '-0.04em',
+    color: '#17212b',
   },
   subtitle: {
     marginTop: 0,
-    marginBottom: '24px',
-    color: '#6b7280',
+    marginBottom: '28px',
+    color: '#64748b',
+    fontSize: '14px',
   },
   toolbar: {
-    marginBottom: '16px',
+    marginBottom: '20px',
     display: 'flex',
     gap: '12px',
     justifyContent: 'space-between',
@@ -242,7 +256,7 @@ const styles = {
   },
   searchForm: {
     display: 'flex',
-    gap: '10px',
+    gap: '8px',
     alignItems: 'center',
     flexWrap: 'wrap',
   },
@@ -250,15 +264,15 @@ const styles = {
     height: '40px',
     minWidth: '260px',
     padding: '0 12px',
-    border: '1px solid #d1d5db',
-    borderRadius: '8px',
+    border: '1px solid #dbe2e8',
+    borderRadius: '10px',
     fontSize: '14px',
   },
   pageSizeSelect: {
     height: '40px',
     padding: '0 12px',
-    border: '1px solid #d1d5db',
-    borderRadius: '8px',
+    border: '1px solid #dbe2e8',
+    borderRadius: '10px',
     fontSize: '14px',
     background: '#fff',
   },
@@ -266,8 +280,8 @@ const styles = {
     height: '40px',
     padding: '0 14px',
     borderRadius: '8px',
-    border: '1px solid #111827',
-    background: '#111827',
+    border: '1px solid #183b4e',
+    background: '#183b4e',
     color: '#fff',
     fontSize: '14px',
     fontWeight: '600',
@@ -278,9 +292,9 @@ const styles = {
   },
   emptyBox: {
     background: '#fff',
-    borderRadius: '12px',
-    padding: '24px',
-    border: '1px solid #e5e7eb',
+    borderRadius: '14px',
+    padding: '28px',
+    border: '1px solid #e2e8ee',
   },
   tableMeta: {
     marginBottom: '10px',
@@ -293,9 +307,10 @@ const styles = {
   },
   tableWrap: {
     background: '#fff',
-    borderRadius: '12px',
+    borderRadius: '14px',
     overflowX: 'auto',
-    border: '1px solid #e5e7eb',
+    border: '1px solid #e2e8ee',
+    boxShadow: '0 1px 2px rgba(16, 24, 40, 0.03)',
   },
   table: {
     width: '100%',
@@ -303,34 +318,38 @@ const styles = {
   },
   th: {
     textAlign: 'left',
-    padding: '14px',
-    background: '#f9fafb',
-    borderBottom: '1px solid #e5e7eb',
-    fontSize: '14px',
+    padding: '14px 16px',
+    background: '#f6f8fa',
+    borderBottom: '1px solid #e7edf1',
+    color: '#52616b',
+    fontSize: '12px',
+    fontWeight: '700',
+    letterSpacing: '0.04em',
+    textTransform: 'uppercase',
   },
   td: {
-    padding: '14px',
-    borderBottom: '1px solid #f1f5f9',
+    padding: '15px 16px',
+    borderBottom: '1px solid #edf1f4',
     fontSize: '14px',
     verticalAlign: 'middle',
   },
   addButton: {
     display: 'inline-block',
     padding: '10px 14px',
-    background: '#111827',
+    background: '#183b4e',
     color: '#fff',
     textDecoration: 'none',
-    borderRadius: '8px',
+    borderRadius: '10px',
     fontSize: '14px',
     fontWeight: '600',
   },
   editButton: {
     display: 'inline-block',
     padding: '8px 12px',
-    background: '#2563eb',
-    color: '#fff',
+    background: '#eaf1f4',
+    color: '#183b4e',
     textDecoration: 'none',
-    borderRadius: '8px',
+    borderRadius: '9px',
     fontSize: '13px',
     fontWeight: '600',
   },
@@ -377,7 +396,7 @@ const styles = {
     background: '#fff',
     color: '#111827',
     textDecoration: 'none',
-    border: '1px solid #d1d5db',
+    border: '1px solid #dbe2e8',
     fontSize: '14px',
     fontWeight: '600',
   },

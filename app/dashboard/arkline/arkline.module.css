@@ -532,6 +532,14 @@
   line-height: 1.7;
 }
 
+.sectionHeaderNote {
+  margin: 6px 0 0;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.4;
+}
+
 .toolbar {
   display: grid;
   grid-template-columns: minmax(0, 1.25fr) repeat(2, minmax(180px, 0.6fr)) auto;
