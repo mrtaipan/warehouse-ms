@@ -3,6 +3,10 @@ export function getEligibleRejectSources(options, qty) {
   return options.filter((option) => option.qty > 0 && (!Number.isInteger(requestedQty) || requestedQty <= 0 || option.qty >= requestedQty))
 }
 
+export function canRegisterUntrackedShelving(inventorySource, options, isLoading, error) {
+  return inventorySource === 'SHELVING' && options.length === 0 && !isLoading && !error
+}
+
 export function getJakartaDayRange(date) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date || '')) return null
   const start = new Date(`${date}T00:00:00+07:00`)

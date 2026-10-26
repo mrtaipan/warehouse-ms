@@ -1086,7 +1086,7 @@ export default function ReturReportClient({ rows, canAdd = false }) {
                 <div>
                   <p className={reportStyles.eyebrow}>Reguler</p>
                   <h2 className={reportStyles.sectionTitle}>Return Preparation</h2>
-                  <p>Prepare Inbound and Packing List returns into QC return Koli before arrangement.</p>
+                  <p>Prepare Inbound and Packing List returns into QC return Koli.</p>
                 </div>
 
                 <div className={reportStyles.regularHeaderActions}>

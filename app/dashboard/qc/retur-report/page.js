@@ -3,9 +3,11 @@ import Link from 'next/link'
 import { createClient } from '@/utils/supabase/server'
 import ReturReportClient from './retur-report-client'
 import ArklineReturReportClient from './arkline-retur-report-client'
+import DeliveryReturReportClient from './delivery-retur-report-client'
 import reportStyles from './retur-report.module.css'
 import { loadAccessContext } from '@/utils/access-control'
 import { hasPermission } from '@/utils/permissions'
+import { isArklineDeliveryProduct, normalizeDeliverySku } from '@/utils/delivery-return-routing.mjs'
 
 function ReturModeTabs({ activeMode }) {
   return (
@@ -21,6 +23,12 @@ function ReturModeTabs({ activeMode }) {
         className={`${reportStyles.modeTab} ${activeMode === 'arkline' ? reportStyles.modeTabActive : ''}`}
       >
         Arkline
+      </Link>
+      <Link
+        href="/dashboard/qc/retur-report?mode=delivery"
+        className={`${reportStyles.modeTab} ${activeMode === 'delivery' ? reportStyles.modeTabActive : ''}`}
+      >
+        Delivery
       </Link>
     </nav>
   )
@@ -292,6 +300,8 @@ async function loadArklineReturnData(supabase) {
     storedQty: Number(batch.stored_qty || 0),
     status: batch.status,
     sourceType: batch.source_type || 'QC_REJECT',
+    inventorySource: batch.inventory_source || null,
+    stockAppliedAt: batch.stock_applied_at || null,
     notes: batch.notes || '',
     createdBy: batch.created_by || '',
     lines: storageLinesByBatch.get(String(batch.id)) || [],
@@ -316,7 +326,7 @@ export default async function QcReturReportPage({ searchParams }) {
   const canEdit = hasPermission(permissions, 'qc.retur_report.edit', isAdmin)
 
   const params = await searchParams
-  const activeMode = params?.mode === 'arkline' ? 'arkline' : 'regular'
+  const activeMode = ['arkline', 'delivery'].includes(params?.mode) ? params.mode : 'regular'
 
   if (activeMode === 'arkline') {
     let arklineData = null
@@ -352,9 +362,55 @@ export default async function QcReturReportPage({ searchParams }) {
     )
   }
 
-  const { data: rows, error } = await supabase
-    .from('warehouse_returns')
-    .select(`
+  if (activeMode === 'delivery') {
+    const [deliveryRejectResult, rejectKoliResult, directoryResult] = await Promise.all([
+      supabase.from('delivery_return_items')
+        .select('id, case_id, group_code, sku, product_name, size, qty, reason, created_at, return_case:delivery_error_retur_cases!case_id(kode_kejadian)')
+        .eq('outcome', 'REJECT')
+        .eq('route_status', 'PENDING_ARRANGEMENT')
+        .order('created_at', { ascending: true })
+        .limit(500),
+      supabase.from('warehouse_reject_storage')
+        .select('koli_number, status')
+        .order('created_at', { ascending: false })
+        .limit(5000),
+      supabase.from('arkline_dir_products').select('sku_induk').limit(5000),
+    ])
+    const deliveryError = deliveryRejectResult.error || rejectKoliResult.error || directoryResult.error
+    const directorySkus = new Set((directoryResult.data || []).map((row) => normalizeDeliverySku(row.sku_induk)).filter(Boolean))
+    const deliveryRows = (deliveryRejectResult.data || []).map((row) => ({
+      ...row,
+      isArklineProduct: isArklineDeliveryProduct(row, directorySkus),
+    }))
+    const koliStatusByNumber = new Map()
+    ;(rejectKoliResult.data || []).forEach((row) => {
+      const number = String(row.koli_number || '').trim()
+      if (!number) return
+      const statuses = koliStatusByNumber.get(number) || new Set()
+      statuses.add(String(row.status || '').trim().toUpperCase())
+      koliStatusByNumber.set(number, statuses)
+    })
+    const draftRejectKoliNumbers = Array.from(koliStatusByNumber.entries())
+      .filter(([number, statuses]) => /^R-\d+$/.test(number) && statuses.size === 1 && statuses.has('DRAFT'))
+      .map(([number]) => number)
+      .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
+
+    return (
+      <div className={reportStyles.page}>
+        <ReturnReportShell activeMode={activeMode}>
+          {deliveryError ? (
+            <section className={reportStyles.regularArrangementPanel}>
+              <p className={reportStyles.error}>Delivery return data could not be loaded: {deliveryError.message}</p>
+            </section>
+          ) : (
+            <DeliveryReturReportClient rows={deliveryRows} draftRejectKoliNumbers={draftRejectKoliNumbers} canAdd={canAdd} />
+          )}
+        </ReturnReportShell>
+      </div>
+    )
+  }
+
+  const { data: rows, error } = await supabase.from('warehouse_returns').select(`
       *,
       inbound:inbound_id (
         id,
@@ -372,8 +428,7 @@ export default async function QcReturReportPage({ searchParams }) {
         category_name,
         full_name
       )
-    `)
-    .order('created_at', { ascending: false })
+    `).order('created_at', { ascending: false })
 
   return (
     <div className={reportStyles.page}>
@@ -383,7 +438,10 @@ export default async function QcReturReportPage({ searchParams }) {
             <p className={reportStyles.error}>Error: {error.message}</p>
           </section>
         ) : (
-          <ReturReportClient rows={rows || []} canAdd={canAdd} />
+          <ReturReportClient
+            rows={rows || []}
+            canAdd={canAdd}
+          />
         )}
       </ReturnReportShell>
     </div>

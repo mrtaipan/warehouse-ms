@@ -24,7 +24,7 @@ const STORAGE_GROUP_FILTERS = ['ARKLINE', 'MOB', 'OI']
 const TEMPORARY_SALES_GROUP_FILTERS = ['MOB', 'OI']
 const ARKLINE_REGISTER_SIZE_OPTIONS = ['XS', 'S', 'M', 'L', 'XL', 'XXL']
 const REJECT_GRADES = ['B', 'C']
-const REJECT_STORAGE_SELECT_COLUMNS = 'id, koli_number, product_name, size, category_id, sub_category_id, item_type_id, qty, grade, reject_note, status, posted_at, posted_by, created_by, created_at, updated_by, updated_at'
+const REJECT_STORAGE_SELECT_COLUMNS = 'id, koli_number, delivery_return_item_id, product_name, size, category_id, sub_category_id, item_type_id, qty, grade, reject_note, status, posted_at, posted_by, created_by, created_at, updated_by, updated_at'
 const TEMPORARY_SALES_SELECT_COLUMNS = 'id, source_warehouse_storage_id, source_pl_packing_item_id, source_variant_code, sku_id, item_name, size, category_id, area_type, group_code, source_location_label, qty_in_area, status, entered_at, due_at, created_by, created_at, updated_at'
 const TEMPORARY_SALES_LEGACY_SELECT_COLUMNS = 'id, source_warehouse_storage_id, source_pl_packing_item_id, source_variant_code, sku_id, item_name, size, group_code, source_location_label, qty_in_area, status, entered_at, due_at, created_by, created_at, updated_at'
 const STORAGE_BUNDLE_SELECT_COLUMNS = 'id, bundle_code, bundle_name, bundle_unit_qty, storing_type, is_size_dependent, status'
@@ -232,7 +232,7 @@ function getRejectCategoryLabel(entry = {}, categoryById = new Map()) {
   return [getCategoryDisplayName(itemType), getCategoryDisplayName(subCategory)]
     .filter((value) => value && value !== '-')
     .join(' ')
-    .trim() || '-'
+    .trim() || (entry.delivery_return_item_id ? 'Delivery Return' : '-')
 }
 
 function createEmptyRejectForm() {
@@ -722,7 +722,7 @@ async function fetchAllRejectStorageRows() {
 async function fetchTemporarySalesItems() {
   const { data, error } = await supabase
     .from('warehouse_temporary_sales_items')
-    .select(TEMPORARY_SALES_SELECT_COLUMNS)
+    .select(`${TEMPORARY_SALES_SELECT_COLUMNS}, priority_restock:restock_request!warehouse_temporary_sales_items_restock_request_id_fkey(return_case:delivery_error_retur_cases!restock_request_return_case_id_fkey(kode_kejadian,status_barang))`)
     .order('entered_at', { ascending: false })
 
   if (error) {
@@ -1526,7 +1526,7 @@ export default function StorageOverviewPage() {
   const canAddRejectStorage = Boolean(storageAccess.rejectStorageAdd || storageAccess.locationAdd)
   const canEditRejectStorage = Boolean(storageAccess.rejectStorageEdit || storageAccess.locationEdit || storageAccess.locationAdd)
   const canDeleteRejectStorageEntry = useCallback((entry) => {
-    if (!entry || !canEditRejectStorage || normalizeRejectStatus(entry.status) !== 'DRAFT') return false
+    if (!entry || entry.delivery_return_item_id || !canEditRejectStorage || normalizeRejectStatus(entry.status) !== 'DRAFT') return false
     if (storageAccess.isAdmin) return true
 
     const createdBy = normalizeFilterValue(entry.created_by).toLowerCase()
@@ -3373,6 +3373,7 @@ export default function StorageOverviewPage() {
   }
 
   function openRejectModal(row = null) {
+    if (row?.delivery_return_item_id) return
     if (row && !canEditRejectStorage) return
     if (!row && !canAddRejectStorage) return
     setRejectModalEntry(row)
@@ -7050,7 +7051,14 @@ export default function StorageOverviewPage() {
                         />
                       ) : null}
                     </td>
-                    <td style={{ ...styles.temporarySalesValueCell, textAlign: 'left' }}>{entry.sku_id ? `${entry.sku_id} | ` : ''}{entry.item_name || '-'}</td>
+                    <td style={{ ...styles.temporarySalesValueCell, textAlign: 'left' }}>
+                      <div>{entry.sku_id ? `${entry.sku_id} | ` : ''}{entry.item_name || '-'}</div>
+                      {visibleListMode === 'temporary-retur' && normalizeFilterValue(entry.priority_restock?.return_case?.status_barang) === 'CANCEL' ? (
+                        <div style={styles.temporaryCancelledCaseNote}>
+                          Case {entry.priority_restock.return_case.kode_kejadian || '-'} dibatalkan. Kembalikan ke lokasi yang sesuai.
+                        </div>
+                      ) : null}
+                    </td>
                     <td style={styles.temporarySalesValueCell}>{entry.size || '-'}</td>
                     <td style={styles.temporarySalesValueCell}>{Number(entry.qty_in_area || 0)}</td>
                     <td style={styles.temporarySalesValueCell}>{entry.source_location_label || '-'}</td>
@@ -7451,9 +7459,9 @@ export default function StorageOverviewPage() {
                                             <button
                                               type="button"
                                               onClick={() => openRejectModal(entry)}
-                                              style={isEntryDraft ? styles.tableIconButton : { ...styles.tableIconButton, ...styles.tableIconButtonDisabled }}
-                                              disabled={!isEntryDraft || deletingReject}
-                                              title={isEntryDraft ? 'Edit reject item' : 'Posted koli cannot be edited'}
+                                              style={isEntryDraft && !entry.delivery_return_item_id ? styles.tableIconButton : { ...styles.tableIconButton, ...styles.tableIconButtonDisabled }}
+                                              disabled={!isEntryDraft || Boolean(entry.delivery_return_item_id) || deletingReject}
+                                              title={entry.delivery_return_item_id ? 'Delivery source is managed in Return Preparation' : isEntryDraft ? 'Edit reject item' : 'Posted koli cannot be edited'}
                                               aria-label="Edit reject item"
                                             >
                                               <svg viewBox="0 0 24 24" style={styles.tableActionIcon} aria-hidden="true">
@@ -10210,6 +10218,13 @@ const styles = {
     lineHeight: 1.35,
     textAlign: 'center',
     verticalAlign: 'middle',
+  },
+  temporaryCancelledCaseNote: {
+    marginTop: '4px',
+    color: '#9a3412',
+    fontSize: '11px',
+    fontWeight: '600',
+    lineHeight: 1.4,
   },
   temporarySalesTh: {
     textAlign: 'center',

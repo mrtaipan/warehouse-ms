@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
+  canRegisterUntrackedShelving,
   getEligibleRejectSources,
   getJakartaDayRange,
   requiresRejectSourceChoice,
@@ -37,6 +38,14 @@ test('different shelves or completed restocks require an explicit source', () =>
 test('a stale choice falls back only when one eligible source remains', () => {
   const sources = [{ id: '2', qty: 4, label: 'A8.6.A' }]
   assert.equal(resolveRejectSource(sources, 'SHELVING', '1')?.id, '2')
+})
+
+test('unregistered shelving is allowed only when no matching stock row exists', () => {
+  assert.equal(canRegisterUntrackedShelving('SHELVING', [], false, ''), true)
+  assert.equal(canRegisterUntrackedShelving('SHELVING', [{ id: '1', qty: 0 }], false, ''), false)
+  assert.equal(canRegisterUntrackedShelving('SHELVING', [], true, ''), false)
+  assert.equal(canRegisterUntrackedShelving('SHELVING', [], false, 'Lookup failed'), false)
+  assert.equal(canRegisterUntrackedShelving('PALLET_RESTOCK', [], false, ''), false)
 })
 
 test('Restock For uses the selected WIB calendar day', () => {

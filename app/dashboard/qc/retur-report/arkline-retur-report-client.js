@@ -4,7 +4,7 @@ import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/utils/supabase/browser'
-import { getEligibleRejectSources, getJakartaDayRange, requiresRejectSourceChoice, resolveRejectSource } from '@/utils/arkline-reject-registration.mjs'
+import { canRegisterUntrackedShelving, getEligibleRejectSources, getJakartaDayRange, requiresRejectSourceChoice, resolveRejectSource } from '@/utils/arkline-reject-registration.mjs'
 import styles from './retur-report.module.css'
 
 function todayValue() {
@@ -26,9 +26,10 @@ function formatStatus(value) {
   return String(value || 'SENT').replaceAll('_', ' ')
 }
 
-function formatStorageSourceType(value, inventorySource) {
+function formatStorageSourceType(value, inventorySource, stockAppliedAt) {
   const normalized = String(value || 'QC_REJECT').toUpperCase()
   if (normalized === 'PACKING_REJECT') {
+    if (inventorySource === 'SHELVING' && !stockAppliedAt) return 'Shelving Reject (Unregistered)'
     if (inventorySource === 'SHELVING') return 'Shelving Reject'
     if (inventorySource === 'PALLET_RESTOCK') return 'Pallet Restock Reject'
     return 'Packing Reject'
@@ -647,6 +648,7 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
           storageNumber: storage.storageNumber,
           sourceType: storage.sourceType || line.sourceType || 'QC_REJECT',
           inventorySource: storage.inventorySource || null,
+          stockAppliedAt: storage.stockAppliedAt || null,
         }
         current.lines.push({
           ...enrichedLine,
@@ -890,6 +892,12 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
     [registrationDraft.qty, registrationSourceOptions]
   )
   const registrationNeedsSourceChoice = requiresRejectSourceChoice(eligibleRegistrationSources, registrationDraft.inventorySource)
+  const canUseUntrackedShelving = canRegisterUntrackedShelving(
+    registrationDraft.inventorySource,
+    registrationSourceOptions,
+    registrationSourcesLoading,
+    registrationSourcesError
+  )
   const selectedRegistrationReason = useMemo(
     () =>
       rejectReasons.find((reason) => String(reason.id) === String(registrationDraft.rejectReasonId)) ||
@@ -925,7 +933,6 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
             .eq('rack_location.location_type', 'SHELVING')
             .or(`sku_id.ilike.${sku}%,source_variant_code.ilike.${sku}%`)
             .eq('size', size)
-            .gt('qty', 0)
             .order('qty', { ascending: false })
             .limit(50)
           if (sourceError) throw sourceError
@@ -1359,7 +1366,7 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
     }
 
     const selectedSource = resolveRejectSource(eligibleRegistrationSources, registrationDraft.inventorySource, registrationDraft.sourceId)
-    if (!selectedSource || registrationSourcesLoading || qty > selectedSource.qty) {
+    if ((!selectedSource && !canUseUntrackedShelving) || registrationSourcesLoading || (selectedSource && qty > selectedSource.qty)) {
       setError(registrationNeedsSourceChoice ? 'Choose the matching reject source.' : 'No matching source has enough available quantity.')
       return
     }
@@ -1378,7 +1385,7 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
       p_notes: registrationDraft.notes.trim(),
       p_created_by: userEmail || '',
       p_inventory_source: registrationDraft.inventorySource,
-      p_source_warehouse_storage_id: registrationDraft.inventorySource === 'SHELVING' ? Number(selectedSource.id) : null,
+      p_source_warehouse_storage_id: registrationDraft.inventorySource === 'SHELVING' && selectedSource ? Number(selectedSource.id) : null,
       p_source_restock_request_id: registrationDraft.inventorySource === 'PALLET_RESTOCK' ? selectedSource.id : null,
     })
 
@@ -2206,7 +2213,7 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
                                                                   {displayDetails.map((detail) => (
                                                                     <tr key={detail.rowKey}>
                                                                       <td>{detail.poLabel}</td>
-                                                                      <td>{formatStorageSourceType(detail.sourceType, detail.inventorySource)}</td>
+                                                                      <td>{formatStorageSourceType(detail.sourceType, detail.inventorySource, detail.stockAppliedAt)}</td>
                                                                       <td>{detail.grade}</td>
                                                                       <td>{detail.reasonName}</td>
                                                                       <td className={styles.centerNumberCell}>{detail.qty}</td>
@@ -2467,7 +2474,10 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
                 <div className={`${styles.field} ${styles.fieldFull}`} aria-live="polite">
                   {registrationSourcesError ? <span className={styles.registrationSourceError}>{registrationSourcesError}</span> : null}
                   {!registrationSourcesError && registrationSourcesLoading ? <span className={styles.registrationSourceHint}>Checking available source...</span> : null}
-                  {!registrationSourcesError && !registrationSourcesLoading && !eligibleRegistrationSources.length ? (
+                  {canUseUntrackedShelving ? (
+                    <span className={styles.registrationSourceHint}>Shelving stock is not registered yet. This reject can be saved without deducting stock; reconcile the shelving record separately.</span>
+                  ) : null}
+                  {!registrationSourcesError && !registrationSourcesLoading && !eligibleRegistrationSources.length && !canUseUntrackedShelving ? (
                     <span className={styles.registrationSourceError}>No matching {registrationDraft.inventorySource === 'SHELVING' ? 'shelving stock' : 'pallet restock completed on this Storage Date'} has enough quantity.</span>
                   ) : null}
                 </div>
