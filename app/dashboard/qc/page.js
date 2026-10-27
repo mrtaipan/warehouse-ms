@@ -41,7 +41,10 @@ const styles = {
     display: 'flex',
     flexDirection: 'column',
     gap: '18px',
-    padding: '4px 0 18px',
+    paddingTop: '4px',
+    paddingRight: 0,
+    paddingBottom: '18px',
+    paddingLeft: 0,
     borderBottom: '1px solid #e2e8f0',
   },
   flatSectionLast: {
@@ -1559,6 +1562,24 @@ function getRepairFlowLabel(status, completeLabel = 'Sent') {
   return 'Available'
 }
 
+async function loadArklineRejectStorageLines(supabase) {
+  const pageSize = 1000
+  const rows = []
+
+  for (let offset = 0; ; offset += pageSize) {
+    const { data, error } = await supabase
+      .from('arkline_qc_rejection_storage_lines')
+      .select('id, storage_batch_id, reject_detail_id, reject_reason_id, grade, size, qty')
+      .not('reject_detail_id', 'is', null)
+      .order('id', { ascending: true })
+      .range(offset, offset + pageSize - 1)
+
+    if (error) return { data: null, error }
+    rows.push(...(data || []))
+    if (!data || data.length < pageSize) return { data: rows, error: null }
+  }
+}
+
 function buildReadOnlyRejectReasonSummaryRows(
   rows = [],
   reasonNameById = new Map(),
@@ -1732,6 +1753,7 @@ export default function QcDashboardPage() {
   const [rejectDetailError, setRejectDetailError] = useState('')
   const [pausingAll, setPausingAll] = useState(false)
   const [showPauseConfirm, setShowPauseConfirm] = useState(false)
+  const [regularReQcMetrics, setRegularReQcMetrics] = useState({ allocation: 0, graded: 0, gap: 0 })
   const [previewPhoto, setPreviewPhoto] = useState(null)
   const [qcMode, setQcMode] = useState('regular')
   const [reQcSource, setReQcSource] = useState('arkline')
@@ -2012,10 +2034,7 @@ export default function QcDashboardPage() {
         .from('arkline_qc_return_batch_lines')
         .select('id, return_batch_id, reject_detail_id, reject_reason_id, grade, size, qty')
         .order('created_at', { ascending: false }),
-      supabase
-        .from('arkline_qc_rejection_storage_lines')
-        .select('id, storage_batch_id, reject_detail_id, reject_reason_id, grade, size, qty')
-        .order('created_at', { ascending: false }),
+      loadArklineRejectStorageLines(supabase),
       supabase
         .from('arkline_po_item_sizes')
         .select('arkline_po_item_id, size, qty')
@@ -3437,7 +3456,7 @@ export default function QcDashboardPage() {
     .filter((item) => Number(item.secondsPerPcs || 0) > 0)
     .sort((a, b) => Number(a.secondsPerPcs || 0) - Number(b.secondsPerPcs || 0))
   const maxProductThroughputSeconds = rankedProductThroughputRows.reduce((max, item) => Math.max(max, Number(item.secondsPerPcs || 0)), 0)
-  const activeSummaryLabel = qcMode === 'regular' ? 'Reguler' : qcMode === 're_qc' ? 'Re-QC' : 'Arkline'
+  const activeSummaryLabel = qcMode === 'regular' ? 'Reguler' : qcMode === 're_qc' ? 'Arkline Re-QC' : 'Arkline'
   const showRegularSplitColumn = qcMode === 'regular' && sampleFilter === 'yes'
   const selectedInspectorPerformance = inspectorPerformance.find((item) => item.inspectorKey === pauseDetailInspector)
   const selectedInspectorPauseLogs = selectedInspectorPerformance?.pauseLogs || []
@@ -4677,6 +4696,23 @@ export default function QcDashboardPage() {
     setShowPauseConfirm(false)
   }
 
+  const pauseConfirmModal = showPauseConfirm ? (
+    <div style={styles.overlay}>
+      <div style={styles.modal}>
+        <div>
+          <h2 style={styles.sectionTitle}>Pause All QC?</h2>
+          <p style={styles.subtitle}>All running QC stopwatches will be paused first, then each inspector can resume individually later.</p>
+        </div>
+        <div style={styles.buttonRow}>
+          <button type="button" onClick={() => setShowPauseConfirm(false)} style={styles.secondaryButton}>Cancel</button>
+          <button type="button" onClick={handlePauseAllQc} style={styles.dangerButton} disabled={pausingAll}>
+            {pausingAll ? 'Pausing...' : 'Pause All QC'}
+          </button>
+        </div>
+      </div>
+    </div>
+  ) : null
+
   if (loading) {
     return <p style={styles.emptyText}>Loading QC summary...</p>
   }
@@ -4684,27 +4720,56 @@ export default function QcDashboardPage() {
   if (qcMode === 're_qc' && reQcSource === 'regular') {
     return (
       <div style={styles.wrapper}>
-        <div style={styles.flatSection}>
-          <p style={styles.eyebrow}>Quality Control</p>
-          <h1 style={styles.title}>Summary</h1>
-          <div style={styles.modeSwitchRow}>
-            <div style={styles.modeRow}>
-              <button type="button" style={styles.modeButton} onClick={() => setQcMode('regular')}>Reguler</button>
-              <button type="button" style={styles.modeButton} onClick={() => setQcMode('arkline')}>Arkline</button>
-              <button type="button" style={{ ...styles.modeButton, ...styles.modeButtonActive }}>Re-QC</button>
+        <div style={{ ...styles.flatSection, ...styles.flatSectionLast }}>
+          <div style={{ ...styles.summaryHeaderGrid, gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 420px), 1fr))' }}>
+            <div style={styles.summaryHeaderLeft}>
+              <div style={styles.headerRow}>
+                <div>
+                  <p style={styles.eyebrow}>Quality Control</p>
+                  <div style={styles.titleRow}>
+                    <h1 style={styles.title}>Summary</h1>
+                    <button type="button" onClick={() => setShowPauseConfirm(true)} disabled={pausingAll}
+                      style={{ ...styles.pauseIconButton, opacity: pausingAll ? 0.6 : 1, cursor: pausingAll ? 'not-allowed' : 'pointer' }}
+                      title="Pause All QC" aria-label="Pause All QC">
+                      {pausingAll ? '...' : '⏸'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+              <div style={styles.modeSwitchRow}>
+                <div style={styles.modeRow}>
+                  <button type="button" style={styles.modeButton} onClick={() => setQcMode('regular')}>Reguler</button>
+                  <button type="button" style={styles.modeButton} onClick={() => setQcMode('arkline')}>Arkline</button>
+                  <button type="button" style={{ ...styles.modeButton, ...styles.modeButtonActive }}>Re-QC</button>
+                </div>
+                <select aria-label="Re-QC source" value={reQcSource} onChange={(event) => setReQcSource(event.target.value)} style={styles.reQcSourceSelect}>
+                  <option value="arkline">Re-QC Arkline</option>
+                  <option value="regular">Re-QC Reguler</option>
+                </select>
+              </div>
             </div>
-            <select
-              aria-label="Re-QC source"
-              value={reQcSource}
-              onChange={(event) => setReQcSource(event.target.value)}
-              style={styles.reQcSourceSelect}
-            >
-              <option value="arkline">Re-QC Arkline</option>
-              <option value="regular">Re-QC Reguler</option>
-            </select>
+            <div style={{ ...styles.summaryMetricGrid, gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 120px), 1fr))' }}>
+              <div style={styles.compactMetricCard}>
+                <span style={styles.summaryLabel}>Allocation</span>
+                <strong style={{ ...styles.summaryValue, ...styles.compactMetricValue }}>{regularReQcMetrics.allocation}</strong>
+              </div>
+              <div style={styles.compactMetricCard}>
+                <span style={styles.summaryLabel}>Graded Qty <InfoHint text="Qty yang sudah di QC oleh Grader." /></span>
+                <strong style={{ ...styles.summaryValue, ...styles.compactMetricValue }}>{regularReQcMetrics.graded}</strong>
+              </div>
+              <div style={styles.compactMetricCard}>
+                <span style={styles.summaryLabel}>Allocation Gap <InfoHint text="Graded Qty minus Allocation." /></span>
+                <strong style={{ ...styles.summaryValue, ...styles.compactMetricValue, color: regularReQcMetrics.gap > 0 ? '#16a34a' : regularReQcMetrics.gap < 0 ? '#dc2626' : '#111827' }}>
+                  {regularReQcMetrics.gap > 0 ? '+' : ''}{regularReQcMetrics.gap}
+                </strong>
+              </div>
+            </div>
           </div>
-          <RegularReQcWorkflow view="results" />
         </div>
+        {error ? <p style={styles.errorText}>{error}</p> : null}
+        {success ? <p style={styles.successText}>{success}</p> : null}
+        <RegularReQcWorkflow view="results" summaryStyles={styles} onSummaryMetricsChange={setRegularReQcMetrics} />
+        {pauseConfirmModal}
       </div>
     )
   }
@@ -5274,24 +5339,7 @@ export default function QcDashboardPage() {
       ) : null}
       </div>
 
-      {showPauseConfirm ? (
-        <div style={styles.overlay}>
-          <div style={styles.modal}>
-            <div>
-              <h2 style={styles.sectionTitle}>Pause All QC?</h2>
-              <p style={styles.subtitle}>All running QC stopwatches will be paused first, then each inspector can resume individually later.</p>
-            </div>
-            <div style={styles.buttonRow}>
-              <button type="button" onClick={() => setShowPauseConfirm(false)} style={styles.secondaryButton}>
-                Cancel
-              </button>
-              <button type="button" onClick={handlePauseAllQc} style={styles.dangerButton}>
-                {pausingAll ? 'Pausing...' : 'Pause All QC'}
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
+      {pauseConfirmModal}
 
       {previewPhoto ? (
         <div style={styles.photoPreviewOverlay}>

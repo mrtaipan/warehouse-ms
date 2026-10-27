@@ -460,16 +460,16 @@ const styles = {
     minWidth: 0,
   },
   modelNameText: {
-    maxWidth: '116px',
+    width: '100%',
+    maxWidth: 'none',
     color: '#334155',
-    fontSize: '11px',
+    fontSize: '10px',
     fontWeight: 850,
     lineHeight: 1.25,
-    overflow: 'hidden',
-    textOverflow: 'ellipsis',
-    display: '-webkit-box',
-    WebkitLineClamp: 2,
-    WebkitBoxOrient: 'vertical',
+    whiteSpace: 'normal',
+    overflowWrap: 'anywhere',
+    wordBreak: 'break-word',
+    textAlign: 'center',
   },
   modelControlRow: {
     display: 'inline-flex',
@@ -596,6 +596,27 @@ const styles = {
     opacity: 0.62,
     cursor: 'not-allowed',
   },
+  validationActionRow: {
+    display: 'flex',
+    alignItems: 'stretch',
+    gap: '10px',
+    width: '100%',
+  },
+  unvalidateButton: {
+    minWidth: '132px',
+    height: '52px',
+    padding: '0 16px',
+    borderWidth: '1px',
+    borderStyle: 'solid',
+    borderColor: '#fecaca',
+    borderRadius: '12px',
+    background: '#fff',
+    color: '#b91c1c',
+    fontSize: '14px',
+    fontWeight: 900,
+    cursor: 'pointer',
+    whiteSpace: 'nowrap',
+  },
   overviewTableWrap: {
     background: '#fff',
     border: '1px solid #e2e8f0',
@@ -689,6 +710,12 @@ const styles = {
     alignItems: 'center',
     minWidth: 0,
     gap: '6px',
+    flexWrap: 'wrap',
+    maxWidth: '100%',
+  },
+  dropdownLabelText: {
+    minWidth: 0,
+    overflowWrap: 'anywhere',
   },
   variancePill: {
     display: 'inline-flex',
@@ -813,9 +840,13 @@ const styles = {
     textAlign: 'left',
   },
   dropdownButtonText: {
-    overflow: 'hidden',
-    textOverflow: 'ellipsis',
-    whiteSpace: 'nowrap',
+    display: 'block',
+    flex: 1,
+    minWidth: 0,
+    whiteSpace: 'normal',
+    overflowWrap: 'anywhere',
+    lineHeight: 1.25,
+    fontSize: '12px',
     color: '#111827',
   },
   dropdownMenu: {
@@ -1434,6 +1465,7 @@ export default function PackingListReceivingPage() {
   const [confirmRows, setConfirmRows] = useState([])
   const [inboundUnloadRows, setInboundUnloadRows] = useState([])
   const [validationSummaryRows, setValidationSummaryRows] = useState([])
+  const [breakdownInboundIds, setBreakdownInboundIds] = useState([])
   const [userProfiles, setUserProfiles] = useState([])
   const [productModels, setProductModels] = useState([])
   const [productModelVariants, setProductModelVariants] = useState([])
@@ -1462,6 +1494,7 @@ export default function PackingListReceivingPage() {
   const [detailGrn, setDetailGrn] = useState(initialGrn)
   const [isPackingStaff, setIsPackingStaff] = useState(false)
   const [canManageReceiving, setCanManageReceiving] = useState(false)
+  const [canUnvalidateReceiving, setCanUnvalidateReceiving] = useState(false)
   const [accessReady, setAccessReady] = useState(false)
 
   useEffect(() => {
@@ -1494,6 +1527,7 @@ export default function PackingListReceivingPage() {
       const isStaff = role === 'packing_staff'
       setIsPackingStaff(isStaff)
       setCanManageReceiving(nextCanManageReceiving)
+      setCanUnvalidateReceiving(isAdminUser || role === 'packing_coordinator')
 
       if (!nextCanManageReceiving && isInputRoute && initialGrn) {
         setShowInputForm(false)
@@ -1525,6 +1559,7 @@ export default function PackingListReceivingPage() {
       const [
         { data: confirmData, error: confirmError },
         { data: validationSummaryData, error: validationSummaryError },
+        { data: breakdownData, error: breakdownError },
         { data: userProfileData, error: userProfileError },
         { data: productModelData, error: productModelError },
         { data: productModelVariantData, error: productModelVariantError },
@@ -1564,6 +1599,9 @@ export default function PackingListReceivingPage() {
           .select('id, inbound_id, source_koli_sequence, source_qc_confirm_id, product_model_id, product_model_variant_id, source_variant_code, model_name, model_color:variant_name, source_qty, received_qty, qty_diff, validated_by, received_with_names, validated_at')
           .order('validated_at', { ascending: false }),
         supabase
+          .from('pl_size_breakdown')
+          .select('inbound_id'),
+        supabase
           .from('dir_user_profiles')
           .select('email, display_name, role'),
         supabase
@@ -1585,10 +1623,11 @@ export default function PackingListReceivingPage() {
           .order('id', { ascending: true }),
       ])
 
-      if (confirmError || validationSummaryError || productModelError || productModelVariantError) {
+      if (confirmError || validationSummaryError || breakdownError || productModelError || productModelVariantError) {
         setError(
           confirmError?.message ||
             validationSummaryError?.message ||
+            breakdownError?.message ||
             productModelError?.message ||
             productModelVariantError?.message ||
             'Failed to load packing list receiving.'
@@ -1599,6 +1638,7 @@ export default function PackingListReceivingPage() {
 
       setConfirmRows(confirmData || [])
       setValidationSummaryRows(validationSummaryData || [])
+      setBreakdownInboundIds(Array.from(new Set((breakdownData || []).map((row) => Number(row.inbound_id || 0)).filter(Boolean))))
       setUserProfiles(userProfileError ? [] : userProfileData || [])
       setProductModels(productModelData || [])
       setProductModelVariants(productModelVariantData || [])
@@ -2528,6 +2568,7 @@ export default function PackingListReceivingPage() {
     [draftRows, sourceRowMap, sourceRows]
   )
   const isValidated = Boolean(selectedSource?.isValidated)
+  const hasSizeBreakdown = breakdownInboundIds.includes(Number(selectedInbound?.id || 0))
 
   async function handleValidate() {
     if (!canManageReceiving) return
@@ -2681,6 +2722,73 @@ export default function PackingListReceivingPage() {
     }
 
     setSuccess(`Receiving validated. ${mismatchCount} row still differs from QC Confirm.`)
+  }
+
+  async function handleUnvalidate() {
+    if (!canUnvalidateReceiving || !isValidated || saving || !selectedInbound || !selectedSource) return
+
+    if (hasSizeBreakdown) {
+      setSuccess('')
+      setError('This receiving cannot be unvalidated because the GRN already has Size Breakdown data.')
+      return
+    }
+
+    const confirmed = window.confirm(
+      [
+        'Unvalidate this Packing List Receiving?',
+        '',
+        `GRN: ${selectedInbound.grn_number || '-'}`,
+        `Koli: ${selectedSource.label || '-'}`,
+        '',
+        'The saved PL Receiving rows for this Koli will be removed and the Koli can be validated again.',
+      ].join('\n')
+    )
+
+    if (!confirmed) return
+
+    setSaving(true)
+    setError('')
+    setSuccess('')
+
+    const { data: breakdownRowsForGrn, error: breakdownCheckError } = await supabase
+      .from('pl_size_breakdown')
+      .select('id')
+      .eq('inbound_id', selectedInbound.id)
+      .limit(1)
+
+    if (breakdownCheckError) {
+      setSaving(false)
+      setError(breakdownCheckError.message || 'Failed to check Size Breakdown status.')
+      return
+    }
+
+    if (breakdownRowsForGrn?.length) {
+      setSaving(false)
+      setBreakdownInboundIds((current) => (current.includes(Number(selectedInbound.id)) ? current : [...current, Number(selectedInbound.id)]))
+      setError('This receiving cannot be unvalidated because the GRN already has Size Breakdown data.')
+      return
+    }
+
+    const { error: deleteError } = await supabase
+      .from('pl_receiving')
+      .delete()
+      .eq('inbound_id', selectedInbound.id)
+      .eq('source_koli_sequence', selectedSource.koli_sequence)
+
+    if (deleteError) {
+      setSaving(false)
+      setError(deleteError.message || 'Failed to unvalidate Packing List Receiving.')
+      return
+    }
+
+    const validationKey = `${selectedInbound.id}::${selectedSource.koli_sequence}`
+    setValidationRows([])
+    setValidationSummaryRows((current) => current.filter((row) => `${row.inbound_id}::${Number(row.source_koli_sequence || 0)}` !== validationKey))
+    setDraftRows(createDraftRows(sourceRows))
+    setReceivedWithNames([])
+    setReceivedWithMenuOpen(false)
+    setSaving(false)
+    setSuccess(`Receiving unvalidated for ${selectedInbound.grn_number || '-'} ${selectedSource.label || '-'}.`)
   }
 
   if (loading || !accessReady) {
@@ -2997,7 +3105,7 @@ export default function PackingListReceivingPage() {
                     <span style={styles.dropdownButtonText}>
                       {selectedSource ? (
                         <span style={styles.dropdownLabelWrap}>
-                          <span>{selectedSource.isValidated ? `${selectedSource.label} - Validated` : selectedSource.label}</span>
+                          <span style={styles.dropdownLabelText}>{selectedSource.isValidated ? `${selectedSource.label} - Validated` : selectedSource.label}</span>
                           {selectedSource.isSample ? <span style={styles.samplePill}>Sample</span> : null}
                         </span>
                       ) : 'Choose QC Confirm Koli'}
@@ -3018,7 +3126,7 @@ export default function PackingListReceivingPage() {
                           }}
                         >
                           <span style={styles.dropdownLabelWrap}>
-                            <span>{row.isValidated ? `${row.label} - Validated` : row.label}</span>
+                            <span style={styles.dropdownLabelText}>{row.isValidated ? `${row.label} - Validated` : row.label}</span>
                             {row.isSample ? <span style={styles.samplePill}>Sample</span> : null}
                           </span>
                         </button>
@@ -3201,14 +3309,33 @@ export default function PackingListReceivingPage() {
             </div>
 
             {canManageReceiving ? (
-              <button
-                type="button"
-                onClick={handleValidate}
-                style={isValidated || saving ? { ...styles.saveButton, ...styles.saveButtonDisabled } : styles.saveButton}
-                disabled={isValidated || saving}
-              >
-                {isValidated ? 'Validated' : saving ? 'Saving...' : 'Validate Receiving'}
-              </button>
+              <div style={styles.validationActionRow}>
+                {canUnvalidateReceiving && selectedSource ? (
+                  <button
+                    type="button"
+                    onClick={handleUnvalidate}
+                    disabled={saving || !isValidated || hasSizeBreakdown}
+                    style={saving || !isValidated || hasSizeBreakdown ? { ...styles.unvalidateButton, ...styles.saveButtonDisabled } : styles.unvalidateButton}
+                    title={
+                      hasSizeBreakdown
+                        ? 'Unavailable because Size Breakdown has already started for this GRN.'
+                        : !isValidated
+                          ? 'Available after this Koli is validated.'
+                          : 'Reverse validation for this Koli'
+                    }
+                  >
+                    Unvalidate
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  onClick={handleValidate}
+                  style={isValidated || saving ? { ...styles.saveButton, ...styles.saveButtonDisabled, width: 'auto', flex: 1 } : { ...styles.saveButton, width: 'auto', flex: 1 }}
+                  disabled={isValidated || saving}
+                >
+                  {isValidated ? 'Validated' : saving ? 'Saving...' : 'Validate Receiving'}
+                </button>
+              </div>
             ) : null}
           </>
         ) : null}

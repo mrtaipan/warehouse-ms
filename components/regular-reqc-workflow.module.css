@@ -2,8 +2,33 @@
   display: flex;
   flex-direction: column;
   gap: 24px;
-  padding: 24px clamp(16px, 2.4vw, 36px) 40px;
+  padding: 16px 0 40px;
   color: #172033;
+}
+
+.resultsSection {
+  display: grid;
+  min-width: 0;
+  gap: 18px;
+}
+
+.page.resultPage { min-width: 0; padding: 0; }
+
+.resultTabs,
+.resultPanel { min-width: 0; }
+
+.resultTabButton:focus-visible {
+  outline: 3px solid #9ecac4;
+  outline-offset: -3px;
+}
+
+.resultFilters {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(160px, 1fr);
+  gap: 16px;
+  padding: 20px 0 18px;
+  border-top: 1px solid #eef2f7;
+  border-bottom: 1px solid #e2e8f0;
 }
 
 .queuePage {
@@ -287,6 +312,7 @@
 
 .tableWrap {
   width: 100%;
+  min-width: 0;
   overflow-x: auto;
   border: 1px solid #dbe2ea;
   border-radius: 7px;
@@ -369,6 +395,18 @@
   font-size: 11px;
 }
 
+.checkboxCell {
+  width: 44px;
+  text-align: center !important;
+}
+
+.checkboxCell input {
+  width: 17px;
+  height: 17px;
+  accent-color: #11786d;
+  cursor: pointer;
+}
+
 .numeric {
   text-align: right !important;
   font-variant-numeric: tabular-nums;
@@ -447,10 +485,116 @@
   color: #17624f;
 }
 
+.modalOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgb(15 23 42 / 48%);
+}
+
+.detailModal {
+  display: grid;
+  gap: 20px;
+  width: min(960px, 100%);
+  max-height: calc(100vh - 48px);
+  overflow: auto;
+  padding: 24px;
+  border: 1px solid #dbe2ea;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.detailModal .table {
+  min-width: 760px;
+}
+
+.rejectModal {
+  width: min(520px, 100%);
+  gap: 16px;
+}
+
+.rejectContext {
+  margin: 0;
+  color: #526176;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.rejectNote {
+  width: 100%;
+  min-height: 96px;
+  padding: 10px 12px;
+  resize: vertical;
+  border: 1px solid #cbd5e1;
+  border-radius: 7px;
+  background: #fff;
+  color: #172033;
+  font: inherit;
+  font-size: 14px;
+}
+
+.rejectNote:focus-visible {
+  outline: 3px solid #9ecac4;
+  outline-offset: 2px;
+}
+
+.modalActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.modalHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 20px;
+}
+
+.modalHeader h2 {
+  margin: 5px 0;
+  font-size: 21px;
+}
+
+.modalHeader span {
+  color: #667085;
+  font-size: 13px;
+}
+
+.closeButton {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  flex: 0 0 36px;
+  border: 1px solid #e3c4c6;
+  border-radius: 7px;
+  background: #fff;
+  color: #a33c47;
+  font: inherit;
+  font-size: 23px;
+  cursor: pointer;
+}
+
+.closeButton:focus-visible {
+  outline: 3px solid #9ecac4;
+  outline-offset: 2px;
+}
+
 @media (max-width: 760px) {
+  .resultPanelHeader { flex-direction: column; align-items: stretch !important; }
+  .resultPanelHeader .primaryButton { align-self: flex-start; }
+  .resultTabList { max-width: 100%; }
+  .resultTabList .resultTabButton { min-width: 0 !important; padding: 0 10px !important; }
   .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .page { gap: 18px; padding: 18px 12px 28px; }
+  .page { gap: 18px; padding: 16px 0 28px; }
   .queuePage { padding: 8px 0 0; }
+  .resultFilters { grid-template-columns: minmax(0, 1fr); }
+  .modalOverlay { padding: 12px; }
+  .detailModal { padding: 16px; max-height: calc(100vh - 24px); }
   .queueSelectors { grid-template-columns: minmax(0, 1fr); }
   .allocationCard { padding: 16px; }
   .allocationForm { grid-template-columns: minmax(0, 1fr) minmax(96px, 110px); }
@@ -462,6 +606,7 @@
   .tab, .tabActive { flex: 0 0 auto; font-size: 13px; }
   .search { width: 100%; }
   .table { min-width: 940px; }
+  .detailModal .table { min-width: 760px; }
   .mobileList { display: grid; gap: 12px; }
   .mobileList + .helper { margin-top: 12px; }
   .queueTableWrap { display: none; }

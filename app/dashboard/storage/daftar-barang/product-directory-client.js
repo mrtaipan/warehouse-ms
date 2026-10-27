@@ -69,6 +69,8 @@ const PRODUCT_VARIANT_SELECT_COLUMNS = [
   'merged_into_variant_id',
   'variant_notes',
   'variant_photo_url',
+  'created_by',
+  'updated_by',
 ].join(', ')
 const IDENTITY_EVENT_SELECT_COLUMNS = 'id, event_type, source_variant_ids, target_variant_id, detail_assignments, created_at'
 const RELEASE_STATE_SELECT_COLUMNS = [
@@ -3399,6 +3401,7 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
         merged_at: mergedAt,
         merged_by: actor,
         updated_at: mergedAt,
+        updated_by: actor,
       }
       const { data: nextUpdatedVariants, error: updateError } = await supabase
         .from('dir_product_model_variants')
@@ -3449,6 +3452,7 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
               merged_at: null,
               merged_by: null,
               updated_at: new Date().toISOString(),
+              updated_by: actor,
             })
             .in('id', updatedIds)
         } catch {
@@ -3590,6 +3594,7 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
       const payload = {
         selling_name: nextSellingName || null,
         updated_at: new Date().toISOString(),
+        updated_by: await getActorLabel(),
       }
       const { data: updatedVariant, error: updateError } = await supabase
         .from('dir_product_model_variants')
@@ -4006,6 +4011,8 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
             variant_notes: item.variantNotes || baseVariant?.variant_notes || null,
             variant_photo_url: item.variantPhotoUrl || baseVariant?.variant_photo_url || null,
             is_active: true,
+            created_by: actor,
+            updated_by: actor,
           },
         }
       })
@@ -4115,6 +4122,7 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
           merged_at: null,
           merged_by: null,
           updated_at: now,
+          updated_by: actor,
         })
         .eq('id', Number(baseVariant.id))
         .select('*')
@@ -4170,6 +4178,7 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
                 merged_at: baseVariantSnapshot.merged_at,
                 merged_by: baseVariantSnapshot.merged_by,
                 updated_at: baseVariantSnapshot.updated_at,
+                updated_by: baseVariantSnapshot.updated_by,
               })
               .eq('id', Number(baseVariantSnapshot.id))
           }

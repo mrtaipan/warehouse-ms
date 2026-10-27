@@ -5251,6 +5251,7 @@ export default function UnloadPage() {
           variant_code: nextVariantCode,
           variant_photo_url: movedVariantPhotoUrl || null,
           updated_at: movedAt,
+          updated_by: displayName,
         })
         .eq('id', sourceVariant.id)
         .select('*')
@@ -5544,6 +5545,7 @@ export default function UnloadPage() {
           variant_notes: modelDraft.variant_notes.trim() || null,
           variant_photo_url: variantPhotoUrl || null,
           updated_at: new Date().toISOString(),
+          updated_by: displayName,
         }
 
         const { data: updatedVariant, error: updateVariantError } = await supabase
@@ -5678,6 +5680,8 @@ export default function UnloadPage() {
         variant_notes: modelDraft.variant_notes.trim() || null,
         variant_photo_url: variantPhotoUrl || null,
         is_active: true,
+        created_by: displayName,
+        updated_by: displayName,
       }
 
       const { data: insertedVariant, error: variantError } = await supabase

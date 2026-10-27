@@ -148,6 +148,7 @@
 .modalForm { padding: 22px 24px 24px; }
 .formGrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px 16px; }
 .formField b { color: #ae5555; }
+.namePreview { display: flex; min-height: 42px; align-items: center; padding: 0 12px; border: 1px dashed #b9cbd3; border-radius: 9px; background: #f6f9fa; color: #244b5e; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; font-weight: 650; }
 .fullWidth { grid-column: 1 / -1; }
 .formError { margin: 16px 0 0; color: #b33d3d; font-size: 13px; }
 .modalActions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 24px; padding-top: 18px; border-top: 1px solid #edf1f3; }

@@ -11,6 +11,19 @@ function uniqueValues(rows, field) {
     .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
 }
 
+function getWarehouseNumber(locationId) {
+  const match = String(locationId || '').match(/\bLV\s*0*(\d+)\b/i)
+  return match?.[1] || ''
+}
+
+function buildPalletLocationName(form) {
+  const warehouseNumber = getWarehouseNumber(form.location_id)
+  const parts = ['PL', warehouseNumber, form.location_code, form.sub_location]
+  return warehouseNumber && form.location_code && form.sub_location.trim()
+    ? parts.join('-')
+    : ''
+}
+
 export default function RackLocationsClient({ rackLocations, loadError }) {
   const router = useRouter()
   const supabase = createClient()
@@ -31,19 +44,23 @@ export default function RackLocationsClient({ rackLocations, loadError }) {
   })
 
   const groups = useMemo(() => uniqueValues(rackLocations, 'group_code'), [rackLocations])
-  const types = useMemo(() => [...new Set([
-    'PALLET',
-    'SHELVING',
-    ...uniqueValues(rackLocations, 'location_type'),
-  ])], [rackLocations])
+  const types = useMemo(() => uniqueValues(rackLocations, 'location_type'), [rackLocations])
   const warehouses = useMemo(() => uniqueValues(rackLocations, 'location_id'), [rackLocations])
+  const formWarehouses = useMemo(() => uniqueValues(
+    rackLocations.filter((row) =>
+      (!form.group_code || row.group_code === form.group_code) &&
+      (!form.location_type || row.location_type === form.location_type)
+    ),
+    'location_id'
+  ), [rackLocations, form.group_code, form.location_type])
   const locationCodes = useMemo(() => uniqueValues(
     rackLocations.filter((row) =>
+      (!form.group_code || row.group_code === form.group_code) &&
       (!form.location_type || row.location_type === form.location_type) &&
       (!form.location_id || row.location_id === form.location_id)
     ),
     'location_code'
-  ), [rackLocations, form.location_type, form.location_id])
+  ), [rackLocations, form.group_code, form.location_type, form.location_id])
 
   const filteredRows = useMemo(() => rackLocations.filter((row) =>
     (!groupFilter || row.group_code === groupFilter) &&
@@ -61,11 +78,12 @@ export default function RackLocationsClient({ rackLocations, loadError }) {
   }, [filteredRows])
 
   function openCreateModal() {
+    const firstRow = rackLocations.find((row) => row.location_type === 'PALLET') || rackLocations[0]
     setForm({
-      group_code: groups[0] || '',
-      location_type: types[0] || '',
-      location_id: warehouses[0] || '',
-      location_code: '',
+      group_code: firstRow?.group_code || groups[0] || '',
+      location_type: firstRow?.location_type || types[0] || '',
+      location_id: firstRow?.location_id || warehouses[0] || '',
+      location_code: firstRow?.location_code || '',
       location_name: '',
       sub_location: '',
     })
@@ -77,7 +95,39 @@ export default function RackLocationsClient({ rackLocations, loadError }) {
     const { name, value } = event.target
     setForm((current) => {
       const next = { ...current, [name]: name === 'sub_location' ? value.toUpperCase() : value }
-      if (name === 'location_type' || name === 'location_id') next.location_code = ''
+
+      if (name === 'group_code') {
+        let matchingRows = rackLocations.filter((row) => row.group_code === value)
+        if (!matchingRows.some((row) => row.location_type === current.location_type)) {
+          next.location_type = matchingRows[0]?.location_type || ''
+        }
+        matchingRows = matchingRows.filter((row) => row.location_type === next.location_type)
+        next.location_id = matchingRows[0]?.location_id || ''
+        next.location_code = matchingRows[0]?.location_code || ''
+      }
+
+      if (name === 'location_type') {
+        let matchingRows = rackLocations.filter((row) => row.location_type === value)
+        const currentWarehouseMatch = matchingRows.find((row) =>
+          row.group_code === current.group_code && row.location_id === current.location_id
+        )
+        if (!currentWarehouseMatch && !matchingRows.some((row) => row.group_code === current.group_code)) {
+          next.group_code = matchingRows[0]?.group_code || ''
+        }
+        matchingRows = matchingRows.filter((row) => row.group_code === next.group_code)
+        const matchingWarehouse = matchingRows.find((row) => row.location_id === current.location_id)
+        next.location_id = matchingWarehouse?.location_id || matchingRows[0]?.location_id || ''
+        next.location_code = matchingRows.find((row) => row.location_id === next.location_id)?.location_code || ''
+      }
+
+      if (name === 'location_id') {
+        const matchingRow = rackLocations.find((row) =>
+          row.group_code === current.group_code &&
+          row.location_type === current.location_type &&
+          row.location_id === value
+        )
+        next.location_code = matchingRow?.location_code || ''
+      }
       return next
     })
   }
@@ -91,7 +141,9 @@ export default function RackLocationsClient({ rackLocations, loadError }) {
       location_type: form.location_type,
       location_id: form.location_id,
       location_code: form.location_code,
-      location_name: form.location_name.trim() || null,
+      location_name: form.location_type === 'PALLET'
+        ? buildPalletLocationName(form)
+        : form.location_name.trim() || null,
       sub_location: form.sub_location.trim() || null,
       is_active: true,
     })
@@ -233,7 +285,7 @@ export default function RackLocationsClient({ rackLocations, loadError }) {
                 <label className={styles.formField}><span>Warehouse location <b>*</b></span>
                   <select name="location_id" value={form.location_id} onChange={updateForm} required>
                     <option value="" disabled>Select warehouse</option>
-                    {warehouses.map((warehouse) => <option key={warehouse} value={warehouse}>{warehouse}</option>)}
+                    {formWarehouses.map((warehouse) => <option key={warehouse} value={warehouse}>{warehouse}</option>)}
                   </select>
                 </label>
                 <label className={styles.formField}><span>Pallet / Shelving <b>*</b></span>
@@ -246,8 +298,22 @@ export default function RackLocationsClient({ rackLocations, loadError }) {
                   <input name="location_name" value={form.location_name} onChange={updateForm} placeholder="Enter a recognizable location name" />
                 </label>
                 <label className={styles.formField}><span>Carton Number</span>
-                  <input name="sub_location" value={form.sub_location} onChange={updateForm} placeholder="Enter carton / sub-location" />
+                  <input name="sub_location" value={form.sub_location} onChange={updateForm} placeholder="Enter carton / sub-location" required={form.location_type === 'PALLET'} />
                 </label>
+                {form.location_type === 'PALLET' && (
+                  <div className={`${styles.formField} ${styles.fullWidth}`}>
+                    <span>Location Name</span>
+                    <output className={styles.namePreview} aria-live="polite">
+                      {buildPalletLocationName(form) || 'PL-[warehouse]-[pallet]-[carton]'}
+                    </output>
+                  </div>
+                )}
+                {form.location_type !== 'PALLET' && (
+                  <label className={styles.formField}>
+                    <span>Location Name</span>
+                    <input name="location_name" value={form.location_name} onChange={updateForm} placeholder="Enter a recognizable location name" />
+                  </label>
+                )}
               </div>
               {formError && <p className={styles.formError}>{formError}</p>}
               <footer className={styles.modalActions}>

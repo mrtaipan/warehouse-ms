@@ -475,6 +475,9 @@ function getQueueItemName(row = {}) {
 }
 
 function getQueueKoliLabel(row = {}) {
+  if (row.package_type === 'RE_QC') {
+    return 'Re-QC Grade A'
+  }
   if (row.package_type === 'PHOTO') {
     return 'Photo'
   }
@@ -871,6 +874,38 @@ async function fetchAllStorageQueueRows() {
     }
 
     from += BATCH_SIZE
+  }
+
+  let resultOffset = 0
+  while (true) {
+    const { data, error } = await supabase
+      .from('reqc_results')
+      .select('id, qty, created_at, reviewed_at, reviewed_by, reqc_queue:reqc_queue_id (sku_id, source_variant_code, item_name, size, brand_code, category_id, group_code)')
+      .eq('grade', 'A')
+      .eq('status', 'STORAGE_QUEUE')
+      .order('created_at', { ascending: false })
+      .range(resultOffset, resultOffset + BATCH_SIZE - 1)
+
+    if (error) throw error
+    allRows.push(...(data || []).map((result) => ({
+      id: `reqc-${result.id}`,
+      reqc_result_id: result.id,
+      inbound_id: null,
+      packing_group_key: `REQC::${result.id}`,
+      storing_type: result.reqc_queue?.group_code || 'MOB',
+      package_type: 'RE_QC',
+      brand_code: result.reqc_queue?.brand_code || '',
+      source_variant_code: result.reqc_queue?.source_variant_code || result.reqc_queue?.sku_id || '',
+      pl_name: result.reqc_queue?.item_name || 'Re-QC item',
+      size_label: result.reqc_queue?.size || '',
+      qty: result.qty,
+      packed_by: result.reviewed_by,
+      category_id: result.reqc_queue?.category_id || null,
+      storage_status: 'queued',
+      created_at: result.reviewed_at || result.created_at,
+    })))
+    if (!data || data.length < BATCH_SIZE) break
+    resultOffset += BATCH_SIZE
   }
 
   return allRows
@@ -3766,6 +3801,11 @@ export default function StorageOverviewPage() {
       return
     }
 
+    if (new Set(selectedQueueEntries.map((entry) => entry.package_type === 'RE_QC' ? 'RE_QC' : 'PL')).size > 1) {
+      setError('Select PL and Re-QC items separately.')
+      return
+    }
+
     setQueueModalEntry(selectedQueueEntries[0])
     setQueueModalEntries(selectedQueueEntries)
     setQueueForm({
@@ -5321,6 +5361,34 @@ export default function StorageOverviewPage() {
     }
 
     const storedBy = await getCurrentUserEmail()
+    const reqcItems = queueItems.filter((item) => item.reqc_result_id)
+    if (reqcItems.length) {
+      if (reqcItems.length !== queueItems.length) {
+        setQueueModalError('Store PL and Re-QC items separately.')
+        setStoringQueue(false)
+        return
+      }
+
+      const { error: reqcError } = await supabase.rpc('store_reqc_grade_a_results', {
+        p_result_ids: reqcItems.map((item) => item.reqc_result_id),
+        p_rack_location_id: selectedQueueLocation.id,
+        p_stored_by: storedBy,
+        p_notes: queueForm.notes.trim() || null,
+      })
+      if (reqcError) {
+        setQueueModalError(reqcError.message)
+        setStoringQueue(false)
+        return
+      }
+
+      await refreshInventoryData({ forceStorage: true })
+      setSelectedQueueKeys((current) => current.filter((key) => !queueEntries.some((entry) => String(entry.key) === String(key))))
+      setSuccess(`${reqcItems.length} Re-QC Grade A item(s) stored successfully.`)
+      setStoringQueue(false)
+      closeQueueModal()
+      return
+    }
+
     const inbound = inboundById.get(Number(queueModalEntry.inbound_id))
     const grnNumber = inbound?.grn_number || ''
     const queueEntryByItemId = new Map(
@@ -8288,7 +8356,7 @@ export default function StorageOverviewPage() {
               <span style={styles.selectedLocationLabel}>
                 {queueModalEntries.length > 1
                   ? `${queueModalEntries.length} Koli Selected`
-                  : `${inboundById.get(Number(queueModalEntry.inbound_id))?.grn_number || 'PL Item'} / ${getQueueKoliLabel(queueModalEntry)}`}
+                  : `${queueModalEntry.package_type === 'RE_QC' ? 'Re-QC' : inboundById.get(Number(queueModalEntry.inbound_id))?.grn_number || 'PL Item'} / ${getQueueKoliLabel(queueModalEntry)}`}
               </span>
               <strong style={styles.selectedLocationValue}>
                 {queueModalEntries.length > 1
@@ -8315,7 +8383,7 @@ export default function StorageOverviewPage() {
                 {queueModalEntries.map((entry) => (
                   <div key={entry.key} style={styles.queueConfirmGroup}>
                     <span style={styles.selectedLocationLabel}>
-                      {inboundById.get(Number(entry.inbound_id))?.grn_number || 'PL Item'} / {getQueueKoliLabel(entry)}
+                      {entry.package_type === 'RE_QC' ? 'Re-QC' : inboundById.get(Number(entry.inbound_id))?.grn_number || 'PL Item'} / {getQueueKoliLabel(entry)}
                     </span>
                     {entry.items.map((item) => (
                       <div key={item.id} style={styles.queueConfirmRow}>
