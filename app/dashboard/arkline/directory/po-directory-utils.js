@@ -78,7 +78,7 @@ function buildRemarksHtml(value) {
     })
 
   return lines.length
-    ? lines.map((line) => `<div class="mb-1">${escapeHtml(line)}</div>`).join('')
+    ? lines.map((line) => `<div class="mb-0.5">${escapeHtml(line)}</div>`).join('')
     : `<div>${escapeHtml(value)}</div>`
 }
 
@@ -307,44 +307,45 @@ function buildSupplierBlock({ label = 'PO To', supplierName, supplierAddress, su
     </div>`
 }
 
-function buildTotalsAndSignature({ subtotal, includePpn }) {
+function buildTotals({ subtotal, includePpn }) {
   const ppn = includePpn ? subtotal * 0.11 : 0
   const total = subtotal + ppn
 
   return `
-    <div class="flex min-h-[360px] w-[45%] flex-col justify-between pb-6">
-      <table class="w-full text-[9.5pt]">
+    <table class="w-[38%] text-[9.5pt]">
         <tbody>
           <tr>
-            <td class="py-2 text-[7pt] font-bold uppercase tracking-widest text-gray-400">Subtotal</td>
-            <td class="py-2 text-right text-gray-700">${escapeHtml(formatCurrency(subtotal))}</td>
+            <td class="py-1 text-[7pt] font-bold uppercase tracking-widest text-gray-400">Subtotal</td>
+            <td class="py-1 text-right text-gray-700">${escapeHtml(formatCurrency(subtotal))}</td>
           </tr>
           ${
             includePpn
               ? `<tr>
-                  <td class="py-2 text-[7pt] font-bold uppercase tracking-widest text-gray-400">PPN 11%</td>
-                  <td class="py-2 text-right text-gray-700">${escapeHtml(formatCurrency(ppn))}</td>
+                  <td class="py-1 text-[7pt] font-bold uppercase tracking-widest text-gray-400">PPN 11%</td>
+                  <td class="py-1 text-right text-gray-700">${escapeHtml(formatCurrency(ppn))}</td>
                 </tr>`
               : ''
           }
           <tr class="border-t-[1.5px] border-black text-[11.5pt] font-bold">
-            <td class="pt-3 text-[7pt] font-bold uppercase tracking-widest text-black">Total</td>
-            <td class="pt-3 text-right text-black">${escapeHtml(formatCurrency(total))}</td>
+            <td class="pt-2 text-[7pt] font-bold uppercase tracking-widest text-black">Total</td>
+            <td class="pt-2 text-right text-black">${escapeHtml(formatCurrency(total))}</td>
           </tr>
         </tbody>
-      </table>
+    </table>`
+}
 
-      <div class="mt-20 text-right">
-        <div class="mb-2 inline-block w-[180px] border-b border-black"></div>
-        <div class="text-[10.5pt] font-semibold tracking-wide text-black">Aditya C. S.</div>
-        <div class="text-[8.5pt] font-medium text-gray-500">President Director</div>
-      </div>
+function buildSignature() {
+  return `
+    <div class="w-[38%] pb-1 text-right">
+      <div class="mb-2 inline-block w-[180px] border-b border-black"></div>
+      <div class="text-[10.5pt] font-semibold tracking-wide text-black">Aditya C. S.</div>
+      <div class="text-[8.5pt] font-medium text-gray-500">President Director</div>
     </div>`
 }
 
 function buildFooter() {
   return `
-    <div class="mt-8 border-t border-gray-200 pt-3 text-center text-[7.5pt] leading-relaxed text-gray-500">
+    <div class="mt-2 border-t border-gray-200 pt-1 text-center text-[7.5pt] leading-relaxed text-gray-500">
       <span class="font-bold uppercase tracking-widest text-gray-600">Warehouse:</span>
       Pergudangan Bizpoint, Point 5 LV No. 85, Tigaraksa, Cikupa, Kab. Tangerang-Banten, Kode pos 15710
     </div>`
@@ -373,20 +374,20 @@ export async function createGarmentPurchaseOrderPreviewHtml(bundle) {
     .map(
       (item) => `
         <tr class="border-b border-gray-200">
-          <td class="py-4 px-1 text-left font-medium">
+          <td class="py-2 px-1 text-left font-medium">
             <div>${escapeHtml(item.name)}</div>
             ${item.sizeBreakdown ? `<div class="mt-1 text-[8pt] text-gray-500">${escapeHtml(item.sizeBreakdown)}</div>` : ''}
           </td>
-          <td class="py-4 px-1 text-center text-gray-600">${escapeHtml(formatQuantity(item.qty))}</td>
-          <td class="py-4 px-1 text-right text-gray-600">${escapeHtml(formatCurrency(item.price))}</td>
-          <td class="py-4 px-1 text-right font-medium">${escapeHtml(formatCurrency(item.amount))}</td>
+          <td class="py-2 px-1 text-center text-gray-600">${escapeHtml(formatQuantity(item.qty))}</td>
+          <td class="py-2 px-1 text-right text-gray-600">${escapeHtml(formatCurrency(item.price))}</td>
+          <td class="py-2 px-1 text-right font-medium">${escapeHtml(formatCurrency(item.amount))}</td>
         </tr>`
     )
     .join('')
 
   const body = `
-    <div class="mx-auto min-h-[297mm] w-[210mm] bg-white p-[20mm] font-sans text-[#111] shadow-lg print:min-h-0 print:w-full print:p-[20mm] print:shadow-none">
-      <div class="mb-14 flex items-start justify-between">
+    <div class="mx-auto min-h-[297mm] w-[210mm] bg-white p-[14mm] font-sans text-[#111] shadow-lg print:min-h-0 print:w-full print:p-[14mm] print:shadow-none">
+      <div class="mb-6 flex items-start justify-between">
         <div class="flex w-[45%] flex-col gap-3">
           <div>
             <div class="text-[7pt] font-bold uppercase tracking-widest text-gray-500">PO Number</div>
@@ -413,7 +414,7 @@ export async function createGarmentPurchaseOrderPreviewHtml(bundle) {
         ${buildCompanyBlock('PT ANUGERAH RETAIL KARYA')}
       </div>
 
-      <table class="mb-16 w-full border-collapse">
+      <table class="mb-6 w-full border-collapse">
         <thead>
           <tr class="border-b-[1.5px] border-black">
             <th class="px-1 py-3 text-left text-[7pt] font-bold uppercase tracking-widest text-gray-700">Produk</th>
@@ -430,15 +431,20 @@ export async function createGarmentPurchaseOrderPreviewHtml(bundle) {
         </tbody>
       </table>
 
-      <div class="print:break-inside-avoid flex min-h-[360px] items-end justify-between">
-        <div class="flex min-h-[360px] w-[50%] flex-col justify-between pb-6">
-          <div>
+      <div>
+        <div class="flex items-start justify-between gap-6">
+          <div class="w-[55%]">
             <div class="mb-1 text-[7pt] font-bold uppercase tracking-widest text-gray-500">Remarks</div>
-            <div class="max-w-[90%] text-[9pt] leading-relaxed text-gray-600">${buildRemarksHtml(remarks)}</div>
+            <div class="text-[8pt] leading-[1.25] text-gray-600">${buildRemarksHtml(remarks)}</div>
           </div>
-          <div class="mt-16 text-[36pt] font-bold leading-[0.95] tracking-tighter text-black">PURCHASE<br />ORDER</div>
+          ${buildTotals({ subtotal, includePpn })}
         </div>
-        ${buildTotalsAndSignature({ subtotal, includePpn })}
+        <div class="mt-5 flex min-h-[120px] items-end justify-between print:break-inside-avoid">
+          <div class="w-[55%] pb-1">
+            <div class="text-[30pt] font-bold leading-[0.95] tracking-tighter text-black">PURCHASE<br />ORDER</div>
+          </div>
+          ${buildSignature()}
+        </div>
       </div>
       ${buildFooter()}
     </div>`
@@ -458,7 +464,7 @@ export async function createMaterialPurchaseOrderPreviewHtml(bundle) {
     .map(
       (item) => `
         <tr class="border-b border-gray-200">
-          <td class="py-4 px-1 text-left font-medium">
+          <td class="py-2 px-1 text-left font-medium">
             <div>${escapeHtml(item.materialName || '-')}</div>
             ${
               [item.variant, item.unit].filter((value) => value && value !== '-').length
@@ -467,16 +473,16 @@ export async function createMaterialPurchaseOrderPreviewHtml(bundle) {
             }
             ${item.notes ? `<div class="mt-1 text-[8pt] leading-relaxed text-gray-500">${buildMultilineHtml(item.notes)}</div>` : ''}
           </td>
-          <td class="py-4 px-1 text-center text-gray-600">${escapeHtml(formatQuantity(item.qty))}</td>
-          <td class="py-4 px-1 text-right text-gray-600">${escapeHtml(formatCurrency(item.price))}</td>
-          <td class="py-4 px-1 text-right font-medium">${escapeHtml(formatCurrency(item.amount))}</td>
+          <td class="py-2 px-1 text-center text-gray-600">${escapeHtml(formatQuantity(item.qty))}</td>
+          <td class="py-2 px-1 text-right text-gray-600">${escapeHtml(formatCurrency(item.price))}</td>
+          <td class="py-2 px-1 text-right font-medium">${escapeHtml(formatCurrency(item.amount))}</td>
         </tr>`
     )
     .join('')
 
   const body = `
-    <div class="mx-auto min-h-[297mm] w-[210mm] bg-white p-[20mm] font-sans text-[#111] shadow-lg print:min-h-0 print:w-full print:p-[20mm] print:shadow-none">
-      <div class="mb-14 flex items-start justify-between">
+    <div class="mx-auto min-h-[297mm] w-[210mm] bg-white p-[14mm] font-sans text-[#111] shadow-lg print:min-h-0 print:w-full print:p-[14mm] print:shadow-none">
+      <div class="mb-6 flex items-start justify-between">
         <div class="flex w-[45%] flex-col gap-3">
           <div>
             <div class="text-[7pt] font-bold uppercase tracking-widest text-gray-500">PO Number</div>
@@ -503,7 +509,7 @@ export async function createMaterialPurchaseOrderPreviewHtml(bundle) {
         ${buildCompanyBlock(orderedAs)}
       </div>
 
-      <table class="mb-16 w-full border-collapse">
+      <table class="mb-6 w-full border-collapse">
         <thead>
           <tr class="border-b-[1.5px] border-black">
             <th class="px-1 py-3 text-left text-[7pt] font-bold uppercase tracking-widest text-gray-700">Material</th>
@@ -520,15 +526,20 @@ export async function createMaterialPurchaseOrderPreviewHtml(bundle) {
         </tbody>
       </table>
 
-      <div class="print:break-inside-avoid flex min-h-[360px] items-end justify-between">
-        <div class="flex min-h-[360px] w-[50%] flex-col justify-between pb-6">
-          <div>
+      <div>
+        <div class="flex items-start justify-between gap-6">
+          <div class="w-[55%]">
             <div class="mb-1 text-[7pt] font-bold uppercase tracking-widest text-gray-500">Remarks</div>
-            <div class="max-w-[90%] text-[9pt] leading-relaxed text-gray-600">${buildRemarksHtml(remarks)}</div>
+            <div class="text-[8pt] leading-[1.25] text-gray-600">${buildRemarksHtml(remarks)}</div>
           </div>
-          <div class="mt-16 text-[36pt] font-bold leading-[0.95] tracking-tighter text-black">PURCHASE<br />ORDER</div>
+          ${buildTotals({ subtotal, includePpn })}
         </div>
-        ${buildTotalsAndSignature({ subtotal, includePpn })}
+        <div class="mt-5 flex min-h-[120px] items-end justify-between print:break-inside-avoid">
+          <div class="w-[55%] pb-1">
+            <div class="text-[30pt] font-bold leading-[0.95] tracking-tighter text-black">PURCHASE<br />ORDER</div>
+          </div>
+          ${buildSignature()}
+        </div>
       </div>
       ${buildFooter()}
     </div>`
