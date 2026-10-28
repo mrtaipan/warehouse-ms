@@ -1465,7 +1465,7 @@ export default function PackingListReceivingPage() {
   const [confirmRows, setConfirmRows] = useState([])
   const [inboundUnloadRows, setInboundUnloadRows] = useState([])
   const [validationSummaryRows, setValidationSummaryRows] = useState([])
-  const [breakdownInboundIds, setBreakdownInboundIds] = useState([])
+  const [breakdownIdentityRows, setBreakdownIdentityRows] = useState([])
   const [userProfiles, setUserProfiles] = useState([])
   const [productModels, setProductModels] = useState([])
   const [productModelVariants, setProductModelVariants] = useState([])
@@ -1600,7 +1600,7 @@ export default function PackingListReceivingPage() {
           .order('validated_at', { ascending: false }),
         supabase
           .from('pl_size_breakdown')
-          .select('inbound_id'),
+          .select('id, inbound_id, product_model_id, product_model_variant_id, source_variant_code, model_name, variant_name'),
         supabase
           .from('dir_user_profiles')
           .select('email, display_name, role'),
@@ -1638,7 +1638,7 @@ export default function PackingListReceivingPage() {
 
       setConfirmRows(confirmData || [])
       setValidationSummaryRows(validationSummaryData || [])
-      setBreakdownInboundIds(Array.from(new Set((breakdownData || []).map((row) => Number(row.inbound_id || 0)).filter(Boolean))))
+      setBreakdownIdentityRows(breakdownData || [])
       setUserProfiles(userProfileError ? [] : userProfileData || [])
       setProductModels(productModelData || [])
       setProductModelVariants(productModelVariantData || [])
@@ -2568,7 +2568,19 @@ export default function PackingListReceivingPage() {
     [draftRows, sourceRowMap, sourceRows]
   )
   const isValidated = Boolean(selectedSource?.isValidated)
-  const hasSizeBreakdown = breakdownInboundIds.includes(Number(selectedInbound?.id || 0))
+  const selectedSourceIdentityKeys = useMemo(
+    () => new Set(
+      sourceRows
+        .map((row) => getProductCatalogIdentityKey(row, resolveProductCatalogIdentity(row, catalogLookup)))
+        .filter(Boolean)
+    ),
+    [catalogLookup, sourceRows]
+  )
+  const hasSizeBreakdown = breakdownIdentityRows.some(
+    (row) =>
+      Number(row.inbound_id || 0) === Number(selectedInbound?.id || 0) &&
+      selectedSourceIdentityKeys.has(getProductCatalogIdentityKey(row))
+  )
 
   async function handleValidate() {
     if (!canManageReceiving) return
@@ -2729,7 +2741,7 @@ export default function PackingListReceivingPage() {
 
     if (hasSizeBreakdown) {
       setSuccess('')
-      setError('This receiving cannot be unvalidated because the GRN already has Size Breakdown data.')
+      setError('This receiving cannot be unvalidated because a model from this Koli already has Size Breakdown data.')
       return
     }
 
@@ -2752,9 +2764,8 @@ export default function PackingListReceivingPage() {
 
     const { data: breakdownRowsForGrn, error: breakdownCheckError } = await supabase
       .from('pl_size_breakdown')
-      .select('id')
+      .select('id, inbound_id, product_model_id, product_model_variant_id, source_variant_code, model_name, variant_name')
       .eq('inbound_id', selectedInbound.id)
-      .limit(1)
 
     if (breakdownCheckError) {
       setSaving(false)
@@ -2762,10 +2773,15 @@ export default function PackingListReceivingPage() {
       return
     }
 
-    if (breakdownRowsForGrn?.length) {
+    const matchingBreakdownRows = (breakdownRowsForGrn || []).filter((row) => selectedSourceIdentityKeys.has(getProductCatalogIdentityKey(row)))
+
+    if (matchingBreakdownRows.length) {
       setSaving(false)
-      setBreakdownInboundIds((current) => (current.includes(Number(selectedInbound.id)) ? current : [...current, Number(selectedInbound.id)]))
-      setError('This receiving cannot be unvalidated because the GRN already has Size Breakdown data.')
+      setBreakdownIdentityRows((current) => {
+        const currentIds = new Set(current.map((row) => Number(row.id || 0)))
+        return [...current, ...matchingBreakdownRows.filter((row) => !currentIds.has(Number(row.id || 0)))]
+      })
+      setError('This receiving cannot be unvalidated because a model from this Koli already has Size Breakdown data.')
       return
     }
 
@@ -3318,7 +3334,7 @@ export default function PackingListReceivingPage() {
                     style={saving || !isValidated || hasSizeBreakdown ? { ...styles.unvalidateButton, ...styles.saveButtonDisabled } : styles.unvalidateButton}
                     title={
                       hasSizeBreakdown
-                        ? 'Unavailable because Size Breakdown has already started for this GRN.'
+                        ? 'Unavailable because a model from this Koli already has Size Breakdown data.'
                         : !isValidated
                           ? 'Available after this Koli is validated.'
                           : 'Reverse validation for this Koli'
