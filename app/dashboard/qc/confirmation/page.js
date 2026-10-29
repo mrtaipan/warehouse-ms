@@ -145,6 +145,10 @@ function getVerificationStatus(row, overviewStatus) {
     return INBOUND_OVERVIEW_STATUS.FULL_RETURN
   }
 
+  if (passingSourceQty === 0 && passingPostedQty === 0 && rejectionSourceQty > 0 && rejectionRemainingQty === 0) {
+    return INBOUND_OVERVIEW_STATUS.FULL_RETURN
+  }
+
   if (passingSourceQty + rejectionSourceQty > 0 && passingRemainingQty + rejectionRemainingQty === 0) {
     return INBOUND_OVERVIEW_STATUS.COMPLETE
   }

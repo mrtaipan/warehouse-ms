@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test:stock": "node --test tests/stock-sizes.test.mjs tests/arkline-upload.test.mjs tests/return-stock-sql.test.mjs tests/priority-return-restock.test.mjs tests/restock-storage-search.test.mjs tests/regular-reqc-storage-queue.test.mjs tests/regular-reqc-reject-note.test.mjs"
+    "test:stock": "node --test tests/stock-sizes.test.mjs tests/arkline-upload.test.mjs tests/return-stock-sql.test.mjs tests/priority-return-restock.test.mjs tests/restock-storage-search.test.mjs tests/regular-reqc-storage-queue.test.mjs tests/regular-reqc-reject-note.test.mjs tests/inbound-overview-status.test.mjs"
   },
   "dependencies": {
     "@supabase/ssr": "^0.10.2",

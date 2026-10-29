@@ -36,6 +36,7 @@ export function buildInboundOverviewStatusMap({
   returnRows = [],
   packingRows = [],
   unloadRows = [],
+  qcRows = [],
 } = {}) {
   const ids = Array.from(new Set(inboundIds.map((id) => Number(id || 0)).filter(Boolean)))
   const statusMap = new Map()
@@ -44,8 +45,12 @@ export function buildInboundOverviewStatusMap({
   const breakdownQtyByInbound = new Map()
   const plReturnQtyByInbound = new Map()
   const inboundReturnQtyByInbound = new Map()
+  const qcReturnQtyByInbound = new Map()
   const packingQtyByInbound = new Map()
   const regularIntakeQtyByInbound = new Map()
+  const totalIntakeQtyByInbound = new Map()
+  const qcGradeAQtyByInbound = new Map()
+  const qcRejectedQtyByInbound = new Map()
   const plStatsByInbound = new Map()
 
   validationRows.forEach((row) => {
@@ -68,12 +73,20 @@ export function buildInboundOverviewStatusMap({
 
     if (phase === 'packing list' || phase === 'packing_list') {
       addToMap(plReturnQtyByInbound, row.inbound_id, row.qty)
+    } else if (phase === 'qc') {
+      addToMap(qcReturnQtyByInbound, row.inbound_id, row.qty)
     }
   })
 
   unloadRows.forEach((row) => {
+    addToMap(totalIntakeQtyByInbound, row.inbound_id, row.qty)
     if (row.is_sample) return
     addToMap(regularIntakeQtyByInbound, row.inbound_id, row.qty)
+  })
+
+  qcRows.forEach((row) => {
+    addToMap(qcGradeAQtyByInbound, row.inbound_id, row.qty_a)
+    addToMap(qcRejectedQtyByInbound, row.inbound_id, asNumber(row.qty_b) + asNumber(row.qty_c))
   })
 
   confirmRows.forEach((row) => {
@@ -98,6 +111,18 @@ export function buildInboundOverviewStatusMap({
     const plStats = plStatsByInbound.get(inboundId)
     const inboundReturnQty = inboundReturnQtyByInbound.get(inboundId) || 0
     const regularIntakeQty = regularIntakeQtyByInbound.get(inboundId) || 0
+    const intakeQty = totalIntakeQtyByInbound.get(inboundId) || 0
+    const qcRejectedQty = qcRejectedQtyByInbound.get(inboundId) || 0
+    const qcReturnQty = qcReturnQtyByInbound.get(inboundId) || 0
+
+    if (
+      intakeQty > 0 && qcRejectedQty >= intakeQty && qcReturnQty >= qcRejectedQty &&
+      !(qcGradeAQtyByInbound.get(inboundId) || 0) &&
+      !(plStats?.qcConfirmQty > 0) && !(packingQtyByInbound.get(inboundId) > 0)
+    ) {
+      statusMap.set(inboundId, INBOUND_OVERVIEW_STATUS.FULL_RETURN)
+      return
+    }
 
     if (plStats?.qcConfirmQty > 0) {
       const pendingKoli = Math.max(0, plStats.koliSet.size - plStats.validatedSet.size)
@@ -145,6 +170,7 @@ export async function fetchInboundOverviewStatusMap(supabase, inboundIds = []) {
     returnResult,
     packingResult,
     unloadResult,
+    qcResult,
   ] = await Promise.all([
     supabase.from('qc_confirm').select('inbound_id, qty, koli_sequence').in('inbound_id', ids),
     supabase.from('pl_receiving').select('inbound_id, source_koli_sequence, received_qty').in('inbound_id', ids),
@@ -152,9 +178,10 @@ export async function fetchInboundOverviewStatusMap(supabase, inboundIds = []) {
     supabase.from('warehouse_returns').select('inbound_id, qty, source_phase').in('inbound_id', ids),
     supabase.from('pl_packing_items').select('inbound_id, qty').in('inbound_id', ids),
     supabase.from('inbound_unload').select('inbound_id, qty, is_sample').in('inbound_id', ids),
+    loadAllQcRows(supabase, ids),
   ])
 
-  ;[confirmResult, validationResult, breakdownResult, returnResult, packingResult, unloadResult].forEach(assertNoError)
+  ;[confirmResult, validationResult, breakdownResult, returnResult, packingResult, unloadResult, qcResult].forEach(assertNoError)
 
   return buildInboundOverviewStatusMap({
     inboundIds: ids,
@@ -164,5 +191,25 @@ export async function fetchInboundOverviewStatusMap(supabase, inboundIds = []) {
     returnRows: returnResult.data || [],
     packingRows: packingResult.data || [],
     unloadRows: unloadResult.data || [],
+    qcRows: qcResult.data || [],
   })
+}
+
+async function loadAllQcRows(supabase, inboundIds) {
+  const pageSize = 1000
+  const rows = []
+
+  for (let offset = 0; ; offset += pageSize) {
+    const { data, error } = await supabase
+      .from('qc_items')
+      .select('id, inbound_id, qty_a, qty_b, qty_c')
+      .eq('status', 'done')
+      .in('inbound_id', inboundIds)
+      .order('id')
+      .range(offset, offset + pageSize - 1)
+
+    if (error) return { data: null, error }
+    rows.push(...(data || []))
+    if (!data || data.length < pageSize) return { data: rows, error: null }
+  }
 }

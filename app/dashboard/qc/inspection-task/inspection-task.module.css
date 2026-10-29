@@ -1,0 +1,66 @@
+.historyList {
+  display: none;
+}
+
+@media (max-width: 640px) {
+  .historyTable {
+    display: none;
+  }
+
+  .historyList {
+    display: block;
+  }
+
+  .historyRow {
+    display: grid;
+    grid-template-columns: 44px minmax(0, 1fr);
+    gap: 12px;
+    padding: 12px 0;
+    border-bottom: 1px solid #e5e7eb;
+  }
+
+  .historyDetails {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+  }
+
+  .historySource,
+  .historyVariant {
+    color: #64748b;
+    font-size: 12px;
+    overflow-wrap: anywhere;
+  }
+
+  .historyModel {
+    color: #111827;
+    font-size: 14px;
+    font-weight: 600;
+    overflow-wrap: anywhere;
+  }
+
+  .historyQty {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 12px;
+    margin-top: 4px;
+    color: #334155;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .historyQty strong {
+    color: #111827;
+  }
+
+  .photoPlaceholder {
+    display: grid;
+    place-items: center;
+    width: 44px;
+    height: 44px;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    color: #64748b;
+  }
+}

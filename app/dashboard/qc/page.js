@@ -3820,8 +3820,10 @@ export default function QcDashboardPage() {
     setSuccess('Sample QC split saved.')
   }
 
-  async function saveSampleFullReturnRows() {
-    if (!sampleSplitSummary) return
+  async function saveSampleFullReturnRows(summary = sampleSplitSummary) {
+    if (!summary) return
+
+    if (!window.confirm('Return this entire sample without registering models? Existing sample splits will be removed.')) return
 
     setSampleSplitError('')
     setSuccess('')
@@ -3831,13 +3833,17 @@ export default function QcDashboardPage() {
       return
     }
 
-    const sourceId = Number(sampleSplitSummary.sampleSourceId || 0)
+    const sourceId = Number(summary.sampleSourceId || 0)
     if (!sourceId) {
       setSampleSplitError('No sample source found.')
       return
     }
 
-    const sourceTasks = selectedSampleSplitTasks.filter((item) => Number(item.id || 0))
+    const sourceTaskRows = summary === sampleSplitSummary
+      ? selectedSampleSplitTasks
+      : activeItems.filter((item) => isTemporarySampleTask(item) && Number(item.inbound_unload_id || item.inbound_unload?.id || 0) === sourceId)
+    const sourceTasks = [...new Map((sourceTaskRows.length ? sourceTaskRows : summary.taskRows || []).map((item) => [String(item.id), item])).values()]
+      .filter((item) => Number(item.id || 0))
     if (!sourceTasks.length) {
       setSampleSplitError('No QC source found for this sample.')
       return
@@ -3882,7 +3888,8 @@ export default function QcDashboardPage() {
       resolution_status: 'full_return',
     }
 
-    const { error: updateError } = selectedSampleSplitBreakdowns.length
+    const existingBreakdowns = sampleBreakdownsByUnloadId.get(sourceId) || []
+    const { error: updateError } = existingBreakdowns.length
       ? await supabase
           .from('inbound_sample_model_breakdowns')
           .update({ resolution_status: 'full_return' })
@@ -5196,14 +5203,14 @@ export default function QcDashboardPage() {
                     {showRegularSplitColumn ? (
                       <td style={{ ...styles.td, ...styles.tdCenter }}>
                         {item.isTemporarySampleSummary ? (
-                          <button
-                            type="button"
-                            style={styles.detailButton}
-                            onClick={() => openSampleSplitModal(item)}
-                            title="Split sample QC result"
-                          >
-                            Split
-                          </button>
+                          <div style={styles.buttonRow}>
+                            <button type="button" style={styles.detailButton} onClick={() => openSampleSplitModal(item)} title="Split sample QC result">
+                              Split
+                            </button>
+                            <button type="button" style={styles.detailButton} disabled={savingSampleSplit} onClick={() => saveSampleFullReturnRows(item)} title="Return the entire sample without model registration">
+                              Full Return
+                            </button>
+                          </div>
                         ) : item.isFullReturnSampleSummary ? (
                           <span style={styles.statusPill}>Full Return</span>
                         ) : (
@@ -5381,7 +5388,7 @@ export default function QcDashboardPage() {
                 </button>
                 <button
                   type="button"
-                  onClick={saveSampleFullReturnRows}
+                  onClick={() => saveSampleFullReturnRows()}
                   disabled={savingSampleSplit || !supportsSampleSplit}
                   style={{
                     ...styles.dangerButton,

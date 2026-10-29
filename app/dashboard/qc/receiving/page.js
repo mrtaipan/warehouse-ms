@@ -237,6 +237,18 @@ async function loadInboundUnloadRows(inboundId) {
   return { data: [], error: lastError }
 }
 
+async function loadAllRows(buildQuery) {
+  const pageSize = 1000
+  const rows = []
+
+  for (let offset = 0; ; offset += pageSize) {
+    const { data, error } = await buildQuery().range(offset, offset + pageSize - 1)
+    if (error) return { data: null, error }
+    rows.push(...(data || []))
+    if (!data || data.length < pageSize) return { data: rows, error: null }
+  }
+}
+
 const styles = {
   wrapper: {
     display: 'flex',
@@ -1351,13 +1363,9 @@ function getSourceAllocationCoverage(source, qcItems) {
 }
 
 function getSourceStatus(source, qcItems) {
-  const { sourceTasks, allocatedQty, plannedQty, hasShortage, shortageClosed, sourceRowsClosed } = getSourceAllocationCoverage(source, qcItems)
+  const { sourceTasks, allocatedQty, plannedQty, hasShortage, shortageClosed } = getSourceAllocationCoverage(source, qcItems)
 
   if (!sourceTasks.length) {
-    if (sourceRowsClosed) {
-      return 'completed'
-    }
-
     return 'idle'
   }
 
@@ -1731,11 +1739,12 @@ export default function QcReceivingPage() {
           .from('inbound')
           .select('id, grn_number, inbound_date, item_name, suppliers:dir_suppliers!supplier_id (supplier_name)')
           .order('created_at', { ascending: false }),
-        supabase
+        loadAllRows(() => supabase
           .from('inbound_unload')
           .select('id, inbound_id, brand_id, category_id, product_model_id, product_model_variant_id, model_name, variant_name, qty, pic_name, is_sample, koli_sequence, photo_url, qc_receiving_status')
           .order('inbound_id', { ascending: false })
-          .order('koli_sequence', { ascending: true }),
+          .order('koli_sequence', { ascending: true })
+          .order('id', { ascending: true })),
         supabase
           .from('dir_brands')
           .select('id, brand_name')
@@ -1754,10 +1763,11 @@ export default function QcReceivingPage() {
           .select('*')
           .eq('is_active', true)
           .order('variant_code', { ascending: true }),
-        supabase
+        loadAllRows(() => supabase
           .from('qc_items')
           .select('*')
-          .order('created_at', { ascending: false }),
+          .order('created_at', { ascending: false })
+          .order('id', { ascending: false })),
         supabase
           .from('arkline_qc')
           .select('*')
@@ -1946,17 +1956,21 @@ export default function QcReceivingPage() {
 
     return statusById
   }, [allUnloadRows, qcItems])
+  const pendingInbounds = useMemo(
+    () => inbounds.filter((item) => inboundStatusById.get(Number(item.id)) === 'open'),
+    [inbounds, inboundStatusById]
+  )
   const visibleGrnOptions = useMemo(() => {
     const search = grnSearch.trim().toUpperCase()
 
-    return inbounds.filter((item) => {
+    return pendingInbounds.filter((item) => {
       if (!search) return true
 
       return [item.grn_number, item.item_name, item.suppliers?.supplier_name]
         .map((value) => String(value || '').trim().toUpperCase())
         .some((value) => value.includes(search))
     })
-  }, [grnSearch, inbounds])
+  }, [grnSearch, pendingInbounds])
   const selectedSource = sourceOptions.find((item) => item.key === selectedSourceKey) || null
   const selectedSourceId = selectedSource?.sourceId || null
 
@@ -2294,7 +2308,7 @@ export default function QcReceivingPage() {
   const canAdjustAllocations = isArklineMode ? true : !isSelectedSourceCompleted
   function handleGrnChange(value) {
     setGrnSearch(value)
-    const match = inbounds.find((item) => item.grn_number === value)
+    const match = pendingInbounds.find((item) => item.grn_number === value)
     setSelectedInboundId(match ? String(match.id) : '')
     setSourceLoading(Boolean(match))
     setSelectedSourceKey('')
@@ -2885,6 +2899,14 @@ export default function QcReceivingPage() {
     return getEditableAllocationTotal(row) + getStartedAllocationTotal(row)
   }
 
+  function isRowFullyGraded(row) {
+    const allocations = [...(row.allocations || []), ...(row.startedAllocations || [])]
+    const qcIn = Number(row.qty_qc || 0)
+    return qcIn > 0 && allocations.length > 0 &&
+      allocations.every((split) => split.task_id && isDoneAllocation(split)) &&
+      getAllocationTotalForRow(row) >= qcIn
+  }
+
   function removeModelRow(rowId) {
     const rowIndex = modelRows.findIndex((row) => row.id === rowId)
     if (rowIndex <= 0 || modelRows.length <= 1) {
@@ -3408,7 +3430,7 @@ export default function QcReceivingPage() {
       }
 
       resetRegularPlanner()
-      setSuccess('Shortage closed. This Koli/Sample is marked done.')
+      setSuccess('Receiving shortage closed. This Koli/Sample still needs QC grading.')
       setSaving(false)
       return
     }
@@ -3963,7 +3985,6 @@ export default function QcReceivingPage() {
               {showGrnOptions && visibleGrnOptions.length ? (
                 <div style={styles.comboList}>
                   {visibleGrnOptions.map((item) => {
-                    const isDone = inboundStatusById.get(Number(item.id)) === 'completed'
                     const isActive = Number(item.id) === Number(selectedInboundId)
 
                     return (
@@ -3976,14 +3997,17 @@ export default function QcReceivingPage() {
                         }}
                         style={{
                           ...styles.comboOption,
-                          ...(isDone ? styles.grnOptionDone : {}),
-                          ...(isActive ? (isDone ? styles.grnOptionDoneActive : styles.grnOptionActive) : {}),
+                          ...(isActive ? styles.grnOptionActive : {}),
                       }}
                     >
                       <strong>{item.grn_number}</strong>
                     </button>
                     )
                   })}
+                </div>
+              ) : showGrnOptions && !pendingInbounds.length ? (
+                <div style={styles.comboList}>
+                  <span style={{ ...styles.comboOption, color: '#64748b' }}>All GRNs are completed.</span>
                 </div>
               ) : null}
             </div>
@@ -4184,6 +4208,9 @@ export default function QcReceivingPage() {
                 rowIndex > 0 &&
                 canEditSavedPlan &&
                 !(row.allocations || []).some((split) => Number(split.locked_qty || 0) > 0)
+              const canEditQcIn = !isSelectedSourceCompleted &&
+                !(row.allocations || []).some((split) => Boolean(split.task_id)) &&
+                !(row.startedAllocations || []).some((split) => Boolean(split.task_id))
 
               return (
               <div key={row.id} style={styles.modelRow}>
@@ -4266,8 +4293,8 @@ export default function QcReceivingPage() {
                           qty_qc: event.target.value,
                         })
                       }
-                      style={{ ...styles.input, ...(!canEditSavedPlan ? styles.inputDisabled : {}) }}
-                      disabled={!canEditSavedPlan}
+                      style={{ ...styles.input, ...(!canEditQcIn ? styles.inputDisabled : {}) }}
+                      disabled={!canEditQcIn}
                     />
                     {Number(row.qty_qc || 0) !== Number(row.qty_in || 0) ? (
                       <p
@@ -4291,6 +4318,7 @@ export default function QcReceivingPage() {
                 <div style={{ ...styles.field, ...styles.allocationWrap }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
                     <label style={styles.label}>Allocation</label>
+                    {!isRowFullyGraded(row) ? (
                     <button
                       type="button"
                       onClick={() => toggleAllocationRow(row.id)}
@@ -4298,8 +4326,27 @@ export default function QcReceivingPage() {
                     >
                       {isAllocationRowOpen(row) ? 'Hide Allocation' : 'Allocate'}
                     </button>
+                    ) : null}
                   </div>
-                  {isAllocationRowOpen(row) ? (
+                  {isRowFullyGraded(row) ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                      <div style={allocationGridStyle}>
+                        <span style={styles.helperText}>Inspector</span>
+                        <span style={styles.helperText}>Qty</span>
+                        <span style={styles.helperText}>Status</span>
+                      </div>
+                      {[...(row.allocations || []), ...(row.startedAllocations || [])].map((split) => (
+                        <div key={split.id} style={allocationGridStyle}>
+                          <div style={{ ...styles.readonlyBox, minHeight: '32px', fontSize: '11px', padding: '0 8px' }}>
+                            {qcMembers.find((member) => member.email === split.member_email)?.display_name || split.member_email || '-'}
+                          </div>
+                          <div style={{ ...styles.readonlyBox, minHeight: '32px', fontSize: '11px', padding: '0 8px' }}>{split.qty || 0}</div>
+                          <div style={{ ...styles.readonlyBox, minHeight: '32px', fontSize: '11px', padding: '0 8px' }}>Done</div>
+                        </div>
+                      ))}
+                      <span style={styles.helperText}>Allocated: {getAllocationTotalForRow(row)} / {Number(row.qty_qc || 0)}</span>
+                    </div>
+                  ) : isAllocationRowOpen(row) ? (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                     {getVisibleStartedAllocations(row).length ? (
                       <>

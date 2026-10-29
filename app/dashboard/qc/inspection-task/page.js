@@ -7,6 +7,7 @@ import { ADMIN_EMAIL, expandImpliedPermissions, resolveRole } from '@/utils/perm
 import { getRolePermissionCodes } from '@/utils/role-permissions'
 import { getProfileByAuthenticatedUser } from '@/utils/user-profiles'
 import { formatSeconds } from '../shared'
+import historyStyles from './inspection-task.module.css'
 
 const supabase = createClient()
 const BREAK_REASONS = ['TOILET', 'PRAYER', 'SUPERVISOR CALL', 'MATERIAL WAIT', 'OTHER', 'COORDINATOR BREAK']
@@ -361,6 +362,11 @@ const styles = {
   },
   wideModal: {
     maxWidth: '940px',
+  },
+  historyModal: {
+    maxHeight: 'calc(100dvh - 48px)',
+    overflowY: 'auto',
+    overscrollBehavior: 'contain',
   },
   modalHeader: {
     display: 'flex',
@@ -992,27 +998,35 @@ export default function QcInspectionTaskPage() {
         .select(regularSelect)
         .eq('assigned_to', normalizedEmail)
         .gte('finished_at', selectedStart)
-        .lte('finished_at', selectedEnd),
+        .lte('finished_at', selectedEnd)
+        .order('finished_at', { ascending: false })
+        .limit(100),
       supabase
         .from('qc_items')
         .select(regularSelect)
         .eq('assigned_to', normalizedEmail)
         .is('finished_at', null)
         .gte('updated_at', selectedStart)
-        .lte('updated_at', selectedEnd),
+        .lte('updated_at', selectedEnd)
+        .order('updated_at', { ascending: false })
+        .limit(100),
       supabase
         .from('arkline_qc')
         .select('*')
         .eq('assigned_to', normalizedEmail)
         .gte('finished_at', selectedStart)
-        .lte('finished_at', selectedEnd),
+        .lte('finished_at', selectedEnd)
+        .order('finished_at', { ascending: false })
+        .limit(100),
       supabase
         .from('arkline_qc')
         .select('*')
         .eq('assigned_to', normalizedEmail)
         .is('finished_at', null)
         .gte('updated_at', selectedStart)
-        .lte('updated_at', selectedEnd),
+        .lte('updated_at', selectedEnd)
+        .order('updated_at', { ascending: false })
+        .limit(100),
     ])
 
     const firstError =
@@ -1045,7 +1059,7 @@ export default function QcInspectionTaskPage() {
         const dateCompare = new Date(b.finished_at || b.updated_at || b.created_at || 0).getTime() - new Date(a.finished_at || a.updated_at || a.created_at || 0).getTime()
         if (dateCompare !== 0) return dateCompare
         return a.modelName.localeCompare(b.modelName, undefined, { numeric: true })
-      })
+      }).slice(0, 25)
     )
     setHistoryLoading(false)
   }, [historyDate, userEmail])
@@ -1939,7 +1953,7 @@ export default function QcInspectionTaskPage() {
 
       {showHistoryModal ? (
         <div style={styles.overlay}>
-          <div style={{ ...styles.modal, ...styles.wideModal }}>
+          <div style={{ ...styles.modal, ...styles.wideModal, ...styles.historyModal }}>
             <div style={styles.modalHeader}>
               <div>
                 <h2 style={styles.queueTitle}>QC History</h2>
@@ -1973,7 +1987,7 @@ export default function QcInspectionTaskPage() {
 
             {historyError ? <p style={styles.errorText}>{historyError}</p> : null}
 
-            <div style={styles.tableWrap}>
+            <div style={styles.tableWrap} className={historyStyles.historyTable}>
               <table style={styles.table}>
                 <thead>
                   <tr>
@@ -2029,6 +2043,28 @@ export default function QcInspectionTaskPage() {
                   )}
                 </tbody>
               </table>
+            </div>
+            <div className={historyStyles.historyList}>
+              {historyLoading ? <p style={styles.subtitle}>Loading QC history...</p> : null}
+              {!historyLoading && !historyRows.length ? <p style={styles.subtitle}>No QC history found for this date.</p> : null}
+              {!historyLoading && historyRows.map((row) => (
+                <div key={`${row.source_type}-${row.id}`} className={historyStyles.historyRow}>
+                  {row.photoUrl ? (
+                    <Image src={row.photoUrl} alt={row.modelName} width={44} height={44} unoptimized style={styles.historyPhoto} />
+                  ) : <span className={historyStyles.photoPlaceholder}>-</span>}
+                  <div className={historyStyles.historyDetails}>
+                    <span className={historyStyles.historySource}>{row.sourceLabel}</span>
+                    <strong className={historyStyles.historyModel}>{row.modelName}</strong>
+                    {row.modelColor ? <span className={historyStyles.historyVariant}>{row.modelColor}</span> : null}
+                    <div className={historyStyles.historyQty}>
+                      <span>A {row.qtyA}</span>
+                      <span>B {row.qtyB}</span>
+                      <span>C {row.qtyC}</span>
+                      <strong>Total {row.checkedTotal}</strong>
+                    </div>
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
         </div>
