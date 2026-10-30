@@ -2098,7 +2098,7 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
     })
     const locationIds = [...new Set(matchesByLine.flatMap((match) => match.locationIds))]
     const { data: locations, error: locationError } = locationIds.length
-      ? await deliverySupabase.from('dir_rack_locations').select('id, location_type, location_id, location_code, sub_location, group_code').in('id', locationIds)
+      ? await deliverySupabase.from('dir_rack_locations').select('id, location_type, location_id, location_code, sub_location, group_code, is_picking_shelf').in('id', locationIds)
       : { data: [], error: null }
     if (locationError) throw locationError
     const locationById = new Map((locations || []).map((location) => [String(location.id), location]))
@@ -2110,7 +2110,7 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
         if (!match) return line
         const shelvingLocations = match.locationIds
           .map((id) => locationById.get(id))
-          .filter((location) => location && cleanUpper(location.group_code) === 'ARKLINE' && cleanUpper(location.location_type) === 'SHELVING')
+          .filter((location) => location && cleanUpper(location.group_code) === 'ARKLINE' && cleanUpper(location.location_type) === 'SHELVING' && location.is_picking_shelf !== false)
         const distinct = [...new Map(shelvingLocations.map((location) => [String(location.id), location])).values()]
         return {
           ...line,

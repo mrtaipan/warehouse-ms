@@ -20,9 +20,10 @@ test('search candidates preserve full input, SKU, and leading token order', () =
 test('storage search filters by rack group and keeps the existing candidate and field order', async () => {
   const calls = []
   const rows = [
-    { id: 1, item_name: 'ARK01HDO005 | Sovereign Hoodie', sku_id: 'ARK01HDO005', group: 'ARKLINE', locationType: 'PALLET' },
-    { id: 2, item_name: 'ARK01HDO005 | Sovereign Hoodie', sku_id: 'ARK01HDO005', group: 'MOB', locationType: 'SHELVING' },
-    { id: 3, item_name: 'ARK01HDO005 | Sovereign Hoodie', sku_id: 'ARK01HDO005', group: 'ARKLINE', locationType: 'SHELVING' },
+    { id: 1, item_name: 'ARK01HDO005 | Sovereign Hoodie', sku_id: 'ARK01HDO005', group: 'ARKLINE', locationType: 'PALLET', isPickingShelf: false },
+    { id: 2, item_name: 'ARK01HDO005 | Sovereign Hoodie', sku_id: 'ARK01HDO005', group: 'MOB', locationType: 'SHELVING', isPickingShelf: true },
+    { id: 3, item_name: 'ARK01HDO005 | Sovereign Hoodie', sku_id: 'ARK01HDO005', group: 'ARKLINE', locationType: 'SHELVING', isPickingShelf: true },
+    { id: 4, item_name: 'ARK01HDO005 | Sovereign Hoodie', sku_id: 'ARK01HDO005', group: 'ARKLINE', locationType: 'SHELVING', isPickingShelf: false },
   ]
   const supabase = {
     from(table) {
@@ -57,7 +58,7 @@ test('storage search filters by rack group and keeps the existing candidate and 
           calls.push({ filters: { ...query.filters }, field: query.field, value: query.value })
           const term = query.value.slice(1, -1).toUpperCase()
           return Promise.resolve({
-            data: rows.filter((row) => row.group === query.filters['rack_location.group_code'] && (!query.filters['rack_location.location_type'] || row.locationType === query.filters['rack_location.location_type']) && String(row[query.field]).toUpperCase().includes(term)),
+            data: rows.filter((row) => row.group === query.filters['rack_location.group_code'] && (query.filters['rack_location.is_picking_shelf'] === undefined || row.isPickingShelf === query.filters['rack_location.is_picking_shelf']) && String(row[query.field]).toUpperCase().includes(term)),
             error: null,
           }).then(resolve, reject)
         },
@@ -67,18 +68,18 @@ test('storage search filters by rack group and keeps the existing candidate and 
   }
 
   const matches = await fetchStorageMatches(supabase, 'ARK01HDO005 | Sovereign Hoodie', 'ARKLINE', 'id,item_name,qty')
-  assert.deepEqual(matches.map((row) => row.id), [1])
-  assert.deepEqual(calls.map((call) => [call.filters['rack_location.group_code'], call.filters['rack_location.location_type'], call.field]), [
-    ['ARKLINE', 'PALLET', 'item_name'],
-    ['ARKLINE', 'PALLET', 'sku_id'],
-    ['ARKLINE', 'PALLET', 'item_name'],
-    ['ARKLINE', 'PALLET', 'sku_id'],
+  assert.deepEqual(matches.map((row) => row.id), [1, 4])
+  assert.deepEqual(calls.map((call) => [call.filters['rack_location.group_code'], call.filters['rack_location.is_picking_shelf'], call.field]), [
+    ['ARKLINE', false, 'item_name'],
+    ['ARKLINE', false, 'sku_id'],
+    ['ARKLINE', false, 'item_name'],
+    ['ARKLINE', false, 'sku_id'],
   ])
   assert.ok(calls.every((call) => !call.value.includes('undefined')))
 
   const mobMatches = await fetchStorageMatches(supabase, 'ARK01HDO005', 'MOB', 'id,item_name,qty')
   assert.deepEqual(mobMatches.map((row) => row.id), [2])
-  assert.ok(calls.slice(4).every((call) => call.filters['rack_location.location_type'] === undefined))
+  assert.ok(calls.slice(4).every((call) => call.filters['rack_location.is_picking_shelf'] === undefined))
 })
 
 test('concurrent mapping preserves output order and caps active requests', async () => {

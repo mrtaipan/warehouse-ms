@@ -26,7 +26,7 @@ export default function EditRackLocationPage() {
   const router = useRouter()
   const supabase = createClient()
   const rackLocationId = params.id
-  const [form, setForm] = useState({ location_type: 'PALLET', location_id: '', location_code: '', sub_location: '', is_active: true })
+  const [form, setForm] = useState({ location_type: 'PALLET', location_id: '', location_code: '', sub_location: '', is_active: true, is_picking_shelf: false })
   const [pageLoading, setPageLoading] = useState(true)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -36,7 +36,7 @@ export default function EditRackLocationPage() {
     async function fetchRackLocation() {
       setPageLoading(true)
       setError('')
-      const { data, error } = await supabase.from('dir_rack_locations').select('id, location_type, location_id, location_code, sub_location, is_active').eq('id', rackLocationId).single()
+      const { data, error } = await supabase.from('dir_rack_locations').select('id, location_type, location_id, location_code, sub_location, is_active, is_picking_shelf').eq('id', rackLocationId).single()
       if (error) {
         setError(error.message)
         setPageLoading(false)
@@ -48,6 +48,7 @@ export default function EditRackLocationPage() {
         location_code: data.location_code || '',
         sub_location: data.sub_location || '',
         is_active: data.is_active ?? true,
+        is_picking_shelf: data.is_picking_shelf ?? false,
       })
       setPageLoading(false)
     }
@@ -60,7 +61,7 @@ export default function EditRackLocationPage() {
       setForm((prev) => ({ ...prev, [name]: checked }))
       return
     }
-    setForm((prev) => ({ ...prev, [name]: value.toUpperCase() }))
+    setForm((prev) => ({ ...prev, [name]: value.toUpperCase(), ...(name === 'location_type' && value !== 'SHELVING' ? { is_picking_shelf: false } : {}) }))
   }
 
   async function handleSubmit(event) {
@@ -75,6 +76,7 @@ export default function EditRackLocationPage() {
       location_code: form.location_code.trim() || null,
       sub_location: form.sub_location.trim() || null,
       is_active: form.is_active,
+      is_picking_shelf: form.location_type === 'SHELVING' && form.is_picking_shelf,
     }).eq('id', rackLocationId)
 
     if (error) {
@@ -107,6 +109,12 @@ export default function EditRackLocationPage() {
             <label style={styles.label}>Warehouse Location</label>
             <input name="location_id" value={form.location_id} onChange={handleChange} style={styles.input} required />
           </div>
+          {form.location_type === 'SHELVING' && (
+            <label style={{ ...styles.label, display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <input type="checkbox" name="is_picking_shelf" checked={form.is_picking_shelf} onChange={handleChange} />
+              Picking shelf
+            </label>
+          )}
           <div style={styles.field}>
             <label style={styles.label}>Pallet/Shelving Number</label>
             <input name="location_code" value={form.location_code} onChange={handleChange} style={styles.input} required />

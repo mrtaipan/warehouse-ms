@@ -13,6 +13,7 @@ const BATCH_SIZE = 1000
 const STORAGE_DATA_CACHE_TTL_MS = 15 * 1000
 const WAREHOUSE_MAP_STATIC_CACHE_TTL_MS = 5 * 60 * 1000
 const WAREHOUSE_STORAGE_SELECT_COLUMNS = 'id, rack_location_id, sku_id, item_name, size, qty, notes, created_at, updated_at'
+const ARKLINE_REGISTRY_SIZES = ['XS', 'S', 'M', 'L', 'XL', 'XXL']
 const warehouseStorageCache = { rows: null, expiresAt: 0 }
 const staticWarehouseMapCache = new Map()
 
@@ -234,6 +235,10 @@ function getArklineRackNumber(value) {
   const match = compact.match(/^ARK[._-]?0*(\d+)(?:[._/-]?[A-Z])?$/) || compact.match(/^0*(\d+)(?:[._/-]?[A-Z])?$/)
 
   return match ? String(Number(match[1])) : ''
+}
+
+function isArklineReserveCode(value) {
+  return /^ARK[._-]?L\d+$/i.test(String(value || '').trim())
 }
 
 function getArklineLocationBaseNumber(location) {
@@ -862,7 +867,7 @@ async function fetchAllRackLocations() {
       const to = from + BATCH_SIZE - 1
       const { data, error } = await supabase
         .from('dir_rack_locations')
-        .select('id, location_type, location_id, location_code, sub_location, location_name, group_code')
+        .select('id, location_type, location_id, location_code, sub_location, location_name, group_code, is_picking_shelf')
         .order('location_type', { ascending: true })
         .order('location_id', { ascending: true })
         .order('location_code', { ascending: true })
@@ -1189,6 +1194,17 @@ function buildOccupiedSubLocationRows(subLocationSlots) {
 }
 
 function buildRackSlots(zoneData, zone, warehouseKey) {
+  if (isArklineReserveCode(zone?.code)) {
+    return [{
+      key: 'reserve',
+      suffix: '',
+      isMapped: zoneData.locations.length > 0,
+      locations: zoneData.locations,
+      entries: zoneData.entries,
+      qty: zoneData.entries.reduce((sum, entry) => sum + Number(entry.qty || 0), 0),
+    }]
+  }
+
   const rackSlotDefinitions = getRackSlotsForZone(zone, warehouseKey)
   const mappedSuffixes = new Set(
     zoneData.locations
@@ -1778,6 +1794,8 @@ export default function WarehouseMapClient({ canEditMap = false, canUseRegistry 
 
     return zoneDataByCode.get(selectedZone.code) || { locations: [], entries: [], totalQty: 0, itemCount: 0 }
   }, [selectedZone, zoneDataByCode])
+  const selectedZoneIsReserve = Boolean(selectedZone && isArklineReserveCode(selectedZone.code))
+  const selectedZoneUsesDirectLocation = selectedZoneIsArkline || selectedZoneIsReserve
   const selectedShelvingData = useMemo(() => {
     if (!selectedShelving) {
       return null
@@ -1792,7 +1810,7 @@ export default function WarehouseMapClient({ canEditMap = false, canUseRegistry 
   const selectedShelvingLevel = selectedShelvingLevels.find((level) => level.key === selectedShelvingLevelKey) || null
   const selectedRegistryIsArkline = selectedLocationKind === 'shelving'
     ? Boolean(selectedShelvingData?.locations?.some(isArklineLocation))
-    : selectedZoneIsArkline
+    : selectedZoneUsesDirectLocation
   const shelvingGoodsGroups = useMemo(() => {
     if (!selectedShelvingData) {
       return []
@@ -1820,7 +1838,9 @@ export default function WarehouseMapClient({ canEditMap = false, canUseRegistry 
   const selectedSlot = rackSlots.find((slot) => slot.key === selectedSlotKey) || rackSlots[0]
   const selectedSlotCode =
     selectedZone && selectedSlot
-      ? selectedZoneIsArkline
+      ? selectedZoneIsReserve
+        ? selectedZone.code
+        : selectedZoneIsArkline
         ? getArklineRackSlotCode(selectedZone.code, selectedSlot)
         : getRackSlotCode(selectedZone.code, selectedSlot)
       : ''
@@ -1853,12 +1873,12 @@ export default function WarehouseMapClient({ canEditMap = false, canUseRegistry 
     (option) => option.key === registryForm.subLocationKey
   )?.location || null
   const selectedArklineRegistryLocation =
-    selectedZoneIsArkline && selectedSlot?.locations?.length
+    selectedZoneUsesDirectLocation && selectedSlot?.locations?.length
       ? selectedSlot.locations.find((location) => isArklineLocation(location)) || selectedSlot.locations[0]
       : null
   const activeRegistryLocation = selectedLocationKind === 'shelving'
     ? selectedShelvingLevel?.location || null
-    : selectedZoneIsArkline
+    : selectedZoneUsesDirectLocation
       ? selectedArklineRegistryLocation
       : selectedRegistryLocation
   const selectedArklineProduct = useMemo(() => {
@@ -1873,7 +1893,7 @@ export default function WarehouseMapClient({ canEditMap = false, canUseRegistry 
   }, [arklineProducts, registryForm.itemName, registryForm.skuId, selectedRegistryIsArkline])
   const selectedSubLocation = subLocationSlots.find((slot) => slot.key === selectedSubLocationKey) || null
   const currentGoodsGroups = useMemo(() => {
-    if (selectedZoneIsArkline) {
+    if (selectedZoneUsesDirectLocation) {
       const entries = selectedSlot?.entries || []
 
       return entries.length > 0
@@ -1904,7 +1924,7 @@ export default function WarehouseMapClient({ canEditMap = false, canUseRegistry 
           qty: entries.reduce((sum, entry) => sum + Number(entry.qty || 0), 0),
         }]
       : []
-  }, [selectedSlot, selectedSlotCode, selectedSubLocation, selectedSubLocationKey, selectedZoneIsArkline])
+  }, [selectedSlot, selectedSlotCode, selectedSubLocation, selectedSubLocationKey, selectedZoneUsesDirectLocation])
   const selectedSlotStorageIds = useMemo(
     () =>
       new Set(
@@ -1951,15 +1971,15 @@ export default function WarehouseMapClient({ canEditMap = false, canUseRegistry 
     }
 
     const locations = (selectedSlot?.locations || []).filter((location) =>
-      selectedZoneIsArkline || selectedSubLocationKey === SUBLOCATION_ALL_KEY ||
+      selectedZoneUsesDirectLocation || selectedSubLocationKey === SUBLOCATION_ALL_KEY ||
       getLocationSubLocationKey(location) === selectedSubLocationKey
     )
     const entries = (selectedSlot?.entries || []).filter((entry) =>
-      selectedZoneIsArkline || selectedSubLocationKey === SUBLOCATION_ALL_KEY ||
+      selectedZoneUsesDirectLocation || selectedSubLocationKey === SUBLOCATION_ALL_KEY ||
       getEntrySubLocationKey(entry) === selectedSubLocationKey
     )
     return buildMovementScope(locations, entries)
-  }, [selectedLocationKind, selectedShelvingData, selectedShelvingLevelKey, selectedSlot, selectedSubLocationKey, selectedZoneIsArkline])
+  }, [selectedLocationKind, selectedShelvingData, selectedShelvingLevelKey, selectedSlot, selectedSubLocationKey, selectedZoneUsesDirectLocation])
 
   useEffect(() => {
     if (!isRackOpen || activePanel !== 'movement') return
@@ -1993,7 +2013,7 @@ export default function WarehouseMapClient({ canEditMap = false, canUseRegistry 
 
       const code =
         warehouse.key === 'LV83' && isArklineLocation(location)
-          ? getArklineRackNumber(location.location_code || location.location_name)
+          ? getArklineRackNumber(location.location_code || location.location_name) || getLocationBaseCode(location.location_code || location.location_name)
           : getLocationBaseCode(location.location_code || location.location_name)
 
       if (code) {
@@ -2547,7 +2567,7 @@ export default function WarehouseMapClient({ canEditMap = false, canUseRegistry 
       setRegistryError(
         selectedLocationKind === 'shelving'
           ? 'Please choose a shelving level first.'
-          : selectedZoneIsArkline
+          : selectedZoneUsesDirectLocation
             ? 'No mapped ARKLINE rack position found for this slot.'
             : 'Please choose a K position first.'
       )
@@ -2563,6 +2583,12 @@ export default function WarehouseMapClient({ canEditMap = false, canUseRegistry 
 
     if (selectedRegistryIsArkline && !selectedArklineProduct) {
       setRegistryError('Please choose an active ARKLINE product from the list.')
+      setRegistrySaving(false)
+      return
+    }
+
+    if (selectedRegistryIsArkline && !ARKLINE_REGISTRY_SIZES.includes(normalizeSizeValue(registryForm.size))) {
+      setRegistryError('Please choose an ARKLINE size from XS, S, M, L, XL, or XXL.')
       setRegistrySaving(false)
       return
     }
@@ -3248,7 +3274,16 @@ export default function WarehouseMapClient({ canEditMap = false, canUseRegistry 
                         value={registryForm.size}
                         onChange={handleRegistryInputChange}
                         placeholder="SIZE"
+                        list={selectedRegistryIsArkline ? 'warehouse-map-arkline-sizes' : undefined}
+                        pattern={selectedRegistryIsArkline ? '(XS|S|M|L|XL|XXL)' : undefined}
+                        title={selectedRegistryIsArkline ? 'Choose XS, S, M, L, XL, or XXL' : undefined}
+                        required={selectedRegistryIsArkline}
                       />
+                      {selectedRegistryIsArkline ? (
+                        <datalist id="warehouse-map-arkline-sizes">
+                          {ARKLINE_REGISTRY_SIZES.map((size) => <option key={size} value={size} />)}
+                        </datalist>
+                      ) : null}
                     </label>
                     <label className={styles.registryField}>
                       <span>Selected Location</span>
@@ -3298,13 +3333,13 @@ export default function WarehouseMapClient({ canEditMap = false, canUseRegistry 
                   <div className={styles.rackSection}>
                   <div className={styles.rackHeader}>
                     <div>
-                      <p className={styles.eyebrow}>Rack View</p>
+                      <p className={styles.eyebrow}>{selectedZoneIsReserve ? 'Reserve Area' : 'Rack View'}</p>
                       <h3>{warehouse.key} / {selectedZoneDisplayCode}</h3>
                       <p>
-                        {selectedZoneData.locations.length} registered slot(s), {formatNumber(selectedZoneData.totalQty)} item qty.
+                        {selectedZoneData.locations.length} registered {selectedZoneIsReserve ? 'location(s)' : 'slot(s)'}, {formatNumber(selectedZoneData.totalQty)} item qty.
                       </p>
                     </div>
-                    {!selectedZoneIsArkline ? (
+                    {!selectedZoneUsesDirectLocation ? (
                       <button
                         type="button"
                         className={`${styles.subLocationAllButton} ${selectedSubLocationKey === SUBLOCATION_ALL_KEY ? styles.subLocationAllButtonActive : ''}`.trim()}
@@ -3316,6 +3351,7 @@ export default function WarehouseMapClient({ canEditMap = false, canUseRegistry 
                     ) : null}
                   </div>
 
+                  {!selectedZoneIsReserve ? (
                   <div className={styles.rackFrame} aria-label={`Rack layout for ${selectedZoneDisplayCode}`}>
                       <span className={styles.rackPostLeft} />
                       <span className={styles.rackPostRight} />
@@ -3365,6 +3401,7 @@ export default function WarehouseMapClient({ canEditMap = false, canUseRegistry 
                         })}
                       </div>
                     </div>
+                  ) : null}
 
                   <div className={styles.segmentedControl} aria-label="Rack detail mode">
                     <button
@@ -3439,7 +3476,7 @@ export default function WarehouseMapClient({ canEditMap = false, canUseRegistry 
                           <div>
                             <h4>{getStorageItemDisplayName(row)}</h4>
                             <p>
-                              {formatNumber(row.qty)} qty taken from {selectedZoneIsArkline ? selectedSlotCode : getSubLocationLabel(getHistorySubLocationKey(row, storageEntryById))}
+                              {formatNumber(row.qty)} qty taken from {selectedZoneUsesDirectLocation ? selectedSlotCode : getSubLocationLabel(getHistorySubLocationKey(row, storageEntryById))}
                               {row.requester_name ? ` for ${row.requester_name}` : ''}
                             </p>
                             <p>Picked by {getDisplayNameByEmail(row.completed_by, userProfilesByEmail)}</p>
@@ -3465,7 +3502,7 @@ export default function WarehouseMapClient({ canEditMap = false, canUseRegistry 
                             <p>{warehouse.key} / {selectedSlotCode}</p>
                           </div>
                           <span>
-                            {selectedZoneIsArkline
+                            {selectedZoneUsesDirectLocation
                               ? activeRegistryLocation
                                 ? 'Rack position'
                                 : 'No mapped slot'
@@ -3474,7 +3511,7 @@ export default function WarehouseMapClient({ canEditMap = false, canUseRegistry 
                         </div>
 
                         <div className={styles.registryGrid}>
-                          {selectedZoneIsArkline ? (
+                          {selectedZoneUsesDirectLocation ? (
                             <label className={styles.registryField}>
                               <span>Rack Position</span>
                               <input value={activeRegistryLocation ? selectedSlotCode : 'Not mapped'} readOnly />
@@ -3513,7 +3550,7 @@ export default function WarehouseMapClient({ canEditMap = false, canUseRegistry 
 
                         <label className={styles.registryField}>
                           <span>Item Name</span>
-                          {selectedZoneIsArkline ? (
+                          {selectedZoneUsesDirectLocation ? (
                             <>
                               <input
                                 name="itemName"
@@ -3547,7 +3584,7 @@ export default function WarehouseMapClient({ canEditMap = false, canUseRegistry 
                             value={registryForm.skuId || ''}
                             onChange={handleRegistryInputChange}
                             placeholder="SKU ID"
-                            readOnly={selectedZoneIsArkline}
+                            readOnly={selectedZoneUsesDirectLocation}
                           />
                         </label>
 
@@ -3559,14 +3596,23 @@ export default function WarehouseMapClient({ canEditMap = false, canUseRegistry 
                               value={registryForm.size}
                               onChange={handleRegistryInputChange}
                               placeholder="SIZE"
+                              list={selectedRegistryIsArkline ? 'warehouse-map-arkline-sizes' : undefined}
+                              pattern={selectedRegistryIsArkline ? '(XS|S|M|L|XL|XXL)' : undefined}
+                              title={selectedRegistryIsArkline ? 'Choose XS, S, M, L, XL, or XXL' : undefined}
+                              required={selectedRegistryIsArkline}
                             />
+                            {selectedRegistryIsArkline ? (
+                              <datalist id="warehouse-map-arkline-sizes">
+                                {ARKLINE_REGISTRY_SIZES.map((size) => <option key={size} value={size} />)}
+                              </datalist>
+                            ) : null}
                           </label>
 
                           <label className={styles.registryField}>
                             <span>Selected Slot</span>
                             <input
                               value={
-                                selectedZoneIsArkline
+                                selectedZoneUsesDirectLocation
                                   ? selectedSlotCode
                                   : activeRegistryLocation
                                     ? `${selectedSlotCode} / ${registryForm.subLocationKey}`
@@ -3587,10 +3633,10 @@ export default function WarehouseMapClient({ canEditMap = false, canUseRegistry 
                           />
                         </label>
 
-                        {!selectedZoneIsArkline && registrySubLocationOptions.length === 0 ? (
+                        {!selectedZoneUsesDirectLocation && registrySubLocationOptions.length === 0 ? (
                           <p className={styles.registryWarning}>No mapped K position found for this rack slot.</p>
                         ) : null}
-                        {selectedZoneIsArkline && !activeRegistryLocation ? (
+                        {selectedZoneUsesDirectLocation && !activeRegistryLocation ? (
                           <p className={styles.registryWarning}>No mapped ARKLINE rack position found for this slot.</p>
                         ) : null}
                         {registryError ? <p className={styles.registryError}>{registryError}</p> : null}

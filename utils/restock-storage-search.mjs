@@ -20,9 +20,9 @@ export async function fetchStorageMatches(supabase, searchTerm, sourceType, colu
     for (const field of ['item_name', 'sku_id']) {
       let query = supabase
         .from('warehouse_storage')
-        .select(`${columns},rack_location:dir_rack_locations!inner(location_type,location_id,location_code,sub_location,group_code)`)
+        .select(`${columns},rack_location:dir_rack_locations!inner(location_type,location_id,location_code,sub_location,group_code,is_picking_shelf)`)
         .eq('rack_location.group_code', group)
-      if (group === 'ARKLINE') query = query.eq('rack_location.location_type', 'PALLET')
+      if (group === 'ARKLINE') query = query.eq('rack_location.is_picking_shelf', false)
       const { data, error } = await query
         .ilike(field, `%${candidate}%`)
         .order('qty', { ascending: false })

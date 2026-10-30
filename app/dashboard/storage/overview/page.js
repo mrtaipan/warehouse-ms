@@ -537,6 +537,7 @@ function getLocationStorageGroup(location = {}) {
 
 function isArklineShelvingLocation(location = {}) {
   return normalizeFilterValue(location.location_type) === 'SHELVING' &&
+    location.is_picking_shelf !== false &&
     normalizeFilterValue(location.group_code) === 'ARKLINE'
 }
 
@@ -594,7 +595,7 @@ async function fetchAllRackLocations() {
       const to = from + BATCH_SIZE - 1
       const { data, error } = await supabase
         .from('dir_rack_locations')
-        .select('id, location_type, location_id, location_code, sub_location, location_name, group_code')
+        .select('id, location_type, location_id, location_code, sub_location, location_name, group_code, is_picking_shelf')
         .order('location_type', { ascending: true })
         .order('location_id', { ascending: true })
         .order('location_code', { ascending: true })
@@ -1316,6 +1317,7 @@ export default function StorageOverviewPage() {
     }
 
     try {
+      if (forceStorage) staticStorageCache.delete('rack-locations')
       const [rackData, storageData, rejectRows, restockRows, queueRows, temporaryRows, movementRows, putawayRows, breakdownRows, variantRows, inboundData, arklineProductRows, brandData, categoryData, profileRows, storageBundleData] = await Promise.all([
         fetchAllRackLocations(),
         fetchAllWarehouseStorage({ force: forceStorage }),
@@ -1999,7 +2001,7 @@ export default function StorageOverviewPage() {
 
   const queueStorageGroup = normalizeFilterValue(queueModalEntry?.storing_type)
   const queueEligibleRackLocations = scopedRackLocations.filter((item) => {
-    if (item.location_type !== 'PALLET') {
+    if (item.location_type !== 'PALLET' && !(item.location_type === 'SHELVING' && item.is_picking_shelf === false)) {
       return false
     }
 
@@ -2071,7 +2073,7 @@ export default function StorageOverviewPage() {
 
   const putawayStorageGroup = normalizeFilterValue(putawayModalEntry?.group_code)
   const putawayEligibleRackLocations = scopedRackLocations.filter((item) => {
-    if (normalizeFilterValue(item.location_type) !== 'SHELVING') return false
+    if (normalizeFilterValue(item.location_type) !== 'SHELVING' || item.is_picking_shelf === false) return false
     return !putawayStorageGroup || getLocationStorageGroup(item) === putawayStorageGroup
   })
   const putawayLocationIdOptions = Array.from(new Set(
@@ -3842,6 +3844,7 @@ export default function StorageOverviewPage() {
       .filter((row) => (
         Number(row.qty || 0) > 0 &&
         normalizeFilterValue(row.location?.location_type) === 'SHELVING' &&
+        row.location?.is_picking_shelf !== false &&
         getLocationStorageGroup(row.location) === group &&
         normalizeStorageSku(row.sku_id) === sku &&
         normalizeSizeValue(row.size) === size
@@ -8418,7 +8421,7 @@ export default function StorageOverviewPage() {
                 </div>
 
                 <div style={styles.field}>
-                  <label style={styles.label}>Pallet Number</label>
+                  <label style={styles.label}>Pallet / Reserve Shelf</label>
                   <input
                     name="locationCode"
                     value={queueForm.locationCode}

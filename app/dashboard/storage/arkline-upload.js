@@ -97,7 +97,7 @@ export function buildArklineImportPreview(parsedLines, storageRows = [], pickRow
   storageRows.forEach((row) => {
     const location = row.location || {}
     if (normalizeKey(location.group_code || row.group_code) !== 'ARKLINE') return
-    if (normalizeKey(location.location_type || row.location_type) !== 'SHELVING') return
+    if (normalizeKey(location.location_type || row.location_type) !== 'SHELVING' || location.is_picking_shelf === false) return
     const sku = baseSku(row.sku_id || row.source_variant_code || row.item_name)
     if (!sku) return
     const key = arklineKey(sku, row.size || '-', '')

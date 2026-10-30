@@ -117,6 +117,18 @@ test('only Arkline shelving counts, and negative balances remain visible', () =>
   assert.equal(preview.lines[0].balanceAfter, -2)
 })
 
+test('reserve shelving is not deducted by an Arkline sales upload', () => {
+  const reserve = { ...shelf(20), location: { group_code: 'ARKLINE', location_type: 'SHELVING', is_picking_shelf: false } }
+  const preview = buildArklineImportPreview([line(5)], [reserve], [])
+  assert.equal(preview.appliedQty, 0)
+  assert.equal(preview.skippedQty, 5)
+
+  const picking = { ...shelf(2), location: { group_code: 'ARKLINE', location_type: 'SHELVING', is_picking_shelf: true } }
+  const withPicking = buildArklineImportPreview([line(5)], [reserve, picking], [])
+  assert.equal(withPicking.appliedQty, 5)
+  assert.equal(withPicking.lines[0].balanceAfter, -3)
+})
+
 test('missing Arkline shelving row is skipped, but an existing zero row may go negative', () => {
   const missing = buildArklineImportPreview([line()], [], [pick()])
   assert.equal(missing.pickOffsetQty, 1)

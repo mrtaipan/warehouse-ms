@@ -41,6 +41,7 @@ export default function RackLocationsClient({ rackLocations, loadError }) {
     location_code: '',
     location_name: '',
     sub_location: '',
+    is_picking_shelf: false,
   })
 
   const groups = useMemo(() => uniqueValues(rackLocations, 'group_code'), [rackLocations])
@@ -48,11 +49,10 @@ export default function RackLocationsClient({ rackLocations, loadError }) {
   const warehouses = useMemo(() => uniqueValues(rackLocations, 'location_id'), [rackLocations])
   const formWarehouses = useMemo(() => uniqueValues(
     rackLocations.filter((row) =>
-      (!form.group_code || row.group_code === form.group_code) &&
-      (!form.location_type || row.location_type === form.location_type)
+      !form.group_code || row.group_code === form.group_code
     ),
     'location_id'
-  ), [rackLocations, form.group_code, form.location_type])
+  ), [rackLocations, form.group_code])
   const locationCodes = useMemo(() => uniqueValues(
     rackLocations.filter((row) =>
       (!form.group_code || row.group_code === form.group_code) &&
@@ -83,18 +83,19 @@ export default function RackLocationsClient({ rackLocations, loadError }) {
       group_code: firstRow?.group_code || groups[0] || '',
       location_type: firstRow?.location_type || types[0] || '',
       location_id: firstRow?.location_id || warehouses[0] || '',
-      location_code: firstRow?.location_code || '',
+      location_code: '',
       location_name: '',
       sub_location: '',
+      is_picking_shelf: false,
     })
     setFormError('')
     setIsModalOpen(true)
   }
 
   function updateForm(event) {
-    const { name, value } = event.target
+    const { name, value, type, checked } = event.target
     setForm((current) => {
-      const next = { ...current, [name]: name === 'sub_location' ? value.toUpperCase() : value }
+      const next = { ...current, [name]: type === 'checkbox' ? checked : ['sub_location', 'location_code'].includes(name) ? value.toUpperCase() : value }
 
       if (name === 'group_code') {
         let matchingRows = rackLocations.filter((row) => row.group_code === value)
@@ -103,10 +104,11 @@ export default function RackLocationsClient({ rackLocations, loadError }) {
         }
         matchingRows = matchingRows.filter((row) => row.location_type === next.location_type)
         next.location_id = matchingRows[0]?.location_id || ''
-        next.location_code = matchingRows[0]?.location_code || ''
+        next.location_code = ''
       }
 
       if (name === 'location_type') {
+        next.is_picking_shelf = false
         let matchingRows = rackLocations.filter((row) => row.location_type === value)
         const currentWarehouseMatch = matchingRows.find((row) =>
           row.group_code === current.group_code && row.location_id === current.location_id
@@ -117,16 +119,11 @@ export default function RackLocationsClient({ rackLocations, loadError }) {
         matchingRows = matchingRows.filter((row) => row.group_code === next.group_code)
         const matchingWarehouse = matchingRows.find((row) => row.location_id === current.location_id)
         next.location_id = matchingWarehouse?.location_id || matchingRows[0]?.location_id || ''
-        next.location_code = matchingRows.find((row) => row.location_id === next.location_id)?.location_code || ''
+        next.location_code = ''
       }
 
       if (name === 'location_id') {
-        const matchingRow = rackLocations.find((row) =>
-          row.group_code === current.group_code &&
-          row.location_type === current.location_type &&
-          row.location_id === value
-        )
-        next.location_code = matchingRow?.location_code || ''
+        next.location_code = ''
       }
       return next
     })
@@ -143,9 +140,10 @@ export default function RackLocationsClient({ rackLocations, loadError }) {
       location_code: form.location_code,
       location_name: form.location_type === 'PALLET'
         ? buildPalletLocationName(form)
-        : form.location_name.trim() || null,
+        : form.location_name.trim(),
       sub_location: form.sub_location.trim() || null,
       is_active: true,
+      is_picking_shelf: form.location_type === 'SHELVING' && form.is_picking_shelf,
     })
     setIsSaving(false)
     if (error) {
@@ -238,7 +236,7 @@ export default function RackLocationsClient({ rackLocations, loadError }) {
                 <table className={styles.table}>
                   <thead>
                     <tr>
-                      <th>Group</th><th>Type</th><th>Pallet / Shelving</th><th>Location Name</th><th>Carton Number</th><th>Status</th><th aria-label="Actions" />
+                      <th>Group</th><th>Type</th><th>Stock Flow</th><th>Pallet / Shelving</th><th>Location Name</th><th>Carton Number</th><th>Status</th><th aria-label="Actions" />
                     </tr>
                   </thead>
                   <tbody>
@@ -246,6 +244,7 @@ export default function RackLocationsClient({ rackLocations, loadError }) {
                       <tr key={row.id}>
                         <td><span className={styles.groupPill}>{row.group_code || '-'}</span></td>
                         <td><span className={`${styles.typePill} ${row.location_type === 'SHELVING' ? styles.shelving : styles.pallet}`}>{row.location_type || '-'}</span></td>
+                        <td>{row.is_picking_shelf ? 'Picking shelf' : 'Reserve'}</td>
                         <td className={styles.locationCode}>{row.location_code || '-'}</td>
                         <td>{row.location_name || <span className={styles.muted}>—</span>}</td>
                         <td>{row.sub_location || <span className={styles.muted}>—</span>}</td>
@@ -282,6 +281,12 @@ export default function RackLocationsClient({ rackLocations, loadError }) {
                     {types.map((type) => <option key={type} value={type}>{type}</option>)}
                   </select>
                 </label>
+                {form.location_type === 'SHELVING' && (
+                  <label className={styles.checkField}>
+                    <input type="checkbox" name="is_picking_shelf" checked={form.is_picking_shelf} onChange={updateForm} />
+                    <span>Picking shelf</span>
+                  </label>
+                )}
                 <label className={styles.formField}><span>Warehouse location <b>*</b></span>
                   <select name="location_id" value={form.location_id} onChange={updateForm} required>
                     <option value="" disabled>Select warehouse</option>
@@ -289,13 +294,10 @@ export default function RackLocationsClient({ rackLocations, loadError }) {
                   </select>
                 </label>
                 <label className={styles.formField}><span>Pallet / Shelving <b>*</b></span>
-                  <select name="location_code" value={form.location_code} onChange={updateForm} required disabled={!locationCodes.length}>
-                    <option value="" disabled>{locationCodes.length ? 'Select location' : 'No matching locations'}</option>
-                    {locationCodes.map((code) => <option key={code} value={code}>{code}</option>)}
-                  </select>
-                </label>
-                <label className={styles.formField}><span>Location Name</span>
-                  <input name="location_name" value={form.location_name} onChange={updateForm} placeholder="Enter a recognizable location name" />
+                  <input name="location_code" value={form.location_code} onChange={updateForm} list="rack-location-code-options" placeholder="Type or select location" required />
+                  <datalist id="rack-location-code-options">
+                    {locationCodes.map((code) => <option key={code} value={code} />)}
+                  </datalist>
                 </label>
                 <label className={styles.formField}><span>Carton Number</span>
                   <input name="sub_location" value={form.sub_location} onChange={updateForm} placeholder="Enter carton / sub-location" required={form.location_type === 'PALLET'} />
@@ -310,15 +312,15 @@ export default function RackLocationsClient({ rackLocations, loadError }) {
                 )}
                 {form.location_type !== 'PALLET' && (
                   <label className={styles.formField}>
-                    <span>Location Name</span>
-                    <input name="location_name" value={form.location_name} onChange={updateForm} placeholder="Enter a recognizable location name" />
+                    <span>Location Name <b>*</b></span>
+                    <input name="location_name" value={form.location_name} onChange={updateForm} placeholder="Enter a recognizable location name" required />
                   </label>
                 )}
               </div>
               {formError && <p className={styles.formError}>{formError}</p>}
               <footer className={styles.modalActions}>
                 <button type="button" className={styles.secondaryButton} onClick={() => setIsModalOpen(false)}>Cancel</button>
-                <button type="submit" className={styles.primaryButton} disabled={isSaving || !groups.length || !types.length || !warehouses.length || !locationCodes.length}>
+                <button type="submit" className={styles.primaryButton} disabled={isSaving || !groups.length || !types.length || !warehouses.length}>
                   {isSaving ? 'Saving…' : 'Save location'}
                 </button>
               </footer>

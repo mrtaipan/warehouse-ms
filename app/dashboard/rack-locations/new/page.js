@@ -23,14 +23,18 @@ const styles = {
 export default function NewRackLocationPage() {
   const router = useRouter()
   const supabase = createClient()
-  const [form, setForm] = useState({ location_type: 'PALLET', location_id: '', location_code: '', sub_location: '' })
+  const [form, setForm] = useState({ location_type: 'PALLET', location_id: '', location_code: '', sub_location: '', is_picking_shelf: false })
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
 
   function handleChange(event) {
-    const { name, value } = event.target
-    setForm((prev) => ({ ...prev, [name]: value.toUpperCase() }))
+    const { name, value, type, checked } = event.target
+    setForm((prev) => ({
+      ...prev,
+      [name]: type === 'checkbox' ? checked : value.toUpperCase(),
+      ...(name === 'location_type' && value !== 'SHELVING' ? { is_picking_shelf: false } : {}),
+    }))
   }
 
   async function handleSubmit(event) {
@@ -45,6 +49,7 @@ export default function NewRackLocationPage() {
       location_code: form.location_code.trim() || null,
       sub_location: form.sub_location.trim() || null,
       is_active: true,
+      is_picking_shelf: form.location_type === 'SHELVING' && form.is_picking_shelf,
     }])
 
     if (error) {
@@ -75,6 +80,12 @@ export default function NewRackLocationPage() {
             <label style={styles.label}>Warehouse Location</label>
             <input name="location_id" value={form.location_id} onChange={handleChange} style={styles.input} placeholder="WAREHOUSE LOCATION" required />
           </div>
+          {form.location_type === 'SHELVING' && (
+            <label style={{ ...styles.label, display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <input type="checkbox" name="is_picking_shelf" checked={form.is_picking_shelf} onChange={handleChange} />
+              Picking shelf
+            </label>
+          )}
           <div style={styles.field}>
             <label style={styles.label}>Pallet/Shelving Number</label>
             <input name="location_code" value={form.location_code} onChange={handleChange} style={styles.input} placeholder="PALLET/SHELVING NUMBER" required />

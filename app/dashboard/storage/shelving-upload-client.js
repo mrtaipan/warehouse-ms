@@ -176,7 +176,7 @@ function buildShelvingAvailability(storageRows = [], temporarySalesRows = [], gr
     const qty = Math.max(0, Number(row.qty_in_area ?? row.qty ?? 0))
 
     if (rowGroupCode !== normalizedGroupCode) return
-    if (isShelving && locationType !== 'SHELVING') return
+    if (isShelving && (locationType !== 'SHELVING' || row.location?.is_picking_shelf === false)) return
     if (!skuCandidates.length || qty <= 0) return
 
     skuCandidates.forEach((sku) => {

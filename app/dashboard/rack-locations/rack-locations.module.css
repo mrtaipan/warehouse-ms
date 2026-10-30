@@ -147,6 +147,8 @@
 .closeButton:hover { background: #e8eef0; }
 .modalForm { padding: 22px 24px 24px; }
 .formGrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px 16px; }
+.checkField { display: flex; align-items: center; gap: 8px; min-height: 42px; color: #34434c; font-size: 14px; font-weight: 600; }
+.checkField input { width: 18px; height: 18px; accent-color: #111827; }
 .formField b { color: #ae5555; }
 .namePreview { display: flex; min-height: 42px; align-items: center; padding: 0 12px; border: 1px dashed #b9cbd3; border-radius: 9px; background: #f6f9fa; color: #244b5e; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; font-weight: 650; }
 .fullWidth { grid-column: 1 / -1; }

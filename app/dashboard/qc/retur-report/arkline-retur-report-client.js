@@ -929,9 +929,10 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
         if (source === 'SHELVING') {
           const { data, error: sourceError } = await supabase
             .from('warehouse_storage')
-            .select('id,sku_id,size,qty,rack_location:dir_rack_locations!inner(location_type,location_id,location_code,sub_location,group_code)')
+            .select('id,sku_id,size,qty,rack_location:dir_rack_locations!inner(location_type,location_id,location_code,sub_location,group_code,is_picking_shelf)')
             .eq('rack_location.group_code', 'ARKLINE')
             .eq('rack_location.location_type', 'SHELVING')
+            .eq('rack_location.is_picking_shelf', true)
             .or(`sku_id.ilike.${sku}%,source_variant_code.ilike.${sku}%`)
             .eq('size', size)
             .order('qty', { ascending: false })
