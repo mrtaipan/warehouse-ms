@@ -40,16 +40,22 @@ function AddIcon() {
 }
 
 function getTodayDateValue() {
-  const now = new Date()
-  const year = now.getFullYear()
-  const month = String(now.getMonth() + 1).padStart(2, '0')
-  const day = String(now.getDate()).padStart(2, '0')
-  return `${year}-${month}-${day}`
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Jakarta', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
 }
 
 function getCurrentTimeValue() {
-  const now = new Date()
-  return `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`
+  return new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Jakarta', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date())
+}
+
+function validateSessionWindow(draft, now = new Date()) {
+  if (!draft.session_date || !draft.start_time || !draft.end_time) return ''
+  const start = new Date(`${draft.session_date}T${draft.start_time}:00+07:00`)
+  const end = new Date(`${draft.session_date}T${draft.end_time}:00+07:00`)
+  if (end <= start) end.setTime(end.getTime() + 24 * 60 * 60 * 1000)
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return 'Enter a valid session date and time.'
+  if (start > now || end > now) return 'The session cannot be in the future.'
+  if (start < new Date(now.getTime() - 24 * 60 * 60 * 1000)) return 'The session must start within the last 24 hours.'
+  return ''
 }
 
 function createDraft() {
@@ -285,6 +291,7 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
   const [draft, setDraft] = useState(createDraft())
+  const sessionWindowError = validateSessionWindow(draft)
   const [profile, setProfile] = useState(null)
   const [profiles, setProfiles] = useState([])
   const [products, setProducts] = useState([])
@@ -760,6 +767,12 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
 
     if (!draft.session_date || !draft.start_time || !draft.end_time) {
       setError('Session date, start time, and end time are required.')
+      return
+    }
+
+    const windowError = validateSessionWindow(draft)
+    if (windowError) {
+      setError(windowError)
       return
     }
 
@@ -1242,7 +1255,10 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
                     <input
                       className={styles.input}
                       type="date"
+                      max={getTodayDateValue()}
                       value={draft.session_date || ''}
+                      aria-invalid={Boolean(sessionWindowError)}
+                      aria-describedby={sessionWindowError ? 'session-window-error' : undefined}
                       onChange={(event) => setDraft((prev) => ({ ...prev, session_date: event.target.value }))}
                     />
                   </div>
@@ -1252,6 +1268,8 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
                       className={styles.input}
                       type="time"
                       value={draft.start_time || ''}
+                      aria-invalid={Boolean(sessionWindowError)}
+                      aria-describedby={sessionWindowError ? 'session-window-error' : undefined}
                       onChange={(event) => setDraft((prev) => ({ ...prev, start_time: event.target.value }))}
                     />
                   </div>
@@ -1261,10 +1279,13 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
                       className={styles.input}
                       type="time"
                       value={draft.end_time || ''}
+                      aria-invalid={Boolean(sessionWindowError)}
+                      aria-describedby={sessionWindowError ? 'session-window-error' : undefined}
                       onChange={(event) => setDraft((prev) => ({ ...prev, end_time: event.target.value }))}
                     />
                   </div>
                 </div>
+                {sessionWindowError ? <p id="session-window-error" role="alert" className={styles.sessionWindowError}>{sessionWindowError}</p> : null}
 
                 <div className={styles.field}>
                   <label className={styles.label}>Wearing Product *</label>

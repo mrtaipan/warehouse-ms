@@ -608,6 +608,17 @@
   align-items: end;
 }
 
+.sessionWindowError {
+  margin: -4px 0 0;
+  color: #b42318;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.dateTimeRow input[aria-invalid='true'] {
+  border-color: #d92d20;
+}
+
 .mobileFormCard .dateTimeRow {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
