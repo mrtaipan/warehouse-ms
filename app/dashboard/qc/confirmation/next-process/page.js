@@ -8,6 +8,9 @@ import { getProfileByAuthenticatedUser } from '@/utils/user-profiles'
 import { ADMIN_EMAIL, hasPermission } from '@/utils/permissions'
 import { getRolePermissionCodes } from '@/utils/role-permissions'
 import { useRealtimeRefresh } from '@/utils/supabase/use-realtime-refresh'
+import { getQcProductGroupKey } from '@/utils/qc-product-identity.mjs'
+import { loadProductCatalog, withCurrentProductLabels } from '@/utils/product-catalog-display.mjs'
+import ProductVariantCode from '@/components/product-variant-code'
 
 const supabase = createClient()
 
@@ -1081,15 +1084,7 @@ const styles = {
 }
 
 function getSourceKey(item) {
-  return `${Number(item.brand_id || 0)}::${Number(item.category_id || 0)}::${String(item.model_name || '').trim().toUpperCase()}::${String(
-    item.model_color || ''
-  )
-    .trim()
-    .toUpperCase()}`
-}
-
-function getModelOnlyKey(item) {
-  return `${String(item.model_name || '').trim().toUpperCase()}::${String(item.model_color || '').trim().toUpperCase()}`
+  return getQcProductGroupKey(item)
 }
 
 function getModelLabel(item) {
@@ -1132,11 +1127,8 @@ function normalizeConfirmRow(item) {
 function getSourceVariantCode(item) {
   return (
     item?.product_model_variant?.variant_code ||
-    item?.product_model_variant?.variant_name ||
     item?.source_variant_code ||
     item?.variant_code ||
-    item?.variant_name ||
-    item?.model_color ||
     null
   )
 }
@@ -1144,10 +1136,8 @@ function getSourceVariantCode(item) {
 function getSampleSourceVariantCode(item) {
   return (
     item?.sample_breakdown?.product_model_variant?.variant_code ||
-    item?.sample_breakdown?.product_model_variant?.variant_name ||
     item?.sample_breakdown?.source_variant_code ||
     item?.sample_breakdown?.variant_code ||
-    item?.sample_breakdown?.variant_name ||
     null
   )
 }
@@ -1419,6 +1409,8 @@ export default function QcConfirmationNextProcessPage() {
               id,
               brand_id,
               category_id,
+              product_model_id,
+              product_model_variant_id,
               model_name,
               variant_name,
               is_sample,
@@ -1580,9 +1572,16 @@ export default function QcConfirmationNextProcessPage() {
       }
     })
 
-    setQcItems((qcData || []).map(normalizeQcItemRow))
-    setQcSampleBreakdownRows(qcSampleData || [])
-    setConfirmRows((confirmData || []).map(normalizeConfirmRow))
+    const { data: catalog, error: catalogError } = await loadProductCatalog(supabase)
+    if (catalogError) {
+      setError(catalogError.message)
+      if (!silent) setLoading(false)
+      return
+    }
+    const currentLabels = (row) => withCurrentProductLabels(row, catalog)
+    setQcItems((qcData || []).map(currentLabels).map(normalizeQcItemRow))
+    setQcSampleBreakdownRows((qcSampleData || []).map(currentLabels))
+    setConfirmRows((confirmData || []).map(currentLabels).map(normalizeConfirmRow))
     setDisplayNameByEmail(profileMap)
     setPicName(nextPicName)
     if (!silent) {
@@ -1636,6 +1635,8 @@ export default function QcConfirmationNextProcessPage() {
         category_id: categoryId,
         model_name: modelName,
         model_color: modelColor,
+        product_model_variant_id: productModelVariantId,
+        source_variant_code: sourceVariantCode,
       })
       const current = grouped.get(key) || {
         key,
@@ -1717,14 +1718,6 @@ export default function QcConfirmationNextProcessPage() {
         })
       })
 
-    const sourceKeyByModelOnlyKey = new Map()
-    grouped.forEach((value, key) => {
-      const modelOnlyKey = getModelOnlyKey(value)
-      if (modelOnlyKey && !sourceKeyByModelOnlyKey.has(modelOnlyKey)) {
-        sourceKeyByModelOnlyKey.set(modelOnlyKey, key)
-      }
-    })
-
     confirmRows
       .filter((item) => (
         Number(item.inbound_id) === Number(selectedInbound?.id) &&
@@ -1732,10 +1725,8 @@ export default function QcConfirmationNextProcessPage() {
       ))
       .forEach((item) => {
         const key = getSourceKey(item)
-        const fallbackKey = sourceKeyByModelOnlyKey.get(getModelOnlyKey(item))
-        const exactCurrent = grouped.get(key)
-        let current = exactCurrent || grouped.get(fallbackKey)
-        let targetKey = exactCurrent ? key : fallbackKey
+        let current = grouped.get(key)
+        const targetKey = key
 
         if (!current && isTransferAdjustment(item)) {
           current = {
@@ -1757,7 +1748,6 @@ export default function QcConfirmationNextProcessPage() {
             pic_names: new Set(),
             is_adjustment_source: true,
           }
-          targetKey = key
         }
 
         if (!current || !targetKey) {
@@ -1797,16 +1787,6 @@ export default function QcConfirmationNextProcessPage() {
   }, [confirmRows, displayNameByEmail, grnFilter, qcItems, qcSampleBreakdownRows, selectedInbound?.id])
 
   const sourceRowByKey = useMemo(() => new Map(sourceRows.map((item) => [item.key, item])), [sourceRows])
-  const sourceRowByModelOnlyKey = useMemo(() => {
-    const result = new Map()
-    sourceRows.forEach((item) => {
-      const key = getModelOnlyKey(item)
-      if (key && !result.has(key)) {
-        result.set(key, item)
-      }
-    })
-    return result
-  }, [sourceRows])
 
   const effectiveSelectedSourceKey = sourceRows.some((item) => item.key === selectedSourceKey) ? selectedSourceKey : ''
   const selectedSourceRow = sourceRows.find((item) => item.key === effectiveSelectedSourceKey) || null
@@ -1845,13 +1825,13 @@ export default function QcConfirmationNextProcessPage() {
 
         current.total_qty += Number(item.qty || 0)
         current.has_transfer_adjustment = current.has_transfer_adjustment || isTransferAdjustment(item)
-        const sourceRow = sourceRowByKey.get(getSourceKey(item)) || sourceRowByModelOnlyKey.get(getModelOnlyKey(item))
+        const sourceRow = sourceRowByKey.get(getSourceKey(item))
         current.items.push({
           ...item,
           brand_id: sourceRow?.brand_id || item.brand_id || null,
           category_id: sourceRow?.category_id || item.category_id || null,
-          brand_name: sourceRow?.brand_name || 'UNBRANDED',
-          category_name: sourceRow?.category_name || 'UNCATEGORIZED',
+          brand_name: sourceRow?.brand_name || getConfirmBrandLabel(item),
+          category_name: sourceRow?.category_name || getConfirmCategoryLabel(item),
           product_model_id: sourceRow?.product_model_id || item.product_model_id || null,
           product_model_variant_id: sourceRow?.product_model_variant_id || item.product_model_variant_id || null,
           source_variant_code: sourceRow?.source_variant_code || item.source_variant_code || null,
@@ -1871,7 +1851,7 @@ export default function QcConfirmationNextProcessPage() {
           display_label: `Koli ${row.koli_sequence}`,
         }
       })
-  }, [confirmRows, selectedInbound?.id, sourceRowByKey, sourceRowByModelOnlyKey])
+  }, [confirmRows, selectedInbound?.id, sourceRowByKey])
 
   const brandFilterOptions = useMemo(() => {
     const options = new Map()
@@ -2430,6 +2410,7 @@ export default function QcConfirmationNextProcessPage() {
                     )}
                     <span style={styles.modelMeta}>
                       <strong style={styles.modelName}>{getModelDashLabel(row)}</strong>
+                      <ProductVariantCode code={row.source_variant_code} />
                       <span style={styles.modelInfo}>{row.brand_name}</span>
                     </span>
                     <span style={styles.mobileRemainingPill}>{formatNumber(remainingQty)}</span>
@@ -2457,6 +2438,7 @@ export default function QcConfirmationNextProcessPage() {
               )}
               <div style={styles.modelMeta}>
                 <strong style={styles.modelName}>{getModelDashLabel(selectedSourceRow)}</strong>
+                <ProductVariantCode code={selectedSourceRow.source_variant_code} />
                 <p style={styles.modelInfo}>{selectedSourceRow.brand_name}</p>
                 <p style={styles.modelInfo}>{selectedSourceRow.category_name}</p>
                 {isAdjustmentMode ? <span style={styles.adjustmentBadge}>{getAdjustmentLabel(effectiveAdjustmentType)}</span> : null}
@@ -2541,6 +2523,7 @@ export default function QcConfirmationNextProcessPage() {
                 )}
                 <div style={styles.modelMeta}>
                   <strong style={styles.modelName}>{getModelDashLabel(item)}</strong>
+                  <ProductVariantCode code={item.source_variant_code} />
                   <p style={styles.modelInfo}>{getBrandItemLabel(displayItem)}</p>
                   {item.adjustment_type ? <span style={styles.adjustmentBadge}>{getAdjustmentLabel(item.adjustment_type)}</span> : null}
                 </div>
@@ -2832,6 +2815,7 @@ export default function QcConfirmationNextProcessPage() {
                                 <span style={styles.koliBrandText}>{item.brand_name || 'UNBRANDED'}</span>
                                 <span style={styles.koliMetaText}>{formatItemTypeSubcategoryLabel(item.category_name)}</span>
                                 <span style={styles.koliMetaText}>{getModelDashLabel(item)}</span>
+                                <ProductVariantCode code={item.source_variant_code} />
                               </div>
                             </td>
                             <td style={{ ...itemCellStyle, ...styles.koliCenterCell, ...styles.koliQtyCell }}>
@@ -2900,7 +2884,7 @@ export default function QcConfirmationNextProcessPage() {
                             )}
                           </td>
                           <td style={styles.td}>{row.category_name}</td>
-                          <td style={styles.td}>{getModelDashLabel(row)}</td>
+                          <td style={styles.td}>{getModelDashLabel(row)}<ProductVariantCode code={row.source_variant_code} /></td>
                           <td style={{ ...styles.td, ...styles.koliCenterCell }}>{formatNumber(row.source_qty)}</td>
                           <td style={{ ...styles.td, ...styles.koliCenterCell }}>{formatNumber(row.confirmed_qty)}</td>
                           <td style={{ ...styles.td, ...styles.koliCenterCell, ...(getPendingBalanceStyle(pendingBalance) || {}) }}>

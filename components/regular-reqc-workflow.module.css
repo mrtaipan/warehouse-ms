@@ -516,6 +516,10 @@
   gap: 16px;
 }
 
+.reviewModal {
+  width: min(800px, 100%);
+}
+
 .rejectContext {
   margin: 0;
   color: #526176;
@@ -544,6 +548,12 @@
 .modalActions {
   display: flex;
   justify-content: flex-end;
+  gap: 8px;
+}
+
+.reviewActions {
+  display: flex;
+  flex-wrap: wrap;
   gap: 8px;
 }
 

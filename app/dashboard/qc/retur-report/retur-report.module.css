@@ -1300,6 +1300,23 @@
   text-decoration: none;
 }
 
+.regularPrintButton {
+  width: 120px;
+  min-height: 40px;
+  padding: 9px 14px;
+}
+
+.regularReverseButton {
+  border-color: #7f1d3a;
+  background: #7f1d3a;
+  color: #fff;
+}
+
+.regularReverseButton:hover:not(:disabled) {
+  border-color: #68152e;
+  background: #68152e;
+}
+
 .rejectStorageButton {
   border-color: #7f1d3a;
   background: #7f1d3a;
@@ -1702,6 +1719,10 @@
   .regularHeaderActions {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .regularPrintButton {
+    width: 100%;
   }
 
   .regularSelectedTotal {

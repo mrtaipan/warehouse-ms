@@ -4,11 +4,12 @@ import { createClient } from '@/utils/supabase/server'
 import { createAdminClient } from '@/utils/supabase/admin'
 import { canAccessOperationsCalendar, getAllowedMenus, getStorageFeatureAccess, hasPermission } from '@/utils/permissions'
 import { loadAccessContext } from '@/utils/access-control'
-import { getJakartaTodayDateString, getUpcomingBirthdayOffset } from '@/utils/birthday-reminders.mjs'
+import { getBirthdayClaimWindow, getJakartaTodayDateString, getUpcomingBirthdayOffset } from '@/utils/birthday-reminders.mjs'
 import { getGrnRejectionRemaining } from '@/utils/grn-rejection-remaining.mjs'
 import RestockShortcutButton from './restock-shortcut-client'
 import ItemSearchShortcutButton from './item-search-shortcut-client'
 import GrnSummaryCopyButton from './grn-summary-copy-button'
+import BirthdayGiftClaimAction from './birthday-gift-claim-action'
 import PenaltyPointsShortcutButton from './penalty-points-shortcut-client'
 import styles from './dashboard.module.css'
 
@@ -1005,7 +1006,30 @@ export default async function DashboardPage({ searchParams }) {
     })
     .filter(Boolean)
     .sort((left, right) => left.offset - right.offset || left.title.localeCompare(right.title))
-  const newsAnnouncements = [...activeBroadcasts, ...birthdayGiftAnnouncements, ...birthdayReminderAnnouncements]
+  const currentPerson = (announcementRows || []).find((person) => person.authenticated_id === user.id) ||
+    (announcementRows || []).find((person) => person.email && person.email.toLowerCase() === user.email?.toLowerCase())
+  const claimWindow = currentPerson && !hasResigned(currentPerson)
+    ? getBirthdayClaimWindow(getBirthDateValue(currentPerson))
+    : null
+  const ownGiftResult = claimWindow?.isOpen
+    ? await supabase
+        .from('hrga_birthday_gift')
+        .select('id')
+        .eq('employee_authenticated_id', user.id)
+        .gte('request_date', claimWindow.birthday)
+        .lte('request_date', claimWindow.windowEnd)
+        .limit(1)
+    : null
+  const birthdayClaimReminder = ownGiftResult && !ownGiftResult.error && !ownGiftResult.data?.length
+    ? [{
+        id: `birthday-gift-unclaimed-${user.id}`,
+        title: 'Your birthday gift is ready',
+        message: `You have not claimed your birthday gift yet. Claim it in MyARKLIFE by ${claimWindow.windowEnd}.`,
+        dateLabel: 'Birthday Gift Unclaimed',
+        canClaimGift: true,
+      }]
+    : []
+  const newsAnnouncements = [...activeBroadcasts, ...birthdayClaimReminder, ...birthdayGiftAnnouncements, ...birthdayReminderAnnouncements]
 
   const showMyArklifeButton = true
   const adminGrnSummary = isAdmin ? await loadAdminGrnSummary(supabase, selectedGrn) : null
@@ -1070,6 +1094,7 @@ export default async function DashboardPage({ searchParams }) {
                     {item.title}
                   </strong>
                   <p className={styles.insightNote}>{item.message || 'No Announcement'}</p>
+                  {item.canClaimGift ? <BirthdayGiftClaimAction /> : null}
                 </div>
               ))
             ) : (
@@ -1147,6 +1172,7 @@ export default async function DashboardPage({ searchParams }) {
                       {item.title}
                     </strong>
                     <p className={styles.insightNote}>{item.message || 'No Announcement'}</p>
+                    {item.canClaimGift ? <BirthdayGiftClaimAction /> : null}
                   </div>
                 ))
               ) : (

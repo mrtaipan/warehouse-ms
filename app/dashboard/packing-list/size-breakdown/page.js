@@ -7,6 +7,7 @@ import {
   buildCatalogIdentityLookup,
   resolveProductCatalogIdentity,
 } from '@/utils/catalog-identity'
+import { loadProductCatalog, withCurrentProductLabels } from '@/utils/product-catalog-display.mjs'
 import { createClient } from '@/utils/supabase/browser'
 import { ADMIN_EMAIL, getRoleLockedGroup, hasPermission, resolveRole } from '@/utils/permissions'
 import { getProfileByAuthenticatedUser } from '@/utils/user-profiles'
@@ -3638,8 +3639,7 @@ export default function PackingListSizeBreakdownPage() {
         { data: packingData, error: packingError },
         { data: returnData, error: returnError },
         { data: confirmData, error: confirmError },
-        { data: productModelData, error: productModelError },
-        { data: variantData, error: variantError },
+        { data: catalogData, error: catalogError },
         { data: brandData, error: brandError },
         { data: categoryData, error: categoryError },
         { data: userProfileData, error: userProfileError },
@@ -3688,22 +3688,20 @@ export default function PackingListSizeBreakdownPage() {
           .from('qc_confirm')
           .select('id, inbound_id, brand_id, category_id, product_model_id, product_model_variant_id, source_variant_code, model_name, model_color:variant_name, photo_url')
           .order('created_at', { ascending: false }),
-        supabase.from('dir_product_models').select('*').order('created_at', { ascending: true }),
-        supabase.from('dir_product_model_variants').select('*').order('id', { ascending: true }),
+        loadProductCatalog(supabase),
         supabase.from('dir_brands').select('*').order('brand_name', { ascending: true }),
         supabase.from('dir_categories').select('*').order('full_code', { ascending: true }),
         supabase.from('dir_user_profiles').select('*').order('display_name', { ascending: true }),
       ])
 
-      if (receivingError || breakdownError || generalPhotoError || returnError || confirmError || productModelError || variantError || brandError || categoryError) {
+      if (receivingError || breakdownError || generalPhotoError || returnError || confirmError || catalogError || brandError || categoryError) {
         setError(
           receivingError?.message ||
             breakdownError?.message ||
             generalPhotoError?.message ||
             returnError?.message ||
             confirmError?.message ||
-            productModelError?.message ||
-            variantError?.message ||
+            catalogError?.message ||
             brandError?.message ||
             categoryError?.message ||
             'Failed to load size breakdown data.'
@@ -3712,14 +3710,15 @@ export default function PackingListSizeBreakdownPage() {
         return
       }
 
-      setPlReceivingRows(receivingData || [])
-      setBreakdownRows(breakdownData || [])
+      const currentLabels = (row) => withCurrentProductLabels(row, catalogData)
+      setPlReceivingRows((receivingData || []).map(currentLabels))
+      setBreakdownRows((breakdownData || []).map(currentLabels))
       setGeneralPhotoRows(generalPhotoData || [])
       setPackingRows(packingError ? [] : packingData || [])
       setPlReturnRows(returnData || [])
-      setConfirmRows(confirmData || [])
-      setProductModels(productModelData || [])
-      setCatalogVariants(variantData || [])
+      setConfirmRows((confirmData || []).map(currentLabels))
+      setProductModels(Array.from(catalogData.modelById.values()))
+      setCatalogVariants(Array.from(catalogData.variantById.values()))
       setBrands(brandData || [])
       setCategories(categoryData || [])
       setPackingStaffProfiles(userProfileError ? [] : (userProfileData || []).filter(isPackingStaffProfile))
@@ -3817,7 +3816,7 @@ export default function PackingListSizeBreakdownPage() {
           item_type: categoryPath[2] || '',
           model_code: catalogModel?.model_code || '',
           variant_code: getVariantCode(catalogVariant) || sourceVariantCode || '',
-          model_name: row.model_name || catalogModel?.model_name || '',
+          model_name: catalogModel?.model_name || row.model_name || '',
           catalogName: getCatalogName(catalogVariant) || row.model_color || '',
           catalogVariant,
           photo_url: sourcePhotoUrl || photoMap.get(photoKey) || catalogVariant?.variant_photo_url || '',
@@ -3888,8 +3887,8 @@ export default function PackingListSizeBreakdownPage() {
           item_type: categoryPath[2] || '',
           model_code: catalogModel?.model_code || '',
           variant_code: sourceVariantCode,
-          model_name: row.model_name || catalogModel?.model_name || '',
-          catalogName: row.variant_name || getCatalogName(catalogVariant) || '',
+          model_name: catalogModel?.model_name || row.model_name || '',
+          catalogName: getCatalogName(catalogVariant) || row.variant_name || '',
           catalogVariant,
           photo_url: row.pl_photo_url || row.variant_photo_url || photoMap.get(photoKey) || catalogVariant?.variant_photo_url || '',
           receiving_qty: 0,

@@ -160,15 +160,15 @@ function LineChart({ values, series, selectedSeries, onSelectSeries }) {
       options: {
         responsive: true,
         maintainAspectRatio: false,
-        interaction: { mode: 'nearest', intersect: true },
+        interaction: { mode: 'index', intersect: false, axis: 'x' },
         layout: { padding: { top: 20, right: 20, bottom: 4 } },
         plugins: {
           legend: { display: false },
           tooltip: {
             enabled: false,
             external({ chart, tooltip }) {
-              const point = tooltip.dataPoints?.[0]
-              if (!point || tooltip.opacity === 0) {
+              const points = tooltip.dataPoints || []
+              if (!points.length || tooltip.opacity === 0) {
                 setHover(null)
                 return
               }
@@ -176,10 +176,13 @@ function LineChart({ values, series, selectedSeries, onSelectSeries }) {
               const anchorX = bounds.left + tooltip.caretX * (bounds.width / chart.width)
               const anchorY = bounds.top + tooltip.caretY * (bounds.height / chart.height)
               const width = 230
-              const height = 70
+              const height = 44 + points.length * 28
               setHover({
-                title: `${point.dataset.label === 'TOTAL' ? 'TOTAL' : point.dataset.label} · ${point.label}`,
-                detail: `${formatCount(point.parsed.y)} order(s)`,
+                title: points[0].label,
+                rows: points.map((point) => ({
+                  name: point.dataset.label,
+                  value: formatCount(point.parsed.y),
+                })),
                 left: anchorX + width + 24 <= window.innerWidth ? anchorX + 12 : Math.max(12, anchorX - width - 12),
                 top: Math.max(12, Math.min(anchorY - height / 2, window.innerHeight - height - 12)),
               })
@@ -200,8 +203,9 @@ function LineChart({ values, series, selectedSeries, onSelectSeries }) {
             ticks: { color: '#64748b', precision: 0, maxTicksLimit: 6, font: { size: 12 }, callback: (value) => new Intl.NumberFormat('en', { notation: 'compact' }).format(value) },
           },
         },
-        onClick(_event, elements) {
-          const index = elements?.[0]?.datasetIndex
+        onClick(event, _elements, chart) {
+          const nearest = chart.getElementsAtEventForMode(event, 'nearest', { intersect: true }, true)
+          const index = nearest?.[0]?.datasetIndex
           if (Number.isInteger(index)) onSelectSeries(series[index])
         },
       },
@@ -211,9 +215,16 @@ function LineChart({ values, series, selectedSeries, onSelectSeries }) {
   }, [onSelectSeries, selectedSeries, series, values])
 
   return (
-    <div className={styles.barChart}>
+    <div className={styles.barChart} onMouseLeave={() => setHover(null)}>
       <canvas ref={canvasRef} role="img" aria-label={`Order quantity trend by ${series.join(', ')}. Total ${formatCount(values.reduce((sum, item) => sum + item.TOTAL, 0))} orders.`} />
-      {hover && typeof document !== 'undefined' ? createPortal(<div className={styles.returnChartTooltip} style={{ left: hover.left, top: hover.top }} role="tooltip"><strong>{hover.title}</strong><span>{hover.detail}</span></div>, document.body) : null}
+      {hover && typeof document !== 'undefined' ? createPortal(
+        <div className={`${styles.returnChartTooltip} ${styles.summaryChartTooltip}`} style={{ left: hover.left, top: hover.top }} role="tooltip">
+          <strong>{hover.title}</strong>
+          {hover.rows.map((row) => <div className={styles.summaryChartTooltipRow} key={row.name}>
+            <span><i style={{ backgroundColor: SERIES_COLORS[row.name] }} />{row.name === 'TOTAL' ? 'Total orders' : row.name}</span>
+            <b>{row.value}</b>
+          </div>)}
+        </div>, document.body) : null}
     </div>
   )
 }
@@ -508,7 +519,7 @@ export default function DeliverySummary({ lockedGroup: lockedGroupProp = '' }) {
           </section>
         </header>
 
-        {loading ? <div className={styles.summaryLoading}>Loading summary...</div> : null}
+        {loading ? <div className={styles.summaryLoading} role="status" aria-live="polite">Loading summary...</div> : null}
 
         <StatusMessage status={status} />
 
@@ -522,7 +533,7 @@ export default function DeliverySummary({ lockedGroup: lockedGroupProp = '' }) {
               <h3>{group}</h3>
               <strong>{loading ? '-' : current == null ? '-' : formatCount(current)}</strong>
               <p>{loading ? '-' : current == null ? '-' : `${formatCount(current)} / ${formatCount(target)} (${progress}%)`}</p>
-              <div className={styles.progressLabel}><b>PROGRESS</b><span>Remaining: {current == null ? '-' : formatCount(Math.max(0, target - current))}</span></div>
+              <div className={styles.progressLabel}><b>PROGRESS</b><span>Remaining: {loading || current == null ? '-' : formatCount(Math.max(0, target - current))}</span></div>
               <div className={styles.progressTrack}>
                 <span style={{ width: `${Math.min(100, progress)}%`, backgroundColor: getProgressColor(progress) }} />
               </div>
@@ -543,7 +554,7 @@ export default function DeliverySummary({ lockedGroup: lockedGroupProp = '' }) {
               ))}
             </div>
           </div>
-          <div className={styles.progressLabel}><b>{scanPhase} PROGRESS</b><span>Remaining: {formatCount(Math.max(0, totalTarget - totalScanned))}</span></div>
+          <div className={styles.progressLabel}><b>{scanPhase} PROGRESS</b><span>Remaining: {loading ? '-' : formatCount(Math.max(0, totalTarget - totalScanned))}</span></div>
           <div className={styles.progressTrack}>
             <span style={{ width: `${Math.min(100, totalProgress)}%`, backgroundColor: getProgressColor(totalProgress) }} />
           </div>
@@ -595,15 +606,15 @@ export default function DeliverySummary({ lockedGroup: lockedGroupProp = '' }) {
             <table>
               <thead><tr><th>Courier</th>{visibleGroups.map((group) => <th key={group}>{group}</th>)}<th>Total</th></tr></thead>
               <tbody>
-                {matrixRows.length ? matrixRows.map((row) => (
+                {!loading && matrixRows.length ? matrixRows.map((row) => (
                   <tr key={row.courier}>
                     <td><strong>{row.courier}</strong></td>
                     {visibleGroups.map((group) => <td key={group}>{formatCount(row[group])}</td>)}
                     <td><strong>{formatCount(row.total)}</strong></td>
                   </tr>
-                )) : <tr><td colSpan={visibleGroups.length + 2}><EmptyState /></td></tr>}
+                )) : <tr><td colSpan={visibleGroups.length + 2}>{loading ? 'Loading matrix...' : <EmptyState />}</td></tr>}
               </tbody>
-              {matrixRows.length ? (
+              {!loading && matrixRows.length ? (
                 <tfoot><tr><td><strong>TOTAL</strong></td>{visibleGroups.map((group) => <td key={group}><strong>{formatCount(matrixRows.reduce((sum, row) => sum + row[group], 0))}</strong></td>)}<td><strong>{formatCount(matrixRows.reduce((sum, row) => sum + row.total, 0))}</strong></td></tr></tfoot>
               ) : null}
             </table>
@@ -612,7 +623,7 @@ export default function DeliverySummary({ lockedGroup: lockedGroupProp = '' }) {
 
         <article className={`${styles.dataCard} ${styles.compositionCard}`}>
           <div className={styles.cardTitleRow}><h2>COURIER COMPOSITION</h2><span className={styles.infoPill}>By Courier</span></div>
-          {couriers.length ? <CourierComposition values={couriers} /> : <EmptyState />}
+          {loading ? <div className={styles.summaryLoading}>Loading courier composition...</div> : couriers.length ? <CourierComposition values={couriers} /> : <EmptyState />}
         </article>
 
         <article className={`${styles.dataCard} ${styles.fullWidth}`}>
@@ -634,7 +645,7 @@ export default function DeliverySummary({ lockedGroup: lockedGroupProp = '' }) {
               </div>
             </div>
           </div>
-          {chartValues.length && chartSeries.length ? <LineChart values={chartValues} series={chartSeries} selectedSeries={highlightedSeries} onSelectSeries={selectChartSeries} /> : <EmptyState />}
+          {loading ? <div className={styles.summaryLoading}>Loading order chart...</div> : chartValues.length && chartSeries.length ? <LineChart values={chartValues} series={chartSeries} selectedSeries={highlightedSeries} onSelectSeries={selectChartSeries} /> : <EmptyState />}
           <div className={styles.chartLegend} role="group" aria-label="Highlight chart series">{chartSeries.map((name) => <button type="button" key={name} aria-pressed={highlightedSeries === name} onClick={() => selectChartSeries(name)} className={highlightedSeries && highlightedSeries !== name ? styles.chartLegendMuted : ''}><i style={{ backgroundColor: SERIES_COLORS[name] }} />{name === 'TOTAL' ? 'Total orders' : name}</button>)}</div>
         </article>
         </section>

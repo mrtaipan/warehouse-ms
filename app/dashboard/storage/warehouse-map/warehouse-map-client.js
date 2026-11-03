@@ -1387,6 +1387,92 @@ function getHistorySubLocationKey(row, storageEntryById) {
   return getSubLocationKeyFromValue(row.take_from) || UNASSIGNED_SUBLOCATION_KEY
 }
 
+function RegistryTypeaheadField({ id, label, name, value, options, onChange, onSelect, placeholder, required, pattern, title, emptyText, wide = false }) {
+  const [isOpen, setIsOpen] = useState(false)
+  const [activeIndex, setActiveIndex] = useState(-1)
+  const query = String(value || '').trim().toUpperCase()
+  const filteredOptions = options.filter((option) => option.toUpperCase().includes(query)).slice(0, 80)
+
+  function selectOption(option) {
+    onSelect(option)
+    setIsOpen(false)
+    setActiveIndex(-1)
+  }
+
+  function handleKeyDown(event) {
+    if (event.key === 'Escape') {
+      setIsOpen(false)
+      setActiveIndex(-1)
+    } else if (event.key === 'ArrowDown' && filteredOptions.length) {
+      event.preventDefault()
+      setIsOpen(true)
+      setActiveIndex((index) => Math.min(index + 1, filteredOptions.length - 1))
+    } else if (event.key === 'ArrowUp' && filteredOptions.length) {
+      event.preventDefault()
+      setIsOpen(true)
+      setActiveIndex((index) => Math.max(index - 1, 0))
+    } else if (event.key === 'Enter' && isOpen && activeIndex >= 0 && filteredOptions[activeIndex]) {
+      event.preventDefault()
+      selectOption(filteredOptions[activeIndex])
+    }
+  }
+
+  return (
+    <div className={styles.registryField}>
+      <label className={styles.registryTypeaheadLabel} htmlFor={id}>{label}</label>
+      <div
+        className={styles.registryTypeaheadWrap}
+        onBlur={(event) => {
+          if (!event.currentTarget.contains(event.relatedTarget)) setIsOpen(false)
+        }}
+      >
+        <input
+          id={id}
+          name={name}
+          value={value}
+          onChange={(event) => {
+            onChange(event)
+            setIsOpen(true)
+            setActiveIndex(-1)
+          }}
+          onFocus={() => setIsOpen(true)}
+          onClick={() => setIsOpen(true)}
+          onKeyDown={handleKeyDown}
+          placeholder={placeholder}
+          autoComplete="off"
+          role="combobox"
+          aria-autocomplete="list"
+          aria-expanded={isOpen}
+          aria-controls={`${id}-options`}
+          required={required}
+          pattern={pattern}
+          title={title}
+        />
+        {isOpen ? (
+          <div id={`${id}-options`} className={`${styles.registryTypeaheadMenu} ${wide ? styles.registryTypeaheadMenuWide : ''}`.trim()} role="listbox">
+            {filteredOptions.length ? filteredOptions.map((option, index) => (
+              <button
+                key={option}
+                type="button"
+                role="option"
+                aria-selected={index === activeIndex}
+                className={`${styles.registryTypeaheadOption} ${index === activeIndex ? styles.registryTypeaheadOptionActive : ''}`.trim()}
+                onPointerDown={(event) => {
+                  event.preventDefault()
+                  selectOption(option)
+                }}
+                onClick={() => selectOption(option)}
+              >
+                {option}
+              </button>
+            )) : <p className={styles.registryTypeaheadEmpty}>{emptyText}</p>}
+          </div>
+        ) : null}
+      </div>
+    </div>
+  )
+}
+
 function matchesHistoryRow(row, options) {
   const {
     selectedWarehouseKey,
@@ -2007,7 +2093,7 @@ export default function WarehouseMapClient({ canEditMap = false, canUseRegistry 
     const codes = new Set()
 
     rackLocations.forEach((location) => {
-      if (!matchesWarehouse(location, warehouse.key)) {
+      if (getStorageType(location.location_type) !== 'PALLET' || !matchesWarehouse(location, warehouse.key)) {
         return
       }
 
@@ -2552,6 +2638,12 @@ export default function WarehouseMapClient({ canEditMap = false, canUseRegistry 
             ? normalizeSizeValue(value)
             : value,
     }))
+  }
+
+  function handleRegistryArklineProductSelect(label) {
+    const product = arklineProducts.find((item) => item.label === label)
+    if (!product) return
+    setRegistryForm((prev) => ({ ...prev, itemName: product.label, skuId: product.sku }))
   }
 
   async function handleRegistrySubmit(event) {
@@ -3236,24 +3328,26 @@ export default function WarehouseMapClient({ canEditMap = false, canUseRegistry 
                     </label>
                   </div>
 
-                  <label className={styles.registryField}>
-                    <span>Item Name</span>
-                    <input
+                  {selectedRegistryIsArkline ? (
+                    <RegistryTypeaheadField
+                      id="warehouse-map-shelving-arkline-products"
+                      label="Item Name"
                       name="itemName"
                       value={registryForm.itemName}
+                      options={arklineProducts.map((product) => product.label)}
                       onChange={handleRegistryInputChange}
-                      placeholder={selectedRegistryIsArkline ? 'TYPE SKU OR PRODUCT' : 'ITEM NAME'}
-                      list={selectedRegistryIsArkline ? 'warehouse-map-shelving-arkline-products' : undefined}
+                      onSelect={handleRegistryArklineProductSelect}
+                      placeholder="Type or select ARKLINE product"
+                      emptyText="No active ARKLINE product found."
                       required
+                      wide
                     />
-                    {selectedRegistryIsArkline ? (
-                      <datalist id="warehouse-map-shelving-arkline-products">
-                        {arklineProducts.map((product) => (
-                          <option key={product.sku} value={product.label} />
-                        ))}
-                      </datalist>
-                    ) : null}
-                  </label>
+                  ) : (
+                    <label className={styles.registryField}>
+                      <span>Item Name</span>
+                      <input name="itemName" value={registryForm.itemName} onChange={handleRegistryInputChange} placeholder="ITEM NAME" required />
+                    </label>
+                  )}
 
                   <label className={styles.registryField}>
                     <span>SKU</span>
@@ -3267,24 +3361,27 @@ export default function WarehouseMapClient({ canEditMap = false, canUseRegistry 
                   </label>
 
                   <div className={styles.registryGrid}>
-                    <label className={styles.registryField}>
-                      <span>Size</span>
-                      <input
+                    {selectedRegistryIsArkline ? (
+                      <RegistryTypeaheadField
+                        id="warehouse-map-shelving-arkline-sizes"
+                        label="Size"
                         name="size"
                         value={registryForm.size}
+                        options={ARKLINE_REGISTRY_SIZES}
                         onChange={handleRegistryInputChange}
-                        placeholder="SIZE"
-                        list={selectedRegistryIsArkline ? 'warehouse-map-arkline-sizes' : undefined}
-                        pattern={selectedRegistryIsArkline ? '(XS|S|M|L|XL|XXL)' : undefined}
-                        title={selectedRegistryIsArkline ? 'Choose XS, S, M, L, XL, or XXL' : undefined}
-                        required={selectedRegistryIsArkline}
+                        onSelect={(size) => setRegistryForm((prev) => ({ ...prev, size }))}
+                        placeholder="Type or select size"
+                        emptyText="No matching size."
+                        pattern="(XS|S|M|L|XL|XXL)"
+                        title="Choose XS, S, M, L, XL, or XXL"
+                        required
                       />
-                      {selectedRegistryIsArkline ? (
-                        <datalist id="warehouse-map-arkline-sizes">
-                          {ARKLINE_REGISTRY_SIZES.map((size) => <option key={size} value={size} />)}
-                        </datalist>
-                      ) : null}
-                    </label>
+                    ) : (
+                      <label className={styles.registryField}>
+                        <span>Size</span>
+                        <input name="size" value={registryForm.size} onChange={handleRegistryInputChange} placeholder="SIZE" />
+                      </label>
+                    )}
                     <label className={styles.registryField}>
                       <span>Selected Location</span>
                       <input
@@ -3548,34 +3645,26 @@ export default function WarehouseMapClient({ canEditMap = false, canUseRegistry 
                           </label>
                         </div>
 
-                        <label className={styles.registryField}>
-                          <span>Item Name</span>
-                          {selectedZoneUsesDirectLocation ? (
-                            <>
-                              <input
-                                name="itemName"
-                                value={registryForm.itemName}
-                                onChange={handleRegistryInputChange}
-                                placeholder="TYPE SKU OR PRODUCT"
-                                list="warehouse-map-arkline-products"
-                                required
-                              />
-                              <datalist id="warehouse-map-arkline-products">
-                                {arklineProducts.map((product) => (
-                                  <option key={product.sku} value={product.label} />
-                                ))}
-                              </datalist>
-                            </>
-                          ) : (
-                            <input
-                              name="itemName"
-                              value={registryForm.itemName}
-                              onChange={handleRegistryInputChange}
-                              placeholder="ITEM NAME"
-                              required
-                            />
-                          )}
-                        </label>
+                        {selectedZoneUsesDirectLocation ? (
+                          <RegistryTypeaheadField
+                            id="warehouse-map-pallet-arkline-products"
+                            label="Item Name"
+                            name="itemName"
+                            value={registryForm.itemName}
+                            options={arklineProducts.map((product) => product.label)}
+                            onChange={handleRegistryInputChange}
+                            onSelect={handleRegistryArklineProductSelect}
+                            placeholder="Type or select ARKLINE product"
+                            emptyText="No active ARKLINE product found."
+                            required
+                            wide
+                          />
+                        ) : (
+                          <label className={styles.registryField}>
+                            <span>Item Name</span>
+                            <input name="itemName" value={registryForm.itemName} onChange={handleRegistryInputChange} placeholder="ITEM NAME" required />
+                          </label>
+                        )}
 
                         <label className={styles.registryField}>
                           <span>SKU</span>
@@ -3589,24 +3678,27 @@ export default function WarehouseMapClient({ canEditMap = false, canUseRegistry 
                         </label>
 
                         <div className={styles.registryGrid}>
-                          <label className={styles.registryField}>
-                            <span>Size</span>
-                            <input
+                          {selectedRegistryIsArkline ? (
+                            <RegistryTypeaheadField
+                              id="warehouse-map-pallet-arkline-sizes"
+                              label="Size"
                               name="size"
                               value={registryForm.size}
+                              options={ARKLINE_REGISTRY_SIZES}
                               onChange={handleRegistryInputChange}
-                              placeholder="SIZE"
-                              list={selectedRegistryIsArkline ? 'warehouse-map-arkline-sizes' : undefined}
-                              pattern={selectedRegistryIsArkline ? '(XS|S|M|L|XL|XXL)' : undefined}
-                              title={selectedRegistryIsArkline ? 'Choose XS, S, M, L, XL, or XXL' : undefined}
-                              required={selectedRegistryIsArkline}
+                              onSelect={(size) => setRegistryForm((prev) => ({ ...prev, size }))}
+                              placeholder="Type or select size"
+                              emptyText="No matching size."
+                              pattern="(XS|S|M|L|XL|XXL)"
+                              title="Choose XS, S, M, L, XL, or XXL"
+                              required
                             />
-                            {selectedRegistryIsArkline ? (
-                              <datalist id="warehouse-map-arkline-sizes">
-                                {ARKLINE_REGISTRY_SIZES.map((size) => <option key={size} value={size} />)}
-                              </datalist>
-                            ) : null}
-                          </label>
+                          ) : (
+                            <label className={styles.registryField}>
+                              <span>Size</span>
+                              <input name="size" value={registryForm.size} onChange={handleRegistryInputChange} placeholder="SIZE" />
+                            </label>
+                          )}
 
                           <label className={styles.registryField}>
                             <span>Selected Slot</span>

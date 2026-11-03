@@ -5,6 +5,7 @@ export function normalizeCatalogIdentityValue(value) {
 function addCandidate(map, key, value) {
   if (!key) return
   const current = map.get(key) || []
+  if (current.some((candidate) => Number(candidate.id) === Number(value.id))) return
   current.push(value)
   map.set(key, current)
 }
@@ -125,12 +126,38 @@ export function resolveProductCatalogIdentity(item = {}, catalogLookup = null) {
     }
   }
 
+  // An explicit ID must never be replaced by a same-name catalog candidate.
+  if (existingVariantId) {
+    return {
+      model: catalogLookup.modelById.get(existingModelId) || null,
+      variant: null,
+      product_model_id: existingModelId,
+      product_model_variant_id: existingVariantId,
+      source_variant_code: fallbackSourceVariantCode,
+    }
+  }
+
+  const sourceCode = normalizeCatalogIdentityValue(fallbackSourceVariantCode)
+  const codeCandidates = sourceCode
+    ? Array.from(catalogLookup.variantById.values()).filter((variant) => normalizeCatalogIdentityValue(variant.variant_code) === sourceCode)
+    : []
+  if (codeCandidates.length === 1) {
+    const variant = codeCandidates[0]
+    return {
+      model: catalogLookup.modelById.get(Number(variant.product_model_id)) || null,
+      variant,
+      product_model_id: Number(variant.product_model_id),
+      product_model_variant_id: Number(variant.id),
+      source_variant_code: variant.variant_code,
+    }
+  }
+
   const modelName = normalizeCatalogIdentityValue(item.model_name)
   const variantValue = getItemVariantValue(item)
   const brandId = Number(item.brand_id || 0)
   const categoryId = Number(item.category_id || 0)
   const existingModel = existingModelId ? catalogLookup.modelById.get(existingModelId) || null : null
-  let model = existingModel && modelMatchesItem(existingModel, item) ? existingModel : null
+  let model = existingModel
 
   if (!model && modelName && brandId && categoryId) {
     model = getUniqueCandidate(

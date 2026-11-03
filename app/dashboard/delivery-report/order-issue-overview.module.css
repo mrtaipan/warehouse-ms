@@ -1,0 +1,102 @@
+.overview {
+  --chart-accent: #3366d6;
+  --overview-ink: #192738;
+  --overview-muted: #68778b;
+  --overview-border: #e5eaf0;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 16px;
+  container-type: inline-size;
+  font-variant-numeric: tabular-nums;
+}
+.card { min-width: 0; display: flex; flex-direction: column; padding: 24px; border: 1px solid var(--overview-border); border-radius: 20px; background: #fff; box-shadow: 0 2px 4px #19273804; color: var(--overview-ink); }
+.attentionCard { --chart-accent: #be821b; }
+.volumeCard { --chart-accent: #91b5ff; --overview-ink: #f7f9fd; --overview-muted: #afbdd1; --overview-border: #32445e; background: #172942; border-color: #172942; }
+.cardHeader { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 24px; }
+.cardHeader h3 { margin: 0; font-size: 18px; font-weight: 650; line-height: 1.3; letter-spacing: -.025em; }
+.metricIcon { display: grid; place-items: center; width: 36px; height: 36px; flex: 0 0 36px; border: 1px solid #e9eef6; border-radius: 10px; background: #f6f8fc; color: var(--chart-accent); }
+.metricIcon svg { width: 20px; height: 20px; }
+.attentionCard .metricIcon { background: #fffbf2; border-color: #f4ead6; }
+.volumeCard .metricIcon { background: #223a59; border-color: #354d6b; }
+.metric { display: flex; align-items: baseline; gap: 6px; min-height: 52px; }
+.metric strong { min-width: 0; font-size: clamp(32px, 3cqi, 48px); font-weight: 650; line-height: 1.05; letter-spacing: -.055em; overflow-wrap: anywhere; }
+.moneyMetric strong { font-size: clamp(28px, 2.5cqi, 42px); }
+.currency { align-self: flex-start; margin-top: 5px; font-size: 17px; font-weight: 500; color: var(--overview-muted); }
+.metricContext { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; min-height: 40px; margin-top: 4px; }
+.metricContext p { margin: 0; font-size: 13px; color: var(--overview-muted); line-height: 1.4; }
+.contextBadge { padding: 4px 8px; border-radius: 6px; background: #fff5df; color: #8b5c0f; font-size: 11px; font-weight: 600; white-space: nowrap; }
+.chart { margin: 24px 0; }
+.chartCaption, .breakdownHeading, .rankingHeader { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; font-weight: 500; color: var(--overview-muted); }
+.chartCaption > :last-child { color: #8390a2; font-size: 11px; }
+.chartBody { display: grid; grid-template-columns: 36px minmax(0, 1fr); margin-top: 8px; }
+.yAxis { display: flex; flex-direction: column; justify-content: space-between; height: 144px; padding: 10px 6px 2px 0; color: #8995a5; font-size: 11px; }
+.plotColumn { min-width: 0; }
+.plot { position: relative; height: 144px; touch-action: pan-y; border-radius: 4px; }
+.plot svg { display: block; width: 100%; height: 144px; overflow: visible; }
+.gridline { stroke: #e8edf3; stroke-width: 1; stroke-dasharray: 3 4; vector-effect: non-scaling-stroke; }
+.trendLine { stroke: var(--chart-accent); fill: none; stroke-width: 2.5; stroke-linejoin: round; stroke-linecap: round; vector-effect: non-scaling-stroke; }
+.dataPoint, .activePoint { fill: #fff; stroke: var(--chart-accent); stroke-width: 2; vector-effect: non-scaling-stroke; }
+.activePoint { stroke-width: 2.5; }
+.barTrack { fill: #f4f6f9; }
+.comparisonBar { fill: var(--chart-accent); transition: opacity .15s; }
+.crosshair { stroke: var(--chart-accent); stroke-width: 1; stroke-dasharray: 3 4; opacity: .4; vector-effect: non-scaling-stroke; }
+.xAxis { position: relative; height: 24px; margin-top: 4px; color: #8995a5; font-size: 11px; }
+.xAxis span { position: absolute; transform: translateX(-50%); white-space: nowrap; }
+.tooltip { position: absolute; z-index: 4; top: -12px; transform: translateX(-50%); display: grid; gap: 6px; width: max-content; max-width: 100%; padding: 12px 16px; border: 1px solid #dce3ec; border-radius: 10px; background: #fff; box-shadow: 0 6px 24px #19273812; pointer-events: none; font-size: 12px; }
+.tooltip span { color: #68778b; }
+.tooltip strong { color: #192738; font-size: 14px; font-weight: 650; }
+.chartInsight { display: flex; align-items: center; gap: 6px; margin: 8px 0 0; min-height: 20px; font-size: 11px; color: var(--overview-muted); }
+.chartInsight b { color: var(--overview-ink); font-weight: 600; margin-left: 3px; }
+.chartInsight strong { margin-left: auto; font-size: 12px; font-weight: 600; color: var(--overview-ink); }
+.insightDot { width: 6px; height: 6px; flex: 0 0 6px; border-radius: 50%; background: var(--chart-accent); }
+.breakdown { margin-top: auto; padding-top: 16px; border-top: 1px solid var(--overview-border); }
+.breakdownHeading { margin-bottom: 8px; font-size: 11px; }
+.breakdownHeading > :last-child { display: inline-flex; align-items: center; gap: 4px; color: #8995a5; }
+.breakdownHeading svg { width: 12px; height: 12px; }
+.groupRow { display: grid; grid-template-columns: minmax(0, 1fr) auto 36px 14px; gap: 8px; align-items: center; width: 100%; min-height: 40px; padding: 8px 0; border: 0; border-radius: 6px; background: transparent; text-align: left; color: var(--overview-ink); transition: background .15s; }
+.groupRow:hover { background: #f5f8fc; }
+.groupName { display: inline-flex; align-items: center; gap: 8px; min-width: 0; font-size: 12px; font-weight: 600; }
+.groupName i { width: 6px; height: 6px; flex: 0 0 6px; border-radius: 50%; background: #94a3b8; }
+.groupName i[data-group="ARKLINE"] { background: #2563eb; }
+.groupName i[data-group="MOB"] { background: #16a34a; }
+.groupName i[data-group="OI"] { background: #f59e0b; }
+.groupValue { font-size: 12px; font-weight: 600; text-align: right; }
+.groupPercent { color: #8995a5; font-size: 11px; text-align: right; }
+.groupRow > svg, .rankButton > svg { width: 14px; height: 14px; color: #9aa6b5; }
+.orderComparison { grid-column: 1 / -1; margin-left: 14px; color: var(--overview-muted); font-size: 11px; font-weight: 400; }
+.rankingHeader { margin-top: 24px; margin-bottom: 16px; }
+.ranking { display: grid; gap: 8px; margin: 0 0 24px; padding: 0; list-style: none; }
+.rankButton { display: grid; grid-template-columns: 22px minmax(0, 1fr) 14px; gap: 8px; align-items: center; width: 100%; min-height: 52px; padding: 8px 0; border: 0; border-radius: 8px; background: transparent; text-align: left; color: var(--overview-ink); }
+.rankButton:hover { background: #f5f8fc; }
+.rankNumber { align-self: start; padding-top: 2px; font-size: 11px; color: #94a0b1; }
+.rankContent { min-width: 0; }
+.rankLabel { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 10px; font-size: 12px; line-height: 1.4; }
+.rankLabel > span { overflow-wrap: anywhere; }
+.rankLabel strong { flex: 0 0 auto; font-size: 13px; font-weight: 650; }
+.rankTrack { height: 6px; border-radius: 2px; background: #f0f3f7; overflow: hidden; }
+.rankTrack span { display: block; height: 100%; border-radius: inherit; background: #a8bde9; }
+.ranking li:first-child .rankTrack span { background: var(--chart-accent); }
+.ranking li:first-child .rankLabel { font-weight: 600; }
+.rankingFootnote { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: auto; padding-top: 16px; border-top: 1px solid var(--overview-border); color: var(--overview-muted); font-size: 11px; }
+.emptyChart { display: flex; flex: 1; min-height: 184px; align-items: center; justify-content: center; flex-direction: column; gap: 8px; padding: 24px 0; text-align: center; color: #94a3b8; }
+.emptyChart svg { width: 28px; height: 28px; }
+.emptyChart p { max-width: 220px; margin: 0; color: var(--overview-muted); font-size: 13px; line-height: 1.5; }
+.emptyChart span { color: #8995a5; font-size: 11px; }
+.volumeCard .chartCaption > :last-child,
+.volumeCard .yAxis,
+.volumeCard .xAxis,
+.volumeCard .groupPercent,
+.volumeCard .breakdownHeading > :last-child,
+.volumeCard .emptyChart span { color: #a3b4cc; }
+.volumeCard .gridline { stroke: #354a66; }
+.volumeCard .barTrack { fill: #233b58; }
+.volumeCard .dataPoint, .volumeCard .activePoint { fill: #172942; }
+.volumeCard .groupRow:hover { background: #223a59; }
+.volumeCard .groupName i[data-group="ARKLINE"] { background: #91b5ff; }
+.volumeCard .groupName i[data-group="MOB"] { background: #6fdba5; }
+.volumeCard .groupName i[data-group="OI"] { background: #f5c268; }
+.volumeCard .plot:focus-visible, .volumeCard button:focus-visible { outline-color: #91b5ff; }
+.overview button:focus-visible, .plot:focus-visible { outline: 2px solid #3366d6; outline-offset: 3px; }
+@media (max-width: 1200px) { .overview { grid-template-columns: repeat(2, minmax(0, 1fr)); } .metric strong { font-size: 44px; } .moneyMetric strong { font-size: 38px; } }
+@media (max-width: 640px) { .overview { grid-template-columns: minmax(0, 1fr); gap: 16px; } .card { padding: 24px; border-radius: 16px; } .cardHeader { margin-bottom: 16px; } .metric strong { font-size: 40px; } .moneyMetric strong { font-size: 34px; } .groupRow, .rankButton { min-height: 44px; } }
+@media (prefers-reduced-motion: reduce) { .overview * { transition: none; } }

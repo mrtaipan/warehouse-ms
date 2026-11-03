@@ -53,12 +53,20 @@ export default function RegularReQcWorkflow({ view = 'queue', summaryStyles = {}
   const [queueRows, setQueueRows] = useState([])
   const [tasks, setTasks] = useState([])
   const [resultRows, setResultRows] = useState([])
+  const [adjustmentRows, setAdjustmentRows] = useState([])
+  const adjustmentReady = true
   const [inspectors, setInspectors] = useState([])
   const [draftKolis, setDraftKolis] = useState([])
   const [allocation, setAllocation] = useState({})
   const [selectedProductKey, setSelectedProductKey] = useState('')
   const [selectedSizeKey, setSelectedSizeKey] = useState('')
   const [rejectModalId, setRejectModalId] = useState('')
+  const [confirmAModalOpen, setConfirmAModalOpen] = useState(false)
+  const [selectedReviewIds, setSelectedReviewIds] = useState([])
+  const [adjustResultId, setAdjustResultId] = useState('')
+  const [adjustGrade, setAdjustGrade] = useState('')
+  const [adjustQty, setAdjustQty] = useState('')
+  const [adjustNote, setAdjustNote] = useState('')
   const [rejectKoli, setRejectKoli] = useState('')
   const [rejectNote, setRejectNote] = useState('')
   const [selectedPrintKeys, setSelectedPrintKeys] = useState([])
@@ -74,7 +82,7 @@ export default function RegularReQcWorkflow({ view = 'queue', summaryStyles = {}
   const [success, setSuccess] = useState('')
 
   const loadData = useCallback(async () => {
-    const [queueResult, taskResult, resultResult, profileResult, roleResult, rejectResult, categoryResult, rejectStorageResult] = await Promise.all([
+    const [queueResult, taskResult, resultResult, profileResult, roleResult, rejectResult, categoryResult, rejectStorageResult, adjustmentResult] = await Promise.all([
       loadAllRows(() => {
         const query = supabase.from('reqc_queue').select('*').order('created_at', { ascending: false }).order('id')
         return view === 'queue' ? query.neq('status', 'CANCELLED') : query
@@ -86,6 +94,7 @@ export default function RegularReQcWorkflow({ view = 'queue', summaryStyles = {}
       view === 'results' ? loadAllRows(() => supabase.from('warehouse_reject_storage').select('id, koli_number').eq('status', 'DRAFT').like('koli_number', 'R-%').order('id')) : Promise.resolve({ data: [], error: null }),
       view === 'results' ? supabase.from('dir_categories').select('id, category_name, full_name') : Promise.resolve({ data: [], error: null }),
       view === 'results' ? loadAllRows(() => supabase.from('warehouse_reject_storage').select('id, reqc_result_id, koli_number, status').not('reqc_result_id', 'is', null).order('id')) : Promise.resolve({ data: [], error: null }),
+      view === 'results' ? loadAllRows(() => supabase.from('reqc_adjustments').select('*').order('created_at', { ascending: false }).order('id')) : Promise.resolve({ data: [], error: null }),
     ])
     const failure = queueResult.error || taskResult.error || resultResult.error || profileResult.error || roleResult.error || rejectResult.error || categoryResult.error || rejectStorageResult.error
     if (failure) {
@@ -101,6 +110,7 @@ export default function RegularReQcWorkflow({ view = 'queue', summaryStyles = {}
     setQueueRows(queueResult.data || [])
     setTasks(taskResult.data || [])
     setResultRows(resultResult.data || [])
+    setAdjustmentRows(adjustmentResult.data || [])
     setProfileRows(profileResult.data || [])
     setRejectStorageRows(rejectStorageResult.data || [])
     setInspectors((profileResult.data || []).filter((profile) =>
@@ -206,24 +216,58 @@ export default function RegularReQcWorkflow({ view = 'queue', summaryStyles = {}
     setBusyKey('')
   }
 
-  async function reviewResult(result) {
-    if (result.grade !== 'A' && !rejectNote.trim()) {
+  async function reviewSelected(action) {
+    const selected = pendingResults.filter((row) => selectedReviewIds.includes(row.id))
+    if (!selected.length || selected.some((row) => action === 'CONFIRM_A' ? row.grade !== 'A' : row.grade === 'A')) {
+      setError('Select pending results of the matching grade first.')
+      return
+    }
+    if (action === 'STORE_REJECT' && !rejectNote.trim()) {
       setError('Enter a reject note before storing Grade B/C.')
       return
     }
-    setBusyKey(`review-${result.id}`)
+    setBusyKey('review')
     setError('')
     setSuccess('')
     const { data: userResult } = await supabase.auth.getUser()
     const userEmail = userResult?.user?.email || null
-    const isGradeA = result.grade === 'A'
-    const { error: actionError } = isGradeA
-      ? await supabase.rpc('confirm_reqc_grade_a_to_storage', { p_result_id: result.id, p_confirmed_by: userEmail })
-      : await supabase.rpc('confirm_reqc_reject_to_storage_with_note', { p_result_id: result.id, p_koli_number: rejectKoli || null, p_reject_note: rejectNote.trim(), p_confirmed_by: userEmail })
+    const isGradeA = action === 'CONFIRM_A'
+    const { error: actionError } = await supabase.rpc('review_reqc_results', {
+      p_result_ids: selected.map((row) => row.id), p_action: action,
+      p_koli_number: isGradeA ? null : rejectKoli || null,
+      p_reject_note: isGradeA ? null : rejectNote.trim(), p_confirmed_by: userEmail,
+    })
     if (actionError) setError(actionError.message)
     else {
-      setSuccess(isGradeA ? 'Grade A is ready in Storage Queue.' : 'Grade B/C added to Rejection Storage.')
-      if (!isGradeA) setRejectModalId('')
+      setSuccess(isGradeA ? 'Grade A is ready in Shelving Queue.' : 'Grade B/C added to Rejection Storage.')
+      setSelectedReviewIds([])
+      setConfirmAModalOpen(false)
+      setRejectModalId('')
+      await loadData()
+    }
+    setBusyKey('')
+  }
+
+  async function submitAdjustment(event) {
+    event.preventDefault()
+    const result = pendingResults.find((row) => row.id === adjustResultId)
+    const qty = Number(adjustQty)
+    if (!result || !adjustGrade || adjustGrade === result.grade || !Number.isInteger(qty) || qty < 1 || qty > result.qty || !adjustNote.trim()) {
+      setError('Choose another grade, valid quantity, and a note.')
+      return
+    }
+    setBusyKey('adjust')
+    setError('')
+    const { data: userResult } = await supabase.auth.getUser()
+    const { error: actionError } = await supabase.rpc('adjust_reqc_result', {
+      p_result_id: result.id, p_to_grade: adjustGrade, p_qty: qty,
+      p_note: adjustNote.trim(), p_created_by: userResult?.user?.email || null,
+    })
+    if (actionError) setError(actionError.message)
+    else {
+      setAdjustResultId('')
+      setSelectedReviewIds([])
+      setSuccess('Re-QC grade adjusted.')
       await loadData()
     }
     setBusyKey('')
@@ -254,7 +298,10 @@ export default function RegularReQcWorkflow({ view = 'queue', summaryStyles = {}
     return groups
   }, new Map()).values()).sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }))
   const selectedDetail = summaryGroups.find((group) => group.key === detailKey)
-  const selectedRejectResult = pendingResults.find((result) => result.id === rejectModalId)
+  const selectedRejectResults = pendingResults.filter((result) => selectedReviewIds.includes(result.id) && result.grade !== 'A')
+  const selectedGradeAResults = pendingResults.filter((result) => selectedReviewIds.includes(result.id) && result.grade === 'A')
+  const selectedReviewKind = selectedGradeAResults.length ? 'A' : selectedRejectResults.length ? 'REJECT' : ''
+  const selectedAdjustResult = pendingResults.find((result) => result.id === adjustResultId)
   const printableGroups = summaryGroups.filter((group) => selectedPrintKeys.includes(group.key))
   const allVisibleSelected = summaryGroups.length > 0 && summaryGroups.every((group) => selectedPrintKeys.includes(group.key))
 
@@ -400,27 +447,30 @@ export default function RegularReQcWorkflow({ view = 'queue', summaryStyles = {}
                   <p style={{ ...summaryStyles.panelEyebrow, letterSpacing: 0 }}>Reguler Re-QC</p>
                   <h2 style={summaryStyles.sectionTitle}>{resultTab === 'arrangement' ? 'Arrangement' : 'Result Summary'}</h2>
                 </div>
-                {resultTab === 'summary' ? <button className={styles.primaryButton} type="button" onClick={printSelectedResults} disabled={!printableGroups.length} title="Print selected results">Print Selected</button> : null}
+                {resultTab === 'summary' ? <button className={styles.primaryButton} type="button" onClick={printSelectedResults} disabled={!printableGroups.length} title="Print selected results">Print Selected</button> : (
+                  <div className={styles.reviewActions}>
+                    <button className={styles.primaryButton} type="button" disabled={Boolean(busyKey) || !selectedReviewIds.length || selectedReviewIds.some((id) => pendingResults.find((row) => row.id === id)?.grade !== 'A')} onClick={() => { setError(''); setConfirmAModalOpen(true) }}>Confirm A</button>
+                    <button className={styles.primaryButton} type="button" disabled={Boolean(busyKey) || !selectedReviewIds.length || selectedReviewIds.some((id) => pendingResults.find((row) => row.id === id)?.grade === 'A')} onClick={() => { setRejectModalId('selected'); setRejectKoli(''); setRejectNote(''); setError('') }}>Store Reject</button>
+                  </div>
+                )}
               </div>
           {resultTab === 'arrangement' ? (
             <div className={styles.tableWrap}>
               <table className={styles.table}>
-                <thead><tr><th>SKU</th><th>Item</th><th>Size</th><th>Inspector</th><th>Grade</th><th className={styles.numeric}>Qty</th><th>Action</th></tr></thead>
+                <thead><tr><th className={styles.checkboxCell}></th><th>SKU</th><th>Item</th><th>Size</th><th>Inspector</th><th>Grade</th><th className={styles.numeric}>Qty</th>{adjustmentReady ? <th>Adjustment</th> : null}</tr></thead>
                 <tbody>{filteredPendingResults.map((row) => {
                   const queue = queueById.get(row.reqc_queue_id)
                   const task = tasks.find((item) => item.id === row.qc_item_id)
                   return <tr key={row.id}>
+                    <td className={styles.checkboxCell}><input type="checkbox" aria-label={`Select ${queue?.item_name || 'item'} Grade ${row.grade}`} checked={selectedReviewIds.includes(row.id)} disabled={Boolean(busyKey) || (Boolean(selectedReviewKind) && selectedReviewKind !== (row.grade === 'A' ? 'A' : 'REJECT'))} onChange={(event) => setSelectedReviewIds((current) => event.target.checked ? [...current, row.id] : current.filter((id) => id !== row.id))} /></td>
                     <td>{queue?.sku_id || queue?.source_variant_code || '—'}</td>
                     <td><strong>{queue?.item_name || 'Product'}</strong><small>{[queue?.brand_code, categoryById.get(Number(queue?.category_id))?.full_name || categoryById.get(Number(queue?.category_id))?.category_name].filter(Boolean).join(' · ')}</small></td>
                     <td>{queue?.size || '—'}</td><td>{inspectorName(task?.assigned_to)}</td>
                     <td><span className={`${styles.grade} ${row.grade === 'A' ? styles.gradeA : styles.gradeReject}`}>{row.grade}</span></td>
                     <td className={styles.numeric}>{formatQty(row.qty)}</td>
-                    <td><button className={styles.primaryButton} type="button" disabled={busyKey === `review-${row.id}`} onClick={() => {
-                      if (row.grade === 'A') reviewResult(row)
-                      else { setRejectModalId(row.id); setRejectKoli(''); setRejectNote(''); setError('') }
-                    }}>{row.grade === 'A' ? 'Confirm A' : 'Store Reject'}</button></td>
+                    {adjustmentReady ? <td><button className={styles.backLink} type="button" disabled={Boolean(busyKey)} onClick={() => { setAdjustResultId(row.id); setAdjustGrade(''); setAdjustQty(''); setAdjustNote(''); setError('') }}>Adjust</button></td> : null}
                   </tr>
-                })}{!filteredPendingResults.length ? <tr><td colSpan={7} className={styles.empty}>No Re-QC results are waiting for review.</td></tr> : null}</tbody>
+                })}{!filteredPendingResults.length ? <tr><td colSpan={adjustmentReady ? 8 : 7} className={styles.empty}>No Re-QC results are waiting for review.</td></tr> : null}</tbody>
               </table>
             </div>
           ) : (
@@ -448,18 +498,49 @@ export default function RegularReQcWorkflow({ view = 'queue', summaryStyles = {}
           </div>
         </section>
       ) : null}
-      {selectedRejectResult && typeof document !== 'undefined' ? createPortal(
+      {rejectModalId && selectedRejectResults.length > 0 && typeof document !== 'undefined' ? createPortal(
         <div className={styles.modalOverlay} onMouseDown={(event) => { if (event.target === event.currentTarget && !busyKey) setRejectModalId('') }}>
-          <form className={`${styles.detailModal} ${styles.rejectModal}`} role="dialog" aria-modal="true" aria-labelledby="reqc-reject-title" onSubmit={(event) => { event.preventDefault(); reviewResult(selectedRejectResult) }}>
+          <form className={`${styles.detailModal} ${styles.rejectModal} ${styles.reviewModal}`} role="dialog" aria-modal="true" aria-labelledby="reqc-reject-title" onSubmit={(event) => { event.preventDefault(); reviewSelected('STORE_REJECT') }}>
             <div className={styles.modalHeader}>
               <div><p className={styles.eyebrow}>Reguler Re-QC</p><h2 id="reqc-reject-title">Store Reject</h2></div>
               <button className={styles.closeButton} type="button" onClick={() => setRejectModalId('')} disabled={Boolean(busyKey)} aria-label="Close reject form">×</button>
             </div>
-            <p className={styles.rejectContext}>{queueById.get(selectedRejectResult.reqc_queue_id)?.item_name || 'Product'} · {queueById.get(selectedRejectResult.reqc_queue_id)?.size || 'No size'} · Grade {selectedRejectResult.grade} · {formatQty(selectedRejectResult.qty)} pcs</p>
+            <p className={styles.rejectContext}>{selectedRejectResults.length} result(s) · {formatQty(selectedRejectResults.reduce((sum, row) => sum + Number(row.qty || 0), 0))} pcs</p>
+            <div className={styles.tableWrap}><table className={styles.table}><thead><tr><th>SKU</th><th>Item</th><th>Size</th><th>Grade</th><th className={styles.numeric}>Qty</th></tr></thead><tbody>{selectedRejectResults.map((row) => {
+              const queue = queueById.get(row.reqc_queue_id)
+              return <tr key={row.id}><td>{queue?.sku_id || queue?.source_variant_code || '—'}</td><td>{queue?.item_name || 'Product'}</td><td>{queue?.size || '—'}</td><td>{row.grade}</td><td className={styles.numeric}>{formatQty(row.qty)}</td></tr>
+            })}</tbody></table></div>
             {error ? <p className={styles.messageError} role="alert">{error}</p> : null}
             <label className={styles.queueField}><span>Reject Koli</span><select className={styles.queueSelect} value={rejectKoli} onChange={(event) => setRejectKoli(event.target.value)}><option value="">New R-koli</option>{draftKolis.map((koli) => <option key={koli} value={koli}>{koli}</option>)}</select></label>
             <label className={styles.queueField}><span>Reject Note</span><textarea className={styles.rejectNote} value={rejectNote} onChange={(event) => setRejectNote(event.target.value)} placeholder="Describe the rejection" required /></label>
             <div className={styles.modalActions}><button className={styles.backLink} type="button" onClick={() => setRejectModalId('')} disabled={Boolean(busyKey)}>Cancel</button><button className={styles.primaryButton} type="submit" disabled={!rejectNote.trim() || Boolean(busyKey)}>{busyKey ? 'Saving...' : 'Store Reject'}</button></div>
+          </form>
+        </div>, document.body
+      ) : null}
+      {confirmAModalOpen && selectedGradeAResults.length > 0 && typeof document !== 'undefined' ? createPortal(
+        <div className={styles.modalOverlay} onMouseDown={(event) => { if (event.target === event.currentTarget && !busyKey) setConfirmAModalOpen(false) }}>
+          <div className={`${styles.detailModal} ${styles.reviewModal}`} role="dialog" aria-modal="true" aria-labelledby="reqc-confirm-a-title">
+            <div className={styles.modalHeader}><div><p className={styles.eyebrow}>Reguler Re-QC</p><h2 id="reqc-confirm-a-title">Confirm Grade A</h2></div><button className={styles.closeButton} type="button" onClick={() => setConfirmAModalOpen(false)} disabled={Boolean(busyKey)} aria-label="Close Grade A confirmation">×</button></div>
+            <p className={styles.rejectContext}>{selectedGradeAResults.length} result(s) · {formatQty(selectedGradeAResults.reduce((sum, row) => sum + Number(row.qty || 0), 0))} pcs to Shelving Queue</p>
+            {error ? <p className={styles.messageError} role="alert">{error}</p> : null}
+            <div className={styles.tableWrap}><table className={styles.table}><thead><tr><th>SKU</th><th>Item</th><th>Size</th><th>Group</th><th className={styles.numeric}>Qty</th></tr></thead><tbody>{selectedGradeAResults.map((row) => {
+              const queue = queueById.get(row.reqc_queue_id)
+              return <tr key={row.id}><td>{queue?.sku_id || queue?.source_variant_code || '—'}</td><td>{queue?.item_name || 'Product'}</td><td>{queue?.size || '—'}</td><td>{queue?.group_code || '—'}</td><td className={styles.numeric}>{formatQty(row.qty)}</td></tr>
+            })}</tbody></table></div>
+            <div className={styles.modalActions}><button className={styles.backLink} type="button" onClick={() => setConfirmAModalOpen(false)} disabled={Boolean(busyKey)}>Cancel</button><button className={styles.primaryButton} type="button" onClick={() => reviewSelected('CONFIRM_A')} disabled={Boolean(busyKey)}>{busyKey ? 'Confirming...' : 'Confirm A'}</button></div>
+          </div>
+        </div>, document.body
+      ) : null}
+      {adjustmentReady && selectedAdjustResult && typeof document !== 'undefined' ? createPortal(
+        <div className={styles.modalOverlay} onMouseDown={(event) => { if (event.target === event.currentTarget && !busyKey) setAdjustResultId('') }}>
+          <form className={`${styles.detailModal} ${styles.rejectModal}`} role="dialog" aria-modal="true" aria-labelledby="reqc-adjust-title" onSubmit={submitAdjustment}>
+            <div className={styles.modalHeader}><div><p className={styles.eyebrow}>Reguler Re-QC</p><h2 id="reqc-adjust-title">Adjust Grade</h2></div><button className={styles.closeButton} type="button" onClick={() => setAdjustResultId('')} disabled={Boolean(busyKey)} aria-label="Close adjustment">×</button></div>
+            <p className={styles.rejectContext}>Grade {selectedAdjustResult.grade} · {formatQty(selectedAdjustResult.qty)} pcs available</p>
+            {error ? <p className={styles.messageError} role="alert">{error}</p> : null}
+            <label className={styles.queueField}><span>Move to Grade</span><select className={styles.queueSelect} value={adjustGrade} onChange={(event) => setAdjustGrade(event.target.value)} required><option value="">Choose grade</option>{['A', 'B', 'C'].filter((grade) => grade !== selectedAdjustResult.grade).map((grade) => <option key={grade} value={grade}>Grade {grade}</option>)}</select></label>
+            <label className={styles.queueField}><span>Qty</span><input className={styles.queueSelect} type="number" min="1" max={selectedAdjustResult.qty} value={adjustQty} onChange={(event) => setAdjustQty(event.target.value)} required /></label>
+            <label className={styles.queueField}><span>Reason</span><textarea className={styles.rejectNote} value={adjustNote} onChange={(event) => setAdjustNote(event.target.value)} required /></label>
+            <div className={styles.modalActions}><button className={styles.backLink} type="button" onClick={() => setAdjustResultId('')} disabled={Boolean(busyKey)}>Cancel</button><button className={styles.primaryButton} type="submit" disabled={Boolean(busyKey)}>Save Adjustment</button></div>
           </form>
         </div>, document.body
       ) : null}
@@ -472,6 +553,7 @@ export default function RegularReQcWorkflow({ view = 'queue', summaryStyles = {}
               const task = tasks.find((item) => item.id === row.qc_item_id)
               return <tr key={row.id}><td>{queue?.size || '—'}</td><td>{inspectorName(task?.assigned_to)}</td><td>{row.grade}</td><td className={styles.numeric}>{formatQty(row.qty)}</td><td>{row.status === 'PENDING_REVIEW' ? 'Pending review' : row.status === 'STORAGE_QUEUE' ? 'Storage Queue' : row.status === 'STORED' ? 'Stored' : row.status === 'SHELVING_QUEUE' ? 'Shelving Queue (legacy)' : row.status === 'REJECTION_STORAGE' ? 'Reject Storage' : row.status}</td><td>{row.grade === 'A' ? row.status === 'SHELVING_QUEUE' ? 'Shelving Queue (legacy)' : 'Storage Queue' : 'Reject Storage'}</td><td>{row.grade === 'A' ? '—' : rejectKoliByResult.get(row.id) || 'Pending'}</td></tr>
             })}</tbody></table></div>
+            {adjustmentRows.some((row) => selectedDetail.rows.some((result) => result.qc_item_id === row.qc_item_id)) ? <div className={styles.tableWrap}><table className={styles.table}><thead><tr><th colSpan={5}>Adjustment History</th></tr><tr><th>From</th><th>To</th><th className={styles.numeric}>Qty</th><th>Reason</th><th>Created</th></tr></thead><tbody>{adjustmentRows.filter((row) => selectedDetail.rows.some((result) => result.qc_item_id === row.qc_item_id)).map((row) => <tr key={row.id}><td>{row.from_grade}</td><td>{row.to_grade}</td><td className={styles.numeric}>{formatQty(row.qty)}</td><td>{row.note}</td><td>{new Date(row.created_at).toLocaleString('en-GB', { timeZone: 'Asia/Jakarta' })}</td></tr>)}</tbody></table></div> : null}
           </div>
         </div>, document.body
       ) : null}

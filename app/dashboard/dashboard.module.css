@@ -807,6 +807,37 @@
   line-height: 1.6;
 }
 
+.birthdayClaimButton {
+  align-self: flex-start;
+  min-height: 36px;
+  margin-top: 8px;
+  padding: 0 16px;
+  border: 1px solid #0f172a;
+  border-radius: 999px;
+  background: #0f172a;
+  color: #ffffff;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.birthdayClaimButton:hover {
+  background: #1e293b;
+}
+
+.birthdayClaimButton:focus-visible {
+  outline: 3px solid #93c5fd;
+  outline-offset: 2px;
+}
+
+.birthdayClaimSuccess {
+  margin: 8px 0 0;
+  color: #166534;
+  font-size: 13px;
+  font-weight: 700;
+}
+
 .restockActionGroup {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));

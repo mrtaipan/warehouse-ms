@@ -517,7 +517,7 @@ export default function ArklineFinancialManagementPage({
     enabled: canView,
   })
 
-  const filteredRequests = useMemo(() => {
+  const searchableRequests = useMemo(() => {
     const keyword = search.trim().toUpperCase()
     const today = new Date()
     const paidWindowStart = new Date(today.getFullYear(), today.getMonth(), today.getDate())
@@ -541,22 +541,39 @@ export default function ArklineFinancialManagementPage({
           .toUpperCase()
           .includes(keyword)
 
-      const matchesStatus = statusFilter === 'ALL' ? true : item.status === statusFilter
-      const matchesRequester = requesterFilter === 'ALL' ? true : item.created_by === requesterFilter
       const filterDate = getRequestDateForFilter(item)
       const withinDefaultPaidWindow =
         !hrgaView ||
         item.status !== 'PAID' ||
         (filterDate ? filterDate >= paidWindowStart : false)
 
-      return matchesKeyword && matchesStatus && matchesRequester && withinDefaultPaidWindow
+      return matchesKeyword && withinDefaultPaidWindow
     })
-  }, [hrgaView, requests, requesterFilter, search, statusFilter])
+  }, [hrgaView, requests, search])
+
+  const filteredRequests = useMemo(
+    () => searchableRequests.filter((item) =>
+      (statusFilter === 'ALL' || item.status === statusFilter) &&
+      (requesterFilter === 'ALL' || item.created_by === requesterFilter)
+    ),
+    [searchableRequests, statusFilter, requesterFilter]
+  )
+
+  const statusOptions = useMemo(() => {
+    const available = new Set(
+      searchableRequests
+        .filter((item) => requesterFilter === 'ALL' || item.created_by === requesterFilter)
+        .map((item) => item.status)
+    )
+    if (statusFilter !== 'ALL') available.add(statusFilter)
+    return ['SUBMITTED', 'APPROVED', 'PAID'].filter((status) => available.has(status))
+  }, [searchableRequests, requesterFilter, statusFilter])
 
   const requesterOptions = useMemo(
     () =>
       Array.from(
-        requests.reduce((map, item) => {
+        searchableRequests.reduce((map, item) => {
+          if (statusFilter !== 'ALL' && item.status !== statusFilter) return map
           const requesterKey = String(item.created_by || '').trim().toLowerCase()
           if (!requesterKey) return map
           if (!map.has(requesterKey)) {
@@ -566,9 +583,17 @@ export default function ArklineFinancialManagementPage({
             })
           }
           return map
-        }, new Map()).values()
+        }, new Map(
+          requesterFilter === 'ALL' ? [] : requests
+            .filter((item) => item.created_by === requesterFilter)
+            .slice(0, 1)
+            .map((item) => [String(item.created_by || '').trim().toLowerCase(), {
+              value: item.created_by,
+              label: item.created_by_display_name || fallbackDisplayName(item.created_by),
+            }])
+        )).values()
       ).sort((left, right) => left.label.localeCompare(right.label, undefined, { sensitivity: 'base' })),
-    [requests]
+    [requests, searchableRequests, statusFilter, requesterFilter]
   )
 
   const selectableRequests = useMemo(
@@ -1206,9 +1231,9 @@ export default function ArklineFinancialManagementPage({
               <div className={styles.filterField}>
                 <select className={styles.select} value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
                   <option value="ALL">All Status</option>
-                  <option value="SUBMITTED">Submitted</option>
-                  <option value="APPROVED">Approved</option>
-                  <option value="PAID">Paid</option>
+                  {statusOptions.map((status) => (
+                    <option key={status} value={status}>{status.charAt(0) + status.slice(1).toLowerCase()}</option>
+                  ))}
                 </select>
               </div>
               <div className={styles.filterField}>
@@ -1263,9 +1288,9 @@ export default function ArklineFinancialManagementPage({
             <div className={styles.filterField}>
               <select className={styles.select} value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
                 <option value="ALL">All Status</option>
-                <option value="SUBMITTED">Submitted</option>
-                <option value="APPROVED">Approved</option>
-                <option value="PAID">Paid</option>
+                {statusOptions.map((status) => (
+                  <option key={status} value={status}>{status.charAt(0) + status.slice(1).toLowerCase()}</option>
+                ))}
               </select>
             </div>
             <div className={styles.filterField}>

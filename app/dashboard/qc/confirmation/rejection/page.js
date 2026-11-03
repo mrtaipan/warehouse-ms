@@ -8,6 +8,10 @@ import { getProfileByAuthenticatedUser } from '@/utils/user-profiles'
 import { ADMIN_EMAIL, hasPermission } from '@/utils/permissions'
 import { getRolePermissionCodes } from '@/utils/role-permissions'
 import { useRealtimeRefresh } from '@/utils/supabase/use-realtime-refresh'
+import { loadReturnKoliSequences, nextAvailableReturnKoliSequence } from '@/utils/return-koli-sequence.mjs'
+import { getQcProductGroupKey } from '@/utils/qc-product-identity.mjs'
+import { loadProductCatalog, withCurrentProductLabels } from '@/utils/product-catalog-display.mjs'
+import ProductVariantCode from '@/components/product-variant-code'
 
 const supabase = createClient()
 
@@ -910,23 +914,11 @@ const styles = {
 }
 
 function getSourceKey(item) {
-  const variantName = item.variant_name || item.model_color || ''
-
-  return `${Number(item.brand_id || 0)}::${Number(item.category_id || 0)}::${String(item.model_name || '').trim().toUpperCase()}::${String(
-    variantName
-  )
-    .trim()
-    .toUpperCase()}::${String(item.grade || '').trim().toUpperCase()}`
+  return `${getQcProductGroupKey(item)}::${String(item.grade || '').trim().toUpperCase()}`
 }
 
 function getSourceFamilyKey(item) {
-  const variantName = item.variant_name || item.model_color || ''
-
-  return `${Number(item.brand_id || 0)}::${Number(item.category_id || 0)}::${String(item.model_name || '').trim().toUpperCase()}::${String(
-    variantName
-  )
-    .trim()
-    .toUpperCase()}`
+  return getQcProductGroupKey(item)
 }
 
 function getModelLabel(item) {
@@ -1061,11 +1053,8 @@ function getSampleBreakdownCategoryLabel(item) {
 function getSourceVariantCode(item) {
   return (
     item?.product_model_variant?.variant_code ||
-    item?.product_model_variant?.variant_name ||
     item?.source_variant_code ||
     item?.variant_code ||
-    item?.variant_name ||
-    item?.model_color ||
     null
   )
 }
@@ -1073,10 +1062,8 @@ function getSourceVariantCode(item) {
 function getSampleSourceVariantCode(item) {
   return (
     item?.sample_breakdown?.product_model_variant?.variant_code ||
-    item?.sample_breakdown?.product_model_variant?.variant_name ||
     item?.sample_breakdown?.source_variant_code ||
     item?.sample_breakdown?.variant_code ||
-    item?.sample_breakdown?.variant_name ||
     null
   )
 }
@@ -1187,6 +1174,8 @@ export default function QcConfirmationRejectionPage() {
               id,
               brand_id,
               category_id,
+              product_model_id,
+              product_model_variant_id,
               model_name,
               variant_name,
               is_sample,
@@ -1323,11 +1312,18 @@ export default function QcConfirmationRejectionPage() {
       nextPicName = getDisplayName(authData.user, profileRow)
     }
 
-    setQcItems((qcData || []).map(normalizeQcItemRow))
+    const { data: catalog, error: catalogError } = await loadProductCatalog(supabase)
+    if (catalogError) {
+      setError(catalogError.message)
+      if (!silent) setLoading(false)
+      return
+    }
+    const currentLabels = (row) => withCurrentProductLabels(row, catalog)
+    setQcItems((qcData || []).map(currentLabels).map(normalizeQcItemRow))
     setSampleBreakdownRows(sampleBreakdownData || [])
-    setQcSampleBreakdownRows(qcSampleData || [])
-    setConfirmRows((confirmData || []).map(normalizeConfirmRow))
-    setReturnRows((returnsData || []).map(normalizeReturnRow))
+    setQcSampleBreakdownRows((qcSampleData || []).map(currentLabels))
+    setConfirmRows((confirmData || []).map(currentLabels).map(normalizeConfirmRow))
+    setReturnRows((returnsData || []).map(currentLabels).map(normalizeReturnRow))
     setPicName(nextPicName)
     setSupportsConfirmSourceGrade(!sourceGradeSupportError)
     if (!silent) {
@@ -1466,6 +1462,8 @@ export default function QcConfirmationRejectionPage() {
         category_id: categoryId,
         model_name: modelName,
         model_color: modelColor,
+        product_model_variant_id: productModelVariantId,
+        source_variant_code: sourceVariantCode,
         grade,
       })
 
@@ -2071,17 +2069,18 @@ export default function QcConfirmationRejectionPage() {
       .select('koli_sequence')
       .eq('inbound_id', selectedInbound.id)
 
-    if (type === 'return') {
-      sequenceQuery = sequenceQuery.eq('source_phase', 'qc')
-    }
-
-    const { data, error: sequenceError } = await sequenceQuery
+    const { data, error: sequenceError } = type === 'return'
+      ? await loadReturnKoliSequences(() => supabase.from('warehouse_returns')
+        .select('koli_sequence').eq('inbound_id', selectedInbound.id).order('id'))
+      : await sequenceQuery
 
     if (sequenceError) {
       throw new Error(sequenceError.message)
     }
 
-    return (data || []).reduce((maxValue, item) => Math.max(maxValue, Number(item.koli_sequence || 0)), 0) + 1
+    return type === 'return'
+      ? nextAvailableReturnKoliSequence(data || [])
+      : (data || []).reduce((maxValue, item) => Math.max(maxValue, Number(item.koli_sequence || 0)), 0) + 1
   }
 
   async function handlePostTakeKoli(targetSelection = 'new') {
@@ -2249,7 +2248,7 @@ export default function QcConfirmationRejectionPage() {
                     <span style={styles.photoEmpty}>NO</span>
                   )}
                 </td>
-                <td style={styles.td}>{getModelLabel(item)}</td>
+                <td style={styles.td}>{getModelLabel(item)}<ProductVariantCode code={item.source_variant_code} /></td>
                 <td style={{ ...styles.td, ...styles.centerCell }}>
                   {type === 'take' && item.source_grade
                     ? `${item.source_grade} -> ${item.grade}`
@@ -2516,6 +2515,7 @@ export default function QcConfirmationRejectionPage() {
                       </td>
                       <td style={styles.td}>
                         <span style={styles.tableModelName}>{getModelLabel(row)}</span>
+                        <ProductVariantCode code={row.source_variant_code} />
                       </td>
                       <td style={{ ...styles.td, ...styles.centerCell }}>{row.grade}</td>
                       <td style={{ ...styles.td, ...styles.centerCell }}>{formatNumber(row.source_qty)}</td>
@@ -2729,6 +2729,7 @@ export default function QcConfirmationRejectionPage() {
                             )}
                             <span style={styles.modelPickerText}>
                               <span style={styles.modelPickerName}>{getModelLabel(item)}</span>
+                              <ProductVariantCode code={item.source_variant_code} />
                               <span style={styles.modelPickerMeta}>{item.brand_name || 'UNBRANDED'}</span>
                               <span style={styles.modelPickerMeta}>{item.category_name || 'UNCATEGORIZED'}</span>
                             </span>

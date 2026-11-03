@@ -453,6 +453,7 @@ export default async function QcReturReportPage({ searchParams }) {
           <ReturReportClient
             rows={rows || []}
             canAdd={canAdd}
+            canEdit={canEdit}
           />
         )}
       </ReturnReportShell>

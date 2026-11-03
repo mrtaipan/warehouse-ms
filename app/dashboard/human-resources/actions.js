@@ -7,6 +7,7 @@ import { createClient } from '@/utils/supabase/server'
 import { createHrgaRequestLinkPayload, verifyHrgaRequestLinkPayload } from '@/utils/hrga-request-link'
 import { ADMIN_EMAIL, canAccessPeopleManagement } from '@/utils/permissions'
 import { loadAccessContext } from '@/utils/access-control'
+import { getBirthdayClaimWindow } from '@/utils/birthday-reminders.mjs'
 
 async function getActorContext() {
   const supabase = await createClient()
@@ -31,42 +32,6 @@ async function getActorContext() {
 
 function getBirthdayDateValue(profile = {}) {
   return profile?.birthdate || null
-}
-
-function getBirthdayWindow(value) {
-  if (!value) return null
-
-  const parsed = new Date(value)
-  if (Number.isNaN(parsed.getTime())) return null
-
-  const now = new Date()
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
-  let birthday = new Date(today.getFullYear(), parsed.getMonth(), parsed.getDate())
-  let windowEnd = new Date(birthday)
-  windowEnd.setDate(windowEnd.getDate() + 7)
-
-  if (today < birthday) {
-    const previousBirthday = new Date(today.getFullYear() - 1, parsed.getMonth(), parsed.getDate())
-    const previousWindowEnd = new Date(previousBirthday)
-    previousWindowEnd.setDate(previousWindowEnd.getDate() + 7)
-    if (today <= previousWindowEnd) {
-      birthday = previousBirthday
-      windowEnd = previousWindowEnd
-    }
-  }
-
-  return {
-    birthday,
-    windowEnd,
-    isOpen: today >= birthday && today <= windowEnd,
-  }
-}
-
-function formatDateOnly(value) {
-  const year = value.getFullYear()
-  const month = String(value.getMonth() + 1).padStart(2, '0')
-  const day = String(value.getDate()).padStart(2, '0')
-  return `${year}-${month}-${day}`
 }
 
 function toDateOnlyValue(value) {
@@ -569,17 +534,17 @@ export async function submitBirthdayGiftRequest(formData) {
     throw new Error('Item name is required.')
   }
 
-  const birthdayWindow = getBirthdayWindow(getBirthdayDateValue(profile))
+  const birthdayWindow = getBirthdayClaimWindow(getBirthdayDateValue(profile))
   if (!birthdayWindow?.isOpen) {
-    throw new Error('Birthday gift claim is only available from your birthday until H+7.')
+    throw new Error('Birthday gift claim is only available from your birthday until H+14.')
   }
 
   const { data: existingRows, error: existingError } = await supabase
     .from('hrga_birthday_gift')
     .select('id')
     .eq('employee_authenticated_id', user.id)
-    .gte('request_date', formatDateOnly(birthdayWindow.birthday))
-    .lte('request_date', formatDateOnly(birthdayWindow.windowEnd))
+    .gte('request_date', birthdayWindow.birthday)
+    .lte('request_date', birthdayWindow.windowEnd)
     .limit(1)
 
   if (existingError) {
@@ -606,6 +571,7 @@ export async function submitBirthdayGiftRequest(formData) {
   }
 
   refreshHrgaPages()
+  revalidatePath('/dashboard')
 }
 
 export async function approveLeaveRequest(formData) {

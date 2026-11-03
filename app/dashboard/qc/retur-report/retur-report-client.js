@@ -4,6 +4,7 @@ import { useCallback, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/utils/supabase/browser'
 import reportStyles from './retur-report.module.css'
+import { loadReturnKoliSequences, nextAvailableReturnKoliSequence } from '@/utils/return-koli-sequence.mjs'
 
 function formatDateDisplay(value) {
   if (!value) return '-'
@@ -99,7 +100,7 @@ function cloneReturnPayload(row, qty, koliSequence = null) {
   }
 }
 
-export default function ReturReportClient({ rows, canAdd = false }) {
+export default function ReturReportClient({ rows, canAdd = false, canEdit = false }) {
   const router = useRouter()
   const supabase = createClient()
   const [selectedIds, setSelectedIds] = useState([])
@@ -108,6 +109,9 @@ export default function ReturReportClient({ rows, canAdd = false }) {
   const [shippingMethod, setShippingMethod] = useState('')
   const [modalError, setModalError] = useState('')
   const [isPrinting, setIsPrinting] = useState(false)
+  const [reverseTarget, setReverseTarget] = useState(null)
+  const [isReversing, setIsReversing] = useState(false)
+  const [reverseError, setReverseError] = useState('')
   const [paymentInfoOpen, setPaymentInfoOpen] = useState(false)
   const [printError, setPrintError] = useState('')
   const [printCardModeOpen, setPrintCardModeOpen] = useState(false)
@@ -286,6 +290,12 @@ export default function ReturReportClient({ rows, canAdd = false }) {
   const selectedInbound = selectedRows[0]?.inbound || null
   const paymentLabel = selectedInbound?.payment_on_site ? 'Paid by Receiver' : 'Paid by Us'
   const selectedRowsCompleted = selectedRows.length > 0 && selectedRows.every((row) => String(row.status || 'waiting').toLowerCase() === 'completed')
+  const selectedKoliKey = selectedRows.length === 0 ? '' : `${selectedRows[0].inbound_id}::${selectedRows[0].koli_sequence}`
+  const canReverseSelectedKoli = canEdit && Boolean(selectedKoliKey) && selectedRows.every((row) =>
+    hasKoliSequence(row) && `${row.inbound_id}::${row.koli_sequence}` === selectedKoliKey &&
+    String(row.status || 'waiting').toLowerCase() === 'waiting'
+  ) && arrangementRows.filter((row) => `${row.inbound_id}::${row.koli_sequence}` === selectedKoliKey)
+    .every((row) => String(row.status || 'waiting').toLowerCase() === 'waiting')
   const currentPreparationInboundId = currentReturnKoliItems[0]?.sourceRow?.inbound_id || null
   const preparationExistingKoliOptions = useMemo(
     () =>
@@ -374,6 +384,24 @@ export default function ReturReportClient({ rows, canAdd = false }) {
     }
 
     setSelectedIds(selectableRows.map((row) => row.id))
+  }
+
+  async function reverseSelectedKoli() {
+    if (!reverseTarget || isReversing) return
+    setIsReversing(true)
+    setReverseError('')
+    const { error: actionError } = await supabase.rpc('reverse_regular_return_koli', {
+      p_inbound_id: reverseTarget.inboundId,
+      p_koli_sequence: reverseTarget.koliSequence,
+    })
+    setIsReversing(false)
+    if (actionError) {
+      setReverseError(actionError.message)
+      return
+    }
+    setReverseTarget(null)
+    setSelectedIds([])
+    router.refresh()
   }
 
   function togglePreparationRow(id) {
@@ -590,10 +618,11 @@ export default function ReturReportClient({ rows, canAdd = false }) {
     let assignedKoliSequence = Number(preparationPostTarget.koliSequence || 0)
 
     if (preparationPostTarget.mode !== 'existing') {
-      const { data: latestRows, error: sequenceError } = await supabase
+      const { data: latestRows, error: sequenceError } = await loadReturnKoliSequences(() => supabase
         .from('warehouse_returns')
         .select('koli_sequence')
         .eq('inbound_id', inboundId)
+        .order('id'))
 
       if (sequenceError) {
         setPreparationError(sequenceError.message)
@@ -601,8 +630,7 @@ export default function ReturReportClient({ rows, canAdd = false }) {
         return
       }
 
-      assignedKoliSequence =
-        (latestRows || []).reduce((max, row) => Math.max(max, Number(row.koli_sequence || 0)), 0) + 1
+      assignedKoliSequence = nextAvailableReturnKoliSequence(latestRows || [])
     }
 
     for (const item of currentReturnKoliItems) {
@@ -1297,11 +1325,16 @@ export default function ReturReportClient({ rows, canAdd = false }) {
             <span>Selected Koli</span>
             <strong>{selectedReturnCardGroups.length}</strong>
           </div>
-          <button type="button" className={reportStyles.secondaryButton} onClick={openPrintCardModeModal} disabled={!selectedRows.length}>
-            Print Return Card
+          {canEdit ? <button type="button" className={`${reportStyles.primaryButton} ${reportStyles.regularPrintButton} ${reportStyles.regularReverseButton}`} disabled={!canReverseSelectedKoli || isReversing} onClick={() => {
+            const first = selectedRows[0]
+            setReverseError('')
+            setReverseTarget({ inboundId: first.inbound_id, koliSequence: Number(first.koli_sequence), grn: first.inbound?.grn_number || '-' })
+          }}>Reverse Koli</button> : null}
+          <button type="button" className={`${reportStyles.secondaryButton} ${reportStyles.regularPrintButton}`} onClick={openPrintCardModeModal} disabled={!selectedRows.length}>
+            Print Card
           </button>
-          <button type="button" className={reportStyles.primaryButton} onClick={openReturModal} disabled={!selectedRows.length || (!canAdd && !selectedRowsCompleted)}>
-            Return
+          <button type="button" className={`${reportStyles.primaryButton} ${reportStyles.regularPrintButton}`} onClick={openReturModal} disabled={!selectedRows.length || (!canAdd && !selectedRowsCompleted)}>
+            Print SJ
           </button>
         </div>
       </div>
@@ -1529,6 +1562,20 @@ export default function ReturReportClient({ rows, canAdd = false }) {
               <button type="button" style={styles.primaryButton} onClick={confirmMultiSupplier}>
                 Ya, Lanjutkan
               </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {reverseTarget ? (
+        <div style={styles.overlay}>
+          <div style={styles.confirmModal} role="dialog" aria-modal="true" aria-labelledby="reverse-return-title">
+            <h2 id="reverse-return-title" style={styles.modalTitle}>Reverse Koli {reverseTarget.koliSequence}?</h2>
+            <p style={styles.modalSubtitle}>All Waiting rows in {reverseTarget.grn} Koli {reverseTarget.koliSequence} will return to their source for allocation again. This cannot be used after the SJ is completed.</p>
+            {reverseError ? <p style={styles.errorText} role="alert">{reverseError}</p> : null}
+            <div style={styles.modalButtonRow}>
+              <button type="button" style={styles.secondaryButton} onClick={() => setReverseTarget(null)} disabled={isReversing}>Cancel</button>
+              <button type="button" style={styles.primaryButton} onClick={reverseSelectedKoli} disabled={isReversing}>{isReversing ? 'Reversing...' : 'Reverse Koli'}</button>
             </div>
           </div>
         </div>

@@ -8,6 +8,7 @@ import {
   getProductCatalogIdentityKey,
   resolveProductCatalogIdentity,
 } from '@/utils/catalog-identity'
+import { loadProductCatalog, withCurrentProductLabels } from '@/utils/product-catalog-display.mjs'
 import { createClient } from '@/utils/supabase/browser'
 import { ADMIN_EMAIL, hasPermission, resolveRole } from '@/utils/permissions'
 import { getRolePermissionCodes } from '@/utils/role-permissions'
@@ -1311,7 +1312,7 @@ function isTemporaryInboundModelRow(row = {}) {
 function buildPackingRows(confirmRows, catalogLookup = null) {
   const grouped = new Map()
 
-  ;(confirmRows || []).forEach((item) => {
+  ;(confirmRows || []).map((row) => withCurrentProductLabels(row, catalogLookup)).forEach((item) => {
     const catalogIdentity = resolveProductCatalogIdentity(item, catalogLookup)
     const key = getProductCatalogIdentityKey(item, catalogIdentity)
     const categoryName =
@@ -1561,8 +1562,7 @@ export default function PackingListReceivingPage() {
         { data: validationSummaryData, error: validationSummaryError },
         { data: breakdownData, error: breakdownError },
         { data: userProfileData, error: userProfileError },
-        { data: productModelData, error: productModelError },
-        { data: productModelVariantData, error: productModelVariantError },
+        { data: catalogData, error: catalogError },
       ] = await Promise.all([
         supabase
           .from('qc_confirm')
@@ -1604,44 +1604,28 @@ export default function PackingListReceivingPage() {
         supabase
           .from('dir_user_profiles')
           .select('email, display_name, role'),
-        supabase
-          .from('dir_product_models')
-          .select(`
-            *,
-            brands:dir_brands!brand_id (
-              brand_name
-            ),
-            categories:dir_categories!category_id (
-              category_name,
-              full_name
-            )
-          `)
-          .order('model_name', { ascending: true }),
-        supabase
-          .from('dir_product_model_variants')
-          .select('*')
-          .order('id', { ascending: true }),
+        loadProductCatalog(supabase),
       ])
 
-      if (confirmError || validationSummaryError || breakdownError || productModelError || productModelVariantError) {
+      if (confirmError || validationSummaryError || breakdownError || catalogError) {
         setError(
           confirmError?.message ||
             validationSummaryError?.message ||
             breakdownError?.message ||
-            productModelError?.message ||
-            productModelVariantError?.message ||
+            catalogError?.message ||
             'Failed to load packing list receiving.'
         )
         setLoading(false)
         return
       }
 
-      setConfirmRows(confirmData || [])
-      setValidationSummaryRows(validationSummaryData || [])
-      setBreakdownIdentityRows(breakdownData || [])
+      const currentLabels = (row) => withCurrentProductLabels(row, catalogData)
+      setConfirmRows((confirmData || []).map(currentLabels))
+      setValidationSummaryRows((validationSummaryData || []).map(currentLabels))
+      setBreakdownIdentityRows((breakdownData || []).map(currentLabels))
       setUserProfiles(userProfileError ? [] : userProfileData || [])
-      setProductModels(productModelData || [])
-      setProductModelVariants(productModelVariantData || [])
+      setProductModels(Array.from(catalogData.modelById.values()))
+      setProductModelVariants(Array.from(catalogData.variantById.values()))
       setLoading(false)
     }
 
@@ -1853,10 +1837,8 @@ export default function PackingListReceivingPage() {
         const photoUrl = key === sourceKey
           ? item.photo_url || catalogVariant?.variant_photo_url || ''
           : catalogVariant?.variant_photo_url || item.photo_url || ''
-        const modelName = key === sourceKey ? item.model_name || '' : catalogModel?.model_name || item.model_name || ''
-        const modelColor = key === sourceKey
-          ? item.model_color || ''
-          : getVariantDisplayName(catalogVariant) || item.model_color || ''
+        const modelName = catalogModel?.model_name || item.model_name || ''
+        const modelColor = getVariantDisplayName(catalogVariant) || item.model_color || ''
         const current = grouped.get(key) || {
           key,
           brand_name: brandName,

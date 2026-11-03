@@ -6,6 +6,9 @@ import { createClient } from '@/utils/supabase/browser'
 import { ADMIN_EMAIL } from '@/utils/permissions'
 import { useRealtimeRefresh } from '@/utils/supabase/use-realtime-refresh'
 import RegularReQcWorkflow from '@/components/regular-reqc-workflow'
+import { getQcProductGroupKey } from '@/utils/qc-product-identity.mjs'
+import { loadProductCatalog, withCurrentProductLabels } from '@/utils/product-catalog-display.mjs'
+import ProductVariantCode from '@/components/product-variant-code'
 
 const supabase = createClient()
 const QC_GRADE_OPTIONS = ['A', 'B', 'C']
@@ -1142,6 +1145,10 @@ function getTaskModelInfo(item) {
   }
 }
 
+function getRegularProductKey(item, brand, category) {
+  return getQcProductGroupKey({ ...item, brand_id: item.brand_id || brand, category_id: item.category_id || category })
+}
+
 function getRegularModelVariantLabel(item) {
   const taskModel = getTaskModelInfo(item)
   return [taskModel.model, taskModel.variant].map((value) => String(value || '').trim()).filter(Boolean).join(' - ')
@@ -1853,6 +1860,8 @@ export default function QcDashboardPage() {
             id,
             brand_id,
             category_id,
+            product_model_id,
+            product_model_variant_id,
             qty,
             is_sample,
             model_name,
@@ -1892,6 +1901,8 @@ export default function QcDashboardPage() {
         .select(`
           id,
           inbound_id,
+          product_model_variant_id,
+          source_variant_code,
           model_name,
           variant_name,
           photo_url,
@@ -1923,6 +1934,8 @@ export default function QcDashboardPage() {
         .select(`
           id,
           inbound_id,
+          product_model_variant_id,
+          source_variant_code,
           model_name,
           variant_name,
           qty,
@@ -2126,10 +2139,17 @@ export default function QcDashboardPage() {
         getDateOnly(item.qc_active_date) === today
     )
 
-    setQcItems((qcRows || []).map(normalizeQcItemRow))
+    const { data: catalog, error: catalogError } = await loadProductCatalog(supabase)
+    if (catalogError) {
+      setError(catalogError.message)
+      if (!silent) setLoading(false)
+      return
+    }
+    const currentLabels = (row) => withCurrentProductLabels(row, catalog)
+    setQcItems((qcRows || []).map(currentLabels).map(normalizeQcItemRow))
     setArklineQcItems(arklineRows || [])
-    setQcConfirmRows((confirmRows || []).map((row) => ({ ...row, model_color: row.variant_name || row.model_color || '' })))
-    setReturnRows((returnData || []).map((row) => ({ ...row, model_color: row.variant_name || row.model_color || '' })))
+    setQcConfirmRows((confirmRows || []).map(currentLabels))
+    setReturnRows((returnData || []).map(currentLabels))
     setQcMembers(eligibleMembers)
     setQcProfiles(allProfiles)
     setPauseLogs(pauseLogRows || [])
@@ -2140,8 +2160,8 @@ export default function QcDashboardPage() {
     setArklineRejectionStorageLines(storageLineRows || [])
     setArklinePoItemSizes(poItemSizeRows || [])
     setSupportsSampleSplit(!sampleBreakdownError && !qcSampleBreakdownError)
-    setSampleBreakdownRows(sampleBreakdownError ? [] : sampleBreakdownData || [])
-    setQcSampleBreakdownRows(qcSampleBreakdownError ? [] : qcSampleBreakdownData || [])
+    setSampleBreakdownRows(sampleBreakdownError ? [] : (sampleBreakdownData || []).map(currentLabels))
+    setQcSampleBreakdownRows(qcSampleBreakdownError ? [] : (qcSampleBreakdownData || []).map(currentLabels))
     if (!silent) setLoading(false)
   }, [today])
 
@@ -2548,15 +2568,17 @@ export default function QcDashboardPage() {
           const breakdown = split.sample_breakdown || {}
           const splitModel = breakdown.model_name || 'UNKNOWN MODEL'
           const splitVariant = breakdown.variant_name || ''
+          const splitIdentity = getRegularProductKey(breakdown, brand, category)
           const splitKey = shouldSeparateSampleSummary
-            ? `${brand}|||${category}|||${sampleSourceId}|||${splitModel}|||${splitVariant}|||split:${breakdown.id || split.sample_breakdown_id}`
-            : `${brand}|||${category}|||${splitModel}|||${splitVariant}`
+            ? `${sampleSourceId}|||${splitIdentity}|||split:${breakdown.id || split.sample_breakdown_id}`
+            : splitIdentity
           const current =
             grouped.get(splitKey) || {
               brand,
               category,
               model: splitModel,
               variant: splitVariant,
+              source_variant_code: breakdown.source_variant_code,
               roundNumber,
               photoUrl: breakdown.photo_url || '',
               qtyA: 0,
@@ -2590,8 +2612,8 @@ export default function QcDashboardPage() {
 
         if ((residualQtyA || residualQtyB || residualQtyC) && residualMatchesModelVariant) {
           const residualKey = shouldSeparateSampleSummary
-            ? `${brand}|||${category}|||${sampleSourceId}|||TEMPORARY SAMPLE|||TEMPORARY`
-            : `${brand}|||${category}|||TEMPORARY SAMPLE|||TEMPORARY`
+            ? `${brand}|||${category}|||${sampleSourceId}|||TEMPORARY SAMPLE|||TEMPORARY|||legacy`
+            : `${brand}|||${category}|||TEMPORARY SAMPLE|||TEMPORARY|||legacy`
           const current =
             grouped.get(residualKey) || {
               brand,
@@ -2627,8 +2649,8 @@ export default function QcDashboardPage() {
 
       const baseKey = qcMode === 'regular'
         ? isSampleTask && shouldSeparateSampleSummary
-          ? `${brand}|||${category}|||${sampleSourceId}|||${model}|||${variant}`
-          : `${brand}|||${category}|||${model}|||${variant}`
+          ? `${sampleSourceId}|||${getRegularProductKey(item, brand, category)}`
+          : getRegularProductKey(item, brand, category)
         : getSummaryRejectKey({ brand, category, model })
       const key = qcMode === 're_qc' ? `${baseKey}|||ROUND:${roundNumber}` : baseKey
       const current =
@@ -2637,6 +2659,7 @@ export default function QcDashboardPage() {
           category,
           model,
           variant,
+          source_variant_code: item.source_variant_code,
           roundNumber,
           photoUrl: taskModel.photoUrl,
           qtyA: 0,
@@ -2703,7 +2726,8 @@ export default function QcDashboardPage() {
           category,
           model,
           variant,
-          key: `${brand}|||${category}|||${model}|||${variant}`,
+          source_variant_code: item.source_variant_code,
+          key: getRegularProductKey(item, brand, category),
         }
       }
 
@@ -2717,6 +2741,7 @@ export default function QcDashboardPage() {
             category: parts.category,
             model: parts.model,
             variant: parts.variant,
+            source_variant_code: parts.source_variant_code,
             photoUrl,
             qtyA: 0,
             qtyB: 0,
@@ -2871,7 +2896,7 @@ export default function QcDashboardPage() {
       })
     }
 
-    return Array.from(grouped.values())
+    return Array.from(grouped.entries()).map(([key, value]) => ({ ...value, key }))
       .filter((item) => qcMode !== 'regular' || !regularGradeFilter || getSummaryGradeQty(item, regularGradeFilter) > 0)
       .sort((a, b) => {
         if (a.brand !== b.brand) return a.brand.localeCompare(b.brand)
@@ -4174,7 +4199,20 @@ export default function QcDashboardPage() {
 
       if (returnLineError) throw new Error(returnLineError.message)
 
-      const lockedDetailIds = new Set((returnLineRows || []).map((item) => String(item.reject_detail_id)).filter(Boolean))
+      const { data: storageLineRows, error: storageLineError } = existingDetailIds.length
+        ? await supabase
+            .from('arkline_qc_rejection_storage_lines')
+            .select('reject_detail_id, qty')
+            .in('reject_detail_id', existingDetailIds)
+        : { data: [], error: null }
+
+      if (storageLineError) throw new Error(storageLineError.message)
+
+      const lockedDetailIds = new Set(
+        [...(returnLineRows || []), ...(storageLineRows || [])]
+          .map((item) => String(item.reject_detail_id))
+          .filter(Boolean)
+      )
       const lockedDetails = selectedRejectExistingDetails.filter((item) => lockedDetailIds.has(String(item.id)))
       const unlockedDetailIds = selectedRejectExistingDetails
         .filter((item) => !lockedDetailIds.has(String(item.id)))
@@ -4200,7 +4238,7 @@ export default function QcDashboardPage() {
       for (const [key, lockedQty] of lockedQtyByKey.entries()) {
         const desiredQty = Number(desiredQtyByKey.get(key) || 0)
         if (desiredQty < Number(lockedQty || 0)) {
-          throw new Error('Reject detail yang sudah dipakai return tidak bisa dikurangi atau dihapus.')
+          throw new Error('Reject detail yang sudah dipakai return atau reject storage tidak bisa dikurangi atau dihapus.')
         }
       }
 
@@ -4224,7 +4262,7 @@ export default function QcDashboardPage() {
         const queue = taskRowsByGrade[grade] || []
 
         if (remaining < 0) {
-          throw new Error('Reject detail yang sudah dipakai return tidak bisa dikurangi atau dihapus.')
+          throw new Error('Reject detail yang sudah dipakai return atau reject storage tidak bisa dikurangi atau dihapus.')
         }
 
         queue.forEach((task) => {
@@ -5180,7 +5218,7 @@ export default function QcDashboardPage() {
                 qcResultSummary.map((item) => {
                   const rejectTargetQty = Number(item.rejectTargetQty ?? getRejectQty(item))
                   return (
-                  <tr key={`${item.brand}-${item.category}-${item.sampleSourceId || 'regular'}-${item.model}-${item.variant || ''}-${item.roundNumber || 'initial'}`}>
+                  <tr key={item.key}>
                     {qcMode !== 'regular' ? null : <td style={styles.td}>
                       {item.photoUrl ? (
                         <button type="button" style={styles.previewButton} onClick={() => setPreviewPhoto({ url: item.photoUrl, label: item.model })} title="Preview photo">
@@ -5193,9 +5231,9 @@ export default function QcDashboardPage() {
                     </td>}
                     <td style={styles.td}>{qcMode !== 'regular' && String(item.brand || '').trim().toUpperCase() === 'NO PO' ? '-' : item.brand}</td>
                     <td style={styles.td}>{item.category}</td>
-                    <td style={styles.td}>{item.model}</td>
+                    <td style={styles.td}>{item.model}<ProductVariantCode code={item.source_variant_code} /></td>
                     {qcMode === 'regular' ? <td style={styles.td}>{item.variant || '-'}</td> : null}
-                    {qcMode === 're_qc' ? <td style={{ ...styles.td, ...styles.tdCenter }}>Round {item.roundNumber}</td> : null}
+                    {qcMode === 're_qc' ? <td style={{ ...styles.td, ...styles.tdCenter }}>{item.roundNumber}</td> : null}
                     <td style={{ ...styles.td, ...styles.tdCenter }}>{item.qtyA}</td>
                     <td style={{ ...styles.td, ...styles.tdCenter }}>{item.qtyB}</td>
                     <td style={{ ...styles.td, ...styles.tdCenter }}>{item.qtyC}</td>

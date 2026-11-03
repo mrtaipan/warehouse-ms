@@ -11,6 +11,7 @@ import { EmptyState, Modal, ModuleHeader, StatusMessage } from './delivery-repor
 import { GROUPS, formatDate, romanMonth, safeNumber, todayIso } from './delivery-report-helpers'
 import { stockSizesMatch } from '../storage/stock-sizes'
 import { getExternalReplacementLines } from './replacement-stock'
+import OrderIssueOverview from './order-issue-overview'
 import styles from './delivery-report.module.css'
 
 const TABS = [
@@ -56,26 +57,6 @@ const RETURN_STATUS_OPTIONS = {
 
 const ACTIVE_RETURN_STATUSES = new Set(['Pending', 'Sending'])
 const PRODUCT_FIELD_SEPARATOR = ' || '
-
-function IssueTrendChart({ series, metric, label, money = false }) {
-  const max = Math.max(1, ...series.map((item) => item[metric]))
-  const width = 320
-  const step = (width - 40) / Math.max(1, series.length)
-  return <div className={styles.issueTrendChart}>
-    <svg viewBox={`0 0 ${width} 130`} role="img" aria-label={label}>
-      <title>{label}</title>
-      {[0, 1, 2].map((tick) => <line key={tick} x1="30" y1={20 + tick * 40} x2={width} y2={20 + tick * 40} stroke="#e2e8f0" />)}
-      <text x="2" y="17" fontSize="9" fill="#64748b">{new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 }).format(max)}</text>
-      {series.map((item, index) => {
-        const height = item[metric] / max * 80
-        const barWidth = Math.max(1, Math.min(32, step * .7))
-        const center = 30 + (index + .5) * step
-        return <g key={item.label}><title>{item.label}: {money ? formatMoney(item[metric]) : item[metric]}</title><rect x={center - barWidth / 2} y={100 - height} width={barWidth} height={height} rx="2" fill="#2563eb" />{index % Math.max(1, Math.ceil(series.length / 7)) === 0 ? <text x={center} y="118" textAnchor="middle" fontSize="9" fill="#64748b">{item.label}</text> : null}</g>
-      })}
-    </svg>
-    {!series.some((item) => item[metric]) ? <small>No recorded data for this period.</small> : null}
-  </div>
-}
 
 function emptyProductEntry() {
   return { productName: '', size: '', qty: '', sku: '' }
@@ -707,15 +688,29 @@ function hasMeaningfulBulletText(value) {
 
 function getMonthDateRange(monthValue, fallbackDate) {
   const monthText = String(monthValue || fallbackDate.slice(0, 7)).slice(0, 7)
-  const start = new Date(`${monthText}-01T00:00:00+07:00`)
-  if (Number.isNaN(start.getTime())) return { from: fallbackDate, to: fallbackDate }
-  const end = new Date(start)
-  end.setMonth(end.getMonth() + 1)
-  end.setDate(0)
+  const [year, month] = monthText.split('-').map(Number)
+  if (!year || !month || month < 1 || month > 12) return { from: fallbackDate, to: fallbackDate }
+  const lastDay = new Date(year, month, 0).getDate()
   return {
-    from: start.toISOString().slice(0, 10),
-    to: end.toISOString().slice(0, 10),
+    from: `${monthText}-01`,
+    to: `${monthText}-${String(lastDay).padStart(2, '0')}`,
   }
+}
+
+function getReturnChartDateRange(period, range, fallbackDate) {
+  if (period === 'year') {
+    return {
+      from: range.from ? `${range.from}-01-01` : '',
+      to: range.to ? `${range.to}-12-31` : '',
+    }
+  }
+  if (period === 'month') {
+    return {
+      from: range.from ? `${range.from}-01` : '',
+      to: range.to ? getMonthDateRange(range.to, fallbackDate).to : '',
+    }
+  }
+  return range
 }
 
 function normalizeIssueHandlingKey(value) {
@@ -966,11 +961,33 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
   const [returnChartMode, setReturnChartMode] = useState('groups')
   const [returnChartHighlight, setReturnChartHighlight] = useState('')
   const [returnChartPeriod, setReturnChartPeriod] = useState('day')
+  const [returnChartRanges, setReturnChartRanges] = useState(() => ({
+    day: { from: addDays(today, -6), to: today },
+    month: { from: addDays(today, -6).slice(0, 7), to: today.slice(0, 7) },
+    year: { from: addDays(today, -6).slice(0, 4), to: today.slice(0, 4) },
+  }))
+  const returnChartDateRange = useMemo(
+    () => getReturnChartDateRange(returnChartPeriod, returnChartRanges[returnChartPeriod], today),
+    [returnChartPeriod, returnChartRanges, today]
+  )
+  const returnChartYearOptions = useMemo(
+    () => Array.from({ length: Number(today.slice(0, 4)) - 1998 }, (_, index) => String(1999 + index)),
+    [today]
+  )
+  const changeReturnChartDate = (edge, value) => {
+    setReturnChartRanges((current) => {
+      const range = { ...current[returnChartPeriod], [edge]: value }
+      if (returnChartPeriod !== 'day' && range.from && range.to && range.from > range.to) {
+        range[edge === 'from' ? 'to' : 'from'] = value
+      }
+      return { ...current, [returnChartPeriod]: range }
+    })
+  }
   const [pic, setPic] = useState('')
   const [caseListAccess, setCaseListAccess] = useState({ isAdmin: false, name: '', ready: false })
   const [status, setStatus] = useState(null)
   const [busy, setBusy] = useState(false)
-  const [filters, setFilters] = useState({ courier: '', from: addDays(today, -6), group: lockedGroup, search: '', status: '', to: today, type: '', warningOnly: false })
+  const [filters, setFilters] = useState({ courier: '', group: lockedGroup, search: '', status: '', type: '', warningOnly: false })
   const [cases, setCases] = useState([])
   const [issues, setIssues] = useState([])
   const [masters, setMasters] = useState({ actions: [], barcodeRules: [], couriers: [], issueActions: [], issueReasons: [], reasons: [], services: [] })
@@ -983,7 +1000,11 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
   const [issueDetail, setIssueDetail] = useState(null)
   const [issueDetailReadonly, setIssueDetailReadonly] = useState(false)
   const [issueFilters, setIssueFilters] = useState({ from: addDays(today, -6), group: lockedGroup, search: '', to: today })
-  const [issueSummaryMonth, setIssueSummaryMonth] = useState(today.slice(0, 7))
+  const [issueMonthFrom, setIssueMonthFrom] = useState(`${today.slice(0, 4)}-01`)
+  const [issueMonthTo, setIssueMonthTo] = useState(today.slice(0, 7))
+  const [issueOrderRows, setIssueOrderRows] = useState([])
+  const [issueOrdersLoading, setIssueOrdersLoading] = useState(true)
+  const [issueOrdersError, setIssueOrdersError] = useState('')
   const [issuePeriodMode, setIssuePeriodMode] = useState('all')
   const [issueYearFrom, setIssueYearFrom] = useState(today.slice(0, 4))
   const [issueYearTo, setIssueYearTo] = useState(today.slice(0, 4))
@@ -1197,14 +1218,14 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
   const summaryCases = useMemo(() => {
     return accessibleCases.filter((row) => {
       const submissionDate = dateOnly(row.tanggal_pengajuan)
-      if (filters.from && submissionDate && submissionDate < filters.from) return false
-      if (filters.to && submissionDate && submissionDate > filters.to) return false
+      if (returnChartDateRange.from && submissionDate && submissionDate < returnChartDateRange.from) return false
+      if (returnChartDateRange.to && submissionDate && submissionDate > returnChartDateRange.to) return false
       if (filters.group && row.group_order !== filters.group) return false
       if (filters.courier && row.courier_name !== filters.courier) return false
       if (filters.type && cleanUpper(row.internal_external) !== cleanUpper(filters.type)) return false
       return true
     })
-  }, [accessibleCases, filters.courier, filters.from, filters.group, filters.to, filters.type])
+  }, [accessibleCases, filters.courier, filters.group, filters.type, returnChartDateRange.from, returnChartDateRange.to])
 
   const returnChartTimeline = useMemo(() => buildReturnTimeline(summaryCases, returnChartPeriod), [returnChartPeriod, summaryCases])
   const returnChartBars = useMemo(() => {
@@ -1277,8 +1298,39 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
   const issueSummaryRange = useMemo(() => {
     if (issuePeriodMode === 'all') return { from: '', to: '' }
     if (issuePeriodMode === 'annual') return { from: `${issueYearFrom}-01-01`, to: `${issueYearTo}-12-31` }
-    return getMonthDateRange(issueSummaryMonth, today)
-  }, [issuePeriodMode, issueSummaryMonth, issueYearFrom, issueYearTo, today])
+    return { from: `${issueMonthFrom}-01`, to: getMonthDateRange(issueMonthTo, today).to }
+  }, [issuePeriodMode, issueMonthFrom, issueMonthTo, issueYearFrom, issueYearTo, today])
+
+  useEffect(() => {
+    if (activeTab !== 'issues') return
+    let ignore = false
+    const timer = window.setTimeout(async () => {
+      setIssueOrdersLoading(true)
+      setIssueOrdersError('')
+      setIssueOrderRows([])
+      const rows = []
+      for (let offset = 0; ; offset += 1000) {
+        let query = deliverySupabase.from('delivery_order')
+          .select('delivery_date,group_order,quantity')
+          .order('delivery_date', { ascending: true }).order('id', { ascending: true })
+          .range(offset, offset + 999)
+        if (issueSummaryRange.from) query = query.gte('delivery_date', issueSummaryRange.from)
+        if (issueSummaryRange.to) query = query.lte('delivery_date', issueSummaryRange.to)
+        if (lockedGroup) query = query.eq('group_order', lockedGroup)
+        const { data, error } = await query
+        if (ignore) return
+        if (error) { setIssueOrdersError(error.message); setIssueOrdersLoading(false); return }
+        rows.push(...(data || []))
+        if (!data || data.length < 1000) break
+      }
+      if (!ignore) { setIssueOrderRows(rows); setIssueOrdersLoading(false) }
+    }, 0)
+    return () => { ignore = true; window.clearTimeout(timer) }
+  }, [activeTab, issueSummaryRange.from, issueSummaryRange.to, lockedGroup])
+
+  const issueOrderTotals = useMemo(() => Object.fromEntries(groupOptions.map((group) => [group,
+    issueOrderRows.filter((row) => cleanUpper(row.group_order) === group).reduce((sum, row) => sum + safeNumber(row.quantity), 0),
+  ])), [groupOptions, issueOrderRows])
 
   const issueSummaryRows = useMemo(() => {
     return accessibleIssues.filter((row) => {
@@ -1343,17 +1395,19 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
     issueSummaryRows.forEach((row) => {
       const date = dateOnly(row.created_at)
       if (!date) return
-      const label = issuePeriodMode === 'monthly' ? date.slice(8, 10) : date.slice(0, 4)
+      const label = issuePeriodMode === 'monthly' ? date.slice(0, 7) : date.slice(0, 4)
       const item = buckets.get(label) || { label, count: 0, cost: 0, pending: 0 }
       item.count += 1
       item.cost += safeNumber(row.biaya_timbul)
       item.pending += isIssuePending(row) ? 1 : 0
       buckets.set(label, item)
     })
-    if (issuePeriodMode === 'monthly' && issueSummaryMonth) {
-      const [year, month] = issueSummaryMonth.split('-').map(Number)
-      for (let day = 1; day <= new Date(year, month, 0).getDate(); day += 1) {
-        const label = String(day).padStart(2, '0')
+    if (issuePeriodMode === 'monthly' && issueMonthFrom && issueMonthTo) {
+      const [startYear, startMonth] = issueMonthFrom.split('-').map(Number)
+      const [endYear, endMonth] = issueMonthTo.split('-').map(Number)
+      for (let year = startYear, month = startMonth; year < endYear || (year === endYear && month <= endMonth); month += 1) {
+        if (month > 12) { year += 1; month = 1 }
+        const label = `${year}-${String(month).padStart(2, '0')}`
         if (!buckets.has(label)) buckets.set(label, { label, count: 0, cost: 0, pending: 0 })
       }
     }
@@ -1366,27 +1420,7 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
       }
     }
     return [...buckets.values()].sort((a, b) => a.label.localeCompare(b.label))
-  }, [issueSummaryRows, issuePeriodMode, issueSummaryMonth, issueYearFrom, issueYearTo, isIssuePending])
-
-  const renderIssueMetricRows = (items, formatter = (value) => `${value} cases`) => {
-    const safeItems = (items || []).filter((item) => safeNumber(item.value) > 0)
-    const totalValue = safeItems.reduce((sum, item) => sum + safeNumber(item.value), 0)
-    if (!safeItems.length || !totalValue) return null
-
-    return (
-      <div className={styles.orderIssueChart}>
-        {safeItems.map((item) => {
-          const percent = Math.round((safeNumber(item.value) / totalValue) * 100)
-          return (
-            <button key={item.key || item.label} type="button" className={styles.orderIssueChartRow} onClick={item.onClick}>
-              <div className={styles.orderIssueChartMeta}><span>{item.label}</span><strong>{formatter(item.value)}</strong></div>
-              <div className={styles.orderIssueChartTrack}><div className={`${styles.orderIssueChartFill} ${item.className || ''}`} style={{ width: `${Math.max(percent, item.value ? 6 : 0)}%` }} /></div>
-            </button>
-          )
-        })}
-      </div>
-    )
-  }
+  }, [issueSummaryRows, issuePeriodMode, issueMonthFrom, issueMonthTo, issueYearFrom, issueYearTo, isIssuePending])
 
   const returnActionRules = useMemo(() => {
     const actionMeta = masters.actions.find((item) => String(item.name || '').trim() === String(returnForm.retur_action || '').trim()) || null
@@ -1897,7 +1931,6 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
     const pending = isTruthyFlag(meta.is_pending)
     return <span className={`${styles.statusBadge} ${pending ? styles.productIssuePending : styles.productIssueRecorded}`}>{pending ? 'Needs Handling' : 'No Pending Handling'}</span>
   }
-  const getGroupFillClass = (group) => styles[`orderIssueFill${cleanUpper(group).charAt(0)}${cleanUpper(group).slice(1).toLowerCase()}`] || ''
 
   const receivingRows = useMemo(() => {
     const keyword = cleanUpper(receivingFilters.search)
@@ -2485,8 +2518,14 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
                     <button type="button" className={styles.inputNewCaseButton} onClick={openReturnForm} aria-label="Input New Case" title="Input New Case">+</button>
                   </div>
                   <div className={styles.returnChartControls}>
-                    <label className={styles.returnChartDateField}><span>DATE FROM</span><input type="date" value={filters.from} onChange={(event) => setFilters({ ...filters, from: event.target.value })} /></label>
-                    <label className={styles.returnChartDateField}><span>DATE TO</span><input type="date" value={filters.to} onChange={(event) => setFilters({ ...filters, to: event.target.value })} /></label>
+                    {['from', 'to'].map((edge) => <label className={styles.returnChartDateField} key={edge}>
+                      <span>{returnChartPeriod === 'day' ? 'DATE' : returnChartPeriod === 'month' ? 'MONTH' : 'YEAR'} {edge.toUpperCase()}</span>
+                      {returnChartPeriod === 'year'
+                        ? <select value={returnChartRanges.year[edge]} onChange={(event) => changeReturnChartDate(edge, event.target.value)} aria-label={`Year ${edge}`}>
+                          {returnChartYearOptions.map((year) => <option key={year} value={year}>{year}</option>)}
+                        </select>
+                        : <input type={returnChartPeriod === 'month' ? 'month' : 'date'} value={returnChartRanges[returnChartPeriod][edge]} onChange={(event) => changeReturnChartDate(edge, event.target.value)} aria-label={`${returnChartPeriod === 'month' ? 'Month' : 'Date'} ${edge}`} />}
+                    </label>)}
                     <label className={styles.returnChartModeSelectWrap}>
                       <select className={styles.returnChartModeSelect} aria-label="Return chart view" value={returnChartMode} onChange={(event) => setReturnChartMode(event.target.value)}>
                         <option value="groups">Group</option>
@@ -2593,60 +2632,20 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
               <div className={styles.orderIssueHeading}><h2>Order Issue</h2><button type="button" className={styles.inputNewCaseButton} aria-label="Input New Issue" title="Input New Issue" onClick={() => { resetIssueForm(); setStatus(null); setIssueFormOpen(true) }}>+</button></div>
               <div className={styles.orderIssueMonthControl}>
                 <div className={styles.issuePeriodToggle} role="group" aria-label="Summary period">{[['all', 'All time'], ['annual', 'Annually'], ['monthly', 'Monthly']].map(([value, label]) => <button key={value} type="button" aria-pressed={issuePeriodMode === value} onClick={() => setIssuePeriodMode(value)}>{label}</button>)}</div>
-                {issuePeriodMode === 'monthly' ? <label><span>YEAR / MONTH</span><input type="month" value={issueSummaryMonth} onChange={(event) => setIssueSummaryMonth(event.target.value)} /></label> : null}
+                {issuePeriodMode === 'monthly' ? <><label><span>FROM MONTH</span><input type="month" value={issueMonthFrom} onChange={(event) => { setIssueMonthFrom(event.target.value); if (event.target.value > issueMonthTo) setIssueMonthTo(event.target.value) }} /></label><label><span>TO MONTH</span><input type="month" value={issueMonthTo} onChange={(event) => { setIssueMonthTo(event.target.value); if (event.target.value < issueMonthFrom) setIssueMonthFrom(event.target.value) }} /></label></> : null}
                 {issuePeriodMode === 'annual' ? <><label><span>FROM YEAR</span><select value={issueYearFrom} onChange={(event) => { setIssueYearFrom(event.target.value); if (event.target.value > issueYearTo) setIssueYearTo(event.target.value) }}>{Array.from({ length: Number(today.slice(0, 4)) - 1999 }, (_, index) => 2000 + index).map((year) => <option key={year}>{year}</option>)}</select></label><label><span>TO YEAR</span><select value={issueYearTo} onChange={(event) => { setIssueYearTo(event.target.value); if (event.target.value < issueYearFrom) setIssueYearFrom(event.target.value) }}>{Array.from({ length: Number(today.slice(0, 4)) - 1999 }, (_, index) => 2000 + index).map((year) => <option key={year}>{year}</option>)}</select></label></> : null}
               </div>
             </div>
-            <div className={styles.orderIssueSummaryGrid}>
-              <article className={styles.resolutionMetricCard}>
-                <span>Total Cases</span>
-                <strong>{issueSummaryStats.total}</strong>
-                <IssueTrendChart series={issueTrendSeries} metric="count" label={issuePeriodMode === 'monthly' ? 'Cases by day' : 'Cases by year'} />
-                {renderIssueMetricRows(issueSummaryStats.groups.map((item) => ({
-                  className: getGroupFillClass(item.group),
-                  key: item.group,
-                  label: item.group,
-                  onClick: () => setIssueFilters({ ...issueFilters, from: issueSummaryRange.from, group: item.group, to: issueSummaryRange.to }),
-                  value: item.count,
-                })))}
-              </article>
-              <article className={styles.resolutionMetricCard}>
-                <span>Need Handling</span>
-                <strong>{issueSummaryStats.pendingRows.length}</strong>
-                <IssueTrendChart series={issueTrendSeries} metric="pending" label="Cases needing handling over time" />
-                {renderIssueMetricRows(issueSummaryStats.groups.map((item) => ({
-                  className: getGroupFillClass(item.group),
-                  key: item.group,
-                  label: item.group,
-                  onClick: () => setIssueFilters({ ...issueFilters, from: issueSummaryRange.from, group: item.group, to: issueSummaryRange.to }),
-                  value: item.pending,
-                })))}
-              </article>
-              <article className={styles.resolutionMetricCard}>
-                <span>Additional Cost</span>
-                <strong>{formatMoney(issueSummaryStats.costTotal)}</strong>
-                <IssueTrendChart series={issueTrendSeries} metric="cost" label="Additional cost over time" money />
-                {renderIssueMetricRows(issueSummaryStats.groups.map((item) => ({
-                  className: getGroupFillClass(item.group),
-                  key: item.group,
-                  label: item.group,
-                  onClick: () => setIssueFilters({ ...issueFilters, from: issueSummaryRange.from, group: item.group, to: issueSummaryRange.to }),
-                  value: item.cost,
-                })), formatMoney)}
-              </article>
-              <article className={styles.resolutionMetricCard}>
-                <span>Handling Frequency</span>
-                <strong>{issueSummaryStats.handlingTotal}</strong>
-                <p>Top handling actions</p>
-                {renderIssueMetricRows(issueSummaryStats.topHandling.map((item) => ({
-                  className: styles.orderIssueFillArkline,
-                  key: item.key,
-                  label: item.label,
-                  onClick: () => setIssueFilters({ ...issueFilters, from: issueSummaryRange.from, search: item.label, to: issueSummaryRange.to }),
-                  value: item.value,
-                })))}
-              </article>
-            </div>
+            <OrderIssueOverview
+              stats={issueSummaryStats}
+              series={issueTrendSeries}
+              monthly={issuePeriodMode === 'monthly'}
+              orderTotals={issueOrderTotals}
+              ordersLoading={issueOrdersLoading}
+              ordersError={issueOrdersError}
+              onSelectGroup={(group) => setIssueFilters({ ...issueFilters, from: issueSummaryRange.from, group, to: issueSummaryRange.to })}
+              onSelectHandling={(search) => setIssueFilters({ ...issueFilters, from: issueSummaryRange.from, search, to: issueSummaryRange.to })}
+            />
           </section>
 
           <Modal open={issueFormOpen} title={editingIssueId ? 'Edit Issue' : 'Input New Issue'} hideHeader={!editingIssueId} className={`${styles.issueEntryModal} ${styles.returnWizardModal}`} portal onClose={() => { if (!busy) setIssueFormOpen(false) }}>

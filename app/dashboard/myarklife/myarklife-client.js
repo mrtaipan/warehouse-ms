@@ -3,6 +3,7 @@
 import { useMemo, useState, useTransition } from 'react'
 import { submitBirthdayGiftRequest, submitLeaveRequest } from '../human-resources/actions'
 import { updateOwnProfile } from '../profile/actions'
+import { getBirthdayClaimWindow, getJakartaTodayDateString } from '@/utils/birthday-reminders.mjs'
 import MyArklifeReimbursementClient from './myarklife-reimbursement-client'
 import MyArklifeMobPaymentClient from './myarklife-mob-payment-client'
 import styles from './myarklife.module.css'
@@ -115,67 +116,44 @@ function getBirthdayDateValue(profile = {}) {
 }
 
 function getBirthdayClaimState(profile, giftRows) {
-  const rawBirthDate = getBirthdayDateValue(profile)
-  if (!rawBirthDate) {
+  const window = getBirthdayClaimWindow(getBirthdayDateValue(profile))
+  if (!window) {
     return { eligible: false, message: 'Birthday date is not available yet.' }
-  }
-
-  const parsed = new Date(rawBirthDate)
-  if (Number.isNaN(parsed.getTime())) {
-    return { eligible: false, message: 'Birthday date is not available yet.' }
-  }
-
-  const now = new Date()
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
-  let birthday = new Date(today.getFullYear(), parsed.getMonth(), parsed.getDate())
-  let windowEnd = new Date(birthday)
-  windowEnd.setDate(windowEnd.getDate() + 7)
-
-  if (today < birthday) {
-    const previousBirthday = new Date(today.getFullYear() - 1, parsed.getMonth(), parsed.getDate())
-    const previousWindowEnd = new Date(previousBirthday)
-    previousWindowEnd.setDate(previousWindowEnd.getDate() + 7)
-    if (today <= previousWindowEnd) {
-      birthday = previousBirthday
-      windowEnd = previousWindowEnd
-    }
   }
 
   const hasClaimed = (giftRows || []).some((item) => {
-    const requestDate = new Date(item.request_date)
-    if (Number.isNaN(requestDate.getTime())) return false
-    const day = new Date(requestDate.getFullYear(), requestDate.getMonth(), requestDate.getDate())
-    return day >= birthday && day <= windowEnd
+    const requestDate = String(item.request_date || '').slice(0, 10)
+    return requestDate >= window.birthday && requestDate <= window.windowEnd
   })
 
   if (hasClaimed) {
     return {
       eligible: false,
       message: 'Already claimed for this birthday period.',
-      windowLabel: `${formatLongDate(birthday)} - ${formatLongDate(windowEnd)}`,
+      windowLabel: `${formatLongDate(window.birthday)} - ${formatLongDate(window.windowEnd)}`,
     }
   }
 
-  if (today < birthday) {
+  if (getJakartaTodayDateString() < window.birthday) {
     return {
       eligible: false,
-      message: `Available on ${formatLongDate(birthday)}.`,
-      windowLabel: `${formatLongDate(birthday)} - ${formatLongDate(windowEnd)}`,
+      message: `Available on ${formatLongDate(window.birthday)}.`,
+      windowLabel: `${formatLongDate(window.birthday)} - ${formatLongDate(window.windowEnd)}`,
     }
   }
 
-  if (today > windowEnd) {
+  if (!window.isOpen) {
     return {
       eligible: false,
       message: 'Birthday gift claim window is not applicable right now.',
-      windowLabel: `${formatLongDate(birthday)} - ${formatLongDate(windowEnd)}`,
+      windowLabel: `${formatLongDate(window.birthday)} - ${formatLongDate(window.windowEnd)}`,
     }
   }
 
   return {
     eligible: true,
     message: 'You can claim your birthday gift now.',
-    windowLabel: `${formatLongDate(birthday)} - ${formatLongDate(windowEnd)}`,
+    windowLabel: `${formatLongDate(window.birthday)} - ${formatLongDate(window.windowEnd)}`,
   }
 }
 

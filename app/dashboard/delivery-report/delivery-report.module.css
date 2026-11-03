@@ -587,7 +587,7 @@
 .returnChartControls { display: flex; align-items: flex-end; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
 .returnChartDateField { display: grid; min-width: 142px; gap: 4px; }
 .returnChartDateField span { color: #64748b; font-size: 10px; font-weight: 800; }
-.returnChartDateField input { width: 100%; min-height: 44px; padding: 0 9px; border: 1px solid #d9dde2; border-radius: 9px; background: #ffffff; color: #1f2937; font-size: 13px; }
+.returnChartDateField input, .returnChartDateField select { width: 100%; min-height: 44px; padding: 0 9px; border: 1px solid #d9dde2; border-radius: 9px; background: #ffffff; color: #1f2937; font-size: 13px; }
 .returnChartPeriodToggle { display: inline-flex; align-items: center; gap: 3px; padding: 3px; border: 1px solid #d9dde2; border-radius: 10px; background: #f3f4f6; }
 .returnChartPeriodToggle button { min-height: 36px; padding: 0 11px; border: 1px solid transparent; border-radius: 7px; background: transparent; color: #64748b; font-size: 12px; font-weight: 750; white-space: nowrap; cursor: pointer; }
 .returnChartPeriodToggle button:hover { color: #111827; }
@@ -620,6 +620,11 @@
 .returnChartTooltip { position: fixed; z-index: 10000; display: grid; gap: 5px; width: max-content; max-width: min(230px, calc(100vw - 24px)); padding: 11px 13px; border: 1px solid #d9dde2; border-radius: 8px; background: #ffffff; box-shadow: 0 8px 20px rgba(15,23,42,.14); color: #111827; pointer-events: none; }
 .returnChartTooltip strong { overflow: hidden; color: #111827; font-size: 14px; font-weight: 850; text-overflow: ellipsis; white-space: nowrap; }
 .returnChartTooltip span { color: #475569; font-size: 13px; font-weight: 650; }
+.summaryChartTooltip { min-width: 180px; gap: 8px; }
+.summaryChartTooltipRow { display: flex; align-items: center; justify-content: space-between; gap: 16px; font-size: 13px; }
+.summaryChartTooltipRow span { display: inline-flex; align-items: center; gap: 8px; font-weight: 500; }
+.summaryChartTooltipRow i { width: 8px; height: 8px; flex: none; border-radius: 50%; }
+.summaryChartTooltipRow b { color: #111827; font-variant-numeric: tabular-nums; font-weight: 700; }
 .returnChartProductTooltip { max-width: min(360px, calc(100vw - 24px)); }
 .returnChartProductTooltip strong { white-space: normal; overflow-wrap: anywhere; }
 .returnChartEmpty { display: grid; min-height: 180px; place-items: center; margin-top: 8px; border: 1px dashed #cbd5e1; border-radius: 10px; color: #64748b; font-size: 14px; }
