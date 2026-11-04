@@ -1941,6 +1941,11 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
       .filter((row) => !receivingFilters.group || row.group_order === receivingFilters.group)
       .filter((row) => !receivingFilters.courier || row.courier_name === receivingFilters.courier)
       .filter((row) => !keyword || [row.kode_kejadian, row.nama_customer, row.order_id, row.no_resi_pengiriman].some((value) => cleanUpper(value).includes(keyword)))
+      .sort((a, b) => {
+        const rank = { Sending: 0, Completed: 1 }
+        const statusOrder = (rank[a.status_barang] ?? 99) - (rank[b.status_barang] ?? 99)
+        return statusOrder || String(b.tanggal_pengajuan || '').localeCompare(String(a.tanggal_pengajuan || ''))
+      })
   }, [cases, receivingFilters.courier, receivingFilters.group, receivingFilters.search, receivingFilters.status, today])
 
   const receivingCourierOptions = useMemo(() => {

@@ -1,5 +1,7 @@
 'use client'
 
+import { buildArklinePoPrintStyles } from '@/utils/arkline-po-print'
+
 export const SIZE_OPTIONS = ['XS', 'S', 'M', 'L', 'XL', 'XXL']
 export const ORDERED_AS_OPTIONS = ['PT ANUGERAH RETAIL KARYA', 'CV MITRA KARSA GARMINDO']
 
@@ -256,8 +258,7 @@ function buildPrintShell({ title, body }) {
     <title>${escapeHtml(title)}</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
-      @page { size: A4; margin: 0; }
-      body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+      ${buildArklinePoPrintStyles(title)}
     </style>
   </head>
   <body class="bg-gray-100 min-h-screen py-10 print:bg-white print:py-0">
@@ -295,9 +296,9 @@ function buildCompanyBlock(orderedAs = 'PT ANUGERAH RETAIL KARYA') {
     </div>`
 }
 
-function buildSupplierBlock({ label = 'PO To', supplierName, supplierAddress, supplierContact }) {
+function buildSupplierBlock({ label = 'PO To', supplierName, supplierAddress, supplierContact, compact = false }) {
   return `
-    <div class="mt-6">
+    <div class="${compact ? 'mt-0' : 'mt-6'}">
       <div class="mb-1 text-[7pt] font-bold uppercase tracking-widest text-gray-500">${escapeHtml(label)}</div>
       <div class="mb-1 text-[11pt] font-semibold">${escapeHtml(supplierName || '-')}</div>
       <div class="text-[8.5pt] leading-relaxed text-gray-600">
@@ -386,7 +387,7 @@ export async function createGarmentPurchaseOrderPreviewHtml(bundle) {
     .join('')
 
   const body = `
-    <div class="mx-auto min-h-[297mm] w-[210mm] bg-white p-[14mm] font-sans text-[#111] shadow-lg print:min-h-0 print:w-full print:p-[14mm] print:shadow-none">
+    <div class="po-sheet mx-auto w-[210mm] bg-white p-[14mm] font-sans text-[#111] shadow-lg print:shadow-none">
       <div class="mb-6 flex items-start justify-between">
         <div class="flex w-[45%] flex-col gap-3">
           <div>
@@ -414,7 +415,7 @@ export async function createGarmentPurchaseOrderPreviewHtml(bundle) {
         ${buildCompanyBlock('PT ANUGERAH RETAIL KARYA')}
       </div>
 
-      <table class="mb-6 w-full border-collapse">
+      <table class="po-items-table mb-6 w-full border-collapse">
         <thead>
           <tr class="border-b-[1.5px] border-black">
             <th class="px-1 py-3 text-left text-[7pt] font-bold uppercase tracking-widest text-gray-700">Produk</th>
@@ -431,7 +432,7 @@ export async function createGarmentPurchaseOrderPreviewHtml(bundle) {
         </tbody>
       </table>
 
-      <div>
+      <div class="po-financial">
         <div class="flex items-start justify-between gap-6">
           <div class="w-[55%]">
             <div class="mb-1 text-[7pt] font-bold uppercase tracking-widest text-gray-500">Remarks</div>
@@ -439,14 +440,16 @@ export async function createGarmentPurchaseOrderPreviewHtml(bundle) {
           </div>
           ${buildTotals({ subtotal, includePpn })}
         </div>
-        <div class="mt-5 flex min-h-[120px] items-end justify-between print:break-inside-avoid">
+      </div>
+      <div class="po-bottom">
+        <div class="mt-5 flex min-h-[120px] items-end justify-between">
           <div class="w-[55%] pb-1">
             <div class="text-[30pt] font-bold leading-[0.95] tracking-tighter text-black">PURCHASE<br />ORDER</div>
           </div>
           ${buildSignature()}
         </div>
+        ${buildFooter()}
       </div>
-      ${buildFooter()}
     </div>`
 
   return buildPrintShell({ title: bundle.poId || 'Purchase Order', body })
@@ -468,10 +471,10 @@ export async function createMaterialPurchaseOrderPreviewHtml(bundle) {
             <div>${escapeHtml(item.materialName || '-')}</div>
             ${
               [item.variant, item.unit].filter((value) => value && value !== '-').length
-                ? `<div class="mt-1 text-[8pt] text-gray-500">${escapeHtml([item.variant, item.unit].filter((value) => value && value !== '-').join(' - '))}</div>`
+                ? `<div class="mt-1 text-[5.6pt] text-gray-500">${escapeHtml([item.variant, item.unit].filter((value) => value && value !== '-').join(' - '))}</div>`
                 : ''
             }
-            ${item.notes ? `<div class="mt-1 text-[8pt] leading-relaxed text-gray-500">${buildMultilineHtml(item.notes)}</div>` : ''}
+            ${item.notes ? `<div class="mt-1 text-[5.6pt] leading-relaxed text-gray-500">${buildMultilineHtml(item.notes)}</div>` : ''}
           </td>
           <td class="py-2 px-1 text-center text-gray-600">${escapeHtml(formatQuantity(item.qty))}</td>
           <td class="py-2 px-1 text-right text-gray-600">${escapeHtml(formatCurrency(item.price))}</td>
@@ -481,7 +484,7 @@ export async function createMaterialPurchaseOrderPreviewHtml(bundle) {
     .join('')
 
   const body = `
-    <div class="mx-auto min-h-[297mm] w-[210mm] bg-white p-[14mm] font-sans text-[#111] shadow-lg print:min-h-0 print:w-full print:p-[14mm] print:shadow-none">
+    <div class="po-sheet mx-auto w-[210mm] bg-white p-[14mm] font-sans text-[#111] shadow-lg print:shadow-none">
       <div class="mb-6 flex items-start justify-between">
         <div class="flex w-[45%] flex-col gap-3">
           <div>
@@ -504,12 +507,13 @@ export async function createMaterialPurchaseOrderPreviewHtml(bundle) {
             supplierName: bundle.header.supplierName,
             supplierAddress: bundle.header.supplierAddress,
             supplierContact: bundle.header.supplierContact,
+            compact: true,
           })}
         </div>
         ${buildCompanyBlock(orderedAs)}
       </div>
 
-      <table class="mb-6 w-full border-collapse">
+      <table class="po-items-table mb-6 w-full border-collapse">
         <thead>
           <tr class="border-b-[1.5px] border-black">
             <th class="px-1 py-3 text-left text-[7pt] font-bold uppercase tracking-widest text-gray-700">Material</th>
@@ -518,7 +522,7 @@ export async function createMaterialPurchaseOrderPreviewHtml(bundle) {
             <th class="w-[25%] px-1 py-3 text-right text-[7pt] font-bold uppercase tracking-widest text-gray-700">Amount</th>
           </tr>
         </thead>
-        <tbody class="text-[9.5pt]">
+        <tbody class="text-[6.1pt]">
           ${
             itemRowsHtml ||
             `<tr><td colspan="4" class="px-1 py-8 text-center text-[9pt] text-gray-500">No material lines found for this purchase order.</td></tr>`
@@ -526,7 +530,7 @@ export async function createMaterialPurchaseOrderPreviewHtml(bundle) {
         </tbody>
       </table>
 
-      <div>
+      <div class="po-financial">
         <div class="flex items-start justify-between gap-6">
           <div class="w-[55%]">
             <div class="mb-1 text-[7pt] font-bold uppercase tracking-widest text-gray-500">Remarks</div>
@@ -534,14 +538,16 @@ export async function createMaterialPurchaseOrderPreviewHtml(bundle) {
           </div>
           ${buildTotals({ subtotal, includePpn })}
         </div>
-        <div class="mt-5 flex min-h-[120px] items-end justify-between print:break-inside-avoid">
+      </div>
+      <div class="po-bottom">
+        <div class="mt-5 flex min-h-[120px] items-end justify-between">
           <div class="w-[55%] pb-1">
             <div class="text-[30pt] font-bold leading-[0.95] tracking-tighter text-black">PURCHASE<br />ORDER</div>
           </div>
           ${buildSignature()}
         </div>
+        ${buildFooter()}
       </div>
-      ${buildFooter()}
     </div>`
 
   return buildPrintShell({ title: bundle.poNumber || 'Material Purchase Order', body })

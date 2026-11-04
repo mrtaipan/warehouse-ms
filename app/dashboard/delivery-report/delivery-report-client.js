@@ -152,7 +152,7 @@ export function Modal({ open, title, description, children, actions, onClose, hi
   return portal && typeof document !== 'undefined' ? createPortal(modal, document.body) : modal
 }
 
-export default function DeliveryReportClient({ lockedGroup = '' }) {
+export default function DeliveryReportClient({ lockedGroup = '', isAdmin = false }) {
   const searchParams = useSearchParams()
   const moduleId = searchParams.get('module')
   const isKnownModule = modules.some((module) => module.id === moduleId)
@@ -169,7 +169,7 @@ export default function DeliveryReportClient({ lockedGroup = '' }) {
       data-delivery-resolution={moduleId === 'resolution' ? '' : undefined}
     >
       {showHome ? <Home /> : null}
-      {moduleId === 'summary' ? <DeliverySummary lockedGroup={lockedGroup} /> : null}
+      {moduleId === 'summary' ? <DeliverySummary lockedGroup={lockedGroup} isAdmin={isAdmin} /> : null}
       {moduleId === 'delivery-order' ? <DeliveryOrder lockedGroup={lockedGroup} /> : null}
       {moduleId === 'barcode' ? <BarcodeScanner lockedGroup={lockedGroup} /> : null}
       {moduleId === 'resolution' ? <ResolutionCenter lockedGroup={lockedGroup} /> : null}

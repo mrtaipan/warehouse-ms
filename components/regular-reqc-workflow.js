@@ -239,7 +239,7 @@ export default function RegularReQcWorkflow({ view = 'queue', summaryStyles = {}
     })
     if (actionError) setError(actionError.message)
     else {
-      setSuccess(isGradeA ? 'Grade A is ready in Shelving Queue.' : 'Grade B/C added to Rejection Storage.')
+      setSuccess(isGradeA ? 'Grade A is ready in Storage Queue.' : 'Grade B/C added to Rejection Storage.')
       setSelectedReviewIds([])
       setConfirmAModalOpen(false)
       setRejectModalId('')
@@ -521,7 +521,7 @@ export default function RegularReQcWorkflow({ view = 'queue', summaryStyles = {}
         <div className={styles.modalOverlay} onMouseDown={(event) => { if (event.target === event.currentTarget && !busyKey) setConfirmAModalOpen(false) }}>
           <div className={`${styles.detailModal} ${styles.reviewModal}`} role="dialog" aria-modal="true" aria-labelledby="reqc-confirm-a-title">
             <div className={styles.modalHeader}><div><p className={styles.eyebrow}>Reguler Re-QC</p><h2 id="reqc-confirm-a-title">Confirm Grade A</h2></div><button className={styles.closeButton} type="button" onClick={() => setConfirmAModalOpen(false)} disabled={Boolean(busyKey)} aria-label="Close Grade A confirmation">×</button></div>
-            <p className={styles.rejectContext}>{selectedGradeAResults.length} result(s) · {formatQty(selectedGradeAResults.reduce((sum, row) => sum + Number(row.qty || 0), 0))} pcs to Shelving Queue</p>
+            <p className={styles.rejectContext}>{selectedGradeAResults.length} result(s) · {formatQty(selectedGradeAResults.reduce((sum, row) => sum + Number(row.qty || 0), 0))} pcs to Storage Queue</p>
             {error ? <p className={styles.messageError} role="alert">{error}</p> : null}
             <div className={styles.tableWrap}><table className={styles.table}><thead><tr><th>SKU</th><th>Item</th><th>Size</th><th>Group</th><th className={styles.numeric}>Qty</th></tr></thead><tbody>{selectedGradeAResults.map((row) => {
               const queue = queueById.get(row.reqc_queue_id)
@@ -551,7 +551,7 @@ export default function RegularReQcWorkflow({ view = 'queue', summaryStyles = {}
             <div className={styles.tableWrap}><table className={styles.table}><thead><tr><th>Size</th><th>Inspector</th><th>Grade</th><th className={styles.numeric}>Qty</th><th>Status</th><th>Destination</th><th>Koli</th></tr></thead><tbody>{selectedDetail.rows.map((row) => {
               const queue = queueById.get(row.reqc_queue_id)
               const task = tasks.find((item) => item.id === row.qc_item_id)
-              return <tr key={row.id}><td>{queue?.size || '—'}</td><td>{inspectorName(task?.assigned_to)}</td><td>{row.grade}</td><td className={styles.numeric}>{formatQty(row.qty)}</td><td>{row.status === 'PENDING_REVIEW' ? 'Pending review' : row.status === 'STORAGE_QUEUE' ? 'Storage Queue' : row.status === 'STORED' ? 'Stored' : row.status === 'SHELVING_QUEUE' ? 'Shelving Queue (legacy)' : row.status === 'REJECTION_STORAGE' ? 'Reject Storage' : row.status}</td><td>{row.grade === 'A' ? row.status === 'SHELVING_QUEUE' ? 'Shelving Queue (legacy)' : 'Storage Queue' : 'Reject Storage'}</td><td>{row.grade === 'A' ? '—' : rejectKoliByResult.get(row.id) || 'Pending'}</td></tr>
+              return <tr key={row.id}><td>{queue?.size || '—'}</td><td>{inspectorName(task?.assigned_to)}</td><td>{row.grade}</td><td className={styles.numeric}>{formatQty(row.qty)}</td><td>{row.status === 'PENDING_REVIEW' ? 'Pending review' : row.status === 'STORAGE_QUEUE' ? 'Storage Queue' : row.status === 'STORED' ? 'Stored' : row.status === 'SHELVING_QUEUE' ? 'Needs rerouting' : row.status === 'REJECTION_STORAGE' ? 'Reject Storage' : row.status}</td><td>{row.grade === 'A' ? 'Storage Queue' : 'Reject Storage'}</td><td>{row.grade === 'A' ? '—' : rejectKoliByResult.get(row.id) || 'Pending'}</td></tr>
             })}</tbody></table></div>
             {adjustmentRows.some((row) => selectedDetail.rows.some((result) => result.qc_item_id === row.qc_item_id)) ? <div className={styles.tableWrap}><table className={styles.table}><thead><tr><th colSpan={5}>Adjustment History</th></tr><tr><th>From</th><th>To</th><th className={styles.numeric}>Qty</th><th>Reason</th><th>Created</th></tr></thead><tbody>{adjustmentRows.filter((row) => selectedDetail.rows.some((result) => result.qc_item_id === row.qc_item_id)).map((row) => <tr key={row.id}><td>{row.from_grade}</td><td>{row.to_grade}</td><td className={styles.numeric}>{formatQty(row.qty)}</td><td>{row.note}</td><td>{new Date(row.created_at).toLocaleString('en-GB', { timeZone: 'Asia/Jakarta' })}</td></tr>)}</tbody></table></div> : null}
           </div>

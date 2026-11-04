@@ -6,6 +6,8 @@ import { createClient } from '@/utils/supabase/browser'
 import styles from '../../arkline.module.css'
 import progressStyles from '../../progress-overview/progress-overview.module.css'
 import useArklineAccess from '../../use-arkline-access'
+import PoFormatGuide, { PoFormatHelpButton } from '../../po-format-guide'
+import groupStyles from '../procurement-groups.module.css'
 import {
   buildSizeBreakdown,
   createGarmentPurchaseOrderPreviewHtml,
@@ -483,6 +485,7 @@ export default function ArklinePurchaseOrderDirectoryPage() {
   const [reportRow, setReportRow] = useState(null)
   const [reportBundle, setReportBundle] = useState(null)
   const [reportLoading, setReportLoading] = useState(false)
+  const [showPoFormatGuide, setShowPoFormatGuide] = useState(false)
   const [uploadingReportSignedPo, setUploadingReportSignedPo] = useState(false)
   const [reportSections, setReportSections] = useState({
     productLists: true,
@@ -877,7 +880,10 @@ export default function ArklinePurchaseOrderDirectoryPage() {
         <div className={styles.sectionHeader}>
           <div>
             <p className={styles.eyebrow}>Arkline</p>
-            <h1 className={styles.sectionTitle}>Purchase Order</h1>
+            <div className={groupStyles.headingWithHelp}>
+              <h1 className={styles.sectionTitle}>Purchase Order</h1>
+              <PoFormatHelpButton onClick={() => setShowPoFormatGuide(true)} />
+            </div>
           </div>
 
           <button type="button" className={styles.secondaryButton} onClick={() => void loadPurchaseOrders()} disabled={loading}>
@@ -979,72 +985,37 @@ export default function ArklinePurchaseOrderDirectoryPage() {
         ) : !filteredRows.length ? (
           <div className={styles.emptyState}>No purchase order matches the current filters.</div>
         ) : (
-          <div className={`${styles.listWrap} ${styles.directoryListWrap}`.trim()}>
-            <div className={`${styles.listHead} ${styles.poArchiveListHead}`.trim()}>
-              <span>PO Number</span>
-              <span>Supplier</span>
-              <span>{itemFilterLabel}</span>
-              <span>Status</span>
-              <span>Qty</span>
-              <span>PO Amount</span>
-              <span>Action</span>
-            </div>
-
-            {filteredRows.map((item) => {
-              const statusTone = getStatusTone(item.status)
-              return (
-                <div key={`${item.type}-${item.poNumber}`} className={`${styles.listRow} ${styles.poArchiveListRow}`.trim()}>
-                  <div>
-                    <p className={styles.poArchiveNumber}>{item.poNumber}</p>
-                    <p className={styles.cellMeta}>Created {formatDate(item.createdAt)}</p>
-                  </div>
-                  <div>
-                    <p className={styles.cellTitle}>{item.supplierName || '-'}</p>
-                    <p className={styles.cellMeta}>
-                      {item.type === 'garment' ? item.secondary || '-' : item.secondary || 'No PO'}
-                      {item.orderedAs ? ` / ${item.orderedAs}` : ''}
-                    </p>
-                  </div>
-                  <div>
-                    <strong>{item.firstItem || `${formatQuantity(item.itemCount)} item(s)`}</strong>
-                    <p className={styles.cellMeta}>{formatQuantity(item.itemCount)} line(s)</p>
-                  </div>
-                  <div>
-                    <span className={`${styles.poStatusPill} ${styles[`poStatusPill${statusTone}`] || styles.poStatusPillneutral}`.trim()}>
-                      {normalizeStatusLabel(item.status)}
-                    </span>
-                  </div>
-                  <div>
-                    <strong>{formatQuantity(item.totalQty)}</strong>
-                    {item.actualQty > 0 ? <p className={styles.cellMeta}>Actual {formatQuantity(item.actualQty)}</p> : null}
-                  </div>
-                  <div>{formatCurrency(item.amount)}</div>
-                  <div className={`${styles.buttonRow} ${styles.poArchiveActions}`.trim()}>
-                    <button
-                      type="button"
-                      className={styles.poIconButton}
-                      onClick={() => void handleViewReport(item)}
-                      disabled={reportLoading}
-                      title="View PO detail"
-                      aria-label={`View PO detail for ${item.poNumber}`}
-                    >
-                      <ReportIcon />
-                    </button>
-                    <button
-                      type="button"
-                      className={`${styles.secondaryButton} ${styles.directoryEditButton}`.trim()}
-                      onClick={() => void handlePrint(item)}
-                      disabled={!canPrintActiveType || printingPoNumber === item.poNumber}
-                    >
-                      {printingPoNumber === item.poNumber ? '...' : 'Print'}
-                    </button>
-                  </div>
-                </div>
-              )
-            })}
+          <div className={groupStyles.tableWrap}>
+            <table className={`${groupStyles.table} ${groupStyles.listTable} ${groupStyles.poTable}`.trim()}>
+              <thead><tr><th>PO Number</th><th>Supplier</th><th>{itemFilterLabel}</th><th>Status</th><th>Qty</th><th>PO Amount</th><th>Action</th></tr></thead>
+              <tbody>
+                {filteredRows.map((item) => {
+                  const statusTone = getStatusTone(item.status)
+                  return (
+                    <tr key={`${item.type}-${item.poNumber}`} className={groupStyles.directoryRow}>
+                      <td>{item.poNumber}<span className={groupStyles.cellMeta}>Created {formatDate(item.createdAt)}</span></td>
+                      <td>{item.supplierName || '-'}<span className={groupStyles.cellMeta}>
+                        {item.type === 'garment' ? item.secondary || '-' : item.secondary || 'No PO'}
+                        {item.orderedAs ? ` / ${item.orderedAs}` : ''}
+                      </span></td>
+                      <td><strong>{item.firstItem || `${formatQuantity(item.itemCount)} item(s)`}</strong><span className={groupStyles.cellMeta}>{formatQuantity(item.itemCount)} line(s)</span></td>
+                      <td><span className={`${styles.poStatusPill} ${styles[`poStatusPill${statusTone}`] || styles.poStatusPillneutral}`.trim()}>{normalizeStatusLabel(item.status)}</span></td>
+                      <td className={groupStyles.numericCell}><strong>{formatQuantity(item.totalQty)}</strong>{item.actualQty > 0 ? <span className={groupStyles.cellMeta}>Actual {formatQuantity(item.actualQty)}</span> : null}</td>
+                      <td className={groupStyles.numericCell}>{formatCurrency(item.amount)}</td>
+                      <td><div className={`${styles.buttonRow} ${styles.poArchiveActions}`.trim()}>
+                        <button type="button" className={styles.poIconButton} onClick={() => void handleViewReport(item)} disabled={reportLoading} title="View PO detail" aria-label={`View PO detail for ${item.poNumber}`}><ReportIcon /></button>
+                        <button type="button" className={`${styles.secondaryButton} ${styles.directoryEditButton}`.trim()} onClick={() => void handlePrint(item)} disabled={!canPrintActiveType || printingPoNumber === item.poNumber}>{printingPoNumber === item.poNumber ? '...' : 'Print'}</button>
+                      </div></td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
           </div>
         )}
       </section>
+
+      {showPoFormatGuide ? <PoFormatGuide onClose={() => setShowPoFormatGuide(false)} /> : null}
 
       {reportRow ? (
         <div className={progressStyles.modalOverlay} onClick={closeReport}>

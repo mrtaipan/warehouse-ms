@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { createClient } from '@/utils/supabase/browser'
 import styles from '../../arkline.module.css'
 import useArklineAccess from '../../use-arkline-access'
+import groupStyles from '../procurement-groups.module.css'
 
 const supabase = createClient()
 const ARKLINE_GROUP = 'ARKLINE'
@@ -301,41 +302,20 @@ export default function ArklineSupplierDirectoryPage() {
         ) : !filteredSuppliers.length ? (
           <div className={styles.emptyState}>No Arkline supplier matches the current filters.</div>
         ) : (
-          <div className={`${styles.listWrap} ${styles.directoryListWrap}`.trim()}>
-            <div className={`${styles.listHead} ${styles.directoryListHead} ${styles.supplierListHead}`.trim()}>
-              <span>Supplier</span>
-              <span>Contact</span>
-              <span>Status</span>
-              <span>Action</span>
-            </div>
-
-            {filteredSuppliers.map((supplier) => (
-              <div key={supplier.id} className={`${styles.listRow} ${styles.directoryListRow} ${styles.supplierListRow}`.trim()}>
-                <div>
-                  <p className={styles.cellTitle}>{supplier.supplier_name || '-'}</p>
-                  <p className={styles.cellMeta}>{supplier.supplier_code || 'NO CODE'} / ARKLINE / {supplier.supplier_level || 'NO LEVEL'}</p>
-                </div>
-                <div>
-                  <p className={styles.cellTitle}>{supplier.contact_person || '-'}</p>
-                  <p className={styles.cellMeta}>{supplier.phone || '-'}</p>
-                </div>
-                <div>
-                  <span className={`${styles.status} ${supplier.is_active ? styles.statusActive : styles.statusInactive}`.trim()}>
-                    {supplier.is_active ? 'Active' : 'Inactive'}
-                  </span>
-                </div>
-                <div className={`${styles.buttonRow} ${styles.directoryActionCell}`.trim()}>
-                  <button
-                    type="button"
-                    className={`${styles.secondaryButton} ${styles.directoryEditButton}`.trim()}
-                    onClick={() => openEditModal(supplier)}
-                    disabled={!canEditSupplier}
-                  >
-                    Edit
-                  </button>
-                </div>
-              </div>
-            ))}
+          <div className={groupStyles.tableWrap}>
+            <table className={`${groupStyles.table} ${groupStyles.listTable} ${groupStyles.supplierTable}`.trim()}>
+              <thead><tr><th>Supplier</th><th>Contact</th><th>Status</th><th>Action</th></tr></thead>
+              <tbody>
+                {filteredSuppliers.map((supplier) => (
+                  <tr key={supplier.id} className={groupStyles.directoryRow}>
+                    <td>{supplier.supplier_name || '-'}<span className={groupStyles.cellMeta}>{supplier.supplier_code || 'NO CODE'} / ARKLINE / {supplier.supplier_level || 'NO LEVEL'}</span></td>
+                    <td>{supplier.contact_person || '-'}<span className={groupStyles.cellMeta}>{supplier.phone || '-'}</span></td>
+                    <td><span className={`${groupStyles.statusBadge} ${supplier.is_active ? styles.statusActive : styles.statusInactive}`.trim()}>{supplier.is_active ? 'Active' : 'Inactive'}</span></td>
+                    <td><button type="button" className={styles.secondaryButton} onClick={() => openEditModal(supplier)} disabled={!canEditSupplier}>Edit</button></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         )}
       </section>

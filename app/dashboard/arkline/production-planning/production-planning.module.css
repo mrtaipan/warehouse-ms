@@ -1003,6 +1003,52 @@
   line-height: 1.5;
 }
 
+.poFormatGuideButton {
+  width: 20px;
+  height: 20px;
+  border: 1px solid #cbd5e1;
+  border-radius: 50%;
+  background: #f8fafc;
+  color: #334155;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.poFormatGuideButton:hover, .poFormatGuideButton:focus-visible {
+  border-color: #64748b;
+  background: #e2e8f0;
+}
+
+.poFormatGuide {
+  width: min(100%, 760px);
+  max-height: calc(100dvh - 40px);
+  overflow-y: auto;
+  gap: 20px;
+  padding: 28px;
+}
+
+.poFormatGuideHeader { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
+.poFormatEyebrow { margin: 0 0 6px; color: #64748b; font-size: 11px; font-weight: 700; letter-spacing: .12em; }
+.poFormatGuideClose { width: 32px; height: 32px; flex: 0 0 auto; border: 1px solid #d7dee7; border-radius: 8px; background: #fff; color: #475569; font-size: 20px; cursor: pointer; }
+.poFormatGuideClose:hover { background: #f1f5f9; }
+.poFormatExample { display: flex; flex-wrap: wrap; align-items: center; gap: 3px; padding: 16px; border: 1px solid #d7dee7; border-radius: 12px; background: #f8fafc; color: #0f172a; font-family: monospace; font-size: 17px; font-weight: 700; }
+.poFormatExample span:nth-child(even) { color: #94a3b8; }
+.poFormatLegend { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.poFormatLegend > div { display: flex; flex-direction: column; gap: 4px; min-width: 0; padding: 12px; border: 1px solid #e2e8f0; border-radius: 10px; }
+.poFormatLegend strong { color: #0f172a; font-size: 12px; }
+.poFormatLegend span { color: #475569; font-size: 12px; line-height: 1.45; }
+.poFormatExamples { display: grid; gap: 7px; padding-top: 12px; border-top: 1px solid #e2e8f0; }
+.poFormatExamples p { display: flex; justify-content: space-between; gap: 12px; margin: 0; color: #475569; font-size: 12px; }
+.poFormatExamples code { color: #0f172a; font-size: 12px; font-weight: 600; overflow-wrap: anywhere; text-align: right; }
+
+@media (max-width: 600px) {
+  .poFormatGuide { padding: 20px; }
+  .poFormatLegend { grid-template-columns: 1fr; }
+  .poFormatExamples p { flex-direction: column; gap: 3px; }
+  .poFormatExamples code { text-align: left; }
+}
+
 .modalActions {
   display: flex;
   justify-content: flex-end;

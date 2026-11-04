@@ -15,9 +15,11 @@ import {
   normalizeArklinePoSuffix,
   normalizeArklineSupplierInitial,
 } from '@/utils/arkline-po-number'
+import { buildArklinePoPrintStyles } from '@/utils/arkline-po-print'
 import { createClient } from '@/utils/supabase/browser'
 
 import shellStyles from '../arkline.module.css'
+import PoFormatGuide, { PoFormatHelpButton } from '../po-format-guide'
 import styles from './production-planning.module.css'
 
 const supabase = createClient()
@@ -458,15 +460,7 @@ async function createPurchaseOrderPreviewHtml(bundle) {
     <title>${escapeHtml(bundle.poId || 'Purchase Order')}</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
-      @page {
-        size: A4;
-        margin: 0;
-      }
-
-      body {
-        -webkit-print-color-adjust: exact;
-        print-color-adjust: exact;
-      }
+      ${buildArklinePoPrintStyles(bundle.poId)}
     </style>
   </head>
   <body class="bg-gray-100 min-h-screen py-10 print:bg-white print:py-0">
@@ -479,7 +473,7 @@ async function createPurchaseOrderPreviewHtml(bundle) {
       </button>
     </div>
 
-    <div class="mx-auto min-h-[297mm] w-[210mm] bg-white p-[14mm] font-sans text-[#111] shadow-lg print:min-h-0 print:w-full print:p-[14mm] print:shadow-none">
+    <div class="po-sheet mx-auto w-[210mm] bg-white p-[14mm] font-sans text-[#111] shadow-lg print:shadow-none">
       <div class="mb-6 flex items-start justify-between">
         <div class="flex w-[45%] flex-col gap-3">
           <div>
@@ -535,7 +529,7 @@ async function createPurchaseOrderPreviewHtml(bundle) {
         </div>
       </div>
 
-      <table class="mb-6 w-full border-collapse">
+      <table class="po-items-table mb-6 w-full border-collapse">
         <thead>
           <tr class="border-b-[1.5px] border-black">
             <th class="px-1 py-3 text-left text-[7pt] font-bold uppercase tracking-widest text-gray-700">Produk</th>
@@ -553,7 +547,7 @@ async function createPurchaseOrderPreviewHtml(bundle) {
         </tbody>
       </table>
 
-      <div>
+      <div class="po-financial">
         <div class="flex items-start justify-between gap-6">
           <div class="w-[55%]">
             <div class="mb-1 text-[7pt] font-bold uppercase tracking-widest text-gray-500">Remarks</div>
@@ -583,7 +577,9 @@ async function createPurchaseOrderPreviewHtml(bundle) {
           </table>
         </div>
 
-        <div class="mt-5 flex min-h-[120px] items-end justify-between print:break-inside-avoid">
+      </div>
+      <div class="po-bottom">
+        <div class="mt-5 flex min-h-[120px] items-end justify-between">
           <div class="w-[55%] pb-1">
             <div class="text-[30pt] font-bold leading-[0.95] tracking-tighter text-black">
               PURCHASE<br />ORDER
@@ -595,11 +591,10 @@ async function createPurchaseOrderPreviewHtml(bundle) {
             <div class="text-[8.5pt] font-medium text-gray-500">President Director</div>
           </div>
         </div>
-      </div>
-
-      <div class="mt-2 border-t border-gray-200 pt-1 text-center text-[7.5pt] leading-relaxed text-gray-500">
-        <span class="font-bold uppercase tracking-widest text-gray-600">Warehouse:</span>
-        Pergudangan Bizpoint, Point 5 LV No. 85, Tigaraksa, Cikupa, Kab. Tangerang-Banten, Kode pos 15710
+        <div class="mt-2 border-t border-gray-200 pt-1 text-center text-[7.5pt] leading-relaxed text-gray-500">
+          <span class="font-bold uppercase tracking-widest text-gray-600">Warehouse:</span>
+          Pergudangan Bizpoint, Point 5 LV No. 85, Tigaraksa, Cikupa, Kab. Tangerang-Banten, Kode pos 15710
+        </div>
       </div>
     </div>
   </body>
@@ -827,6 +822,7 @@ export default function ArklineProductionPlanningPage() {
   const [pendingNavigationHref, setPendingNavigationHref] = useState('')
   const [showExistingPoPicker, setShowExistingPoPicker] = useState(false)
   const [showSupplierModal, setShowSupplierModal] = useState(false)
+  const [showPoFormatGuide, setShowPoFormatGuide] = useState(false)
   const [savingSupplier, setSavingSupplier] = useState(false)
   const [supplierCodeLoading, setSupplierCodeLoading] = useState(false)
   const [supplierDraft, setSupplierDraft] = useState(createEmptySupplierDraft())
@@ -1608,6 +1604,7 @@ export default function ArklineProductionPlanningPage() {
       }
 
       let poDbId = currentPoDbId
+      let existingItemRows = []
 
       const headerPayload = {
         po_id: resolvedPoId,
@@ -1667,18 +1664,19 @@ export default function ArklineProductionPlanningPage() {
           throw new Error(updatePoError.message)
         }
 
-        const { data: existingItemIds, error: fetchExistingItemError } = await supabase
+        const { data: existingItems, error: fetchExistingItemError } = await supabase
           .from('arkline_po_items')
-          .select('id')
+          .select('id, sku_induk')
           .eq('po_id', resolvedPoId)
 
         if (fetchExistingItemError) {
           throw new Error(fetchExistingItemError.message)
         }
 
-        const itemIds = (existingItemIds || []).map((item) => item.id).filter(Boolean)
+        existingItemRows = existingItems || []
+        const itemIds = existingItemRows.map((item) => item.id).filter(Boolean)
 
-        if (itemIds.length) {
+        if (!isFinalizingTemporaryPo && itemIds.length) {
           const { error: deleteSizeError } = await supabase.from('arkline_po_item_sizes').delete().in('arkline_po_item_id', itemIds)
 
           if (deleteSizeError) {
@@ -1686,13 +1684,15 @@ export default function ArklineProductionPlanningPage() {
           }
         }
 
-        const { error: deleteItemError } = await supabase
-          .from('arkline_po_items')
-          .delete()
-          .eq('po_id', resolvedPoId)
+        if (!isFinalizingTemporaryPo) {
+          const { error: deleteItemError } = await supabase
+            .from('arkline_po_items')
+            .delete()
+            .eq('po_id', resolvedPoId)
 
-        if (deleteItemError) {
-          throw new Error(deleteItemError.message)
+          if (deleteItemError) {
+            throw new Error(deleteItemError.message)
+          }
         }
       }
 
@@ -1715,16 +1715,68 @@ export default function ArklineProductionPlanningPage() {
         }
       })
 
-      const { data: insertedItems, error: insertItemError } = await supabase
-        .from('arkline_po_items')
-        .insert(itemPayload)
-        .select('*')
+      let savedItems = []
 
-      if (insertItemError) {
-        throw new Error(insertItemError.message)
+      if (isFinalizingTemporaryPo) {
+        const existingById = new Map(existingItemRows.map((item) => [item.id, item]))
+        const retainedIds = new Set(
+          poItems
+            .filter((item) => {
+              const existing = existingById.get(item.dbId)
+              return existing && String(existing.sku_induk || '').trim().toUpperCase() === item.skuInduk
+            })
+            .map((item) => item.dbId)
+        )
+        const removedIds = existingItemRows.map((item) => item.id).filter((id) => !retainedIds.has(id))
+
+        if (removedIds.length) {
+          const { error: deleteSizeError } = await supabase.from('arkline_po_item_sizes').delete().in('arkline_po_item_id', removedIds)
+          if (deleteSizeError) throw new Error(deleteSizeError.message)
+
+          const { error: deleteItemError } = await supabase.from('arkline_po_items').delete().in('id', removedIds).eq('po_id', resolvedPoId)
+          if (deleteItemError) throw new Error(deleteItemError.message)
+        }
+
+        const newItemPayload = []
+        for (const [index, item] of poItems.entries()) {
+          if (!retainedIds.has(item.dbId)) {
+            newItemPayload.push(itemPayload[index])
+            continue
+          }
+
+          const updatePayload = { ...itemPayload[index] }
+          delete updatePayload.actual_qty
+          if (method !== 'FOB') delete updatePayload.hpp
+
+          const { data: updatedItem, error: updateItemError } = await supabase
+            .from('arkline_po_items')
+            .update(updatePayload)
+            .eq('id', item.dbId)
+            .eq('po_id', resolvedPoId)
+            .select('*')
+            .single()
+
+          if (updateItemError) throw new Error(updateItemError.message)
+          savedItems.push(updatedItem)
+        }
+
+        if (newItemPayload.length) {
+          const { data: insertedItems, error: insertItemError } = await supabase.from('arkline_po_items').insert(newItemPayload).select('*')
+          if (insertItemError) throw new Error(insertItemError.message)
+          savedItems = [...savedItems, ...(insertedItems || [])]
+        }
+
+        if (retainedIds.size) {
+          const { error: deleteSizeError } = await supabase.from('arkline_po_item_sizes').delete().in('arkline_po_item_id', [...retainedIds])
+          if (deleteSizeError) throw new Error(deleteSizeError.message)
+        }
+      } else {
+        const { data: insertedItems, error: insertItemError } = await supabase.from('arkline_po_items').insert(itemPayload).select('*')
+        if (insertItemError) throw new Error(insertItemError.message)
+        savedItems = insertedItems || []
       }
 
-      const insertedBySku = (insertedItems || []).reduce((accumulator, item) => {
+      const insertedBySku = savedItems.reduce((accumulator, item) => {
         accumulator[String(item.sku_induk || '').trim().toUpperCase()] = item
         return accumulator
       }, {})
@@ -1990,9 +2042,12 @@ export default function ArklineProductionPlanningPage() {
             </div>
 
             <div className={styles.field}>
-              <label className={styles.label}>
-                PO ID <span className={styles.requiredMark}>*</span>
-              </label>
+              <div className={styles.fieldHeaderRow}>
+                <label className={styles.label}>
+                  PO ID <span className={styles.requiredMark}>*</span>
+                </label>
+                <PoFormatHelpButton onClick={() => setShowPoFormatGuide(true)} />
+              </div>
               {mode === 'existing' && (showExistingPoPicker || !selectedExistingPoId) ? (
                 <select
                   className={styles.select}
@@ -2509,6 +2564,8 @@ export default function ArklineProductionPlanningPage() {
           </div>
         </div>
       ) : null}
+
+      {showPoFormatGuide ? <PoFormatGuide onClose={() => setShowPoFormatGuide(false)} /> : null}
 
       {showLeaveConfirm ? (
         <div className={styles.modalOverlay}>

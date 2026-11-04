@@ -1,0 +1,48 @@
+.tableWrap { overflow-x: auto; border: 1px solid #e2e8f0; border-radius: 16px; background: #fff; }
+.table { width: 100%; border-collapse: collapse; color: #0f172a; font-size: 13px; }
+.table th { padding: 12px 16px; background: #f8fafc; color: #64748b; font-size: 11px; font-weight: 700; letter-spacing: .06em; text-align: left; text-transform: uppercase; }
+.table th:first-child { width: 55%; }
+.table th:last-child { text-align: right; }
+.table td { padding: 10px 16px; border-top: 1px solid #edf2f7; vertical-align: middle; }
+.table td:last-child { text-align: right; }
+.table button { cursor: pointer; }
+.categoryRow button, .typeRow button, .procurementRow button { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 32px; border: 0; background: transparent; color: inherit; text-align: left; font: inherit; }
+.categoryRow button:hover, .typeRow button:hover, .procurementRow button:hover { color: #1d4ed8; }
+.categoryRow { background: #f1f5f9; font-size: 15px; }
+.typeRow { background: #f8fafc; font-size: 14px; }
+.typeRow button { padding-left: 24px; }
+.procurementRow button { padding-left: 48px; }
+.procurementRow { font-weight: 600; }
+.chevron { display: inline-flex; justify-content: center; width: 20px; font-size: 18px; font-weight: 500; }
+.count { margin-left: auto; color: #64748b; font-size: 12px; font-variant-numeric: tabular-nums; font-weight: 500; }
+.inactive { padding: 2px 7px; border-radius: 999px; background: #fef2f2; color: #991b1b; font-size: 11px; }
+.productRow td:first-child { padding-left: 88px; }
+.productRow strong { font-weight: 600; }
+.productRow .sku { color: #475569; font-variant-numeric: tabular-nums; }
+.productRow td:nth-child(3) span { display: inline-block; padding: 5px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; }
+.productRow td:last-child button { min-height: 32px; padding: 0 10px; font-size: 12px; }
+.listTable th:first-child { width: auto; }
+.listTable .productRow td:first-child { padding-left: 16px; }
+.listTable .productRow td:last-child { white-space: nowrap; }
+.listTable .productRow td:nth-child(5) span { display: inline-block; padding: 5px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; }
+.directoryRow td:first-child { font-weight: 600; }
+.directoryRow td:last-child { white-space: nowrap; }
+.directoryRow td:last-child button { min-height: 32px; padding: 0 10px; font-size: 12px; }
+.cellMeta { display: block; margin-top: 4px; color: #64748b; font-size: 12px; font-weight: 400; line-height: 1.4; }
+.statusBadge { display: inline-block; padding: 5px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; }
+.numericCell { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.poTable { min-width: 1080px; }
+.poTable th:nth-child(5), .poTable th:nth-child(6) { text-align: right; }
+.poTable td:nth-child(3) { max-width: 240px; }
+.poTable td:nth-child(3) strong { overflow-wrap: anywhere; }
+.poTable td:last-child { min-width: 110px; }
+.headingWithHelp { display: flex; align-items: center; gap: 8px; }
+@media (max-width: 720px) {
+  .table { min-width: 600px; }
+  .table th:first-child { width: 45%; }
+  .productRow td:first-child { padding-left: 48px; }
+  .procurementRow button { padding-left: 20px; }
+  .typeRow button { padding-left: 12px; }
+  .listTable { min-width: 900px; }
+  .supplierTable, .materialTable { min-width: 620px; }
+}

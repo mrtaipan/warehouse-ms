@@ -346,6 +346,13 @@
 .summaryPage .dangerIssue { background: #fef2f2; color: #b91c1c; }
 .summaryPage .modalCard { width: min(980px, 100%); }
 .summaryPage .modalCard .tableWrap table { min-width: 860px; }
+.summaryPage .modalCard.missingBarcodeListModal { width: min(1120px, 100%); }
+.summaryPage .tableWrap th.missingBarcodeAction, .summaryPage .tableWrap td.missingBarcodeAction { text-align: center; }
+.missingBarcodeRemoveButton { min-height: 34px; padding: 0 12px; border: 1px solid #fecaca; border-radius: 8px; background: #fff7f7; color: #b42318; font-size: 12px; font-weight: 700; white-space: nowrap; }
+.missingBarcodeRemoveButton:hover { background: #fee2e2; }
+.missingBarcodeRemoveButton:focus-visible { outline: 2px solid #b42318; outline-offset: 2px; }
+.modalCard.missingBarcodeConfirmModal { width: min(460px, calc(100vw - 40px)); border: 1px solid #d9dde2; border-radius: 12px; }
+.missingBarcodeConfirmModal .statusMessage { margin-top: 16px; }
 
 /* Summary-only visual tokens: keep the other Delivery modules unchanged. */
 .summaryPage { --muted: #64748b; font-family: inherit; }

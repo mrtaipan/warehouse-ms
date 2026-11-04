@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { createClient } from '@/utils/supabase/browser'
 import styles from '../../arkline.module.css'
 import useArklineAccess from '../../use-arkline-access'
+import groupStyles from '../procurement-groups.module.css'
 
 const supabase = createClient()
 const MATERIAL_TYPE_OPTIONS = ['FABRIC', 'ACCESSORIES']
@@ -288,41 +289,21 @@ export default function ArklineMaterialDirectoryPage() {
         ) : !filteredMaterials.length ? (
           <div className={styles.emptyState}>No Arkline material matches the current filters.</div>
         ) : viewMode === 'list' ? (
-          <div className={`${styles.listWrap} ${styles.directoryListWrap}`.trim()}>
-            <div className={`${styles.listHead} ${styles.directoryListHead}`.trim()}>
-              <span>Material</span>
-              <span>Type</span>
-              <span>Unit</span>
-              <span>Status</span>
-              <span>Action</span>
-            </div>
-
-            {filteredMaterials.map((item) => (
-              <div key={item.id} className={`${styles.listRow} ${styles.directoryListRow}`.trim()}>
-                <div>
-                  <p className={styles.cellTitle}>{item.material_name}</p>
-                  <p className={styles.cellMeta}>{item.material_type || 'NO TYPE'}</p>
-                </div>
-                <div>{item.material_type || '-'}</div>
-                <div>{item.unit || '-'}</div>
-                <div>{item.is_active ? 'Active' : 'Inactive'}</div>
-                <div className={`${styles.buttonRow} ${styles.directoryActionCell}`.trim()}>
-                  <span
-                    className={`${styles.statusDot} ${item.is_active ? styles.statusDotActive : styles.statusDotInactive}`.trim()}
-                    title={item.is_active ? 'Active' : 'Inactive'}
-                    aria-label={item.is_active ? 'Active' : 'Inactive'}
-                  />
-                  <button
-                    type="button"
-                    className={`${styles.secondaryButton} ${styles.directoryEditButton}`.trim()}
-                    onClick={() => openEditModal(item)}
-                    disabled={!canEditMaterial}
-                  >
-                    Edit
-                  </button>
-                </div>
-              </div>
-            ))}
+          <div className={groupStyles.tableWrap}>
+            <table className={`${groupStyles.table} ${groupStyles.listTable} ${groupStyles.materialTable}`.trim()}>
+              <thead><tr><th>Material</th><th>Type</th><th>Unit</th><th>Status</th><th>Action</th></tr></thead>
+              <tbody>
+                {filteredMaterials.map((item) => (
+                  <tr key={item.id} className={groupStyles.directoryRow}>
+                    <td>{item.material_name}</td>
+                    <td>{item.material_type || '-'}</td>
+                    <td>{item.unit || '-'}</td>
+                    <td><span className={`${groupStyles.statusBadge} ${item.is_active ? styles.statusActive : styles.statusInactive}`.trim()}>{item.is_active ? 'Active' : 'Inactive'}</span></td>
+                    <td><button type="button" className={styles.secondaryButton} onClick={() => openEditModal(item)} disabled={!canEditMaterial}>Edit</button></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         ) : (
           <div className={`${styles.cardWrap} ${styles.directoryCardWrap}`.trim()}>

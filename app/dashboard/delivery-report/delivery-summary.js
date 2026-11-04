@@ -229,7 +229,7 @@ function LineChart({ values, series, selectedSeries, onSelectSeries }) {
   )
 }
 
-export default function DeliverySummary({ lockedGroup: lockedGroupProp = '' }) {
+export default function DeliverySummary({ lockedGroup: lockedGroupProp = '', isAdmin = false }) {
   const today = useMemo(() => todayIso(), [])
   const lockedGroup = useMemo(() => normalizeLockedGroup(lockedGroupProp), [lockedGroupProp])
   const visibleGroups = useMemo(() => (lockedGroup ? [lockedGroup] : GROUPS), [lockedGroup])
@@ -266,6 +266,36 @@ export default function DeliverySummary({ lockedGroup: lockedGroupProp = '' }) {
   const [loading, setLoading] = useState(true)
   const [status, setStatus] = useState(null)
   const [issueModal, setIssueModal] = useState(null)
+  const [removeTarget, setRemoveTarget] = useState(null)
+  const [removeBusy, setRemoveBusy] = useState(false)
+  const [removeError, setRemoveError] = useState('')
+  const [removeFeedback, setRemoveFeedback] = useState('')
+
+  const removeMissingBarcode = async () => {
+    if (!isAdmin || !removeTarget || removeBusy) return
+    setRemoveBusy(true)
+    setRemoveError('')
+
+    try {
+      const response = await fetch('/api/delivery-report/missing-barcode', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ barcode: removeTarget.sourceBarcode || removeTarget.barcode }),
+      })
+      const result = await response.json()
+      if (!response.ok) throw new Error(result.error || 'Failed to remove barcode.')
+
+      const removedBarcode = result.barcode
+      setPackingRows((current) => current.filter((row) => row.barcode !== removedBarcode))
+      setDeliveryRows((current) => current.filter((row) => row.barcode !== removedBarcode))
+      setRemoveFeedback(`Barcode ${removedBarcode} was removed.`)
+      setRemoveTarget(null)
+    } catch (error) {
+      setRemoveError(error.message || 'Failed to remove barcode.')
+    } finally {
+      setRemoveBusy(false)
+    }
+  }
 
   const loadData = useCallback(async (signal) => {
     setLoading(true)
@@ -447,6 +477,7 @@ export default function DeliverySummary({ lockedGroup: lockedGroupProp = '' }) {
       byBarcode.set(barcode, {
         ...current,
         ...row,
+        sourceBarcode: current.sourceBarcode || row.barcode,
         barcode,
         timestamp_packing: current.timestamp_packing || row.timestamp_packing,
         timestamp_delivery: current.timestamp_delivery || row.timestamp_delivery,
@@ -590,7 +621,7 @@ export default function DeliverySummary({ lockedGroup: lockedGroupProp = '' }) {
                   className={styles.infoButton}
                   aria-label="Show missing barcode details"
                   title="Show details"
-                  onClick={() => setIssueModal('missing')}
+                  onClick={() => { setRemoveFeedback(''); setIssueModal('missing') }}
                 >
                   <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="8" /><path d="M10 9v5m0-8h.01" /></svg>
                 </button>
@@ -656,8 +687,11 @@ export default function DeliverySummary({ lockedGroup: lockedGroupProp = '' }) {
           description={issueModal === 'undefined'
             ? 'These barcodes could not be identified by the courier rules.'
             : 'These barcodes have incomplete status: packed but not delivered yet, or delivered but not packed yet.'}
-          onClose={() => setIssueModal(null)}
+          className={issueModal === 'missing' ? styles.missingBarcodeListModal : ''}
+          onClose={() => { setIssueModal(null); setRemoveFeedback('') }}
         >
+          {issueModal === 'missing' && removeFeedback ? <StatusMessage status={{ type: 'success', message: removeFeedback }} /> : null}
+          {!modalRows.length ? <EmptyState label="No barcodes to show." /> : null}
           <div className={styles.tableWrap}>
             {issueModal === 'undefined' ? (
               <table>
@@ -675,7 +709,7 @@ export default function DeliverySummary({ lockedGroup: lockedGroupProp = '' }) {
               </table>
             ) : (
               <table>
-                <thead><tr><th>Barcode</th><th>Status</th><th>Packing Time</th><th>Delivery Time</th><th>Group</th><th>Courier</th><th>Packing Team</th></tr></thead>
+                <thead><tr><th>Barcode</th><th>Status</th><th>Packing Time</th><th>Delivery Time</th><th>Group</th><th>Courier</th><th>Packing Team</th>{isAdmin ? <th className={styles.missingBarcodeAction}>Action</th> : null}</tr></thead>
                 <tbody>
                   {modalRows.map((row) => (
                     <tr key={row.barcode}>
@@ -690,12 +724,29 @@ export default function DeliverySummary({ lockedGroup: lockedGroupProp = '' }) {
                       <td>{row.group_order || '-'}</td>
                       <td>{row.courier || 'UNDEFINED'}</td>
                       <td>{row.packing_team || '-'}</td>
+                      {isAdmin ? <td className={styles.missingBarcodeAction}>
+                        <button type="button" className={styles.missingBarcodeRemoveButton} onClick={() => { setRemoveError(''); setRemoveTarget(row) }} aria-label={`Remove barcode ${row.barcode}`}>Remove</button>
+                      </td> : null}
                     </tr>
                   ))}
                 </tbody>
               </table>
             )}
           </div>
+        </Modal>
+        <Modal
+          open={Boolean(removeTarget)}
+          title="Remove barcode?"
+          description={removeTarget ? `Barcode ${removeTarget.barcode} will be permanently deleted from delivery scans. This action cannot be undone.` : ''}
+          className={styles.missingBarcodeConfirmModal}
+          portal
+          onClose={() => { if (!removeBusy) setRemoveTarget(null) }}
+          actions={<>
+            <button type="button" className={styles.softButton} disabled={removeBusy} onClick={() => setRemoveTarget(null)}>Cancel</button>
+            <button type="button" className={styles.dangerButton} disabled={removeBusy} onClick={removeMissingBarcode}>{removeBusy ? 'Removing...' : 'Remove barcode'}</button>
+          </>}
+        >
+          {removeError ? <StatusMessage status={{ type: 'error', message: removeError }} /> : null}
         </Modal>
       </div>
     </div>

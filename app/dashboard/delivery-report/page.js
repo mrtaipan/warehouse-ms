@@ -24,5 +24,5 @@ export default async function DeliveryReportPage() {
   const { data: profile } = await getProfileByAuthenticatedUser(supabase, user, 'role')
   const role = resolveRole(profile?.role, isAdmin)
 
-  return <DeliveryReportClient lockedGroup={getRoleLockedGroup(role)} />
+  return <DeliveryReportClient lockedGroup={getRoleLockedGroup(role)} isAdmin={role === 'admin'} />
 }

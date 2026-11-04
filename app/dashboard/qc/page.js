@@ -1161,6 +1161,13 @@ function matchesModelVariantSearch(label, searchValue) {
   return String(label || '').trim().toUpperCase().includes(normalizedSearch)
 }
 
+function matchesRegularProductSearch(item, searchValue) {
+  return matchesModelVariantSearch(
+    [getRegularModelVariantLabel(item), item?.source_variant_code, item?.product_model_variant?.variant_code].filter(Boolean).join(' '),
+    searchValue
+  )
+}
+
 function getArklinePoLabel(item) {
   return String(item.po_id || 'NO PO').trim().toUpperCase() || 'NO PO'
 }
@@ -2194,14 +2201,14 @@ export default function QcDashboardPage() {
     const matchesModelVariant =
       ignoredFilter === 'modelVariant' ||
       !regularModelVariantFilter ||
-      matchesModelVariantSearch(getRegularModelVariantLabel(item), regularModelVariantFilter) ||
+      matchesRegularProductSearch(item, regularModelVariantFilter) ||
       (isTemporarySampleTask(item) &&
         qcSampleBreakdownRows.some((split) => {
           const sourceId = Number(item.inbound_unload_id || item.inbound_unload?.id || 0)
           return (
             (Number(split.qc_item_id || 0) === Number(item.id || 0) ||
               Number(split.sample_breakdown?.inbound_unload_id || 0) === sourceId) &&
-            matchesModelVariantSearch(getSampleBreakdownLabel(split.sample_breakdown || {}), regularModelVariantFilter)
+            matchesRegularProductSearch(split.sample_breakdown || {}, regularModelVariantFilter)
           )
         }))
     const matchesSample =
@@ -2329,7 +2336,7 @@ export default function QcDashboardPage() {
         const matchesCategory = !categoryFilter || getConfirmCategoryLabel(item) === categoryFilter
         const matchesModelVariant =
           !regularModelVariantFilter ||
-          getRegularModelVariantLabel(item).toUpperCase().includes(String(regularModelVariantFilter || '').trim().toUpperCase())
+          matchesRegularProductSearch(item, regularModelVariantFilter)
         const matchesSample =
           !sampleFilter ||
           (sampleFilter === 'yes' ? Boolean(item.is_sample) : !Boolean(item.is_sample))
@@ -2354,7 +2361,7 @@ export default function QcDashboardPage() {
         const matchesCategory = !categoryFilter || getReturnCategoryLabel(item) === categoryFilter
         const matchesModelVariant =
           !regularModelVariantFilter ||
-          getRegularModelVariantLabel(item).toUpperCase().includes(String(regularModelVariantFilter || '').trim().toUpperCase())
+          matchesRegularProductSearch(item, regularModelVariantFilter)
         const matchesSample =
           !sampleFilter ||
           (sampleFilter === 'yes' ? Boolean(item.is_sample) : !Boolean(item.is_sample))
@@ -2375,7 +2382,7 @@ export default function QcDashboardPage() {
         const matchesCategory = !categoryFilter || getCategoryLabel(item.qc_item || {}) === categoryFilter
         const matchesModelVariant =
           !regularModelVariantFilter ||
-          getRegularModelVariantLabel(item.qc_item || {}).toUpperCase().includes(String(regularModelVariantFilter || '').trim().toUpperCase())
+          matchesRegularProductSearch(item.qc_item || {}, regularModelVariantFilter)
         const matchesSample =
           !sampleFilter ||
           (sampleFilter === 'yes' ? isRegularSampleTask(item.qc_item || {}) : !isRegularSampleTask(item.qc_item || {}))
@@ -2555,7 +2562,7 @@ export default function QcDashboardPage() {
         let splitQtyB = 0
         let splitQtyC = 0
         const visibleSampleSplitRows = regularModelVariantFilter
-          ? sampleSplitRows.filter((split) => matchesModelVariantSearch(getSampleBreakdownLabel(split.sample_breakdown || {}), regularModelVariantFilter))
+          ? sampleSplitRows.filter((split) => matchesRegularProductSearch(split.sample_breakdown || {}, regularModelVariantFilter))
           : sampleSplitRows
 
         sampleSplitRows.forEach((split) => {
@@ -5086,7 +5093,7 @@ export default function QcDashboardPage() {
               </div>
 
               <div style={{ ...styles.field, gridColumn: 'span 2' }}>
-                <label style={styles.label}>Model Variant</label>
+                <label style={styles.label}>Model Variant / SKU</label>
                 <input
                   type="search"
                   value={regularModelVariantFilter}
@@ -5096,7 +5103,7 @@ export default function QcDashboardPage() {
                   }}
                   onChange={(event) => setRegularModelVariantFilter(event.target.value)}
                   style={styles.input}
-                  placeholder="Search model or variant"
+                  placeholder="Search model, variant, or SKU"
                 />
               </div>
 

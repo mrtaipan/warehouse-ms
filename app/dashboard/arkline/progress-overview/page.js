@@ -215,7 +215,7 @@ function normalizeBoardStatus(value) {
 
 function normalizeMaterialLogStatus(value) {
   const normalized = String(value || '').trim().toUpperCase()
-  if (normalized === 'SENT') return 'Sent'
+  if (normalized === 'SENT' || normalized === 'SENT_TO_GARMENT') return 'Sent'
   if (normalized === 'RECEIVED') return 'Received'
   return 'Ordered'
 }
@@ -652,26 +652,31 @@ async function loadMaterialProgressRows() {
     { data: headerData, error: headerError },
     { data: itemData, error: itemError },
     { data: logData, error: logError },
+    { data: receiptData, error: receiptError },
   ] = await Promise.all([
     supabase
       .from('arkline_po_material_ordered')
-      .select('id, material_po_number, supplier_name_snapshot, garment_po_number, request_delivery_date, status, notes, include_ppn, created_at')
+      .select('id, material_po_number, supplier_name_snapshot, garment_po_number, po_date, request_delivery_date, updated_delivery_date, status, notes, include_ppn, created_at')
       .order('created_at', { ascending: false }),
     supabase
       .from('arkline_po_material_ordered_items')
-      .select('id, material_po_ordered_id, material_po_number, material_name_snapshot, size_variant, color_variant, unit, qty, price, amount, notes, source_po_id'),
+      .select('id, material_po_ordered_id, material_po_number, material_id, material_name_snapshot, size_variant, color_variant, unit, qty, price, amount, notes, source_po_id'),
     supabase
       .from('arkline_po_material_logs')
       .select(
-        'id, material_po_number, material_po_ordered_id, material_name_snapshot, size_variant, color_variant, unit, qty, supplier_name, notes, log_type, event_date, created_at'
+        'id, material_po_number, material_po_ordered_id, material_po_ordered_item_id, material_name_snapshot, size_variant, color_variant, unit, qty, supplier_name, notes, log_type, event_date, created_at'
       )
-      .in('log_type', ['RECEIVED', 'SENT'])
+      .in('log_type', ['received', 'sent_to_garment'])
       .order('event_date', { ascending: false }),
+    supabase
+      .from('arkline_po_material_receipts')
+      .select('id, material_po_ordered_item_id, received_qty, receive_date, supplier_sj, notes, is_final, created_at'),
   ])
 
   if (headerError) throw new Error(headerError.message)
   if (itemError) throw new Error(itemError.message)
   if (logError) throw new Error(logError.message)
+  if (receiptError) throw new Error(receiptError.message)
 
   const headerById = (headerData || []).reduce((accumulator, row) => {
     accumulator[String(row?.id || '').trim()] = row
@@ -725,6 +730,8 @@ async function loadMaterialProgressRows() {
       headerById[String(row?.material_po_ordered_id || '').trim()] || headerByMaterialPoNumber[materialPoNumber] || null
     return {
       id: `ordered:${row.id}`,
+      orderedItemId: row.id,
+      materialPoOrderedId: header?.id || row.material_po_ordered_id,
       status: 'Ordered',
       poNumber: String(row?.material_po_number || header?.material_po_number || '').trim().toUpperCase(),
       supplier: String(header?.supplier_name_snapshot || '').trim().toUpperCase(),
@@ -735,7 +742,10 @@ async function loadMaterialProgressRows() {
       price: getMaterialLinePrice(row),
       amount: getMaterialLineAmount(row),
       includePpn: normalizeBoolean(header?.include_ppn, true),
-      date: String(header?.request_delivery_date || header?.created_at || '').slice(0, 10),
+      requestDeliveryDate: String(header?.request_delivery_date || '').slice(0, 10),
+      updatedDeliveryDate: String(header?.updated_delivery_date || '').slice(0, 10),
+      issueDate: String(header?.po_date || header?.created_at || '').slice(0, 10),
+      date: String(header?.updated_delivery_date || header?.request_delivery_date || header?.created_at || '').slice(0, 10),
       notes: String(row?.notes || header?.notes || '').trim(),
       garmentPoNumber: String(row?.source_po_id || header?.garment_po_number || '').trim().toUpperCase(),
     }
@@ -754,6 +764,7 @@ async function loadMaterialProgressRows() {
       null
     return {
       id: `${String(row?.log_type || '').trim().toLowerCase()}:${row.id}`,
+      orderedItemId: row.material_po_ordered_item_id || orderedItem?.id || '',
       status: normalizeMaterialLogStatus(row?.log_type),
       poNumber: String(row?.material_po_number || header?.material_po_number || '').trim().toUpperCase(),
       supplier: String(row?.supplier_name || header?.supplier_name_snapshot || '').trim().toUpperCase(),
@@ -764,13 +775,31 @@ async function loadMaterialProgressRows() {
       price: getMaterialLinePrice(row, orderedItem),
       amount: getMaterialLineAmount(row, orderedItem),
       includePpn: normalizeBoolean(header?.include_ppn, true),
+      requestDeliveryDate: String(header?.request_delivery_date || '').slice(0, 10),
+      updatedDeliveryDate: String(header?.updated_delivery_date || '').slice(0, 10),
+      issueDate: String(header?.po_date || header?.created_at || '').slice(0, 10),
       date: String(row?.event_date || row?.created_at || '').slice(0, 10),
       notes: String(row?.notes || '').trim(),
       garmentPoNumber: String(header?.garment_po_number || sourcePoByMaterialPoNumber[materialPoNumber] || '').trim().toUpperCase(),
     }
   })
 
-  return [...orderedRows, ...logRows]
+  const orderedById = new Map(orderedRows.map((row) => [String(row.orderedItemId), row]))
+  const receiptRows = (receiptData || []).flatMap((receipt) => {
+    const ordered = orderedById.get(String(receipt.material_po_ordered_item_id))
+    if (!ordered) return []
+    return [{
+      ...ordered,
+      id: `material-receipt:${receipt.id}`,
+      status: 'Received',
+      isFinal: Boolean(receipt.is_final),
+      qty: Number(receipt.received_qty || 0),
+      date: String(receipt.receive_date || '').slice(0, 10),
+      notes: String(receipt.notes || '').trim(),
+    }]
+  })
+
+  return [...orderedRows, ...logRows, ...receiptRows]
 }
 
 async function loadUpdateReasons() {
@@ -789,8 +818,8 @@ async function loadUpdateReasons() {
 }
 
 function getStatusSymbol(status) {
-  if (status === 'Completed') return '●'
-  if (status === 'On Progress') return '◐'
+  if (status === 'Completed' || status === 'Sent') return '●'
+  if (status === 'On Progress' || status === 'Received') return '◐'
   return '○'
 }
 
@@ -799,11 +828,23 @@ function getPoSortNumber(poId) {
   return match ? Number(match[1]) : Number.MAX_SAFE_INTEGER
 }
 
+function comparePoNumbers(left, right) {
+  const leftPo = String(left || '').trim().toUpperCase()
+  const rightPo = String(right || '').trim().toUpperCase()
+  const numberDifference = getPoSortNumber(leftPo) - getPoSortNumber(rightPo)
+  if (numberDifference) return numberDifference
+
+  const romanMonths = { I: 1, II: 2, III: 3, IV: 4, V: 5, VI: 6, VII: 7, VIII: 8, IX: 9, X: 10, XI: 11, XII: 12 }
+  const getIssueCode = (po) => {
+    const match = po.match(/-(\d{1,2})(XII|XI|X|IX|VIII|VII|VI|V|IV|III|II|I)(\d{4})(?:-\d+)?$/)
+    return match ? `${match[3]}-${String(romanMonths[match[2]]).padStart(2, '0')}-${match[1].padStart(2, '0')}` : ''
+  }
+  const dateDifference = getIssueCode(leftPo).localeCompare(getIssueCode(rightPo))
+  return dateDifference || leftPo.localeCompare(rightPo, undefined, { numeric: true })
+}
+
 function comparePoItems(left, right) {
-  const leftNumber = getPoSortNumber(left?.poId)
-  const rightNumber = getPoSortNumber(right?.poId)
-  if (leftNumber !== rightNumber) return leftNumber - rightNumber
-  return String(left?.poId || '').localeCompare(String(right?.poId || ''), undefined, { numeric: true })
+  return comparePoNumbers(left?.poId, right?.poId)
 }
 
 function formatNumber(value) {
@@ -1998,7 +2039,7 @@ export default function ArklineProgressOverviewPage() {
   const [selectedCmtInspectionDetail, setSelectedCmtInspectionDetail] = useState(null)
   const [cmtSavedPhotoPreviews, setCmtSavedPhotoPreviews] = useState([])
   const [cmtReasonFocusIndex, setCmtReasonFocusIndex] = useState(null)
-  const [receiptDraft, setReceiptDraft] = useState({ receiveDate: '', supplierSj: '', notes: '', sizeQty: {}, isFinal: false })
+  const [receiptDraft, setReceiptDraft] = useState({ receiveDate: '', supplierSj: '', notes: '', sizeQty: {}, receivedGoodsQty: '', isFinal: false })
   const [statusDraft, setStatusDraft] = useState({
     editingUpdateId: '',
     updatedDeliveryDate: '',
@@ -2171,9 +2212,20 @@ export default function ArklineProgressOverviewPage() {
       }),
     [filteredRows, monthDate]
   )
+  const filteredMaterialRows = useMemo(() => {
+    const keyword = productFilter.trim().toUpperCase()
+    return materialRows.filter((item) => {
+      if (!keyword) return true
+      return [item.poNumber, item.supplier, item.materialName, item.variant, item.notes, item.garmentPoNumber]
+        .join(' ')
+        .toUpperCase()
+        .includes(keyword)
+    })
+  }, [materialRows, productFilter])
+
   const calendarItemsInMonth = useMemo(
     () =>
-      filteredRows.flatMap((item) => {
+      [...filteredRows.flatMap((item) => {
         if (item.status === 'Completed') {
           return []
         }
@@ -2206,8 +2258,33 @@ export default function ArklineProgressOverviewPage() {
           targetDate: item.targetDate,
           updatedDate: entry.displayDate,
         }))
-      }),
-    [filteredRows, monthDate]
+      }), ...Array.from(
+        filteredMaterialRows.reduce((map, row) => {
+          if (row.status !== 'Ordered') return map
+          const displayDate = row.updatedDeliveryDate || row.requestDeliveryDate
+          if (!displayDate || !sameMonth(parseIso(displayDate), monthDate)) return map
+          if (map.has(row.poNumber)) {
+            const existing = map.get(row.poNumber)
+            existing.materialCount += 1
+            existing.productName = `Material: ${existing.materialCount} material lines`
+            return map
+          }
+          map.set(row.poNumber, {
+            id: `calendar-material:${row.poNumber}`,
+            poId: row.poNumber,
+            supplier: row.supplier,
+            productName: `Material: ${row.materialName}`,
+            qty: 0,
+            displayDate,
+            targetDate: row.requestDeliveryDate,
+            updatedDate: row.updatedDeliveryDate || row.requestDeliveryDate,
+            isMaterial: true,
+            materialCount: 1,
+          })
+          return map
+        }, new Map()).values()
+      )],
+    [filteredRows, filteredMaterialRows, monthDate]
   )
 
   const boardItemsByStatus = useMemo(
@@ -2218,17 +2295,6 @@ export default function ArklineProgressOverviewPage() {
       }, {}),
     [filteredRows]
   )
-
-  const filteredMaterialRows = useMemo(() => {
-    const keyword = productFilter.trim().toUpperCase()
-    return materialRows.filter((item) => {
-      if (!keyword) return true
-      return [item.poNumber, item.supplier, item.materialName, item.variant, item.notes, item.garmentPoNumber]
-        .join(' ')
-        .toUpperCase()
-        .includes(keyword)
-    })
-  }, [materialRows, productFilter])
 
   const materialBoardItemsByStatus = useMemo(
     () => {
@@ -2273,9 +2339,7 @@ export default function ArklineProgressOverviewPage() {
       })
 
       MATERIAL_BOARD_STATUSES.forEach((status) => {
-        boardItems[status].sort(
-          (left, right) => String(right.date || '').localeCompare(String(left.date || '')) || String(left.poNumber || '').localeCompare(String(right.poNumber || ''), undefined, { numeric: true })
-        )
+        boardItems[status].sort((left, right) => comparePoNumbers(left.poNumber, right.poNumber))
       })
 
       return boardItems
@@ -2510,19 +2574,25 @@ export default function ArklineProgressOverviewPage() {
       const lineVariant = String(line?.variant || '-').trim().toUpperCase() || '-'
       const lineQty = Number(line?.qty || 0)
       const linePrice = Number(line?.price || 0)
-      const receivedQty = materialRows
-        .filter(
+      const matchingReceiptRows = materialRows.filter(
           (row) =>
             String(row?.poNumber || '').trim().toUpperCase() === linePoNumber &&
             row?.status === 'Received' &&
-            String(row?.materialName || '').trim().toUpperCase() === lineMaterialName &&
-            String(row?.variant || '-').trim().toUpperCase() === lineVariant
+            (line?.orderedItemId && row?.orderedItemId
+              ? String(row.orderedItemId) === String(line.orderedItemId)
+              : String(row?.materialName || '').trim().toUpperCase() === lineMaterialName &&
+                String(row?.variant || '-').trim().toUpperCase() === lineVariant)
         )
+      const dedicatedReceipts = matchingReceiptRows.filter((row) => String(row.id || '').startsWith('material-receipt:'))
+      const receiptSource = dedicatedReceipts.length ? dedicatedReceipts : matchingReceiptRows
+      const receivedQty = receiptSource
         .reduce((sum, row) => sum + Number(row?.qty || 0), 0)
-      const lineStatus = lineQty > 0 && receivedQty >= lineQty ? 'Completed' : receivedQty > 0 ? 'On Progress' : 'Initiated'
+      const lineStatus = receiptSource.some((row) => row.isFinal) || (lineQty > 0 && receivedQty >= lineQty) ? 'Completed' : receivedQty > 0 ? 'On Progress' : 'Initiated'
 
       return {
         id: `material-progress-line:${line?.id || materialPoNumber || index}`,
+        materialOrderedItemId: line?.orderedItemId || '',
+        materialPoOrderedId: line?.materialPoOrderedId || '',
         sku: lineVariant || 'MATERIAL',
         productName: lineMaterialName,
         category: 'MATERIAL',
@@ -2534,7 +2604,7 @@ export default function ArklineProgressOverviewPage() {
         remainingQty: Math.max(lineQty - receivedQty, 0),
         price: linePrice,
         hpp: 0,
-        updatedDeliveryDate: '',
+        updatedDeliveryDate: line?.updatedDeliveryDate || '',
         status: lineStatus,
         notes: String(line?.notes || '').trim(),
         sizeBreakdown: [],
@@ -2551,11 +2621,11 @@ export default function ArklineProgressOverviewPage() {
       method: 'MATERIAL',
       status: normalizeBoardStatus(item?.status),
       includePpn,
-      createdAt: item?.date || '',
-      startDate: item?.date || '',
-      targetDate: '',
-      updatedDate: '',
-      displayDate: item?.date || '',
+      createdAt: item?.issueDate || item?.date || '',
+      startDate: item?.issueDate || item?.date || '',
+      targetDate: item?.requestDeliveryDate || '',
+      updatedDate: item?.updatedDeliveryDate || '',
+      displayDate: item?.updatedDeliveryDate || item?.requestDeliveryDate || '',
       completionDate: '',
       notes: String(item?.notes || '').trim(),
       subtitle: String(item?.notes || '').trim(),
@@ -2835,13 +2905,42 @@ export default function ArklineProgressOverviewPage() {
       financeSummary: null,
       sizeBreakdown: [],
     })
-    setReceiptDraft({ receiveDate: '', supplierSj: '', notes: '', sizeQty: {}, isFinal: false })
+    setReceiptDraft({ receiveDate: '', supplierSj: '', notes: '', sizeQty: {}, receivedGoodsQty: '', isFinal: false })
     setStatusDraft({
       updatedDeliveryDate: entry.updatedDeliveryDate || '',
       reason: DEFAULT_UPDATE_REASON,
       customReason: '',
       notes: '',
     })
+    if (selectedPoDetail.isMaterialPo) {
+      try {
+        const [
+          { data: materialReceipts, error: materialReceiptError },
+          { data: materialUpdates, error: materialUpdateError },
+        ] = await Promise.all([
+          supabase.from('arkline_po_material_receipts')
+            .select('id, received_qty, receive_date, supplier_sj, notes, is_final, created_at')
+            .eq('material_po_ordered_item_id', entry.materialOrderedItemId)
+            .order('receive_date', { ascending: false }),
+          supabase.from('arkline_po_material_delivery_updates')
+            .select('id, previous_updated_delivery_date, updated_delivery_date, reason, notes, created_by, created_at')
+            .eq('material_po_ordered_id', entry.materialPoOrderedId)
+            .order('created_at', { ascending: false }),
+        ])
+        if (materialReceiptError) throw new Error(materialReceiptError.message)
+        if (materialUpdateError) throw new Error(materialUpdateError.message)
+        setSelectedProductDetail((current) => current?.id === entry.id ? {
+          ...current,
+          receipts: (materialReceipts || []).map((row) => ({ ...row, size: '', receipt_group_id: row.id })),
+          updates: materialUpdates || [],
+        } : current)
+      } catch (error) {
+        setProductActionError(error.message || 'Failed to load material receipts.')
+      } finally {
+        setProductDetailLoading(false)
+      }
+      return
+    }
     try {
       const [itemRows, sizeRows, receiptRows, updateRows, paymentRowsRaw, qcRowsRaw, returnBatchRows, cmtInspectionRows, cmtRejectReasonRows, dailyProductionReportRows] = await Promise.all([
         loadOptionalRows(() =>
@@ -3216,6 +3315,36 @@ export default function ArklineProgressOverviewPage() {
     if (!selectedProductDetail) return
     setProductActionMessage('')
     setProductActionError('')
+    if (selectedProductDetail.isMaterialProduct) {
+      const qty = Number(receiptDraft.receivedGoodsQty)
+      if (!receiptDraft.receiveDate || !Number.isFinite(qty) || qty <= 0) {
+        setProductActionError('Isi tanggal dan Received Goods lebih dari 0.')
+        return
+      }
+      if (!selectedProductDetail.materialOrderedItemId) {
+        setProductActionError('Material PO item tidak ditemukan. Refresh lalu coba lagi.')
+        return
+      }
+      const { data: { user } } = await supabase.auth.getUser()
+      const { error } = await supabase.from('arkline_po_material_receipts').insert({
+        material_po_ordered_item_id: selectedProductDetail.materialOrderedItemId,
+        received_qty: qty,
+        receive_date: receiptDraft.receiveDate,
+        supplier_sj: receiptDraft.supplierSj.trim().toUpperCase() || null,
+        notes: receiptDraft.notes.trim() || null,
+        is_final: receiptDraft.isFinal,
+        created_by: user?.email?.toLowerCase() || null,
+      })
+      if (error) {
+        setProductActionError(error.message || 'Failed to save material receipt.')
+        return
+      }
+      setReceiptDraft({ receiveDate: '', supplierSj: '', notes: '', sizeQty: {}, receivedGoodsQty: '', isFinal: false })
+      await openProductDetail(selectedProductDetail)
+      await refreshRows()
+      setProductActionMessage('Material receipt berhasil disimpan.')
+      return
+    }
     const sizeEntries = Object.entries(receiptDraft.sizeQty || {})
       .map(([size, qty]) => ({ size, qty: Number(qty || 0) }))
       .filter((row) => row.qty > 0)
@@ -3289,6 +3418,7 @@ export default function ArklineProgressOverviewPage() {
       receiveDate: '',
       supplierSj: '',
       notes: '',
+      receivedGoodsQty: '',
       sizeQty: Object.keys(prev.sizeQty || {}).reduce((accumulator, size) => {
         accumulator[size] = ''
         return accumulator
@@ -4334,6 +4464,41 @@ export default function ArklineProgressOverviewPage() {
       return
     }
 
+    if (selectedProductDetail.isMaterialProduct) {
+      if (!selectedProductDetail.materialPoOrderedId) {
+        setProductActionError('Material PO tidak ditemukan. Refresh lalu coba lagi.')
+        return
+      }
+      setSavingStatusChange(true)
+      try {
+        const { data: { user } } = await supabase.auth.getUser()
+        const previousDate = selectedProductDetail.updatedDeliveryDate || null
+        const { error } = await supabase.from('arkline_po_material_ordered')
+          .update({ updated_delivery_date: statusDraft.updatedDeliveryDate })
+          .eq('id', selectedProductDetail.materialPoOrderedId)
+        if (error) throw new Error(error.message)
+        const { error: logError } = await supabase.from('arkline_po_material_delivery_updates').insert({
+          material_po_ordered_id: selectedProductDetail.materialPoOrderedId,
+          previous_updated_delivery_date: previousDate,
+          updated_delivery_date: statusDraft.updatedDeliveryDate,
+          reason: resolvedReason,
+          notes: statusDraft.notes.trim(),
+          created_by: user?.email?.toLowerCase() || null,
+        })
+        if (logError) throw new Error(`Tanggal tersimpan, tetapi riwayat update gagal: ${logError.message}`)
+        setSelectedProductDetail((current) => current ? { ...current, updatedDeliveryDate: statusDraft.updatedDeliveryDate } : current)
+        setStatusModalOpen(false)
+        await openProductDetail({ ...selectedProductDetail, updatedDeliveryDate: statusDraft.updatedDeliveryDate })
+        await refreshRows()
+        setProductActionMessage('Updated delivery Material PO berhasil disimpan.')
+      } catch (error) {
+        setProductActionError(error.message || 'Failed to update material delivery.')
+      } finally {
+        setSavingStatusChange(false)
+      }
+      return
+    }
+
     const currentUpdatedDate = selectedProductDetail.updatedDeliveryDate || ''
     const impactDays = getUpdateImpactDays(selectedProductDetail.requestDeliveryDate, statusDraft.updatedDeliveryDate)
     const {
@@ -5030,6 +5195,15 @@ export default function ArklineProgressOverviewPage() {
                 ) : null}
                 <button
                   type="button"
+                  aria-label="Material progress view"
+                  data-view-label="Material Progress"
+                  className={`${styles.segmentButton} ${view === 'materials' ? styles.segmentButtonActive : ''}`.trim()}
+                  onClick={() => setView('materials')}
+                >
+                  <MaterialStackIcon />
+                </button>
+                <button
+                  type="button"
                   aria-label="Calendar view"
                   data-view-label="Calendar View"
                   className={`${styles.segmentButton} ${view === 'calendar' ? styles.segmentButtonActive : ''}`.trim()}
@@ -5045,15 +5219,6 @@ export default function ArklineProgressOverviewPage() {
                   onClick={() => setView('products')}
                 >
                   <ProductListIcon />
-                </button>
-                <button
-                  type="button"
-                  aria-label="Material progress view"
-                  data-view-label="Material Progress"
-                  className={`${styles.segmentButton} ${view === 'materials' ? styles.segmentButtonActive : ''}`.trim()}
-                  onClick={() => setView('materials')}
-                >
-                  <MaterialStackIcon />
                 </button>
               </div>
             ) : null}
@@ -5214,7 +5379,7 @@ export default function ArklineProgressOverviewPage() {
                               <article key={item.id} className={`${styles.eventCard} ${styles[`eventCard${tone[0].toUpperCase()}${tone.slice(1)}`]}`.trim()}>
                                 <div className={styles.eventTitle}>{item.productName || 'NO PRODUCT'}</div>
                                 <p className={styles.eventText}>{item.poId}</p>
-                                <p className={styles.eventMetaText}>Qty {item.qty || 0}</p>
+                                {!item.isMaterial ? <p className={styles.eventMetaText}>Qty {item.qty || 0}</p> : null}
                               </article>
                             )
                           })
@@ -5293,7 +5458,7 @@ export default function ArklineProgressOverviewPage() {
               <section key={status} className={`${styles.boardColumn} ${styles[`boardColumn${status}`] || ''}`.trim()}>
                 <div className={styles.boardColumnHead}>
                   <div className={styles.boardColumnTitleWrap}>
-                    <span className={styles.boardColumnDot}>{status.slice(0, 1).toUpperCase()}</span>
+                    <span className={styles.boardColumnDot}>{getStatusSymbol(status)}</span>
                     <h3>{status}</h3>
                   </div>
                   <span>{materialBoardItemsByStatus[status]?.length || 0}</span>
@@ -5330,7 +5495,7 @@ export default function ArklineProgressOverviewPage() {
                         </div>
                         <div className={styles.boardProductSummary}>
                           <p className={styles.boardProductLine}>{item.materialName || 'NO MATERIAL'}</p>
-                          <p className={styles.boardProductExtra}>{item.variant || '-'}</p>
+                          {item.variant && item.variant !== '-' ? <p className={styles.boardProductExtra}>{item.variant}</p> : null}
                         </div>
                         <div className={styles.boardFooter}>
                           <span className={styles.boardQty}>Qty {formatNumber(item.qty || 0)}</span>
@@ -6160,8 +6325,18 @@ export default function ArklineProgressOverviewPage() {
                   </div>
                 ) : null}
               </div>
-              ) : null}
+              ) : (
+                <div className={styles.productDetailSection}>
+                  <div className={styles.productDetailSectionHead}>
+                    <h4 className={styles.modalSectionTitle}>CMT Inspection</h4>
+                  </div>
+                  <div className={styles.productDetailRows}>
+                    <div className={styles.emptyMini}>Format inspeksi Material akan ditambahkan setelah format baru ditetapkan.</div>
+                  </div>
+                </div>
+              )}
 
+              {!selectedProductDetail.isMaterialProduct ? (
               <div className={styles.productDetailSection}>
                 <div className={styles.productDetailSectionHead}>
                   <div className={styles.productSectionHeadLeft}>
@@ -6228,6 +6403,7 @@ export default function ArklineProgressOverviewPage() {
                   </div>
                 ) : null}
               </div>
+              ) : null}
 
               <div className={styles.productDetailSection}>
                 <div className={styles.productDetailSectionHead}>
@@ -6279,7 +6455,7 @@ export default function ArklineProgressOverviewPage() {
                               <tr>
                                 <th>Receiving Date</th>
                                 <th>Supplier SJ</th>
-                                <th>Size</th>
+                                {!selectedProductDetail.isMaterialProduct ? <th>Size</th> : null}
                                 <th>Total</th>
                               </tr>
                             </thead>
@@ -6288,7 +6464,7 @@ export default function ArklineProgressOverviewPage() {
                                 <tr key={group.id}>
                                   <td>{formatDateLabel(group.receiveDate)}</td>
                                   <td>{group.supplierSj || '-'}</td>
-                                  <td>{formatIncomingGoodsGroupSizes(group.rows)}</td>
+                                  {!selectedProductDetail.isMaterialProduct ? <td>{formatIncomingGoodsGroupSizes(group.rows)}</td> : null}
                                   <td>{formatNumber(group.totalQty)}</td>
                                 </tr>
                               ))}
@@ -6738,7 +6914,7 @@ export default function ArklineProgressOverviewPage() {
                 <p className={styles.eyebrow}>Incoming Goods</p>
                 <h3 className={styles.modalTitle}>Incoming Goods - {selectedProductDetail.productName || 'NO PRODUCT'}</h3>
               </div>
-              <div className={styles.productHeaderActions}>
+              <div className={styles.incomingGoodsHeaderActions}>
                 <label className={styles.receiptCheckbox}>
                   <input
                     type="checkbox"
@@ -6766,6 +6942,28 @@ export default function ArklineProgressOverviewPage() {
             {productActionError ? <div className={styles.productActionError}>{productActionError}</div> : null}
             {productActionMessage ? <div className={styles.productActionMessage}>{productActionMessage}</div> : null}
 
+            {selectedProductDetail.isMaterialProduct ? (
+              <div className={styles.materialIncomingForm}>
+                <div className={styles.materialIncomingFields}>
+                  <label className={styles.filterField}>
+                    <span>Incoming Goods Date</span>
+                    <input className={styles.input} type="date" value={receiptDraft.receiveDate} onChange={(event) => setReceiptDraft((prev) => ({ ...prev, receiveDate: event.target.value }))} />
+                  </label>
+                  <label className={styles.filterField}>
+                    <span>Supplier SJ</span>
+                    <input className={styles.input} value={receiptDraft.supplierSj} onChange={(event) => setReceiptDraft((prev) => ({ ...prev, supplierSj: event.target.value.toUpperCase() }))} placeholder="Supplier delivery note" />
+                  </label>
+                  <label className={styles.filterField}>
+                    <span>Received Goods</span>
+                    <input className={styles.input} type="number" min="0" step="any" inputMode="decimal" value={receiptDraft.receivedGoodsQty} onChange={(event) => setReceiptDraft((prev) => ({ ...prev, receivedGoodsQty: event.target.value }))} placeholder="0" />
+                  </label>
+                </div>
+                <label className={styles.filterField}>
+                  <span>Notes</span>
+                  <textarea className={styles.materialIncomingNotes} value={receiptDraft.notes} onChange={(event) => setReceiptDraft((prev) => ({ ...prev, notes: event.target.value }))} placeholder="Optional receiving notes" />
+                </label>
+              </div>
+            ) : <>
             <div className={styles.deliveryTopGrid}>
               <div className={styles.filterField}>
                 <span>Incoming Goods Date</span>
@@ -6784,10 +6982,6 @@ export default function ArklineProgressOverviewPage() {
                   onChange={(event) => setReceiptDraft((prev) => ({ ...prev, supplierSj: event.target.value.toUpperCase() }))}
                   placeholder="Input supplier SJ"
                 />
-              </div>
-              <div className={styles.filterField}>
-                <span>Product</span>
-                <div className={styles.readonlyField}>{selectedProductDetail.productName || 'NO PRODUCT'}</div>
               </div>
               <div className={styles.filterField}>
                 <span>Incoming Qty</span>
@@ -6882,6 +7076,7 @@ export default function ArklineProgressOverviewPage() {
                 </label>
               </div>
             </div>
+            </>}
           </div>
         </div>
       ) : null}
