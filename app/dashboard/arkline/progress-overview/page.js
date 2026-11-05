@@ -10,6 +10,8 @@ import {
   fetchGarmentPoBundle,
   openPreviewWindow,
 } from '../directory/po-directory-utils'
+import MaterialInspectionModal from './material-inspection-modal'
+import { printMaterialInspectionPdf } from './print-material-inspection'
 
 import shellStyles from '../arkline.module.css'
 import styles from './progress-overview.module.css'
@@ -17,7 +19,7 @@ import styles from './progress-overview.module.css'
 const supabase = createClient()
 
 const BOARD_STATUSES = ['Initiated', 'On Progress', 'Completed']
-const MATERIAL_BOARD_STATUSES = ['Ordered', 'Received', 'Sent']
+const MATERIAL_BOARD_STATUSES = ['Ordered', 'Received', 'Completed']
 const RECEIPT_SIZE_ORDER = ['XS', 'S', 'M', 'L', 'XL', 'XXL']
 const PPN_RATE = 0.11
 const DEFAULT_UPDATE_REASON = 'FABRIC ISSUE'
@@ -215,7 +217,7 @@ function normalizeBoardStatus(value) {
 
 function normalizeMaterialLogStatus(value) {
   const normalized = String(value || '').trim().toUpperCase()
-  if (normalized === 'SENT' || normalized === 'SENT_TO_GARMENT') return 'Sent'
+  if (normalized === 'SENT' || normalized === 'SENT_TO_GARMENT') return 'Completed'
   if (normalized === 'RECEIVED') return 'Received'
   return 'Ordered'
 }
@@ -653,10 +655,12 @@ async function loadMaterialProgressRows() {
     { data: itemData, error: itemError },
     { data: logData, error: logError },
     { data: receiptData, error: receiptError },
+    { data: paymentData, error: paymentError },
+    { data: materialData, error: materialError },
   ] = await Promise.all([
     supabase
       .from('arkline_po_material_ordered')
-      .select('id, material_po_number, supplier_name_snapshot, garment_po_number, po_date, request_delivery_date, updated_delivery_date, status, notes, include_ppn, created_at')
+      .select('id, material_po_number, supplier_name_snapshot, garment_po_number, po_date, request_delivery_date, updated_delivery_date, status, notes, include_ppn, finance_resolved, finance_resolved_at, finance_resolved_by, finance_resolution_notes, created_at')
       .order('created_at', { ascending: false }),
     supabase
       .from('arkline_po_material_ordered_items')
@@ -671,12 +675,30 @@ async function loadMaterialProgressRows() {
     supabase
       .from('arkline_po_material_receipts')
       .select('id, material_po_ordered_item_id, received_qty, receive_date, supplier_sj, notes, is_final, created_at'),
+    supabase
+      .from('arkline_payment')
+      .select('po_number, amount, status, paid_at')
+      .eq('payment_basis', 'PO_BASED')
+      .eq('po_source_type', 'MATERIAL'),
+    supabase.from('arkline_dir_materials').select('id, material_name, material_type'),
   ])
 
   if (headerError) throw new Error(headerError.message)
   if (itemError) throw new Error(itemError.message)
   if (logError) throw new Error(logError.message)
   if (receiptError) throw new Error(receiptError.message)
+  if (paymentError) throw new Error(paymentError.message)
+  if (materialError) throw new Error(materialError.message)
+
+  const materialById = new Map((materialData || []).map((row) => [String(row.id), row]))
+  const materialByName = new Map((materialData || []).map((row) => [String(row.material_name || '').trim().toUpperCase(), row]))
+
+  const paidValueByMaterialPo = (paymentData || []).reduce((accumulator, row) => {
+    if (!isPaidFinancePayment(row)) return accumulator
+    const poNumber = String(row?.po_number || '').trim().toUpperCase()
+    if (poNumber) accumulator[poNumber] = (accumulator[poNumber] || 0) + parseNumberValue(row?.amount)
+    return accumulator
+  }, {})
 
   const headerById = (headerData || []).reduce((accumulator, row) => {
     accumulator[String(row?.id || '').trim()] = row
@@ -728,10 +750,13 @@ async function loadMaterialProgressRows() {
     const materialPoNumber = String(row?.material_po_number || '').trim().toUpperCase()
     const header =
       headerById[String(row?.material_po_ordered_id || '').trim()] || headerByMaterialPoNumber[materialPoNumber] || null
+    const material = materialById.get(String(row?.material_id || '')) ||
+      materialByName.get(String(row?.material_name_snapshot || '').trim().toUpperCase()) || null
     return {
       id: `ordered:${row.id}`,
       orderedItemId: row.id,
       materialPoOrderedId: header?.id || row.material_po_ordered_id,
+      materialType: String(material?.material_type || '').trim().toUpperCase(),
       status: 'Ordered',
       poNumber: String(row?.material_po_number || header?.material_po_number || '').trim().toUpperCase(),
       supplier: String(header?.supplier_name_snapshot || '').trim().toUpperCase(),
@@ -742,6 +767,11 @@ async function loadMaterialProgressRows() {
       price: getMaterialLinePrice(row),
       amount: getMaterialLineAmount(row),
       includePpn: normalizeBoolean(header?.include_ppn, true),
+      financePaidValue: paidValueByMaterialPo[materialPoNumber] || 0,
+      financeResolved: normalizeBoolean(header?.finance_resolved, false),
+      financeResolvedAt: header?.finance_resolved_at || '',
+      financeResolvedBy: String(header?.finance_resolved_by || '').trim(),
+      financeResolutionNotes: String(header?.finance_resolution_notes || '').trim(),
       requestDeliveryDate: String(header?.request_delivery_date || '').slice(0, 10),
       updatedDeliveryDate: String(header?.updated_delivery_date || '').slice(0, 10),
       issueDate: String(header?.po_date || header?.created_at || '').slice(0, 10),
@@ -800,6 +830,100 @@ async function loadMaterialProgressRows() {
   })
 
   return [...orderedRows, ...logRows, ...receiptRows]
+}
+
+function buildMaterialProgressPo(item, materialRows) {
+  const materialPoNumber = String(item?.poNumber || '').trim().toUpperCase() || '-'
+  const materialLines = materialRows.filter(
+    (row) => String(row?.poNumber || '').trim().toUpperCase() === materialPoNumber && row?.status === 'Ordered'
+  )
+  const detailLines = materialLines.length ? materialLines : [item]
+  const includePpn = detailLines.every((row) => row?.includePpn !== false)
+  const productEntries = detailLines.map((line, index) => {
+    const linePoNumber = String(line?.poNumber || materialPoNumber).trim().toUpperCase()
+    const lineMaterialName = String(line?.materialName || '').trim().toUpperCase() || 'NO MATERIAL'
+    const lineVariant = String(line?.variant || '-').trim().toUpperCase() || '-'
+    const lineQty = Number(line?.qty || 0)
+    const linePrice = Number(line?.price || 0)
+    const matchingReceiptRows = materialRows.filter(
+      (row) =>
+        String(row?.poNumber || '').trim().toUpperCase() === linePoNumber &&
+        row?.status === 'Received' &&
+        (line?.orderedItemId && row?.orderedItemId
+          ? String(row.orderedItemId) === String(line.orderedItemId)
+          : String(row?.materialName || '').trim().toUpperCase() === lineMaterialName &&
+            String(row?.variant || '-').trim().toUpperCase() === lineVariant)
+    )
+    const dedicatedReceipts = matchingReceiptRows.filter((row) => String(row.id || '').startsWith('material-receipt:'))
+    const receiptSource = dedicatedReceipts.length ? dedicatedReceipts : matchingReceiptRows
+    const receivedQty = receiptSource.reduce((sum, row) => sum + Number(row?.qty || 0), 0)
+    const lineStatus = receiptSource.some((row) => row.isFinal) || (lineQty > 0 && receivedQty >= lineQty)
+      ? 'Completed'
+      : receivedQty > 0 ? 'On Progress' : 'Initiated'
+
+    return {
+      id: `material-progress-line:${line?.id || materialPoNumber || index}`,
+      materialOrderedItemId: line?.orderedItemId || '',
+      materialPoOrderedId: line?.materialPoOrderedId || '',
+      materialType: line?.materialType || '',
+      sku: lineVariant || 'MATERIAL',
+      productName: lineMaterialName,
+      category: 'MATERIAL',
+      qty: lineQty,
+      actualQty: receivedQty,
+      shortQty: 0,
+      openReturnQty: 0,
+      hasOpenReturn: false,
+      remainingQty: Math.max(lineQty - receivedQty, 0),
+      price: linePrice,
+      hpp: 0,
+      updatedDeliveryDate: line?.updatedDeliveryDate || '',
+      status: lineStatus,
+      notes: String(line?.notes || '').trim(),
+      sizeBreakdown: [],
+    }
+  })
+  const totalQty = productEntries.reduce((sum, line) => sum + Number(line.qty || 0), 0)
+  const netAmount = productEntries.reduce((sum, entry) => sum + getFinanceQtyForItem(entry) * parseNumberValue(entry.price), 0)
+  const dueValue = applyPpnToAmount(netAmount, includePpn)
+  const paidValue = Number(detailLines[0]?.financePaidValue || 0)
+  const financeResolved = Boolean(detailLines[0]?.financeResolved)
+  const outstandingValue = getFinanceOutstandingValue(dueValue, paidValue)
+
+  return {
+    id: `material-progress:${item?.id || item?.poNumber || 'detail'}`,
+    materialPoOrderedId: detailLines[0]?.materialPoOrderedId || '',
+    isMaterialPo: true,
+    poId: materialPoNumber,
+    supplier: String(item?.supplier || '').trim().toUpperCase(),
+    method: 'MATERIAL',
+    status: normalizeBoardStatus(item?.status),
+    includePpn,
+    createdAt: item?.issueDate || item?.date || '',
+    startDate: item?.issueDate || item?.date || '',
+    targetDate: item?.requestDeliveryDate || '',
+    updatedDate: item?.updatedDeliveryDate || '',
+    displayDate: item?.updatedDeliveryDate || item?.requestDeliveryDate || '',
+    completionDate: '',
+    notes: String(item?.notes || '').trim(),
+    subtitle: String(item?.notes || '').trim(),
+    productNames: productEntries.map((line) => line.productName),
+    productEntries,
+    totalQty,
+    financeDueValue: dueValue,
+    financePaidValue: paidValue,
+    financeOutstandingValue: outstandingValue,
+    financeResolved,
+    isFinanceSettled: dueValue > 0 && (outstandingValue === 0 || financeResolved),
+    financeResolvedAt: detailLines[0]?.financeResolvedAt || '',
+    financeResolvedBy: detailLines[0]?.financeResolvedBy || '',
+    financeResolutionNotes: detailLines[0]?.financeResolutionNotes || '',
+    payments: [],
+    documentHistory: {
+      receipts: [],
+      signedPoFiles: [],
+    },
+  }
 }
 
 async function loadUpdateReasons() {
@@ -1955,6 +2079,50 @@ async function loadOptionalRows(queryFactory) {
   }
 }
 
+function MaterialInspectionSection({ item, expanded, canAdd, onToggle, onAdd, onOpen, onPrint, printingId }) {
+  if (item?.materialType !== 'FABRIC') return null
+
+  return (
+    <div className={styles.productDetailSection}>
+      <div className={styles.productDetailSectionHead}>
+        <div className={styles.productSectionHeadLeft}>
+          <h4 className={styles.modalSectionTitle}>CMT Inspection</h4>
+          {canAdd ? (
+            <button type="button" className={styles.productSectionLaunch} onClick={onAdd} aria-label="Add fabric inspection" title="Add fabric inspection">
+              <PlusIcon />
+            </button>
+          ) : null}
+        </div>
+        <button type="button" className={styles.productDetailSectionToggle} onClick={onToggle}>
+          <span className={styles.productDetailHint}>{item.materialInspections?.length || 0} inspection(s)</span>
+          <ChevronIcon expanded={expanded} />
+        </button>
+      </div>
+      {expanded ? (
+        <div className={styles.productDetailRows}>
+          {(item.materialInspections || []).length ? (
+            <div className={styles.cmtInspectionStageGrid}>
+              {item.materialInspections.map((inspection) => (
+                <div key={inspection.id} role="button" tabIndex={0} className={styles.cmtInspectionStageCard} onClick={() => onOpen(inspection)} onKeyDown={(event) => { if (event.target.closest('button')) return; if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onOpen(inspection) } }}>
+                  <div className={styles.cmtInspectionStageTop}>
+                    <span>{inspection.lot}</span>
+                    <button type="button" className={styles.cmtInspectionPrintButton} onClick={(event) => { event.stopPropagation(); void onPrint(inspection, item) }} disabled={printingId === inspection.id} aria-label={`Print fabric inspection ${inspection.lot}`} title="Print fabric inspection PDF"><PrintIcon /></button>
+                  </div>
+                  <strong>Grade {inspection.grade}</strong>
+                  <div className={styles.cmtInspectionStageMeta}>
+                    <span>{formatDateLabel(inspection.inspected_at)}</span>
+                    <span>{inspection.points_per_100_sq_yd} pts / 100 sq yd</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : <div className={styles.emptyMini}>No fabric inspection yet.</div>}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
 export default function ArklineProgressOverviewPage() {
   const { access, loading: accessLoading, role } = useArklineAccess()
   const searchParams = useSearchParams()
@@ -2003,6 +2171,7 @@ export default function ArklineProgressOverviewPage() {
   const [printingQcReport, setPrintingQcReport] = useState(false)
   const [printingReturnHistory, setPrintingReturnHistory] = useState(false)
   const [printingCmtInspectionId, setPrintingCmtInspectionId] = useState('')
+  const [printingMaterialInspectionId, setPrintingMaterialInspectionId] = useState('')
   const [qcReceiptDateFilter, setQcReceiptDateFilter] = useState(['all'])
   const [expandedReturnBatchId, setExpandedReturnBatchId] = useState('')
   const [savingStatusChange, setSavingStatusChange] = useState(false)
@@ -2016,6 +2185,7 @@ export default function ArklineProgressOverviewPage() {
   const [hppDraft, setHppDraft] = useState('')
   const [savingHpp, setSavingHpp] = useState(false)
   const [cmtInspectionModalOpen, setCmtInspectionModalOpen] = useState(false)
+  const [materialInspectionModal, setMaterialInspectionModal] = useState(null)
   const [savingCmtInspection, setSavingCmtInspection] = useState(false)
   const [cmtInspectionDraft, setCmtInspectionDraft] = useState(() => createCmtInspectionDraft())
   const [dailyProductionReportModalOpen, setDailyProductionReportModalOpen] = useState(false)
@@ -2298,7 +2468,7 @@ export default function ArklineProgressOverviewPage() {
 
   const materialBoardItemsByStatus = useMemo(
     () => {
-      const statusRank = { Ordered: 0, Received: 1, Sent: 2 }
+      const statusRank = { Ordered: 0, Received: 1, Completed: 2 }
       const rowsByPoNumber = filteredMaterialRows.reduce((accumulator, row) => {
         const poNumber = String(row?.poNumber || '').trim().toUpperCase() || 'NO PO'
         if (!accumulator[poNumber]) accumulator[poNumber] = []
@@ -2312,15 +2482,17 @@ export default function ArklineProgressOverviewPage() {
       }, {})
 
       Object.entries(rowsByPoNumber).forEach(([poNumber, rows]) => {
-        const currentStatus = rows.reduce(
+        const activityStatus = rows.reduce(
           (highest, row) => (statusRank[row?.status] > statusRank[highest] ? row.status : highest),
           'Ordered'
         )
         const orderedRows = rows.filter((row) => row?.status === 'Ordered')
-        const summaryRows = orderedRows.length ? orderedRows : rows.filter((row) => row?.status === currentStatus)
+        const summaryRows = orderedRows.length ? orderedRows : rows.filter((row) => row?.status === activityStatus)
         const names = Array.from(new Set(summaryRows.map((row) => String(row?.materialName || '').trim().toUpperCase()).filter(Boolean)))
         const variants = Array.from(new Set(summaryRows.map((row) => String(row?.variant || '').trim().toUpperCase()).filter((variant) => variant && variant !== '-')))
         const firstRow = summaryRows[0] || rows[0] || {}
+        const financeDetail = buildMaterialProgressPo(firstRow, materialRows)
+        const currentStatus = financeDetail.isFinanceSettled ? 'Completed' : activityStatus
         const totalQty = summaryRows.reduce((sum, row) => sum + Number(row?.qty || 0), 0)
         const totalAmount = summaryRows.reduce((sum, row) => sum + Number(row?.amount || 0), 0)
         const latestDate = rows.map((row) => String(row?.date || '')).filter(Boolean).sort().at(-1) || ''
@@ -2330,6 +2502,7 @@ export default function ArklineProgressOverviewPage() {
           id: `material-po:${poNumber}`,
           poNumber,
           status: currentStatus,
+          isFinanceSettled: financeDetail.isFinanceSettled,
           materialName: names.length > 1 ? `${names.length} MATERIAL LINES` : names[0] || 'NO MATERIAL',
           variant: variants.length > 1 ? `${variants.length} VARIANTS` : variants[0] || '-',
           qty: totalQty,
@@ -2344,7 +2517,7 @@ export default function ArklineProgressOverviewPage() {
 
       return boardItems
     },
-    [filteredMaterialRows]
+    [filteredMaterialRows, materialRows]
   )
 
   const openProductSnapshot = useMemo(() => {
@@ -2524,15 +2697,15 @@ export default function ArklineProgressOverviewPage() {
             supabase
               .from('arkline_payment')
               .select(
-                `id, payment_basis, po_source_type, po_db_id, po_number, invoice_number, amount, notes, status, paid_at, created_at,
+                `id, payment_basis, po_source_type, po_number, invoice_number, amount, notes, status, paid_at, created_at,
                 attachments:arkline_payment_attachments(id, storage_bucket, storage_path, file_name, mime_type, file_size, uploaded_by, created_at)`
               )
               .eq('payment_basis', 'PO_BASED')
-              .eq('po_source_type', 'GARMENT')
+              .eq('po_source_type', item.isMaterialPo ? 'MATERIAL' : 'GARMENT')
               .eq('po_number', item.poId)
               .order('created_at', { ascending: false })
           ),
-      poItemIds.length
+      !item.isMaterialPo && poItemIds.length
         ? loadOptionalRows(() =>
             supabase
               .from('arkline_po_item_receipts')
@@ -2562,89 +2735,7 @@ export default function ArklineProgressOverviewPage() {
   }
 
   function getMaterialProgressPo(item) {
-    const materialPoNumber = String(item?.poNumber || '').trim().toUpperCase() || '-'
-    const materialLines = materialRows.filter(
-      (row) => String(row?.poNumber || '').trim().toUpperCase() === materialPoNumber && row?.status === 'Ordered'
-    )
-    const detailLines = materialLines.length ? materialLines : [item]
-    const includePpn = detailLines.every((row) => row?.includePpn !== false)
-    const productEntries = detailLines.map((line, index) => {
-      const linePoNumber = String(line?.poNumber || materialPoNumber).trim().toUpperCase()
-      const lineMaterialName = String(line?.materialName || '').trim().toUpperCase() || 'NO MATERIAL'
-      const lineVariant = String(line?.variant || '-').trim().toUpperCase() || '-'
-      const lineQty = Number(line?.qty || 0)
-      const linePrice = Number(line?.price || 0)
-      const matchingReceiptRows = materialRows.filter(
-          (row) =>
-            String(row?.poNumber || '').trim().toUpperCase() === linePoNumber &&
-            row?.status === 'Received' &&
-            (line?.orderedItemId && row?.orderedItemId
-              ? String(row.orderedItemId) === String(line.orderedItemId)
-              : String(row?.materialName || '').trim().toUpperCase() === lineMaterialName &&
-                String(row?.variant || '-').trim().toUpperCase() === lineVariant)
-        )
-      const dedicatedReceipts = matchingReceiptRows.filter((row) => String(row.id || '').startsWith('material-receipt:'))
-      const receiptSource = dedicatedReceipts.length ? dedicatedReceipts : matchingReceiptRows
-      const receivedQty = receiptSource
-        .reduce((sum, row) => sum + Number(row?.qty || 0), 0)
-      const lineStatus = receiptSource.some((row) => row.isFinal) || (lineQty > 0 && receivedQty >= lineQty) ? 'Completed' : receivedQty > 0 ? 'On Progress' : 'Initiated'
-
-      return {
-        id: `material-progress-line:${line?.id || materialPoNumber || index}`,
-        materialOrderedItemId: line?.orderedItemId || '',
-        materialPoOrderedId: line?.materialPoOrderedId || '',
-        sku: lineVariant || 'MATERIAL',
-        productName: lineMaterialName,
-        category: 'MATERIAL',
-        qty: lineQty,
-        actualQty: receivedQty,
-        shortQty: 0,
-        openReturnQty: 0,
-        hasOpenReturn: false,
-        remainingQty: Math.max(lineQty - receivedQty, 0),
-        price: linePrice,
-        hpp: 0,
-        updatedDeliveryDate: line?.updatedDeliveryDate || '',
-        status: lineStatus,
-        notes: String(line?.notes || '').trim(),
-        sizeBreakdown: [],
-      }
-    })
-    const totalQty = productEntries.reduce((sum, line) => sum + Number(line.qty || 0), 0)
-    const netAmount = detailLines.reduce((sum, line) => sum + Number(line?.amount || Number(line?.qty || 0) * Number(line?.price || 0)), 0)
-
-    return {
-      id: `material-progress:${item?.id || item?.poNumber || 'detail'}`,
-      isMaterialPo: true,
-      poId: materialPoNumber,
-      supplier: String(item?.supplier || '').trim().toUpperCase(),
-      method: 'MATERIAL',
-      status: normalizeBoardStatus(item?.status),
-      includePpn,
-      createdAt: item?.issueDate || item?.date || '',
-      startDate: item?.issueDate || item?.date || '',
-      targetDate: item?.requestDeliveryDate || '',
-      updatedDate: item?.updatedDeliveryDate || '',
-      displayDate: item?.updatedDeliveryDate || item?.requestDeliveryDate || '',
-      completionDate: '',
-      notes: String(item?.notes || '').trim(),
-      subtitle: String(item?.notes || '').trim(),
-      productNames: productEntries.map((line) => line.productName),
-      productEntries,
-      totalQty,
-      financeDueValue: applyPpnToAmount(netAmount, includePpn),
-      financePaidValue: 0,
-      financeOutstandingValue: 0,
-      financeResolved: false,
-      financeResolvedAt: '',
-      financeResolvedBy: '',
-      financeResolutionNotes: '',
-      payments: [],
-      documentHistory: {
-        receipts: [],
-        signedPoFiles: [],
-      },
-    }
+    return buildMaterialProgressPo(item, materialRows)
   }
 
   function openMaterialProgressDetail(item) {
@@ -2713,17 +2804,23 @@ export default function ArklineProgressOverviewPage() {
       }
 
       const resolvedAt = new Date().toISOString()
-      const { error } = await supabase
-        .from('arkline_pos')
+      const tableName = selectedPoDetail.isMaterialPo ? 'arkline_po_material_ordered' : 'arkline_pos'
+      const recordId = selectedPoDetail.isMaterialPo ? selectedPoDetail.materialPoOrderedId : selectedPoDetail.id
+      if (!recordId) throw new Error('PO record not found. Refresh the page and try again.')
+      const { data: updatedPo, error } = await supabase
+        .from(tableName)
         .update({
           finance_resolved: true,
           finance_resolved_at: resolvedAt,
           finance_resolved_by: resolvedBy || null,
           finance_resolution_notes: notes,
         })
-        .eq('id', selectedPoDetail.id)
+        .eq('id', recordId)
+        .select('id')
+        .single()
 
       if (error) throw new Error(error.message || 'Failed to resolve finance.')
+      if (!updatedPo) throw new Error('PO was not updated. Refresh the page and try again.')
 
       setSelectedPoDetail((prev) =>
         prev
@@ -2868,6 +2965,7 @@ export default function ArklineProgressOverviewPage() {
     setManualCompleteOpen(false)
     setHppModalOpen(false)
     setCmtInspectionModalOpen(false)
+    setMaterialInspectionModal(null)
     setDailyProductionReportModalOpen(false)
     setSelectedCmtInspectionDetail(null)
     setCmtPrefinalPdfFile(null)
@@ -2901,6 +2999,7 @@ export default function ArklineProgressOverviewPage() {
       returnQcRows: [],
       returnQcRejectAdjustments: [],
       cmtInspections: [],
+      materialInspections: [],
       dailyProductionReports: [],
       financeSummary: null,
       sizeBreakdown: [],
@@ -2917,6 +3016,7 @@ export default function ArklineProgressOverviewPage() {
         const [
           { data: materialReceipts, error: materialReceiptError },
           { data: materialUpdates, error: materialUpdateError },
+          { data: materialInspections, error: materialInspectionError },
         ] = await Promise.all([
           supabase.from('arkline_po_material_receipts')
             .select('id, received_qty, receive_date, supplier_sj, notes, is_final, created_at')
@@ -2926,13 +3026,19 @@ export default function ArklineProgressOverviewPage() {
             .select('id, previous_updated_delivery_date, updated_delivery_date, reason, notes, created_by, created_at')
             .eq('material_po_ordered_id', entry.materialPoOrderedId)
             .order('created_at', { ascending: false }),
+          supabase.from('arkline_cmt_material_inspections')
+            .select('id, material_po_ordered_item_id, lot, nominal_width_in, nominal_gsm, remarks, total_points, scored_points, points_per_100_sq_yd, grade, inspected_by, inspected_at')
+            .eq('material_po_ordered_item_id', entry.materialOrderedItemId)
+            .order('inspected_at', { ascending: false }),
         ])
         if (materialReceiptError) throw new Error(materialReceiptError.message)
         if (materialUpdateError) throw new Error(materialUpdateError.message)
+        if (materialInspectionError) throw new Error(materialInspectionError.message)
         setSelectedProductDetail((current) => current?.id === entry.id ? {
           ...current,
           receipts: (materialReceipts || []).map((row) => ({ ...row, size: '', receipt_group_id: row.id })),
           updates: materialUpdates || [],
+          materialInspections: materialInspections || [],
         } : current)
       } catch (error) {
         setProductActionError(error.message || 'Failed to load material receipts.')
@@ -2978,7 +3084,7 @@ export default function ArklineProgressOverviewPage() {
           : loadOptionalRows(() =>
               supabase
                 .from('arkline_payment')
-                .select('id, payment_basis, po_source_type, po_db_id, po_number, invoice_number, amount, notes, status, paid_at, created_at')
+                .select('id, payment_basis, po_source_type, po_number, invoice_number, amount, notes, status, paid_at, created_at')
                 .eq('payment_basis', 'PO_BASED')
                 .eq('po_source_type', 'GARMENT')
                 .eq('po_number', selectedPoDetail.poId)
@@ -4037,6 +4143,19 @@ export default function ArklineProgressOverviewPage() {
       setProductActionError(error?.message || 'Failed to generate CMT inspection PDF.')
     } finally {
       setPrintingCmtInspectionId('')
+    }
+  }
+
+  async function handlePrintMaterialInspection(inspection, item) {
+    if (!inspection?.id || printingMaterialInspectionId) return
+    setProductActionError('')
+    setPrintingMaterialInspectionId(inspection.id)
+    try {
+      await printMaterialInspectionPdf(inspection, item)
+    } catch (error) {
+      setProductActionError(error?.message || 'Failed to generate fabric inspection PDF.')
+    } finally {
+      setPrintingMaterialInspectionId('')
     }
   }
 
@@ -5471,7 +5590,7 @@ export default function ArklineProgressOverviewPage() {
                       return (
                       <article
                         key={item.id}
-                        className={`${styles.boardCard} ${!canOpenMaterialDetail ? styles.boardCardStatic : ''}`.trim()}
+                        className={`${styles.boardCard} ${item.isFinanceSettled ? styles.boardCardFinanceSettled : ''} ${!canOpenMaterialDetail ? styles.boardCardStatic : ''}`.trim()}
                         role={canOpenMaterialDetail ? 'button' : undefined}
                         tabIndex={canOpenMaterialDetail ? 0 : undefined}
                         onClick={canOpenMaterialDetail ? () => openMaterialProgressDetail(item) : undefined}
@@ -5725,7 +5844,7 @@ export default function ArklineProgressOverviewPage() {
                                   <th>Date</th>
                                   <th>Invoice No</th>
                                   <th>Status</th>
-                                  <th>Nominal Paid</th>
+                                  <th>Payment Amount</th>
                                 </tr>
                               </thead>
                               <tbody>
@@ -5996,7 +6115,18 @@ export default function ArklineProgressOverviewPage() {
             {productActionMessage ? <div className={styles.productActionMessage}>{productActionMessage}</div> : null}
 
             <div className={styles.productDetailStack}>
-              <div className={styles.productDetailSection}>
+              {selectedProductDetail.isMaterialProduct ? (
+                <MaterialInspectionSection
+                  item={selectedProductDetail}
+                  expanded={productDetailSections.cmtInspection}
+                  canAdd={selectedProductDetail.materialType === 'FABRIC'}
+                  onToggle={() => toggleProductDetailSection('cmtInspection')}
+                  onAdd={() => setMaterialInspectionModal({ inspection: null })}
+                  onOpen={(inspection) => setMaterialInspectionModal({ inspection })}
+                  onPrint={handlePrintMaterialInspection}
+                  printingId={printingMaterialInspectionId}
+                />
+              ) : <div className={styles.productDetailSection}>
                 <div className={styles.productDetailSectionHead}>
                   <div className={styles.productSectionHeadLeft}>
                     <h4 className={styles.modalSectionTitle}>CMT Inspection</h4>
@@ -6052,9 +6182,9 @@ export default function ArklineProgressOverviewPage() {
                     )}
                   </div>
                 ) : null}
-              </div>
+              </div>}
 
-              <div className={styles.productDetailSection}>
+              {!selectedProductDetail.isMaterialProduct ? <div className={styles.productDetailSection}>
                 <div className={styles.productDetailSectionHead}>
                   <div className={styles.productSectionHeadLeft}>
                     <h4 className={styles.modalSectionTitle}>Daily Production Report</h4>
@@ -6117,7 +6247,7 @@ export default function ArklineProgressOverviewPage() {
                     )}
                   </div>
                 ) : null}
-              </div>
+              </div> : null}
             </div>
           </div>
         </div>
@@ -6326,14 +6456,16 @@ export default function ArklineProgressOverviewPage() {
                 ) : null}
               </div>
               ) : (
-                <div className={styles.productDetailSection}>
-                  <div className={styles.productDetailSectionHead}>
-                    <h4 className={styles.modalSectionTitle}>CMT Inspection</h4>
-                  </div>
-                  <div className={styles.productDetailRows}>
-                    <div className={styles.emptyMini}>Format inspeksi Material akan ditambahkan setelah format baru ditetapkan.</div>
-                  </div>
-                </div>
+                <MaterialInspectionSection
+                  item={selectedProductDetail}
+                  expanded={productDetailSections.cmtInspection}
+                  canAdd={['admin', 'arkline_merchandiser', 'arkline_host'].includes(role)}
+                  onToggle={() => toggleProductDetailSection('cmtInspection')}
+                  onAdd={() => setMaterialInspectionModal({ inspection: null })}
+                  onOpen={(inspection) => setMaterialInspectionModal({ inspection })}
+                  onPrint={handlePrintMaterialInspection}
+                  printingId={printingMaterialInspectionId}
+                />
               )}
 
               {!selectedProductDetail.isMaterialProduct ? (
@@ -7206,6 +7338,24 @@ export default function ArklineProgressOverviewPage() {
             </div>
           </div>
         </div>
+      ) : null}
+
+      {selectedProductDetail && materialInspectionModal ? (
+        <MaterialInspectionModal
+          key={materialInspectionModal.inspection?.id || 'new'}
+          item={selectedProductDetail}
+          inspection={materialInspectionModal.inspection}
+          onPrint={handlePrintMaterialInspection}
+          printing={printingMaterialInspectionId === materialInspectionModal.inspection?.id}
+          onClose={() => setMaterialInspectionModal(null)}
+          onSaved={async () => {
+            const item = selectedProductDetail
+            setMaterialInspectionModal(null)
+            await openProductDetail(item)
+            setProductDetailSections((current) => ({ ...current, cmtInspection: true }))
+            setProductActionMessage('Fabric inspection saved.')
+          }}
+        />
       ) : null}
 
       {selectedProductDetail && cmtInspectionModalOpen ? (

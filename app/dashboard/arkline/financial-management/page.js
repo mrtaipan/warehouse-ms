@@ -16,7 +16,6 @@ const ARKLINE_PAYMENT_DETAIL_SELECT = `
   id,
   payment_basis,
   po_source_type,
-  po_db_id,
   po_number,
   supplier_name_snapshot,
   invoice_number,
@@ -91,7 +90,7 @@ function createDraft() {
   return {
     payment_basis: 'NON_PO_BASED',
     po_source_type: 'GARMENT',
-    linked_po_id: '',
+    linked_po_number: '',
     invoice_number: '',
     no_invoice_number: false,
     category_id: '',
@@ -197,7 +196,6 @@ function normalizeRequest(row) {
     id: row?.id || '',
     payment_basis: row?.payment_basis || 'NON_PO_BASED',
     po_source_type: row?.po_source_type || 'GARMENT',
-    po_db_id: row?.po_db_id || null,
     po_number: row?.po_number || '',
     supplier_name_snapshot: row?.supplier_name_snapshot || '',
     invoice_number: row?.invoice_number || '',
@@ -653,7 +651,7 @@ export default function ArklineFinancialManagementPage({
     setDraft({
       payment_basis: item.payment_basis || 'NON_PO_BASED',
       po_source_type: item.po_source_type || 'GARMENT',
-      linked_po_id: item.po_db_id ? String(item.po_db_id) : '',
+      linked_po_number: String(item.po_number || '').trim().toUpperCase(),
       invoice_number: item.invoice_number || '',
       no_invoice_number: false,
       category_id: item.category_id || '',
@@ -743,7 +741,7 @@ export default function ArklineFinancialManagementPage({
       return
     }
 
-    if (draft.payment_basis === 'PO_BASED' && !draft.linked_po_id) {
+    if (draft.payment_basis === 'PO_BASED' && !draft.linked_po_number) {
       setError(`Choose a ${draft.po_source_type === 'MATERIAL' ? 'material' : 'garment'} PO first for PO based payment.`)
       return
     }
@@ -771,9 +769,23 @@ export default function ArklineFinancialManagementPage({
     const selectedPo =
       draft.payment_basis === 'PO_BASED'
         ? draft.po_source_type === 'MATERIAL'
-          ? materialPoOptions.find((item) => item.id === draft.linked_po_id)
-          : poOptions.find((item) => item.id === draft.linked_po_id)
+          ? materialPoOptions.find((item) => item.poNumber === draft.linked_po_number)
+          : poOptions.find((item) => item.poNumber === draft.linked_po_number)
         : null
+    const savedPo = editingRequest?.payment_basis === 'PO_BASED' &&
+      editingRequest.po_source_type === draft.po_source_type &&
+      String(editingRequest.po_number || '').trim().toUpperCase() === draft.linked_po_number
+      ? {
+          poNumber: draft.linked_po_number,
+          supplierName: editingRequest.supplier_name_snapshot || '',
+        }
+      : null
+    const resolvedPo = selectedPo || savedPo
+
+    if (draft.payment_basis === 'PO_BASED' && !resolvedPo) {
+      setError('Selected PO is no longer available. Please choose a PO from the list.')
+      return
+    }
 
     setSaving(true)
     const uploadedPaths = []
@@ -783,13 +795,12 @@ export default function ArklineFinancialManagementPage({
         const payload = {
         payment_basis: draft.payment_basis,
         po_source_type: draft.payment_basis === 'PO_BASED' ? draft.po_source_type : null,
-        po_db_id: draft.payment_basis === 'PO_BASED' && draft.linked_po_id ? Number(draft.linked_po_id) : null,
-        po_number: draft.payment_basis === 'PO_BASED' ? selectedPo?.poNumber || null : null,
+        po_number: draft.payment_basis === 'PO_BASED' ? resolvedPo?.poNumber || null : null,
         supplier_name_snapshot:
           draft.payment_basis === 'PO_BASED'
             ? draft.po_source_type === 'MATERIAL'
-              ? selectedPo?.poNumber || null
-              : selectedPo?.supplierName || null
+              ? resolvedPo?.poNumber || null
+              : resolvedPo?.supplierName || null
             : null,
         invoice_number: resolvedInvoiceNumber,
         category_id: Number(draft.category_id),
@@ -1493,7 +1504,7 @@ export default function ArklineFinancialManagementPage({
                         ...prev,
                         payment_basis: event.target.value,
                         po_source_type: 'GARMENT',
-                        linked_po_id: '',
+                        linked_po_number: '',
                       }))
                     }
                   >
@@ -1510,7 +1521,7 @@ export default function ArklineFinancialManagementPage({
                     <select
                       className={styles.select}
                       value={draft.po_source_type}
-                      onChange={(event) => setDraft((prev) => ({ ...prev, po_source_type: event.target.value, linked_po_id: '' }))}
+                      onChange={(event) => setDraft((prev) => ({ ...prev, po_source_type: event.target.value, linked_po_number: '' }))}
                     >
                       <option value="GARMENT">Garment</option>
                       <option value="MATERIAL">Material</option>
@@ -1540,12 +1551,15 @@ export default function ArklineFinancialManagementPage({
                     <label className={styles.label}>{draft.po_source_type === 'MATERIAL' ? 'Material PO *' : 'Garment PO *'}</label>
                     <select
                       className={styles.select}
-                      value={draft.linked_po_id}
-                      onChange={(event) => setDraft((prev) => ({ ...prev, linked_po_id: event.target.value }))}
+                      value={draft.linked_po_number}
+                      onChange={(event) => setDraft((prev) => ({ ...prev, linked_po_number: event.target.value }))}
                     >
                       <option value="">{draft.po_source_type === 'MATERIAL' ? 'Choose material PO' : 'Choose garment PO'}</option>
+                      {draft.linked_po_number && !(draft.po_source_type === 'MATERIAL' ? materialPoOptions : poOptions).some((item) => item.poNumber === draft.linked_po_number) ? (
+                        <option value={draft.linked_po_number}>{draft.linked_po_number} (saved PO)</option>
+                      ) : null}
                       {(draft.po_source_type === 'MATERIAL' ? materialPoOptions : poOptions).map((item) => (
-                        <option key={item.id} value={item.id}>
+                        <option key={item.id} value={item.poNumber}>
                           {item.poNumber}
                           {item.supplierName ? ` - ${item.supplierName}` : ''}
                         </option>

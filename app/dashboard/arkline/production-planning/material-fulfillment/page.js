@@ -810,6 +810,7 @@ export default function ArklineMaterialFulfillmentPage() {
   const [showSupplierModal, setShowSupplierModal] = useState(false)
   const [showMaterialModal, setShowMaterialModal] = useState(false)
   const [showOrderedAsModal, setShowOrderedAsModal] = useState(false)
+  const [showPrintPrompt, setShowPrintPrompt] = useState(false)
   const [generatingRequirements, setGeneratingRequirements] = useState(false)
   const [poFilter, setPoFilter] = useState(NO_PO_VALUE)
   const [requirementWarnings, setRequirementWarnings] = useState([])
@@ -1449,6 +1450,8 @@ export default function ArklineMaterialFulfillmentPage() {
   }
 
   function handleResetDraft() {
+    setShowPrintPrompt(false)
+    setPoFilter(NO_PO_VALUE)
     setOrderHeader(createOrderHeaderDraft())
     setFreeMaterialDraft(createFreeMaterialDraft())
     setSelectedRequirementIds([])
@@ -1491,6 +1494,7 @@ export default function ArklineMaterialFulfillmentPage() {
   }
 
   function handleSaveMaterialPo() {
+    if (isMaterialPoSaved || saving || generatingRequirements) return
     setError('')
     setSuccess('')
 
@@ -1545,6 +1549,7 @@ export default function ArklineMaterialFulfillmentPage() {
   }
 
   async function handleConfirmSaveMaterialPo(orderedAs) {
+    if (isMaterialPoSaved || saving) return
     setSaving(true)
     setError('')
     setSuccess('')
@@ -1670,6 +1675,7 @@ export default function ArklineMaterialFulfillmentPage() {
       setIsMaterialPoSaved(true)
       setMaterialPoNumbers((current) => (current.includes(materialPoNumber) ? current : [...current, materialPoNumber]))
       setSuccess(`Material PO ${materialPoNumber} saved.`)
+      setShowPrintPrompt(true)
     } catch (saveError) {
       setError(saveError.message || 'Failed to save material purchase order.')
     } finally {
@@ -1679,7 +1685,6 @@ export default function ArklineMaterialFulfillmentPage() {
 
   async function handlePrintMaterialOrder() {
     setError('')
-    setSuccess('')
 
     if (!validateMaterialPoDraft()) {
       return
@@ -1732,6 +1737,7 @@ export default function ArklineMaterialFulfillmentPage() {
       previewWindow.document.open()
       previewWindow.document.write(previewHtml)
       previewWindow.document.close()
+      setShowPrintPrompt(false)
     } catch (printError) {
       previewWindow?.close()
       setError(printError.message || 'Failed to prepare material purchase order print view.')
@@ -1751,19 +1757,11 @@ export default function ArklineMaterialFulfillmentPage() {
           </div>
           <div className={styles.headerControls}>
             <div className={styles.headerActions}>
-              <button type="button" className={styles.secondaryButton} onClick={handleResetDraft}>
-                Reset Draft
+              <button type="button" className={styles.secondaryButton} onClick={handleResetDraft} disabled={saving || printing}>
+                {isMaterialPoSaved ? 'New Material PO' : 'Reset Draft'}
               </button>
-              <button type="button" className={styles.primaryButton} onClick={handleSaveMaterialPo} disabled={saving || loading || printing}>
-                {saving ? 'Saving...' : 'Save Material PO'}
-              </button>
-              <button
-                type="button"
-                className={styles.printButton}
-                onClick={handlePrintMaterialOrder}
-                disabled={printing || loading || saving || !isMaterialPoSaved || !savedMaterialPoNumber}
-              >
-                {printing ? 'Preparing Print...' : 'Print Purchase Order'}
+              <button type="button" className={styles.primaryButton} onClick={handleSaveMaterialPo} disabled={saving || loading || printing || generatingRequirements || isMaterialPoSaved}>
+                {saving ? 'Saving...' : isMaterialPoSaved ? 'PO Issued' : 'Save Material PO'}
               </button>
             </div>
           </div>
@@ -1781,6 +1779,14 @@ export default function ArklineMaterialFulfillmentPage() {
           </div>
         ) : null}
 
+        {isMaterialPoSaved ? (
+          <div className={styles.issuedNotice} role="status">
+            <strong>{savedMaterialPoNumber} sudah diterbitkan.</strong>
+            <span>Form ini dikunci. Untuk print ulang, buka Purchase Order Directory. Pilih New Material PO untuk pesanan berikutnya.</span>
+          </div>
+        ) : null}
+
+        <fieldset className={styles.issuedFieldset} disabled={isMaterialPoSaved}>
         <section className={styles.sectionCard}>
           <div className={styles.sectionHeader}>
             <div>
@@ -1851,7 +1857,7 @@ export default function ArklineMaterialFulfillmentPage() {
             <div className={`${styles.field} ${styles.materialTaxField}`.trim()}>
               <label className={styles.label}>{orderHeader.includePpn ? 'With PPN' : 'Without PPN'}</label>
               <label
-                className={`${styles.taxToggleCompact} ${orderHeader.includePpn ? styles.taxToggleCompactActive : ''}`.trim()}
+                className={`${styles.taxToggleCompact} ${orderHeader.includePpn ? styles.taxToggleCompactActive : ''} ${isMaterialPoSaved ? styles.taxToggleCompactDisabled : ''}`.trim()}
                 aria-label={orderHeader.includePpn ? 'With PPN' : 'Without PPN'}
               >
                 <input
@@ -2058,7 +2064,7 @@ export default function ArklineMaterialFulfillmentPage() {
           <section className={styles.sectionCard}>
             <div className={styles.sectionHeader}>
               <div>
-                <h2 className={styles.sectionTitle}>Material PO Draft</h2>
+                <h2 className={styles.sectionTitle}>{isMaterialPoSaved ? 'Issued Material PO' : 'Material PO Draft'}</h2>
               </div>
 
               <div className={styles.compactStats}>
@@ -2155,6 +2161,7 @@ export default function ArklineMaterialFulfillmentPage() {
             )}
           </section>
         </section>
+        </fieldset>
       </section>
 
       {showOrderedAsModal ? (
@@ -2180,6 +2187,21 @@ export default function ArklineMaterialFulfillmentPage() {
             <div className={styles.modalActions}>
               <button type="button" className={styles.secondaryButton} onClick={() => setShowOrderedAsModal(false)} disabled={saving}>
                 Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {showPrintPrompt ? (
+        <div className={styles.modalOverlay} role="presentation">
+          <div className={styles.modalCard} role="dialog" aria-modal="true" aria-labelledby="material-issued-title">
+            <h3 id="material-issued-title" className={styles.modalTitle}>PO berhasil diterbitkan</h3>
+            <p className={styles.modalCopy}>PO {savedMaterialPoNumber} sudah disimpan. Ingin langsung membuka PDF untuk print?</p>
+            <div className={styles.modalActions}>
+              <button type="button" className={styles.secondaryButton} onClick={() => setShowPrintPrompt(false)} disabled={printing}>Selesai</button>
+              <button type="button" className={styles.primaryButton} onClick={() => void handlePrintMaterialOrder()} disabled={printing}>
+                {printing ? 'Menyiapkan PDF...' : 'Print sekarang'}
               </button>
             </div>
           </div>

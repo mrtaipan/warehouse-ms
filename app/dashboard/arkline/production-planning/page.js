@@ -814,6 +814,7 @@ export default function ArklineProductionPlanningPage() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [printing, setPrinting] = useState(false)
+  const [issuedPoId, setIssuedPoId] = useState('')
   const [error, setError] = useState('')
   const [lineError, setLineError] = useState('')
   const [success, setSuccess] = useState('')
@@ -994,7 +995,6 @@ export default function ArklineProductionPlanningPage() {
     mode === 'existing' && loadedPlanningSnapshot
       ? hasPoRevisionChanges(loadedPlanningSnapshot, currentPlanningSnapshot) || hasPendingLineDraftChanges
       : isPlanningDirty
-  const canPrintPurchaseOrder = Boolean(currentPoDbId && header.poId && !hasUnsavedSavedPoChanges && !saving && !loading)
 
   const isTemporaryPo = isTemporaryPoId(header.poId)
   const canToggleTemporaryPo = mode === 'new' || (mode === 'existing' && isTemporaryPoId(selectedExistingPoId))
@@ -1837,6 +1837,7 @@ export default function ArklineProductionPlanningPage() {
       resetPlanningState('new', refreshedRegistry)
       setExistingPos(refreshedPos)
       setSuccess(revisionWarning ? `PO ${resolvedPoId} saved successfully. Revision history not saved yet: ${revisionWarning}` : `PO ${resolvedPoId} saved successfully.`)
+      setIssuedPoId(resolvedPoId)
     } catch (saveError) {
       setError(saveError.message || 'Failed to save Arkline production planning.')
     } finally {
@@ -1844,14 +1845,9 @@ export default function ArklineProductionPlanningPage() {
     }
   }
 
-  async function handlePrint() {
+  async function handlePrintIssuedPo() {
+    if (!issuedPoId || printing) return
     setError('')
-    setSuccess('')
-
-    if (!currentPoDbId || hasUnsavedSavedPoChanges) {
-      setError('Save the PO first before printing.')
-      return
-    }
 
     setPrinting(true)
     const previewWindow = window.open('', '_blank')
@@ -1864,7 +1860,7 @@ export default function ArklineProductionPlanningPage() {
       previewWindow.document.write('<html><body style="font-family: Arial, sans-serif; padding: 24px;">Preparing PDF preview...</body></html>')
       previewWindow.document.close()
 
-      const bundle = await fetchPoBundle(header.poId)
+      const bundle = await fetchPoBundle(issuedPoId)
       const supplierContactParts = [bundle.supplier?.contactPerson, bundle.supplier?.phone].filter(Boolean)
       const printableItems = bundle.items.map((item) => {
         const currentProduct = productBySku[item.skuInduk] || null
@@ -1875,20 +1871,24 @@ export default function ArklineProductionPlanningPage() {
         }
       })
       const previewHtml = await createPurchaseOrderPreviewHtml({
-        poId: header.poId,
-        method,
+        poId: bundle.po.po_id,
+        method: bundle.po.method,
         poCreatedAt: bundle.po.created_at,
         header: {
-          ...header,
-          paymentTerms: String(bundle.po.payment_terms || header.paymentTerms || ''),
+          requestDeliveryDate: bundle.po.request_delivery_date || '',
+          paymentTerms: String(bundle.po.payment_terms || ''),
+          supplierName: bundle.po.supplier_name || bundle.supplier?.supplierName || '',
           supplierAddress: bundle.supplier?.address || '',
           supplierContact: supplierContactParts.join(' | '),
+          includePpn: bundle.po.include_ppn !== false,
+          notes: bundle.po.notes || '',
         },
         items: printableItems,
       })
       previewWindow.document.open()
       previewWindow.document.write(previewHtml)
       previewWindow.document.close()
+      setIssuedPoId('')
     } catch (printError) {
       previewWindow?.close()
       setError(printError.message || 'Failed to prepare print view.')
@@ -1952,9 +1952,6 @@ export default function ArklineProductionPlanningPage() {
             <div className={styles.headerActions}>
               <button type="button" className={styles.secondaryButton} onClick={() => resetPlanningState('new')}>
                 Reset Planning
-              </button>
-              <button type="button" className={styles.printButton} onClick={handlePrint} disabled={printing || !canPrintPurchaseOrder}>
-                {printing ? 'Preparing Print...' : 'Print Purchase Order'}
               </button>
               <button type="button" className={styles.primaryButton} onClick={handleSavePo} disabled={saving || loading}>
                 {saving ? 'Saving...' : 'Save Planning'}
@@ -2482,6 +2479,21 @@ export default function ArklineProductionPlanningPage() {
         </div>
 
       </section>
+
+      {issuedPoId ? (
+        <div className={styles.modalOverlay} role="presentation">
+          <div className={styles.modalCard} role="dialog" aria-modal="true" aria-labelledby="garment-issued-title">
+            <h3 id="garment-issued-title" className={styles.modalTitle}>PO berhasil diterbitkan</h3>
+            <p className={styles.modalCopy}>PO {issuedPoId} sudah disimpan. Ingin langsung membuka PDF untuk print?</p>
+            <div className={styles.modalActions}>
+              <button type="button" className={styles.secondaryButton} onClick={() => setIssuedPoId('')} disabled={printing}>Selesai</button>
+              <button type="button" className={styles.primaryButton} onClick={() => void handlePrintIssuedPo()} disabled={printing}>
+                {printing ? 'Menyiapkan PDF...' : 'Print sekarang'}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {showSupplierModal ? (
         <div className={styles.modalOverlay}>
