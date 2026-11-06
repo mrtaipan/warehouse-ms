@@ -812,7 +812,10 @@ export default function ArklineMaterialFulfillmentPage() {
   const [showOrderedAsModal, setShowOrderedAsModal] = useState(false)
   const [showPrintPrompt, setShowPrintPrompt] = useState(false)
   const [generatingRequirements, setGeneratingRequirements] = useState(false)
+  const [poMode, setPoMode] = useState('new')
   const [poFilter, setPoFilter] = useState(NO_PO_VALUE)
+  const [savedMaterialPoOptions, setSavedMaterialPoOptions] = useState([])
+  const [selectedExistingMaterialPo, setSelectedExistingMaterialPo] = useState('')
   const [requirementWarnings, setRequirementWarnings] = useState([])
   const [requirements, setRequirements] = useState([])
   const [poOptions, setPoOptions] = useState([])
@@ -825,6 +828,7 @@ export default function ArklineMaterialFulfillmentPage() {
   const [freeMaterialDraft, setFreeMaterialDraft] = useState(createFreeMaterialDraft())
   const [freeMaterialError, setFreeMaterialError] = useState('')
   const [savedMaterialPoNumber, setSavedMaterialPoNumber] = useState('')
+  const [editingMaterialPoNumber, setEditingMaterialPoNumber] = useState('')
   const [isMaterialPoSaved, setIsMaterialPoSaved] = useState(false)
   const [supplierDraft, setSupplierDraft] = useState(createEmptySupplierDraft())
   const [materialDraft, setMaterialDraft] = useState(createEmptyMaterialDraft())
@@ -836,17 +840,12 @@ export default function ArklineMaterialFulfillmentPage() {
       setError('')
 
       try {
-        const { data: materialRows, error: materialError } = await supabase
-          .from('arkline_po_materials')
-          .select('*')
-          .order('po_id', { ascending: true })
-
-        if (materialError) throw new Error(materialError.message)
-
-        const normalizedRequirements = (materialRows || []).map(normalizeMaterialRequirement)
-        const itemIds = Array.from(new Set(normalizedRequirements.map((item) => item.arklinePoItemId).filter(Boolean)))
-
-        const [poResponse, allPoResponse, itemResponse, supplierResponse, materialMasterResponse, materialPoResponse] = await Promise.all([
+        const requestedEditPo = String(new URLSearchParams(window.location.search).get('edit') || '').trim().toUpperCase()
+        if (requestedEditPo) {
+          setPoMode('existing')
+          setSelectedExistingMaterialPo(requestedEditPo)
+        }
+        const [poResponse, allPoResponse, supplierResponse, materialMasterResponse, materialPoResponse] = await Promise.all([
           supabase
             .from('arkline_pos')
             .select('po_id, supplier_name, request_delivery_date, method, status')
@@ -854,9 +853,6 @@ export default function ArklineMaterialFulfillmentPage() {
             .eq('status', 'Initiated')
             .order('po_id', { ascending: true }),
           supabase.from('arkline_pos').select('po_id, method').not('po_id', 'is', null),
-          itemIds.length
-            ? supabase.from('arkline_po_items').select('id, nama_produk, kategori_produk').in('id', itemIds)
-            : Promise.resolve({ data: [], error: null }),
           supabase
             .from('dir_suppliers')
             .select('id, supplier_name, initial, supplier_level, contact_person, phone, address, "group", is_active')
@@ -870,7 +866,6 @@ export default function ArklineMaterialFulfillmentPage() {
 
         if (poResponse.error) throw new Error(poResponse.error.message)
         if (allPoResponse.error) throw new Error(allPoResponse.error.message)
-        if (itemResponse.error) throw new Error(itemResponse.error.message)
         if (supplierResponse.error) throw new Error(supplierResponse.error.message)
         if (materialMasterResponse.error) throw new Error(materialMasterResponse.error.message)
         if (materialPoResponse.error) throw new Error(materialPoResponse.error.message)
@@ -878,14 +873,6 @@ export default function ArklineMaterialFulfillmentPage() {
         const normalizedPoOptions = (poResponse.data || []).map(normalizePo).filter((item) => item.poId)
         const nextPoMeta = normalizedPoOptions.reduce((accumulator, item) => {
           accumulator[item.poId] = item
-          return accumulator
-        }, {})
-
-        const itemMetaById = (itemResponse.data || []).reduce((accumulator, item) => {
-          accumulator[String(item.id || '').trim()] = {
-            productName: String(item.nama_produk || '').trim().toUpperCase(),
-            categoryName: String(item.kategori_produk || '').trim().toUpperCase(),
-          }
           return accumulator
         }, {})
 
@@ -899,22 +886,74 @@ export default function ArklineMaterialFulfillmentPage() {
           accumulator[item.id] = item
           return accumulator
         }, {})
-        const enrichedRequirements = normalizedRequirements
-          .filter((item) => nextPoMeta[item.poId])
-          .map((item) => ({
-            ...item,
-            materialType: item.materialType || materialMetaById[item.materialId]?.materialType || '',
-            productName: itemMetaById[item.arklinePoItemId]?.productName || '',
-            categoryName: itemMetaById[item.arklinePoItemId]?.categoryName || '',
-          }))
         const allGarmentPoNumbers = (allPoResponse.data || [])
           .map((item) => String(item.po_id || '').trim().toUpperCase())
           .filter(Boolean)
         const materialNumberRows = (materialPoResponse.data || [])
           .map((item) => String(item.material_po_number || '').trim().toUpperCase())
           .filter(Boolean)
+        const uniqueMaterialNumbers = Array.from(new Set(materialNumberRows))
+          .sort((left, right) => left.localeCompare(right, undefined, { numeric: true }))
+        setSavedMaterialPoOptions(uniqueMaterialNumbers)
 
-        setRequirements(enrichedRequirements)
+        if (requestedEditPo) {
+          const [{ data: editHeader, error: editHeaderError }, { data: editItems, error: editItemsError }] = await Promise.all([
+            supabase.from('arkline_po_material_ordered').select('*').eq('material_po_number', requestedEditPo).maybeSingle(),
+            supabase.from('arkline_po_material_ordered_items')
+              .select('id, material_id, material_name_snapshot, size_variant, color_variant, unit, qty, price, amount, notes, source_po_id')
+              .eq('material_po_number', requestedEditPo)
+              .order('created_at', { ascending: true }),
+          ])
+          if (editHeaderError || editItemsError) throw new Error(editHeaderError?.message || editItemsError?.message)
+          if (!editHeader) throw new Error(`Material PO ${requestedEditPo} was not found.`)
+
+          const itemIds = (editItems || []).map((item) => item.id)
+          if (itemIds.length) {
+            const { data: receipts, error: receiptsError } = await supabase
+              .from('arkline_po_material_receipts')
+              .select('id')
+              .in('material_po_ordered_item_id', itemIds)
+              .limit(1)
+            if (receiptsError) throw new Error(receiptsError.message)
+            if (receipts?.length) throw new Error('This Material PO has receipts and can no longer be edited.')
+          }
+
+          const supplierId = String(editHeader.supplier_id || '')
+          const sourcePoId = String(editHeader.garment_po_number || '').trim().toUpperCase()
+          setEditingMaterialPoNumber(requestedEditPo)
+          setSavedMaterialPoNumber(requestedEditPo)
+          setOrderHeader({
+            supplierId,
+            supplierName: editHeader.supplier_name_snapshot || '',
+            paymentTerms: editHeader.payment_terms || '',
+            requestDeliveryDate: editHeader.request_delivery_date || '',
+            notes: editHeader.notes || '',
+            includePpn: editHeader.include_ppn !== false,
+            orderedAs: editHeader.ordered_as || '',
+          })
+          setPoFilter(sourcePoId || NO_PO_VALUE)
+          setOrderLines((editItems || []).map((item) => {
+            const source = sourcePoId
+              ? { id: `existing:${item.id}`, sourceType: 'PO', sourceRowId: item.id, poId: sourcePoId, qty: Number(item.qty || 0), label: sourcePoId, productName: sourcePoId, skuInduk: '', secondaryLabel: 'Existing Material PO' }
+              : buildOrderSourceFromFreeMaterial({ id: item.material_id, materialName: item.material_name_snapshot }, Number(item.qty || 0))
+            const line = {
+              materialId: String(item.material_id || ''),
+              materialName: String(item.material_name_snapshot || '').trim().toUpperCase(),
+              materialType: materialMetaById[String(item.material_id || '')]?.materialType || '',
+              unit: String(item.unit || 'PCS').trim().toUpperCase(),
+              sizeVariant: String(item.size_variant || '').trim().toUpperCase(),
+              colorVariant: String(item.color_variant || '').trim().toUpperCase(),
+              totalQty: Number(item.qty || 0),
+              price: String(item.price ?? ''),
+              notes: item.notes || '',
+              sources: [source],
+            }
+            return { ...line, key: buildOrderLineKey(line) }
+          }))
+          setSuccess(`Editing ${requestedEditPo}. Update the lines and save to replace the PO.`)
+        }
+
+        setRequirements([])
         setPoOptions(normalizedPoOptions)
         setPoMeta(nextPoMeta)
         setSuppliers(normalizedSuppliers)
@@ -928,6 +967,7 @@ export default function ArklineMaterialFulfillmentPage() {
         setSuppliers([])
         setMaterialOptions([])
         setMaterialPoNumbers([])
+        setSavedMaterialPoOptions([])
         setError(loadError.message || 'Failed to load material requirement planning.')
       } finally {
         setLoading(false)
@@ -976,7 +1016,7 @@ export default function ArklineMaterialFulfillmentPage() {
 
   const materialDraftPoNumber = useMemo(() => {
     try {
-      return isMaterialPoSaved && savedMaterialPoNumber ? savedMaterialPoNumber : (orderLines.length ? buildMaterialPoNumber(orderLines, materialPoNumbers, {
+      return (isMaterialPoSaved || editingMaterialPoNumber) && savedMaterialPoNumber ? savedMaterialPoNumber : (orderLines.length ? buildMaterialPoNumber(orderLines, materialPoNumbers, {
         includePpn: orderHeader.includePpn !== false,
         poMeta,
         supplierInitial: selectedSupplierInitial,
@@ -984,7 +1024,7 @@ export default function ArklineMaterialFulfillmentPage() {
     } catch {
       return ''
     }
-  }, [isMaterialPoSaved, materialPoNumbers, orderHeader.includePpn, orderLines, poMeta, savedMaterialPoNumber, selectedSupplierInitial])
+  }, [editingMaterialPoNumber, isMaterialPoSaved, materialPoNumbers, orderHeader.includePpn, orderLines, poMeta, savedMaterialPoNumber, selectedSupplierInitial])
 
   function markMaterialDraftUnsaved(options = {}) {
     setIsMaterialPoSaved(false)
@@ -996,7 +1036,7 @@ export default function ArklineMaterialFulfillmentPage() {
   }
 
   function updateOrderHeader(name, value) {
-    markMaterialDraftUnsaved({ clearPoNumber: ['supplierId', 'includePpn'].includes(name) })
+    markMaterialDraftUnsaved({ clearPoNumber: !editingMaterialPoNumber && ['supplierId', 'includePpn'].includes(name) })
 
     if (name === 'supplierId') {
       const selectedSupplier = suppliers.find((item) => item.id === value)
@@ -1364,32 +1404,8 @@ export default function ArklineMaterialFulfillmentPage() {
 
     try {
       const { payload, warnings, itemMetaById } = await buildGeneratedMaterialRequirements(selectedPoId)
-
-      const { error: deleteError } = await supabase
-        .from('arkline_po_materials')
-        .delete()
-        .eq('po_id', selectedPoId)
-
-      if (deleteError) {
-        throw new Error(deleteError.message)
-      }
-
-      let insertedRows = []
-
-      if (payload.length) {
-        const { data: inserted, error: insertError } = await supabase
-          .from('arkline_po_materials')
-          .insert(payload)
-          .select('*')
-
-        if (insertError) {
-          throw new Error(insertError.message)
-        }
-
-        insertedRows = inserted || []
-      }
-
-      const nextRequirements = insertedRows
+      const nextRequirements = payload
+        .map((row, index) => ({ ...row, id: `${selectedPoId}:${index}` }))
         .map(normalizeMaterialRequirement)
         .map((item) => ({
           ...item,
@@ -1398,12 +1414,7 @@ export default function ArklineMaterialFulfillmentPage() {
           categoryName: itemMetaById[item.arklinePoItemId]?.categoryName || '',
         }))
 
-      setRequirements((current) =>
-        [
-          ...current.filter((item) => item.poId !== selectedPoId),
-          ...nextRequirements,
-        ].sort(compareMaterialRequirementRows)
-      )
+      setRequirements(nextRequirements.sort(compareMaterialRequirementRows))
       setSelectedRequirementIds([])
       setRequirementWarnings(Array.from(new Set(warnings)))
       setSuccess(
@@ -1433,6 +1444,11 @@ export default function ArklineMaterialFulfillmentPage() {
     setOrderLines((current) => current.map((item) => (item.key === lineKey ? { ...item, price: value } : item)))
   }
 
+  function handleUpdateOrderLineQty(lineKey, value) {
+    markMaterialDraftUnsaved()
+    setOrderLines((current) => current.map((item) => (item.key === lineKey ? { ...item, totalQty: value } : item)))
+  }
+
   function moveOrderLine(lineKey, direction) {
     markMaterialDraftUnsaved()
     setOrderLines((current) => {
@@ -1459,9 +1475,33 @@ export default function ArklineMaterialFulfillmentPage() {
     setOrderLines([])
     setFreeMaterialError('')
     setSavedMaterialPoNumber('')
+    setEditingMaterialPoNumber('')
+    setPoMode('new')
+    setSelectedExistingMaterialPo('')
     setIsMaterialPoSaved(false)
     setError('')
     setSuccess('')
+    const currentUrl = new URL(window.location.href)
+    if (currentUrl.searchParams.has('edit')) {
+      currentUrl.searchParams.delete('edit')
+      window.history.replaceState({}, '', `${currentUrl.pathname}${currentUrl.search}${currentUrl.hash}`)
+    }
+  }
+
+  function handlePoModeChange(nextMode) {
+    if (nextMode === poMode || saving || printing) return
+    const hasDraftChanges = Boolean(orderLines.length || requirements.length || orderHeader.supplierId || orderHeader.notes || orderHeader.paymentTerms)
+    if (hasDraftChanges && !window.confirm('Discard the current material PO draft and change PO mode?')) return
+
+    if (editingMaterialPoNumber || isMaterialPoSaved || hasDraftChanges) handleResetDraft()
+    setPoMode(nextMode)
+  }
+
+  function handleSelectExistingMaterialPo(value) {
+    const poNumber = String(value || '').trim().toUpperCase()
+    setSelectedExistingMaterialPo(poNumber)
+    if (!poNumber) return
+    window.location.assign(`/dashboard/arkline/production-planning/material-fulfillment?edit=${encodeURIComponent(poNumber)}`)
   }
 
   function validateMaterialPoDraft() {
@@ -1563,7 +1603,7 @@ export default function ArklineMaterialFulfillmentPage() {
       const userEmail = user?.email?.toLowerCase() || null
       const normalizedOrderedAs = String(orderedAs || ORDERED_AS_OPTIONS[0]).trim().toUpperCase()
       const materialPoNumber =
-        isMaterialPoSaved && savedMaterialPoNumber ? savedMaterialPoNumber :
+        (isMaterialPoSaved || editingMaterialPoNumber) && savedMaterialPoNumber ? savedMaterialPoNumber :
         buildMaterialPoNumber(orderLines, materialPoNumbers, {
           includePpn: orderHeader.includePpn !== false,
           poMeta,
@@ -1606,19 +1646,27 @@ export default function ArklineMaterialFulfillmentPage() {
 
         orderedId = insertedHeader.id
       } else {
-        const { data: blockingLogs, error: blockingLogsError } = await supabase
-          .from('arkline_po_material_logs')
-          .select('id, log_type')
+        const { data: existingItems, error: existingItemsError } = await supabase
+          .from('arkline_po_material_ordered_items')
+          .select('id')
           .eq('material_po_ordered_id', orderedId)
-          .in('log_type', ['RECEIVED', 'SENT'])
-          .limit(1)
 
-        if (blockingLogsError) {
-          throw new Error(blockingLogsError.message)
+        if (existingItemsError) throw new Error(existingItemsError.message)
+
+        const existingItemIds = (existingItems || []).map((row) => row.id)
+        let blockingReceipts = []
+        if (existingItemIds.length) {
+          const { data, error: blockingReceiptsError } = await supabase
+            .from('arkline_po_material_receipts')
+            .select('id')
+            .in('material_po_ordered_item_id', existingItemIds)
+            .limit(1)
+          if (blockingReceiptsError) throw new Error(blockingReceiptsError.message)
+          blockingReceipts = data || []
         }
 
-        if ((blockingLogs || []).length) {
-          throw new Error('This Material PO already has received or sent logs, so the draft can no longer be replaced.')
+        if ((blockingReceipts || []).length) {
+          throw new Error('This Material PO already has receipts, so its saved lines can no longer be replaced.')
         }
 
         const { error: updateHeaderError } = await updateMaterialPoHeader(orderedId, headerPayload)
@@ -1639,8 +1687,6 @@ export default function ArklineMaterialFulfillmentPage() {
 
       const itemPayload = orderLines.map((line) => {
         const lineSourcePoIds = getSourcePoIdsFromSources(line.sources)
-        const hasGeneratedSource = (line.sources || []).some((source) => source.sourceType === 'PO')
-        const hasFreeSource = (line.sources || []).some((source) => source.sourceType === 'FREE')
 
         return {
           material_po_ordered_id: orderedId,
@@ -1654,7 +1700,6 @@ export default function ArklineMaterialFulfillmentPage() {
           price: toNumber(line.price),
           amount: toNumber(line.price) * toNumber(line.totalQty),
           notes: String(line.notes || '').trim() || null,
-          source_type: hasGeneratedSource && hasFreeSource ? 'MIXED' : hasGeneratedSource ? 'PO' : 'FREE',
           source_po_id: lineSourcePoIds[0] || null,
         }
       })
@@ -1674,6 +1719,8 @@ export default function ArklineMaterialFulfillmentPage() {
       setSavedMaterialPoNumber(materialPoNumber)
       setIsMaterialPoSaved(true)
       setMaterialPoNumbers((current) => (current.includes(materialPoNumber) ? current : [...current, materialPoNumber]))
+      setSavedMaterialPoOptions((current) => Array.from(new Set([...current, materialPoNumber]))
+        .sort((left, right) => left.localeCompare(right, undefined, { numeric: true })))
       setSuccess(`Material PO ${materialPoNumber} saved.`)
       setShowPrintPrompt(true)
     } catch (saveError) {
@@ -1756,12 +1803,48 @@ export default function ArklineMaterialFulfillmentPage() {
             <p className={styles.subtitle}>Material PO setup, purchasing information, material allocation, save, and print.</p>
           </div>
           <div className={styles.headerControls}>
+            <div className={styles.controlStack}>
+              <label className={styles.controlLabel}>PO Mode</label>
+              <div className={styles.headerActions}>
+                <button
+                  type="button"
+                  className={`${styles.modeButton} ${poMode === 'new' ? styles.modeButtonActive : ''}`.trim()}
+                  onClick={() => handlePoModeChange('new')}
+                  disabled={loading || saving || printing}
+                >
+                  New PO
+                </button>
+                <button
+                  type="button"
+                  className={`${styles.modeButton} ${poMode === 'existing' ? styles.modeButtonActive : ''}`.trim()}
+                  onClick={() => handlePoModeChange('existing')}
+                  disabled={loading || saving || printing}
+                >
+                  Existing PO
+                </button>
+              </div>
+              {poMode === 'existing' ? (
+                <select
+                  className={styles.select}
+                  style={{ width: 'min(280px, 100%)' }}
+                  value={selectedExistingMaterialPo}
+                  onChange={(event) => handleSelectExistingMaterialPo(event.target.value)}
+                  disabled={loading || saving || printing || !savedMaterialPoOptions.length}
+                  aria-label="Select existing Material PO to edit"
+                >
+                  <option value="">Select Material PO</option>
+                  {savedMaterialPoOptions.map((poNumber) => (
+                    <option key={poNumber} value={poNumber}>{poNumber}</option>
+                  ))}
+                </select>
+              ) : null}
+            </div>
             <div className={styles.headerActions}>
               <button type="button" className={styles.secondaryButton} onClick={handleResetDraft} disabled={saving || printing}>
-                {isMaterialPoSaved ? 'New Material PO' : 'Reset Draft'}
+                {isMaterialPoSaved ? 'New Material PO' : editingMaterialPoNumber ? 'Cancel Edit' : 'Reset Draft'}
               </button>
               <button type="button" className={styles.primaryButton} onClick={handleSaveMaterialPo} disabled={saving || loading || printing || generatingRequirements || isMaterialPoSaved}>
-                {saving ? 'Saving...' : isMaterialPoSaved ? 'PO Issued' : 'Save Material PO'}
+                {saving ? 'Saving...' : isMaterialPoSaved ? 'PO Issued' : editingMaterialPoNumber ? 'Update Material PO' : 'Save Material PO'}
               </button>
             </div>
           </div>
@@ -1786,6 +1869,13 @@ export default function ArklineMaterialFulfillmentPage() {
           </div>
         ) : null}
 
+        {editingMaterialPoNumber ? (
+          <div className={styles.issuedNotice} role="status">
+            <strong>Edit {editingMaterialPoNumber}</strong>
+            <span>Perubahan akan memperbarui PO ini, bukan membuat nomor PO baru.</span>
+          </div>
+        ) : null}
+
         <fieldset className={styles.issuedFieldset} disabled={isMaterialPoSaved}>
         <section className={styles.sectionCard}>
           <div className={styles.sectionHeader}>
@@ -1803,6 +1893,9 @@ export default function ArklineMaterialFulfillmentPage() {
                 onChange={(event) => handlePoFilterChange(event.target.value)}
               >
                 <option value={NO_PO_VALUE}>No PO</option>
+                {editingMaterialPoNumber && poFilter !== NO_PO_VALUE && !poOptions.some((po) => po.poId === poFilter) ? (
+                  <option value={poFilter}>{poFilter}</option>
+                ) : null}
                 {poOptions.map((po) => (
                   <option key={po.poId} value={po.poId}>
                     {po.poId}
@@ -1971,7 +2064,7 @@ export default function ArklineMaterialFulfillmentPage() {
               <div>
                 <h3 className={styles.sourceSubsectionTitle}>Generated Materials</h3>
                 <p className={styles.sourceSubsectionCopy}>
-                  {selectedPoId ? 'Generated requirement is saved as a PO material snapshot.' : 'Select a PO number to generate from BOM.'}
+                  {selectedPoId ? 'Generate BOM requirements as a temporary helper, then adjust quantities in the draft.' : 'Select a PO number to generate from BOM.'}
                 </p>
               </div>
 
@@ -2124,9 +2217,17 @@ export default function ArklineMaterialFulfillmentPage() {
                     </div>
 
                     <div className={styles.orderDraftPriceRow}>
-                      <div className={styles.orderDraftQtyCard}>
-                        <span className={styles.orderDraftAmountLabel}>Qty</span>
-                        <strong className={styles.orderDraftAmountValue}>{formatQty(line.totalQty)}</strong>
+                      <div className={`${styles.field} ${styles.orderDraftPriceField}`.trim()}>
+                        <label className={styles.label}>Qty</label>
+                        <input
+                          className={styles.input}
+                          type="number"
+                          min="0"
+                          step="any"
+                          value={line.totalQty}
+                          onChange={(event) => handleUpdateOrderLineQty(line.key, event.target.value)}
+                          inputMode="decimal"
+                        />
                       </div>
                       <div className={`${styles.field} ${styles.orderDraftPriceField}`.trim()}>
                         <label className={styles.label}>Price</label>
@@ -2140,7 +2241,7 @@ export default function ArklineMaterialFulfillmentPage() {
                       </div>
                       <div className={styles.orderDraftAmountCard}>
                         <span className={styles.orderDraftAmountLabel}>Amount</span>
-                        <strong className={styles.orderDraftAmountValue}>{formatCurrency(toNumber(line.price) * line.totalQty)}</strong>
+                        <strong className={styles.orderDraftAmountValue}>{formatCurrency(toNumber(line.price) * toNumber(line.totalQty))}</strong>
                       </div>
                     </div>
 

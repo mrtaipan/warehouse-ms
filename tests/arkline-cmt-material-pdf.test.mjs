@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { writeFile } from 'node:fs/promises'
+import { readFile, writeFile } from 'node:fs/promises'
 
 import { jsPDF } from 'jspdf'
 import { buildMaterialInspectionDocument } from '../app/dashboard/arkline/progress-overview/print-material-inspection.js'
@@ -29,11 +29,15 @@ const defects = Array.from({ length: 14 }, (_, index) => ({
 }))
 
 test('fabric inspection PDF uses landscape A4 and continues long roll lists', async () => {
-  const doc = buildMaterialInspectionDocument(jsPDF, { inspection, item, rolls, groups, types, defects })
+  const logo = await readFile(new URL('../public/Gemini_Generated_Image_1pgskj1pgskj1pgs.png', import.meta.url))
+  const wordmark = `data:image/png;base64,${logo.toString('base64')}`
+  const doc = buildMaterialInspectionDocument(jsPDF, { inspection, item, rolls, groups, types, defects, wordmark })
   assert.equal(Math.round(doc.internal.pageSize.getWidth()), 297)
   assert.equal(Math.round(doc.internal.pageSize.getHeight()), 210)
   assert.ok(doc.internal.getNumberOfPages() >= 2)
   assert.ok(doc.output('arraybuffer').byteLength > 1000)
   assert.match(doc.output(), /Total Pts: 48/)
+  assert.match(doc.output(), /Expected GSM/)
+  assert.equal((doc.output().match(/ROLL NUMBER/g) || []).length, doc.internal.getNumberOfPages())
   if (process.env.PREVIEW_PDF) await writeFile(process.env.PREVIEW_PDF, Buffer.from(doc.output('arraybuffer')))
 })

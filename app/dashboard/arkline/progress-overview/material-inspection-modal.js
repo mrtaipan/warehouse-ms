@@ -45,7 +45,8 @@ function GradeBadge({ grade }) {
 export default function MaterialInspectionModal({ item, inspection, onClose, onSaved, onPrint, printing }) {
   const viewOnly = Boolean(inspection?.id)
   const [groups, setGroups] = useState([])
-  const [defectTypes, setDefectTypes] = useState([])
+  const [allDefectTypes, setDefectTypes] = useState([])
+  const defectTypes = allDefectTypes.filter((type) => type.is_active)
   const [lot, setLot] = useState('')
   const [inspectionDate, setInspectionDate] = useState(() => new Date().toLocaleDateString('en-CA'))
   const [nominalWidthIn, setNominalWidthIn] = useState('')
@@ -62,7 +63,8 @@ export default function MaterialInspectionModal({ item, inspection, onClose, onS
   const [groupName, setGroupName] = useState('')
   const [groupPrefix, setGroupPrefix] = useState('')
   const [newDefectGroupId, setNewDefectGroupId] = useState('')
-  const [newDefectCode, setNewDefectCode] = useState('')
+  const prefix = groups.find((row) => row.id === newDefectGroupId)?.code_prefix
+  const newDefectCode = prefix ? suggestedCode(prefix, allDefectTypes) : ''
   const [newDefectName, setNewDefectName] = useState('')
 
   useEffect(() => {
@@ -77,7 +79,6 @@ export default function MaterialInspectionModal({ item, inspection, onClose, onS
             .order('sort_order'),
           supabase.from('arkline_cmt_fabric_defects')
             .select('id, group_id, code, defect_name, sort_order, is_active')
-            .eq('is_active', true)
             .order('code'),
         ])
         if (groupError || defectError) throw new Error(groupError?.message || defectError?.message)
@@ -153,23 +154,24 @@ export default function MaterialInspectionModal({ item, inspection, onClose, onS
       if (catalogMode === 'group') {
         const name = groupName.trim()
         const codePrefix = groupPrefix.trim().toUpperCase()
-        if (!name || !/^[A-Z]{1,3}$/.test(codePrefix)) {
-          throw new Error('Enter a group name and a unique prefix of 1-3 letters.')
+        if (groups.some((row) => row.code_prefix === codePrefix)) throw new Error('This prefix is already in use.')
+        if (!name || !/^[A-Z]$/.test(codePrefix)) {
+          throw new Error('Enter a group name and a unique prefix of one letter (A-Z).')
         }
         const { data, error: insertError } = await supabase
           .from('arkline_cmt_fabric_defect_groups')
           .insert({ name, code_prefix: codePrefix, sort_order: groups.length + 1 })
           .select('id, name, code_prefix, sort_order, is_active')
           .single()
+        if (insertError?.code === '23505') throw new Error('The group name or prefix is already in use.')
         if (insertError) throw new Error(insertError.message)
         setGroups((current) => [...current, data])
         setNewDefectGroupId(data.id)
-        setNewDefectCode(`${codePrefix}01`)
         setGroupName('')
         setGroupPrefix('')
       } else {
         const group = groups.find((row) => row.id === newDefectGroupId)
-        const code = newDefectCode.trim().toUpperCase() || suggestedCode(group?.code_prefix || '', defectTypes)
+        const code = newDefectCode
         const name = newDefectName.trim()
         if (!group || !name || !new RegExp(`^${group.code_prefix}\\d{2,}$`).test(code)) {
           throw new Error('Choose a group, defect name, and a code matching its prefix.')
@@ -182,7 +184,6 @@ export default function MaterialInspectionModal({ item, inspection, onClose, onS
         if (insertError) throw new Error(insertError.message)
         setDefectTypes((current) => [...current, data])
         setNewDefectName('')
-        setNewDefectCode(suggestedCode(group.code_prefix, [...defectTypes, data]))
       }
       setCatalogMode('')
     } catch (saveError) {
@@ -298,7 +299,7 @@ export default function MaterialInspectionModal({ item, inspection, onClose, onS
               <label className={styles.field}>Inspection Date<input type="date" value={viewOnly ? (inspection.inspected_at ? new Date(inspection.inspected_at).toLocaleDateString('en-CA', { timeZone: 'Asia/Jakarta' }) : '') : inspectionDate} onChange={(event) => setInspectionDate(event.target.value)} readOnly={viewOnly} required /></label>
               <label className={styles.field}>Lot <input value={viewOnly ? inspection.lot : lot} onChange={(event) => setLot(event.target.value)} readOnly={viewOnly} placeholder="Fabric lot" /></label>
               <label className={styles.field}>Expected Width <span className={styles.inputUnit}><input type="number" min="0" step="0.01" value={viewOnly ? inspection.nominal_width_in : nominalWidthIn} onChange={(event) => setNominalWidthIn(event.target.value)} readOnly={viewOnly} placeholder="0" /><span>in</span></span></label>
-              <label className={styles.field}>Expected Gramasi <span className={styles.inputUnit}><input type="number" min="0" step="0.01" value={viewOnly ? inspection.nominal_gsm : nominalGsm} onChange={(event) => setNominalGsm(event.target.value)} readOnly={viewOnly} placeholder="0" /><span>gsm</span></span></label>
+              <label className={styles.field}>Expected GSM <span className={styles.inputUnit}><input type="number" min="0" step="0.01" value={viewOnly ? inspection.nominal_gsm : nominalGsm} onChange={(event) => setNominalGsm(event.target.value)} readOnly={viewOnly} placeholder="0" /><span>gsm</span></span></label>
             </div>
           </section>
 
@@ -316,12 +317,12 @@ export default function MaterialInspectionModal({ item, inspection, onClose, onS
                 {catalogMode === 'group' ? (
                   <div className={styles.catalogFields}>
                     <label className={styles.field}>Group Name<input value={groupName} onChange={(event) => setGroupName(event.target.value)} placeholder="e.g. Coating" /></label>
-                    <label className={styles.field}>Code Prefix<input value={groupPrefix} onChange={(event) => setGroupPrefix(event.target.value.toUpperCase().replace(/[^A-Z]/g, '').slice(0, 3))} placeholder="C" maxLength={3} /></label>
+                    <label className={styles.field}>Code Prefix<input value={groupPrefix} onChange={(event) => setGroupPrefix(event.target.value.toUpperCase().replace(/[^A-Z]/g, '').slice(0, 1))} placeholder="C" maxLength={1} /></label>
                   </div>
                 ) : (
                   <div className={styles.catalogFields}>
-                    <label className={styles.field}>Defect Group<select value={newDefectGroupId} onChange={(event) => { const group = groups.find((row) => row.id === event.target.value); setNewDefectGroupId(event.target.value); setNewDefectCode(group ? suggestedCode(group.code_prefix, defectTypes) : '') }}><option value="">Select group</option>{groups.map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}</select></label>
-                    <label className={styles.field}>Code<input value={newDefectCode} onChange={(event) => setNewDefectCode(event.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ''))} placeholder="D07" /></label>
+                    <label className={styles.field}>Defect Group<select value={newDefectGroupId} onChange={(event) => setNewDefectGroupId(event.target.value)}><option value="">Select group</option>{groups.map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}</select></label>
+                    <label className={styles.field}>Code<input value={newDefectCode} readOnly placeholder="Select group first" /></label>
                     <label className={styles.field}>Defect Name<input value={newDefectName} onChange={(event) => setNewDefectName(event.target.value)} placeholder="New defect type" /></label>
                   </div>
                 )}

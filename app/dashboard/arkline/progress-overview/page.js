@@ -12,6 +12,7 @@ import {
 } from '../directory/po-directory-utils'
 import MaterialInspectionModal from './material-inspection-modal'
 import { printMaterialInspectionPdf } from './print-material-inspection'
+import { appendPdfPages } from './cmt-inspection-pdf'
 
 import shellStyles from '../arkline.module.css'
 import styles from './progress-overview.module.css'
@@ -213,13 +214,6 @@ function normalizeBoardStatus(value) {
   if (normalized === 'COMPLETED') return 'Completed'
   if (normalized === 'ON PROGRESS' || normalized === 'IN PROGRESS' || normalized === 'ONGOING') return 'On Progress'
   return 'Initiated'
-}
-
-function normalizeMaterialLogStatus(value) {
-  const normalized = String(value || '').trim().toUpperCase()
-  if (normalized === 'SENT' || normalized === 'SENT_TO_GARMENT') return 'Completed'
-  if (normalized === 'RECEIVED') return 'Received'
-  return 'Ordered'
 }
 
 function getStatusKey(status) {
@@ -653,7 +647,6 @@ async function loadMaterialProgressRows() {
   const [
     { data: headerData, error: headerError },
     { data: itemData, error: itemError },
-    { data: logData, error: logError },
     { data: receiptData, error: receiptError },
     { data: paymentData, error: paymentError },
     { data: materialData, error: materialError },
@@ -665,13 +658,6 @@ async function loadMaterialProgressRows() {
     supabase
       .from('arkline_po_material_ordered_items')
       .select('id, material_po_ordered_id, material_po_number, material_id, material_name_snapshot, size_variant, color_variant, unit, qty, price, amount, notes, source_po_id'),
-    supabase
-      .from('arkline_po_material_logs')
-      .select(
-        'id, material_po_number, material_po_ordered_id, material_po_ordered_item_id, material_name_snapshot, size_variant, color_variant, unit, qty, supplier_name, notes, log_type, event_date, created_at'
-      )
-      .in('log_type', ['received', 'sent_to_garment'])
-      .order('event_date', { ascending: false }),
     supabase
       .from('arkline_po_material_receipts')
       .select('id, material_po_ordered_item_id, received_qty, receive_date, supplier_sj, notes, is_final, created_at'),
@@ -685,7 +671,6 @@ async function loadMaterialProgressRows() {
 
   if (headerError) throw new Error(headerError.message)
   if (itemError) throw new Error(itemError.message)
-  if (logError) throw new Error(logError.message)
   if (receiptError) throw new Error(receiptError.message)
   if (paymentError) throw new Error(paymentError.message)
   if (materialError) throw new Error(materialError.message)
@@ -708,25 +693,6 @@ async function loadMaterialProgressRows() {
   const headerByMaterialPoNumber = (headerData || []).reduce((accumulator, row) => {
     const materialPoNumber = String(row?.material_po_number || '').trim().toUpperCase()
     if (materialPoNumber) accumulator[materialPoNumber] = row
-    return accumulator
-  }, {})
-
-  const sourcePoByMaterialPoNumber = (itemData || []).reduce((accumulator, row) => {
-    const materialPoNumber = String(row?.material_po_number || '').trim().toUpperCase()
-    const sourcePoId = String(row?.source_po_id || '').trim().toUpperCase()
-    if (materialPoNumber && sourcePoId && !accumulator[materialPoNumber]) {
-      accumulator[materialPoNumber] = sourcePoId
-    }
-    return accumulator
-  }, {})
-
-  const orderedItemByMaterialKey = (itemData || []).reduce((accumulator, row) => {
-    const materialPoNumber = String(row?.material_po_number || '').trim().toUpperCase()
-    const materialName = String(row?.material_name_snapshot || '').trim().toUpperCase()
-    const sizeVariant = String(row?.size_variant || '').trim().toUpperCase()
-    const colorVariant = String(row?.color_variant || '').trim().toUpperCase()
-    const key = [materialPoNumber, materialName, sizeVariant, colorVariant].join('::')
-    if (materialPoNumber && !accumulator[key]) accumulator[key] = row
     return accumulator
   }, {})
 
@@ -781,39 +747,6 @@ async function loadMaterialProgressRows() {
     }
   })
 
-  const logRows = (logData || []).map((row) => {
-    const materialPoNumber = String(row?.material_po_number || '').trim().toUpperCase()
-    const materialName = String(row?.material_name_snapshot || '').trim().toUpperCase()
-    const sizeVariant = String(row?.size_variant || '').trim().toUpperCase()
-    const colorVariant = String(row?.color_variant || '').trim().toUpperCase()
-    const header =
-      headerById[String(row?.material_po_ordered_id || '').trim()] || headerByMaterialPoNumber[materialPoNumber] || null
-    const orderedItem =
-      orderedItemByMaterialKey[[materialPoNumber, materialName, sizeVariant, colorVariant].join('::')] ||
-      (itemData || []).find((item) => String(item?.material_po_number || '').trim().toUpperCase() === materialPoNumber) ||
-      null
-    return {
-      id: `${String(row?.log_type || '').trim().toLowerCase()}:${row.id}`,
-      orderedItemId: row.material_po_ordered_item_id || orderedItem?.id || '',
-      status: normalizeMaterialLogStatus(row?.log_type),
-      poNumber: String(row?.material_po_number || header?.material_po_number || '').trim().toUpperCase(),
-      supplier: String(row?.supplier_name || header?.supplier_name_snapshot || '').trim().toUpperCase(),
-      materialName: String(row?.material_name_snapshot || '').trim().toUpperCase() || 'NO MATERIAL',
-      variant: [String(row?.size_variant || '').trim().toUpperCase(), String(row?.color_variant || '').trim().toUpperCase()].filter(Boolean).join(' / ') || '-',
-      unit: String(row?.unit || '').trim().toUpperCase() || '-',
-      qty: Number(row?.qty || 0),
-      price: getMaterialLinePrice(row, orderedItem),
-      amount: getMaterialLineAmount(row, orderedItem),
-      includePpn: normalizeBoolean(header?.include_ppn, true),
-      requestDeliveryDate: String(header?.request_delivery_date || '').slice(0, 10),
-      updatedDeliveryDate: String(header?.updated_delivery_date || '').slice(0, 10),
-      issueDate: String(header?.po_date || header?.created_at || '').slice(0, 10),
-      date: String(row?.event_date || row?.created_at || '').slice(0, 10),
-      notes: String(row?.notes || '').trim(),
-      garmentPoNumber: String(header?.garment_po_number || sourcePoByMaterialPoNumber[materialPoNumber] || '').trim().toUpperCase(),
-    }
-  })
-
   const orderedById = new Map(orderedRows.map((row) => [String(row.orderedItemId), row]))
   const receiptRows = (receiptData || []).flatMap((receipt) => {
     const ordered = orderedById.get(String(receipt.material_po_ordered_item_id))
@@ -829,7 +762,7 @@ async function loadMaterialProgressRows() {
     }]
   })
 
-  return [...orderedRows, ...logRows, ...receiptRows]
+  return [...orderedRows, ...receiptRows]
 }
 
 function buildMaterialProgressPo(item, materialRows) {
@@ -4138,7 +4071,28 @@ export default function ArklineProgressOverviewPage() {
         doc.text(`${label} :`, x + signatureWidth / 2, cursorY + 23, { align: 'center' })
       })
 
-      doc.save(`cmt-inspection-${safePoId}-${safeTitle}.pdf`)
+      const reportBytes = doc.output('arraybuffer')
+      let finalPdfBytes = reportBytes
+
+      if (inspection.measurement_pdf_path) {
+        const measurementUrl = await getSignedStorageUrl(inspection.measurement_pdf_path)
+        if (!measurementUrl) throw new Error('Could not access the saved measurement PDF.')
+
+        const measurementResponse = await fetch(measurementUrl)
+        if (!measurementResponse.ok) throw new Error('Could not download the saved measurement PDF.')
+
+        finalPdfBytes = await appendPdfPages(reportBytes, await measurementResponse.arrayBuffer())
+      }
+
+      const pdfBlob = new Blob([finalPdfBytes], { type: 'application/pdf' })
+      const downloadUrl = URL.createObjectURL(pdfBlob)
+      const downloadLink = document.createElement('a')
+      downloadLink.href = downloadUrl
+      downloadLink.download = `cmt-inspection-${safePoId}-${safeTitle}.pdf`
+      document.body.appendChild(downloadLink)
+      downloadLink.click()
+      downloadLink.remove()
+      window.setTimeout(() => URL.revokeObjectURL(downloadUrl), 1000)
     } catch (error) {
       setProductActionError(error?.message || 'Failed to generate CMT inspection PDF.')
     } finally {

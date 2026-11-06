@@ -7,7 +7,7 @@ create table if not exists public.arkline_cmt_fabric_defect_groups (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   constraint arkline_cmt_fabric_defect_group_prefix_check
-    check (code_prefix ~ '^[A-Z]{1,3}$')
+    check (code_prefix ~ '^[A-Z]$')
 );
 
 create unique index if not exists arkline_cmt_fabric_defect_groups_name_key

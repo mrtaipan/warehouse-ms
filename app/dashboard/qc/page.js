@@ -6,6 +6,7 @@ import { createClient } from '@/utils/supabase/browser'
 import { ADMIN_EMAIL } from '@/utils/permissions'
 import { useRealtimeRefresh } from '@/utils/supabase/use-realtime-refresh'
 import RegularReQcWorkflow from '@/components/regular-reqc-workflow'
+import { buildArklineRejectDetailUsage } from '@/utils/arkline-reject-detail-usage.mjs'
 import { getQcProductGroupKey } from '@/utils/qc-product-identity.mjs'
 import { loadProductCatalog, withCurrentProductLabels } from '@/utils/product-catalog-display.mjs'
 import ProductVariantCode from '@/components/product-variant-code'
@@ -4215,26 +4216,14 @@ export default function QcDashboardPage() {
 
       if (storageLineError) throw new Error(storageLineError.message)
 
-      const lockedDetailIds = new Set(
-        [...(returnLineRows || []), ...(storageLineRows || [])]
-          .map((item) => String(item.reject_detail_id))
-          .filter(Boolean)
-      )
+      const { usedQtyByDetailId, usedQtyByKey: lockedQtyByKey, usedQtyByTaskGrade: lockedQtyByTaskGrade } =
+        buildArklineRejectDetailUsage(selectedRejectExistingDetails, returnLineRows || [], storageLineRows || [])
+      const lockedDetailIds = new Set(usedQtyByDetailId.keys())
       const lockedDetails = selectedRejectExistingDetails.filter((item) => lockedDetailIds.has(String(item.id)))
       const unlockedDetailIds = selectedRejectExistingDetails
         .filter((item) => !lockedDetailIds.has(String(item.id)))
         .map((item) => item.id)
         .filter(Boolean)
-      const lockedQtyByKey = new Map()
-      const lockedQtyByTaskGrade = new Map()
-
-      lockedDetails.forEach((item) => {
-        const key = getRejectDraftKey(item)
-        lockedQtyByKey.set(key, Number(lockedQtyByKey.get(key) || 0) + Number(item.qty || 0))
-
-        const taskGradeKey = `${item.arkline_qc_id || ''}|||${String(item.grade || '').trim().toUpperCase()}`
-        lockedQtyByTaskGrade.set(taskGradeKey, Number(lockedQtyByTaskGrade.get(taskGradeKey) || 0) + Number(item.qty || 0))
-      })
 
       const desiredQtyByKey = new Map()
       rowsWithReasons.forEach((row) => {
@@ -4245,7 +4234,7 @@ export default function QcDashboardPage() {
       for (const [key, lockedQty] of lockedQtyByKey.entries()) {
         const desiredQty = Number(desiredQtyByKey.get(key) || 0)
         if (desiredQty < Number(lockedQty || 0)) {
-          throw new Error('Reject detail yang sudah dipakai return atau reject storage tidak bisa dikurangi atau dihapus.')
+          throw new Error('Qty Reject Detail tidak boleh kurang dari qty yang sudah dikirim untuk return atau disimpan.')
         }
       }
 
@@ -4269,7 +4258,7 @@ export default function QcDashboardPage() {
         const queue = taskRowsByGrade[grade] || []
 
         if (remaining < 0) {
-          throw new Error('Reject detail yang sudah dipakai return atau reject storage tidak bisa dikurangi atau dihapus.')
+          throw new Error('Qty Reject Detail tidak boleh kurang dari qty yang sudah dikirim untuk return atau disimpan.')
         }
 
         queue.forEach((task) => {
@@ -4310,6 +4299,17 @@ export default function QcDashboardPage() {
           throw new Error('Reject detail belum bisa disimpan karena task summary tidak ditemukan.')
         }
       })
+
+      for (const item of lockedDetails) {
+        const usedQty = Number(usedQtyByDetailId.get(String(item.id)) || 0)
+        if (Number(item.qty || 0) === usedQty) continue
+
+        const { error: updateLockedDetailError } = await supabase
+          .from('arkline_qc_reject_details')
+          .update({ qty: usedQty })
+          .eq('id', item.id)
+        if (updateLockedDetailError) throw new Error(updateLockedDetailError.message)
+      }
 
       if (unlockedDetailIds.length) {
         const { error: deleteDetailError } = await supabase.from('arkline_qc_reject_details').delete().in('id', unlockedDetailIds)

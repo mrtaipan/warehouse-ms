@@ -37,7 +37,8 @@ const PO_TYPES = [
 function ReportIcon() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-      <path d="M5 4.75A2.75 2.75 0 0 1 7.75 2h8.5A2.75 2.75 0 0 1 19 4.75v14.5A2.75 2.75 0 0 1 16.25 22h-8.5A2.75 2.75 0 0 1 5 19.25V4.75Zm2.75-.25a.25.25 0 0 0-.25.25v14.5c0 .14.11.25.25.25h8.5c.14 0 .25-.11.25-.25V4.75a.25.25 0 0 0-.25-.25h-8.5Zm1 3.25c0-.41.34-.75.75-.75h5c.41 0 .75.34.75.75s-.34.75-.75.75h-5a.75.75 0 0 1-.75-.75Zm0 3.5c0-.41.34-.75.75-.75h5c.41 0 .75.34.75.75s-.34.75-.75.75h-5a.75.75 0 0 1-.75-.75Zm0 3.5c0-.41.34-.75.75-.75h3c.41 0 .75.34.75.75s-.34.75-.75.75h-3a.75.75 0 0 1-.75-.75Z" />
+      <path d="M2.75 12s3.35-5.25 9.25-5.25S21.25 12 21.25 12 17.9 17.25 12 17.25 2.75 12 2.75 12Z" fill="none" stroke="currentColor" strokeWidth="1.8" />
+      <circle cx="12" cy="12" r="2.5" fill="none" stroke="currentColor" strokeWidth="1.8" />
     </svg>
   )
 }
@@ -53,6 +54,15 @@ function PrintMiniIcon() {
         strokeLinejoin="round"
         strokeWidth="1.8"
       />
+    </svg>
+  )
+}
+
+function EditMiniIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className={progressStyles.actionIcon}>
+      <path d="m4 16.5-.8 4.3 4.3-.8L19.8 7.7a2.2 2.2 0 0 0-3.1-3.1L4 16.5Z" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" />
+      <path d="m14.9 6.4 3.1 3.1" fill="none" stroke="currentColor" strokeLinecap="round" strokeWidth="1.8" />
     </svg>
   )
 }
@@ -654,6 +664,11 @@ export default function ArklinePurchaseOrderDirectoryPage() {
     setUploadingReportSignedPo(false)
   }
 
+  function handleEditMaterialPo(row) {
+    if (row?.type !== 'material') return
+    window.location.assign(`/dashboard/arkline/production-planning/material-fulfillment?edit=${encodeURIComponent(row.poNumber)}`)
+  }
+
   function toggleReportSection(sectionKey) {
     setReportSections((current) => ({
       ...current,
@@ -1004,7 +1019,8 @@ export default function ArklinePurchaseOrderDirectoryPage() {
                       <td className={groupStyles.numericCell}>{formatCurrency(item.amount)}</td>
                       <td><div className={`${styles.buttonRow} ${styles.poArchiveActions}`.trim()}>
                         <button type="button" className={styles.poIconButton} onClick={() => void handleViewReport(item)} disabled={reportLoading} title="View PO detail" aria-label={`View PO detail for ${item.poNumber}`}><ReportIcon /></button>
-                        <button type="button" className={`${styles.secondaryButton} ${styles.directoryEditButton}`.trim()} onClick={() => void handlePrint(item)} disabled={!canPrintActiveType || printingPoNumber === item.poNumber}>{printingPoNumber === item.poNumber ? '...' : 'Print'}</button>
+                        {item.type === 'material' ? <button type="button" className={styles.poIconButton} onClick={() => handleEditMaterialPo(item)} title="Edit Material PO" aria-label={`Edit Material PO ${item.poNumber}`}><EditMiniIcon /></button> : null}
+                        <button type="button" className={styles.poIconButton} onClick={() => void handlePrint(item)} disabled={!canPrintActiveType || printingPoNumber === item.poNumber} title="Print PO" aria-label={`Print PO ${item.poNumber}`}><PrintMiniIcon /></button>
                       </div></td>
                     </tr>
                   )

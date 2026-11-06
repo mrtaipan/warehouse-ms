@@ -36,7 +36,7 @@
 }
 .headerTitle { flex: 1 1 280px; }
 .headerResults { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-left: auto; }
-.headerResults > div { display: grid; gap: 4px; min-width: 108px; padding: 8px 12px; border: 1px solid #e2e8f0; border-radius: 10px; background: #f8fafc; }
+.headerResults > div { display: grid; gap: 4px; justify-items: center; align-content: center; min-width: 108px; min-height: 56px; padding: 8px 12px; border: 1px solid #e2e8f0; border-radius: 10px; background: #f8fafc; text-align: center; }
 .headerResults span { color: #64748b; font-size: 10px; font-weight: 700; text-transform: uppercase; }
 .headerResults strong { font-size: 15px; font-variant-numeric: tabular-nums; }
 
@@ -409,11 +409,15 @@
 .summaryMetrics > div {
   display: grid;
   gap: 4px;
+  justify-items: center;
+  align-content: center;
   min-width: 92px;
+  min-height: 48px;
   padding: 10px 12px;
   border: 1px solid #e2e8f0;
   border-radius: 10px;
   background: #fff;
+  text-align: center;
 }
 
 .rollMetrics strong,

@@ -31,7 +31,6 @@ create table if not exists public.arkline_po_material_ordered_items (
   price numeric not null default 0,
   amount numeric not null default 0,
   notes text null,
-  source_type text not null default 'FREE',
   source_po_id text null,
   created_at timestamptz not null default timezone('utc', now()),
   updated_at timestamptz not null default timezone('utc', now())
