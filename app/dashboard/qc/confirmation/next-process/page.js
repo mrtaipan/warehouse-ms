@@ -1345,6 +1345,18 @@ function getKoliDisplayLabel(koli) {
   return `Koli ${koli.koli_sequence || '-'}`
 }
 
+async function fetchAllRows(createQuery) {
+  const pageSize = 500
+  const rows = []
+
+  for (let offset = 0; ; offset += pageSize) {
+    const { data, error } = await createQuery().range(offset, offset + pageSize - 1)
+    if (error) return { data: null, error }
+    rows.push(...(data || []))
+    if (!data || data.length < pageSize) return { data: rows, error: null }
+  }
+}
+
 export default function QcConfirmationNextProcessPage() {
   const router = useRouter()
   const searchParams = useSearchParams()
@@ -1384,6 +1396,27 @@ export default function QcConfirmationNextProcessPage() {
       setError('')
     }
 
+    if (!grnFilter) {
+      setQcItems([])
+      setQcSampleBreakdownRows([])
+      setConfirmRows([])
+      setLoading(false)
+      return
+    }
+
+    const { data: inboundRow, error: inboundError } = await supabase
+      .from('inbound')
+      .select('id')
+      .eq('grn_number', grnFilter)
+      .limit(1)
+      .maybeSingle()
+
+    if (inboundError || !inboundRow) {
+      setError(inboundError?.message || 'GRN not found.')
+      setLoading(false)
+      return
+    }
+
     const [
       { data: authData, error: authError },
       { data: qcData, error: qcError },
@@ -1392,7 +1425,7 @@ export default function QcConfirmationNextProcessPage() {
       { data: profileData, error: profileError },
     ] = await Promise.all([
       supabase.auth.getUser(),
-      supabase
+      fetchAllRows(() => supabase
         .from('qc_items')
         .select(`
             *,
@@ -1447,9 +1480,11 @@ export default function QcConfirmationNextProcessPage() {
               selling_name
             )
           `)
+        .eq('inbound_id', inboundRow.id)
         .eq('status', 'done')
-        .order('created_at', { ascending: false }),
-      supabase
+        .order('created_at', { ascending: false })
+        .order('id', { ascending: false })),
+      fetchAllRows(() => supabase
         .from('qc_sample_breakdowns')
         .select(`
           id,
@@ -1458,7 +1493,7 @@ export default function QcConfirmationNextProcessPage() {
           qty_a,
           qty_b,
           qty_c,
-          qc_item:qc_item_id (
+          qc_item:qc_item_id!inner (
             id,
             inbound_id,
             assigned_to,
@@ -1508,8 +1543,10 @@ export default function QcConfirmationNextProcessPage() {
             )
           )
         `)
-        .order('created_at', { ascending: true }),
-      supabase
+        .eq('qc_item.inbound_id', inboundRow.id)
+        .order('created_at', { ascending: true })
+        .order('id', { ascending: true })),
+      fetchAllRows(() => supabase
         .from('qc_confirm')
         .select(`
           id,
@@ -1539,7 +1576,9 @@ export default function QcConfirmationNextProcessPage() {
             full_name
           )
         `)
-        .order('koli_sequence', { ascending: true }),
+        .eq('inbound_id', inboundRow.id)
+        .order('koli_sequence', { ascending: true })
+        .order('id', { ascending: true })),
       supabase
         .from('dir_user_profiles')
         .select('email, display_name'),
@@ -1587,7 +1626,7 @@ export default function QcConfirmationNextProcessPage() {
     if (!silent) {
       setLoading(false)
     }
-  }, [])
+  }, [grnFilter])
 
   useEffect(() => {
     const timeoutId = window.setTimeout(() => {

@@ -11,6 +11,8 @@ import { useRealtimeRefresh } from '@/utils/supabase/use-realtime-refresh'
 import ProductDirectoryClient from '../daftar-barang/product-directory-client'
 import ShelvingUploadClient from '../shelving-upload-client'
 import ArklineRejectionStoragePanel from '@/components/arkline-rejection-storage-panel'
+import RejectStorageRelease, { getReleasedQtyBySource, loadRejectStorageOutbounds } from '@/components/reject-storage-release'
+import rejectReleaseStyles from '@/components/reject-storage-release.module.css'
 import arklineReportStyles from '@/app/dashboard/qc/retur-report/retur-report.module.css'
 
 const supabase = createClient()
@@ -1140,7 +1142,12 @@ export default function StorageOverviewPage() {
   const [rackLocations, setRackLocations] = useState([])
   const [storageEntries, setStorageEntries] = useState([])
   const [rejectStorageRows, setRejectStorageRows] = useState([])
+  const [rejectOutbounds, setRejectOutbounds] = useState([])
+  const [rejectReleaseError, setRejectReleaseError] = useState('')
+  const [rejectReleaseReady, setRejectReleaseReady] = useState(false)
+  const [rejectReleaseEntryId, setRejectReleaseEntryId] = useState(null)
   const [rejectStorageSource, setRejectStorageSource] = useState(initialRejectStorageSource)
+  const [arklineRejectViewMode, setArklineRejectViewMode] = useState('koli')
   const [restockHistoryRows, setRestockHistoryRows] = useState([])
   const [storageQueueRows, setStorageQueueRows] = useState([])
   const [temporarySalesRows, setTemporarySalesRows] = useState([])
@@ -1577,7 +1584,7 @@ export default function StorageOverviewPage() {
       )
     )
   }, [canEditRejectStorage, storageAccess.currentUserEmail, storageAccess.currentUserId, storageAccess.isAdmin])
-  const rejectToolbarButtonCount = (canAddRejectStorage ? 1 : 0) + (canEditRejectStorage ? 1 : 0) + 2
+  const rejectToolbarButtonCount = (canAddRejectStorage ? 1 : 0) + (canEditRejectStorage ? 2 : 0) + 2
   const queueToolbarActionCount = (canStoreQueueItem ? 1 : 0) + (canTakeStorageItem ? 1 : 0)
   const storageLocationTabItems = useMemo(
     () => [
@@ -1620,6 +1627,22 @@ export default function StorageOverviewPage() {
     : isStorageHistoryMode
       ? 'storage-history'
       : visibleListMode
+
+  const refreshRejectOutbounds = useCallback(async () => {
+    try {
+      const rows = await loadRejectStorageOutbounds('REGULAR')
+      setRejectOutbounds(rows)
+      setRejectReleaseError('')
+      setRejectReleaseReady(true)
+    } catch (loadError) {
+      setRejectReleaseError(loadError.message || 'Could not load reject release history.')
+      setRejectReleaseReady(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (visibleListMode === 'reject-storage' && rejectStorageSource === 'regular') void refreshRejectOutbounds()
+  }, [visibleListMode, rejectStorageSource, refreshRejectOutbounds])
 
   const productScopedStorageRows = useMemo(() => {
     const normalizedProductSearch = normalizeFilterValue(productSearch)
@@ -2501,7 +2524,22 @@ export default function StorageOverviewPage() {
   const allVisibleTemporarySalesSelected =
     selectableTemporarySalesIds.length > 0 &&
     selectableTemporarySalesIds.every((id) => selectedTemporarySalesIds.includes(id))
+  const releasedRejectQtyById = getReleasedQtyBySource(rejectOutbounds, 'REGULAR')
+  const regularReleaseItems = rejectStorageRows.map((entry) => ({
+    id: entry.id,
+    koli: entry.koli_number || '-',
+    name: entry.product_name || '-',
+    size: entry.size || '-',
+    grade: entry.grade || '-',
+    available: normalizeRejectStatus(entry.status) === 'POSTED'
+      ? Math.max(0, Number(entry.qty || 0) - Number(releasedRejectQtyById.get(String(entry.id)) || 0))
+      : 0,
+  }))
   const filteredRejectRows = rejectStorageRows
+    .map((entry) => ({
+      ...entry,
+      available_qty: Math.max(0, Number(entry.qty || 0) - Number(releasedRejectQtyById.get(String(entry.id)) || 0)),
+    }))
     .filter((entry) => {
       const normalizedProductSearch = normalizeFilterValue(productSearch)
 
@@ -2548,13 +2586,19 @@ export default function StorageOverviewPage() {
         return {
           koliNumber,
           rows: sortedRows,
-          totalQty: sortedRows.reduce((sum, entry) => sum + Number(entry.qty || 0), 0),
+          totalQty: sortedRows.reduce((sum, entry) => sum + Number(entry.available_qty || 0), 0),
           status,
           createdAt: latestRow.created_at || '',
           createdBy: latestRow.created_by || '',
         }
       })
-      .sort((left, right) => new Date(right.createdAt || 0).getTime() - new Date(left.createdAt || 0).getTime() || naturalSort.compare(left.koliNumber, right.koliNumber))
+      .sort((left, right) => {
+        const statusDifference = Number(left.status === 'POSTED') - Number(right.status === 'POSTED')
+        if (statusDifference) return statusDifference
+
+        return getRejectKoliSequence(left.koliNumber) - getRejectKoliSequence(right.koliNumber)
+          || naturalSort.compare(left.koliNumber, right.koliNumber)
+      })
   }, [filteredRejectRows])
   const selectedRejectKoliSet = useMemo(
     () => new Set(selectedRejectKoliNumbers.map((value) => normalizeFilterValue(value)).filter(Boolean)),
@@ -3673,7 +3717,7 @@ export default function StorageOverviewPage() {
             <td>${escapeHtml(entry.size || '-')}</td>
             <td>${escapeHtml(categoryLabel || '-')}</td>
             <td>${escapeHtml(entry.grade || '-')}</td>
-            <td class="number">${Number(entry.qty || 0)}</td>
+            <td class="number">${Number(entry.available_qty || 0)}</td>
             <td>${escapeHtml(entry.reject_note || '-')}</td>
           </tr>
         `
@@ -3695,7 +3739,7 @@ export default function StorageOverviewPage() {
                 <th>Size</th>
                 <th>Category</th>
                 <th>Grade</th>
-                <th>Qty</th>
+                <th>Available Qty</th>
                 <th>Reject Note</th>
               </tr>
             </thead>
@@ -6173,24 +6217,22 @@ export default function StorageOverviewPage() {
           </div>
         ) : null}
         {visibleListMode === 'reject-storage' ? (
-          <div style={styles.rejectSourceToggle} role="group" aria-label="Reject storage source">
-            {[
-              ['regular', 'Reguler'],
-              ['arkline', 'Arkline'],
-            ].map(([source, label]) => (
-              <button
-                key={source}
-                type="button"
-                aria-pressed={rejectStorageSource === source}
-                onClick={() => setRejectStorageSource(source)}
-                style={{
-                  ...styles.rejectSourceToggleButton,
-                  ...(rejectStorageSource === source ? styles.rejectSourceToggleButtonActive : {}),
-                }}
-              >
-                {label}
-              </button>
-            ))}
+          <div className={rejectReleaseStyles.sourceHeading}>
+            <button type="button" role="switch" aria-label="Use Arkline reject storage" aria-checked={rejectStorageSource === 'arkline'} className={rejectReleaseStyles.sourceSwitch} onClick={() => setRejectStorageSource((source) => source === 'regular' ? 'arkline' : 'regular')}>
+              <span data-active={rejectStorageSource === 'regular'}>Reguler</span>
+              <i aria-hidden="true" />
+              <span data-active={rejectStorageSource === 'arkline'}>Arkline</span>
+            </button>
+            <div className={rejectReleaseStyles.headingTitleRow}>
+              <h2 className={arklineReportStyles.sectionTitle}>Reject Storage</h2>
+              {rejectStorageSource === 'arkline' ? (
+                <div className={rejectReleaseStyles.viewToggle} role="group" aria-label="Arkline reject storage view">
+                  {['koli', 'model'].map((mode) => (
+                    <button key={mode} type="button" aria-pressed={arklineRejectViewMode === mode} onClick={() => setArklineRejectViewMode(mode)}>{mode === 'koli' ? 'Koli' : 'Model'}</button>
+                  ))}
+                </div>
+              ) : null}
+            </div>
           </div>
         ) : null}
         {visibleListMode === 'product-directory' ? (
@@ -6201,17 +6243,9 @@ export default function StorageOverviewPage() {
             lockedGroup={lockedStorageGroup}
           />
         ) : visibleListMode === 'reject-storage' && rejectStorageSource === 'arkline' ? (
-          <ArklineRejectionStoragePanel userEmail={storageAccess.currentUserEmail} canAdd={canAddRejectStorage} />
+          <ArklineRejectionStoragePanel userEmail={storageAccess.currentUserEmail} canAdd={canAddRejectStorage} canRelease={canEditRejectStorage} storageViewMode={arklineRejectViewMode} />
         ) : (
           <>
-        {visibleListMode === 'reject-storage' ? (
-          <div className={arklineReportStyles.sectionHeader}>
-            <div>
-              <p className={arklineReportStyles.eyebrow}>Reguler</p>
-              <h2 className={arklineReportStyles.sectionTitle}>Reject Storage</h2>
-            </div>
-          </div>
-        ) : null}
         {isTemporaryAreaMode ? (
           <div style={styles.temporarySalesShell}>
             <div
@@ -6663,6 +6697,13 @@ export default function StorageOverviewPage() {
           ) : null}
           {visibleListMode === 'reject-storage' && canEditRejectStorage ? (
             <div style={styles.rejectToolbarActionField}>
+              <button type="button" className={rejectReleaseStyles.releaseButton} onClick={() => setRejectReleaseEntryId('all')} disabled={!rejectReleaseReady || !regularReleaseItems.some((item) => item.available > 0)} title="Release from Koli" aria-label="Release from Koli">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h14" /><path d="m12 6 6 6-6 6" /><path d="M20 4v16" /></svg>
+              </button>
+            </div>
+          ) : null}
+          {visibleListMode === 'reject-storage' && canEditRejectStorage ? (
+            <div style={styles.rejectToolbarActionField}>
               <button
                 type="button"
                 onClick={handleSelectedRejectPost}
@@ -7036,7 +7077,7 @@ export default function StorageOverviewPage() {
               <p style={{ ...styles.summary, ...styles.rejectSummary }}>
                 Showing {rejectKoliGroups.length ? rejectPageStartIndex + 1 : 0}-{rejectPageEndIndex} of {rejectKoliGroups.length} Koli
               </p>
-              <span style={styles.rejectQtySummary}>Total Qty Reject: {totalRejectQty}</span>
+              <span style={styles.rejectQtySummary}>Available Reject Qty: {totalRejectQty}</span>
             </div>
             <div style={styles.paginationControls}>
               <button
@@ -7081,6 +7122,7 @@ export default function StorageOverviewPage() {
         )}
 
         {error ? <p style={styles.error}>{error}</p> : null}
+        {visibleListMode === 'reject-storage' && rejectStorageSource === 'regular' && rejectReleaseError ? <p style={styles.error}>{rejectReleaseError}. Run supabase/reject_storage_outbound.sql if it has not been applied.</p> : null}
         {success ? <p style={styles.success}>{success}</p> : null}
 
         {isTemporaryAreaMode ? (
@@ -7343,7 +7385,7 @@ export default function StorageOverviewPage() {
                   <th style={styles.th}>SKU</th>
                   <th style={styles.th}>Item</th>
                   <th style={styles.th}>Size</th>
-                  <th style={styles.th}>Total Qty</th>
+                  <th style={styles.th}>Available Qty</th>
                   <th style={styles.th}>Type</th>
                 </tr>
               </thead>
@@ -7505,7 +7547,7 @@ export default function StorageOverviewPage() {
                                   <th style={{ ...styles.rejectDetailTh, ...styles.rejectDetailProductTh }}>Product</th>
                                   <th style={styles.rejectDetailTh}>Size</th>
                                   <th style={styles.rejectDetailTh}>Category</th>
-                                  <th style={styles.rejectDetailTh}>Qty</th>
+                                  <th style={styles.rejectDetailTh}>Available Qty</th>
                                   <th style={styles.rejectDetailTh}>Grade</th>
                                   <th style={styles.rejectDetailTh}>Reject Note</th>
                                   {canEditRejectStorage ? <th style={styles.rejectDetailTh}>Action</th> : null}
@@ -7521,7 +7563,7 @@ export default function StorageOverviewPage() {
                                       <td style={{ ...styles.rejectDetailTd, ...styles.rejectDetailProductTd }}>{entry.product_name || '-'}</td>
                                       <td style={styles.rejectDetailTd}>{entry.size || '-'}</td>
                                       <td style={styles.rejectDetailTd}>{categoryLabel}</td>
-                                      <td style={styles.rejectDetailTd}>{entry.qty}</td>
+                                      <td style={styles.rejectDetailTd}>{entry.available_qty}</td>
                                       <td style={styles.rejectDetailTd}>{entry.grade || '-'}</td>
                                       <td style={styles.rejectDetailTd}>{entry.reject_note || '-'}</td>
                                       {canEditRejectStorage ? (
@@ -7540,6 +7582,17 @@ export default function StorageOverviewPage() {
                                                 <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5Z" />
                                               </svg>
                                             </button>
+                                            {rejectReleaseReady && normalizeRejectStatus(entry.status) === 'POSTED' && entry.available_qty > 0 ? (
+                                              <button
+                                                type="button"
+                                                onClick={() => setRejectReleaseEntryId(String(entry.id))}
+                                                style={{ ...styles.tableIconButton, ...styles.tableIconButtonDark }}
+                                                title="Release from reject koli"
+                                                aria-label={`Release ${entry.product_name || 'item'} from reject koli`}
+                                              >
+                                                <svg viewBox="0 0 24 24" style={styles.tableActionIcon} aria-hidden="true"><path d="M5 12h14" /><path d="m13 6 6 6-6 6" /></svg>
+                                              </button>
+                                            ) : null}
                                             {canDeleteRejectStorageEntry(entry) ? (
                                               <button
                                                 type="button"
@@ -7575,6 +7628,21 @@ export default function StorageOverviewPage() {
               </tbody>
             </table>
           </div>
+        ) : null}
+
+        {visibleListMode === 'reject-storage' && rejectStorageSource === 'regular' && rejectOutbounds.length > 0 ? (
+          <section className={rejectReleaseStyles.log} aria-label="Regular reject release history">
+            <h3>Release History</h3>
+            <div className={rejectReleaseStyles.logScroll}>
+              <table><thead><tr><th>Date</th><th>Koli</th><th>Item</th><th>Qty</th><th>Reason</th><th>Destination</th><th>By</th></tr></thead>
+                <tbody>{rejectOutbounds.slice(0, 100).map((row) => { const item = regularReleaseItems.find((entry) => String(entry.id) === String(row.regular_reject_id)); return <tr key={row.id}><td>{formatDateTime(row.released_at)}</td><td>{item?.koli || '-'}</td><td>{item?.name || '-'} / {item?.size || '-'}</td><td>{row.qty}</td><td>{row.reason}</td><td>{row.destination || '-'}</td><td>{getDisplayNameByEmail(row.released_by)}</td></tr> })}</tbody>
+              </table>
+            </div>
+          </section>
+        ) : null}
+
+        {rejectReleaseEntryId && visibleListMode === 'reject-storage' && rejectStorageSource === 'regular' ? (
+          <RejectStorageRelease sourceType="REGULAR" items={regularReleaseItems} outbounds={rejectOutbounds} initialItemId={rejectReleaseEntryId === 'all' ? '' : rejectReleaseEntryId} onSaved={refreshRejectOutbounds} onClose={() => setRejectReleaseEntryId(null)} />
         ) : null}
 
         {visibleListMode === 'history' ? filteredHistoryRows.length === 0 ? (
@@ -9998,12 +10066,18 @@ const styles = {
     display: 'inline-flex',
     alignSelf: 'flex-start',
     gap: '4px',
-    marginTop: '12px',
-    marginBottom: '8px',
     padding: '4px',
     border: '1px solid #dbe2ea',
     borderRadius: '8px',
     background: '#f1f5f9',
+  },
+  rejectHeadingRow: {
+    display: 'flex',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: '12px',
+    marginTop: '12px',
+    marginBottom: '8px',
   },
   rejectSourceToggleButton: {
     minHeight: '36px',

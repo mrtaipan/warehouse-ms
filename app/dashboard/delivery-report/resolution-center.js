@@ -1092,13 +1092,19 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
 
   const loadCases = useCallback(async () => {
     if (!caseListAccess.ready) return
-    const { data, error } = await deliverySupabase
-      .from('delivery_error_retur_cases')
-      .select('*,return_items:delivery_return_items(outcome,qty)')
-      .order('tanggal_pengajuan', { ascending: false })
-      .limit(5000)
-    if (error) setStatus({ type: 'error', message: `Failed to load return cases: ${error.message}` })
-    else setCases(data || [])
+    const allRows = []
+    for (let offset = 0; ; offset += 1000) {
+      const { data, error } = await deliverySupabase
+        .from('delivery_error_retur_cases')
+        .select('id,created_at,updated_at,tanggal_pengajuan,batas_tanggal_retur,group_order,internal_external,kode_kejadian,order_id,nama_customer,no_handphone,no_resi_pengiriman,nomor_tim,courier_name,courier_service,retur_reason,retur_action,produk_diretur,produk_pengganti,ongkir_masuk,ongkir_keluar,nilai_refund_kompensasi,keterangan_tambahan,status_barang,total_retur,alamat,note_konsumen,need_prioritized,created_by,updated_by,return_items:delivery_return_items(outcome,qty)')
+        .order('tanggal_pengajuan', { ascending: false })
+        .order('id', { ascending: false })
+        .range(offset, offset + 999)
+      if (error) { setStatus({ type: 'error', message: `Failed to load return cases: ${error.message}` }); return }
+      allRows.push(...(data || []))
+      if (!data || data.length < 1000) break
+    }
+    setCases(allRows)
   }, [caseListAccess.ready])
 
   const loadIssues = useCallback(async () => {
@@ -1242,8 +1248,14 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
 
   const visibleCases = useMemo(() => {
     const keyword = filters.search.trim().toLowerCase()
-    return summaryCases.filter((row) => {
-      if (row.status_barang === 'Completed' && dateOnly(row.updated_at) < addDays(today, -1)) return false
+    const source = keyword ? accessibleCases : summaryCases
+    return source.filter((row) => {
+      if (keyword) {
+        if (filters.group && row.group_order !== filters.group) return false
+        if (filters.courier && row.courier_name !== filters.courier) return false
+        if (filters.type && cleanUpper(row.internal_external) !== cleanUpper(filters.type)) return false
+      }
+      if (!keyword && row.status_barang === 'Completed' && dateOnly(row.updated_at) < addDays(today, -1)) return false
       if (filters.warningOnly && getCaseWarningMeta(row, today).rank <= 0) return false
       if (filters.status && cleanUpper(row.status_barang) !== cleanUpper(filters.status)) return false
       if (!keyword) return true
@@ -1253,7 +1265,7 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
       const statusOrder = (rank[a.status_barang] ?? 99) - (rank[b.status_barang] ?? 99)
       return statusOrder || String(b.tanggal_pengajuan || '').localeCompare(String(a.tanggal_pengajuan || ''))
     })
-  }, [filters.search, filters.status, filters.warningOnly, summaryCases, today])
+  }, [accessibleCases, filters.courier, filters.group, filters.search, filters.status, filters.type, filters.warningOnly, summaryCases, today])
 
   const caseListStats = useMemo(() => {
     const visibleWithWarningMeta = visibleCases.map((row) => ({ meta: getCaseWarningMeta(row, today), row }))
@@ -1348,8 +1360,8 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
       const groupValue = cleanUpper(row.group_order)
       const haystack = [row.order_id, row.nama, row.tim, row.produk_bermasalah, row.alasan_bermasalah, row.tindak_lanjut, row.keterangan].join(' ').toLowerCase()
 
-      if (issueFilters.from && createdDate && createdDate < issueFilters.from) return false
-      if (issueFilters.to && createdDate && createdDate > issueFilters.to) return false
+      if (!keyword && issueFilters.from && createdDate && createdDate < issueFilters.from) return false
+      if (!keyword && issueFilters.to && createdDate && createdDate > issueFilters.to) return false
       if (issueFilters.group && groupValue !== issueFilters.group) return false
       if (keyword && !haystack.includes(keyword)) return false
       return true
@@ -2584,7 +2596,7 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
                 <label><span>COURIER</span><select value={filters.courier} onChange={(event) => setFilters({ ...filters, courier: event.target.value })}><option value="">ALL COURIERS</option>{courierOptions.map((item) => <option key={item}>{item}</option>)}</select></label>
                 <label><span>INTERNAL / EXTERNAL</span><select value={filters.type} onChange={(event) => setFilters({ ...filters, type: event.target.value })}><option value="">ALL TYPES</option><option value="Internal">Internal</option><option value="External">External</option></select></label>
                 <label><span>STATUS</span><select value={filters.status} onChange={(event) => setFilters({ ...filters, status: event.target.value })}><option value="">ALL STATUSES</option>{caseStatusOptions.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
-                <label className={styles.searchField}><span>SEARCH</span><input placeholder="Search case code, order ID, AWB, or customer name" value={filters.search} onChange={(event) => setFilters({ ...filters, search: event.target.value })} /></label>
+                <label className={styles.searchField}><span>{filters.search.trim() ? 'SEARCH · ALL DATES' : 'SEARCH'}</span><input placeholder="Search case code, order ID, AWB, or customer name" value={filters.search} onChange={(event) => setFilters({ ...filters, search: event.target.value })} /></label>
                 <button className={`${styles.warningOnlyButton} ${filters.warningOnly ? styles.active : ''}`} onClick={() => setFilters({ ...filters, warningOnly: !filters.warningOnly })} aria-pressed={filters.warningOnly}>Warning Only</button>
               </div>
             </div>
@@ -2722,10 +2734,10 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
               </div>
               <p>Monitor, filter, review details, and edit order issue cases directly from one list.</p>
               <div className={styles.resolutionCaseFilters}>
-                <label><span>DATE FROM</span><input type="date" value={issueFilters.from} onChange={(event) => setIssueFilters({ ...issueFilters, from: event.target.value })} /></label>
-                <label><span>DATE TO</span><input type="date" value={issueFilters.to} onChange={(event) => setIssueFilters({ ...issueFilters, to: event.target.value })} /></label>
+                <label><span>DATE FROM</span><input type="date" value={issueFilters.search.trim() ? '' : issueFilters.from} disabled={Boolean(issueFilters.search.trim())} onChange={(event) => setIssueFilters({ ...issueFilters, from: event.target.value })} /></label>
+                <label><span>DATE TO</span><input type="date" value={issueFilters.search.trim() ? '' : issueFilters.to} disabled={Boolean(issueFilters.search.trim())} onChange={(event) => setIssueFilters({ ...issueFilters, to: event.target.value })} /></label>
                 <label><span>GROUP</span><select value={issueFilters.group} onChange={(event) => setIssueFilters({ ...issueFilters, group: lockedGroup || event.target.value })} disabled={Boolean(lockedGroup)}>{lockedGroup ? null : <option value="">ALL GROUPS</option>}{groupOptions.map((group) => <option key={group}>{group}</option>)}</select></label>
-                <label className={styles.searchField}><span>SEARCH</span><input placeholder="Search order ID, customer, reason, handling, product, or team" value={issueFilters.search} onChange={(event) => setIssueFilters({ ...issueFilters, search: event.target.value })} /></label>
+                <label className={styles.searchField}><span>{issueFilters.search.trim() ? 'SEARCH · ALL DATES' : 'SEARCH'}</span><input placeholder="Search order ID, customer, reason, handling, product, or team" value={issueFilters.search} onChange={(event) => setIssueFilters({ ...issueFilters, search: event.target.value })} /></label>
               </div>
             </div>
             <div className={styles.panelBody}>

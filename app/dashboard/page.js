@@ -42,6 +42,17 @@ const DAILY_QUOTES = [
   'Yang penting bukan seberapa besar langkahnya, tapi seberapa sering kamu melangkah.',
   'Doubt kills more dreams than failure ever will.',
   'Kamu udah sejauh ini bukan karena kebetulan - kamu emang layak sampai di sini.',
+  'Ambisi tanpa tujuan hanya membuat kita berlari lebih cepat ke arah yang belum tentu benar.',
+  'Pada akhirnya, bukan seberapa tinggi kita pernah berdiri yang paling berarti, tetapi seberapa banyak hal baik yang berhasil kita bangun.',
+  "The more you know, the more you realize how much you don't.",
+  "If you never question the way things are done, you'll never discover a better way.",
+  'Yang paling berbahaya bukan orang yang tidak tahu, tetapi orang yang merasa sudah tahu segalanya.',
+  'Terkadang kita terlalu sibuk mencari solusi, sampai lupa mempertanyakan apa sebenarnya masalah yang ada?',
+  'Tidak semua yang sulit itu penting, dan tidak semua yang sederhana itu mudah.',
+  'Kalau semua orang berpikir dengan cara yang sama, jangan heran kalau hasilnya selalu sama.',
+  "You don't have to win every battle. You just have to make sure you don't lose yourself.",
+  'Jangan takut memulai dari nol. Takutlah jika bertahun-tahun berlalu dan kamu masih berada di titik yang sama.',
+  'Kalau jalannya tertutup, cari jalan lain. Kalau tidak ada jalan, cari tahu caranya buat jalan.',
 ]
 
 function formatToday() {

@@ -357,7 +357,7 @@ function buildStorageProductGroups(lines = []) {
     })
     .sort((a, b) => String(a.productName || '').localeCompare(String(b.productName || ''), undefined, { numeric: true }))
 }
-export default function ArklineReturReportClient({ eligibleRows, batches, storages = [], registrationProducts = [], rejectReasons = [], userEmail, canAdd = false, canEdit = false, storageOnly = false, onStorageChanged }) {
+export default function ArklineReturReportClient({ eligibleRows, batches, storages = [], registrationProducts = [], rejectReasons = [], userEmail, canAdd = false, canEdit = false, storageOnly = false, onStorageChanged, releaseAction = null, storageViewMode = 'koli' }) {
   const router = useRouter()
   const supabase = useMemo(() => createClient(), [])
   const [selectedIds, setSelectedIds] = useState([])
@@ -374,7 +374,6 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
   const [progressProductFilter, setProgressProductFilter] = useState('')
   const [progressRejectReasonFilter, setProgressRejectReasonFilter] = useState('')
   const [progressStatusFilter, setProgressStatusFilter] = useState('')
-  const [storageViewMode, setStorageViewMode] = useState('koli')
   const [storageMatrixSort, setStorageMatrixSort] = useState({ key: 'name', direction: 'asc' })
   const [storageCategoryFilter, setStorageCategoryFilter] = useState('')
   const [storageSearch, setStorageSearch] = useState('')
@@ -1929,31 +1928,6 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
 
       {storageOnly ? (
       <section className={`${styles.card} ${styles.subPageCard}`.trim()}>
-        <div className={styles.sectionHeader}>
-          <div className={styles.storageHeading}>
-            <p className={styles.eyebrow}>Arkline</p>
-            <h2 className={styles.sectionTitle}>Reject Storage</h2>
-            <div className={styles.storageModeToggle} role="group" aria-label="Reject storage view mode">
-              <button
-                type="button"
-                className={`${styles.storageModeButton} ${storageViewMode === 'koli' ? styles.storageModeButtonActive : ''}`.trim()}
-                onClick={() => setStorageViewMode('koli')}
-                aria-pressed={storageViewMode === 'koli'}
-              >
-                Koli
-              </button>
-              <button
-                type="button"
-                className={`${styles.storageModeButton} ${storageViewMode === 'model' ? styles.storageModeButtonActive : ''}`.trim()}
-                onClick={() => setStorageViewMode('model')}
-                aria-pressed={storageViewMode === 'model'}
-              >
-                Model
-              </button>
-            </div>
-          </div>
-        </div>
-
         <div className={styles.storageToolbar}>
           <div className={`${styles.field} ${styles.storageCategoryField}`.trim()}>
             <label htmlFor="storage-category-filter">Category</label>
@@ -1994,42 +1968,45 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
               <option value="DELIVERY_REJECT">Delivery Reject</option>
             </select>
           </div>
-          <div className={`${styles.field} ${styles.storageSearchField}`.trim()}>
-            <label htmlFor="storage-search">Search storage, product, PO, or reject reason</label>
-            <input
-              id="storage-search"
-              className={styles.input}
-              value={storageSearch}
-              onChange={(event) => setStorageSearch(event.target.value)}
-              placeholder="Search product, storage no, PO..."
-            />
-          </div>
-          {storageSearch || storageSizeFilter || storageSourceFilter || storageCategoryFilter ? (
-            <button
-              type="button"
-              className={styles.secondaryButton}
-              onClick={() => {
-                setStorageSearch('')
-                setStorageSizeFilter('')
-                setStorageSourceFilter('')
-                setStorageCategoryFilter('')
-              }}
-            >
-              Clear
-            </button>
-          ) : null}
-          {canAdd ? (
-            <button
-              type="button"
-              className={styles.storageAddButton}
-              onClick={openRegistrationModal}
-              disabled={!registrationProducts.length || !rejectReasons.length}
-              title="Item Registration"
-              aria-label="Open Item Registration"
-            >
-              +
-            </button>
-          ) : null}
+            <div className={`${styles.field} ${styles.storageSearchField}`.trim()}>
+              <label htmlFor="storage-search">Search storage, product, PO, or reject reason</label>
+              <input
+                id="storage-search"
+                className={styles.input}
+                value={storageSearch}
+                onChange={(event) => setStorageSearch(event.target.value)}
+                placeholder="Search product, storage no, PO..."
+              />
+            </div>
+            {storageSearch || storageSizeFilter || storageSourceFilter || storageCategoryFilter ? (
+              <button
+                type="button"
+                className={styles.secondaryButton}
+                onClick={() => {
+                  setStorageSearch('')
+                  setStorageSizeFilter('')
+                  setStorageSourceFilter('')
+                  setStorageCategoryFilter('')
+                }}
+              >
+                Clear
+              </button>
+            ) : null}
+            <div className={styles.storageActions}>
+              {canAdd ? (
+                <button
+                  type="button"
+                  className={styles.storageAddButton}
+                  onClick={openRegistrationModal}
+                  disabled={!registrationProducts.length || !rejectReasons.length}
+                  title="Item Registration"
+                  aria-label="Open Item Registration"
+                >
+                  +
+                </button>
+              ) : null}
+              {releaseAction}
+            </div>
         </div>
 
         {!storages.length ? (
@@ -2086,7 +2063,7 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
               <thead>
                 <tr>
                   <th>Koli Number</th>
-                  <th className={styles.centerNumberCell}>Stored Qty</th>
+                  <th className={styles.centerNumberCell}>Available Qty</th>
                   <th>Updated Date</th>
                   <th className={styles.centerNumberCell}>Number of Products</th>
                   <th className={styles.centerNumberCell}>Number of Sizes</th>
@@ -2134,7 +2111,7 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
                                 <thead>
                                   <tr>
                                     <th>SKU / Product</th>
-                                    <th className={styles.centerNumberCell}>Stored Qty</th>
+                                    <th className={styles.centerNumberCell}>Available Qty</th>
                                     <th className={styles.centerNumberCell}>Number of Sizes</th>
                                     <th className={styles.centerNumberCell}>Reject Details</th>
                                   </tr>
@@ -2172,7 +2149,7 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
                                                 <thead>
                                                   <tr>
                                                     <th>Size</th>
-                                                    <th className={styles.centerNumberCell}>Stored Qty</th>
+                                                    <th className={styles.centerNumberCell}>Available Qty</th>
                                                     <th className={styles.centerNumberCell}>Reject Details</th>
                                                   </tr>
                                                 </thead>

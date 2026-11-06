@@ -759,6 +759,13 @@
   margin-top: 18px;
 }
 
+.storageActions {
+  display: flex;
+  align-items: center;
+  flex: none;
+  gap: 8px;
+}
+
 .storageHeading {
   display: flex;
   align-items: center;
@@ -782,7 +789,7 @@
 
 .storageModeButton {
   min-width: 52px;
-  height: 28px;
+  height: 32px;
   padding: 0 8px;
   border: 0;
   border-radius: 5px;
@@ -883,16 +890,16 @@
 }
 
 .storageSizeField {
-  width: 160px;
+  width: 136px;
 }
 
 .storageCategoryField {
-  width: 208px;
+  width: 168px;
 }
 
 .storageSearchField {
   flex: 1;
-  min-width: 260px;
+  min-width: 220px;
 }
 
 .storageAddButton {
