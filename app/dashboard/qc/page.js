@@ -459,6 +459,37 @@ const styles = {
     fontWeight: '700',
     cursor: 'pointer',
   },
+  sampleActionRow: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: '6px',
+  },
+  sampleActionButton: {
+    width: '34px',
+    height: '34px',
+    padding: 0,
+    border: '1px solid #cbd5e1',
+    borderRadius: '8px',
+    background: '#fff',
+    color: '#334155',
+    fontSize: '17px',
+    fontWeight: '700',
+    cursor: 'pointer',
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    lineHeight: 1,
+  },
+  sampleFullReturnButton: {
+    borderColor: '#fecaca',
+    background: '#fff1f2',
+    color: '#9f1239',
+  },
+  sampleActionButtonDisabled: {
+    cursor: 'not-allowed',
+    opacity: 0.55,
+  },
   inspectorNameCell: {
     display: 'flex',
     alignItems: 'center',
@@ -5216,7 +5247,7 @@ export default function QcDashboardPage() {
                 <th style={{ ...styles.th, ...styles.thCenter }}>Qty B</th>
                 <th style={{ ...styles.th, ...styles.thCenter }}>Qty C</th>
                 <th style={{ ...styles.th, ...styles.thCenter }}>Total Inspected</th>
-                {showRegularSplitColumn ? <th style={{ ...styles.th, ...styles.thCenter }}>Split</th> : null}
+                {showRegularSplitColumn ? <th style={{ ...styles.th, ...styles.thCenter }}>Action</th> : null}
                 {qcMode !== 'regular' ? <th style={{ ...styles.th, ...styles.thCenter }}>Detail</th> : null}
               </tr>
             </thead>
@@ -5248,12 +5279,29 @@ export default function QcDashboardPage() {
                     {showRegularSplitColumn ? (
                       <td style={{ ...styles.td, ...styles.tdCenter }}>
                         {item.isTemporarySampleSummary ? (
-                          <div style={styles.buttonRow}>
-                            <button type="button" style={styles.detailButton} onClick={() => openSampleSplitModal(item)} title="Split sample QC result">
-                              Split
+                          <div style={styles.sampleActionRow}>
+                            <button
+                              type="button"
+                              style={styles.sampleActionButton}
+                              onClick={() => openSampleSplitModal(item)}
+                              title="Split sample QC result"
+                              aria-label="Split sample QC result"
+                            >
+                              📝
                             </button>
-                            <button type="button" style={styles.detailButton} disabled={savingSampleSplit} onClick={() => saveSampleFullReturnRows(item)} title="Return the entire sample without model registration">
-                              Full Return
+                            <button
+                              type="button"
+                              style={{
+                                ...styles.sampleActionButton,
+                                ...styles.sampleFullReturnButton,
+                                ...(savingSampleSplit ? styles.sampleActionButtonDisabled : {}),
+                              }}
+                              disabled={savingSampleSplit}
+                              onClick={() => saveSampleFullReturnRows(item)}
+                              title="Return the entire sample without model registration"
+                              aria-label="Full return sample"
+                            >
+                              &#x21a9;
                             </button>
                           </div>
                         ) : item.isFullReturnSampleSummary ? (

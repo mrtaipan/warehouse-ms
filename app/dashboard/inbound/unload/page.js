@@ -27,6 +27,20 @@ function getTodayDateString() {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
 }
 
+async function fetchAllQueryRows(buildQuery, pageSize = 1000) {
+  const rows = []
+
+  for (let from = 0; ; from += pageSize) {
+    const { data, error } = await buildQuery(from, from + pageSize - 1)
+    if (error) return { data: null, error }
+
+    rows.push(...(data || []))
+    if (!data || data.length < pageSize) break
+  }
+
+  return { data: rows, error: null }
+}
+
 function buildCategoryMaps(categories) {
   const byId = new Map(categories.map((item) => [item.id, item]))
   const rootOptions = []
@@ -2634,16 +2648,22 @@ export default function UnloadPage() {
           .select('id, category_code, category_name, parent_id, level, full_code, full_name')
           .eq('is_active', true)
           .order('full_code', { ascending: true }),
-        supabase
-          .from('dir_product_models')
-          .select('id, brand_id, category_id, model_code, model_name, model_notes')
-          .eq('is_active', true)
-          .order('model_name', { ascending: true }),
-        supabase
-          .from('dir_product_model_variants')
-          .select('*')
-          .eq('is_active', true)
-          .order('variant_code', { ascending: true }),
+        fetchAllQueryRows((from, to) =>
+          supabase
+            .from('dir_product_models')
+            .select('id, brand_id, category_id, model_code, model_name, model_notes')
+            .eq('is_active', true)
+            .order('model_name', { ascending: true })
+            .range(from, to)
+        ),
+        fetchAllQueryRows((from, to) =>
+          supabase
+            .from('dir_product_model_variants')
+            .select('*')
+            .eq('is_active', true)
+            .order('variant_code', { ascending: true })
+            .range(from, to)
+        ),
       ])
 
       if (inboundError || brandError || categoryError || modelError || productVariantError) {
