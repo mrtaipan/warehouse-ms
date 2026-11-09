@@ -593,6 +593,20 @@
   letter-spacing: 0.06em;
 }
 
+.boardReturnBadge {
+  align-self: flex-start;
+  max-width: 100%;
+  padding: 3px 7px;
+  border: 1px solid #fed7aa;
+  border-radius: 999px;
+  background: #fff7ed;
+  color: #9a3412;
+  font-size: 8px;
+  font-weight: 800;
+  line-height: 1.25;
+  white-space: nowrap;
+}
+
 .boardMeta {
   display: flex;
   align-items: center;

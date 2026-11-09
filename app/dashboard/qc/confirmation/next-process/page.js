@@ -1314,7 +1314,14 @@ function matchesResultFilterValues(row, qty, filters, ignoredFilter = '') {
     return false
   }
 
-  if (ignoredFilter !== 'search' && filters.search && !normalizeFilterValue(getModelDashLabel(row)).includes(normalizeFilterValue(filters.search))) {
+  const searchValue = normalizeFilterValue(filters.search)
+  const searchableProductText = normalizeFilterValue([
+    getModelNameLabel(row),
+    row.model_color || row.variant_name,
+    row.source_variant_code,
+    row.product_model_variant?.variant_code,
+  ].filter(Boolean).join(' '))
+  if (ignoredFilter !== 'search' && searchValue && !searchableProductText.includes(searchValue)) {
     return false
   }
 
@@ -2783,8 +2790,8 @@ export default function QcConfirmationNextProcessPage() {
             value={resultFilters.search}
             onChange={(event) => updateResultFilter('search', event.target.value)}
             style={styles.filterSearchInput}
-            placeholder="Search model"
-            aria-label="Search model"
+            placeholder="Search model, variant, or SKU"
+            aria-label="Search model, variant, or SKU"
           />
         </div>
 

@@ -947,6 +947,18 @@ function normalizeFilterValue(value) {
   return String(value || '').trim().toUpperCase()
 }
 
+async function fetchAllRows(createQuery) {
+  const pageSize = 500
+  const rows = []
+
+  for (let offset = 0; ; offset += pageSize) {
+    const { data, error } = await createQuery().range(offset, offset + pageSize - 1)
+    if (error) return { data: null, error }
+    rows.push(...(data || []))
+    if (!data || data.length < pageSize) return { data: rows, error: null }
+  }
+}
+
 function matchesResultFilterValues(row, qty, filters, ignoredFilter = '') {
   if (ignoredFilter !== 'brandId' && filters.brandId && String(row.brand_id || '') !== filters.brandId) {
     return false
@@ -960,7 +972,14 @@ function matchesResultFilterValues(row, qty, filters, ignoredFilter = '') {
     return false
   }
 
-  if (ignoredFilter !== 'search' && filters.search && !normalizeFilterValue(getModelLabel(row)).includes(normalizeFilterValue(filters.search))) {
+  const searchValue = normalizeFilterValue(filters.search)
+  const searchableProductText = normalizeFilterValue([
+    row.model_name,
+    row.variant_name || row.model_color,
+    row.source_variant_code,
+    row.product_model_variant?.variant_code,
+  ].filter(Boolean).join(' '))
+  if (ignoredFilter !== 'search' && searchValue && !searchableProductText.includes(searchValue)) {
     return false
   }
 
@@ -1157,7 +1176,7 @@ export default function QcConfirmationRejectionPage() {
       { data: returnsData, error: returnsError },
     ] = await Promise.all([
       supabase.auth.getUser(),
-      supabase
+      fetchAllRows(() => supabase
         .from('qc_items')
         .select(`
             *,
@@ -1213,16 +1232,18 @@ export default function QcConfirmationRejectionPage() {
             )
           `)
         .eq('status', 'done')
-        .order('created_at', { ascending: false }),
+        .order('created_at', { ascending: false })
+        .order('id', { ascending: false })),
       supabase
         .from('qc_confirm')
         .select('source_grade')
         .limit(1),
-      supabase
+      fetchAllRows(() => supabase
         .from('inbound_sample_model_breakdowns')
         .select('id, inbound_unload_id, resolution_status')
-        .order('created_at', { ascending: true }),
-      supabase
+        .order('created_at', { ascending: true })
+        .order('id', { ascending: true })),
+      fetchAllRows(() => supabase
         .from('qc_sample_breakdowns')
         .select(`
           id,
@@ -1281,16 +1302,19 @@ export default function QcConfirmationRejectionPage() {
             )
           )
         `)
-        .order('created_at', { ascending: true }),
-      supabase
+        .order('created_at', { ascending: true })
+        .order('id', { ascending: true })),
+      fetchAllRows(() => supabase
         .from('qc_confirm')
         .select('*')
-        .order('koli_sequence', { ascending: true }),
-      supabase
+        .order('koli_sequence', { ascending: true })
+        .order('id', { ascending: true })),
+      fetchAllRows(() => supabase
         .from('warehouse_returns')
         .select('id, inbound_id, source_phase, brand_id, category_id, product_model_id, product_model_variant_id, source_variant_code, model_name, variant_name, qty, koli_sequence, grade, is_adjustment, adjustment_type, pic_name')
         .eq('source_phase', 'qc')
-        .order('koli_sequence', { ascending: true }),
+        .order('koli_sequence', { ascending: true })
+        .order('id', { ascending: true })),
     ])
 
     if (authError || qcError || sampleBreakdownError || qcSampleError || confirmError || returnsError) {
@@ -2468,8 +2492,8 @@ export default function QcConfirmationRejectionPage() {
               value={resultFilters.search}
               onChange={(event) => updateResultFilter('search', event.target.value)}
               style={styles.filterSearchInput}
-              placeholder="Search model"
-              aria-label="Search model"
+              placeholder="Search model, variant, or SKU"
+              aria-label="Search model, variant, or SKU"
             />
           </div>
         ) : null}

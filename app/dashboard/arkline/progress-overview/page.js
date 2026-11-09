@@ -553,6 +553,7 @@ async function loadSnapshotRows() {
         productNames: [],
         productEntries: [],
         totalQty: 0,
+        openReturnQty: 0,
         financeDueValue: 0,
         latestUpdatedDeliveryDate: '',
         itemCount: 0,
@@ -583,6 +584,7 @@ async function loadSnapshotRows() {
       notes: itemNotes,
       sizeBreakdown,
     })
+    accumulator[poId].openReturnQty += Number.isFinite(openReturnQty) ? openReturnQty : 0
 
     accumulator[poId].financeDueValue += getFinanceQtyForItem({
       qty: totalQty,
@@ -626,6 +628,8 @@ async function loadSnapshotRows() {
           targetDate: normalized.targetDate,
           displayDate: getLaterIsoDate(normalized.targetDate, entry.updatedDeliveryDate),
         })),
+        openReturnQty: summary?.openReturnQty || 0,
+        hasOpenReturn: Number(summary?.openReturnQty || 0) > 0,
         totalQty: summary?.totalQty || 0,
         financeDueValue,
         financePaidValue,
@@ -5374,6 +5378,14 @@ export default function ArklineProgressOverviewPage() {
                             </div>
                             <span className={styles.boardMethod}>{item.method}</span>
                           </div>
+                          {item.hasOpenReturn ? (
+                            <span
+                              className={styles.boardReturnBadge}
+                              title={`${formatNumber(item.openReturnQty)} pcs still in return process`}
+                            >
+                              Return in progress · {formatNumber(item.openReturnQty)} pcs
+                            </span>
+                          ) : null}
                           <div className={styles.boardProductSummary}>
                             <p className={styles.boardProductLine}>
                               {item.productNames?.length ? item.productNames.slice(0, 3).join(' / ') : 'NO PRODUCT'}
