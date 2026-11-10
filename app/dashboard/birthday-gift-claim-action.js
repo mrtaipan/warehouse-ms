@@ -48,6 +48,7 @@ export default function BirthdayGiftClaimAction() {
             </div>
             <div className={formStyles.modalBody}>
               <form className={formStyles.modalForm} action={submit}>
+                <p className={formStyles.formNote}>Harga Produk yang bisa diclaim maksimal adalah Rp200.000</p>
                 <label className={formStyles.field}>
                   <span className={formStyles.label}>Item Name</span>
                   <input className={formStyles.input} type="text" name="item_name" placeholder="Enter gift item name" required autoFocus />

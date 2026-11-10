@@ -585,6 +585,7 @@ export default function MyArklifeClient({ profile, leaveRows, giftRows, publicHo
             }
           >
             <input type="hidden" name="request_date" value={new Date().toISOString().slice(0, 10)} />
+            <p className={styles.formNote}>Harga Produk yang bisa diclaim maksimal adalah Rp200.000</p>
             <label className={styles.field}>
               <span className={styles.label}>Item Name</span>
               <input className={styles.input} type="text" name="item_name" placeholder="Enter gift item name" required />

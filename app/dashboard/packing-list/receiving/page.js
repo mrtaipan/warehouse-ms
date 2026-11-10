@@ -16,6 +16,22 @@ import { getProfileByAuthenticatedUser } from '@/utils/user-profiles'
 
 const supabase = createClient()
 
+async function fetchAllSupabaseRows(buildQuery, pageSize = 1000) {
+  const rows = []
+  let from = 0
+
+  while (true) {
+    const { data, error } = await buildQuery().range(from, from + pageSize - 1)
+    if (error) return { data: rows, error }
+
+    rows.push(...(data || []))
+    if (!data || data.length < pageSize) break
+    from += pageSize
+  }
+
+  return { data: rows, error: null }
+}
+
 function sanitizeQuantityInput(value) {
   return String(value || '').replace(/\D/g, '')
 }
@@ -1564,43 +1580,49 @@ export default function PackingListReceivingPage() {
         { data: userProfileData, error: userProfileError },
         { data: catalogData, error: catalogError },
       ] = await Promise.all([
-        supabase
-          .from('qc_confirm')
-          .select(`
-            id,
-            inbound_id,
-            brand_id,
-            category_id,
-            product_model_id,
-            product_model_variant_id,
-            source_variant_code,
-            model_name,
-            model_color:variant_name,
-            photo_url,
-            qty,
-            koli_sequence,
-            is_sample,
-            brands:dir_brands!brand_id (
-              brand_name
-            ),
-            categories:dir_categories!category_id (
-              category_name,
-              full_name
-            ),
-            inbound:inbound_id (
+        fetchAllSupabaseRows(() =>
+          supabase
+            .from('qc_confirm')
+            .select(`
               id,
-              grn_number,
-              inbound_date
-            )
-          `)
-          .order('created_at', { ascending: false }),
-        supabase
-          .from('pl_receiving')
-          .select('id, inbound_id, source_koli_sequence, source_qc_confirm_id, product_model_id, product_model_variant_id, source_variant_code, model_name, model_color:variant_name, source_qty, received_qty, qty_diff, validated_by, received_with_names, validated_at')
-          .order('validated_at', { ascending: false }),
-        supabase
-          .from('pl_size_breakdown')
-          .select('id, inbound_id, product_model_id, product_model_variant_id, source_variant_code, model_name, variant_name'),
+              inbound_id,
+              brand_id,
+              category_id,
+              product_model_id,
+              product_model_variant_id,
+              source_variant_code,
+              model_name,
+              model_color:variant_name,
+              photo_url,
+              qty,
+              koli_sequence,
+              is_sample,
+              brands:dir_brands!brand_id (
+                brand_name
+              ),
+              categories:dir_categories!category_id (
+                category_name,
+                full_name
+              ),
+              inbound:inbound_id (
+                id,
+                grn_number,
+                inbound_date
+              )
+            `)
+            .order('created_at', { ascending: false })
+        ),
+        fetchAllSupabaseRows(() =>
+          supabase
+            .from('pl_receiving')
+            .select('id, inbound_id, source_koli_sequence, source_qc_confirm_id, product_model_id, product_model_variant_id, source_variant_code, model_name, model_color:variant_name, source_qty, received_qty, qty_diff, validated_by, received_with_names, validated_at')
+            .order('validated_at', { ascending: false })
+        ),
+        fetchAllSupabaseRows(() =>
+          supabase
+            .from('pl_size_breakdown')
+            .select('id, inbound_id, product_model_id, product_model_variant_id, source_variant_code, model_name, variant_name')
+        ),
         supabase
           .from('dir_user_profiles')
           .select('email, display_name, role'),

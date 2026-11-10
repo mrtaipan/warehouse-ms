@@ -21,6 +21,22 @@ function assertNoError(result) {
   }
 }
 
+async function fetchAllRows(buildQuery, pageSize = 1000) {
+  const rows = []
+  let from = 0
+
+  while (true) {
+    const { data, error } = await buildQuery().range(from, from + pageSize - 1)
+    if (error) return { data: rows, error }
+
+    rows.push(...(data || []))
+    if (!data || data.length < pageSize) break
+    from += pageSize
+  }
+
+  return { data: rows, error: null }
+}
+
 export function attachInboundOverviewStatuses(rows = [], statusMap = new Map()) {
   return rows.map((row) => ({
     ...row,
@@ -172,12 +188,12 @@ export async function fetchInboundOverviewStatusMap(supabase, inboundIds = []) {
     unloadResult,
     qcResult,
   ] = await Promise.all([
-    supabase.from('qc_confirm').select('inbound_id, qty, koli_sequence').in('inbound_id', ids),
-    supabase.from('pl_receiving').select('inbound_id, source_koli_sequence, received_qty').in('inbound_id', ids),
-    supabase.from('pl_size_breakdown').select('inbound_id, qty').in('inbound_id', ids),
-    supabase.from('warehouse_returns').select('inbound_id, qty, source_phase').in('inbound_id', ids),
-    supabase.from('pl_packing_items').select('inbound_id, qty').in('inbound_id', ids),
-    supabase.from('inbound_unload').select('inbound_id, qty, is_sample').in('inbound_id', ids),
+    fetchAllRows(() => supabase.from('qc_confirm').select('inbound_id, qty, koli_sequence').in('inbound_id', ids)),
+    fetchAllRows(() => supabase.from('pl_receiving').select('inbound_id, source_koli_sequence, received_qty').in('inbound_id', ids)),
+    fetchAllRows(() => supabase.from('pl_size_breakdown').select('inbound_id, qty').in('inbound_id', ids)),
+    fetchAllRows(() => supabase.from('warehouse_returns').select('inbound_id, qty, source_phase').in('inbound_id', ids)),
+    fetchAllRows(() => supabase.from('pl_packing_items').select('inbound_id, qty').in('inbound_id', ids)),
+    fetchAllRows(() => supabase.from('inbound_unload').select('inbound_id, qty, is_sample').in('inbound_id', ids)),
     loadAllQcRows(supabase, ids),
   ])
 

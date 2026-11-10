@@ -645,10 +645,17 @@
 .resolutionApp .resolutionSummaryControls .primaryButton:hover { border-color: #000000; background: #000000; }
 .returnWizardTopbar { display: grid; grid-template-columns: minmax(180px, .65fr) minmax(0, 1.35fr); gap: 28px; align-items: center; padding-bottom: 22px; border-bottom: 1px solid #e5e7eb; }
 .returnWizardCaseCode { min-width: 0; }
+.returnWizardCaseCodeLabel { display: flex; align-items: center; gap: 8px; }
+.caseCodeHelpButton { display: inline-flex; width: 20px; height: 20px; align-items: center; justify-content: center; padding: 0; border: 1px solid #cbd5e1; border-radius: 50%; background: #f8fafc; color: #334155; font-size: 12px !important; font-weight: 800; line-height: 1; cursor: pointer; }
+.caseCodeHelpButton:hover, .caseCodeHelpButton:focus-visible { border-color: #64748b; background: #e2e8f0; outline: none; }
 .returnWizardCodeLine { display: flex; min-width: 0; align-items: center; gap: 12px; flex-wrap: wrap; }
 .returnWizardCaseCode span { display: block; color: #64748b; font-size: 14px; font-weight: 850; letter-spacing: .04em; text-transform: uppercase; }
 .returnWizardCaseCode strong { display: block; margin-top: 8px; overflow-wrap: anywhere; color: #111827; font-size: clamp(28px, 3vw, 42px); font-weight: 950; letter-spacing: -.04em; line-height: 1.05; }
 .returnWizardCaseCode small { display: block; margin-top: 8px; color: #94a3b8; font-size: 11px; font-weight: 900; letter-spacing: .08em; }
+.modalCard.caseCodeHelpModal { width: min(560px, calc(100vw - 40px)); border: 1px solid #d9dde2; border-radius: 16px; }
+.caseCodeHelpContent { padding: 16px; border: 1px solid #dbe3ec; border-left: 4px solid #334155; border-radius: 12px; background: #f8fafc; }
+.caseCodeHelpContent h3 { margin: 0; color: #172033; font-size: 16px; font-weight: 800; line-height: 1.5; }
+.caseCodeHelpContent p { margin: 12px 0 0; color: #475569; font-size: 14px; line-height: 1.6; }
 .returnWizardProgress { width: 100%; max-width: 620px; justify-self: center; }
 .returnWizardProgressMeta { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; color: #111827; }
 .returnWizardProgressMeta strong { font-size: 16px; font-weight: 900; }

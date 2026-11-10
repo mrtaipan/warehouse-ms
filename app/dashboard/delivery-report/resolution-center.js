@@ -479,6 +479,9 @@ function ResolutionReturnChart({ bars, groups = RETURN_CHART_SERIES, mode, timel
   const [hover, setHover] = useState(null)
   const isTimelineMode = mode === 'groups' || mode === 'types'
   const activeSeries = mode === 'types' ? types : groups
+  const renderedSeries = highlightedSeries && activeSeries.includes(highlightedSeries)
+    ? [...activeSeries.filter((series) => series !== highlightedSeries), highlightedSeries]
+    : activeSeries
   const hasChartData = isTimelineMode ? timeline.length > 0 : bars.length > 0
 
   const setHoverFromPointer = (event, title, detail) => {
@@ -526,7 +529,7 @@ function ResolutionReturnChart({ bars, groups = RETURN_CHART_SERIES, mode, timel
             const yPos = y(value)
             return <g key={index}><line x1={left} x2={width - right} y1={yPos} y2={yPos} className={styles.returnChartGridLine} /><text x={left - 10} y={yPos + 4} textAnchor="end" className={styles.returnChartAxisLabel}>{Math.round(value)}</text></g>
           })}
-          {activeSeries.map((series) => {
+          {renderedSeries.map((series) => {
             const coordinates = timeline.map((item, index) => ({ x: x(index), y: y(item.values[series]) }))
             const linePath = buildSmoothChartPath(coordinates)
             const baseline = height - bottom
@@ -1024,6 +1027,7 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
   const [issueFormOpen, setIssueFormOpen] = useState(false)
   const [issueConfirmOpen, setIssueConfirmOpen] = useState(false)
   const [caseCode, setCaseCode] = useState('')
+  const [caseCodeHelpOpen, setCaseCodeHelpOpen] = useState(false)
   const [detail, setDetail] = useState(null)
   const [detailDraft, setDetailDraft] = useState(null)
   const [detailMode, setDetailMode] = useState('view')
@@ -1324,14 +1328,7 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
 
   const visibleCases = useMemo(() => {
     const keyword = filters.search.trim().toLowerCase()
-    const source = keyword ? accessibleCases : summaryCases
-    return source.filter((row) => {
-      if (keyword) {
-        if (filters.group && row.group_order !== filters.group) return false
-        if (filters.courier && row.courier_name !== filters.courier) return false
-        if (filters.type && cleanUpper(row.internal_external) !== cleanUpper(filters.type)) return false
-      }
-      if (!keyword && row.status_barang === 'Completed' && dateOnly(row.updated_at) < addDays(today, -1)) return false
+    return summaryCases.filter((row) => {
       if (filters.warningOnly && getCaseWarningMeta(row, today).rank <= 0) return false
       if (filters.status && cleanUpper(row.status_barang) !== cleanUpper(filters.status)) return false
       if (!keyword) return true
@@ -1341,7 +1338,7 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
       const statusOrder = (rank[a.status_barang] ?? 99) - (rank[b.status_barang] ?? 99)
       return statusOrder || String(b.tanggal_pengajuan || '').localeCompare(String(a.tanggal_pengajuan || ''))
     })
-  }, [accessibleCases, filters.courier, filters.group, filters.search, filters.status, filters.type, filters.warningOnly, summaryCases, today])
+  }, [filters.search, filters.status, filters.warningOnly, summaryCases, today])
 
   const caseListStats = useMemo(() => {
     const visibleWithWarningMeta = visibleCases.map((row) => ({ meta: getCaseWarningMeta(row, today), row }))
@@ -2469,7 +2466,10 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
             <article className={styles.formPanel}>
               <div className={styles.returnWizardTopbar}>
                 <div className={styles.returnWizardCaseCode}>
-                  <span>CASE CODE</span>
+                  <div className={styles.returnWizardCaseCodeLabel}>
+                    <span>CASE CODE</span>
+                    <button type="button" className={styles.caseCodeHelpButton} onClick={() => setCaseCodeHelpOpen(true)} aria-label="Show return deadline SOP" title="Return deadline SOP">?</button>
+                  </div>
                   <div className={styles.returnWizardCodeLine}>
                     <strong>{caseCode || '...'}</strong>
                     <label className={styles.returnWizardPriorityField}><input type="checkbox" checked={returnForm.need_prioritized} onChange={returnField('need_prioritized')} /><span>Priority case</span></label>
@@ -2604,6 +2604,20 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
             </article>
             </Modal>
 
+            <Modal
+              open={caseCodeHelpOpen}
+              title="Return Deadline SOP"
+              description="Short guide for the return case deadline."
+              className={styles.caseCodeHelpModal}
+              portal
+              onClose={() => setCaseCodeHelpOpen(false)}
+            >
+              <div className={styles.caseCodeHelpContent}>
+                <h3>Batas Pengajuan Retur adalah H+7 dari diterimanya barang oleh konsumen di luar hari Minggu dan tanggal merah</h3>
+                <p><strong>Contoh:</strong> Barang diterima 1 Oktober 2026, maka batas pengajuan retur adalah 9 Oktober 2026, karena hari Minggu tidak dihitung.</p>
+              </div>
+            </Modal>
+
               <article className={styles.resolutionInsightCard}>
                 <div className={`${styles.cardTitleRow} ${styles.returnChartHeader}`}>
                   <div className={styles.returnChartTitleGroup}>
@@ -2672,7 +2686,7 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
                 <label><span>COURIER</span><select value={filters.courier} onChange={(event) => setFilters({ ...filters, courier: event.target.value })}><option value="">ALL COURIERS</option>{courierOptions.map((item) => <option key={item}>{item}</option>)}</select></label>
                 <label><span>INTERNAL / EXTERNAL</span><select value={filters.type} onChange={(event) => setFilters({ ...filters, type: event.target.value })}><option value="">ALL TYPES</option><option value="Internal">Internal</option><option value="External">External</option></select></label>
                 <label><span>STATUS</span><select value={filters.status} onChange={(event) => setFilters({ ...filters, status: event.target.value })}><option value="">ALL STATUSES</option>{caseStatusOptions.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
-                <label className={styles.searchField}><span>{filters.search.trim() ? 'SEARCH · ALL DATES' : 'SEARCH'}</span><input placeholder="Search case code, order ID, AWB, or customer name" value={filters.search} onChange={(event) => setFilters({ ...filters, search: event.target.value })} /></label>
+                <label className={styles.searchField}><span>SEARCH IN SELECTED DATES</span><input placeholder="Search case code, order ID, AWB, or customer name" value={filters.search} onChange={(event) => setFilters({ ...filters, search: event.target.value })} /></label>
                 <button className={`${styles.warningOnlyButton} ${filters.warningOnly ? styles.active : ''}`} onClick={() => setFilters({ ...filters, warningOnly: !filters.warningOnly })} aria-pressed={filters.warningOnly}>Warning Only</button>
               </div>
             </div>

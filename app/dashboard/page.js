@@ -444,20 +444,39 @@ async function loadInboundUnloadRowsForDashboard(supabase, inboundId) {
       full_name
     )
   `
-  const { data, error } = await supabase
-    .from('inbound_unload')
-    .select(`${relationSelect}, variant_name`)
-    .eq('inbound_id', inboundId)
+  const { data, error } = await fetchAllRows(() =>
+    supabase
+      .from('inbound_unload')
+      .select(`${relationSelect}, variant_name`)
+      .eq('inbound_id', inboundId)
+  )
 
   return { data: data || [], error }
 }
 
+async function fetchAllRows(buildQuery, pageSize = 1000) {
+  const rows = []
+  let from = 0
+
+  while (true) {
+    const { data, error } = await buildQuery().range(from, from + pageSize - 1)
+    if (error) return { data: rows, error }
+
+    rows.push(...(data || []))
+    if (!data || data.length < pageSize) break
+    from += pageSize
+  }
+
+  return { data: rows, error: null }
+}
+
 async function loadAdminGrnSummary(supabase, selectedGrn = '') {
-  const { data: inboundRows, error: inboundError } = await supabase
-    .from('inbound')
-    .select('id, grn_number, inbound_date, item_name, total_received_qty, total_claimed_qty, suppliers:dir_suppliers!supplier_id (supplier_name)')
-    .order('created_at', { ascending: false })
-    .limit(250)
+  const { data: inboundRows, error: inboundError } = await fetchAllRows(() =>
+    supabase
+      .from('inbound')
+      .select('id, grn_number, inbound_date, item_name, total_received_qty, total_claimed_qty, suppliers:dir_suppliers!supplier_id (supplier_name)')
+      .order('created_at', { ascending: false })
+  )
 
   if (inboundError) {
     return { grnOptions: [], selectedGrn, selectedInbound: null, summary: null, error: inboundError.message }
@@ -530,7 +549,7 @@ async function loadAdminGrnSummary(supabase, selectedGrn = '') {
     { data: qcSampleRows, error: qcSampleError },
   ] = await Promise.all([
     loadInboundUnloadRowsForDashboard(supabase, selectedInbound.id),
-    supabase
+    fetchAllRows(() => supabase
       .from('qc_items')
       .select(`
         *,
@@ -567,17 +586,16 @@ async function loadAdminGrnSummary(supabase, selectedGrn = '') {
           )
         )
       `)
-      .eq('inbound_id', selectedInbound.id),
-    supabase
+      .eq('inbound_id', selectedInbound.id)),
+    fetchAllRows(() => supabase
       .from('qc_confirm')
       .select('id, qty, grade, source_grade, adjustment_type, is_adjustment, brand_id, category_id, model_name, variant_name')
-      .eq('inbound_id', selectedInbound.id),
-    supabase
+      .eq('inbound_id', selectedInbound.id)),
+    fetchAllRows(() => supabase
       .from('pl_receiving')
       .select('id, received_qty')
-      .eq('inbound_id', selectedInbound.id)
-      .limit(5000),
-    supabase
+      .eq('inbound_id', selectedInbound.id)),
+    fetchAllRows(() => supabase
       .from('pl_size_breakdown')
       .select(`
         *,
@@ -590,9 +608,8 @@ async function loadAdminGrnSummary(supabase, selectedGrn = '') {
           )
         )
       `)
-      .eq('inbound_id', selectedInbound.id)
-      .limit(5000),
-    supabase
+      .eq('inbound_id', selectedInbound.id)),
+    fetchAllRows(() => supabase
       .from('warehouse_returns')
       .select(`
         id,
@@ -620,19 +637,16 @@ async function loadAdminGrnSummary(supabase, selectedGrn = '') {
           )
         )
       `)
-      .eq('inbound_id', selectedInbound.id)
-      .limit(5000),
-    supabase
+      .eq('inbound_id', selectedInbound.id)),
+    fetchAllRows(() => supabase
       .from('inbound_sample_model_breakdowns')
       .select('id, inbound_unload_id, resolution_status, brand_id, category_id, model_name, variant_name')
-      .eq('inbound_id', selectedInbound.id)
-      .limit(5000),
-    supabase
+      .eq('inbound_id', selectedInbound.id)),
+    fetchAllRows(() => supabase
       .from('qc_sample_breakdowns')
       .select('qc_item_id, sample_breakdown_id, qty_b, qty_c, qc_item:qc_item_id!inner(inbound_id, status)')
       .eq('qc_item.inbound_id', selectedInbound.id)
-      .eq('qc_item.status', 'done')
-      .limit(5000),
+      .eq('qc_item.status', 'done')),
   ])
 
   const firstError = unloadError || qcError || qcConfirmError || plReceivingError || plBreakdownError || returnError || sampleBreakdownError || qcSampleError

@@ -10,6 +10,22 @@ import { getProfileByAuthenticatedUser } from '@/utils/user-profiles'
 
 const supabase = createClient()
 
+async function fetchAllSupabaseRows(buildQuery, pageSize = 1000) {
+  const rows = []
+  let from = 0
+
+  while (true) {
+    const { data, error } = await buildQuery().range(from, from + pageSize - 1)
+    if (error) return { data: rows, error }
+
+    rows.push(...(data || []))
+    if (!data || data.length < pageSize) break
+    from += pageSize
+  }
+
+  return { data: rows, error: null }
+}
+
 function sanitizeQuantityInput(value) {
   return String(value || '').replace(/\D/g, '')
 }
@@ -318,26 +334,32 @@ function ItemStoringContent() {
         { data: confirmData, error: confirmError },
         { data: brandData, error: brandError },
       ] = await Promise.all([
-        supabase
-          .from('pl_size_breakdown')
-          .select('*')
-          .eq('inbound_id', inboundRow.id)
-          .gt('qty', 0)
-          .order('detail_order', { ascending: true })
-          .order('id', { ascending: true }),
-        supabase
-          .from('pl_packing_items')
-          .select('*')
-          .eq('inbound_id', inboundRow.id)
-          .order('created_at', { ascending: true }),
-        supabase.from('dir_product_models').select('id, brand_id'),
-        supabase.from('dir_product_model_variants').select('*'),
-        supabase
-          .from('qc_confirm')
-          .select('inbound_id, model_name, model_color:variant_name, photo_url')
-          .eq('inbound_id', inboundRow.id)
-          .order('created_at', { ascending: false }),
-        supabase.from('dir_brands').select('*'),
+        fetchAllSupabaseRows(() =>
+          supabase
+            .from('pl_size_breakdown')
+            .select('*')
+            .eq('inbound_id', inboundRow.id)
+            .gt('qty', 0)
+            .order('detail_order', { ascending: true })
+            .order('id', { ascending: true })
+        ),
+        fetchAllSupabaseRows(() =>
+          supabase
+            .from('pl_packing_items')
+            .select('*')
+            .eq('inbound_id', inboundRow.id)
+            .order('created_at', { ascending: true })
+        ),
+        fetchAllSupabaseRows(() => supabase.from('dir_product_models').select('id, brand_id')),
+        fetchAllSupabaseRows(() => supabase.from('dir_product_model_variants').select('*')),
+        fetchAllSupabaseRows(() =>
+          supabase
+            .from('qc_confirm')
+            .select('inbound_id, model_name, model_color:variant_name, photo_url')
+            .eq('inbound_id', inboundRow.id)
+            .order('created_at', { ascending: false })
+        ),
+        fetchAllSupabaseRows(() => supabase.from('dir_brands').select('*')),
       ])
 
       if (!mounted) return
@@ -381,11 +403,13 @@ function ItemStoringContent() {
   }, [selectedBreakdownId, sizeOptions])
 
   async function reloadPackingRows(inboundId) {
-    const { data, error: reloadError } = await supabase
-      .from('pl_packing_items')
-      .select('*')
-      .eq('inbound_id', inboundId)
-      .order('created_at', { ascending: true })
+    const { data, error: reloadError } = await fetchAllSupabaseRows(() =>
+      supabase
+        .from('pl_packing_items')
+        .select('*')
+        .eq('inbound_id', inboundId)
+        .order('created_at', { ascending: true })
+    )
 
     if (reloadError) throw reloadError
 

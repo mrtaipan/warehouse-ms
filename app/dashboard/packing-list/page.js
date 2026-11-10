@@ -61,6 +61,22 @@ function StatusLegend() {
 
 const RELATED_PAGE_SIZE = 1000
 
+async function fetchAllRows(buildQuery, pageSize = RELATED_PAGE_SIZE) {
+  const rows = []
+  let from = 0
+
+  while (true) {
+    const { data, error } = await buildQuery().range(from, from + pageSize - 1)
+    if (error) return { data: rows, error }
+
+    rows.push(...(data || []))
+    if (!data || data.length < pageSize) break
+    from += pageSize
+  }
+
+  return { data: rows, error: null }
+}
+
 async function fetchAllInboundRows(supabase, tableName, selectColumns, inboundIds, customizeQuery = (query) => query) {
   if (!inboundIds.length) {
     return { data: [], error: null }
@@ -223,7 +239,7 @@ export default async function PackingListOverviewPage() {
   const canManageReceiving = hasPermission(permissions, 'packing.receiving.add', isAdmin) || hasPermission(permissions, 'packing.receiving.edit', isAdmin)
   const canManageSizeBreakdown = hasPermission(permissions, 'packing.size_breakdown.edit', isAdmin)
 
-  const { data: confirmRows, error: confirmError } = await supabase
+  const { data: confirmRows, error: confirmError } = await fetchAllRows(() => supabase
     .from('qc_confirm')
     .select(`
       id,
@@ -237,8 +253,7 @@ export default async function PackingListOverviewPage() {
         item_name
       )
     `)
-    .order('created_at', { ascending: false })
-    .limit(5000)
+    .order('created_at', { ascending: false }))
 
   const inboundIds = Array.from(
     new Set((confirmRows || []).map((row) => Number(row.inbound_id || row.inbound?.id || 0)).filter(Boolean))

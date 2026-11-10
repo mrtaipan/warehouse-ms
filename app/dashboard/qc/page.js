@@ -14,6 +14,22 @@ import ProductVariantCode from '@/components/product-variant-code'
 const supabase = createClient()
 const QC_GRADE_OPTIONS = ['A', 'B', 'C']
 
+async function fetchAllSupabaseRows(buildQuery, pageSize = 1000) {
+  const rows = []
+  let from = 0
+
+  while (true) {
+    const { data, error } = await buildQuery().range(from, from + pageSize - 1)
+    if (error) return { data: rows, error }
+
+    rows.push(...(data || []))
+    if (!data || data.length < pageSize) break
+    from += pageSize
+  }
+
+  return { data: rows, error: null }
+}
+
 function normalizeQcItemRow(item) {
   return {
     ...item,
@@ -1883,7 +1899,7 @@ export default function QcDashboardPage() {
       { data: sampleBreakdownData, error: sampleBreakdownError },
       { data: qcSampleBreakdownData, error: qcSampleBreakdownError },
     ] = await Promise.all([
-      supabase
+      fetchAllSupabaseRows(() => supabase
         .from('qc_items')
         .select(`
           *,
@@ -1930,12 +1946,12 @@ export default function QcDashboardPage() {
             )
           )
         `)
-        .order('created_at', { ascending: false }),
-      supabase
+        .order('created_at', { ascending: false })),
+      fetchAllSupabaseRows(() => supabase
         .from('arkline_qc')
         .select('*')
-        .order('created_at', { ascending: false }),
-      supabase
+        .order('created_at', { ascending: false })),
+      fetchAllSupabaseRows(() => supabase
         .from('qc_confirm')
         .select(`
           id,
@@ -1967,8 +1983,8 @@ export default function QcDashboardPage() {
             full_name
           )
         `)
-        .order('created_at', { ascending: false }),
-      supabase
+        .order('created_at', { ascending: false })),
+      fetchAllSupabaseRows(() => supabase
         .from('warehouse_returns')
         .select(`
           id,
@@ -1998,13 +2014,13 @@ export default function QcDashboardPage() {
           )
         `)
         .eq('source_phase', 'qc')
-        .order('created_at', { ascending: false }),
+        .order('created_at', { ascending: false })),
       supabase
         .from('dir_user_profiles')
         .select('id, email, display_name, role, is_qc_active, qc_active_date')
         .order('display_name', { ascending: true }),
       supabase.from('dir_user_roles').select('role, permission_code').eq('permission_code', 'qc.grading_task.view'),
-      supabase
+      fetchAllSupabaseRows(() => supabase
         .from('qc_pause_logs')
         .select(`
           id,
@@ -2050,7 +2066,7 @@ export default function QcDashboardPage() {
             qc_type
           )
         `)
-        .order('paused_at', { ascending: false }),
+        .order('paused_at', { ascending: false })),
       supabase
         .from('arkline_qc_reject_reasons')
         .select('id, reason_name, is_active, is_repairable')
