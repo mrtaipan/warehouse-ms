@@ -561,14 +561,29 @@
   display: flex;
   flex-direction: column;
   gap: 4px;
+  width: 100%;
+  min-width: 0;
+}
+
+.boardCardPoLine {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  width: 100%;
+  min-width: 0;
+  white-space: nowrap;
 }
 
 .poLinkButton {
   color: #0f172a;
-  font-size: 11px;
+  font-size: 9px;
   font-weight: 800;
   line-height: 1.2;
   text-align: left;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .boardSupplierLine {
@@ -580,8 +595,9 @@
 }
 
 .boardMethod {
-  min-height: 16px;
-  padding: 0 6px;
+  margin-left: auto;
+  min-height: 14px;
+  padding: 0 5px;
   border-radius: 999px;
   background: #f8fafc;
   color: #475569;
@@ -594,14 +610,13 @@
 }
 
 .boardReturnBadge {
-  align-self: flex-start;
-  max-width: 100%;
-  padding: 3px 7px;
+  flex: 0 0 auto;
+  padding: 2px 5px;
   border: 1px solid #fed7aa;
   border-radius: 999px;
   background: #fff7ed;
   color: #9a3412;
-  font-size: 8px;
+  font-size: 7px;
   font-weight: 800;
   line-height: 1.25;
   white-space: nowrap;

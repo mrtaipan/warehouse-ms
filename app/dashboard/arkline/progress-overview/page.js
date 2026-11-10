@@ -5373,19 +5373,21 @@ export default function ArklineProgressOverviewPage() {
                         >
                           <div className={styles.boardCardTop}>
                             <div className={styles.boardCardIdentity}>
-                              <strong className={styles.poLinkButton}>{item.poId}</strong>
+                              <div className={styles.boardCardPoLine}>
+                                <strong className={styles.poLinkButton}>{item.poId}</strong>
+                                {item.hasOpenReturn ? (
+                                  <span
+                                    className={styles.boardReturnBadge}
+                                    title={`${formatNumber(item.openReturnQty)} pcs still in return process`}
+                                  >
+                                    Returning... · {formatNumber(item.openReturnQty)} pcs
+                                  </span>
+                                ) : null}
+                                <span className={styles.boardMethod}>{item.method}</span>
+                              </div>
                               <span className={styles.boardSupplierLine}>{item.supplier || '-'}</span>
                             </div>
-                            <span className={styles.boardMethod}>{item.method}</span>
                           </div>
-                          {item.hasOpenReturn ? (
-                            <span
-                              className={styles.boardReturnBadge}
-                              title={`${formatNumber(item.openReturnQty)} pcs still in return process`}
-                            >
-                              Return in progress · {formatNumber(item.openReturnQty)} pcs
-                            </span>
-                          ) : null}
                           <div className={styles.boardProductSummary}>
                             <p className={styles.boardProductLine}>
                               {item.productNames?.length ? item.productNames.slice(0, 3).join(' / ') : 'NO PRODUCT'}

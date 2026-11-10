@@ -1587,6 +1587,9 @@ const styles = {
     display: 'flex',
     flexDirection: 'column',
   },
+  printModelModal: {
+    width: 'min(860px, 96vw)',
+  },
   printModalBody: {
     padding: '16px 18px 18px',
     display: 'flex',
@@ -1610,6 +1613,78 @@ const styles = {
     gap: '10px',
     flexWrap: 'nowrap',
     overflowX: 'auto',
+  },
+  printRangeGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+    gap: '6px',
+    flex: '0 0 auto',
+  },
+  printModelPicker: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+    gap: '8px',
+    maxHeight: '280px',
+    overflowY: 'auto',
+    padding: '2px',
+  },
+  printModelOption: {
+    display: 'grid',
+    gridTemplateColumns: '24px 44px minmax(0, 1fr)',
+    alignItems: 'center',
+    gap: '8px',
+    minWidth: 0,
+    padding: '8px',
+    borderWidth: '1px',
+    borderStyle: 'solid',
+    borderColor: '#e2e8f0',
+    borderRadius: '12px',
+    background: '#fff',
+    color: '#0f172a',
+    cursor: 'pointer',
+    textAlign: 'left',
+  },
+  printModelOptionActive: {
+    borderColor: '#0f766e',
+    background: '#f0fdfa',
+  },
+  printModelOptionImage: {
+    width: '44px',
+    height: '44px',
+    borderRadius: '8px',
+    objectFit: 'contain',
+    background: '#f1f5f9',
+  },
+  printModelOptionNoPhoto: {
+    width: '44px',
+    height: '44px',
+    borderRadius: '8px',
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    background: '#f1f5f9',
+    color: '#94a3b8',
+    fontSize: '9px',
+    fontWeight: 900,
+  },
+  printModelOptionText: {
+    minWidth: 0,
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '2px',
+  },
+  printModelOptionTitle: {
+    color: '#0f172a',
+    fontSize: '11px',
+    fontWeight: 850,
+    lineHeight: 1.25,
+    overflowWrap: 'anywhere',
+  },
+  printModelOptionMeta: {
+    color: '#64748b',
+    fontSize: '10px',
+    fontWeight: 700,
+    lineHeight: 1.2,
   },
   printChoiceGrid: {
     display: 'grid',
@@ -3572,6 +3647,7 @@ export default function PackingListSizeBreakdownPage() {
   const [printType, setPrintType] = useState('packing_list')
   const [printRange, setPrintRange] = useState('all')
   const [printSectionKey, setPrintSectionKey] = useState('')
+  const [selectedPrintModelKeys, setSelectedPrintModelKeys] = useState([])
   const [printPicMode, setPrintPicMode] = useState('with_pic')
   const [deletingKoliKey, setDeletingKoliKey] = useState('')
   const [selectedKoliPrintKeys, setSelectedKoliPrintKeys] = useState([])
@@ -3644,30 +3720,32 @@ export default function PackingListSizeBreakdownPage() {
         { data: categoryData, error: categoryError },
         { data: userProfileData, error: userProfileError },
       ] = await Promise.all([
-        supabase
-          .from('pl_receiving')
-          .select(`
-            id,
-            inbound_id,
-            source_qc_confirm_id,
-            source_koli_sequence,
-            product_model_id,
-            product_model_variant_id,
-            source_variant_code,
-            model_name,
-            model_color:variant_name,
-            received_qty,
-            qty_diff,
-            validated_at,
-            inbound:inbound_id (
+        fetchAllSupabaseRows(() =>
+          supabase
+            .from('pl_receiving')
+            .select(`
               id,
-              grn_number,
-              suppliers:dir_suppliers!supplier_id (
-                supplier_code
+              inbound_id,
+              source_qc_confirm_id,
+              source_koli_sequence,
+              product_model_id,
+              product_model_variant_id,
+              source_variant_code,
+              model_name,
+              model_color:variant_name,
+              received_qty,
+              qty_diff,
+              validated_at,
+              inbound:inbound_id (
+                id,
+                grn_number,
+                suppliers:dir_suppliers!supplier_id (
+                  supplier_code
+                )
               )
-            )
-          `)
-          .order('validated_at', { ascending: true }),
+            `)
+            .order('validated_at', { ascending: true })
+        ),
         fetchAllSupabaseRows(() =>
           supabase
             .from('pl_size_breakdown')
@@ -5308,7 +5386,9 @@ export default function PackingListSizeBreakdownPage() {
       }))
   }
 
-  function buildPrintSections() {
+  function buildPrintSections(options = {}) {
+    const selectedModelKeySet = new Set((options.modelKeys || []).filter(Boolean))
+    const chooseModels = Boolean(options.chooseModels && selectedModelKeySet.size)
     const printableCards = (sectionCards = []) => sectionCards.filter((card) => {
       const receivingQty = Number(card.receiving_qty || 0)
       if (receivingQty <= 0) return true
@@ -5320,11 +5400,32 @@ export default function PackingListSizeBreakdownPage() {
 
       return !isFullyReturned
     })
+    const filterSelectedCards = (sectionCards = []) => {
+      const printable = printableCards(sectionCards)
+      if (!chooseModels) return printable
+      return printable.filter((card) => selectedModelKeySet.has(card.key))
+    }
 
     if (pageMode === 'multipage') {
+      if (chooseModels) {
+        const selectedCards = visibleMultipageGroups.flatMap((group) =>
+          filterSelectedCards(group.cards.filter((card) => matchesModelFilter(card, effectiveModelFilters)))
+        )
+        return selectedCards.length
+          ? [{
+              key: 'chosen-models',
+              title: initialGrn || 'Packing List',
+              grn_number: initialGrn || '-',
+              brand_name: 'SELECTED MODELS',
+              category_path_label: '-',
+              cards: selectedCards,
+            }]
+          : []
+      }
+
       return visibleMultipageGroups
         .map((group) => {
-          const sectionCards = printableCards(
+          const sectionCards = filterSelectedCards(
             group.cards.filter((card) => matchesModelFilter(card, effectiveModelFilters))
           )
           return {
@@ -5346,7 +5447,7 @@ export default function PackingListSizeBreakdownPage() {
         grn_number: initialGrn || '-',
         brand_name: modelFilters.brand || (displayCards.length === 1 ? displayCards[0]?.brand_name : 'ALL'),
         category_path_label: modelFilters.categoryPath || (displayCards.length === 1 ? getCategoryPathLabel(displayCards[0]) : 'ALL'),
-        cards: printableCards(displayCards),
+        cards: filterSelectedCards(displayCards),
       },
     ]
   }
@@ -5556,7 +5657,10 @@ export default function PackingListSizeBreakdownPage() {
     if (printingPdf) return
 
     const showPrintPic = options.picMode !== 'without_pic'
-    const sections = buildPrintSections().filter((section) => !options.sectionKey || section.key === options.sectionKey)
+    const sections = buildPrintSections({
+      chooseModels: options.chooseModels,
+      modelKeys: options.modelKeys,
+    }).filter((section) => !options.sectionKey || section.key === options.sectionKey)
     if (!sections.length || !sections.some((section) => section.cards.length)) {
       setError('No Packing List data to print.')
       setSuccess('')
@@ -6435,12 +6539,27 @@ export default function PackingListSizeBreakdownPage() {
     key: section.key,
     label: section.grn_number || section.title || '-',
   }))
+  const printableModelSourceSections = pageMode === 'multipage' && printRange === 'certain'
+    ? printSections.filter((section) => section.key === printSectionKey)
+    : printSections
+  const printableModelOptions = printableModelSourceSections
+    .flatMap((section) =>
+      section.cards
+        .filter((card) => cardHasVisibleModelQty(card))
+        .map((card) => ({
+          key: card.key,
+          card,
+          pageLabel: pageMode === 'multipage' ? section.title : '',
+        }))
+    )
+    .filter((option, index, options) => options.findIndex((item) => item.key === option.key) === index)
   const hasFilteredPrintData = printSections.some((section) => {
     const payload = overviewMode === 'koli' ? buildPrintKoliGroups(section.cards) : buildPrintRowsForCards(section.cards)
     return overviewMode === 'koli'
       ? Boolean(payload.koliGroups?.length)
       : Boolean(payload.modelRows?.length)
   })
+  const hasSelectedPrintModels = selectedPrintModelKeys.some((key) => printableModelOptions.some((option) => option.key === key))
   const selectedKoliPrintRows = packingKoliRows.filter((row) => selectedKoliPrintKeys.includes(row.key))
   const qtyModeOptions = lockedPackingQtyMode
     ? [[lockedPackingQtyMode, lockedPackingQtyMode === 'mob' ? 'MOB' : 'OI']]
@@ -6457,6 +6576,9 @@ export default function PackingListSizeBreakdownPage() {
   const canOpenPrintModal = viewMode === 'table' && !saving && !printingPdf && (hasFilteredPrintData || packingKoliRows.length)
   const canPrintPackingListFromView = overviewMode === 'model'
   const canPrintPlCardFromView = overviewMode === 'koli'
+  const canPrintPackingList = canPrintPackingListFromView && (
+    printRange === 'choose_model' ? hasSelectedPrintModels : hasFilteredPrintData
+  )
 
   function toggleKoliPrintSelection(koliKey) {
     setSelectedKoliPrintKeys((prev) =>
@@ -6531,6 +6653,7 @@ export default function PackingListSizeBreakdownPage() {
     setPrintType(overviewMode === 'koli' ? 'pl_card' : 'packing_list')
     setPrintRange(pageMode === 'multipage' ? 'all' : 'all')
     setPrintSectionKey((current) => current || printableSectionOptions[0]?.key || '')
+    setSelectedPrintModelKeys([])
     setPrintModalOpen(true)
   }
 
@@ -6687,10 +6810,12 @@ export default function PackingListSizeBreakdownPage() {
       return
     }
 
-    if (!canPrintPackingListFromView) return
+    if (!canPrintPackingList) return
     await handlePrintPdf({
       sectionKey: pageMode === 'multipage' && printRange === 'certain' ? printSectionKey : '',
       picMode: printPicMode,
+      chooseModels: printRange === 'choose_model',
+      modelKeys: selectedPrintModelKeys,
     })
     setPrintModalOpen(false)
   }
@@ -7785,7 +7910,13 @@ export default function PackingListSizeBreakdownPage() {
       </section>
       {printModalOpen ? (
         <div style={styles.previewOverlay} onClick={closePrintModal}>
-          <div style={styles.printModal} onClick={(event) => event.stopPropagation()}>
+          <div
+            style={{
+              ...styles.printModal,
+              ...(printType === 'packing_list' && printRange === 'choose_model' ? styles.printModelModal : {}),
+            }}
+            onClick={(event) => event.stopPropagation()}
+          >
             <div style={styles.modalHeader}>
               <div>
                 <p style={styles.eyebrow}>Print</p>
@@ -7800,12 +7931,12 @@ export default function PackingListSizeBreakdownPage() {
                   onClick={handlePrintSubmit}
                   disabled={
                     printingPdf ||
-                    (printType === 'packing_list' && (!canPrintPackingListFromView || !hasFilteredPrintData)) ||
+                    (printType === 'packing_list' && !canPrintPackingList) ||
                     (printType === 'pl_card' && (!canPrintPlCardFromView || !selectedKoliPrintRows.length))
                   }
                   style={
                     printingPdf ||
-                    (printType === 'packing_list' && (!canPrintPackingListFromView || !hasFilteredPrintData)) ||
+                    (printType === 'packing_list' && !canPrintPackingList) ||
                     (printType === 'pl_card' && (!canPrintPlCardFromView || !selectedKoliPrintRows.length))
                       ? { ...styles.primaryButton, ...styles.disabledButton }
                       : styles.primaryButton
@@ -7857,7 +7988,7 @@ export default function PackingListSizeBreakdownPage() {
                             ...(printPicMode === 'with_pic' ? styles.segmentedButtonActive : {}),
                           }}
                         >
-                          With PIC
+                          w/ PIC
                         </button>
                         <button
                           type="button"
@@ -7867,36 +7998,50 @@ export default function PackingListSizeBreakdownPage() {
                             ...(printPicMode === 'without_pic' ? styles.segmentedButtonActive : {}),
                           }}
                         >
-                          Without PIC
+                          w/o PIC
                         </button>
                       </div>
-                      {pageMode === 'multipage' ? (
-                        <div style={styles.segmentedToggle} role="tablist" aria-label="Packing List print range">
-                          <button
-                            type="button"
-                            onClick={() => setPrintRange('all')}
-                            style={{
-                              ...styles.segmentedButton,
-                              ...(printRange === 'all' ? styles.segmentedButtonActive : {}),
-                            }}
-                          >
-                            Print All
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setPrintRange('certain')
-                              setPrintSectionKey((current) => current || printableSectionOptions[0]?.key || '')
-                            }}
-                            style={{
-                              ...styles.segmentedButton,
-                              ...(printRange === 'certain' ? styles.segmentedButtonActive : {}),
-                            }}
-                          >
-                            Print Certain PL
-                          </button>
-                        </div>
-                      ) : null}
+                      <div style={styles.printRangeGrid} role="tablist" aria-label="Packing List print range">
+                        {pageMode === 'multipage' ? (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => setPrintRange('all')}
+                              style={{
+                                ...styles.segmentedButton,
+                                ...(printRange === 'all' ? styles.segmentedButtonActive : {}),
+                              }}
+                            >
+                              Print All
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setPrintRange('certain')
+                                setPrintSectionKey((current) => current || printableSectionOptions[0]?.key || '')
+                              }}
+                              style={{
+                                ...styles.segmentedButton,
+                                ...(printRange === 'certain' ? styles.segmentedButtonActive : {}),
+                              }}
+                            >
+                              Print Certain PL
+                            </button>
+                          </>
+                        ) : null}
+                        <button
+                          type="button"
+                          onClick={() => setPrintRange('choose_model')}
+                          disabled={!printableModelOptions.length}
+                          style={{
+                            ...styles.segmentedButton,
+                            ...(printRange === 'choose_model' ? styles.segmentedButtonActive : {}),
+                            ...(!printableModelOptions.length ? styles.disabledButton : {}),
+                          }}
+                        >
+                          Choose Models
+                        </button>
+                      </div>
                     </div>
                     {pageMode === 'multipage' && printRange === 'certain' ? (
                       <label style={styles.field}>
@@ -7915,8 +8060,64 @@ export default function PackingListSizeBreakdownPage() {
                         </select>
                       </label>
                     ) : null}
+                    {printRange === 'choose_model' ? (
+                      <div style={styles.field}>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
+                          <span style={styles.label}>Choose Models to Combine</span>
+                          <span style={styles.emptyText}>{selectedPrintModelKeys.length} selected</span>
+                        </div>
+                        {printableModelOptions.length ? (
+                          <div style={styles.printModelPicker}>
+                            {printableModelOptions.map(({ key, card, pageLabel }) => {
+                              const checked = selectedPrintModelKeys.includes(key)
+                              const modelLabel = getOverviewModelVariantLabel(card) || getModelLabel(card) || '-'
+                              return (
+                                <label
+                                  key={key}
+                                  style={{
+                                    ...styles.printModelOption,
+                                    ...(checked ? styles.printModelOptionActive : {}),
+                                  }}
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={checked}
+                                    onChange={() => {
+                                      setSelectedPrintModelKeys((current) =>
+                                        current.includes(key)
+                                          ? current.filter((item) => item !== key)
+                                          : [...current, key]
+                                      )
+                                    }}
+                                    style={{ width: '17px', height: '17px', accentColor: '#0f766e' }}
+                                  />
+                                  {card.photo_url ? (
+                                    <Image src={card.photo_url} alt="" width={44} height={44} unoptimized style={styles.printModelOptionImage} />
+                                  ) : (
+                                    <span style={styles.printModelOptionNoPhoto}>No photo</span>
+                                  )}
+                                  <span style={styles.printModelOptionText}>
+                                    <span style={styles.printModelOptionTitle}>{modelLabel}</span>
+                                    <span style={styles.printModelOptionMeta}>
+                                      {[card.brand_name || 'UNBRANDED', pageLabel, `${formatPdfQty(card.receiving_qty || 0)} pcs`]
+                                        .filter(Boolean)
+                                        .join(' · ')}
+                                    </span>
+                                  </span>
+                                </label>
+                              )
+                            })}
+                          </div>
+                        ) : (
+                          <p style={styles.errorText}>No model matches the current filters.</p>
+                        )}
+                      </div>
+                    ) : null}
                   </div>
-                  {!hasFilteredPrintData ? <p style={styles.errorText}>No Packing List data matches the current filters.</p> : null}
+                  {printRange === 'choose_model' && !hasSelectedPrintModels ? (
+                    <p style={styles.errorText}>Choose at least one model to print.</p>
+                  ) : null}
+                  {printRange !== 'choose_model' && !hasFilteredPrintData ? <p style={styles.errorText}>No Packing List data matches the current filters.</p> : null}
                 </>
               ) : (
                 <>

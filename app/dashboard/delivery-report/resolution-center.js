@@ -475,7 +475,7 @@ function buildSmoothChartPath(points) {
   }, '')
 }
 
-function ResolutionReturnChart({ bars, groups = RETURN_CHART_SERIES, mode, timeline, types = RETURN_CHART_TYPES, highlightedSeries, onHighlightSeries }) {
+function ResolutionReturnChart({ bars, groups = RETURN_CHART_SERIES, mode, timeline, types = RETURN_CHART_TYPES, highlightedSeries, onHighlightSeries, shipmentTotals = {}, ordersLoading = false, ordersError = '' }) {
   const [hover, setHover] = useState(null)
   const isTimelineMode = mode === 'groups' || mode === 'types'
   const activeSeries = mode === 'types' ? types : groups
@@ -485,8 +485,8 @@ function ResolutionReturnChart({ bars, groups = RETURN_CHART_SERIES, mode, timel
     const targetBounds = event.currentTarget.getBoundingClientRect()
     const anchorX = event.clientX > 0 ? event.clientX : targetBounds.left + targetBounds.width / 2
     const anchorY = event.clientY > 0 ? event.clientY : targetBounds.top + targetBounds.height / 2
-    const tooltipWidth = mode === 'product' ? 360 : 230
-    const tooltipHeight = 70
+    const tooltipWidth = mode === 'product' ? 360 : 300
+    const tooltipHeight = 88
     const left = anchorX + tooltipWidth + 24 <= window.innerWidth
       ? anchorX + 12
       : Math.max(12, anchorX - tooltipWidth - 12)
@@ -495,7 +495,7 @@ function ResolutionReturnChart({ bars, groups = RETURN_CHART_SERIES, mode, timel
   }
 
   const hoverTooltip = hover && typeof document !== 'undefined'
-    ? createPortal(<div className={`${styles.returnChartTooltip} ${mode === 'product' ? styles.returnChartProductTooltip : ''}`} style={{ left: hover.left, top: hover.top }} role="tooltip"><strong>{hover.title}</strong><span>{hover.detail}</span></div>, document.body)
+    ? createPortal(<div className={`${styles.returnChartTooltip} ${styles.resolutionReturnTooltip} ${mode === 'product' ? styles.returnChartProductTooltip : ''}`} style={{ left: hover.left, top: hover.top }} role="tooltip"><strong>{hover.title}</strong><span>{hover.detail}</span></div>, document.body)
     : null
 
   if (isTimelineMode) {
@@ -539,7 +539,17 @@ function ResolutionReturnChart({ bars, groups = RETURN_CHART_SERIES, mode, timel
               <path d={linePath} fill="none" stroke={`url(#returnLine-${series})`} strokeWidth="3" strokeLinejoin="round" strokeLinecap="round" className={styles.returnChartInteractiveLine} onClick={toggleSeries} />
               {timeline.map((item, index) => {
                 const title = `${RETURN_CHART_LABELS[series]} · ${item.label}`
-                const detail = `${item.values[series]} return case(s)`
+                const returnCount = item.values[series]
+                const orderCount = shipmentTotals[`${item.key}|||${series}`] || 0
+                const detail = mode !== 'groups'
+                  ? `${returnCount} return case(s)`
+                  : ordersLoading
+                    ? `${returnCount} return case(s) · loading shipment total…`
+                    : ordersError
+                      ? `${returnCount} return case(s) · shipment total unavailable`
+                      : orderCount > 0
+                        ? `${returnCount} return case(s) · ${new Intl.NumberFormat('id-ID', { maximumFractionDigits: 1 }).format((returnCount / orderCount) * 100)}% of ${orderCount.toLocaleString('id-ID')} shipments`
+                        : `${returnCount} return case(s) · —% of 0 shipments`
                 return <g key={`${series}-${item.key}`}>
                 <circle className={styles.returnChartHitTarget} cx={x(index)} cy={y(item.values[series])} r="12" fill="transparent" pointerEvents="all" tabIndex={0} role="button" aria-label={`${title}: ${detail}`} onMouseEnter={(event) => setHoverFromPointer(event, title, detail)} onMouseMove={(event) => setHoverFromPointer(event, title, detail)} onMouseLeave={() => setHover(null)} onFocus={(event) => setHoverFromPointer(event, title, detail)} onBlur={() => setHover(null)} onClick={() => toggleSeries()} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); toggleSeries() } }} />
                 <circle cx={x(index)} cy={y(item.values[series])} r="8" fill={RETURN_CHART_COLORS[series]} opacity=".15" pointerEvents="none" />
@@ -961,6 +971,9 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
   const [returnChartMode, setReturnChartMode] = useState('groups')
   const [returnChartHighlight, setReturnChartHighlight] = useState('')
   const [returnChartPeriod, setReturnChartPeriod] = useState('day')
+  const [returnChartShipmentTotals, setReturnChartShipmentTotals] = useState({})
+  const [returnChartOrdersLoading, setReturnChartOrdersLoading] = useState(false)
+  const [returnChartOrdersError, setReturnChartOrdersError] = useState('')
   const [returnChartRanges, setReturnChartRanges] = useState(() => ({
     day: { from: addDays(today, -6), to: today },
     month: { from: addDays(today, -6).slice(0, 7), to: today.slice(0, 7) },
@@ -1234,6 +1247,69 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
   }, [accessibleCases, filters.courier, filters.group, filters.type, returnChartDateRange.from, returnChartDateRange.to])
 
   const returnChartTimeline = useMemo(() => buildReturnTimeline(summaryCases, returnChartPeriod), [returnChartPeriod, summaryCases])
+  useEffect(() => {
+    if (activeTab !== 'registration' || returnChartMode !== 'groups') {
+      setReturnChartOrdersLoading(false)
+      return undefined
+    }
+    if (!returnChartDateRange.from || !returnChartDateRange.to || returnChartDateRange.from > returnChartDateRange.to) {
+      setReturnChartShipmentTotals({})
+      setReturnChartOrdersLoading(false)
+      setReturnChartOrdersError('')
+      return undefined
+    }
+
+    let ignore = false
+    const loadShipmentTotals = async () => {
+      setReturnChartOrdersLoading(true)
+      setReturnChartOrdersError('')
+      setReturnChartShipmentTotals({})
+      const orderRows = []
+
+      for (let offset = 0; ; offset += 1000) {
+        let query = deliverySupabase.from('delivery_order')
+          .select('id,delivery_date,group_order,delivery_category,quantity')
+          .gte('delivery_date', returnChartDateRange.from)
+          .lte('delivery_date', returnChartDateRange.to)
+          .order('delivery_date', { ascending: true })
+          .order('id', { ascending: true })
+          .range(offset, offset + 999)
+        if (lockedGroup) query = query.eq('group_order', lockedGroup)
+
+        const { data, error } = await query
+        if (ignore) return
+        if (error) {
+          setReturnChartOrdersError(error.message)
+          setReturnChartOrdersLoading(false)
+          return
+        }
+        orderRows.push(...(data || []))
+        if (!data || data.length < 1000) break
+      }
+
+      const totals = new Map()
+      orderRows.forEach((row) => {
+        if (cleanUpper(row.delivery_category) === 'RETURAN') return
+        const date = String(row.delivery_date || '').slice(0, 10)
+        if (!date || !RETURN_CHART_GROUPS.includes(cleanUpper(row.group_order))) return
+        const key = returnChartPeriod === 'year' ? date.slice(0, 4) : returnChartPeriod === 'month' ? date.slice(0, 7) : date
+        const bucketKey = `${key}|||${cleanUpper(row.group_order)}`
+        totals.set(bucketKey, (totals.get(bucketKey) || 0) + safeNumber(row.quantity))
+      })
+      if (!ignore) {
+        setReturnChartShipmentTotals(Object.fromEntries(totals))
+        setReturnChartOrdersLoading(false)
+      }
+    }
+
+    loadShipmentTotals().catch((error) => {
+      if (ignore) return
+      setReturnChartOrdersError(error.message || 'Failed to load shipment totals.')
+      setReturnChartOrdersLoading(false)
+    })
+
+    return () => { ignore = true }
+  }, [activeTab, lockedGroup, returnChartDateRange.from, returnChartDateRange.to, returnChartMode, returnChartPeriod])
   const returnChartBars = useMemo(() => {
     if (returnChartMode === 'reason') return buildReturnBars(summaryCases, 'retur_reason')
     if (returnChartMode === 'action') return buildReturnBars(summaryCases, 'retur_action')
@@ -2577,7 +2653,7 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
                     </div>
                   ) : <div />}
                 </div>
-                <MemoizedResolutionReturnChart bars={returnChartBars} groups={returnChartGroups} mode={returnChartMode} timeline={returnChartTimeline} types={returnChartTypes} highlightedSeries={returnChartHighlight} onHighlightSeries={setReturnChartHighlight} />
+                <MemoizedResolutionReturnChart bars={returnChartBars} groups={returnChartGroups} mode={returnChartMode} timeline={returnChartTimeline} types={returnChartTypes} highlightedSeries={returnChartHighlight} onHighlightSeries={setReturnChartHighlight} shipmentTotals={returnChartShipmentTotals} ordersLoading={returnChartOrdersLoading} ordersError={returnChartOrdersError} />
               </article>
           </section>
 
