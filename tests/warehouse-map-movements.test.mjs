@@ -110,3 +110,17 @@ test('restock source records fulfilled quantity while excess putaway only increa
   assert.deepEqual(sourceRows.map((row) => row.qty), [-5])
   assert.deepEqual(destinationRows.map((row) => row.qty), [3])
 })
+
+test('loan issue and return appear with opposite signs at the same location', () => {
+  const rows = combineWarehouseMovements({
+    scope: buildMovementScope([location]),
+    movements: [
+      { id: 101, movement_type: 'LOAN_OUT', qty: 2, from_location_label: label, to_location_label: 'Peminjaman 123', created_at: '2026-10-20T10:00:00Z' },
+      { id: 102, movement_type: 'LOAN_RETURN', qty: 1, from_location_label: 'Peminjaman 123', to_location_label: label, created_at: '2026-10-20T11:00:00Z' },
+    ],
+  })
+  assert.deepEqual(rows.map((row) => [row.label, row.qty]), [
+    ['Kembali dari peminjaman', 1],
+    ['Dipinjam', -2],
+  ])
+})

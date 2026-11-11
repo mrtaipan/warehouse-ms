@@ -1243,6 +1243,23 @@ const styles = {
     fontWeight: 900,
     cursor: 'pointer',
   },
+  remainingOnlyFilter: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '6px',
+    minHeight: '38px',
+    padding: '0 8px',
+    borderWidth: '1px',
+    borderStyle: 'solid',
+    borderColor: '#cbd5e1',
+    borderRadius: '999px',
+    background: '#fff',
+    color: '#475569',
+    fontSize: '11px',
+    fontWeight: 800,
+    whiteSpace: 'nowrap',
+    cursor: 'pointer',
+  },
   dangerButton: {
     minHeight: '40px',
     padding: '0 14px',
@@ -1451,6 +1468,44 @@ const styles = {
     alignItems: 'center',
     gap: '6px',
     flexWrap: 'wrap',
+  },
+  allocationScopeRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '6px',
+    flexWrap: 'wrap',
+    marginTop: '8px',
+  },
+  allocationScopeLabel: {
+    color: '#64748b',
+    fontSize: '11px',
+    fontWeight: 800,
+    letterSpacing: '0.02em',
+  },
+  allocationScopeButton: {
+    minHeight: '28px',
+    padding: '0 10px',
+    borderWidth: '1px',
+    borderStyle: 'solid',
+    borderColor: '#cbd5e1',
+    borderRadius: '999px',
+    background: '#fff',
+    color: '#475569',
+    fontSize: '10px',
+    fontWeight: 850,
+    cursor: 'pointer',
+    whiteSpace: 'nowrap',
+  },
+  allocationScopeButtonActive: {
+    borderColor: '#0f172a',
+    background: '#0f172a',
+    color: '#fff',
+  },
+  allocationScopeHint: {
+    margin: '4px 0 0',
+    color: '#64748b',
+    fontSize: '11px',
+    lineHeight: 1.4,
   },
   allocationPresetButton: {
     minHeight: '28px',
@@ -2254,8 +2309,8 @@ function getShortGrnLabel(grnNumber) {
   return value.split('-')[0] || value || 'GRN'
 }
 
-function getBreakdownIdentity(row = {}) {
-  return getPlVariantIdentityKey(row)
+function getBreakdownIdentity(row = {}, resolvedIdentity = null) {
+  return `${Number(row.inbound_id || 0)}::${getPlVariantIdentityKey(row, resolvedIdentity)}`
 }
 
 function getNormalizedPlVariantCode(row = {}, resolvedIdentity = null) {
@@ -2273,11 +2328,11 @@ function getNormalizedPlVariantCode(row = {}, resolvedIdentity = null) {
 }
 
 function getPlVariantIdentityKey(row = {}, resolvedIdentity = null) {
-  const variantCode = getNormalizedPlVariantCode(row, resolvedIdentity)
-  if (variantCode) return `code:${variantCode}`
-
   const variantId = Number(resolvedIdentity?.product_model_variant_id || row.product_model_variant_id || 0)
   if (variantId) return `variant:${variantId}`
+
+  const variantCode = getNormalizedPlVariantCode(row, resolvedIdentity)
+  if (variantCode) return `code:${variantCode}`
 
   const modelId = Number(resolvedIdentity?.product_model_id || row.product_model_id || 0)
   if (modelId) {
@@ -2300,13 +2355,12 @@ function getPlVariantIdentityKey(row = {}, resolvedIdentity = null) {
 function matchesPlReturnCard(row = {}, card = {}) {
   if (Number(row.inbound_id || 0) !== Number(card.inbound_id || 0)) return false
 
-  const rowVariantCode = getNormalizedPlVariantCode(row)
-  const cardVariantCode = getNormalizedPlVariantCode(card)
-  if (rowVariantCode && cardVariantCode) return rowVariantCode === cardVariantCode
-
   const rowVariantId = Number(row.product_model_variant_id || 0)
   const cardVariantId = Number(card.product_model_variant_id || 0)
   if (rowVariantId && cardVariantId) return rowVariantId === cardVariantId
+  const rowVariantCode = getNormalizedPlVariantCode(row)
+  const cardVariantCode = getNormalizedPlVariantCode(card)
+  if (rowVariantCode && cardVariantCode) return rowVariantCode === cardVariantCode
   if (rowVariantCode || rowVariantId) return false
 
   const rowModelId = Number(row.product_model_id || 0)
@@ -3707,6 +3761,7 @@ export default function PackingListSizeBreakdownPage() {
   const [allocationError, setAllocationError] = useState('')
   const [allocationActivePreset, setAllocationActivePreset] = useState('default')
   const [allocationHoveredPreset, setAllocationHoveredPreset] = useState('')
+  const [allocationScope, setAllocationScope] = useState('active')
   const [fullReturnModalOpen, setFullReturnModalOpen] = useState(false)
   const [printModalOpen, setPrintModalOpen] = useState(false)
   const [printType, setPrintType] = useState('packing_list')
@@ -3725,6 +3780,7 @@ export default function PackingListSizeBreakdownPage() {
     model: '',
     search: '',
   })
+  const [showRemainingOnly, setShowRemainingOnly] = useState(false)
   const [canEditSizeBreakdown, setCanEditSizeBreakdown] = useState(false)
   const [accessReady, setAccessReady] = useState(false)
   const [editCatalogFilters, setEditCatalogFilters] = useState({
@@ -3901,7 +3957,10 @@ export default function PackingListSizeBreakdownPage() {
         return
       }
 
-      const currentLabels = (row) => withCurrentProductLabels(row, catalogData)
+      const currentLabels = (row) => ({
+        ...withCurrentProductLabels(row, catalogData),
+        source_variant_code: row.source_variant_code || null,
+      })
       setPlReceivingRows((receivingData || []).map(currentLabels))
       setBreakdownRows((breakdownData || []).map(currentLabels))
       setGeneralPhotoRows(generalPhotoData || [])
@@ -3974,13 +4033,13 @@ export default function PackingListSizeBreakdownPage() {
         const brand = catalogContext.brandById.get(Number(catalogModel?.brand_id || sourceConfirm?.brand_id || 0)) || null
         const category = catalogContext.categoryById.get(Number(catalogModel?.category_id || sourceConfirm?.category_id || 0)) || null
         const categoryPath = getCategoryPath(category, catalogContext.categoryById)
-        const sourceVariantCode = getVariantCode(catalogVariant) || identity.source_variant_code || row.source_variant_code || ''
+        const sourceVariantCode = row.source_variant_code || identity.source_variant_code || getVariantCode(catalogVariant) || ''
         const identitySource = {
           ...row,
           brand_id: catalogModel?.brand_id || sourceConfirm?.brand_id || null,
           category_id: catalogModel?.category_id || sourceConfirm?.category_id || null,
           source_variant_code: sourceVariantCode,
-          variant_code: getVariantCode(catalogVariant) || sourceVariantCode || '',
+          variant_code: sourceVariantCode || '',
         }
         const key = getPlVariantIdentityKey(identitySource, identity)
         const photoKey = `${Number(row.inbound_id || 0)}::${key}`
@@ -4006,7 +4065,7 @@ export default function PackingListSizeBreakdownPage() {
           sub_category: categoryPath[1] || '',
           item_type: categoryPath[2] || '',
           model_code: catalogModel?.model_code || '',
-          variant_code: getVariantCode(catalogVariant) || sourceVariantCode || '',
+          variant_code: sourceVariantCode || '',
           model_name: catalogModel?.model_name || row.model_name || '',
           catalogName: getCatalogName(catalogVariant) || row.model_color || '',
           catalogVariant,
@@ -4026,7 +4085,7 @@ export default function PackingListSizeBreakdownPage() {
         current.sub_category = current.sub_category || categoryPath[1] || ''
         current.item_type = current.item_type || categoryPath[2] || ''
         current.model_code = current.model_code || catalogModel?.model_code || ''
-        current.variant_code = current.variant_code || getVariantCode(catalogVariant) || sourceVariantCode || ''
+        current.variant_code = current.variant_code || sourceVariantCode || ''
         current.source_variant_code = current.source_variant_code || sourceVariantCode
         current.photo_url = current.photo_url || sourcePhotoUrl || photoMap.get(photoKey) || catalogVariant?.variant_photo_url || ''
         current.firstSort = Math.min(current.firstSort || Number(row.id || 0), new Date(row.validated_at || 0).getTime() || Number(row.id || 0))
@@ -4092,7 +4151,7 @@ export default function PackingListSizeBreakdownPage() {
     breakdownRows
       .filter((row) => row.inbound_id && plReceivingRows.some((receiving) => receiving.inbound_id === row.inbound_id && receiving.inbound?.grn_number === initialGrn))
       .forEach((row) => {
-        const key = getBreakdownIdentity(row)
+        const key = getBreakdownIdentity(row, resolveProductCatalogIdentity(row, catalogContext))
         breakdownByIdentity.set(key, (breakdownByIdentity.get(key) || 0) + Number(row.qty || 0))
       })
 
@@ -4102,7 +4161,7 @@ export default function PackingListSizeBreakdownPage() {
 
     return assignPlIdentities(sortedCards).map((card) => ({
       ...card,
-      breakdown_qty: breakdownByIdentity.get(getPlVariantIdentityKey(card)) || 0,
+      breakdown_qty: breakdownByIdentity.get(`${Number(card.inbound_id || 0)}::${getPlVariantIdentityKey(card)}`) || 0,
     }))
   }, [breakdownRows, catalogContext, confirmRows, initialGrn, photoMap, plReceivingRows])
 
@@ -4120,16 +4179,13 @@ export default function PackingListSizeBreakdownPage() {
     }
   }, [cards, editCatalogFilters.brand, editCatalogFilters.categoryPath])
 
-  const editCatalogCards = useMemo(
-    () =>
-      cards.filter((card) => {
-        if (editCatalogFilters.brand && (card.brand_name || 'UNBRANDED') !== editCatalogFilters.brand) return false
-        if (editCatalogFilters.categoryPath && getCategoryPathLabel(card) !== editCatalogFilters.categoryPath) return false
-        if (!matchesModelVariantQuery(card, editCatalogFilters.modelVariantQuery)) return false
-        return true
-      }),
-    [cards, editCatalogFilters.brand, editCatalogFilters.categoryPath, editCatalogFilters.modelVariantQuery]
-  )
+  const editCatalogCards = cards.filter((card) => {
+    if (editCatalogFilters.brand && (card.brand_name || 'UNBRANDED') !== editCatalogFilters.brand) return false
+    if (editCatalogFilters.categoryPath && getCategoryPathLabel(card) !== editCatalogFilters.categoryPath) return false
+    if (!matchesModelVariantQuery(card, editCatalogFilters.modelVariantQuery)) return false
+    if (showRemainingOnly && getCardRemainingQty(card) === 0) return false
+    return true
+  })
 
   const selectedCard = cards.find((card) => card.key === selectedCardKey) || null
 
@@ -4187,6 +4243,12 @@ export default function PackingListSizeBreakdownPage() {
     () => (pageMode === 'multipage' ? { ...modelFilters, brand: '', categoryPath: '' } : modelFilters),
     [modelFilters, pageMode]
   )
+
+  function getCardRemainingQty(card) {
+    const rows = buildRowsForCard(card)
+    return Number(card.receiving_qty || 0) - getPlRowsBreakdownQty(rows) - getPlRowsReturnQty(rows)
+  }
+
   function cardHasVisibleModelQty(card) {
     const rows = buildRowsForCard(card)
     const modelTotalQty = getPlRowsBreakdownQty(rows)
@@ -4250,13 +4312,12 @@ export default function PackingListSizeBreakdownPage() {
   }, [effectiveModelFilters, filterBaseCards])
 
   const displayCards = filterBaseCards.filter(
-    (card) => matchesModelFilter(card, effectiveModelFilters) && matchesCardBreakdownSearch(card, effectiveModelFilters.search)
+    (card) =>
+      matchesModelFilter(card, effectiveModelFilters) &&
+      matchesCardBreakdownSearch(card, effectiveModelFilters.search)
   )
 
-  const summaryCards = useMemo(
-    () => (viewMode === 'table' ? displayCards : editCatalogCards),
-    [displayCards, editCatalogCards, viewMode]
-  )
+  const summaryCards = viewMode === 'table' ? displayCards : editCatalogCards
 
   const summary = useMemo(() => {
     const plReceivingQty = summaryCards.reduce((sum, card) => sum + Number(card.receiving_qty || 0), 0)
@@ -4331,7 +4392,7 @@ export default function PackingListSizeBreakdownPage() {
 
     const identityRows = sourceBreakdownRows.filter((row) => {
       if (Number(row.inbound_id || 0) !== Number(card.inbound_id || 0)) return false
-      return getPlVariantIdentityKey(row) === getPlVariantIdentityKey(card)
+      return getPlVariantIdentityKey(row, resolveProductCatalogIdentity(row, catalogContext)) === getPlVariantIdentityKey(card)
     })
 
     const grouped = new Map()
@@ -4559,30 +4620,30 @@ export default function PackingListSizeBreakdownPage() {
     setAllocationError('')
     setAllocationActivePreset('default')
     setAllocationHoveredPreset('')
+    setAllocationScope('active')
   }
 
-  function openAllocationModal() {
-    if (!canEditSizeBreakdown) return
-    if (!selectedCard) {
-      setError('Choose a model card first.')
-      setSuccess('')
-      return
-    }
+  function buildAllocationDraftRowsForCard(card, sourceRows = null, keyPrefix = '') {
+    if (!card) return []
 
-    const modelVariantQty = getPlRowsBreakdownQty(plRows)
-    const draftRows = plRows.flatMap((plRow, plRowIndex) =>
+    const rows = sourceRows || buildRowsForCard(card)
+    const modelVariantQty = getPlRowsBreakdownQty(rows)
+    return rows.flatMap((plRow, plRowIndex) =>
       plRow.sizeRows.map((sizeRow, sizeRowIndex) => {
         const rowQty = Math.max(0, Number(sizeRow.qty || 0))
         const defaultTargets = getDefaultAllocationTargets(rowQty, modelVariantQty)
         const currentTargets = getSizeRowAllocationTargets(sizeRow, modelVariantQty)
         const breakdownId = Number(sizeRow.breakdown_row_id || 0)
+        const baseKey = `${plRow.id || 'pl-row'}:${sizeRow.id || 'size-row'}:${plRowIndex}:${sizeRowIndex}`
         return {
-          key: `${plRow.id || 'pl-row'}:${sizeRow.id || 'size-row'}:${plRowIndex}:${sizeRowIndex}`,
+          key: keyPrefix ? `${keyPrefix}:${baseKey}` : baseKey,
+          cardKey: card.key,
           plRowId: plRow.id,
           sizeRowId: sizeRow.id,
-          pl_id: computePlLabel(selectedCard, plRow, plRows.length),
-          pl_name: String(plRow.pl_name || selectedCard.catalogName || selectedCard.model_name || '').trim().toUpperCase(),
-          photo_url: plRow.pl_photo_url || selectedCard.photo_url || '',
+          breakdown_row_id: breakdownId || null,
+          pl_id: computePlLabel(card, plRow, rows.length),
+          pl_name: String(plRow.pl_name || card.catalogName || card.model_name || '').trim().toUpperCase(),
+          photo_url: plRow.pl_photo_url || card.photo_url || '',
           size_label: normalizeSizeLabel(sizeRow.size_label) || 'SIZE',
           qty: rowQty,
           mob_qty: currentTargets.mobTargetQty,
@@ -4594,6 +4655,17 @@ export default function PackingListSizeBreakdownPage() {
         }
       })
     )
+  }
+
+  function openAllocationModal() {
+    if (!canEditSizeBreakdown) return
+    if (!selectedCard) {
+      setError('Choose a model card first.')
+      setSuccess('')
+      return
+    }
+
+    const draftRows = buildAllocationDraftRowsForCard(selectedCard, plRows)
     const existingReason =
       plRows
         .flatMap((plRow) => plRow.sizeRows)
@@ -4606,7 +4678,31 @@ export default function PackingListSizeBreakdownPage() {
     setAllocationError('')
     setAllocationActivePreset(existingReason ? '' : 'default')
     setAllocationHoveredPreset('')
+    setAllocationScope('active')
     setAllocationModalOpen(true)
+  }
+
+  function switchAllocationScope(nextScope) {
+    if (nextScope === allocationScope) return
+    if (hasAllocationDraftChanges()) {
+      const shouldSwitch = window.confirm('You have unsaved manual allocation changes. Switch scope and discard them?')
+      if (!shouldSwitch) return
+    }
+
+    const isAllModels = nextScope === 'all'
+    const draftRows = isAllModels
+      ? cards.flatMap((card) => {
+          const sourceRows = card.key === selectedCard?.key ? plRows : null
+          return buildAllocationDraftRowsForCard(card, sourceRows, `card:${card.key}`).filter((row) => row.breakdown_row_id)
+        })
+      : buildAllocationDraftRowsForCard(selectedCard, plRows)
+
+    setAllocationScope(nextScope)
+    setAllocationDraftRows(draftRows)
+    setAllocationBaselineSignature(getAllocationDraftSignature(draftRows, ''))
+    setAllocationReason('')
+    setAllocationError('')
+    setAllocationActivePreset('default')
   }
 
   function updateAllocationDraftQty(rowKey, field, value) {
@@ -4636,7 +4732,6 @@ export default function PackingListSizeBreakdownPage() {
   }
 
   function applyAllocationPreset(preset) {
-    const modelVariantQty = getPlRowsBreakdownQty(plRows)
     setAllocationDraftRows((prev) =>
       prev.map((row) => {
         if (preset === 'mob') {
@@ -4646,7 +4741,11 @@ export default function PackingListSizeBreakdownPage() {
           return { ...row, mob_qty: 0, oi_qty: Number(row.qty || 0) }
         }
 
-        const sourceSizeRow = plRows
+        const sourceRows = row.cardKey === selectedCard?.key
+          ? plRows
+          : buildRowsForCard(cards.find((card) => card.key === row.cardKey))
+        const modelVariantQty = getPlRowsBreakdownQty(sourceRows)
+        const sourceSizeRow = sourceRows
           .find((plRow) => plRow.id === row.plRowId)
           ?.sizeRows.find((sizeRow) => sizeRow.id === row.sizeRowId)
         const defaultTargets = getDefaultAllocationTargets(Number(sourceSizeRow?.qty || row.qty || 0), modelVariantQty)
@@ -4666,7 +4765,7 @@ export default function PackingListSizeBreakdownPage() {
     setAllocationError('')
   }
 
-  function applyAllocationOverride() {
+  async function applyAllocationOverride() {
     const reason = String(allocationReason || '').trim().toUpperCase()
     const hasManualOverride = allocationDraftRows.some(
       (row) => Number(row.mob_qty || 0) !== Number(row.default_mob_qty || 0) || Number(row.oi_qty || 0) !== Number(row.default_oi_qty || 0)
@@ -4696,6 +4795,94 @@ export default function PackingListSizeBreakdownPage() {
 
     if (blockedRow) {
       setAllocationError(`${blockedRow.pl_id} ${blockedRow.size_label} cannot be lower than posted Item Storing qty.`)
+      return
+    }
+
+    if (allocationScope === 'all') {
+      const shouldApply = window.confirm('Apply this allocation to all models in this GRN?')
+      if (!shouldApply) return
+
+      const persistedRows = allocationDraftRows.filter((row) => Number(row.breakdown_row_id || 0) > 0)
+      if (!persistedRows.length) {
+        setAllocationError('No saved size breakdown rows are available for this GRN yet.')
+        return
+      }
+
+      setSaving(true)
+      setAllocationError('')
+      try {
+        const updates = persistedRows.map((row) => {
+          const isManual =
+            Number(row.mob_qty || 0) !== Number(row.default_mob_qty || 0) ||
+            Number(row.oi_qty || 0) !== Number(row.default_oi_qty || 0)
+          return {
+            id: Number(row.breakdown_row_id),
+            mob_target_qty: Number(row.mob_qty || 0),
+            oi_target_qty: Number(row.oi_qty || 0),
+            allocation_source: isManual ? 'MANUAL_OVERRIDE' : 'DEFAULT_RULE',
+            allocation_reason: isManual ? reason || null : null,
+          }
+        })
+
+        for (const update of updates) {
+          const { error: updateError } = await supabase
+            .from('pl_size_breakdown')
+            .update({
+              mob_target_qty: update.mob_target_qty,
+              oi_target_qty: update.oi_target_qty,
+              allocation_source: update.allocation_source,
+              allocation_reason: update.allocation_reason,
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', update.id)
+
+          if (updateError) throw updateError
+        }
+
+        const updateById = new Map(updates.map((update) => [update.id, update]))
+        setBreakdownRows((prev) =>
+          prev.map((row) => {
+            const update = updateById.get(Number(row.id || 0))
+            return update
+              ? {
+                  ...row,
+                  mob_target_qty: update.mob_target_qty,
+                  oi_target_qty: update.oi_target_qty,
+                  allocation_source: update.allocation_source,
+                  allocation_reason: update.allocation_reason,
+                }
+              : row
+          })
+        )
+        setPlRows((prev) =>
+          prev.map((plRow) => ({
+            ...plRow,
+            sizeRows: plRow.sizeRows.map((sizeRow) => {
+              const draft = allocationDraftRows.find(
+                (row) => row.cardKey === selectedCard?.key && row.plRowId === plRow.id && row.sizeRowId === sizeRow.id
+              )
+              if (!draft) return sizeRow
+              const isManual =
+                Number(draft.mob_qty || 0) !== Number(draft.default_mob_qty || 0) ||
+                Number(draft.oi_qty || 0) !== Number(draft.default_oi_qty || 0)
+              return {
+                ...sizeRow,
+                mob_target_qty: Number(draft.mob_qty || 0),
+                oi_target_qty: Number(draft.oi_qty || 0),
+                allocation_source: isManual ? 'MANUAL_OVERRIDE' : 'DEFAULT_RULE',
+                allocation_reason: isManual ? reason : '',
+              }
+            }),
+          }))
+        )
+        setSuccess(hasManualOverride ? 'MOB/OI allocation applied to all models in this GRN.' : 'Default allocation applied to all models in this GRN.')
+        setError('')
+        closeAllocationModal(true)
+      } catch (allocationSaveError) {
+        setAllocationError(allocationSaveError.message || 'Failed to apply allocation to all models.')
+      } finally {
+        setSaving(false)
+      }
       return
     }
 
@@ -6365,7 +6552,7 @@ export default function PackingListSizeBreakdownPage() {
 
     const existingRows = breakdownRows.filter((row) => {
       if (Number(row.inbound_id || 0) !== Number(selectedCard.inbound_id || 0)) return false
-      return getPlVariantIdentityKey(row) === getPlVariantIdentityKey(selectedCard)
+      return getPlVariantIdentityKey(row, resolveProductCatalogIdentity(row, catalogContext)) === getPlVariantIdentityKey(selectedCard)
     })
     const incomingIds = new Set(payload.map((row) => Number(row.id || 0)).filter(Boolean))
     const staleRows = existingRows.filter((row) => !incomingIds.has(Number(row.id || 0)))
@@ -7521,13 +7708,25 @@ export default function PackingListSizeBreakdownPage() {
                   </label>
                   <button
                     type="button"
-                    onClick={() => setEditCatalogFilters({ brand: '', categoryPath: '', modelVariantQuery: '' })}
+                    onClick={() => {
+                      setEditCatalogFilters({ brand: '', categoryPath: '', modelVariantQuery: '' })
+                      setShowRemainingOnly(false)
+                    }}
                     style={styles.compactResetButton}
                     title="Reset catalog filters"
                     aria-label="Reset catalog filters"
                   >
                     &#8634;
                   </button>
+                  <label style={styles.remainingOnlyFilter} title="Show only models with remaining quantity">
+                    <input
+                      type="checkbox"
+                      checked={showRemainingOnly}
+                      onChange={(event) => setShowRemainingOnly(event.target.checked)}
+                      style={styles.koliCheckbox}
+                    />
+                    Remaining only
+                  </label>
                 </div>
                 {editCatalogCards.length ? (
                   <div style={styles.cardGrid}>
@@ -7560,6 +7759,7 @@ export default function PackingListSizeBreakdownPage() {
                             <span style={{ ...styles.cardPopover, ...(index < 8 ? styles.cardPopoverBelow : {}) }}>
                               <span style={styles.cardPopoverEyebrow}>{card.brand_name || 'UNBRANDED'}</span>
                               <span style={styles.cardTitle}>{getModelLabel(card)}</span>
+                              <span style={styles.cardMeta}>SKU: {card.catalogVariant?.sku_code || card.source_variant_code || card.variant_code || '-'}</span>
                             </span>
                           ) : null}
                         </button>
@@ -7581,7 +7781,7 @@ export default function PackingListSizeBreakdownPage() {
                 {plRows.map((plRow, plRowIndex) => {
                   const isFirstPlRow = plRowIndex === 0
                   const isLastPlRow = plRowIndex === plRows.length - 1
-                  const plRowSourceCode = selectedCard.source_variant_code || selectedCard.variant_code || selectedCard.catalogName || '-'
+                  const plRowSourceCode = selectedCard.catalogVariant?.sku_code || selectedCard.source_variant_code || selectedCard.variant_code || '-'
                   return (
                   <div key={plRow.id} style={styles.plRow}>
                     <fieldset disabled={saving} style={saving ? { ...styles.editorFieldset, ...styles.lockedArea } : styles.editorFieldset}>
@@ -7606,9 +7806,9 @@ export default function PackingListSizeBreakdownPage() {
                         )}
                         <div style={styles.featureMeta}>
                           <div style={styles.modelLine}>
-                            <span style={styles.sourceInline}>{plRowSourceCode}</span>
                             <strong style={styles.modelNameStrong}>{getModelLabel(selectedCard)}</strong>
                           </div>
+                          <span style={styles.cardMeta}>SKU: {plRowSourceCode}</span>
                           <div style={styles.field}>
                             <label style={styles.label}>PL Name</label>
                             <input value={plRow.pl_name} onChange={(event) => updatePlRow(plRow.id, { pl_name: event.target.value.toUpperCase() })} style={styles.input} />
@@ -8420,13 +8620,41 @@ export default function PackingListSizeBreakdownPage() {
                     </button>
                   </div>
                 </div>
+                <div style={styles.allocationScopeRow}>
+                  <span style={styles.allocationScopeLabel}>Apply to</span>
+                  <button
+                    type="button"
+                    onClick={() => switchAllocationScope('active')}
+                    style={{
+                      ...styles.allocationScopeButton,
+                      ...(allocationScope === 'active' ? styles.allocationScopeButtonActive : {}),
+                    }}
+                  >
+                    ACTIVE MODEL
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => switchAllocationScope('all')}
+                    style={{
+                      ...styles.allocationScopeButton,
+                      ...(allocationScope === 'all' ? styles.allocationScopeButtonActive : {}),
+                    }}
+                  >
+                    ALL MODELS IN GRN
+                  </button>
+                </div>
+                <p style={styles.allocationScopeHint}>
+                  {allocationScope === 'all'
+                    ? 'The selected preset and manual values will apply to every saved model in this GRN.'
+                    : 'The selected preset and manual values apply only to the active model.'}
+                </p>
               </div>
               <div style={styles.modalActionGroup}>
                 <button type="button" onClick={() => closeAllocationModal()} style={styles.secondaryButton}>
                   Cancel
                 </button>
-                <button type="button" onClick={applyAllocationOverride} style={styles.primaryButton}>
-                  Apply
+                <button type="button" onClick={applyAllocationOverride} disabled={saving} style={saving ? { ...styles.primaryButton, ...styles.disabledButton } : styles.primaryButton}>
+                  {saving ? 'Applying...' : 'Apply'}
                 </button>
               </div>
             </div>

@@ -1370,6 +1370,9 @@
 .externalReplacementNotice > span { white-space: pre-wrap; }
 .externalReplacementNotice > small { font-size: 12px; }
 .receivingConfirmModal .modalActions { flex-shrink: 0; }
+.receivingConfirmModal .receivingBackToDecisionsButton { border: 1px solid #94a3b8; background: #ffffff; color: #172033; box-shadow: none; }
+.receivingConfirmModal .receivingBackToDecisionsButton:hover:not(:disabled) { border-color: #475569; background: #f8fafc; }
+.receivingConfirmModal .receivingBackToDecisionsButton:focus-visible { outline: 2px solid #475569; outline-offset: 2px; }
 .receivingConfirmModal .modalCloseButton { color: #991b1b; background: #fef2f2; }
 .receivingConfirmModal .modalCloseButton:hover { color: #7f1d1d; background: #fee2e2; }
 .receivingConfirmModal .modalActions { margin-top: 16px; }

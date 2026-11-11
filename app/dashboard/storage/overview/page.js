@@ -11,6 +11,7 @@ import { useRealtimeRefresh } from '@/utils/supabase/use-realtime-refresh'
 import ProductDirectoryClient from '../daftar-barang/product-directory-client'
 import ShelvingUploadClient from '../shelving-upload-client'
 import ArklineRejectionStoragePanel from '@/components/arkline-rejection-storage-panel'
+import WarehouseLoansClient, { WarehouseLoanQueueReturns } from '@/components/warehouse-loans-client'
 import RejectStorageRelease, { getReleasedQtyBySource, loadRejectStorageOutbounds } from '@/components/reject-storage-release'
 import rejectReleaseStyles from '@/components/reject-storage-release.module.css'
 import arklineReportStyles from '@/app/dashboard/qc/retur-report/retur-report.module.css'
@@ -911,7 +912,21 @@ async function fetchAllStorageQueueRows() {
     resultOffset += BATCH_SIZE
   }
 
-  return allRows
+  const loanedByPl = new Map()
+  for (let offset = 0; ; offset += BATCH_SIZE) {
+    const { data, error: loanError } = await supabase.rpc('warehouse_loan_pl_issued_quantities')
+      .order('pl_packing_item_id').range(offset, offset + BATCH_SIZE - 1)
+    if (loanError) {
+      if (loanError.code === 'PGRST202') break
+      throw loanError
+    }
+    for (const row of data || []) loanedByPl.set(String(row.pl_packing_item_id), Number(row.issued_qty || 0))
+    if (!data || data.length < BATCH_SIZE) break
+  }
+
+  return allRows.map((row) => row.inbound_id
+    ? { ...row, qty: Math.max(0, Number(row.qty || 0) - Number(loanedByPl.get(String(row.id)) || 0)) }
+    : row).filter((row) => Number(row.qty || 0) > 0)
 }
 
 async function fetchAllPlSizeBreakdownRows() {
@@ -1593,9 +1608,10 @@ export default function StorageOverviewPage() {
       storageAccess.queue ? ['temporary-sales', 'Temp. Sales Area'] : null,
       storageAccess.queue ? ['temporary-retur', 'Temp. Retur Keeping'] : null,
       storageAccess.queue ? ['putaway-queue', 'Shelving Queue'] : null,
+      storageAccess.menu ? ['loans', 'Peminjaman Barang'] : null,
       canViewRejectStorage ? ['reject-storage', 'Reject Storage'] : null,
     ].filter(Boolean),
-    [canViewRejectStorage, storageAccess.location, storageAccess.queue]
+    [canViewRejectStorage, storageAccess.location, storageAccess.menu, storageAccess.queue]
   )
   const storageTabItems = useMemo(
     () => [
@@ -6242,6 +6258,17 @@ export default function StorageOverviewPage() {
             canManage={canManageProductDirectory}
             lockedGroup={lockedStorageGroup}
           />
+        ) : visibleListMode === 'loans' ? (
+          <WarehouseLoansClient
+            currentUserId={storageAccess.currentUserId}
+            canManage={Boolean(storageAccess.locationEdit || storageAccess.queueEdit)}
+            lockedGroup={lockedStorageGroup}
+            storageRows={storageRows}
+            queueRows={storageQueueRows}
+            locations={rackLocations}
+            arklineProducts={arklineProducts}
+            onStockChanged={() => refreshInventoryData({ forceStorage: true })}
+          />
         ) : visibleListMode === 'reject-storage' && rejectStorageSource === 'arkline' ? (
           <ArklineRejectionStoragePanel userEmail={storageAccess.currentUserEmail} canAdd={canAddRejectStorage} canRelease={canEditRejectStorage} storageViewMode={arklineRejectViewMode} />
         ) : (
@@ -7419,6 +7446,15 @@ export default function StorageOverviewPage() {
               </tbody>
             </table>
           </div>
+        ) : null}
+
+        {visibleListMode === 'queue' ? (
+          <WarehouseLoanQueueReturns
+            locations={rackLocations}
+            lockedGroup={lockedStorageGroup}
+            canManage={canStoreQueueItem}
+            onStockChanged={() => refreshInventoryData({ forceStorage: true })}
+          />
         ) : null}
 
         {visibleListMode === 'putaway-queue' ? filteredPutawayRows.length === 0 ? (

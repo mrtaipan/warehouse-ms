@@ -8,6 +8,8 @@ const MOVEMENT_LABELS = {
   CUSTOMER_REPLACEMENT_OUT: 'Replacement out',
   QC_RECHECK_OUT: 'Re-QC',
   REJECT_OUT: 'To reject storage',
+  LOAN_OUT: 'Dipinjam',
+  LOAN_RETURN: 'Kembali dari peminjaman',
 }
 const uploadDayFormatter = new Intl.DateTimeFormat('en-US', {
   timeZone: 'Asia/Jakarta', year: 'numeric', month: '2-digit', day: '2-digit',

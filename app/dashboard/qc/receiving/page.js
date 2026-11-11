@@ -8,6 +8,7 @@ import { ADMIN_EMAIL } from '@/utils/permissions'
 import { getRolesForPermissionCode } from '@/utils/role-permissions'
 import { readFileAsDataUrl } from '../shared'
 import RegularReQcWorkflow from '@/components/regular-reqc-workflow'
+import { loadProductCatalog, withCurrentProductLabels } from '@/utils/product-catalog-display.mjs'
 
 const supabase = createClient()
 const PRODUCT_PHOTOS_BUCKET = 'product-photos'
@@ -1606,12 +1607,13 @@ function ReceivingModePicker({ qcMode, reQcSource, isMobileLayout, onModeChange,
             onClick={() => setMenuOpen((open) => !open)}
             style={{ ...styles.modeButton, ...(qcMode === 're_qc' ? styles.modeButtonActive : {}), ...(isMobileLayout ? { width: '100%' } : {}) }}
           >
-            {qcMode === 're_qc' ? `Re-QC ${reQcSource === 'regular' ? 'Reguler' : 'Arkline'}` : 'Re-QC'}
+            {qcMode === 're_qc' ? `Re-QC ${reQcSource === 'regular' ? 'Reguler' : reQcSource === 'arkline-loan' ? 'Peminjaman' : 'Arkline'}` : 'Re-QC'}
           </button>
           {menuOpen ? (
             <div role="menu" aria-label="Re-QC mode" style={styles.reQcMenu}>
               {[
                 ['arkline', 'Re-QC Arkline'],
+                ['arkline-loan', 'Arkline · Peminjaman'],
                 ['regular', 'Re-QC Reguler'],
               ].map(([source, label]) => (
                 <button
@@ -1644,6 +1646,7 @@ export default function QcReceivingPage() {
   const [viewportWidth, setViewportWidth] = useState(1280)
   const [inbounds, setInbounds] = useState([])
   const [allUnloadRows, setAllUnloadRows] = useState([])
+  const [catalogLookup, setCatalogLookup] = useState(null)
   const [unloadRows, setUnloadRows] = useState([])
   const [brands, setBrands] = useState([])
   const [categories, setCategories] = useState([])
@@ -1734,6 +1737,7 @@ export default function QcReceivingPage() {
         { data: returnBatchRows, error: returnBatchError },
         { data: memberRows, error: memberError },
         { data: rolePermissionRows, error: rolePermissionError },
+        { data: catalogData, error: catalogError },
       ] = await Promise.all([
         supabase
           .from('inbound')
@@ -1786,6 +1790,7 @@ export default function QcReceivingPage() {
           .eq('is_qc_active', true)
           .order('display_name', { ascending: true }),
         getRolesForPermissionCode(supabase, 'qc.grading_task.view'),
+        loadProductCatalog(supabase),
       ])
 
       if (
@@ -1799,7 +1804,8 @@ export default function QcReceivingPage() {
         reworkReceiptError ||
         returnBatchError ||
         memberError ||
-        rolePermissionError
+        rolePermissionError ||
+        catalogError
       ) {
         setError(
           inboundError?.message ||
@@ -1813,6 +1819,7 @@ export default function QcReceivingPage() {
             returnBatchError?.message ||
             memberError?.message ||
             rolePermissionError?.message ||
+            catalogError?.message ||
             'Failed to load QC receiving setup.'
         )
         setLoading(false)
@@ -1828,12 +1835,13 @@ export default function QcReceivingPage() {
       )
 
       setInbounds(inboundRows || [])
-      setAllUnloadRows((allUnloadData || []).map(normalizeInboundUnloadRow))
+      setCatalogLookup(catalogData)
+      setAllUnloadRows((allUnloadData || []).map((row) => normalizeInboundUnloadRow(withCurrentProductLabels(row, catalogData))))
       setBrands(brandRows || [])
       setCategories(categoryRows || [])
       setProductModels(modelRows || [])
       setProductModelVariants(productVariantRows || [])
-      setQcItems((qcRows || []).map(normalizeQcItemRow))
+      setQcItems((qcRows || []).map((row) => normalizeQcItemRow(withCurrentProductLabels(row, catalogData))))
       setArklineQcItems(arklineQcRows || [])
       setArklineReworkReceipts(reworkReceiptRows || [])
       setArklineReturnBatches(returnBatchRows || [])
@@ -1873,17 +1881,20 @@ export default function QcReceivingPage() {
         ])
       )
       setUnloadRows(
-        (data || []).map((row) => ({
-          ...row,
-          brand_name: row.brand_name || brandMap.get(Number(row.brand_id)) || '',
-          category_name: getItemTypeSubcategoryLabel(row.category_id, categoryMap, row.category_name),
-        }))
+        (data || []).map((row) => {
+          const labeledRow = withCurrentProductLabels(row, catalogLookup)
+          return {
+            ...labeledRow,
+            brand_name: labeledRow.brand_name || brandMap.get(Number(labeledRow.brand_id)) || '',
+            category_name: getItemTypeSubcategoryLabel(labeledRow.category_id, categoryMap, labeledRow.category_name),
+          }
+        })
       )
       setSourceLoading(false)
     }
 
     loadUnloadRows()
-  }, [brands, categories, selectedInboundId])
+  }, [brands, catalogLookup, categories, selectedInboundId])
 
   const isMobileApp = pathname?.startsWith('/mobile/')
   const isMobileLayout = isMobileApp || viewportWidth <= 820
@@ -3609,13 +3620,13 @@ export default function QcReceivingPage() {
     return <p style={styles.emptyText}>Loading QC receiving setup...</p>
   }
 
-  if (qcMode === 're_qc' && reQcSource === 'regular') {
+  if (qcMode === 're_qc' && (reQcSource === 'regular' || reQcSource === 'arkline-loan')) {
     return (
       <div style={styles.wrapper}>
         <div style={shellCardStyle}>
           <h2 style={styles.sectionTitle}>QC Receiving & Allocation</h2>
           <ReceivingModePicker qcMode={qcMode} reQcSource={reQcSource} isMobileLayout={isMobileLayout} onModeChange={handleQcModeChange} onReQcSourceChange={setReQcSource} />
-          <RegularReQcWorkflow view="queue" />
+          <RegularReQcWorkflow view="queue" source={reQcSource} />
         </div>
       </div>
     )

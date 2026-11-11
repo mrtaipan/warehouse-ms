@@ -30,6 +30,16 @@ export function stockSizesMatch(stockSize, requestedSize, variationRaw = '') {
   return stockSizeAliases(stockSize).some((size) => requested.includes(size))
 }
 
+export function uploadStockSizePriority(stockSize, requestedSize, variationRaw = '') {
+  if (stockSizesMatch(stockSize, requestedSize, variationRaw)) return 0
+
+  const requested = canonicalStockSize(requestedSize)
+  const stock = canonicalStockSize(stockSize)
+  if (/^\d{2,3}$/.test(requested) && new RegExp(`^${requested}X\\d{2}$`).test(stock)) return 1
+
+  return null
+}
+
 export function resolveUploadSize(value) {
   const raw = normalize(value)
   if (!raw) return ''

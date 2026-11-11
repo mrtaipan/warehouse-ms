@@ -4816,7 +4816,7 @@ export default function QcDashboardPage() {
     return <p style={styles.emptyText}>Loading QC summary...</p>
   }
 
-  if (qcMode === 're_qc' && reQcSource === 'regular') {
+  if (qcMode === 're_qc' && (reQcSource === 'regular' || reQcSource === 'arkline-loan')) {
     return (
       <div style={styles.wrapper}>
         <div style={{ ...styles.flatSection, ...styles.flatSectionLast }}>
@@ -4843,6 +4843,7 @@ export default function QcDashboardPage() {
                 </div>
                 <select aria-label="Re-QC source" value={reQcSource} onChange={(event) => setReQcSource(event.target.value)} style={styles.reQcSourceSelect}>
                   <option value="arkline">Re-QC Arkline</option>
+                  <option value="arkline-loan">Arkline · Peminjaman</option>
                   <option value="regular">Re-QC Reguler</option>
                 </select>
               </div>
@@ -4867,7 +4868,7 @@ export default function QcDashboardPage() {
         </div>
         {error ? <p style={styles.errorText}>{error}</p> : null}
         {success ? <p style={styles.successText}>{success}</p> : null}
-        <RegularReQcWorkflow view="results" summaryStyles={styles} onSummaryMetricsChange={setRegularReQcMetrics} />
+        <RegularReQcWorkflow view="results" source={reQcSource} summaryStyles={styles} onSummaryMetricsChange={setRegularReQcMetrics} />
         {pauseConfirmModal}
       </div>
     )
@@ -4958,6 +4959,7 @@ export default function QcDashboardPage() {
                   style={styles.reQcSourceSelect}
                 >
                   <option value="arkline">Re-QC Arkline</option>
+                  <option value="arkline-loan">Arkline · Peminjaman</option>
                   <option value="regular">Re-QC Reguler</option>
                 </select>
               ) : null}

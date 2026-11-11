@@ -5197,19 +5197,6 @@ export default function UnloadPage() {
         return
       }
 
-      let nextVariantCode = ''
-
-      try {
-        nextVariantCode = getNextVariantCode(
-          targetModel,
-          productModelVariants.filter((variant) => Number(variant.id || 0) !== Number(sourceVariant.id || 0))
-        )
-      } catch (variantCodeError) {
-        setMoveModelError(variantCodeError.message || 'Failed to generate new variant code.')
-        setSaving(false)
-        return
-      }
-
       const sourcePhotoUrl = String(sourceVariant.variant_photo_url || '').trim()
       let movedVariantPhotoUrl = sourcePhotoUrl
 
@@ -5227,7 +5214,7 @@ export default function UnloadPage() {
               model: targetModel,
               modelFallback: targetModel.model_name || normalizedModelName,
             }),
-            getStablePhotoFileName(nextVariantCode, fileExtension),
+            getStablePhotoFileName(previousVariantCode, fileExtension),
           ].join('/')
 
           if (sourcePhotoPath !== targetPhotoPath) {
@@ -5268,7 +5255,6 @@ export default function UnloadPage() {
         .from('dir_product_model_variants')
         .update({
           product_model_id: targetModel.id,
-          variant_code: nextVariantCode,
           variant_photo_url: movedVariantPhotoUrl || null,
           updated_at: movedAt,
           updated_by: displayName,
@@ -5418,7 +5404,7 @@ export default function UnloadPage() {
       setShowMoveModelModal(false)
       setMoveModelError('')
       setError('')
-      setSuccess(`Variant moved to ${targetModel.model_name}. New Product ID ${movedVariantCode}.`)
+      setSuccess(`Variant moved to ${targetModel.model_name}. SKU ${movedVariantCode} remains unchanged.`)
       setSaving(false)
     }
 
@@ -7684,7 +7670,7 @@ export default function UnloadPage() {
               <div style={styles.helperBox}>
                 <p style={styles.emptyText}>
                   {movingVariantContext?.variant
-                    ? `${getVariantDisplayName(movingVariantContext.variant)} will receive a new Product ID under the target model.`
+                    ? `${getVariantDisplayName(movingVariantContext.variant)} will move to the target model. SKU ${getVariantProductId(movingVariantContext.variant)} will remain unchanged.`
                     : 'Choose a variant to move.'}
                 </p>
               </div>

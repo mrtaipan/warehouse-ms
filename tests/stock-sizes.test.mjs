@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { resolveUploadSize, selectStockRowsForSize, stockSizesMatch } from '../app/dashboard/storage/stock-sizes.js'
+import { resolveUploadSize, selectStockRowsForSize, stockSizesMatch, uploadStockSizePriority } from '../app/dashboard/storage/stock-sizes.js'
 
 test('keeps explicit alphabetic/numeric size aliases from an upload', () => {
   for (const value of ['XS/90', 'S/95', 'M/100', 'L/105', 'XL/110']) {
@@ -74,4 +74,16 @@ test('repeated X and numeric XL sizes match, including Tall, without mixing adja
     { id: 3, size: '4XL' },
     { id: 4, size: 'XXXLTALL' },
   ], 'XXXL').map((row) => row.id), [1, 2])
+})
+
+test('upload prefers exact waist size, then accepts the same waist with an inseam', () => {
+  assert.equal(uploadStockSizePriority('32', '32'), 0)
+  assert.equal(uploadStockSizePriority('32x30', '32'), 1)
+  assert.equal(uploadStockSizePriority('32X32', '32'), 1)
+  assert.equal(uploadStockSizePriority('32x30', '32x30'), 0)
+  assert.equal(uploadStockSizePriority('34x30', '32'), null)
+  assert.equal(uploadStockSizePriority('32', '32x30'), null)
+  assert.equal(uploadStockSizePriority('32x30', '32x32'), null)
+  assert.equal(uploadStockSizePriority('32/30', '32'), null)
+  assert.equal(uploadStockSizePriority('S', 'S/95'), 0)
 })

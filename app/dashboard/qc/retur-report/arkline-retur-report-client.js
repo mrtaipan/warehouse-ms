@@ -29,6 +29,7 @@ function formatStatus(value) {
 function formatStorageSourceType(value, inventorySource, stockAppliedAt) {
   const normalized = String(value || 'QC_REJECT').toUpperCase()
   if (normalized === 'DELIVERY_REJECT') return 'Delivery Reject'
+  if (normalized === 'LOAN_RE_QC') return 'Peminjaman Re-QC'
   if (normalized === 'PACKING_REJECT') {
     if (inventorySource === 'SHELVING' && !stockAppliedAt) return 'Shelving Reject (Unregistered)'
     if (inventorySource === 'SHELVING') return 'Shelving Reject'
@@ -1929,6 +1930,16 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
       {storageOnly ? (
       <section className={`${styles.card} ${styles.subPageCard}`.trim()}>
         <div className={styles.storageToolbar}>
+          <div className={`${styles.field} ${styles.storageSearchField}`.trim()}>
+            <label htmlFor="storage-search">Search storage, product, PO, or reject reason</label>
+            <input
+              id="storage-search"
+              className={styles.input}
+              value={storageSearch}
+              onChange={(event) => setStorageSearch(event.target.value)}
+              placeholder="Search product, storage no, PO..."
+            />
+          </div>
           <div className={`${styles.field} ${styles.storageCategoryField}`.trim()}>
             <label htmlFor="storage-category-filter">Category</label>
             <select
@@ -1966,18 +1977,9 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
               <option value="QC_REJECT">QC Reject</option>
               <option value="PACKING_REJECT">Packing Reject</option>
               <option value="DELIVERY_REJECT">Delivery Reject</option>
+              <option value="LOAN_RE_QC">Peminjaman Re-QC</option>
             </select>
           </div>
-            <div className={`${styles.field} ${styles.storageSearchField}`.trim()}>
-              <label htmlFor="storage-search">Search storage, product, PO, or reject reason</label>
-              <input
-                id="storage-search"
-                className={styles.input}
-                value={storageSearch}
-                onChange={(event) => setStorageSearch(event.target.value)}
-                placeholder="Search product, storage no, PO..."
-              />
-            </div>
             {storageSearch || storageSizeFilter || storageSourceFilter || storageCategoryFilter ? (
               <button
                 type="button"

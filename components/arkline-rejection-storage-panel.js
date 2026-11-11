@@ -54,7 +54,7 @@ export default function ArklineRejectionStoragePanel({ userEmail, canAdd = false
           grade: line.grade,
           size: String(line.size || 'No size').trim().toUpperCase(),
           qty: available,
-          sourceType: line.delivery_return_item_id ? 'DELIVERY_REJECT' : line.reject_detail_id ? 'QC_REJECT' : 'PACKING_REJECT',
+          sourceType: batchById.get(key)?.source_type || (line.delivery_return_item_id ? 'DELIVERY_REJECT' : line.reject_detail_id ? 'QC_REJECT' : 'PACKING_REJECT'),
         })
         linesByBatch.set(key, current)
       })

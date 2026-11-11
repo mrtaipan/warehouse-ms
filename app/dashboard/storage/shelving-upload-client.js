@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createClient } from '@/utils/supabase/browser'
 import { read, utils } from 'xlsx'
 import { buildArklineImportPreview, parseArklineDate, parseArklineSku, parseArklineWorkbookRows } from './arkline-upload'
-import { resolveUploadSize as resolveSize, stockSizeAliases, stockSizesMatch } from './stock-sizes'
+import { resolveUploadSize as resolveSize, stockSizeAliases, stockSizesMatch, uploadStockSizePriority } from './stock-sizes'
 
 const supabase = createClient()
 const VALID_STATUSES = ['packaged', 'ship', 'shipped', 'completed']
@@ -277,7 +277,7 @@ function buildImportPreview(csvRows, storageRows, temporarySalesRows = [], bundl
     const included = !exclusionReason
     const matchingStockKeys = included && !arklineSku ? Array.from(availability.keys()).filter((stockKey) => {
       const [stockSku, stockSize] = stockKey.split('::')
-      return stockSku === normalizeSku(skuId) && stockSizesMatch(stockSize, size, variationRaw)
+      return stockSku === normalizeSku(skuId) && uploadStockSizePriority(stockSize, size, variationRaw) !== null
     }) : []
     let availableQty = matchingStockKeys.reduce((sum, key) => sum + Math.max(0, Number(availability.get(key) || 0)), 0)
     let appliedQty = included ? Math.min(qty, availableQty) : 0

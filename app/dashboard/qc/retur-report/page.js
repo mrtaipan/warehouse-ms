@@ -51,6 +51,37 @@ function ReturnReportShell({ activeMode, children }) {
   )
 }
 
+async function loadAllRegularReturnRows(supabase) {
+  const pageSize = 500
+  const rows = []
+
+  for (let offset = 0; ; offset += pageSize) {
+    const { data, error } = await supabase.from('warehouse_returns').select(`
+      *,
+      inbound:inbound_id (
+        id,
+        grn_number,
+        inbound_date,
+        payment_on_site,
+        suppliers:dir_suppliers!supplier_id (
+          supplier_name
+        )
+      ),
+      brands:dir_brands!brand_id (
+        brand_name
+      ),
+      categories:dir_categories!category_id (
+        category_name,
+        full_name
+      )
+    `).order('created_at', { ascending: false }).order('id', { ascending: false }).range(offset, offset + pageSize - 1)
+
+    if (error) return { data: null, error }
+    rows.push(...(data || []))
+    if ((data || []).length < pageSize) return { data: rows, error: null }
+  }
+}
+
 async function loadArklineReturnData(supabase) {
   const [
     detailResult,
@@ -422,25 +453,7 @@ export default async function QcReturReportPage({ searchParams }) {
     )
   }
 
-  const { data: rows, error } = await supabase.from('warehouse_returns').select(`
-      *,
-      inbound:inbound_id (
-        id,
-        grn_number,
-        inbound_date,
-        payment_on_site,
-        suppliers:dir_suppliers!supplier_id (
-          supplier_name
-        )
-      ),
-      brands:dir_brands!brand_id (
-        brand_name
-      ),
-      categories:dir_categories!category_id (
-        category_name,
-        full_name
-      )
-    `).order('created_at', { ascending: false })
+  const { data: rows, error } = await loadAllRegularReturnRows(supabase)
 
   return (
     <div className={reportStyles.page}>

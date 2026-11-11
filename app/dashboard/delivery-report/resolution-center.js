@@ -142,7 +142,7 @@ function inspectReceivingDecisions(cases, { requireShelvingLookup = false } = {}
       if (quantities[2] > 0 && !cleanText(line.lostReason)) {
         return `${inspectedCase.code}: enter the lost reason for ${line.productName}.`
       }
-      if (requireShelvingLookup && quantities[0] > 0 && inspectedCase.group === 'ARKLINE' && !line.shelvingLocationStatus) {
+      if (requireShelvingLookup && quantities[0] > 0 && ['ARKLINE', 'MOB'].includes(inspectedCase.group) && !line.shelvingLocationStatus) {
         return `${inspectedCase.code}: review the storage destination for ${line.sku} / ${line.size}.`
       }
     }
@@ -2184,21 +2184,27 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
       .reduce((sum, key) => sum + Number(line[key] || 0), 0))
   }
 
-  async function findArklineShelvingLocations(casesToResolve) {
+  async function findReturnShelvingLocations(casesToResolve) {
     const requiredLines = casesToResolve.flatMap((inspectedCase) => (
-      inspectedCase.group === 'ARKLINE'
-        ? inspectedCase.lines.filter((line) => Number(line.storedQty || 0) > 0).map((line) => ({ ...line, caseId: inspectedCase.caseId }))
+      ['ARKLINE', 'MOB'].includes(inspectedCase.group)
+        ? inspectedCase.lines.filter((line) => Number(line.storedQty || 0) > 0).map((line) => ({ ...line, caseId: inspectedCase.caseId, group: inspectedCase.group }))
         : []
     ))
     if (!requiredLines.length) return casesToResolve
 
-    const prefixes = [...new Set(requiredLines.map((line) => arklineSkuKey(line.sku)).filter(Boolean))]
-    if (!prefixes.length) {
-      throw new Error('Could not identify an Arkline SKU for shelving lookup.')
+    const lookupKeys = requiredLines.map((line) => ({
+      group: line.group,
+      key: line.group === 'ARKLINE' ? arklineSkuKey(line.sku) : cleanUpper(line.sku),
+    })).filter((entry) => entry.key)
+    if (!lookupKeys.length) {
+      throw new Error('Could not identify a product SKU for shelving lookup.')
     }
 
     const storageRows = []
-    const lookupFilter = prefixes.flatMap((prefix) => [`sku_id.ilike.${prefix}%`, `source_variant_code.ilike.${prefix}%`]).join(',')
+    const lookupFilter = [...new Set(lookupKeys.flatMap(({ group, key }) => {
+      const pattern = group === 'ARKLINE' ? `${key}%` : key
+      return [`sku_id.ilike.${pattern}`, `source_variant_code.ilike.${pattern}`]
+    }))].join(',')
     for (let offset = 0; ; offset += 1000) {
       const { data, error } = await deliverySupabase
         .from('warehouse_storage')
@@ -2212,9 +2218,11 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
     }
 
     const matchesByLine = requiredLines.map((line) => {
-      const skuKey = arklineSkuKey(line.sku)
+      const skuKey = line.group === 'ARKLINE' ? arklineSkuKey(line.sku) : cleanUpper(line.sku).replace(/[^A-Z0-9]/g, '')
       const rows = storageRows.filter((stock) => (
-        String(stock.sku_id ?? stock.source_variant_code ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '').startsWith(skuKey) &&
+        (line.group === 'ARKLINE'
+          ? cleanUpper(stock.sku_id ?? stock.source_variant_code ?? '').replace(/[^A-Z0-9]/g, '').startsWith(skuKey)
+          : cleanUpper(stock.sku_id ?? stock.source_variant_code ?? '').replace(/[^A-Z0-9]/g, '') === skuKey) &&
         stockSizesMatch(stock.size, line.size) && stock.rack_location_id != null
       ))
       return { line, locationIds: [...new Set(rows.map((stock) => String(stock.rack_location_id)))] }
@@ -2233,7 +2241,7 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
         if (!match) return line
         const shelvingLocations = match.locationIds
           .map((id) => locationById.get(id))
-          .filter((location) => location && cleanUpper(location.group_code) === 'ARKLINE' && cleanUpper(location.location_type) === 'SHELVING' && location.is_picking_shelf !== false)
+          .filter((location) => location && cleanUpper(location.group_code) === match.line.group && cleanUpper(location.location_type) === 'SHELVING' && location.is_picking_shelf === true)
         const distinct = [...new Map(shelvingLocations.map((location) => [String(location.id), location])).values()]
         return {
           ...line,
@@ -2253,7 +2261,7 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
     setReceivingLookupBusy(true)
     setReceivingConfirmError('')
     try {
-      const casesWithLocations = await findArklineShelvingLocations(receivingInspectionCases)
+      const casesWithLocations = await findReturnShelvingLocations(receivingInspectionCases)
       setReceivingInspectionCases(casesWithLocations)
       setReceivingConfirmStep('review')
     } catch (lookupError) {
@@ -2905,7 +2913,7 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
         portal
         onClose={closeReceivingInspection}
         actions={receivingConfirmStep === 'review' ? <>
-          <button type="button" className={styles.softButton} disabled={busy} onClick={() => { setReceivingConfirmStep('inspect'); setReceivingConfirmError('') }}>Back to Decisions</button>
+          <button type="button" className={`${styles.softButton} ${styles.receivingBackToDecisionsButton}`} disabled={busy} onClick={() => { setReceivingConfirmStep('inspect'); setReceivingConfirmError('') }}>Back to Decisions</button>
           <button type="button" className={styles.darkButton} disabled={busy || receivingLookupBusy || !receivingInspectionCases.length} onClick={completeReceivingRows}>{busy ? 'Resolving...' : 'Confirm Resolution'}</button>
         </> : null}
       >
@@ -2958,7 +2966,7 @@ export default function ResolutionCenter({ lockedGroup: lockedGroupProp = '' }) 
                 {!inspectedCase.lines.length ? <p className={styles.receivingInspectionEmpty}>No returned products to route.</p> : inspectedCase.lines.map((line) => (
                   <div className={styles.receivingInspectionReviewLine} key={line.key}>
                     <div><strong>{line.productName}</strong><span>{line.sku || 'No SKU'} · Size {line.size || '-'} · {line.expectedQty} unit{line.expectedQty === 1 ? '' : 's'}</span></div>
-                    <div className={styles.receivingInspectionReviewQuantities}>{Number(line.storedQty || 0) > 0 ? <span>Store {line.storedQty} to {inspectedCase.group === 'ARKLINE' && line.shelvingLocationStatus === 'FOUND' ? `Shelving ${line.shelvingLocation}` : 'Shelving Queue'}</span> : null}{Number(line.rejectQty || 0) > 0 ? <span>Reject {line.rejectQty} pending arrangement</span> : null}{Number(line.lostQty || 0) > 0 ? <span>Lost {line.lostQty} recorded</span> : null}</div>
+                    <div className={styles.receivingInspectionReviewQuantities}>{Number(line.storedQty || 0) > 0 ? <span>Store {line.storedQty} to {['ARKLINE', 'MOB'].includes(inspectedCase.group) && line.shelvingLocationStatus === 'FOUND' ? `Shelving ${line.shelvingLocation}` : 'Shelving Queue'}</span> : null}{Number(line.rejectQty || 0) > 0 ? <span>Reject {line.rejectQty} pending arrangement</span> : null}{Number(line.lostQty || 0) > 0 ? <span>Lost {line.lostQty} recorded</span> : null}</div>
                   </div>
                 ))}
                 {cleanText(inspectedCase.row.produk_pengganti) ? (

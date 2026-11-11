@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/utils/supabase/browser'
 import reportStyles from './retur-report.module.css'
@@ -100,9 +100,85 @@ function cloneReturnPayload(row, qty, koliSequence = null) {
   }
 }
 
+function SearchableFilter({ id, label, allLabel, options, value, onChange }) {
+  const [search, setSearch] = useState('')
+  const [isOpen, setIsOpen] = useState(false)
+  const [cursor, setCursor] = useState(0)
+  const [lastSelectedLabel, setLastSelectedLabel] = useState('')
+  const inputRef = useRef(null)
+  const selectedLabel = value ? options.find((option) => option.value === value)?.label || lastSelectedLabel : ''
+  const matchingOptions = options.filter((option) => option.label.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase())).slice(0, 50)
+  const visibleOptions = search.trim() ? matchingOptions : [{ value: '', label: allLabel }, ...matchingOptions]
+
+  function chooseOption(option) {
+    onChange(option.value)
+    setLastSelectedLabel(option.label)
+    setSearch('')
+    setIsOpen(false)
+    inputRef.current?.blur()
+  }
+
+  return (
+    <div className={`${reportStyles.field} ${reportStyles.registrationProductField}`} onBlur={(event) => {
+      if (!event.currentTarget.contains(event.relatedTarget)) setIsOpen(false)
+    }}>
+      <label htmlFor={id}>{label}</label>
+      <input
+        ref={inputRef}
+        id={id}
+        className={reportStyles.input}
+        value={isOpen ? search : selectedLabel}
+        onFocus={() => { setSearch(''); setCursor(0); setIsOpen(true) }}
+        onChange={(event) => { setSearch(event.target.value); setCursor(0); setIsOpen(true) }}
+        onKeyDown={(event) => {
+          if (event.key === 'Escape') { setIsOpen(false); inputRef.current?.blur() }
+          if (event.key === 'ArrowDown' && visibleOptions.length) {
+            event.preventDefault()
+            setIsOpen(true)
+            setCursor((current) => Math.min(current + 1, visibleOptions.length - 1))
+          }
+          if (event.key === 'ArrowUp' && visibleOptions.length) {
+            event.preventDefault()
+            setIsOpen(true)
+            setCursor((current) => Math.max(current - 1, 0))
+          }
+          if (event.key === 'Enter' && isOpen && visibleOptions[cursor]) {
+            event.preventDefault()
+            chooseOption(visibleOptions[cursor])
+          }
+        }}
+        placeholder={allLabel}
+        autoComplete="off"
+        role="combobox"
+        aria-autocomplete="list"
+        aria-expanded={isOpen}
+        aria-controls={`${id}-options`}
+        aria-activedescendant={isOpen && visibleOptions[cursor] ? `${id}-option-${cursor}` : undefined}
+      />
+      {isOpen ? (
+        <div id={`${id}-options`} className={reportStyles.registrationProductOptions} role="listbox" aria-label={label}>
+          {visibleOptions.length ? visibleOptions.map((option, index) => (
+            <button
+              key={option.value}
+              id={`${id}-option-${index}`}
+              type="button"
+              role="option"
+              aria-selected={option.value === value}
+              className={`${reportStyles.registrationProductOption} ${index === cursor ? reportStyles.registrationProductOptionActive : ''}`.trim()}
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => chooseOption(option)}
+            >{option.label}</button>
+          )) : <div className={reportStyles.searchFilterEmpty}>No matching {label.toLowerCase()}.</div>}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
 export default function ReturReportClient({ rows, canAdd = false, canEdit = false }) {
   const router = useRouter()
   const supabase = createClient()
+  const grnDropdownRef = useRef(null)
   const [selectedIds, setSelectedIds] = useState([])
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [isSupplierConfirmOpen, setIsSupplierConfirmOpen] = useState(false)
@@ -172,6 +248,40 @@ export default function ReturReportClient({ rows, canAdd = false, canEdit = fals
       ),
     [filterSourceRows, matchesActiveFilters]
   )
+  const grnOptionGroups = useMemo(() => {
+    if (grnOptions.length <= 20) return []
+    const groups = []
+    for (let index = 0; index < grnOptions.length; index += 20) {
+      const options = grnOptions.slice(index, index + 20)
+      const first = options[0].split('-')[0]
+      const last = options.at(-1).split('-')[0]
+      groups.push({ label: first === last ? first : `${first} - ${last}`, options })
+    }
+    return groups
+  }, [grnOptions])
+  useEffect(() => {
+    const closeDropdown = () => {
+      const dropdown = grnDropdownRef.current
+      if (!dropdown) return
+      dropdown.open = false
+      dropdown.querySelectorAll('details').forEach((group) => { group.open = false })
+    }
+    const onPointerDown = (event) => {
+      if (!grnDropdownRef.current?.contains(event.target)) closeDropdown()
+    }
+    const onKeyDown = (event) => {
+      if (event.key === 'Escape' && grnDropdownRef.current?.open) {
+        closeDropdown()
+        grnDropdownRef.current?.querySelector('summary')?.focus()
+      }
+    }
+    document.addEventListener('pointerdown', onPointerDown)
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown)
+      document.removeEventListener('keydown', onKeyDown)
+    }
+  }, [])
   const koliOptions = useMemo(
     () =>
       Array.from(
@@ -359,11 +469,11 @@ export default function ReturReportClient({ rows, canAdd = false, canEdit = fals
     setSelectedIds([])
   }
 
-  function resetFilters() {
+  function resetFilters(defaultStatus = '') {
     setGrnFilter('')
     setKoliFilter('')
     setSupplierFilter('')
-    setStatusFilter('')
+    setStatusFilter(defaultStatus)
     setPhaseFilter('')
     setBrandFilter('')
     setCategoryFilter('')
@@ -669,6 +779,7 @@ export default function ReturReportClient({ rows, canAdd = false, canEdit = fals
     setPreparationPostTarget({ mode: 'new', koliSequence: '' })
     setPreparationSuccess(`Return Koli ${assignedKoliSequence} posted to Return Arrangement.`)
     setIsPostingPreparation(false)
+    resetFilters('waiting')
     setActiveReturnTab('arrangement')
     router.refresh()
   }
@@ -1098,7 +1209,7 @@ export default function ReturReportClient({ rows, canAdd = false, canEdit = fals
               className={`${reportStyles.subPageTabLink} ${activeReturnTab === 'arrangement' ? reportStyles.subPageTabLinkActive : ''}`.trim()}
               onClick={() => {
                 setActiveReturnTab('arrangement')
-                resetFilters()
+                resetFilters('waiting')
               }}
             >
               <span className={reportStyles.subPageTabLabel}>Return Arrangement</span>
@@ -1107,7 +1218,7 @@ export default function ReturReportClient({ rows, canAdd = false, canEdit = fals
           </div>
         </div>
 
-        <div className={reportStyles.subPageTabsPanel}>
+        <div className={`${reportStyles.subPageTabsPanel} ${activeReturnTab === 'arrangement' ? reportStyles.arrangementTabsPanel : ''}`}>
           {activeReturnTab === 'preparation' ? (
             <section className={`${reportStyles.card} ${reportStyles.subPageCard}`.trim()}>
               <div className={reportStyles.sectionHeader}>
@@ -1342,18 +1453,43 @@ export default function ReturReportClient({ rows, canAdd = false, canEdit = fals
       {grnOptions.length || koliOptions.length || supplierOptions.length || statusOptions.length || phaseOptions.length || brandOptions.length || categoryOptions.length || modelOptions.length || gradeOptions.length ? (
       <div className={reportStyles.filterGrid}>
         <div className={reportStyles.field}>
-          <label htmlFor="qc-retur-report-grn-filter">GRN Number</label>
-          <select
-            id="qc-retur-report-grn-filter"
-            className={reportStyles.input}
-            value={grnFilter}
-            onChange={(event) => updateFilter(setGrnFilter, event.target.value)}
-          >
-            <option value="">All GRN</option>
-            {grnOptions.map((item) => (
-              <option key={item} value={item}>{item}</option>
-            ))}
-          </select>
+          {grnOptionGroups.length ? (
+            <>
+              <span className={reportStyles.filterLabel}>GRN Number</span>
+              <details ref={grnDropdownRef} className={reportStyles.grnDropdown}>
+                <summary className={reportStyles.grnDropdownTrigger} aria-label={`GRN Number: ${grnFilter || 'All GRN'}`}>
+                  <span>{grnFilter || 'All GRN'}</span>
+                </summary>
+                <div className={reportStyles.grnDropdownMenu}>
+                  <button type="button" className={reportStyles.grnDropdownOption} onClick={() => {
+                    updateFilter(setGrnFilter, '')
+                    grnDropdownRef.current.open = false
+                    grnDropdownRef.current.querySelectorAll('details').forEach((group) => { group.open = false })
+                  }}>All GRN</button>
+                  {grnOptionGroups.map((group) => (
+                    <details key={group.options[0]} className={reportStyles.grnDropdownGroup}>
+                      <summary>{group.label}</summary>
+                      {group.options.map((item) => (
+                        <button key={item} type="button" className={reportStyles.grnDropdownOption} aria-current={grnFilter === item ? 'true' : undefined} onClick={() => {
+                          updateFilter(setGrnFilter, item)
+                          grnDropdownRef.current.open = false
+                          grnDropdownRef.current.querySelectorAll('details').forEach((openGroup) => { openGroup.open = false })
+                        }}>{item}</button>
+                      ))}
+                    </details>
+                  ))}
+                </div>
+              </details>
+            </>
+          ) : (
+            <>
+              <label htmlFor="qc-retur-report-grn-filter">GRN Number</label>
+              <select id="qc-retur-report-grn-filter" className={reportStyles.input} value={grnFilter} onChange={(event) => updateFilter(setGrnFilter, event.target.value)}>
+                <option value="">All GRN</option>
+                {grnOptions.map((item) => <option key={item} value={item}>{item}</option>)}
+              </select>
+            </>
+          )}
         </div>
 
         <div className={reportStyles.field}>
@@ -1371,20 +1507,14 @@ export default function ReturReportClient({ rows, canAdd = false, canEdit = fals
           </select>
         </div>
 
-        <div className={reportStyles.field}>
-          <label htmlFor="qc-retur-report-supplier-filter">Supplier</label>
-          <select
-            id="qc-retur-report-supplier-filter"
-            className={reportStyles.input}
-            value={supplierFilter}
-            onChange={(event) => updateFilter(setSupplierFilter, event.target.value)}
-          >
-            <option value="">All Supplier</option>
-            {supplierOptions.map((item) => (
-              <option key={item} value={item}>{item}</option>
-            ))}
-          </select>
-        </div>
+        <SearchableFilter
+          id="qc-retur-report-supplier-filter"
+          label="Supplier"
+          allLabel="All Supplier"
+          options={supplierOptions.map((item) => ({ value: item, label: item }))}
+          value={supplierFilter}
+          onChange={(value) => updateFilter(setSupplierFilter, value)}
+        />
 
         <div className={reportStyles.field}>
           <label htmlFor="qc-retur-report-status-filter">Status</label>
@@ -1416,20 +1546,14 @@ export default function ReturReportClient({ rows, canAdd = false, canEdit = fals
           </select>
         </div>
 
-        <div className={reportStyles.field}>
-          <label htmlFor="qc-retur-report-brand-filter">Brand</label>
-          <select
-            id="qc-retur-report-brand-filter"
-            className={reportStyles.input}
-            value={brandFilter}
-            onChange={(event) => updateFilter(setBrandFilter, event.target.value)}
-          >
-            <option value="">All Brand</option>
-            {brandOptions.map((item) => (
-              <option key={item.id} value={item.id}>{item.name}</option>
-            ))}
-          </select>
-        </div>
+        <SearchableFilter
+          id="qc-retur-report-brand-filter"
+          label="Brand"
+          allLabel="All Brand"
+          options={brandOptions.map((item) => ({ value: item.id, label: item.name }))}
+          value={brandFilter}
+          onChange={(value) => updateFilter(setBrandFilter, value)}
+        />
 
         <div className={reportStyles.field}>
           <label htmlFor="qc-retur-report-category-filter">Category</label>
@@ -1446,20 +1570,14 @@ export default function ReturReportClient({ rows, canAdd = false, canEdit = fals
           </select>
         </div>
 
-        <div className={reportStyles.field}>
-          <label htmlFor="qc-retur-report-model-filter">Model-Variant</label>
-          <select
-            id="qc-retur-report-model-filter"
-            className={reportStyles.input}
-            value={modelFilter}
-            onChange={(event) => updateFilter(setModelFilter, event.target.value)}
-          >
-            <option value="">All Model-Variant</option>
-            {modelOptions.map((item) => (
-              <option key={item} value={item}>{item}</option>
-            ))}
-          </select>
-        </div>
+        <SearchableFilter
+          id="qc-retur-report-model-filter"
+          label="Model-Variant"
+          allLabel="All Model-Variant"
+          options={modelOptions.map((item) => ({ value: item, label: item }))}
+          value={modelFilter}
+          onChange={(value) => updateFilter(setModelFilter, value)}
+        />
 
         <div className={reportStyles.field}>
           <label htmlFor="qc-retur-report-grade-filter">Grade</label>

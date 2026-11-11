@@ -8,6 +8,7 @@ import { getRolePermissionCodes } from '@/utils/role-permissions'
 import { getProfileByAuthenticatedUser } from '@/utils/user-profiles'
 import { formatSeconds } from '../shared'
 import historyStyles from './inspection-task.module.css'
+import { loadProductCatalog, withCurrentProductLabels } from '@/utils/product-catalog-display.mjs'
 
 const supabase = createClient()
 const BREAK_REASONS = ['TOILET', 'PRAYER', 'SUPERVISOR CALL', 'MATERIAL WAIT', 'OTHER', 'COORDINATOR BREAK']
@@ -831,7 +832,7 @@ export default function QcInspectionTaskPage() {
         return
       }
 
-      const [regularTaskResult, arklineTaskResult] = await Promise.all([
+      const [regularTaskResult, arklineTaskResult, catalogResult] = await Promise.all([
         supabase
           .from('qc_items')
           .select(`
@@ -845,6 +846,8 @@ export default function QcInspectionTaskPage() {
               id,
               brand_id,
               category_id,
+              product_model_id,
+              product_model_variant_id,
               model_name,
               variant_name,
               photo_url,
@@ -870,20 +873,24 @@ export default function QcInspectionTaskPage() {
           .eq('assigned_to', normalizedEmail)
           .in('status', ['queued', 'in_progress', 'paused'])
           .order('created_at', { ascending: true }),
+        loadProductCatalog(supabase),
       ])
 
       if (!isMounted) {
         return
       }
 
-      if (regularTaskResult.error || arklineTaskResult.error) {
-        setError(regularTaskResult.error?.message || arklineTaskResult.error?.message || 'Failed to load QC tasks.')
+      if (regularTaskResult.error || arklineTaskResult.error || catalogResult.error) {
+        setError(regularTaskResult.error?.message || arklineTaskResult.error?.message || catalogResult.error?.message || 'Failed to load QC tasks.')
         setLoading(false)
         return
       }
 
       const normalizedRegularTasks = (regularTaskResult.data || []).map((item) => ({
-          ...normalizeRegularTask(item),
+          ...normalizeRegularTask(withCurrentProductLabels({
+            ...item,
+            inbound_unload: withCurrentProductLabels(item.inbound_unload, catalogResult.data),
+          }, catalogResult.data)),
           source_type: 'regular',
         }))
       const normalizedArklineTasks = (arklineTaskResult.data || []).map((item) => ({

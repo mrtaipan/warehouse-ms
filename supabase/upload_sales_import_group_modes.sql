@@ -1,5 +1,5 @@
 -- Separate shelving sales uploads by warehouse group.
--- Requires warehouse_stock_size_matching.sql.
+-- Requires warehouse_stock_size_matching.sql and upload_sales_import_inseam_fallback.sql.
 -- Existing batches are treated as MOB for backward compatibility.
 -- For MOB 21:00 settlement and ARK rows, run upload_sales_import_arkline_workflow.sql
 -- before using the functions below, then schedule upload_sales_import_arkline_2100_cron.sql.
@@ -322,9 +322,10 @@ begin
             @> array[normalized_sku]
           and (
             allow_any_size
-            or public.warehouse_sizes_match(temporary_item.size, import_line.size, import_line.variation_raw)
+            or public.warehouse_upload_size_priority(temporary_item.size, import_line.size, import_line.variation_raw) is not null
           )
-        order by temporary_item.entered_at asc nulls first, temporary_item.id asc
+        order by public.warehouse_upload_size_priority(temporary_item.size, import_line.size, import_line.variation_raw) asc nulls last,
+          temporary_item.entered_at asc nulls first, temporary_item.id asc
         for update of temporary_item
       loop
         exit when remaining_qty <= 0;
@@ -423,9 +424,10 @@ begin
           @> array[normalized_sku]
         and (
           allow_any_size
-          or public.warehouse_sizes_match(storage.size, import_line.size, import_line.variation_raw)
+          or public.warehouse_upload_size_priority(storage.size, import_line.size, import_line.variation_raw) is not null
         )
-      order by storage.created_at asc nulls first, storage.id asc
+      order by public.warehouse_upload_size_priority(storage.size, import_line.size, import_line.variation_raw) asc nulls last,
+        storage.created_at asc nulls first, storage.id asc
       for update of storage
     loop
       exit when remaining_qty <= 0;
@@ -778,9 +780,10 @@ begin
           @> array[normalized_sku]
         and (
           allow_any_size
-          or public.warehouse_sizes_match(temporary_item.size, import_line.size, import_line.variation_raw)
+          or public.warehouse_upload_size_priority(temporary_item.size, import_line.size, import_line.variation_raw) is not null
         )
-      order by temporary_item.entered_at asc nulls first, temporary_item.id asc
+      order by public.warehouse_upload_size_priority(temporary_item.size, import_line.size, import_line.variation_raw) asc nulls last,
+        temporary_item.entered_at asc nulls first, temporary_item.id asc
       for update of temporary_item
     loop
       exit when remaining_qty <= 0;
@@ -847,9 +850,10 @@ begin
           @> array[normalized_sku]
         and (
           allow_any_size
-          or public.warehouse_sizes_match(storage.size, import_line.size, import_line.variation_raw)
+          or public.warehouse_upload_size_priority(storage.size, import_line.size, import_line.variation_raw) is not null
         )
-      order by storage.created_at asc nulls first, storage.id asc
+      order by public.warehouse_upload_size_priority(storage.size, import_line.size, import_line.variation_raw) asc nulls last,
+        storage.created_at asc nulls first, storage.id asc
       for update of storage
     loop
       exit when remaining_qty <= 0;
