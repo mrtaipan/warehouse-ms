@@ -1016,6 +1016,15 @@ const styles = {
     textAlign: 'center',
     verticalAlign: 'middle',
   },
+  tableItemSku: {
+    display: 'block',
+    marginTop: '4px',
+    color: '#64748b',
+    fontSize: '11px',
+    fontWeight: 500,
+    lineHeight: 1.3,
+    overflowWrap: 'anywhere',
+  },
   tablePhoto: {
     width: '54px',
     height: '54px',
@@ -5707,26 +5716,10 @@ export default function PackingListSizeBreakdownPage() {
     }
 
     if (pageMode === 'multipage') {
-      if (chooseModels) {
-        const modelSourceGroups = options.sectionKey
-          ? visibleMultipageGroups.filter((group) => group.key === options.sectionKey)
-          : visibleMultipageGroups
-        const selectedCards = modelSourceGroups.flatMap((group) =>
-          filterSelectedCards(group.cards.filter((card) => matchesModelFilter(card, effectiveModelFilters)))
-        )
-        return selectedCards.length
-          ? [{
-              key: 'chosen-models',
-              title: initialGrn || 'Packing List',
-              grn_number: initialGrn || '-',
-              brand_name: 'SELECTED MODELS',
-              category_path_label: '-',
-              cards: selectedCards,
-            }]
-          : []
-      }
-
-      return visibleMultipageGroups
+      const sourceGroups = options.sectionKey
+        ? visibleMultipageGroups.filter((group) => group.key === options.sectionKey)
+        : visibleMultipageGroups
+      return sourceGroups
         .map((group) => {
           const sectionCards = filterSelectedCards(
             group.cards.filter((card) => matchesModelFilter(card, effectiveModelFilters))
@@ -6109,7 +6102,12 @@ export default function PackingListSizeBreakdownPage() {
 
         drawInlineField('Group', getPdfGroupLabel(qtyMode), margin, y)
         y += 6
-        drawInlineField('Print Date', formatPdfPrintDate(printedAt), margin, y)
+        drawInlineField(
+          'Print Date',
+          `${formatPdfPrintDate(printedAt)} | ${options.chooseModels ? 'Selected Model' : 'All'}`,
+          margin,
+          y
+        )
         y += 6
         drawInlineField('Supplier Code', getSupplierCodeSummary(section), margin, y)
 
@@ -6725,6 +6723,7 @@ export default function PackingListSizeBreakdownPage() {
           brand_name: card.brand_name || 'UNBRANDED',
           model_variant: modelVariantLabel,
           item_name: itemName,
+          sku_code: card.catalogVariant?.sku_code || card.catalogVariant?.variant_code || card.source_variant_code || card.variant_code || '',
           breakdown_qty: totalQty,
           sizes,
           total_qty: totalQty,
@@ -6763,6 +6762,7 @@ export default function PackingListSizeBreakdownPage() {
           brand_name: card.brand_name || 'UNBRANDED',
           category_path: getCategoryPathLabel(card) || '-',
           item_name: itemName || '-',
+          sku_code: card.catalogVariant?.sku_code || card.catalogVariant?.variant_code || card.source_variant_code || card.variant_code || '',
           photo_url: plRow.pl_photo_url || card.photo_url || '',
         })
       })
@@ -6804,6 +6804,7 @@ export default function PackingListSizeBreakdownPage() {
           brand_name: displayInfo.brand_name || 'UNBRANDED',
           category_path: displayInfo.category_path || '-',
           source_variant_code: row.source_variant_code || sourceBreakdown.source_variant_code || '',
+          sku_code: displayInfo.sku_code || row.source_variant_code || sourceBreakdown.source_variant_code || '',
           item_name: row.pl_name || displayInfo.item_name || sourceBreakdown.pl_name || sourceBreakdown.variant_name || sourceBreakdown.model_name || 'PL Item',
           size_label: normalizeSizeLabel(row.size_label || sourceBreakdown.size_label),
           qty: Number(row.qty || 0),
@@ -7522,7 +7523,10 @@ export default function PackingListSizeBreakdownPage() {
                           )}
                         </td>
                         <td style={styles.td}>{row.brand_name}</td>
-                        <td style={{ ...styles.td, textAlign: 'left' }}>{row.item_name}</td>
+                        <td style={{ ...styles.td, textAlign: 'left' }}>
+                          <span>{row.item_name}</span>
+                          {row.sku_code ? <span style={styles.tableItemSku}>SKU: {row.sku_code}</span> : null}
+                        </td>
                         <td style={styles.td}>
                           {row.sizes.length ? (
                             <span style={styles.sizeSummary}>
@@ -7613,7 +7617,10 @@ export default function PackingListSizeBreakdownPage() {
                               </td>
                               <td style={{ ...styles.td, ...dividerStyle, textAlign: 'left' }}>
                                 {row.isFirstItemRow ? (
-                                  <span style={styles.koliItemText}>{row.item_name}</span>
+                                  <span style={styles.koliItemText}>
+                                    {row.item_name}
+                                    {row.sku_code ? <span style={styles.tableItemSku}>SKU: {row.sku_code}</span> : null}
+                                  </span>
                                 ) : null}
                               </td>
                               <td style={{ ...styles.td, ...dividerStyle }}>

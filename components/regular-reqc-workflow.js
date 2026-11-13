@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { createClient } from '@/utils/supabase/browser'
 import { getRolesForPermissionCode } from '@/utils/role-permissions'
+import { buildRegularReQcSizeBreakdown } from '@/utils/regular-reqc-print-summary.mjs'
 import styles from './regular-reqc-workflow.module.css'
 
 const supabase = createClient()
@@ -334,23 +335,40 @@ export default function RegularReQcWorkflow({ view = 'queue', source = 'regular'
       <td class="qty">${formatQty(group.qtyA)}</td><td class="qty">${formatQty(group.qtyB)}</td>
       <td class="qty">${formatQty(group.qtyC)}</td><td class="qty">${formatQty(group.qtyA + group.qtyB + group.qtyC)}</td>
     </tr>`).join('')
+    const sizeBreakdown = buildRegularReQcSizeBreakdown(printableGroups, queueById)
+    const sizeSections = ['A', 'B', 'C'].map((grade) => {
+      const gradeRows = sizeBreakdown[grade]
+      const detailRows = gradeRows.map((row) => `<tr><td>${escapePrintHtml(row.sku)}</td><td>${escapePrintHtml(row.name)}</td><td>${escapePrintHtml(row.size)}</td><td class="qty">${formatQty(row.qty)}</td></tr>`).join('')
+      const gradeTotal = gradeRows.reduce((sum, row) => sum + row.qty, 0)
+      return `<section class="size-section"><h2>Grade ${grade}</h2>
+        <table><thead><tr><th>SKU</th><th>Item</th><th>Size</th><th class="qty">Qty</th></tr></thead>
+        <tbody>${detailRows || '<tr><td colspan="4">No items in this grade.</td></tr>'}</tbody>
+        <tfoot><tr><td colspan="3">Grade ${grade} Total</td><td class="qty">${formatQty(gradeTotal)}</td></tr></tfoot></table></section>`
+    }).join('')
     printWindow.document.write(`<!doctype html><html><head><title>Reguler Re-QC Result Summary</title><style>
       @page { size: A4; margin: 20mm; }
       body { color: #172033; font: 12px Arial, sans-serif; margin: 0; }
       header { border-bottom: 2px solid #172033; padding-bottom: 14px; margin-bottom: 20px; }
       h1 { font-size: 22px; margin: 4px 0 8px; }
+      h2 { font-size: 15px; margin: 0 0 8px; }
       .eyebrow { color: #526176; font-size: 11px; font-weight: bold; text-transform: uppercase; }
       .meta { color: #526176; }
       table { border-collapse: collapse; width: 100%; }
+      thead { display: table-header-group; }
       th, td { padding: 9px 7px; border-bottom: 1px solid #dbe2ea; text-align: left; vertical-align: top; }
       th { background: #f4f6f8; font-size: 11px; }
       .qty { text-align: right; font-variant-numeric: tabular-nums; }
       tfoot td { border-top: 2px solid #172033; font-weight: bold; }
       tr { break-inside: avoid; }
+      .size-breakdown { margin-top: 28px; }
+      .size-breakdown > h2 { font-size: 17px; margin-bottom: 16px; }
+      .size-section { margin-top: 18px; }
+      .size-section h2 { break-after: avoid; }
     </style></head><body><header><div class="eyebrow">Quality Control</div><h1>Reguler Re-QC Result Summary</h1>
       <div class="meta">Printed ${escapePrintHtml(printedAt)} WIB · ${printableGroups.length} SKU selected</div></header>
       <table><thead><tr><th>SKU</th><th>Item</th><th class="qty">Grade A</th><th class="qty">Grade B</th><th class="qty">Grade C</th><th class="qty">Total</th></tr></thead>
       <tbody>${rows}</tbody><tfoot><tr><td colspan="2">Total</td><td class="qty">${formatQty(totals.a)}</td><td class="qty">${formatQty(totals.b)}</td><td class="qty">${formatQty(totals.c)}</td><td class="qty">${formatQty(totals.a + totals.b + totals.c)}</td></tr></tfoot></table>
+      <div class="size-breakdown"><h2>Size Breakdown</h2>${sizeSections}</div>
     </body></html>`)
     printWindow.document.close()
     printWindow.focus()

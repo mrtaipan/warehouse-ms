@@ -27,7 +27,7 @@ const TARGET_MANAGER_ROLES = new Set([
   'warehouse_leader',
 ])
 
-function normalizeText(value) {
+function normalizeText(value) { 
   return String(value || '').trim()
 }
 

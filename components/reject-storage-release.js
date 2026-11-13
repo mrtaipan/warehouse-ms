@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { createClient } from '@/utils/supabase/browser'
 import styles from './reject-storage-release.module.css'
 
@@ -96,7 +97,9 @@ export default function RejectStorageRelease({ sourceType, items, outbounds, onS
     }
   }
 
-  return (
+  if (typeof document === 'undefined') return null
+
+  return createPortal((
     <div className={styles.overlay} role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) onClose() }}>
       <form className={styles.dialog} role="dialog" aria-modal="true" aria-labelledby="reject-release-title" onSubmit={handleSubmit}>
         <header className={styles.header}>
@@ -147,5 +150,5 @@ export default function RejectStorageRelease({ sourceType, items, outbounds, onS
         <footer><button type="button" onClick={onClose} disabled={saving}>Cancel</button><button type="submit" className={styles.primary} disabled={saving || !selectedSize || availableQty < 1 || !qty || !reason.trim()}>{saving ? 'Processing...' : 'Confirm Release'}</button></footer>
       </form>
     </div>
-  )
+  ), document.body)
 }

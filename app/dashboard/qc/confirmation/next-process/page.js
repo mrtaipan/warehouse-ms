@@ -3,6 +3,7 @@
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { createClient } from '@/utils/supabase/browser'
 import { getProfileByAuthenticatedUser } from '@/utils/user-profiles'
 import { ADMIN_EMAIL, hasPermission } from '@/utils/permissions'
@@ -863,7 +864,7 @@ const styles = {
   photoPreviewOverlay: {
     position: 'fixed',
     inset: 0,
-    zIndex: 60,
+    zIndex: 1300,
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
@@ -2595,7 +2596,7 @@ export default function QcConfirmationNextProcessPage() {
             {saving ? 'Posting...' : 'Post'}
           </button>
         </section>
-        {previewPhotoUrl ? (
+        {previewPhotoUrl && typeof document !== 'undefined' ? createPortal(
           <div style={styles.photoPreviewOverlay} role="dialog" aria-modal="true" onClick={() => setPreviewPhotoUrl('')}>
             <div style={styles.photoPreviewWrap} onClick={(event) => event.stopPropagation()}>
               <img src={previewPhotoUrl} alt="Product preview" style={styles.photoPreviewImage} />
@@ -2603,7 +2604,8 @@ export default function QcConfirmationNextProcessPage() {
                 X
               </button>
             </div>
-          </div>
+          </div>,
+          document.body
         ) : null}
       </div>
     )
@@ -2946,7 +2948,7 @@ export default function QcConfirmationNextProcessPage() {
           </>
         ) : null}
       </section>
-      {previewPhotoUrl ? (
+      {previewPhotoUrl && typeof document !== 'undefined' ? createPortal(
         <div style={styles.photoPreviewOverlay} role="dialog" aria-modal="true" onClick={() => setPreviewPhotoUrl('')}>
           <div style={styles.photoPreviewWrap} onClick={(event) => event.stopPropagation()}>
             <img src={previewPhotoUrl} alt="Product preview" style={styles.photoPreviewImage} />
@@ -2954,7 +2956,8 @@ export default function QcConfirmationNextProcessPage() {
               X
             </button>
           </div>
-        </div>
+        </div>,
+        document.body
       ) : null}
     </div>
   )

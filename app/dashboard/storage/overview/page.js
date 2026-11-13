@@ -12,6 +12,7 @@ import ProductDirectoryClient from '../daftar-barang/product-directory-client'
 import ShelvingUploadClient from '../shelving-upload-client'
 import ArklineRejectionStoragePanel from '@/components/arkline-rejection-storage-panel'
 import WarehouseLoansClient, { WarehouseLoanQueueReturns } from '@/components/warehouse-loans-client'
+import StorageLocationGuide, { StorageLocationHelpButton } from '@/components/storage-location-guide'
 import RejectStorageRelease, { getReleasedQtyBySource, loadRejectStorageOutbounds } from '@/components/reject-storage-release'
 import rejectReleaseStyles from '@/components/reject-storage-release.module.css'
 import arklineReportStyles from '@/app/dashboard/qc/retur-report/retur-report.module.css'
@@ -1246,6 +1247,7 @@ export default function StorageOverviewPage() {
   const [isShelvingUploadModalOpen, setIsShelvingUploadModalOpen] = useState(false)
   const [isCompactLayout, setIsCompactLayout] = useState(false)
   const [activeListMode, setActiveListMode] = useState(initialListMode)
+  const [showStorageLocationGuide, setShowStorageLocationGuide] = useState(false)
   const [stockPage, setStockPage] = useState(1)
   const [queuePage, setQueuePage] = useState(1)
   const [rejectPage, setRejectPage] = useState(1)
@@ -1608,7 +1610,7 @@ export default function StorageOverviewPage() {
       storageAccess.queue ? ['temporary-sales', 'Temp. Sales Area'] : null,
       storageAccess.queue ? ['temporary-retur', 'Temp. Retur Keeping'] : null,
       storageAccess.queue ? ['putaway-queue', 'Shelving Queue'] : null,
-      storageAccess.menu ? ['loans', 'Peminjaman Barang'] : null,
+      storageAccess.menu ? ['loans', 'Product Loans'] : null,
       canViewRejectStorage ? ['reject-storage', 'Reject Storage'] : null,
     ].filter(Boolean),
     [canViewRejectStorage, storageAccess.location, storageAccess.menu, storageAccess.queue]
@@ -6125,8 +6127,11 @@ export default function StorageOverviewPage() {
               : styles.storageTabList}
           >
             {storagePrimaryTabItems.map(([mode, label]) => (
-              <button
+              <div
                 key={mode}
+                style={{ ...styles.storagePrimaryTabWrap, ...(isCompactLayout ? styles.storagePrimaryTabWrapCompact : {}) }}
+              >
+              <button
                 type="button"
                 onClick={() => {
                   setActiveListMode(
@@ -6143,12 +6148,15 @@ export default function StorageOverviewPage() {
                 style={{
                   ...styles.storageTabButton,
                   ...(isCompactLayout ? styles.storageTabButtonCompact : {}),
+                  ...(mode === 'storage-location' && !isCompactLayout ? styles.storageTabButtonWithGuide : {}),
                   ...(visiblePrimaryTabMode === mode ? styles.storageTabButtonActive : {}),
                 }}
               >
-                <span style={styles.storageTabLabel}>{label}</span>
+                <span style={{ ...styles.storageTabLabel, ...(mode === 'storage-location' && isCompactLayout ? styles.storageTabLabelWithGuideCompact : {}) }}>{label}</span>
                 {visiblePrimaryTabMode === mode ? <span style={styles.storageTabUnderline} /> : null}
               </button>
+              {mode === 'storage-location' ? <StorageLocationHelpButton onClick={() => setShowStorageLocationGuide(true)} /> : null}
+              </div>
             ))}
           </div>
 
@@ -6261,6 +6269,8 @@ export default function StorageOverviewPage() {
         ) : visibleListMode === 'loans' ? (
           <WarehouseLoansClient
             currentUserId={storageAccess.currentUserId}
+            isAdmin={Boolean(storageAccess.isAdmin)}
+            userProfilesByEmail={userProfilesByEmail}
             canManage={Boolean(storageAccess.locationEdit || storageAccess.queueEdit)}
             lockedGroup={lockedStorageGroup}
             storageRows={storageRows}
@@ -7763,6 +7773,7 @@ export default function StorageOverviewPage() {
         </div>
       </div>
 
+      {showStorageLocationGuide ? <StorageLocationGuide onClose={() => setShowStorageLocationGuide(false)} /> : null}
       {rejectDeleteEntry ? (
         <div style={{ ...styles.modalOverlay, zIndex: 70 }}>
           <div style={styles.confirmationModalCard} role="dialog" aria-modal="true" aria-labelledby="reject-delete-title">
@@ -10024,6 +10035,14 @@ const styles = {
     gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
     overflowX: 'hidden',
   },
+  storagePrimaryTabWrap: {
+    display: 'flex',
+    position: 'relative',
+    minWidth: 0,
+  },
+  storagePrimaryTabWrapCompact: {
+    width: '100%',
+  },
   storageTabButton: {
     minHeight: '42px',
     minWidth: '138px',
@@ -10055,6 +10074,10 @@ const styles = {
     minWidth: 0,
     padding: '0 6px',
   },
+  storageTabButtonWithGuide: {
+    minWidth: '174px',
+    paddingRight: '30px',
+  },
   storageTabButtonActive: {
     borderTopWidth: '1px',
     borderRightWidth: '1px',
@@ -10070,6 +10093,11 @@ const styles = {
     fontWeight: '750',
     lineHeight: 1.1,
     whiteSpace: 'nowrap',
+  },
+  storageTabLabelWithGuideCompact: {
+    maxWidth: 'calc(100% - 18px)',
+    fontSize: '11px',
+    whiteSpace: 'normal',
   },
   storageTabUnderline: {
     position: 'absolute',

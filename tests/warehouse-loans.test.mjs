@@ -14,6 +14,7 @@ test('partial PL loan preserves the Packing List and returns only after receipt'
       create function auth.jwt() returns jsonb language sql stable as $$
         select '{"email":"borrower@example.com"}'::jsonb $$;
       create function reqc_has_permission(p_code text) returns boolean language sql stable as $$ select true $$;
+      create function warehouse_loan_is_admin() returns boolean language sql stable as $$ select false $$;
       create function upload_stock_sku_tokens(p_sku text,p_variant text,p_name text) returns text[]
         language sql stable as $$ select array[upper(regexp_replace(coalesce(p_sku,p_variant,''),'[^A-Z0-9]','','g'))] $$;
       create table dir_categories(id bigint primary key);
@@ -53,6 +54,10 @@ test('partial PL loan preserves the Packing List and returns only after receipt'
     await db.exec(sizeSql)
     const loanSql = await readFile(new URL('../supabase/warehouse_loans.sql', import.meta.url), 'utf8')
     await db.exec(loanSql)
+    const addExistingSql = await readFile(new URL('../supabase/warehouse_loan_add_existing.sql', import.meta.url), 'utf8')
+    await db.exec(addExistingSql)
+    const editRequestSql = await readFile(new URL('../supabase/warehouse_loan_edit_request_item.sql', import.meta.url), 'utf8')
+    await db.exec(editRequestSql)
     const created = await db.query(`select create_warehouse_loan('MOB','Photoshoot',
       '[{"sku":"SKU-1","name":"Shirt","size":"M","qty":3}]'::jsonb) as id`)
     const loanId = created.rows[0].id
@@ -124,6 +129,45 @@ test('partial PL loan preserves the Packing List and returns only after receipt'
     assert.equal((await db.query('select status from warehouse_loans where id=$1', [arkline.rows[0].id])).rows[0].status, 'COMPLETED')
     const movements = await db.query(`select movement_type,qty from warehouse_storage_movements order by id`)
     assert.deepEqual(movements.rows.map((row) => row.movement_type), ['LOAN_RETURN', 'LOAN_OUT', 'LOAN_RETURN'])
+
+    const third = await db.query(`select create_warehouse_loan('MOB','Content',
+      '[{"sku":"SKU-1","name":"Shirt","size":"M","qty":2}]'::jsonb) as id`)
+    const thirdId = third.rows[0].id
+    const thirdItem = await db.query(`select id from warehouse_loan_items where loan_id=$1 and event_type='REQUEST'`, [thirdId])
+    await db.query(`select issue_warehouse_loan_item($1,'PL_QUEUE',7,1)`, [thirdItem.rows[0].id])
+    assert.equal((await db.query('select status from warehouse_loans where id=$1', [thirdId])).rows[0].status, 'REQUESTED')
+    await db.query(`select add_warehouse_loan_items($1,
+      '[{"sku":"SKU-1","name":"Shirt","size":"M","qty":1}]'::jsonb)`, [thirdId])
+    const addedItem = await db.query(`select id from warehouse_loan_items where loan_id=$1 and event_type='REQUEST' and id<>$2`, [thirdId, thirdItem.rows[0].id])
+    assert.equal(addedItem.rows.length, 1)
+    await db.query(`select issue_warehouse_loan_item($1,'PL_QUEUE',7,1)`, [thirdItem.rows[0].id])
+    await db.query(`select issue_warehouse_loan_item($1,'PL_QUEUE',7,1)`, [addedItem.rows[0].id])
+    assert.equal((await db.query('select status from warehouse_loans where id=$1', [thirdId])).rows[0].status, 'IN_LOAN')
+    await assert.rejects(() => db.query(`select add_warehouse_loan_items($1,
+      '[{"sku":"SKU-1","name":"Shirt","size":"M","qty":1}]'::jsonb)`, [thirdId]), /can no longer accept items/)
+
+    const editable = await db.query(`select create_warehouse_loan('MOB','Sample',
+      '[{"sku":"SKU-1","name":"Shirt","size":"XL","qty":3},
+        {"sku":"SKU-1","name":"Shirt","size":"M","qty":1}]'::jsonb) as id`)
+    const editableItems = await db.query(`select id,size from warehouse_loan_items
+      where loan_id=$1 and event_type='REQUEST' order by size desc`, [editable.rows[0].id])
+    const xlId = editableItems.rows.find((row) => row.size === 'XL').id
+    await db.query(`select update_warehouse_loan_request_item($1,'L',4)`, [xlId])
+    assert.deepEqual((await db.query(`select size,qty from warehouse_loan_items where id=$1`, [xlId])).rows[0], { size: 'L', qty: 4 })
+    await db.exec(`insert into pl_packing_items values(8,'queued','MOB','SKU-1','L',10)`)
+    await db.query(`select issue_warehouse_loan_item($1,'PL_QUEUE',8,2)`, [xlId])
+    await assert.rejects(() => db.query(`select update_warehouse_loan_request_item($1,'XL',4)`, [xlId]), /Size cannot change/)
+    await assert.rejects(() => db.query(`select update_warehouse_loan_request_item($1,'L',1)`, [xlId]), /Qty cannot be below/)
+    await db.query(`select update_warehouse_loan_request_item($1,'L',3)`, [xlId])
+    assert.equal((await db.query(`select status from warehouse_loans where id=$1`, [editable.rows[0].id])).rows[0].status, 'REQUESTED')
+    const edits = await db.query(`select qty,notes from warehouse_loan_items where request_item_id=$1 and event_type='EDIT_REQUEST' order by created_at,id`, [xlId])
+    assert.equal(edits.rows.length, 2)
+    assert.match(edits.rows[1].notes, /previous_qty/)
+    await db.query(`select issue_warehouse_loan_item($1,'PL_QUEUE',8,1)`, [xlId])
+    const remainingItem = editableItems.rows.find((row) => row.size === 'M').id
+    await db.query(`select issue_warehouse_loan_item($1,'PL_QUEUE',7,1)`, [remainingItem])
+    assert.equal((await db.query(`select status from warehouse_loans where id=$1`, [editable.rows[0].id])).rows[0].status, 'IN_LOAN')
+    await assert.rejects(() => db.query(`select update_warehouse_loan_request_item($1,'L',4)`, [xlId]), /can no longer be edited/)
   } finally {
     await db.close()
   }

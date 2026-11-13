@@ -1,0 +1,17 @@
+.helpButton { position: absolute; z-index: 3; top: 8px; right: 16px; display: grid; place-items: center; width: 20px; height: 20px; padding: 0; border: 1px solid #cbd5e1; border-radius: 50%; background: #f8fafc; color: #334155; font-size: 12px; font-weight: 700; line-height: 1; cursor: pointer; }
+.helpButton:hover, .helpButton:focus-visible { border-color: #64748b; background: #e2e8f0; }
+.helpButton:focus-visible, .closeButton:focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; }
+.backdrop { position: fixed; z-index: 1100; inset: 0; display: grid; place-items: center; padding: 20px; background: rgb(17 24 39 / 45%); }
+.dialog { width: min(720px, 100%); max-height: calc(100dvh - 40px); overflow-y: auto; border: 1px solid #dce2e9; border-radius: 8px; background: #fff; box-shadow: 0 20px 50px rgb(15 23 42 / 14%); }
+.header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 24px 28px 20px; }
+.eyebrow { margin: 0 0 8px; color: #64748b; font-size: 12px; font-weight: 700; }
+.header h2 { margin: 0; color: #111827; font-size: 22px; font-weight: 700; }
+.intro { margin: 7px 0 0; color: #64748b; font-size: 14px; line-height: 1.5; }
+.closeButton { display: grid; place-items: center; flex: none; width: 36px; height: 36px; padding: 0; border: 1px solid #dce2e9; border-radius: 6px; background: #fff; color: #334155; font-size: 24px; cursor: pointer; }
+.closeButton:hover { background: #f3f4f6; }
+.list { padding: 0 28px 24px; }
+.row { display: grid; grid-template-columns: 28px minmax(120px, 170px) minmax(0, 1fr); align-items: start; gap: 12px; padding: 14px 0; border-top: 1px solid #e5e7eb; }
+.index { color: #94a3b8; font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.row h3 { margin: 0; color: #111827; font-size: 14px; font-weight: 700; }
+.row p { margin: 0; color: #475569; font-size: 13px; line-height: 1.55; }
+@media (max-width: 600px) { .helpButton { right: 3px; } .backdrop { padding: 12px; } .dialog { max-height: calc(100dvh - 24px); } .header { padding: 20px 18px 16px; } .list { padding: 0 18px 18px; } .row { grid-template-columns: 24px minmax(0, 1fr); gap: 4px 10px; } .row p { grid-column: 2; } }

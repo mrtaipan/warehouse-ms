@@ -539,6 +539,23 @@ async function fetchWarehouseStorageSkuTotals() {
   }))
 }
 
+async function fetchActiveTemporarySkuTotals() {
+  const rows = []
+  for (let from = 0; ; from += BATCH_SIZE) {
+    const { data, error } = await supabase.from('warehouse_temporary_sales_items')
+      .select('id, sku_id, source_variant_code, group_code, area_type, qty_in_area')
+      .eq('status', 'IN_TEMPORARY_AREA')
+      .in('group_code', ['MOB', 'OI'])
+      .gt('qty_in_area', 0)
+      .order('id', { ascending: true })
+      .range(from, from + BATCH_SIZE - 1)
+    if (error) throw error
+    rows.push(...(data || []).filter((row) => ['SALES', 'RETUR_KEEPING'].includes(normalizeUpper(row.area_type || 'SALES'))))
+    if (!data || data.length < BATCH_SIZE) break
+  }
+  return rows
+}
+
 async function fetchOptionalRows(tableName, selectColumns = '*', orderColumn = 'id') {
   try {
     return await fetchAllRows(tableName, selectColumns, orderColumn)
@@ -827,6 +844,7 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
   const [inboundRows, setInboundRows] = useState([])
   const [breakdownRows, setBreakdownRows] = useState([])
   const [warehouseStorageRows, setWarehouseStorageRows] = useState([])
+  const [temporaryInventoryRows, setTemporaryInventoryRows] = useState([])
   const [groupTransferRows, setGroupTransferRows] = useState([])
   const [bundleRows, setBundleRows] = useState([])
   const [bundleComponentRows, setBundleComponentRows] = useState([])
@@ -920,6 +938,7 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
           nextInboundRows,
           nextBreakdownRows,
           nextWarehouseStorageRows,
+          nextTemporaryInventoryRows,
           nextGroupTransferRows,
           nextBundleRows,
           nextBundleComponentRows,
@@ -934,6 +953,7 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
           fetchAllRows('inbound', 'id, grn_number, inbound_date, item_name, created_at', 'created_at'),
           fetchAllRows('pl_size_breakdown', BREAKDOWN_SELECT_COLUMNS, 'id'),
           fetchWarehouseStorageSkuTotals(),
+          fetchActiveTemporarySkuTotals(),
           fetchOptionalRows('product_group_transfer_events', GROUP_TRANSFER_SELECT_COLUMNS, 'created_at'),
           fetchOptionalRows('product_bundles', BUNDLE_SELECT_COLUMNS, 'created_at'),
           fetchOptionalRows('product_bundle_components', BUNDLE_COMPONENT_SELECT_COLUMNS, 'created_at'),
@@ -949,6 +969,7 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
         setInboundRows(nextInboundRows)
         setBreakdownRows(nextBreakdownRows)
         setWarehouseStorageRows(nextWarehouseStorageRows)
+        setTemporaryInventoryRows(nextTemporaryInventoryRows)
         setGroupTransferRows(nextGroupTransferRows)
         setBundleRows(nextBundleRows)
         setBundleComponentRows(nextBundleComponentRows)
@@ -982,7 +1003,16 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
       if (sku) variantBySku.set(sku, variant)
     })
 
-    ;(warehouseStorageRows || []).forEach((entry) => {
+    const inventoryRows = [
+      ...(warehouseStorageRows || []),
+      ...(temporaryInventoryRows || []).map((entry) => ({
+        sku_id: entry.sku_id || entry.source_variant_code,
+        qty: entry.qty_in_area,
+        group_code: entry.group_code,
+      })),
+    ]
+
+    inventoryRows.forEach((entry) => {
       const sku = normalizeUpper(entry.sku_id)
       if (!sku) return
 
@@ -1048,7 +1078,7 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
       storageQtyBySkuAndGroup,
       variantReleaseStateByKey,
     }
-  }, [brands, breakdownRows, categories, identityEvents, inboundRows, productModels, productVariantReleaseStates, productVariants, warehouseStorageRows])
+  }, [brands, breakdownRows, categories, identityEvents, inboundRows, productModels, productVariantReleaseStates, productVariants, temporaryInventoryRows, warehouseStorageRows])
 
   const effectivePackingRows = useMemo(() => {
     const transfersBySourceId = new Map()

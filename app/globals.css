@@ -24,3 +24,19 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/* Keep the page still while any modal is open; modal content may scroll itself. */
+html:has([aria-modal="true"], [class*="modalOverlay" i], [class*="modalBackdrop" i], div[style*="position: fixed"][style*="inset: 0"][style*="background: rgba("]),
+body:has([aria-modal="true"], [class*="modalOverlay" i], [class*="modalBackdrop" i], div[style*="position: fixed"][style*="inset: 0"][style*="background: rgba("]) {
+  overflow: hidden !important;
+  overscroll-behavior: none;
+}
+
+/* Shared focus treatment for modal overlays, including inline-styled ones. */
+:where([class*="modalOverlay" i], [class*="modalBackdrop" i], [class*="dialogOverlay" i], [class*="dialogBackdrop" i], div[style*="position: fixed"][style*="inset: 0"][style*="background: rgba("]),
+:where(div):has(> [aria-modal="true"]):not([aria-modal="true"]) {
+  background: rgb(15 23 42 / 88%) !important;
+  -webkit-backdrop-filter: blur(24px) !important;
+  backdrop-filter: blur(24px) !important;
+  overscroll-behavior: contain;
+}
