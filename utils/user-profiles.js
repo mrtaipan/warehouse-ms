@@ -47,13 +47,14 @@ export function clearUserProfileCache() {
   userProfileCache.clear()
 }
 
-export async function getProfileByAuthenticatedUser(supabase, user, select = '*') {
+export async function getProfileByAuthenticatedUser(supabase, user, select = '*', options = {}) {
   if (!supabase || !user) {
     return { data: null, error: null }
   }
 
+  const skipCache = options?.skipCache === true
   const cacheKey = getProfileCacheKey(user, select)
-  const cached = readProfileCache(cacheKey)
+  const cached = skipCache ? null : readProfileCache(cacheKey)
 
   if (cached) {
     return cached
@@ -74,7 +75,7 @@ export async function getProfileByAuthenticatedUser(supabase, user, select = '*'
     }
 
     if (authMatch.data) {
-      return writeProfileCache(cacheKey, authMatch)
+      return skipCache ? authMatch : writeProfileCache(cacheKey, authMatch)
     }
   }
 
@@ -89,5 +90,5 @@ export async function getProfileByAuthenticatedUser(supabase, user, select = '*'
     .ilike('email', normalizedEmail)
     .maybeSingle()
 
-  return writeProfileCache(cacheKey, emailMatch)
+  return skipCache ? emailMatch : writeProfileCache(cacheKey, emailMatch)
 }

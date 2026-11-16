@@ -21,7 +21,6 @@ const DESTINATIONS = [
 const LOAN_STATUS_GUIDE = [
   ['REQUESTED', 'Barang sudah diminta, tetapi belum seluruh qty aktif disiapkan melalui Issue.'],
   ['IN_LOAN', 'Seluruh qty aktif sudah disiapkan melalui Issue. Barang bisa masih menunggu penyerahan atau sedang dipinjam; sistem belum membedakan keduanya.'],
-  ['RETURN_PENDING', 'Peminjam sudah menyatakan barang akan dikembalikan, tetapi penerima belum mengonfirmasi barangnya.'],
   ['COMPLETED', 'Seluruh barang yang di-Issue sudah diterima kembali dan dikonfirmasi.'],
   ['CLOSED', 'Pinjaman atau sisa pinjaman tidak dikembalikan; penyelesaiannya dicatat bersama alasan.'],
   ['CANCELLED', 'Seluruh permintaan dibatalkan sebelum Issue. Pembatalan setelah Issue belum tersedia; stok harus dikembalikan ke sumber dan pembatalannya dicatat.'],
@@ -41,7 +40,7 @@ const shortName = (value) => {
 function eventTotals(events, itemId) {
   const rows = events.filter((row) => row.request_item_id === itemId)
   const sum = (type) => rows.filter((row) => row.event_type === type).reduce((total, row) => total + qty(row.qty), 0)
-  return { issued: sum('ISSUE'), declared: sum('DECLARE_RETURN'), received: sum('RECEIVE'), closed: sum('CLOSE') }
+  return { issued: sum('ISSUE'), received: sum('RECEIVE'), closed: sum('CLOSE') }
 }
 
 async function loadLoanEvents(loanIds) {
@@ -395,7 +394,7 @@ export default function WarehouseLoansClient({ currentUserId, canManage, isAdmin
           const isOpen = activeCaseId === loan.id
           return <Fragment key={loan.id}>
             <tr className={isOpen ? styles.activeRow : undefined}>
-              <td className={styles.purposeCell}><div className={styles.loanNumberCell}>{canManage ? <button type="button" className={styles.detailButton} data-open={isOpen} onClick={() => setActiveCaseId(isOpen ? '' : loan.id)} aria-expanded={isOpen} aria-label={`${isOpen ? 'Hide' : 'View'} details for ${loan.loan_number || loan.purpose}`} title={isOpen ? 'Hide details' : 'View details'}>{isOpen ? '−' : '+'}</button> : loan.requester_id === currentUserId && (totals.issued > totals.returned + totals.closed || totals.unissued > 0) ? <button type="button" className={styles.returnButton} onClick={() => setActiveCaseId(isOpen ? '' : loan.id)} aria-expanded={isOpen}>{isOpen ? 'Close' : totals.issued > totals.returned + totals.closed ? 'Return' : 'Edit Items'}</button> : null}<strong>{loan.loan_number || loan.id.slice(0, 8)}</strong></div></td>
+              <td className={styles.purposeCell}><div className={styles.loanNumberCell}>{canManage ? <button type="button" className={styles.detailButton} data-open={isOpen} onClick={() => setActiveCaseId(isOpen ? '' : loan.id)} aria-expanded={isOpen} aria-label={`${isOpen ? 'Hide' : 'View'} details for ${loan.loan_number || loan.purpose}`} title={isOpen ? 'Hide details' : 'View details'}>{isOpen ? '−' : '+'}</button> : loan.requester_id === currentUserId ? <button type="button" className={styles.returnButton} onClick={() => setActiveCaseId(isOpen ? '' : loan.id)} aria-expanded={isOpen}>{isOpen ? 'Hide' : 'Details'}</button> : null}<strong>{loan.loan_number || loan.id.slice(0, 8)}</strong></div></td>
               <td>{loan.purpose}</td>
               <td>{loan.group_code}</td>
               <td className={styles.number}>{totals.requested}</td>
@@ -411,8 +410,7 @@ export default function WarehouseLoansClient({ currentUserId, canManage, isAdmin
                 const cancelled = events.filter((row) => row.request_item_id === item.id && row.event_type === 'CANCEL_REQUEST').reduce((sum, row) => sum + qty(row.qty), 0)
                 const remainingIssue = qty(item.qty) - totals.issued - cancelled
                 const outstanding = totals.issued - totals.received - totals.closed
-                const declarations = events.filter((row) => row.request_item_id === item.id && row.event_type === 'DECLARE_RETURN')
-                const availableDeclare = outstanding - (totals.declared - totals.received)
+                const receivedReturns = events.filter((row) => row.request_item_id === item.id && row.event_type === 'RECEIVE')
                 const options = sourceOptions(item, loan.group_code)
                 const form = forms[item.id] || {}
                 const matchingStockLocationIds = new Set(storageRows.filter((stock) => (
@@ -424,6 +422,18 @@ export default function WarehouseLoansClient({ currentUserId, canManage, isAdmin
                   && ['PALLET', 'SHELVING'].includes(row.location_type)
                   && matchingStockLocationIds.has(Number(row.id))
                 ))
+                const issueRows = events.filter((row) => row.request_item_id === item.id && row.event_type === 'ISSUE')
+                const allowQueue = issueRows.length > 0 && issueRows.every((row) => row.source_type === 'PL_QUEUE')
+                const destinationOptions = DESTINATIONS.filter(([type]) => (
+                  (type !== 'STORAGE_QUEUE' || allowQueue)
+                  && (!['PALLET', 'SHELVING'].includes(type) || returnLocations.some((row) => row.location_type === type))
+                ))
+                const defaultDestination = returnLocations.some((row) => row.location_type === 'SHELVING')
+                  ? 'SHELVING' : returnLocations.some((row) => row.location_type === 'PALLET') ? 'PALLET' : 'SHELVING_QUEUE'
+                const destination = destinationOptions.some(([type]) => type === form.destination)
+                  ? form.destination : defaultDestination
+                const storageDestination = destination === 'PALLET' || destination === 'SHELVING'
+                const selectedLocation = returnLocations.find((row) => Number(row.id) === Number(form.locationId) && row.location_type === destination)
                 const canIssue = canManage && (isAdmin || loan.requester_id !== currentUserId) && remainingIssue > 0
                 const canRemove = (loan.requester_id === currentUserId || isAdmin) && (totals.issued === 0 || remainingIssue > 0)
                 const canEdit = loan.status === 'REQUESTED' && (loan.requester_id === currentUserId || isAdmin)
@@ -437,28 +447,18 @@ export default function WarehouseLoansClient({ currentUserId, canManage, isAdmin
                         <button type="button" className={styles.primary} disabled={busy || !itemEdit.qty || (loan.group_code === 'ARKLINE' && !ARKLINE_SIZES.includes(itemEdit.size))} onClick={() => void saveRequestItem(item, totals.issued + cancelled)}>Save</button>
                         <button type="button" className={styles.secondary} disabled={busy} onClick={() => setEditingItemId('')}>Cancel</button>
                       </div> : canIssue || canRemove || canEdit ? <div className={styles.issueControls}>{canIssue ? <><select aria-label={`Source for ${item.item_name}`} value={form.source || ''} onChange={(event) => setForm(item.id, { source: event.target.value, manualSource: '' })}><option value="">Select source</option>{options.map((option) => <option key={option.key} value={option.key}>{option.label}</option>)}</select>{form.source === 'OTHER' ? <input aria-label="Other source location" value={form.manualSource || ''} maxLength={160} onChange={(event) => setForm(item.id, { manualSource: event.target.value })} placeholder="Type source location" /> : null}<input className={styles.issueQty} aria-label="Issue qty" type="number" min="1" max={remainingIssue} value={form.issueQty || ''} onChange={(event) => setForm(item.id, { issueQty: event.target.value === '' ? '' : Math.min(remainingIssue, Math.max(1, Number(event.target.value) || 1)) })} placeholder="Qty" /><button type="button" className={styles.primary} disabled={busy || !form.source || !Number(form.issueQty) || Number(form.issueQty) > remainingIssue || (form.source === 'OTHER' && !form.manualSource?.trim())} onClick={() => { const [sourceType, sourceId] = form.source.split(':'); void perform('Loan item issued.', () => sourceType === 'OTHER' ? supabase.rpc('issue_warehouse_loan_item_other', { p_item_id: item.id, p_qty: Number(form.issueQty), p_source_label: form.manualSource.trim() }) : supabase.rpc('issue_warehouse_loan_item', { p_item_id: item.id, p_source_type: sourceType, p_source_id: Number(sourceId), p_qty: Number(form.issueQty) }), { refreshStock: sourceType !== 'OTHER' }) }}>Issue</button></> : null}{canEdit ? <button type="button" className={styles.editItemButton} disabled={busy} onClick={() => { setEditingItemId(item.id); setItemEdit({ size: item.size || '', qty: String(item.qty) }); setError('') }} aria-label={`Edit size and qty for ${item.item_name}`} title="Edit size and qty">✎</button> : null}{canRemove ? <button type="button" className={styles.removeItemButton} disabled={busy} onClick={() => void removeRequestItem(item, remainingIssue, totals.issued)} aria-label={`Remove ${item.item_name} size ${item.size || '-'}`} title="Remove unissued item">×</button> : null}</div> : null}
-                  {canManage && declarations.map((declaration) => {
-                    const accepted = events.filter((row) => row.declaration_id === declaration.id && row.event_type === 'RECEIVE').reduce((sum, row) => sum + qty(row.qty), 0)
-                    const remaining = qty(declaration.qty) - accepted
-                    const receiveForm = forms[declaration.id] || {}
-                    const issueRows = events.filter((row) => row.request_item_id === item.id && row.event_type === 'ISSUE')
-                    const allowQueue = issueRows.length > 0 && issueRows.every((row) => row.source_type === 'PL_QUEUE')
-                    const destinationOptions = DESTINATIONS.filter(([type]) => (
-                      (type !== 'STORAGE_QUEUE' || allowQueue)
-                      && (!['PALLET', 'SHELVING'].includes(type) || returnLocations.some((row) => row.location_type === type))
-                    ))
-                    const defaultDestination = returnLocations.some((row) => row.location_type === 'SHELVING')
-                      ? 'SHELVING' : returnLocations.some((row) => row.location_type === 'PALLET') ? 'PALLET' : 'SHELVING_QUEUE'
-                    const destination = destinationOptions.some(([type]) => type === receiveForm.destination)
-                      ? receiveForm.destination : defaultDestination
-                    const storageDestination = destination === 'PALLET' || destination === 'SHELVING'
-                    const selectedLocation = returnLocations.find((row) => Number(row.id) === Number(receiveForm.locationId) && row.location_type === destination)
-                    return remaining > 0 ? <div className={styles.returnBox} key={declaration.id}><span>{remaining} unit(s) awaiting receipt</span><div className={styles.actionRow}><select aria-label="Return destination" value={destination} onChange={(event) => setForm(declaration.id, { destination: event.target.value, locationId: '' })}>{destinationOptions.map(([type, label]) => <option value={type} key={type}>{label}</option>)}</select>{storageDestination ? <select className={styles.returnLocationSelect} aria-label="Return location" value={receiveForm.locationId || ''} onChange={(event) => setForm(declaration.id, { locationId: event.target.value })}><option value="">Select {destination.toLowerCase()} location</option>{returnLocations.filter((row) => row.location_type === destination).map((row) => <option key={row.id} value={row.id}>{formatLocation(row)}</option>)}</select> : null}<input aria-label="Receive qty" type="number" min="1" max={remaining} value={receiveForm.receiveQty || ''} onChange={(event) => setForm(declaration.id, { receiveQty: event.target.value })} placeholder="Qty" /><button type="button" className={styles.primary} disabled={busy || !receiveForm.receiveQty || (storageDestination && !selectedLocation)} onClick={() => void perform('Return received.', () => supabase.rpc('receive_warehouse_loan_return', { p_declaration_id: declaration.id, p_qty: Number(receiveForm.receiveQty), p_destination: storageDestination ? 'STORAGE' : destination, p_rack_location_id: storageDestination ? selectedLocation.id : null }), { refreshStock: true })}>Receive</button></div></div> : null
+                      {canManage && outstanding > 0 ? <div className={styles.returnBox}><div className={styles.actionRow}><select aria-label="Return destination" value={destination} onChange={(event) => setForm(item.id, { destination: event.target.value, locationId: '' })}>{destinationOptions.map(([type, label]) => <option value={type} key={type}>{label}</option>)}</select>{storageDestination ? <select className={styles.returnLocationSelect} aria-label="Return location" value={form.locationId || ''} onChange={(event) => setForm(item.id, { locationId: event.target.value })}><option value="">Select {destination.toLowerCase()} location</option>{returnLocations.filter((row) => row.location_type === destination).map((row) => <option key={row.id} value={row.id}>{formatSourceLocation(row)}</option>)}</select> : null}<input aria-label="Receive qty" type="number" min="1" max={outstanding} value={form.receiveQty || ''} onChange={(event) => setForm(item.id, { receiveQty: event.target.value === '' ? '' : Math.min(outstanding, Math.max(1, Math.floor(Number(event.target.value) || 1))) })} placeholder="Qty" /><button type="button" className={styles.primary} disabled={busy || !Number(form.receiveQty) || Number(form.receiveQty) > outstanding || (storageDestination && !selectedLocation)} onClick={() => void perform('Return received.', () => supabase.rpc('receive_warehouse_loan_item', { p_item_id: item.id, p_qty: Number(form.receiveQty), p_destination: storageDestination ? 'STORAGE' : destination, p_rack_location_id: storageDestination ? selectedLocation.id : null }), { refreshStock: true })}>Receive</button></div></div> : null}
+                      {canManage && outstanding > 0 ? <div className={styles.actionRow}><select aria-label="Close outcome" value={form.disposition || ''} onChange={(event) => setForm(item.id, { disposition: event.target.value })}><option value="">Select outcome</option>{['LOST','DAMAGED','PURCHASED','OTHER'].map((value) => <option key={value}>{value}</option>)}</select><input aria-label="Close qty" type="number" min="1" max={outstanding} value={form.closeQty || ''} onChange={(event) => setForm(item.id, { closeQty: event.target.value === '' ? '' : Math.min(outstanding, Math.max(1, Math.floor(Number(event.target.value) || 1))) })} placeholder="Qty" /><input aria-label="Close reason" value={form.reason || ''} onChange={(event) => setForm(item.id, { reason: event.target.value })} placeholder="Reason required" /><button type="button" className={styles.secondary} disabled={busy || !Number(form.closeQty) || Number(form.closeQty) > outstanding || !form.disposition || !form.reason?.trim()} onClick={() => { if (window.confirm('Close this quantity with the selected outcome and reason?')) void perform('Remaining loan quantity closed.', () => supabase.rpc('close_warehouse_loan_item', { p_item_id: item.id, p_qty: Number(form.closeQty), p_disposition: form.disposition, p_reason: form.reason })) }}>Close Loan</button></div> : null}
+                  {receivedReturns.map((receipt) => {
+                    const location = locations.find((row) => Number(row.id) === Number(receipt.destination_rack_location_id))
+                    const destination = receipt.destination_type === 'STORAGE'
+                      ? location ? formatSourceLocation(location) : 'Storage location unavailable'
+                      : DESTINATIONS.find(([type]) => type === receipt.destination_type)?.[1] || receipt.destination_type || '-'
+                    const actor = userProfilesByEmail[String(receipt.actor_email || '').toLowerCase()] || String(receipt.actor_email || '').split('@')[0]
+                    return <div className={styles.receivedInfo} key={receipt.id}><strong>Returned {receipt.qty} pcs</strong><span>{formatTime(receipt.created_at)} · {destination} · by {shortName(actor)}</span></div>
                   })}
                     </div>
                   </div>
-                  {loan.requester_id === currentUserId && availableDeclare > 0 ? <div className={styles.actionRow}><input aria-label="Declare return qty" type="number" min="1" max={availableDeclare} value={form.declareQty || ''} onChange={(event) => setForm(item.id, { declareQty: event.target.value })} placeholder="Return qty" /><button type="button" className={styles.secondary} disabled={busy || !form.declareQty} onClick={() => void perform('Return declared. Awaiting receipt.', () => supabase.rpc('declare_warehouse_loan_return', { p_item_id: item.id, p_qty: Number(form.declareQty) }))}>Declare Return</button></div> : null}
-                  {canManage && outstanding - (totals.declared - totals.received) > 0 ? <div className={styles.actionRow}><select aria-label="Close outcome" value={form.disposition || ''} onChange={(event) => setForm(item.id, { disposition: event.target.value })}><option value="">Select outcome</option>{['LOST','DAMAGED','PURCHASED','OTHER'].map((value) => <option key={value}>{value}</option>)}</select><input aria-label="Close qty" type="number" min="1" max={outstanding - (totals.declared - totals.received)} value={form.closeQty || ''} onChange={(event) => setForm(item.id, { closeQty: event.target.value })} placeholder="Qty" /><input aria-label="Close reason" value={form.reason || ''} onChange={(event) => setForm(item.id, { reason: event.target.value })} placeholder="Reason required" /><button type="button" className={styles.secondary} disabled={busy || !form.closeQty || !form.disposition || !form.reason?.trim()} onClick={() => { if (window.confirm('Close this quantity with the selected outcome and reason?')) void perform('Remaining loan quantity closed.', () => supabase.rpc('close_warehouse_loan_item', { p_item_id: item.id, p_qty: Number(form.closeQty), p_disposition: form.disposition, p_reason: form.reason })) }}>Close Loan</button></div> : null}
                 </div>
               })}
             </div></td></tr> : null}

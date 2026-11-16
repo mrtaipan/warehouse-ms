@@ -86,11 +86,13 @@
 .actionRow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .actionRow select { flex: 0 1 190px; width: 190px; max-width: 100%; }
 .actionRow .returnLocationSelect { flex-basis: 260px; width: 260px; }
+.returnBox .actionRow select { flex: 0 1 142px; width: 142px; }
+.returnBox .actionRow .returnLocationSelect { flex-basis: 195px; width: 195px; }
 .actionRow input[type="number"] { flex: 0 0 84px; width: 84px; }
 .actionRow input:not([type="number"]) { flex: 0 1 220px; width: 220px; }
 .returnBox { display: grid; gap: 6px; min-width: 0; font-size: 13px; }
-.returnBox > span { color: #475569; font-size: 12px; }
-.returnBox + .returnBox { padding-top: 8px; border-top: 1px solid #dce1e7; }
+.receivedInfo { display: grid; gap: 2px; color: #475569; font-size: 12px; line-height: 1.4; }
+.receivedInfo strong { color: #111827; font-weight: 700; }
 .emptyState { padding: 32px !important; color: #64748b; text-align: center; }
 .pagination { color: #64748b; font-size: 13px; }
 .pagination > div { justify-content: flex-end; }

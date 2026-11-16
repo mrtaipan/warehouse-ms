@@ -28,15 +28,33 @@ export async function proxy(request) {
   } = await supabase.auth.getUser()
 
   const { pathname } = request.nextUrl
+  const isApiPath = pathname.startsWith('/api/')
   const isDashboardPath = pathname.startsWith('/dashboard')
   const isMobilePath = pathname.startsWith('/mobile')
   const isTakeRequestsPath = pathname === '/take-requests'
   const isRestockRequestPath = pathname === '/restock-request'
   const emailAdmin = user?.email?.toLowerCase() === ADMIN_EMAIL
   let role = emailAdmin ? 'admin' : 'storage_staff'
+  let profile = null
 
   if (user) {
-    const { data: profile } = await getProfileByAuthenticatedUser(supabase, user, 'role')
+    const { data: currentProfile } = await getProfileByAuthenticatedUser(
+      supabase,
+      user,
+      isApiPath ? 'resign_date' : 'role, resign_date',
+      { skipCache: true }
+    )
+    profile = currentProfile
+
+    if (String(profile?.resign_date || '').trim()) {
+      await supabase.auth.signOut()
+      const inactiveResponse = isApiPath
+        ? NextResponse.json({ error: 'Account inactive', reason: 'resigned' }, { status: 403 })
+        : NextResponse.redirect(new URL('/login?reason=inactive', request.url))
+      response.cookies.getAll().forEach((cookie) => inactiveResponse.cookies.set(cookie))
+      return inactiveResponse
+    }
+
     const profileRole = profile?.role ? resolveRole(profile.role, emailAdmin) : ''
 
     role = profileRole === 'admin' ? 'admin' : profileRole || 'storage_staff'
@@ -46,7 +64,7 @@ export async function proxy(request) {
 
   let permissions = []
 
-  if (user && !isAdmin) {
+  if (user && !isAdmin && !isApiPath) {
     const { data: rolePermissions } = await supabase
       .from('dir_user_roles')
       .select('permission_code')
@@ -79,5 +97,14 @@ export async function proxy(request) {
 }
 
 export const config = {
-  matcher: ['/login', '/dashboard/:path*', '/mobile/:path*', '/take-requests', '/restock-request'],
+  matcher: [
+    '/login',
+    '/dashboard/:path*',
+    '/mobile/:path*',
+    '/operations-calendar',
+    '/take-shortcut',
+    '/take-requests',
+    '/restock-request',
+    '/api/:path*',
+  ],
 }

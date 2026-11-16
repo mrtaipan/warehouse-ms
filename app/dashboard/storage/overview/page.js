@@ -13,6 +13,8 @@ import ShelvingUploadClient from '../shelving-upload-client'
 import ArklineRejectionStoragePanel from '@/components/arkline-rejection-storage-panel'
 import WarehouseLoansClient, { WarehouseLoanQueueReturns } from '@/components/warehouse-loans-client'
 import StorageLocationGuide, { StorageLocationHelpButton } from '@/components/storage-location-guide'
+import StorageMovementGuide from '@/components/storage-movement-guide'
+import storageGuideStyles from '@/components/storage-location-guide.module.css'
 import RejectStorageRelease, { getReleasedQtyBySource, loadRejectStorageOutbounds } from '@/components/reject-storage-release'
 import rejectReleaseStyles from '@/components/reject-storage-release.module.css'
 import arklineReportStyles from '@/app/dashboard/qc/retur-report/retur-report.module.css'
@@ -1265,6 +1267,7 @@ export default function StorageOverviewPage() {
   const [brandLookupSearch, setBrandLookupSearch] = useState('')
   const [historyPickerFilter, setHistoryPickerFilter] = useState('')
   const [movementTypeFilter, setMovementTypeFilter] = useState('')
+  const [showStorageMovementGuide, setShowStorageMovementGuide] = useState(false)
   const [queueFilters, setQueueFilters] = useState({
     group: '',
     grn: '',
@@ -6809,11 +6812,22 @@ export default function StorageOverviewPage() {
           ) : null}
           {visibleListMode === 'movement-history' ? (
             <div style={styles.field}>
-              <label style={styles.label}>Movement</label>
+              <div style={styles.movementLabelRow}>
+                <label htmlFor="storage-movement-filter" style={styles.label}>Movement</label>
+                <button
+                  type="button"
+                  className={storageGuideStyles.helpButton}
+                  style={{ position: 'static', flex: 'none' }}
+                  onClick={() => setShowStorageMovementGuide(true)}
+                  aria-label="Lihat penjelasan jenis movement"
+                  title="Penjelasan movement"
+                >?</button>
+              </div>
               <select
+                id="storage-movement-filter"
                 value={movementTypeFilter}
                 onChange={(event) => setMovementTypeFilter(event.target.value)}
-                style={{ ...styles.select, ...styles.compactFilterControl }}
+                style={styles.select}
               >
                 <option value="">All movements</option>
                 {movementTypeOptions.map((movementType) => (
@@ -7774,6 +7788,7 @@ export default function StorageOverviewPage() {
       </div>
 
       {showStorageLocationGuide ? <StorageLocationGuide onClose={() => setShowStorageLocationGuide(false)} /> : null}
+      {showStorageMovementGuide ? <StorageMovementGuide onClose={() => setShowStorageMovementGuide(false)} /> : null}
       {rejectDeleteEntry ? (
         <div style={{ ...styles.modalOverlay, zIndex: 70 }}>
           <div style={styles.confirmationModalCard} role="dialog" aria-modal="true" aria-labelledby="reject-delete-title">
@@ -11219,6 +11234,11 @@ const styles = {
   label: {
     fontSize: '14px',
     fontWeight: '600',
+  },
+  movementLabelRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
   },
   select: {
     width: '100%',

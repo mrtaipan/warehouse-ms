@@ -58,6 +58,19 @@ test('partial PL loan preserves the Packing List and returns only after receipt'
     await db.exec(addExistingSql)
     const editRequestSql = await readFile(new URL('../supabase/warehouse_loan_edit_request_item.sql', import.meta.url), 'utf8')
     await db.exec(editRequestSql)
+    await db.exec(`insert into pl_packing_items values(9,'queued','MOB','SKU-1','M',10)`)
+    const legacy = await db.query(`select create_warehouse_loan('MOB','Legacy return',
+      '[{"sku":"SKU-1","name":"Shirt","size":"M","qty":2}]'::jsonb) as id`)
+    const legacyItem = await db.query(`select id from warehouse_loan_items where loan_id=$1 and event_type='REQUEST'`, [legacy.rows[0].id])
+    await db.query(`select issue_warehouse_loan_item($1,'PL_QUEUE',9,2)`, [legacyItem.rows[0].id])
+    await db.query(`select declare_warehouse_loan_return($1,2)`, [legacyItem.rows[0].id])
+    const directReceiveSql = await readFile(new URL('../supabase/warehouse_loan_direct_receive.sql', import.meta.url), 'utf8')
+    await db.exec(directReceiveSql)
+    assert.equal((await db.query('select status from warehouse_loans where id=$1', [legacy.rows[0].id])).rows[0].status, 'IN_LOAN')
+    const permissions = await db.query(`select
+      has_function_privilege('authenticated', 'receive_warehouse_loan_item(uuid,integer,text,bigint)', 'EXECUTE') as direct_receive,
+      has_function_privilege('authenticated', 'declare_warehouse_loan_return(uuid,integer)', 'EXECUTE') as old_declare`)
+    assert.deepEqual(permissions.rows[0], { direct_receive: true, old_declare: true })
     const created = await db.query(`select create_warehouse_loan('MOB','Photoshoot',
       '[{"sku":"SKU-1","name":"Shirt","size":"M","qty":3}]'::jsonb) as id`)
     const loanId = created.rows[0].id
@@ -70,10 +83,12 @@ test('partial PL loan preserves the Packing List and returns only after receipt'
       from pl_packing_items p left join warehouse_loan_items i
       on i.source_pl_packing_item_id=p.id and i.event_type='ISSUE' where p.id=7 group by p.id`)
     assert.equal(Number(available.rows[0].remaining), 7)
-    const declaration = await db.query('select declare_warehouse_loan_return($1,2) as id', [itemId])
     const tempBefore = await db.query('select count(*)::integer as n from warehouse_temporary_sales_items')
     assert.equal(tempBefore.rows[0].n, 0)
-    await db.query(`select receive_warehouse_loan_return($1,2,'TEMP_SALES',null)`, [declaration.rows[0].id])
+    await db.query(`select receive_warehouse_loan_item($1,2,'TEMP_SALES',null)`, [itemId])
+    assert.equal((await db.query(`select count(*)::integer as n from warehouse_loan_items
+      where request_item_id=$1 and event_type='DECLARE_RETURN'`, [itemId])).rows[0].n, 0)
+    await assert.rejects(() => db.query(`select receive_warehouse_loan_item($1,2,'TEMP_SALES',null)`, [itemId]), /outstanding loan balance/)
     const tempAfter = await db.query('select qty_in_area,status from warehouse_temporary_sales_items')
     assert.deepEqual(tempAfter.rows[0], { qty_in_area: 2, status: 'IN_TEMPORARY_AREA' })
     await db.query(`select close_warehouse_loan_item($1,1,'LOST','Lost during shoot')`, [itemId])
@@ -86,8 +101,7 @@ test('partial PL loan preserves the Packing List and returns only after receipt'
       '[{"sku":"SKU-1","name":"Shirt","size":"M","qty":2}]'::jsonb) as id`)
     const secondItem = await db.query(`select id from warehouse_loan_items where loan_id=$1 and event_type='REQUEST'`, [second.rows[0].id])
     await db.query(`select issue_warehouse_loan_item($1,'PL_QUEUE',7,2)`, [secondItem.rows[0].id])
-    const returnDeclaration = await db.query('select declare_warehouse_loan_return($1,2) as id', [secondItem.rows[0].id])
-    const queueReturn = await db.query(`select receive_warehouse_loan_return($1,2,'STORAGE_QUEUE',null) as id`, [returnDeclaration.rows[0].id])
+    const queueReturn = await db.query(`select receive_warehouse_loan_item($1,2,'STORAGE_QUEUE',null) as id`, [secondItem.rows[0].id])
     await db.query(`select place_warehouse_loan_queue_return($1,1,'STORAGE',1)`, [queueReturn.rows[0].id])
     await db.query(`select place_warehouse_loan_queue_return($1,1,'TEMP_SALES',null)`, [queueReturn.rows[0].id])
     const queuePlaced = await db.query(`select sum(qty)::integer as placed from warehouse_loan_items where queue_return_id=$1`, [queueReturn.rows[0].id])
@@ -111,11 +125,10 @@ test('partial PL loan preserves the Packing List and returns only after receipt'
     await db.query(`select issue_warehouse_loan_item($1,'STORAGE',$2,3)`, [arklineItem.rows[0].id, stock.rows[0].id])
     assert.equal((await db.query('select qty from warehouse_storage where id=$1', [stock.rows[0].id])).rows[0].qty, 2)
     await db.query('select cancel_warehouse_loan_request_item($1,1)', [arklineItem.rows[0].id])
-    const arklineDeclaration = await db.query('select declare_warehouse_loan_return($1,3) as id', [arklineItem.rows[0].id])
-    await db.query(`select receive_warehouse_loan_return($1,2,'STORAGE',2)`, [arklineDeclaration.rows[0].id])
+    await db.query(`select receive_warehouse_loan_item($1,2,'STORAGE',2)`, [arklineItem.rows[0].id])
     assert.deepEqual((await db.query(`select category_id,brand_code,qty from warehouse_storage
       where notes like 'Returned from loan%'`)).rows.at(-1), { category_id: 42, brand_code: 'ARKLINE', qty: 2 })
-    await db.query(`select receive_warehouse_loan_return($1,1,'RE_QC',null)`, [arklineDeclaration.rows[0].id])
+    await db.query(`select receive_warehouse_loan_item($1,1,'RE_QC',null)`, [arklineItem.rows[0].id])
     const qcQueue = await db.query('select id,group_code,source_loan_receive_id from reqc_queue')
     assert.equal(qcQueue.rows[0].group_code, 'ARKLINE')
     assert.ok(qcQueue.rows[0].source_loan_receive_id)
@@ -168,6 +181,26 @@ test('partial PL loan preserves the Packing List and returns only after receipt'
     await db.query(`select issue_warehouse_loan_item($1,'PL_QUEUE',7,1)`, [remainingItem])
     assert.equal((await db.query(`select status from warehouse_loans where id=$1`, [editable.rows[0].id])).rows[0].status, 'IN_LOAN')
     await assert.rejects(() => db.query(`select update_warehouse_loan_request_item($1,'L',4)`, [xlId]), /can no longer be edited/)
+
+    await db.query(`select receive_warehouse_loan_item($1,1,'TEMP_SALES',null)`, [legacyItem.rows[0].id])
+    assert.equal((await db.query(`select count(*)::integer as n from warehouse_loan_items
+      where request_item_id=$1 and event_type='DECLARE_RETURN'`, [legacyItem.rows[0].id])).rows[0].n, 1)
+    await db.query(`select close_warehouse_loan_item($1,1,'OTHER','Not returned')`, [legacyItem.rows[0].id])
+    assert.equal((await db.query('select status from warehouse_loans where id=$1', [legacy.rows[0].id])).rows[0].status, 'CLOSED')
+
+    await db.exec(`insert into dir_rack_locations(id,group_code,location_type,location_name,location_code,location_id)
+      values(3,'MOB','PALLET','Pallet B','B1','Warehouse LV 83')`)
+    const split = await db.query(`select create_warehouse_loan('MOB','Split return',
+      '[{"sku":"SKU-1","name":"Shirt","size":"M","qty":3}]'::jsonb) as id`)
+    const splitItem = await db.query(`select id from warehouse_loan_items where loan_id=$1 and event_type='REQUEST'`, [split.rows[0].id])
+    await db.query(`select issue_warehouse_loan_item($1,'PL_QUEUE',9,3)`, [splitItem.rows[0].id])
+    await db.query(`select receive_warehouse_loan_item($1,1,'STORAGE',1)`, [splitItem.rows[0].id])
+    await db.query(`select receive_warehouse_loan_item($1,1,'STORAGE',3)`, [splitItem.rows[0].id])
+    await db.query(`select close_warehouse_loan_item($1,1,'LOST','Missing on return')`, [splitItem.rows[0].id])
+    const splitReceipts = await db.query(`select destination_rack_location_id,qty from warehouse_loan_items
+      where request_item_id=$1 and event_type='RECEIVE' order by destination_rack_location_id`, [splitItem.rows[0].id])
+    assert.deepEqual(splitReceipts.rows.map((row) => Number(row.destination_rack_location_id)), [1, 3])
+    assert.equal((await db.query('select status from warehouse_loans where id=$1', [split.rows[0].id])).rows[0].status, 'CLOSED')
   } finally {
     await db.close()
   }

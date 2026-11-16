@@ -420,74 +420,103 @@ export default function MyArklifeReimbursementClient({ profile, headerActions = 
       return
     }
 
-    const createdClaimIds = []
-    const uploadedPaths = []
-
     try {
-      for (const row of batchRows) {
+      for (const [rowIndex, row] of batchRows.entries()) {
+        const entryNumber = rowIndex + 1
+        let claimId = row.savedClaimId || null
+        let claimNumber = row.savedClaimNumber || ''
+
+        if (claimId && !row.submission_files.length) continue
+
         if (!row.expense_category_id || !row.expense_date || !row.total_amount) {
-          throw new Error('Each reimbursement row needs claim type, expense date, and amount.')
+          throw new Error(`Entry ${entryNumber} needs claim type, expense date, and amount.`)
         }
 
         const chargeGroup = resolveChargeGroup(row.charge_group)
         if (!chargeGroup) {
-          throw new Error('Cost center group is required.')
+          throw new Error(`Entry ${entryNumber} needs a cost center group.`)
         }
 
         const amountValue = parseAmountInput(row.total_amount)
         if (amountValue <= 0) {
-          throw new Error('Each reimbursement amount must be greater than zero.')
+          throw new Error(`Entry ${entryNumber} amount must be greater than zero.`)
         }
 
         for (const file of row.submission_files) {
           if (file.size > 10 * 1024 * 1024) {
-            throw new Error('Receipt file must be 10MB or below.')
+            throw new Error(`Entry ${entryNumber}: ${file.name} is over the 10MB file limit.`)
           }
         }
 
-        const payload = {
-          employee_authenticated_id: user.id,
-          employee_email_snapshot: String(user.email || profile?.email || '').toLowerCase(),
-          employee_name_snapshot: normalizeSnapshotName(profile?.display_name || user.user_metadata?.full_name || user.email?.split('@')[0] || 'Team'),
-          expense_date: row.expense_date,
-          expense_category_id: Number(row.expense_category_id),
-          status: 'SUBMITTED',
-          description: String(row.description || '').trim() || null,
-          total_amount: amountValue,
-          payee_type: 'SELF_ACCOUNT',
-          payee_authenticated_id: user.id,
-          payee_bank_name: profile?.reimbursement_bank_name || null,
-          payee_account_name: profile?.reimbursement_account_name || null,
-          payee_account_number: profile?.reimbursement_account_number || null,
-          submitted_at: new Date().toISOString(),
-          created_by: String(user.email || profile?.email || '').toLowerCase(),
-          group: chargeGroup,
+        if (!claimId) {
+          const payload = {
+            employee_authenticated_id: user.id,
+            employee_email_snapshot: String(user.email || profile?.email || '').toLowerCase(),
+            employee_name_snapshot: normalizeSnapshotName(profile?.display_name || user.user_metadata?.full_name || user.email?.split('@')[0] || 'Team'),
+            expense_date: row.expense_date,
+            expense_category_id: Number(row.expense_category_id),
+            status: 'SUBMITTED',
+            description: String(row.description || '').trim() || null,
+            total_amount: amountValue,
+            payee_type: 'SELF_ACCOUNT',
+            payee_authenticated_id: user.id,
+            payee_bank_name: profile?.reimbursement_bank_name || null,
+            payee_account_name: profile?.reimbursement_account_name || null,
+            payee_account_number: profile?.reimbursement_account_number || null,
+            submitted_at: new Date().toISOString(),
+            created_by: String(user.email || profile?.email || '').toLowerCase(),
+            group: chargeGroup,
+          }
+
+          const { data: insertedClaim, error: insertError } = await supabase
+            .from(tableNames.claims)
+            .insert(payload)
+            .select('id, claim_number')
+            .single()
+
+          if (insertError) {
+            throw new Error(`Entry ${entryNumber} could not be saved: ${insertError.message}`)
+          }
+
+          claimId = insertedClaim.id
+          claimNumber = insertedClaim.claim_number || ''
+          setBatchRows((previousRows) =>
+            previousRows.map((item) =>
+              item.localId === row.localId
+                ? { ...item, savedClaimId: claimId, savedClaimNumber: claimNumber }
+                : item
+            )
+          )
         }
-
-        const { data: insertedClaim, error: insertError } = await supabase
-          .from(tableNames.claims)
-          .insert(payload)
-          .select('id, claim_number')
-          .single()
-
-        if (insertError) {
-          throw new Error(insertError.message)
-        }
-
-        createdClaimIds.push(insertedClaim.id)
 
         for (const file of row.submission_files) {
-          const uploadResult = await uploadReceiptFile({
-            file,
-            claimId: insertedClaim.id,
-            claimNumber: insertedClaim.claim_number,
-            uploadedBy: profile?.email || user.email || null,
-          })
-          uploadedPaths.push(uploadResult.storagePath)
+          let storagePath = ''
+          try {
+            const uploadResult = await uploadReceiptFile({
+              file,
+              claimId,
+              claimNumber,
+              uploadedBy: profile?.email || user.email || null,
+            })
+            storagePath = uploadResult.storagePath
 
-          const { error: attachmentError } = await supabase.from(tableNames.attachments).insert(uploadResult.attachmentRow)
-          if (attachmentError) {
-            throw new Error(attachmentError.message)
+            const { error: attachmentError } = await supabase.from(tableNames.attachments).insert(uploadResult.attachmentRow)
+            if (attachmentError) {
+              throw new Error(attachmentError.message)
+            }
+
+            setBatchRows((previousRows) =>
+              previousRows.map((item) =>
+                item.localId === row.localId
+                  ? { ...item, submission_files: item.submission_files.filter((pendingFile) => pendingFile !== file) }
+                  : item
+              )
+            )
+          } catch (attachmentError) {
+            if (storagePath) {
+              await supabase.storage.from(REIMBURSEMENT_BUCKET).remove([storagePath])
+            }
+            throw new Error(`Entry ${entryNumber} (${claimNumber}): ${file.name} could not be attached. The claim itself has been saved. ${attachmentError.message}`)
           }
         }
       }
@@ -496,13 +525,8 @@ export default function MyArklifeReimbursementClient({ profile, headerActions = 
       resetBatchModal()
       await loadWorkspace(true)
     } catch (saveError) {
-      if (uploadedPaths.length) {
-        await supabase.storage.from(REIMBURSEMENT_BUCKET).remove(uploadedPaths)
-      }
-      if (createdClaimIds.length) {
-        await supabase.from(tableNames.claims).delete().in('id', createdClaimIds)
-      }
-      setError(saveError?.message || 'Failed to save reimbursement batch.')
+      await loadWorkspace(true)
+      setError(`${saveError?.message || 'Failed to save reimbursement batch.'} Any claims already saved have been kept; press Submit Batch again to continue without duplicating them.`)
     } finally {
       setSaving(false)
     }
@@ -910,7 +934,9 @@ export default function MyArklifeReimbursementClient({ profile, headerActions = 
       ) : null}
 
       {openBatchModal ? (
-        <div className={styles.modalOverlay} onClick={resetBatchModal}>
+        <div className={styles.modalOverlay} onClick={(event) => {
+          if (event.target === event.currentTarget && !saving) resetBatchModal()
+        }}>
           <div className={styles.modalWideCard} onClick={(event) => event.stopPropagation()}>
             <div className={styles.modalHeader}>
               <h2 className={styles.modalTitle}>Reimbursement Claim</h2>
@@ -927,8 +953,13 @@ export default function MyArklifeReimbursementClient({ profile, headerActions = 
                         <div>
                           <h3 className={styles.batchTitle}>Entry {batchRows.findIndex((item) => item.localId === activeBatchRow.localId) + 1}</h3>
                           <p className={styles.batchText}>Add reimbursement details for this row.</p>
+                          {activeBatchRow.savedClaimNumber ? (
+                            <p className={styles.batchSavedText}>
+                              Saved as {activeBatchRow.savedClaimNumber}. Any remaining receipt files can be submitted again.
+                            </p>
+                          ) : null}
                         </div>
-                        <button type="button" className={styles.batchActionButton} onClick={addBatchRow}>
+                        <button type="button" className={styles.batchActionButton} onClick={addBatchRow} disabled={saving}>
                           Add Row
                         </button>
                       </div>
@@ -940,6 +971,7 @@ export default function MyArklifeReimbursementClient({ profile, headerActions = 
                             <select
                               className={styles.select}
                               value={activeBatchRow.expense_category_id}
+                              disabled={saving || Boolean(activeBatchRow.savedClaimId)}
                               onChange={(event) => updateBatchRow(activeBatchRow.localId, { expense_category_id: event.target.value })}
                             >
                               <option value="">Select type</option>
@@ -957,6 +989,7 @@ export default function MyArklifeReimbursementClient({ profile, headerActions = 
                               className={styles.input}
                               type="date"
                               value={activeBatchRow.expense_date}
+                              disabled={saving || Boolean(activeBatchRow.savedClaimId)}
                               onChange={(event) => updateBatchRow(activeBatchRow.localId, { expense_date: event.target.value })}
                             />
                           </label>
@@ -967,6 +1000,7 @@ export default function MyArklifeReimbursementClient({ profile, headerActions = 
                           <textarea
                             className={styles.textarea}
                             value={activeBatchRow.description}
+                            disabled={saving || Boolean(activeBatchRow.savedClaimId)}
                             onChange={(event) => updateBatchRow(activeBatchRow.localId, { description: event.target.value })}
                           />
                         </label>
@@ -979,6 +1013,7 @@ export default function MyArklifeReimbursementClient({ profile, headerActions = 
                               type="text"
                               inputMode="numeric"
                               value={activeBatchRow.total_amount}
+                              disabled={saving || Boolean(activeBatchRow.savedClaimId)}
                               onChange={(event) => handleBatchAmountChange(activeBatchRow.localId, event.target.value)}
                             />
                           </label>
@@ -989,6 +1024,7 @@ export default function MyArklifeReimbursementClient({ profile, headerActions = 
                               <select
                                 className={styles.select}
                                 value={activeBatchRow.charge_group}
+                                disabled={saving || Boolean(activeBatchRow.savedClaimId)}
                                 onChange={(event) => updateBatchRow(activeBatchRow.localId, { charge_group: event.target.value })}
                               >
                                 <option value="">Select group</option>
@@ -1012,6 +1048,7 @@ export default function MyArklifeReimbursementClient({ profile, headerActions = 
                             className={styles.hiddenInput}
                             type="file"
                             multiple
+                            disabled={saving}
                             accept=".pdf,.png,.jpg,.jpeg"
                             onChange={(event) => {
                               appendSubmissionFiles(activeBatchRow.localId, Array.from(event.target.files || []))
@@ -1027,7 +1064,7 @@ export default function MyArklifeReimbursementClient({ profile, headerActions = 
                             </div>
 
                     <div className={styles.uploadTileRow}>
-                      <label htmlFor={batchFileInputId} className={styles.uploadAddButton} aria-label="Add receipt files">
+                      <label htmlFor={batchFileInputId} className={`${styles.uploadAddButton} ${saving ? styles.uploadAddButtonDisabled : ''}`} aria-label="Add receipt files">
                         +
                       </label>
                       {activeBatchRow.submission_files.map((file, index) => (
@@ -1035,7 +1072,7 @@ export default function MyArklifeReimbursementClient({ profile, headerActions = 
                                   <span className={styles.uploadFileName} title={file.name}>
                                     {truncateFileLabel(file.name)}
                                   </span>
-                                  <button type="button" className={styles.fileChipRemove} onClick={() => removeSubmissionFile(activeBatchRow.localId, index)} aria-label={`Remove ${file.name}`}>
+                                  <button type="button" className={styles.fileChipRemove} disabled={saving} onClick={() => removeSubmissionFile(activeBatchRow.localId, index)} aria-label={`Remove ${file.name}`}>
                                     x
                                   </button>
                                 </div>
@@ -1057,7 +1094,7 @@ export default function MyArklifeReimbursementClient({ profile, headerActions = 
                   </div>
 
                   <div className={styles.modalActions}>
-                    <button type="button" className={styles.cancelDangerButton} onClick={resetBatchModal}>
+                    <button type="button" className={styles.cancelDangerButton} onClick={resetBatchModal} disabled={saving}>
                       Cancel
                     </button>
                     <button type="button" className={styles.primaryButton} onClick={() => void handleSaveBatch()} disabled={saving}>
@@ -1078,11 +1115,11 @@ export default function MyArklifeReimbursementClient({ profile, headerActions = 
                           <div>
                             <p className={styles.batchRowTitle}>Entry {index + 1}</p>
                             <p className={styles.batchRowMeta}>{category?.name || 'No category yet'}</p>
-                            <p className={styles.batchRowMeta}>{row.charge_group || '-'}</p>
+                            <p className={styles.batchRowMeta}>{row.savedClaimNumber ? `Saved as ${row.savedClaimNumber}` : row.charge_group || '-'}</p>
                           </div>
                           <div className={styles.batchRowSide}>
                             <strong>{formatCurrency(parseAmountInput(row.total_amount))}</strong>
-                            <span
+                              {!row.savedClaimId ? <span
                               className={styles.batchRowDelete}
                               onClick={(event) => {
                                 event.stopPropagation()
@@ -1090,7 +1127,7 @@ export default function MyArklifeReimbursementClient({ profile, headerActions = 
                               }}
                             >
                               Remove
-                            </span>
+                            </span> : null}
                           </div>
                         </button>
                       )

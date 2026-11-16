@@ -48,6 +48,11 @@ export default function LoginPage() {
     const hashParams = new URLSearchParams(hash.startsWith('#') ? hash.slice(1) : hash)
     const searchType = String(searchParams.get('type') || '').trim().toLowerCase()
     const hashType = String(hashParams.get('type') || '').trim().toLowerCase()
+    if (searchParams.get('reason') === 'inactive') {
+      window.setTimeout(() => {
+        setError('Akun ini sudah tidak aktif dan tidak memiliki akses ke WMS. Hubungi HRGA jika status ini keliru.')
+      }, 0)
+    }
     const isInviteSignal = searchType === 'invite' || hashType === 'invite'
     const hasRecoverySignal =
       searchType === 'recovery' ||
@@ -102,20 +107,35 @@ export default function LoginPage() {
       return
     }
 
+    let signedInUser = null
+    let signedInProfile = null
+    try {
+      const { data: userResult } = await supabase.auth.getUser()
+      signedInUser = userResult?.user || null
+      if (signedInUser) {
+        const { data: profile } = await getProfileByAuthenticatedUser(
+          supabase,
+          signedInUser,
+          'role, resign_date',
+          { skipCache: true }
+        )
+        signedInProfile = profile
+      }
+    } catch {
+      // The route guard performs a fresh server-side check on the next request.
+    }
+
+    if (String(signedInProfile?.resign_date || '').trim()) {
+      await supabase.auth.signOut()
+      setError('Akun ini sudah tidak aktif dan tidak memiliki akses ke WMS. Hubungi HRGA jika status ini keliru.')
+      setLoading(false)
+      return
+    }
+
     const nextPath = new URLSearchParams(window.location.search).get('next')
     let landingPath = nextPath || '/dashboard'
-    if (!nextPath) {
-      try {
-        const {
-          data: { user },
-        } = await supabase.auth.getUser()
-        const { data: profile } = await getProfileByAuthenticatedUser(supabase, user, 'role')
-        if (resolveRole(profile?.role, false) === 'external') {
-          landingPath = '/dashboard/arkline/progress-overview'
-        }
-      } catch {
-        landingPath = '/dashboard'
-      }
+    if (!nextPath && resolveRole(signedInProfile?.role, false) === 'external') {
+      landingPath = '/dashboard/arkline/progress-overview'
     }
 
     router.push(landingPath)
