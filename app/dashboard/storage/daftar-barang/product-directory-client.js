@@ -7,6 +7,7 @@ import { createPortal } from 'react-dom'
 import { createClient } from '@/utils/supabase/browser'
 import { ADMIN_EMAIL } from '@/utils/permissions'
 import { getProfileByAuthenticatedUser } from '@/utils/user-profiles'
+import { getDisplayedReleaseCount, getProductReleaseState, matchesProductReleaseFilter } from './product-release-status'
 
 const supabase = createClient()
 const BATCH_SIZE = 1000
@@ -433,24 +434,6 @@ function getReleaseEventGrns(event = {}) {
   return []
 }
 
-function getReleaseStateFromSet(states) {
-  if (!states || states.size === 0) return ''
-
-  if (states.has('partial')) return 'partial'
-
-  return states.has('draft') ? 'draft' : 'released'
-}
-
-function getCombinedReleaseState(states) {
-  if (!states || states.size === 0) return ''
-
-  if (states.has('draft') && states.has('released')) {
-    return 'partial'
-  }
-
-  return states.has('released') ? 'released' : 'draft'
-}
-
 function numberToAlphabet(value) {
   let number = Math.max(1, Number(value || 1))
   let result = ''
@@ -865,6 +848,7 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
     category: '',
     subCategory: '',
     itemType: '',
+    bundleOnly: false,
     search: '',
     releaseStatus: 'all',
   })
@@ -879,6 +863,7 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
   const [actionError, setActionError] = useState('')
   const [previewPhoto, setPreviewPhoto] = useState(null)
   const [openFilterMenu, setOpenFilterMenu] = useState('')
+  const [openGrnGroup, setOpenGrnGroup] = useState(-1)
   const [filterSearches, setFilterSearches] = useState({})
   const [pageSize, setPageSize] = useState(10)
   const [currentPage, setCurrentPage] = useState(1)
@@ -1094,15 +1079,11 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
 
       const reservation = bundleReservationsBySourceId.get(sourceRowId) || {
         byGroup: new Map(),
-        latestCreatedAt: '',
       }
       reservation.byGroup.set(
         sourceType,
         Number(reservation.byGroup.get(sourceType) || 0) + allocatedQty
       )
-      if (!reservation.latestCreatedAt || new Date(bundle?.created_at || component.created_at || 0) > new Date(reservation.latestCreatedAt || 0)) {
-        reservation.latestCreatedAt = bundle?.created_at || component.created_at || ''
-      }
       bundleReservationsBySourceId.set(sourceRowId, reservation)
     })
 
@@ -1125,16 +1106,6 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
       const bundleReservedQty = Number(reservation?.byGroup.get(baseType) || 0)
       const remainingBaseQty = Math.max(0, Number(row.qty || 0) - bundleReservedQty)
       const isBundleConsumed = bundleReservedQty > 0 && remainingBaseQty <= 0
-      const shouldBundleRelease = isBundleConsumed && getReleaseState(row) !== 'released'
-      const bundleReleaseHistory = shouldBundleRelease && reservation?.latestCreatedAt
-        ? [{
-            release_count: Math.max(1, Number(row.release_count || 0) + 1),
-            released_at: reservation.latestCreatedAt,
-            released_by: 'Bundle',
-            qty: bundleReservedQty,
-            source: 'bundle',
-          }]
-        : normalizeReleaseHistory(row.release_history)
       const sourceTransfers = transfersBySourceId.get(Number(row.id || 0)) || []
       const qtyByGroup = new Map([
         ['MOB', baseType === 'MOB' ? remainingBaseQty : 0],
@@ -1158,16 +1129,6 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
             qty: Number(qtyByGroup.get(group) || 0),
             isTransferOverlay,
             bundleReservedQty: group === baseType ? bundleReservedQty : 0,
-            bundleAutoReleased: group === baseType && shouldBundleRelease,
-            ...(shouldBundleRelease && group === baseType
-              ? {
-                  release_status: 'released',
-                  released_at: reservation.latestCreatedAt,
-                  released_by: 'Bundle',
-                  release_count: Math.max(1, Number(row.release_count || 0) + 1),
-                  release_history: bundleReleaseHistory,
-                }
-              : {}),
             ...(isTransferOverlay
               ? {
                   release_status: 'draft',
@@ -1356,21 +1317,9 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
       const modelReleaseSource = filters.viewMode === 'model'
         ? getModelTypeReleaseSource(releaseVariant, storingType, lookup, row)
         : null
-      const autoBundleReleaseSource = row.bundleAutoReleased
-        ? {
-            ...(modelReleaseSource || {}),
-            release_status: 'released',
-            released_at: row.released_at || '',
-            released_by: 'Bundle',
-            release_count: Math.max(1, Number(row.release_count || 0)),
-            release_history: normalizeReleaseHistory(row.release_history),
-          }
-        : null
       const releaseSource = filters.viewMode === 'grn' || row.isTransferOverlay
         ? row
-        : modelReleaseSource && getReleaseState(modelReleaseSource) === 'released'
-          ? modelReleaseSource
-          : autoBundleReleaseSource || modelReleaseSource
+        : modelReleaseSource
       const releaseState = releaseSource ? getReleaseState(releaseSource) : ''
       const releaseCount = releaseSource ? getReleaseCount(releaseSource) : 0
       const releaseMeta = releaseSource ? getReleaseMeta(releaseSource) : { releasedAt: '', releasedBy: '' }
@@ -1378,7 +1327,7 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
         ? getSortedReleaseHistory(releaseSource.release_history)
         : []
 
-      const shouldApplyReleaseStatus = filters.viewMode === 'grn' || filters.type !== 'all'
+      const shouldApplyReleaseStatus = filters.viewMode === 'grn'
       if (shouldApplyReleaseStatus && filters.releaseStatus !== 'all' && releaseState !== filters.releaseStatus) {
         return
       }
@@ -1613,9 +1562,7 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
 
     return Array.from(groups.values())
       .map((group) => {
-        const groupReleaseState = filters.viewMode === 'model' && filters.type === 'all'
-          ? getCombinedReleaseState(group.releaseStates)
-          : getReleaseStateFromSet(group.releaseStates)
+        const groupReleaseState = getProductReleaseState(group.releaseStates)
         const adjustedStorageQty = Math.max(0, Number(group.storageQty || 0) - Number(group.bundleConsumedQty || 0))
         const modelCurrentQty = adjustedStorageQty + Number(group.unreleasedQueuedQty || 0)
         const shouldUseCurrentQty = filters.viewMode === 'model' && groupReleaseState === 'released'
@@ -1645,7 +1592,7 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
             plNameList: Array.from(item.plNames || []).filter(Boolean).sort((left, right) => naturalSort.compare(left, right)),
             plDetailSeq: getMinFinite(item.plDetailSeqs),
             detailOrder: getMinFinite(item.detailOrders),
-            releaseState: filters.type === 'all' ? getCombinedReleaseState(item.releaseStates) : getReleaseStateFromSet(item.releaseStates),
+            releaseState: getProductReleaseState(item.releaseStates),
             plDateList: Array.from(item.plDates || []).sort((left, right) => naturalSort.compare(left, right)),
           }))
           .sort((left, right) =>
@@ -1657,6 +1604,7 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
         plDateList: Array.from(group.plDates).sort((left, right) => naturalSort.compare(left, right)),
         }
       })
+      .filter((group) => filters.viewMode !== 'model' || matchesProductReleaseFilter(group.releaseState, filters.releaseStatus))
       .sort((left, right) => {
         const directionMultiplier = sortConfig.direction === 'asc' ? 1 : -1
         let result = 0
@@ -1682,6 +1630,7 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
   }, [effectivePackingRows, filters, lookup, sortConfig])
 
   const bundleGroupedProducts = useMemo(() => {
+    if (filters.viewMode !== 'model') return []
     const packingRowById = new Map((packingRows || []).map((row) => [Number(row.id || 0), row]))
     const componentsByBundleId = new Map()
 
@@ -1762,10 +1711,8 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
       const bundleCode = normalize(bundle.bundle_code) || '-'
       const bundleName = normalize(bundle.bundle_name) || '-'
       const bundleStatus = normalizeUpper(bundle.status || 'draft').toLowerCase()
-      const shouldApplyReleaseStatus = filters.viewMode === 'grn' || filters.type !== 'all'
-
-      if (shouldApplyReleaseStatus && filters.releaseStatus !== 'all' && bundleStatus !== filters.releaseStatus) return []
-      if (filters.grn && filters.grn !== 'GRN Bundle') return []
+      if (!matchesProductReleaseFilter(bundleStatus, filters.releaseStatus)) return []
+      if (filters.grn) return []
       if (filters.brand && brand !== filters.brand) return []
       if (filters.category && categoryParts.categoryRoot !== filters.category) return []
       if (filters.subCategory && categoryParts.subCategory !== filters.subCategory) return []
@@ -1781,6 +1728,7 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
           categoryParts.subCategory,
           categoryParts.itemType,
           detailCategoryLabel,
+          ...components.flatMap((component) => [component.sku, component.product_name]),
         ].map(normalizeUpper).join(' ')
         if (!searchable.includes(normalizeUpper(filters.search))) return []
       }
@@ -1934,10 +1882,11 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
   }, [bundleComponentRows, groupTransferRows, bundleRows, filters, lookup, packingRows])
 
   const groupedProducts = useMemo(() => {
-    const rows = [...packingGroupedProducts, ...bundleGroupedProducts]
+    const rows = filters.bundleOnly ? [...bundleGroupedProducts] : [...packingGroupedProducts, ...bundleGroupedProducts]
     const directionMultiplier = sortConfig.direction === 'asc' ? 1 : -1
 
     return rows.sort((left, right) => {
+      if (Boolean(left.isBundle) !== Boolean(right.isBundle)) return left.isBundle ? 1 : -1
       let result = 0
       if (sortConfig.key === 'qty') {
         result = left.totalQty - right.totalQty
@@ -1956,7 +1905,7 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
 
       return (result * directionMultiplier) || naturalSort.compare(left.primaryGrn || left.productName, right.primaryGrn || right.productName)
     })
-  }, [bundleGroupedProducts, packingGroupedProducts, sortConfig])
+  }, [bundleGroupedProducts, packingGroupedProducts, filters.bundleOnly, sortConfig])
 
   const filterOptions = useMemo(() => {
     const optionSetsByIgnoredFilter = {
@@ -2034,7 +1983,7 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
         : null
       const releaseSource = filters.viewMode === 'grn' || row.isTransferOverlay ? row : modelReleaseSource
       const releaseState = releaseSource ? getReleaseState(releaseSource) : ''
-      const shouldApplyReleaseStatus = filters.viewMode === 'grn' || filters.type !== 'all'
+      const shouldApplyReleaseStatus = filters.viewMode === 'grn'
       const facet = {
         storingType,
         releaseState,
@@ -2071,9 +2020,6 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
     const sortOptions = (items) => Array.from(items).sort((left, right) => naturalSort.compare(left, right))
 
     const grnOptions = sortOptions(optionSetsByIgnoredFilter.grn)
-    if ((bundleRows || []).length && !grnOptions.includes('GRN Bundle')) {
-      grnOptions.push('GRN Bundle')
-    }
 
     return {
       grns: grnOptions,
@@ -2082,14 +2028,13 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
       subCategories: sortOptions(optionSetsByIgnoredFilter.subCategory),
       itemTypes: sortOptions(optionSetsByIgnoredFilter.itemType),
     }
-  }, [bundleRows, effectivePackingRows, filters, lookup])
+  }, [effectivePackingRows, filters, lookup])
 
   const totalQty = groupedProducts.reduce((sum, row) => sum + row.totalQty, 0)
   const mobQty = groupedProducts.reduce((sum, row) => sum + row.mobQty, 0)
   const oiQty = groupedProducts.reduce((sum, row) => sum + row.oiQty, 0)
   const activeQtyLabel = filters.type === 'MOB' ? 'MOB Qty' : filters.type === 'OI' ? 'OI Qty' : 'Total Qty'
   const activeQtyValue = filters.type === 'MOB' ? mobQty : filters.type === 'OI' ? oiQty : totalQty
-  const showReleaseStatusControls = filters.viewMode === 'grn' || filters.type !== 'all'
   const totalPages = Math.max(1, Math.ceil(groupedProducts.length / pageSize))
   const safeCurrentPage = Math.min(currentPage, totalPages)
   const pageStartIndex = (safeCurrentPage - 1) * pageSize
@@ -2215,11 +2160,11 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
       plNameList: Array.from(item.plNames || []).filter(Boolean).sort((left, right) => naturalSort.compare(left, right)),
       plDetailSeq: getMinFinite(item.plDetailSeqs),
       detailOrder: getMinFinite(item.detailOrders),
-      releaseState: getReleaseStateFromSet(item.releaseStates),
+      releaseState: getProductReleaseState(item.releaseStates),
     }))
   }, [effectivePackingRows, filters.type, lookup])
   const bundleSelectableDetailItems = useMemo(() => (
-    filters.viewMode === 'grn' && filters.type !== 'all'
+    filters.viewMode === 'model' && filters.type !== 'all'
       ? bundleGroupedProducts.flatMap((row) => row.detailItemList || [])
       : []
   ), [bundleGroupedProducts, filters.type, filters.viewMode])
@@ -2251,6 +2196,7 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
   )
   const selectedReleaseRowIds = selectedRowIds
   const canSelectSkuRows = canManage && filters.viewMode === 'grn' && filters.type !== 'all'
+  const canSelectBundleRows = canManage && filters.viewMode === 'model' && filters.type !== 'all'
   const selectedHasTransferOverlay = selectedDetailItems.some((item) => item.isTransferOverlay)
   const selectedHasMixedSources = selectedBundleDetailItems.length > 0 && selectedPackingDetailItems.length > 0
   const selectedNameItem = selectedDetailItems.length === 1 ? selectedDetailItems[0] : null
@@ -2395,9 +2341,9 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
       variantIds: mergeOptions.map((item) => item.variantId),
     }
   }, [canSelectSkuRows, mergeOptions, selectedDetailItems.length, selectedHasTransferOverlay])
-  const releaseButtonDisabled = !canSelectSkuRows || selectedHasTransferOverlay || selectedHasMixedSources || (selectedRowIds.length === 0 && selectedBundleDetailItems.length === 0) || bulkWorking
+  const releaseButtonDisabled = !(canSelectSkuRows || canSelectBundleRows) || selectedHasTransferOverlay || selectedHasMixedSources || (selectedRowIds.length === 0 && selectedBundleDetailItems.length === 0) || bulkWorking
   const selectedReleasedDetailItems = selectedDetailItems.filter((item) => item.releaseState === 'released')
-  const canSetUnreleased = isAdminUser && canSelectSkuRows && !selectedHasTransferOverlay
+  const canSetUnreleased = isAdminUser && (canSelectSkuRows || canSelectBundleRows) && !selectedHasTransferOverlay
   const unreleaseButtonDisabled = !canSetUnreleased || selectedHasMixedSources || selectedReleasedDetailItems.length === 0 || bulkWorking
   const splitButtonDisabled = !splitEligibility.canSplit || bulkWorking
   const mergeButtonDisabled = !mergeEligibility.canMerge || bulkWorking
@@ -2460,12 +2406,12 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
 
   function setTypeFilter(type) {
     if (lockedProductGroup) return
+    clearProductSelection()
     setFilters((prev) => {
       const nextType = prev.type === type && type !== 'all' ? 'all' : type
       return {
         ...prev,
         type: nextType,
-        releaseStatus: prev.viewMode === 'model' && nextType === 'all' ? 'all' : prev.releaseStatus,
       }
     })
     setCurrentPage(1)
@@ -2511,10 +2457,12 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
   }
 
   function setViewMode(viewMode) {
+    clearProductSelection()
     setFilters((prev) => ({
       ...prev,
       viewMode,
-      releaseStatus: viewMode === 'model' && prev.type === 'all' ? 'all' : prev.releaseStatus,
+      bundleOnly: viewMode === 'model' ? prev.bundleOnly : false,
+      grn: viewMode === 'model' && prev.grn === 'GRN Bundle' ? '' : prev.grn,
     }))
     if (viewMode === 'grn') {
       setSortConfig({
@@ -4316,7 +4264,7 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
       return <span style={styles.emptyStatusText}>-</span>
     }
     const releaseHistoryRows = getSortedReleaseHistory(releaseHistory)
-    const releaseCountValue = Math.max(Number(releaseCount || 0), releaseHistoryRows.length)
+    const releaseCountValue = getDisplayedReleaseCount(releaseState, releaseCount)
     const releaseMetaLabel = [releasedAt ? formatDateTime(releasedAt) : '', releasedBy].filter(Boolean).join(' • ')
     const releaseCountLabel = releaseCountValue > 1 ? ` x${formatNumber(releaseCountValue)}` : ''
     const hasReleaseTooltip = releaseState === 'released' && Boolean(tooltipKey)
@@ -4327,11 +4275,12 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
           `Release Count: ${formatNumber(releaseCountValue)}`,
           ...releaseHistoryRows.map((event, index) => {
             const releaseNumber = event.release_count ? `#${formatNumber(event.release_count)}` : `#${formatNumber(releaseHistoryRows.length - index)}`
+            const groupText = event.storing_type ? `${event.storing_type} | ` : ''
             const grns = getReleaseEventGrns(event)
             const grnText = grns.length ? ` | GRN ${grns.join(', ')}` : ''
             const qtyText = Number(event.qty || 0) ? ` | Qty ${formatNumber(event.qty)}` : ''
             const actorText = event.released_by ? ` | ${event.released_by}` : ''
-            return `${releaseNumber} ${formatDateTime(event.released_at)}${qtyText}${grnText}${actorText}`
+            return `${groupText}${releaseNumber} ${formatDateTime(event.released_at)}${qtyText}${grnText}${actorText}`
           }),
         ].join('\n')
       : ''
@@ -4372,10 +4321,30 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
     const isOpen = openFilterMenu === name
     const searchValue = filterSearches[name] || ''
     const filteredOptions = options.filter((option) => normalizeUpper(option).includes(normalizeUpper(searchValue)))
+    const grnGroups = name === 'grn' && filteredOptions.length > 20 && !searchValue
+      ? Array.from({ length: Math.ceil(filteredOptions.length / 20) }, (_, index) => {
+          const entries = filteredOptions.slice(index * 20, (index + 1) * 20)
+          const first = entries[0].split('-')[0]
+          const last = entries.at(-1).split('-')[0]
+          return { label: first === last ? first : `${first} - ${last}`, entries }
+        })
+      : []
 
     return (
       <div style={styles.field}>
-        <label style={styles.label}>{label}</label>
+        <div style={styles.filterLabelRow}>
+          <label style={styles.label}>{label}</label>
+          {name === 'itemType' && filters.viewMode === 'model' ? (
+            <label style={styles.bundleOnlyLabel}>
+              <input type="checkbox" checked={filters.bundleOnly} onChange={(event) => {
+                clearProductSelection()
+                setFilters((prev) => ({ ...prev, bundleOnly: event.target.checked, grn: event.target.checked ? '' : prev.grn }))
+                setCurrentPage(1)
+              }} />
+              Bundle
+            </label>
+          ) : null}
+        </div>
         <div style={styles.filterDropdown}>
           <button
             type="button"
@@ -4401,7 +4370,16 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
               >
                 {allLabel}
               </button>
-              {filteredOptions.length ? filteredOptions.map((option) => (
+              {grnGroups.length ? grnGroups.map((group, index) => (
+                <div key={`${group.label}-${index}`}>
+                  <button type="button" style={styles.filterGroupButton} aria-expanded={openGrnGroup === index} onClick={() => setOpenGrnGroup((current) => current === index ? -1 : index)}>
+                    <span>{group.label}</span><span aria-hidden="true">{openGrnGroup === index ? '−' : '+'}</span>
+                  </button>
+                  {openGrnGroup === index ? group.entries.map((option) => (
+                    <button key={option} type="button" onClick={() => setOptionFilter(name, option)} style={selectedValue === option ? { ...styles.filterOption, ...styles.filterOptionActive, ...styles.filterGroupedOption } : { ...styles.filterOption, ...styles.filterGroupedOption }}>{option}</button>
+                  )) : null}
+                </div>
+              )) : filteredOptions.length ? filteredOptions.map((option) => (
                 <button
                   key={option}
                   type="button"
@@ -4429,6 +4407,7 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
       category: '',
       subCategory: '',
       itemType: '',
+      bundleOnly: false,
       search: '',
       releaseStatus: 'all',
     })
@@ -4537,7 +4516,6 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
                       </button>
                     ))}
                   </div>
-                  {showReleaseStatusControls ? (
                   <div style={styles.smallSegmentedControl} role="tablist" aria-label="Readiness status filter">
                     {[
                       ['all', 'All'],
@@ -4557,7 +4535,6 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
                       </button>
                     ))}
                   </div>
-                  ) : null}
                 </div>
               </div>
               <span style={styles.searchLabelSpacer} aria-hidden="true" />
@@ -4583,7 +4560,7 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
         </div>
 
         <div style={styles.filtersGrid}>
-          {renderFilterDropdown('grn', 'GRN', 'All GRN', filterOptions.grns)}
+          {filters.bundleOnly ? <div style={styles.field}><label style={styles.label}>GRN</label><div style={{ ...styles.filterButton, ...styles.bundleGrnPlaceholder }}>Not used for bundles</div></div> : renderFilterDropdown('grn', 'GRN', 'All GRN', filterOptions.grns)}
           {renderFilterDropdown('brand', 'Brand', 'All brands', filterOptions.brands)}
           {renderFilterDropdown('category', 'Category', 'All categories', filterOptions.categories)}
           {renderFilterDropdown('subCategory', 'Sub-Category', 'All sub-categories', filterOptions.subCategories)}
@@ -4602,7 +4579,7 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
           </div>
         ) : (
           <>
-            {filters.viewMode === 'grn' ? (
+            {filters.viewMode === 'grn' || (canSelectBundleRows && (filters.bundleOnly || selectedBundleDetailItems.length > 0)) ? (
               <div style={styles.bulkActionBar}>
                 <div style={styles.bulkButtonRow}>
                   <div style={styles.selectionKpiStack}>
@@ -4695,7 +4672,7 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
                         Set Unreleased
                       </button>
                     ) : null}
-                    {canSelectSkuRows ? (
+                    {canSelectSkuRows || canSelectBundleRows ? (
                       <button
                         type="button"
                         onClick={requestReleaseConfirmation}
@@ -4864,6 +4841,15 @@ export default function ProductDirectoryClient({ embedded = false, activeSection
                         </td>
                         <td style={{ ...styles.td, ...styles.skuTd }}>
                           <div style={styles.compactList}>
+                            {row.isBundle && canSelectBundleRows ? (
+                              <input
+                                type="checkbox"
+                                checked={selectedProductKeys.includes(row.detailItemList[0]?.key)}
+                                onChange={() => toggleSelectedProduct(row.detailItemList[0])}
+                                style={styles.rowCheckbox}
+                                aria-label={`Select bundle ${row.sku}`}
+                              />
+                            ) : null}
                             {skuList.slice(0, 4).map((sku) => (
                               row.isBundle ? (
                                 <button
@@ -6006,6 +5992,23 @@ const styles = {
     fontWeight: '700',
     color: '#111827',
   },
+  filterLabelRow: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: '8px',
+    minHeight: '20px',
+  },
+  bundleOnlyLabel: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '4px',
+    color: '#475569',
+    fontSize: '12px',
+    fontWeight: '600',
+    whiteSpace: 'nowrap',
+    cursor: 'pointer',
+  },
   input: {
     width: '100%',
     minWidth: 0,
@@ -6050,6 +6053,11 @@ const styles = {
   filterButtonActive: {
     borderColor: '#111827',
     background: '#f8fafc',
+  },
+  bundleGrnPlaceholder: {
+    color: '#64748b',
+    background: '#f8fafc',
+    cursor: 'default',
   },
   filterButtonText: {
     minWidth: 0,
@@ -6104,6 +6112,26 @@ const styles = {
     fontWeight: '600',
     cursor: 'pointer',
     fontFamily: 'inherit',
+  },
+  filterGroupButton: {
+    width: '100%',
+    minHeight: '36px',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: '8px',
+    padding: '8px 10px',
+    border: 'none',
+    borderRadius: '8px',
+    background: '#f1f5f9',
+    color: '#111827',
+    fontSize: '13px',
+    fontWeight: '700',
+    textAlign: 'left',
+    cursor: 'pointer',
+  },
+  filterGroupedOption: {
+    paddingLeft: '22px',
   },
   filterOptionActive: {
     background: '#111827',

@@ -184,6 +184,7 @@ export default function MyArklifeReimbursementClient({ profile, headerActions = 
   const editFileInputRef = useRef(null)
   const batchFileInputId = 'myarklife-batch-receipt-input'
   const editFileInputId = 'myarklife-edit-receipt-input'
+  const batchDraftStorageKey = `myarklife-reimbursement-draft:${String(profile?.authenticated_id || profile?.email || 'user').toLowerCase()}`
   const [categories, setCategories] = useState([])
   const [claims, setClaims] = useState([])
   const [groupOptions, setGroupOptions] = useState(DEFAULT_GROUP_OPTIONS)
@@ -192,6 +193,7 @@ export default function MyArklifeReimbursementClient({ profile, headerActions = 
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
+  const [batchDraftNotice, setBatchDraftNotice] = useState('')
   const [openBatchModal, setOpenBatchModal] = useState(false)
   const [openHistoryModal, setOpenHistoryModal] = useState(false)
   const [editingClaim, setEditingClaim] = useState(null)
@@ -314,20 +316,85 @@ export default function MyArklifeReimbursementClient({ profile, headerActions = 
   })
 
   function resetBatchModal() {
+    if (typeof window !== 'undefined') {
+      window.sessionStorage.removeItem(batchDraftStorageKey)
+    }
     const firstRow = createDraftRow(profileGroup)
     setBatchRows([firstRow])
     setActiveBatchRowId(firstRow.localId)
     setOpenBatchModal(false)
+    setBatchDraftNotice('')
+  }
+
+  function cancelBatchModal() {
+    if (saving) return
+
+    const hasUnsavedDraft = batchRows.some((row) => {
+      if (row.savedClaimId) return row.submission_files.length > 0
+      return Boolean(
+        row.expense_category_id ||
+          row.expense_date ||
+          row.description.trim() ||
+          row.total_amount ||
+          row.submission_files.length
+      )
+    })
+
+    if (hasUnsavedDraft && !window.confirm('Discard the reimbursement entries that have not been submitted?')) return
+    resetBatchModal()
   }
 
   function openCreateModal() {
-    const firstRow = createDraftRow(profileGroup)
-    setBatchRows([firstRow])
-    setActiveBatchRowId(firstRow.localId)
+    let restoredDraft = null
+    try {
+      restoredDraft = JSON.parse(window.sessionStorage.getItem(batchDraftStorageKey) || 'null')
+    } catch {
+      window.sessionStorage.removeItem(batchDraftStorageKey)
+    }
+
+    const restoredRows = Array.isArray(restoredDraft?.rows)
+      ? restoredDraft.rows.map((row) => ({
+          ...row,
+          localId: row.localId || createDraftRow(profileGroup).localId,
+          submission_files: [],
+          pendingReceiptNames: Array.isArray(row.pendingReceiptNames) ? row.pendingReceiptNames : [],
+        }))
+      : []
+    const rowsToOpen = restoredRows.length ? restoredRows : [createDraftRow(profileGroup)]
+    setBatchRows(rowsToOpen)
+    setActiveBatchRowId(rowsToOpen.some((row) => row.localId === restoredDraft?.activeBatchRowId) ? restoredDraft.activeBatchRowId : rowsToOpen[0].localId)
     setOpenBatchModal(true)
     setError('')
     setSuccess('')
+    setBatchDraftNotice(
+      restoredRows.length
+        ? restoredRows.some((row) => row.pendingReceiptNames.length)
+          ? 'Draft restored. Please reselect receipt files that were chosen before the page refreshed.'
+          : 'Your unsubmitted reimbursement entries have been restored.'
+        : ''
+    )
   }
+
+  useEffect(() => {
+    if (!openBatchModal) return
+
+    const draft = {
+      activeBatchRowId,
+      rows: batchRows.map(({ submission_files = [], ...row }) => ({
+        ...row,
+        pendingReceiptNames: [
+          ...(Array.isArray(row.pendingReceiptNames) ? row.pendingReceiptNames : []),
+          ...submission_files.map((file) => file.name),
+        ],
+      })),
+    }
+
+    try {
+      window.sessionStorage.setItem(batchDraftStorageKey, JSON.stringify(draft))
+    } catch {
+      setBatchDraftNotice('Draft backup is unavailable in this browser. Keep this page open until submission is complete.')
+    }
+  }, [activeBatchRowId, batchDraftStorageKey, batchRows, openBatchModal])
 
   function addBatchRow() {
     const nextRow = createDraftRow(profileGroup)
@@ -350,6 +417,7 @@ export default function MyArklifeReimbursementClient({ profile, headerActions = 
           ? {
               ...item,
               submission_files: [...item.submission_files, ...files],
+              pendingReceiptNames: [],
             }
           : item
       )
@@ -934,9 +1002,7 @@ export default function MyArklifeReimbursementClient({ profile, headerActions = 
       ) : null}
 
       {openBatchModal ? (
-        <div className={styles.modalOverlay} onClick={(event) => {
-          if (event.target === event.currentTarget && !saving) resetBatchModal()
-        }}>
+        <div className={styles.modalOverlay}>
           <div className={styles.modalWideCard} onClick={(event) => event.stopPropagation()}>
             <div className={styles.modalHeader}>
               <h2 className={styles.modalTitle}>Reimbursement Claim</h2>
@@ -944,6 +1010,7 @@ export default function MyArklifeReimbursementClient({ profile, headerActions = 
 
             <div className={styles.modalBody}>
               {error ? <p className={styles.errorText}>{error}</p> : null}
+              {batchDraftNotice ? <p className={styles.batchSavedText}>{batchDraftNotice}</p> : null}
 
               <div className={styles.batchLayout}>
                 <section className={styles.batchEditor}>
@@ -1089,12 +1156,12 @@ export default function MyArklifeReimbursementClient({ profile, headerActions = 
 
                 <aside className={styles.batchSidebar}>
                   <div className={styles.batchSidebarHeader}>
-                    <h3 className={styles.batchTitle}>Added Entries</h3>
+                    <h3 className={styles.batchTitle}>Added Entries ({batchRows.length})</h3>
                     <strong className={styles.batchTotal}>{formatCurrency(batchRows.reduce((sum, item) => sum + parseAmountInput(item.total_amount), 0))}</strong>
                   </div>
 
                   <div className={styles.modalActions}>
-                    <button type="button" className={styles.cancelDangerButton} onClick={resetBatchModal} disabled={saving}>
+                    <button type="button" className={styles.cancelDangerButton} onClick={cancelBatchModal} disabled={saving}>
                       Cancel
                     </button>
                     <button type="button" className={styles.primaryButton} onClick={() => void handleSaveBatch()} disabled={saving}>

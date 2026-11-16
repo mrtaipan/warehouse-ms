@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from 'react'
 
 import { createClient } from '@/utils/supabase/browser'
 import { getProfileByAuthenticatedUser } from '@/utils/user-profiles'
+import { fetchAllRows } from './fetch-all-rows.mjs'
 
 import shellStyles from '../../arkline.module.css'
 import useArklineAccess from '../../use-arkline-access'
@@ -388,7 +389,7 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
         .select('id, sales_channel, status, current_gross_amount, started_at, started_by_display_name_snapshot, started_by_profile:dir_user_profiles!arkline_live_reporting_runs_started_by_profile_id_fkey(display_name)')
         .eq('status', 'ACTIVE')
         .order('started_at', { ascending: false }),
-      supabase
+      fetchAllRows((from, to) => supabase
         .from('arkline_live_reporting_sessions')
         .select(
           `
@@ -414,9 +415,9 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
             partner_profile:dir_user_profiles!arkline_live_reporting_sessions_partner_profile_id_fkey(display_name)
           `
         )
-        .order('session_date', { ascending: false })
-        .order('start_time', { ascending: false }),
-      supabase
+        .order('id', { ascending: true })
+        .range(from, to)),
+      fetchAllRows((from, to) => supabase
         .from('arkline_live_reporting_credits')
         .select(
           `
@@ -439,7 +440,9 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
               partner_display_name_snapshot
             )
           `
-        ),
+        )
+        .order('id', { ascending: true })
+        .range(from, to)),
     ])
 
     if (profileRowsError || productError || liveRunError || sessionError || creditError) {

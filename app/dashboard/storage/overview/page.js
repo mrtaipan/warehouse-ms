@@ -1,7 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { createClient } from '@/utils/supabase/browser'
 import { ADMIN_EMAIL, getRoleLockedGroup, getStorageFeatureAccess, resolveRole } from '@/utils/permissions'
@@ -1148,6 +1148,53 @@ async function getCurrentUserEmail() {
   } = await supabase.auth.getUser()
 
   return user?.email || null
+}
+
+function StockCategoryFilter({ label, allLabel, value, options, onChange, disabled = false }) {
+  const [isOpen, setIsOpen] = useState(false)
+  const [search, setSearch] = useState('')
+  const dropdownRef = useRef(null)
+
+  useEffect(() => {
+    if (!isOpen) return undefined
+    const closeOnOutsideClick = (event) => {
+      if (!dropdownRef.current?.contains(event.target)) setIsOpen(false)
+    }
+    const closeOnEscape = (event) => {
+      if (event.key === 'Escape') setIsOpen(false)
+    }
+    document.addEventListener('pointerdown', closeOnOutsideClick)
+    document.addEventListener('keydown', closeOnEscape)
+    return () => {
+      document.removeEventListener('pointerdown', closeOnOutsideClick)
+      document.removeEventListener('keydown', closeOnEscape)
+    }
+  }, [isOpen])
+
+  const selectedLabel = options.find((option) => String(option.id) === String(value))?.label || allLabel
+  const visibleOptions = options.filter((option) => normalizeFilterValue(option.label).includes(normalizeFilterValue(search)))
+
+  return (
+    <div style={{ ...styles.field, ...styles.compactFilterField }}>
+      <label style={styles.label}>{label}</label>
+      <div ref={dropdownRef} style={styles.stockCategoryDropdown}>
+        <button type="button" disabled={disabled} aria-expanded={isOpen} onClick={() => { setSearch(''); setIsOpen((open) => !open) }} style={disabled ? { ...styles.stockCategoryButton, ...styles.controlDisabled } : styles.stockCategoryButton}>
+          <span style={styles.stockCategoryButtonText}>{selectedLabel}</span>
+          <span aria-hidden="true" style={styles.stockCategoryCaret}>{isOpen ? '▲' : '▼'}</span>
+        </button>
+        {isOpen && !disabled ? (
+          <div style={styles.stockCategoryMenu}>
+            <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={`Search ${label.toLowerCase()}...`} aria-label={`Search ${label}`} autoFocus style={styles.stockCategorySearch} />
+            <button type="button" onClick={() => { onChange(''); setIsOpen(false) }} style={!value ? { ...styles.stockCategoryOption, ...styles.stockCategoryOptionActive } : styles.stockCategoryOption}>{allLabel}</button>
+            {visibleOptions.map((option) => (
+              <button key={option.id} type="button" onClick={() => { onChange(String(option.id)); setIsOpen(false) }} style={String(value) === String(option.id) ? { ...styles.stockCategoryOption, ...styles.stockCategoryOptionActive } : styles.stockCategoryOption}>{option.label}</button>
+            ))}
+            {!visibleOptions.length ? <div style={styles.stockCategoryEmpty}>No matches</div> : null}
+          </div>
+        ) : null}
+      </div>
+    </div>
+  )
 }
 
 export default function StorageOverviewPage() {
@@ -7006,65 +7053,9 @@ export default function StorageOverviewPage() {
             </datalist>
           </div>
 
-          <div style={{ ...styles.field, ...styles.compactFilterField }}>
-            <label style={styles.label}>Category</label>
-            <select
-              name="categoryId"
-              value={filters.categoryId}
-              onChange={handleFilterChange}
-              style={filters.uncategorized
-                ? { ...styles.select, ...styles.compactFilterControl, ...styles.controlDisabled }
-                : { ...styles.select, ...styles.compactFilterControl }}
-              disabled={filters.uncategorized}
-            >
-              <option value="">All categories</option>
-              {stockCategoryOptions.map((option) => (
-                <option key={option.id} value={option.id}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div style={{ ...styles.field, ...styles.compactFilterField }}>
-            <label style={styles.label}>Sub Category</label>
-            <select
-              name="subCategoryId"
-              value={filters.subCategoryId}
-              onChange={handleFilterChange}
-              style={filters.uncategorized || stockSubCategoryOptions.length === 0
-                ? { ...styles.select, ...styles.compactFilterControl, ...styles.controlDisabled }
-                : { ...styles.select, ...styles.compactFilterControl }}
-              disabled={filters.uncategorized || stockSubCategoryOptions.length === 0}
-            >
-              <option value="">All sub categories</option>
-              {stockSubCategoryOptions.map((option) => (
-                <option key={option.id} value={option.id}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div style={{ ...styles.field, ...styles.compactFilterField }}>
-            <label style={styles.label}>Item Type</label>
-            <select
-              name="itemTypeId"
-              value={filters.itemTypeId}
-              onChange={handleFilterChange}
-              style={filters.uncategorized || stockItemTypeOptions.length === 0
-                ? { ...styles.select, ...styles.compactFilterControl, ...styles.controlDisabled }
-                : { ...styles.select, ...styles.compactFilterControl }}
-              disabled={filters.uncategorized || stockItemTypeOptions.length === 0}
-            >
-              <option value="">All item types</option>
-              {stockItemTypeOptions.map((option) => (
-                <option key={option.id} value={option.id}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </div>
+          <StockCategoryFilter label="Category" allLabel="All categories" value={filters.categoryId} options={stockCategoryOptions} disabled={filters.uncategorized} onChange={(value) => handleFilterChange({ target: { name: 'categoryId', value } })} />
+          <StockCategoryFilter label="Sub Category" allLabel="All sub categories" value={filters.subCategoryId} options={stockSubCategoryOptions} disabled={filters.uncategorized || stockSubCategoryOptions.length === 0} onChange={(value) => handleFilterChange({ target: { name: 'subCategoryId', value } })} />
+          <StockCategoryFilter label="Item Type" allLabel="All item types" value={filters.itemTypeId} options={stockItemTypeOptions} disabled={filters.uncategorized || stockItemTypeOptions.length === 0} onChange={(value) => handleFilterChange({ target: { name: 'itemTypeId', value } })} />
 
         </div>
 
@@ -10906,6 +10897,88 @@ const styles = {
     fontSize: '13px',
     paddingLeft: '10px',
     paddingRight: '10px',
+  },
+  stockCategoryDropdown: {
+    position: 'relative',
+    minWidth: 0,
+  },
+  stockCategoryButton: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: '8px',
+    width: '100%',
+    minWidth: 0,
+    height: '36px',
+    padding: '0 10px',
+    border: '1px solid #d1d5db',
+    borderRadius: '10px',
+    background: '#fff',
+    color: '#111827',
+    fontSize: '13px',
+    fontFamily: 'inherit',
+    textAlign: 'left',
+    cursor: 'pointer',
+  },
+  stockCategoryButtonText: {
+    minWidth: 0,
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+  },
+  stockCategoryCaret: {
+    flex: '0 0 auto',
+    color: '#64748b',
+    fontSize: '10px',
+  },
+  stockCategoryMenu: {
+    position: 'absolute',
+    zIndex: 80,
+    top: 'calc(100% + 6px)',
+    left: 0,
+    right: 0,
+    maxHeight: '240px',
+    overflowY: 'auto',
+    padding: '6px',
+    border: '1px solid #dbe4ef',
+    borderRadius: '10px',
+    background: '#fff',
+    boxShadow: '0 18px 40px rgba(15, 23, 42, 0.14)',
+  },
+  stockCategorySearch: {
+    boxSizing: 'border-box',
+    width: '100%',
+    height: '34px',
+    marginBottom: '6px',
+    padding: '0 10px',
+    border: '1px solid #d1d5db',
+    borderRadius: '8px',
+    background: '#fff',
+    color: '#111827',
+    fontSize: '13px',
+  },
+  stockCategoryOption: {
+    display: 'block',
+    width: '100%',
+    minHeight: '34px',
+    padding: '8px 10px',
+    border: 'none',
+    borderRadius: '8px',
+    background: 'transparent',
+    color: '#334155',
+    fontSize: '13px',
+    fontFamily: 'inherit',
+    textAlign: 'left',
+    cursor: 'pointer',
+  },
+  stockCategoryOptionActive: {
+    background: '#111827',
+    color: '#fff',
+  },
+  stockCategoryEmpty: {
+    padding: '8px 10px',
+    color: '#64748b',
+    fontSize: '13px',
   },
   uncategorizedFilterControl: {
     width: '100%',

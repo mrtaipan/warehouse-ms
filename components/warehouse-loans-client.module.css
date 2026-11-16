@@ -91,6 +91,8 @@
 .actionRow input[type="number"] { flex: 0 0 84px; width: 84px; }
 .actionRow input:not([type="number"]) { flex: 0 1 220px; width: 220px; }
 .returnBox { display: grid; gap: 6px; min-width: 0; font-size: 13px; }
+.returnModeButton { justify-self: start; min-height: 32px; padding: 0 2px; border: 0; background: transparent; color: #475569; font: inherit; font-size: 12px; font-weight: 700; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+.returnModeButton:hover:not(:disabled) { color: #111827; }
 .receivedInfo { display: grid; gap: 2px; color: #475569; font-size: 12px; line-height: 1.4; }
 .receivedInfo strong { color: #111827; font-weight: 700; }
 .emptyState { padding: 32px !important; color: #64748b; text-align: center; }
