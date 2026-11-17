@@ -220,6 +220,20 @@ function buildVerificationRows(inboundRows = [], qcRows = [], qcSampleRows = [],
   return Array.from(rowsByInbound.values()).filter((row) => row.passingSourceQty > 0 || row.rejectionSourceQty > 0)
 }
 
+async function fetchAllRows(buildQuery, pageSize = 1000) {
+  const rows = []
+  let offset = 0
+
+  while (true) {
+    const { data, error } = await buildQuery().range(offset, offset + pageSize - 1)
+    if (error) return { data: rows, error }
+
+    rows.push(...(data || []))
+    if (!data || data.length < pageSize) return { data: rows, error: null }
+    offset += pageSize
+  }
+}
+
 export default async function QcConfirmationPage({ searchParams }) {
   const supabase = await createClient()
   const params = await searchParams
@@ -275,7 +289,7 @@ export default async function QcConfirmationPage({ searchParams }) {
 
   if (inboundIds.length) {
     const [qcResult, qcSampleResult, sampleBreakdownResult, confirmResult, returnResult] = await Promise.all([
-      supabase
+      fetchAllRows(() => supabase
         .from('qc_items')
         .select(`
           inbound_id,
@@ -294,8 +308,9 @@ export default async function QcConfirmationPage({ searchParams }) {
           )
         `)
         .eq('status', 'done')
-        .in('inbound_id', inboundIds),
-      supabase
+        .in('inbound_id', inboundIds)
+        .order('id', { ascending: true })),
+      fetchAllRows(() => supabase
         .from('qc_sample_breakdowns')
         .select(`
           id,
@@ -313,19 +328,23 @@ export default async function QcConfirmationPage({ searchParams }) {
             inbound_unload_id
           )
         `)
-        .in('sample_breakdown.inbound_id', inboundIds),
-      supabase
+        .in('sample_breakdown.inbound_id', inboundIds)
+        .order('id', { ascending: true })),
+      fetchAllRows(() => supabase
         .from('inbound_sample_model_breakdowns')
         .select('id, inbound_unload_id, inbound_id, resolution_status')
-        .in('inbound_id', inboundIds),
-      supabase
+        .in('inbound_id', inboundIds)
+        .order('id', { ascending: true })),
+      fetchAllRows(() => supabase
         .from('qc_confirm')
-        .select('inbound_id, qty, grade, source_grade, adjustment_type')
-        .in('inbound_id', inboundIds),
-      supabase
+        .select('id, inbound_id, qty, grade, source_grade, adjustment_type')
+        .in('inbound_id', inboundIds)
+        .order('id', { ascending: true })),
+      fetchAllRows(() => supabase
         .from('warehouse_returns')
-        .select('inbound_id, qty, source_phase')
-        .in('inbound_id', inboundIds),
+        .select('id, inbound_id, qty, source_phase')
+        .in('inbound_id', inboundIds)
+        .order('id', { ascending: true })),
     ])
 
     qcRows = qcResult.data || []

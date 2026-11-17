@@ -1144,6 +1144,36 @@
   text-align: center !important;
 }
 
+.detailDeleteError {
+  margin: 0 0 12px;
+  color: #b42318;
+  font-size: 13px;
+}
+
+.detailDeleteButton {
+  border: 1px solid #fecaca;
+  border-radius: 6px;
+  background: #fff1f2;
+  color: #b42318;
+  padding: 6px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.detailDeleteButton:hover:not(:disabled) {
+  background: #ffe4e6;
+}
+
+.detailDeleteButton:focus-visible {
+  outline: 2px solid #b42318;
+  outline-offset: 2px;
+}
+
+.detailDeleteButton:disabled {
+  opacity: .45;
+  cursor: not-allowed;
+}
+
 .emptyState {
   padding: 18px;
   border-radius: 16px;

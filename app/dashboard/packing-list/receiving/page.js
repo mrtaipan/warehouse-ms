@@ -1,6 +1,7 @@
 'use client'
 
 import Image from 'next/image'
+import PhotoPreviewModal from '@/components/photo-preview-modal'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import { useEffect, useMemo, useState } from 'react'
 import {
@@ -1053,12 +1054,6 @@ const styles = {
     padding: '18px',
     zIndex: 40,
   },
-  modal: {
-    position: 'relative',
-    display: 'inline-flex',
-    maxWidth: 'min(92vw, 860px)',
-    maxHeight: '86vh',
-  },
   modelPickerModal: {
     width: 'min(92vw, 460px)',
     maxHeight: '82vh',
@@ -1217,33 +1212,6 @@ const styles = {
     color: '#64748b',
     fontSize: '11px',
     fontWeight: 800,
-  },
-  previewImage: {
-    display: 'block',
-    width: 'auto',
-    height: 'auto',
-    maxWidth: 'min(92vw, 860px)',
-    maxHeight: '86vh',
-    objectFit: 'contain',
-  },
-  photoPreviewClose: {
-    position: 'absolute',
-    top: '10px',
-    right: '10px',
-    width: '34px',
-    height: '34px',
-    borderRadius: '999px',
-    border: '1px solid #fecaca',
-    background: 'rgba(255, 255, 255, 0.94)',
-    color: '#dc2626',
-    fontSize: '18px',
-    fontWeight: 950,
-    lineHeight: 1,
-    cursor: 'pointer',
-    display: 'inline-flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    boxShadow: '0 10px 24px rgba(15, 23, 42, 0.18)',
   },
   overviewList: {
     display: 'flex',
@@ -3074,16 +3042,7 @@ export default function PackingListReceivingPage() {
           </div>
         </section>
 
-        {previewPhoto ? (
-          <div style={styles.overlay} role="dialog" aria-modal="true" onClick={() => setPreviewPhoto(null)}>
-            <div style={styles.modal} onClick={(event) => event.stopPropagation()}>
-              <Image src={previewPhoto.url} alt={previewPhoto.label} width={720} height={720} unoptimized style={styles.previewImage} />
-              <button type="button" onClick={() => setPreviewPhoto(null)} style={styles.photoPreviewClose} aria-label="Close preview" title="Close preview">
-                X
-              </button>
-            </div>
-          </div>
-        ) : null}
+        <PhotoPreviewModal src={previewPhoto?.url} alt={previewPhoto?.label} onClose={() => setPreviewPhoto(null)} />
       </>
     )
   }
@@ -3512,16 +3471,7 @@ export default function PackingListReceivingPage() {
         </div>
       ) : null}
 
-      {previewPhoto ? (
-        <div style={styles.overlay} role="dialog" aria-modal="true" onClick={() => setPreviewPhoto(null)}>
-          <div style={styles.modal} onClick={(event) => event.stopPropagation()}>
-            <Image src={previewPhoto.url} alt={previewPhoto.label} width={720} height={720} unoptimized style={styles.previewImage} />
-            <button type="button" onClick={() => setPreviewPhoto(null)} style={styles.photoPreviewClose} aria-label="Close preview" title="Close preview">
-              X
-            </button>
-          </div>
-        </div>
-      ) : null}
+      <PhotoPreviewModal src={previewPhoto?.url} alt={previewPhoto?.label} onClose={() => setPreviewPhoto(null)} />
     </div>
   )
 }

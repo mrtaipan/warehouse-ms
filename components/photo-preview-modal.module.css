@@ -1,0 +1,108 @@
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
+  background: rgba(2, 6, 23, 0.94);
+  backdrop-filter: blur(8px);
+}
+
+.toolbar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 64px;
+  padding: max(8px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) 8px max(16px, env(safe-area-inset-left));
+  gap: 16px;
+}
+
+.zoomControls {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: #fff;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.zoomControls span {
+  min-width: 42px;
+  text-align: center;
+}
+
+.zoomControls button,
+.close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+  font: inherit;
+  font-size: 20px;
+  cursor: pointer;
+}
+
+.zoomControls button:hover:not(:disabled),
+.close:hover {
+  background: rgba(255, 255, 255, 0.22);
+}
+
+.zoomControls button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.zoomControls button:focus-visible,
+.close:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 3px;
+}
+
+.close {
+  flex: none;
+  border-color: #fecaca;
+  background: #fff;
+  color: #dc2626;
+  font-weight: 800;
+}
+
+.close:hover {
+  background: #fee2e2;
+}
+
+.viewer {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+.canvas {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: max-content;
+  min-width: 100%;
+  height: max-content;
+  min-height: 100%;
+  padding: 16px;
+  box-sizing: border-box;
+}
+
+.image {
+  display: block;
+  max-width: none;
+  max-height: none;
+  object-fit: contain;
+  flex: none;
+}

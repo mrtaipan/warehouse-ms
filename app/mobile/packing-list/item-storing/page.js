@@ -1,6 +1,7 @@
 'use client'
 
 import Image from 'next/image'
+import PhotoPreviewModal from '@/components/photo-preview-modal'
 import { Suspense, useEffect, useMemo, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { createClient } from '@/utils/supabase/browser'
@@ -829,16 +830,7 @@ function ItemStoringContent() {
           </>
         )}
       </main>
-      {previewPhoto ? (
-        <div style={styles.previewOverlay} onClick={() => setPreviewPhoto(null)}>
-          <div style={styles.previewFrame} onClick={(event) => event.stopPropagation()}>
-            <Image src={previewPhoto.src} alt={previewPhoto.alt || 'Photo preview'} width={900} height={900} unoptimized style={styles.previewImage} />
-            <button type="button" onClick={() => setPreviewPhoto(null)} style={styles.previewClose} aria-label="Close photo preview">
-              X
-            </button>
-          </div>
-        </div>
-      ) : null}
+      <PhotoPreviewModal src={previewPhoto?.src} alt={previewPhoto?.alt} onClose={() => setPreviewPhoto(null)} />
     </div>
   )
 }
@@ -1440,44 +1432,5 @@ const styles = {
     color: '#64748b',
     fontSize: '13px',
     fontWeight: 750,
-  },
-  previewOverlay: {
-    position: 'fixed',
-    inset: 0,
-    zIndex: 60,
-    background: 'rgba(15, 23, 42, 0.72)',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: '18px',
-  },
-  previewFrame: {
-    position: 'relative',
-    width: 'min(92vw, 720px)',
-    maxHeight: '86vh',
-    borderRadius: '18px',
-    overflow: 'hidden',
-    background: '#020617',
-  },
-  previewImage: {
-    width: '100%',
-    height: 'auto',
-    maxHeight: '86vh',
-    objectFit: 'contain',
-    display: 'block',
-  },
-  previewClose: {
-    position: 'absolute',
-    top: '10px',
-    right: '10px',
-    width: '34px',
-    height: '34px',
-    border: 'none',
-    borderRadius: '999px',
-    background: '#fff',
-    color: '#dc2626',
-    fontSize: '14px',
-    fontWeight: 950,
-    cursor: 'pointer',
   },
 }

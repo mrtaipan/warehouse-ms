@@ -2072,7 +2072,7 @@ export default function QcDashboardPage() {
         .select('id, reason_name, is_active, is_repairable')
         .eq('is_active', true)
         .order('reason_name', { ascending: true }),
-      supabase
+      fetchAllSupabaseRows(() => supabase
         .from('arkline_qc_reject_details')
         .select(`
           id,
@@ -2093,7 +2093,8 @@ export default function QcDashboardPage() {
             is_repairable
           )
         `)
-        .order('created_at', { ascending: false }),
+        .order('created_at', { ascending: false })
+        .order('id', { ascending: false })),
       supabase
         .from('arkline_qc_reject_adjustments')
         .select('*')

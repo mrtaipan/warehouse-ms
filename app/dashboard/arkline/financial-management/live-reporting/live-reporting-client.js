@@ -4,8 +4,10 @@ import Link from 'next/link'
 import { useEffect, useMemo, useState } from 'react'
 
 import { createClient } from '@/utils/supabase/browser'
+import { ADMIN_EMAIL } from '@/utils/permissions'
 import { getProfileByAuthenticatedUser } from '@/utils/user-profiles'
 import { fetchAllRows } from './fetch-all-rows.mjs'
+import { hasHostDetailFilters, showHostDetailCredits } from './host-detail-window.mjs'
 
 import shellStyles from '../../arkline.module.css'
 import useArklineAccess from '../../use-arkline-access'
@@ -268,6 +270,9 @@ function normalizeLiveRun(row) {
 function normalizeCredit(row) {
   return {
     id: row?.id || '',
+    session_id: row?.session_id || row?.session?.id || '',
+    live_run_id: row?.session?.live_run_id || '',
+    checkpoint_no: row?.session?.checkpoint_no || 0,
     credited_host_profile_id: row?.host_profile_id || '',
     host_display_name: row?.host_profile?.display_name || row?.host_display_name_snapshot || '-',
     credited_amount: Number(row?.credited_amount || 0),
@@ -307,10 +312,14 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
   const [hoveredTrendKey, setHoveredTrendKey] = useState('')
   const [selectedRanking, setSelectedRanking] = useState(null)
   const [detailFilters, setDetailFilters] = useState(createDetailFilters)
+  const [detailToday, setDetailToday] = useState(getTodayDateValue)
   const [previewActiveLive, setPreviewActiveLive] = useState(false)
+  const [deletingSessionId, setDeletingSessionId] = useState(null)
+  const [deleteError, setDeleteError] = useState('')
 
   const canView = access.financialManagementLiveReportingView
   const canSubmit = access.financialManagementLiveReportingAdd
+  const canDeleteSessions = profile?.email === ADMIN_EMAIL
 
   function updateProductDraft(fieldPrefix, value) {
     const matched = findProductByInput(products, value)
@@ -422,11 +431,15 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
         .select(
           `
             id,
+            session_id,
             host_profile_id,
             credited_amount,
             host_display_name_snapshot,
             host_profile:dir_user_profiles!arkline_live_reporting_credits_host_profile_id_fkey(display_name),
             session:arkline_live_reporting_sessions!arkline_live_reporting_credits_session_id_fkey(
+              id,
+              live_run_id,
+              checkpoint_no,
               host_profile_id,
               session_date,
               end_date,
@@ -577,14 +590,14 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
   const selectedHostCredits = useMemo(() => {
     if (!selectedRanking) return []
 
-    return filteredCredits
+    return credits
       .filter((item) => item.host_display_name === selectedRanking)
       .sort((left, right) => {
         const dateComparison = String(right.session_date || '').localeCompare(String(left.session_date || ''))
         if (dateComparison !== 0) return dateComparison
         return String(right.session_start_time || '').localeCompare(String(left.session_start_time || ''))
       })
-  }, [filteredCredits, selectedRanking])
+  }, [credits, selectedRanking])
 
   const detailPartnerOptions = useMemo(() => {
     return Array.from(
@@ -598,7 +611,7 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
   }, [selectedHostCredits, selectedRanking])
 
   const filteredSelectedHostCredits = useMemo(() => {
-    return selectedHostCredits.filter((item) => {
+    const matchingCredits = selectedHostCredits.filter((item) => {
       if (detailFilters.channel !== 'ALL' && item.sales_channel !== detailFilters.channel) return false
       if (detailFilters.type !== 'ALL' && item.session_type !== detailFilters.type) return false
 
@@ -621,16 +634,54 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
 
       return true
     })
-  }, [selectedHostCredits, selectedRanking, detailFilters])
+    return showHostDetailCredits(matchingCredits, detailFilters, detailToday)
+  }, [selectedHostCredits, selectedRanking, detailFilters, detailToday])
 
   const filteredSelectedHostCreditTotal = useMemo(
     () => filteredSelectedHostCredits.reduce((sum, item) => sum + Number(item.credited_amount || 0), 0),
     [filteredSelectedHostCredits]
   )
 
+  const latestSessionByRun = useMemo(() => {
+    const latest = new Map()
+    sessions.forEach((item) => {
+      if (!item.live_run_id) return
+      const previous = latest.get(String(item.live_run_id))
+      if (!previous || item.checkpoint_no > previous.checkpoint_no || (item.checkpoint_no === previous.checkpoint_no && Number(item.id) > Number(previous.id))) {
+        latest.set(String(item.live_run_id), item)
+      }
+    })
+    return latest
+  }, [sessions])
+
   function openHostDetail(hostName) {
     setDetailFilters(createDetailFilters())
+    setDetailToday(getTodayDateValue())
+    setDeleteError('')
     setSelectedRanking(hostName)
+  }
+
+  async function deleteHostSession(item) {
+    if (!canDeleteSessions || !item.session_id || deletingSessionId) return
+    const partnerNotice = item.session_type === 'PAIRING' ? ' Both hosts will lose their credit for this session.' : ''
+    if (!window.confirm(`Delete this ${item.sales_channel} session on ${formatDate(item.session_date)}?${partnerNotice} This cannot be undone.`)) return
+
+    setDeletingSessionId(item.session_id)
+    setDeleteError('')
+    try {
+      const { data, error: deleteFailure } = await supabase
+        .from('arkline_live_reporting_sessions')
+        .delete()
+        .eq('id', item.session_id)
+        .select('id')
+      if (deleteFailure) throw deleteFailure
+      if (!data?.length) throw new Error('Session was not deleted. Please refresh and try again.')
+      await loadWorkspace()
+    } catch (deleteFailure) {
+      setDeleteError(deleteFailure.message || 'Unable to delete session.')
+    } finally {
+      setDeletingSessionId(null)
+    }
   }
 
   const wearingProductRanking = useMemo(() => {
@@ -878,7 +929,7 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
           </div>
         ) : null}
 
-        {error ? <p className={shellStyles.errorText}>{error}</p> : null}
+        {error && !error.includes('already been entered') ? <p className={shellStyles.errorText}>{error}</p> : null}
         {success ? <p className={shellStyles.successText}>{success}</p> : null}
 
         {loading || accessLoading ? (
@@ -1347,6 +1398,7 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
                   </>
                 ) : null}
 
+                {error.includes('already been entered') ? <p role="alert" className={shellStyles.errorText}>{error}</p> : null}
                 <div className={`${styles.buttonRow} ${mobile ? styles.mobileButtonRow : ''}`.trim()}>
                   {mobile ? (
                     <>
@@ -1381,7 +1433,7 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
                 <div className={styles.detailTitleRow}>
                   <h2 className={styles.sectionTitle}>{selectedRanking}</h2>
                   <div className={`${styles.totalPill} ${styles.detailCreditPill}`.trim()}>
-                    <span>Total Credit</span>
+                    <span>{hasHostDetailFilters(detailFilters) ? 'Filtered Credit' : '7-Day Credit'}</span>
                     <strong>{formatCurrency(filteredSelectedHostCreditTotal)}</strong>
                   </div>
                 </div>
@@ -1488,6 +1540,8 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
               </div>
             </div>
 
+            {deleteError ? <p role="alert" className={styles.detailDeleteError}>{deleteError}</p> : null}
+
             <div className={styles.detailTableWrap}>
               <table className={styles.detailTable}>
                 <thead>
@@ -1501,6 +1555,7 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
                     <th>Wearing Product</th>
                     <th>Partner Product</th>
                     <th>Credit</th>
+                    {canDeleteSessions ? <th>Action</th> : null}
                   </tr>
                 </thead>
                 <tbody>
@@ -1517,11 +1572,20 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
                       <td>{item.wearing_product_sku || '-'}</td>
                       <td>{item.partner_wearing_product_sku || '-'}</td>
                       <td>{formatCurrency(item.credited_amount)}</td>
+                      {canDeleteSessions ? <td>
+                        <button
+                          type="button"
+                          className={styles.detailDeleteButton}
+                          onClick={() => deleteHostSession(item)}
+                          disabled={Boolean(deletingSessionId) || (Boolean(item.live_run_id) && String(latestSessionByRun.get(String(item.live_run_id))?.id) !== String(item.session_id))}
+                          title={item.live_run_id && String(latestSessionByRun.get(String(item.live_run_id))?.id) !== String(item.session_id) ? 'Only the latest checkpoint can be deleted' : 'Delete session and its credits'}
+                        >{deletingSessionId === item.session_id ? 'Deleting...' : 'Delete'}</button>
+                      </td> : null}
                     </tr>
                   ))}
                   {!filteredSelectedHostCredits.length ? (
                     <tr>
-                      <td colSpan={9} className={styles.detailEmptyCell}>No sessions match the selected filters.</td>
+                      <td colSpan={canDeleteSessions ? 10 : 9} className={styles.detailEmptyCell}>{hasHostDetailFilters(detailFilters) ? 'No sessions match the selected filters.' : 'No sessions in the last 7 days.'}</td>
                     </tr>
                   ) : null}
                 </tbody>

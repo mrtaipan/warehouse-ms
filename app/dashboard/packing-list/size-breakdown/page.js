@@ -1,6 +1,7 @@
 'use client'
 
 import Image from 'next/image'
+import PhotoPreviewModal from '@/components/photo-preview-modal'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import {
@@ -1168,39 +1169,6 @@ const styles = {
     justifyContent: 'center',
     padding: '18px',
     overscrollBehavior: 'contain',
-  },
-  previewFrame: {
-    position: 'relative',
-    display: 'inline-flex',
-    maxWidth: 'min(92vw, 900px)',
-    maxHeight: '86vh',
-  },
-  previewImage: {
-    display: 'block',
-    width: 'auto',
-    height: 'auto',
-    maxWidth: 'min(92vw, 900px)',
-    maxHeight: '86vh',
-    objectFit: 'contain',
-  },
-  previewClose: {
-    position: 'absolute',
-    top: '10px',
-    right: '10px',
-    width: '34px',
-    height: '34px',
-    borderRadius: '999px',
-    border: '1px solid #fecaca',
-    background: 'rgba(255, 255, 255, 0.94)',
-    color: '#dc2626',
-    fontSize: '18px',
-    fontWeight: 950,
-    lineHeight: 1,
-    cursor: 'pointer',
-    display: 'inline-flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    boxShadow: '0 10px 24px rgba(15, 23, 42, 0.18)',
   },
   sizeChip: {
     display: 'inline-flex',
@@ -8752,16 +8720,7 @@ export default function PackingListSizeBreakdownPage() {
           </div>
         </div>
       ) : null}
-      {previewPhoto ? (
-        <div style={styles.previewOverlay} onClick={() => setPreviewPhoto(null)}>
-          <div style={styles.previewFrame} onClick={(event) => event.stopPropagation()}>
-            <Image src={previewPhoto.src} alt={previewPhoto.alt || 'Photo preview'} width={900} height={900} unoptimized style={styles.previewImage} />
-            <button type="button" onClick={() => setPreviewPhoto(null)} style={styles.previewClose} aria-label="Close photo preview">
-              X
-            </button>
-          </div>
-        </div>
-      ) : null}
+      <PhotoPreviewModal src={previewPhoto?.src} alt={previewPhoto?.alt} onClose={() => setPreviewPhoto(null)} />
     </div>
   )
 }
