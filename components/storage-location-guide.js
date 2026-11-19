@@ -6,11 +6,10 @@ import styles from './storage-location-guide.module.css'
 
 const SECTIONS = [
   ['Current Stock', 'Melihat stok yang sudah tersimpan di pallet atau shelving. Dari sini barang dapat dipindahkan, dikeluarkan, atau dikirim ke area sementara.'],
-  ['Storage Queue', 'Antrean barang dari packing list yang belum ditempatkan di gudang. Barang dapat disimpan ke lokasi atau dipindahkan ke Temp. Sales Area.'],
-  ['Temp. Sales Area', 'Area sementara untuk barang yang disiapkan bagi penjualan. Stoknya dapat berkurang dari data penjualan yang diunggah, lalu sisa barang dikembalikan ke gudang atau dipindahkan ke Temp. Retur Keeping.'],
-  ['Temp. Retur Keeping', 'Area sementara untuk barang yang disisihkan bagi proses retur atau penggantian. Barang di sini dapat dikeluarkan atau disimpan kembali ke gudang.'],
-  ['Shelving Queue', 'Antrean barang yang akan ditempatkan ke shelving, misalnya kelebihan pengambilan saat restock atau barang retur yang belum mendapat lokasi shelving.'],
+  ['Queueing Area', 'Storage Queue memuat barang dari packing list yang belum ditempatkan. Shelving Queue memuat barang yang menunggu lokasi shelving, misalnya kelebihan restock atau barang retur. Pilih mode untuk melihat antrean dan aksinya masing-masing.'],
+  ['Temporary Area', 'Temp. Sales Area menyiapkan barang bagi penjualan dan dapat berkurang melalui upload. Temp. Retur Keeping menyisihkan barang untuk retur atau penggantian dan tidak berkurang melalui upload. Pilih mode untuk melihat stok masing-masing.'],
   ['Product Loans', 'Mencatat peminjaman barang untuk keperluan seperti foto atau konten, mulai dari permintaan, pengambilan, pengembalian, hingga penyelesaian pinjaman.'],
+  ['Packaging Supplies', 'Melihat persediaan perlengkapan kemasan, mencatat barang masuk dan keluar, serta menentukan batas kapan stok perlu dipesan ulang.'],
   ['Reject Storage', 'Mencatat barang reject di koli Reguler atau Arkline. Barang yang keluar dari koli juga dicatat agar jumlah dan alasannya tetap terlacak.'],
 ]
 

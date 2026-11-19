@@ -851,6 +851,204 @@
   gap: 18px;
 }
 
+.inventorySnapshotShell {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+
+.inventorySnapshotHeader {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.inventorySnapshotHeader h3 {
+  margin: 0;
+  color: #0f172a;
+  font-size: 18px;
+  font-weight: 800;
+}
+
+.inventorySnapshotHeader p {
+  margin: 4px 0 0;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.inventoryRecordCount {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+  align-self: end;
+  padding-bottom: 12px;
+}
+
+.inventoryFilters {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(180px, 1fr)) auto;
+  gap: 10px;
+  align-items: end;
+  padding: 0;
+}
+
+.inventoryTableWrap {
+  width: 100%;
+  overflow-x: auto;
+  border: 1px solid #dbe4f0;
+  border-radius: 14px;
+  background: #ffffff;
+}
+
+.inventoryTable {
+  width: 100%;
+  min-width: 720px;
+  border-collapse: collapse;
+  text-align: left;
+}
+
+.inventoryTable th,
+.inventoryTable td {
+  padding: 11px 13px;
+  border-bottom: 1px solid #edf2f7;
+  color: #334155;
+  font-size: 12px;
+  vertical-align: middle;
+}
+
+.inventoryTable th {
+  background: #dce7ec;
+  color: #273b46;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.inventoryTable tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.inventoryMatrixTable {
+  min-width: 820px;
+}
+
+.inventoryMatrixTable th:first-child {
+  min-width: 260px;
+}
+
+.inventoryMatrixTable th:not(:first-child),
+.inventoryMatrixTable td {
+  min-width: 64px;
+}
+
+.inventoryMatrixTable tbody tr:nth-child(even) {
+  background: #fbfcfd;
+}
+
+.inventoryMatrixTable tbody td:last-child,
+.inventoryMatrixTable thead th:last-child {
+  border-left: 1px solid #dbe4ee;
+  background: #111827;
+  color: #fff !important;
+  font-weight: 800 !important;
+  text-align: center !important;
+}
+
+.inventoryMatrixTable tbody tr:nth-child(even) td:last-child {
+  background: #1f2937;
+}
+
+.inventoryMatrixTable thead th:last-child {
+  background: #0f172a;
+}
+
+.inventoryMatrixTable tfoot th,
+.inventoryMatrixTable tfoot td {
+  padding: 12px;
+  border-top: 2px solid #cbd5e1;
+  background: #eef2f7;
+  color: #111827;
+  font-size: 13px;
+  font-weight: 750;
+  font-variant-numeric: tabular-nums;
+}
+
+.inventoryMatrixTable tfoot th:last-child,
+.inventoryMatrixTable tfoot td:last-child {
+  background: #0f172a;
+  color: #fff !important;
+  font-weight: 800 !important;
+  text-align: center !important;
+}
+
+.inventorySortButton {
+  display: inline-flex;
+  align-items: center;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  cursor: pointer;
+}
+
+.inventorySortButton:focus-visible {
+  outline: 2px solid #0f766e;
+  outline-offset: 3px;
+}
+
+.inventoryTable td.inventoryQtyCell:not(:last-child) {
+  font-weight: 400 !important;
+}
+
+.inventoryTable tfoot th {
+  border-top: 1px solid #cbd5e1;
+  border-bottom: 0;
+  background: #f8fafc;
+  color: #0f172a;
+}
+
+.inventoryTable td:first-child strong {
+  display: block;
+  color: #0f172a;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.inventoryTable td:first-child small {
+  display: block;
+  max-width: 260px;
+  margin-top: 3px;
+  overflow: hidden;
+  color: #94a3b8;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inventoryQtyCell {
+  text-align: right !important;
+  font-variant-numeric: tabular-nums;
+  font-weight: 800 !important;
+  color: #0f172a !important;
+}
+
+.inventoryEmptyState {
+  padding: 28px 16px;
+  border: 1px dashed #cbd5e1;
+  border-radius: 14px;
+  background: #f8fafc;
+  color: #64748b;
+  font-size: 13px;
+  text-align: center;
+}
+
 .productSnapshotList {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -4019,6 +4217,10 @@
 }
 
 @media (max-width: 1180px) {
+  .inventoryFilters {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .productSnapshotList {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -4181,6 +4383,15 @@
 }
 
 @media (max-width: 560px) {
+  .inventoryFilters {
+    grid-template-columns: 1fr;
+  }
+
+  .inventorySnapshotHeader {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
   .financeResolutionBar,
   .financeResolutionResolved {
     align-items: stretch;

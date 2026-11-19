@@ -22,6 +22,7 @@ const supabase = createClient()
 const BOARD_STATUSES = ['Initiated', 'On Progress', 'Completed']
 const MATERIAL_BOARD_STATUSES = ['Ordered', 'Received', 'Completed']
 const RECEIPT_SIZE_ORDER = ['XS', 'S', 'M', 'L', 'XL', 'XXL']
+const INVENTORY_SIZE_ORDER = new Map(RECEIPT_SIZE_ORDER.map((size, index) => [size, index]))
 const PPN_RATE = 0.11
 const DEFAULT_UPDATE_REASON = 'FABRIC ISSUE'
 const OTHERS_UPDATE_REASON = 'OTHERS'
@@ -88,6 +89,15 @@ function ProductListIcon() {
       <circle cx="7" cy="7.5" r="1" fill="currentColor" />
       <circle cx="7" cy="12" r="1" fill="currentColor" />
       <circle cx="7" cy="16.5" r="1" fill="currentColor" />
+    </svg>
+  )
+}
+
+function InventoryIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className={styles.calendarIcon}>
+      <path d="M3.5 9 12 4l8.5 5v10.5h-17V9Z" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" />
+      <path d="M8 19.5v-6h8v6M3.5 9h17" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" />
     </svg>
   )
 }
@@ -645,6 +655,51 @@ async function loadSnapshotRows() {
       }
     })
     .filter((item) => item.poId)
+}
+
+async function loadInventorySnapshotRows() {
+  async function loadStorage(selectColumns) {
+    const rows = []
+    const pageSize = 1000
+    for (let from = 0; ; from += pageSize) {
+      const result = await supabase
+        .from('warehouse_storage')
+        .select(`${selectColumns}, rack:dir_rack_locations!inner(group_code)`)
+        .gt('qty', 0)
+        .eq('rack.group_code', 'ARKLINE')
+        .order('updated_at', { ascending: false })
+        .range(from, from + pageSize - 1)
+      if (result.error) return result
+      rows.push(...(result.data || []))
+      if ((result.data || []).length < pageSize) break
+    }
+    return { data: rows, error: null }
+  }
+
+  let storageResult = await loadStorage('id, rack_location_id, category_id, brand_code, sku_id, source_variant_code, item_name, size, qty, notes, updated_at')
+  if (storageResult.error && /category_id|brand_code|schema cache|column/i.test(storageResult.error.message || '')) {
+    storageResult = await loadStorage('id, rack_location_id, category_id, sku_id, source_variant_code, item_name, size, qty, notes, updated_at')
+    if (storageResult.error && /category_id|schema cache|column/i.test(storageResult.error.message || '')) {
+      storageResult = await loadStorage('id, rack_location_id, sku_id, source_variant_code, item_name, size, qty, notes, updated_at')
+    }
+  }
+
+  const categoryResult = await supabase
+    .from('dir_categories')
+    .select('id, category_name, full_name')
+
+
+  if (storageResult.error) throw new Error(storageResult.error.message)
+  const categoryById = new Map((categoryResult.data || []).map((row) => [String(row.id), row]))
+
+  return (storageResult.data || []).map((row) => {
+    const category = categoryById.get(String(row.category_id || ''))
+
+    return {
+      ...row,
+      categoryLabel: category?.full_name || category?.category_name || row.brand_code || 'Uncategorized',
+    }
+  })
 }
 
 async function loadMaterialProgressRows() {
@@ -2076,6 +2131,12 @@ export default function ArklineProgressOverviewPage() {
   const [loadError, setLoadError] = useState('')
   const [poRows, setPoRows] = useState([])
   const [materialRows, setMaterialRows] = useState([])
+  const [inventoryRows, setInventoryRows] = useState([])
+  const [inventoryError, setInventoryError] = useState('')
+  const [inventorySearch, setInventorySearch] = useState('')
+  const [inventoryCategoryFilter, setInventoryCategoryFilter] = useState('')
+  const [inventorySizeFilter, setInventorySizeFilter] = useState('')
+  const [inventorySort, setInventorySort] = useState({ key: 'name', direction: 'asc' })
   const [updateReasons, setUpdateReasons] = useState([])
   const [selectedPoDetail, setSelectedPoDetail] = useState(null)
   const [openedPoParam, setOpenedPoParam] = useState('')
@@ -2167,6 +2228,7 @@ export default function ArklineProgressOverviewPage() {
       if (current === 'kanban' && access.progressKanban) return current
       if (current === 'calendar' && access.progressCalendar) return current
       if (current === 'products' && access.progressProducts) return current
+      if (current === 'inventory' && access.progressProducts) return current
       if (current === 'materials' && access.progressOverview) return current
       if (access.progressKanban) return 'kanban'
       if (access.progressCalendar) return 'calendar'
@@ -2264,10 +2326,11 @@ export default function ArklineProgressOverviewPage() {
     setLoadError('')
 
     try {
-      const [rows, reasons, materialResult] = await Promise.all([
+      const [rows, reasons, materialResult, inventoryResult] = await Promise.all([
         loadSnapshotRows(),
         loadUpdateReasons(),
         loadMaterialProgressRows().catch((error) => ({ __error: error })),
+        loadInventorySnapshotRows().catch((error) => ({ __error: error })),
       ])
       setPoRows(rows)
       setUpdateReasons(reasons)
@@ -2275,6 +2338,13 @@ export default function ArklineProgressOverviewPage() {
         setMaterialRows([])
       } else {
         setMaterialRows(materialResult)
+      }
+      if (inventoryResult?.__error) {
+        setInventoryRows([])
+        setInventoryError(inventoryResult.__error.message || 'Could not load warehouse inventory.')
+      } else {
+        setInventoryRows(inventoryResult)
+        setInventoryError('')
       }
       setLastRefresh(new Date())
     } catch (error) {
@@ -2548,6 +2618,55 @@ export default function ArklineProgressOverviewPage() {
     }
   }, [filteredRows, productFilter])
 
+  const inventorySnapshot = useMemo(() => {
+    const search = inventorySearch.trim().toUpperCase()
+    const filtered = inventoryRows.filter((row) => {
+      const matchesSearch = !search || [row.item_name, row.sku_id, row.source_variant_code, row.brand_code, row.notes]
+        .join(' ')
+        .toUpperCase()
+        .includes(search)
+      return matchesSearch
+        && (!inventoryCategoryFilter || row.categoryLabel === inventoryCategoryFilter)
+        && (!inventorySizeFilter || String(row.size || 'NO SIZE').trim().toUpperCase() === inventorySizeFilter)
+    })
+    const grouped = new Map()
+    filtered.forEach((row) => {
+      const sku = String(row.sku_id || row.source_variant_code || '').trim()
+      const name = String(row.item_name || 'Unnamed item').trim()
+      const key = `${sku.toUpperCase()}::${name.toUpperCase()}`
+      const model = grouped.get(key) || { key, sku: sku || '-', name, category: row.categoryLabel, sizeQty: new Map(), qty: 0 }
+      const size = String(row.size || 'NO SIZE').trim().toUpperCase()
+      model.sizeQty.set(size, Number(model.sizeQty.get(size) || 0) + Number(row.qty || 0))
+      model.qty += Number(row.qty || 0)
+      grouped.set(key, model)
+    })
+    const models = [...grouped.values()].sort((a, b) => {
+      const comparison = inventorySort.key === 'total'
+        ? a.qty - b.qty
+        : a.name.localeCompare(b.name, undefined, { numeric: true })
+      return inventorySort.direction === 'asc' ? comparison : -comparison
+    })
+    const sizes = [
+      ...RECEIPT_SIZE_ORDER.filter((size) => models.some((model) => model.sizeQty.has(size))),
+      ...[...new Set(models.flatMap((model) => [...model.sizeQty.keys()]))]
+        .filter((size) => !INVENTORY_SIZE_ORDER.has(size))
+        .sort((a, b) => a.localeCompare(b, undefined, { numeric: true })),
+    ]
+    return {
+      models,
+      sizes,
+      totalQty: models.reduce((sum, model) => sum + model.qty, 0),
+      skuCount: models.length,
+      categories: [...new Set(inventoryRows.map((row) => row.categoryLabel).filter(Boolean))].sort((a, b) => a.localeCompare(b)),
+      availableSizes: [
+        ...RECEIPT_SIZE_ORDER.filter((size) => inventoryRows.some((row) => String(row.size || '').trim().toUpperCase() === size)),
+        ...[...new Set(inventoryRows.map((row) => String(row.size || 'NO SIZE').trim().toUpperCase()))]
+          .filter((size) => !INVENTORY_SIZE_ORDER.has(size))
+          .sort((a, b) => a.localeCompare(b, undefined, { numeric: true })),
+      ],
+    }
+  }, [inventoryRows, inventorySearch, inventoryCategoryFilter, inventorySizeFilter, inventorySort])
+
   const availableUpdateReasons = useMemo(() => {
     if (updateReasons.length) return updateReasons
     return [
@@ -2561,6 +2680,13 @@ export default function ArklineProgressOverviewPage() {
   }, [updateReasons])
 
   function handleClearFilters() {
+    if (view === 'inventory') {
+      setInventorySearch('')
+      setInventoryCategoryFilter('')
+      setInventorySizeFilter('')
+      setMessage(`Refreshed at ${new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}`)
+      return
+    }
     setProductFilter('')
     setMessage(`Refreshed at ${new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}`)
   }
@@ -5297,13 +5423,24 @@ export default function ArklineProgressOverviewPage() {
                 >
                   <ProductListIcon />
                 </button>
+                {access.progressProducts ? (
+                  <button
+                    type="button"
+                    aria-label="Inventory snapshot view"
+                    data-view-label="Inventory Snapshot"
+                    className={`${styles.segmentButton} ${view === 'inventory' ? styles.segmentButtonActive : ''}`.trim()}
+                    onClick={() => setView('inventory')}
+                  >
+                    <InventoryIcon />
+                  </button>
+                ) : null}
               </div>
             ) : null}
           </div>
 
           <div className={styles.toolbar}>
             <div className={styles.filterCluster}>
-              <div className={styles.filterField}>
+              {view !== 'inventory' ? <div className={styles.filterField}>
                 <span>Product / PO</span>
                 <input
                   className={styles.input}
@@ -5311,7 +5448,10 @@ export default function ArklineProgressOverviewPage() {
                   onChange={(event) => setProductFilter(event.target.value.toUpperCase())}
                   placeholder="Type PO / supplier / notes"
                 />
-              </div>
+              </div> : <div className={styles.filterField}>
+                <span>Search Item</span>
+                <input className={styles.input} value={inventorySearch} onChange={(event) => setInventorySearch(event.target.value)} placeholder="Type SKU / product name" />
+              </div>}
               <div className={styles.scheduleActions}>
                 <button type="button" className={styles.secondaryButton} onClick={handleClearFilters}>
                   Clear
@@ -5319,7 +5459,7 @@ export default function ArklineProgressOverviewPage() {
                 <button type="button" className={styles.secondaryButton} onClick={() => void handleRefresh()} disabled={loading}>
                   {loading ? 'Refreshing...' : 'Refresh'}
                 </button>
-                {role === 'admin' ? (
+                {role === 'admin' && view !== 'inventory' ? (
                   <Link className={styles.powerBiButton} href="/arkline-power-bi">
                     BI Report
                   </Link>
@@ -5480,6 +5620,43 @@ export default function ArklineProgressOverviewPage() {
               </div>
             </div>
           </>
+        ) : view === 'inventory' ? (
+          <section className={styles.inventorySnapshotShell} aria-label="Warehouse inventory snapshot">
+            <div className={styles.inventoryFilters}>
+              <label className={styles.filterField}>
+                <span>Category</span>
+                <select className={styles.select} value={inventoryCategoryFilter} onChange={(event) => setInventoryCategoryFilter(event.target.value)}>
+                  <option value="">All categories</option>
+                  {inventorySnapshot.categories.map((category) => <option key={category} value={category}>{category}</option>)}
+                </select>
+              </label>
+              <label className={styles.filterField}>
+                <span>Size</span>
+                <select className={styles.select} value={inventorySizeFilter} onChange={(event) => setInventorySizeFilter(event.target.value)}>
+                  <option value="">All sizes</option>
+                  {inventorySnapshot.availableSizes.map((size) => <option key={size} value={size}>{size}</option>)}
+                </select>
+              </label>
+              <div className={styles.inventoryRecordCount}>{formatNumber(inventorySnapshot.models.length)} SKU(s)</div>
+            </div>
+            {inventoryError ? <div className={styles.inventoryEmptyState}>{inventoryError}</div> : !inventorySnapshot.models.length ? (
+              <div className={styles.inventoryEmptyState}>{inventoryRows.length ? 'No inventory matches these filters.' : 'No available warehouse inventory found.'}</div>
+            ) : (
+              <div className={styles.inventoryTableWrap}>
+                <table className={`${styles.inventoryTable} ${styles.inventoryMatrixTable}`}>
+                   <thead><tr><th aria-sort={inventorySort.key === 'name' ? (inventorySort.direction === 'asc' ? 'ascending' : 'descending') : 'none'}><button type="button" className={styles.inventorySortButton} onClick={() => setInventorySort((current) => ({ key: 'name', direction: current.key === 'name' && current.direction === 'asc' ? 'desc' : 'asc' }))}>Product Name</button></th>{inventorySnapshot.sizes.map((size) => <th key={size} className={styles.inventoryQtyCell}>{size}</th>)}<th className={styles.inventoryQtyCell} aria-sort={inventorySort.key === 'total' ? (inventorySort.direction === 'asc' ? 'ascending' : 'descending') : 'none'}><button type="button" className={styles.inventorySortButton} onClick={() => setInventorySort((current) => ({ key: 'total', direction: current.key === 'total' && current.direction === 'asc' ? 'desc' : 'asc' }))}>Total</button></th></tr></thead>
+                  <tbody>{inventorySnapshot.models.map((model) => (
+                    <tr key={model.key}>
+                       <td><strong>{model.name}</strong></td>
+                      {inventorySnapshot.sizes.map((size) => <td key={size} className={styles.inventoryQtyCell}>{model.sizeQty.get(size) ? formatNumber(model.sizeQty.get(size)) : '-'}</td>)}
+                      <td className={styles.inventoryQtyCell}>{formatNumber(model.qty)}</td>
+                    </tr>
+                  ))}</tbody>
+                  <tfoot><tr><th>Total</th>{inventorySnapshot.sizes.map((size) => <th key={size} className={styles.inventoryQtyCell}>{formatNumber(inventorySnapshot.models.reduce((sum, model) => sum + Number(model.sizeQty.get(size) || 0), 0))}</th>)}<th className={styles.inventoryQtyCell}>{formatNumber(inventorySnapshot.totalQty)}</th></tr></tfoot>
+                </table>
+              </div>
+            )}
+          </section>
         ) : view === 'products' ? (
           <div className={styles.productSnapshotShell}>
             <div className={`${styles.modalGrid} ${styles.compactModalGrid}`.trim()}>

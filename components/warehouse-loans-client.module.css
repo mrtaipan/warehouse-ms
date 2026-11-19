@@ -5,6 +5,7 @@
 .titleGroup { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 .inlineSuccess { color: #166534; font-size: 12px; font-weight: 600; }
 .iconButton, .detailButton, .modalClose { display: inline-grid; place-items: center; flex: none; width: 40px; height: 40px; border: 1px solid #d1d5db; border-radius: 6px; background: #fff; color: #111827; font: inherit; font-size: 23px; cursor: pointer; }
+.toolbarIcon, .deleteIcon { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .detailButton { width: 32px; height: 32px; font-size: 22px; }
 .modalClose { border: 0; background: #fff1f2; color: #be123c; font-size: 26px; }
 .shell input, .shell select, .modal input, .modal select { min-width: 0; height: 40px; padding: 0 10px; border: 1px solid #cbd5e1; border-radius: 6px; background: #fff; color: #111827; font: inherit; font-size: 14px; }
@@ -58,7 +59,7 @@
 .detailButton { border-color: #94a3b8; background: #e2e8f0; color: #1e293b; font-size: 20px; font-weight: 700; }
 .detailButton[data-open="true"] { border-color: #111827; background: #111827; color: #fff; }
 .detailButton[data-open="true"]:hover:not(:disabled) { border-color: #111827; background: #111827; color: #fff; }
-.deleteButton { display: grid; place-items: center; flex: none; width: 32px; height: 32px; padding: 0; border: 1px solid #e4a4b0; border-radius: 6px; background: #fff; color: #881337; font: inherit; font-size: 22px; font-weight: 900; line-height: 1; cursor: pointer; }
+.deleteButton { display: grid; place-items: center; flex: none; width: 32px; height: 32px; padding: 0; border: 1px solid #e4a4b0; border-radius: 6px; background: #fff; color: #881337; cursor: pointer; }
 .deleteButton:hover:not(:disabled) { border-color: #be123c; background: #fff1f2; }
 .returnButton { min-height: 32px; padding: 0 8px; border: 1px solid #cbd5e1; border-radius: 6px; background: #fff; color: #111827; font: inherit; font-size: 12px; font-weight: 700; cursor: pointer; }
 .detailsRow > td { padding: 0; background: #f3f6fa; }

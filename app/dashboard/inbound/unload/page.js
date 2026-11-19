@@ -8,6 +8,7 @@ import { getProfileByAuthenticatedUser } from '@/utils/user-profiles'
 import { ADMIN_EMAIL, hasPermission, resolveRole } from '@/utils/permissions'
 import { getRolePermissionCodes } from '@/utils/role-permissions'
 import { useRealtimeRefresh } from '@/utils/supabase/use-realtime-refresh'
+import { nextAvailableVariantCode } from '@/utils/inbound-variant-codes.mjs'
 
 const supabase = createClient()
 const PRODUCT_PHOTOS_BUCKET = 'product-photos'
@@ -146,19 +147,7 @@ function getQcItemProductIdentityKey(row = {}) {
 }
 
 function getNextVariantCode(model, variants) {
-  const prefix = `${model?.model_code || `MODEL${model?.id || ''}`}`
-  const nextNumber =
-    variants.reduce((max, variant) => {
-      const code = String(variant.variant_code || variant.variant_label || '')
-      const match = code.match(new RegExp(`^${prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}-(\\d+)$`, 'i'))
-      return match ? Math.max(max, Number(match[1] || 0)) : max
-    }, 0) + 1
-
-  if (nextNumber > 999) {
-    throw new Error(`Variant code sequence for ${prefix} already reached 999. Please review the variant registry before adding more variants.`)
-  }
-
-  return `${prefix}-${String(nextNumber).padStart(3, '0')}`
+  return nextAvailableVariantCode(model?.model_code, variants.map((variant) => variant.variant_code))
 }
 
 function getBrandDisplayLabel(brand) {
@@ -224,40 +213,6 @@ function getProductPhotoBasePath({ brand, brandFallback, category, categoryById,
 
 function getStablePhotoFileName(name, extension = 'jpg') {
   return `${getSafeStorageSegment(name, 'variant')}.${extension}`
-}
-
-function getStorageObjectPathFromPublicUrl(url, bucketName) {
-  const cleanUrl = String(url || '').trim()
-  if (!cleanUrl || cleanUrl.startsWith('data:') || cleanUrl.startsWith('blob:')) return ''
-
-  try {
-    const parsedUrl = new URL(cleanUrl)
-    const marker = `/storage/v1/object/public/${bucketName}/`
-    const markerIndex = parsedUrl.pathname.indexOf(marker)
-
-    if (markerIndex === -1) return ''
-
-    return decodeURIComponent(parsedUrl.pathname.slice(markerIndex + marker.length))
-  } catch {
-    return ''
-  }
-}
-
-function getFileExtensionFromUrl(url, fallback = 'jpg') {
-  const cleanUrl = String(url || '').split('?')[0].split('#')[0]
-  const extension = cleanUrl.split('.').pop()?.toLowerCase() || fallback
-
-  return extension.replace(/[^a-z0-9]/g, '') || fallback
-}
-
-function getImageContentType(extension) {
-  const normalizedExtension = String(extension || '').toLowerCase()
-
-  if (normalizedExtension === 'png') return 'image/png'
-  if (normalizedExtension === 'webp') return 'image/webp'
-  if (normalizedExtension === 'gif') return 'image/gif'
-
-  return 'image/jpeg'
 }
 
 function readFileAsDataUrl(file) {
@@ -5123,289 +5078,84 @@ export default function UnloadPage() {
       return
     }
 
-    const sourceModel = movingVariantContext?.model || null
     const sourceVariant = movingVariantContext?.variant || null
     const previousVariantCode = getVariantProductId(sourceVariant)
     const normalizedModelName = moveModelDraft.model_name.trim().toUpperCase()
 
-    if (!sourceModel?.id || !sourceVariant?.id) {
+    if (!sourceVariant?.id || !previousVariantCode) {
       setMoveModelError('Choose a variant to move.')
       return
     }
-
-    if (!selectedBrandId || !selectedCategory) {
-      setMoveModelError('Choose brand and category first.')
-      return
-    }
-
     if (moveUsesNewModel && !normalizedModelName) {
       setMoveModelError('New model name is required.')
       return
     }
-
-    if (!moveUsesNewModel && !moveSelectedModel) {
+    if (!moveUsesNewModel && !moveSelectedModel?.id) {
       setMoveModelError('Choose target model, or create a new model.')
       return
     }
 
     const moveVariant = async () => {
       setSaving(true)
+      try {
+        const response = await fetch('/api/inbound/move-variant', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            variantId: sourceVariant.id,
+            expectedOldCode: previousVariantCode,
+            targetModelId: moveUsesNewModel ? null : moveSelectedModel.id,
+            newModel: moveUsesNewModel
+              ? { name: normalizedModelName, notes: moveModelDraft.model_notes.trim() }
+              : null,
+          }),
+        })
+        const result = await response.json()
+        if (!response.ok) throw new Error(result.error || 'Could not move this variant.')
 
-      let targetModel = moveUsesNewModel ? null : moveSelectedModel
+        const updatedVariant = result.variant
+        const targetModel = result.model
+        const movedVariantCode = getVariantProductId(updatedVariant)
+        const movedVariantName = getVariantDisplayName(updatedVariant)
 
-      if (moveUsesNewModel) {
-        const duplicateModel = productModels.find(
-          (model) =>
-            Number(model.brand_id || 0) === Number(selectedBrandId) &&
-            Number(model.category_id || 0) === Number(selectedCategory.id) &&
-            String(model.model_name || '').trim().toUpperCase() === normalizedModelName
+        setProductModels((prev) => prev.some((model) => Number(model.id) === Number(targetModel.id))
+          ? prev.map((model) => Number(model.id) === Number(targetModel.id) ? { ...model, ...targetModel } : model)
+          : [...prev, targetModel])
+        setProductModelVariants((prev) =>
+          prev.map((variant) => Number(variant.id) === Number(updatedVariant.id) ? updatedVariant : variant)
+        )
+        setCurrentKoliItems((prev) =>
+          prev.map((item) => (
+            Number(item.product_model_variant_id || 0) === Number(updatedVariant.id) ||
+            getRowVariantIdentifier(item) === previousVariantCode
+          ) ? {
+            ...item,
+            product_model_id: targetModel.id,
+            product_model_variant_id: updatedVariant.id,
+            model_name: targetModel.model_name,
+            variant_label: movedVariantCode,
+            variant_code: movedVariantCode,
+            variant_name: movedVariantName,
+            photo_url: updatedVariant.variant_photo_url || null,
+          } : item)
         )
 
-        if (duplicateModel) {
-          setMoveModelError('A model with this name already exists. Choose it from the existing model list.')
-          setSaving(false)
-          return
+        if (Number(selectedVariant?.id || 0) === Number(updatedVariant.id)) {
+          setSelectedModel({ ...targetModel, photo_url: updatedVariant.variant_photo_url || '' })
+          setSelectedVariantLabel(movedVariantCode)
         }
 
-        const { data: insertedModel, error: insertModelError } = await supabase
-          .from('dir_product_models')
-          .insert([
-            {
-              brand_id: Number(selectedBrandId),
-              category_id: selectedCategory.id,
-              model_name: normalizedModelName,
-              model_notes: moveModelDraft.model_notes.trim() || null,
-              is_active: true,
-            },
-          ])
-          .select('id, brand_id, category_id, model_code, model_name, model_notes')
-          .single()
-
-        if (insertModelError) {
-          setMoveModelError(insertModelError.message)
-          setSaving(false)
-          return
-        }
-
-        targetModel = insertedModel
-        setProductModels((prev) => [...prev, insertedModel])
-      }
-
-      if (!targetModel?.id) {
-        setMoveModelError('Target model is not available.')
+        if (selectedInbound?.id) await refreshUnloadData(selectedInbound.id)
+        setMovingVariantContext(null)
+        setMoveModelDraft({ model_id: '', model_name: '', model_notes: '', is_new_model: false })
+        setShowMoveModelModal(false)
+        setError('')
+        setSuccess(`Variant moved to ${targetModel.model_name}. SKU: ${movedVariantCode}.${result.warning ? ` ${result.warning}` : ''}`)
+      } catch (error) {
+        setMoveModelError(error.message || 'Could not move this variant.')
+      } finally {
         setSaving(false)
-        return
       }
-
-      const sourcePhotoUrl = String(sourceVariant.variant_photo_url || '').trim()
-      let movedVariantPhotoUrl = sourcePhotoUrl
-
-      if (sourcePhotoUrl) {
-        const sourcePhotoPath = getStorageObjectPathFromPublicUrl(sourcePhotoUrl, PRODUCT_PHOTOS_BUCKET)
-
-        if (sourcePhotoPath) {
-          const fileExtension = getFileExtensionFromUrl(sourcePhotoUrl)
-          const targetPhotoPath = [
-            getProductPhotoBasePath({
-              brand: selectedBrand,
-              brandFallback: selectedBrandId,
-              category: selectedCategory,
-              categoryById: categoryMaps.byId,
-              model: targetModel,
-              modelFallback: targetModel.model_name || normalizedModelName,
-            }),
-            getStablePhotoFileName(previousVariantCode, fileExtension),
-          ].join('/')
-
-          if (sourcePhotoPath !== targetPhotoPath) {
-            const { data: photoBlob, error: downloadPhotoError } = await supabase.storage
-              .from(PRODUCT_PHOTOS_BUCKET)
-              .download(sourcePhotoPath)
-
-            if (downloadPhotoError) {
-              setMoveModelError(downloadPhotoError.message || 'Failed to read the current variant photo before moving model.')
-              setSaving(false)
-              return
-            }
-
-            const { error: uploadPhotoError } = await supabase.storage
-              .from(PRODUCT_PHOTOS_BUCKET)
-              .upload(targetPhotoPath, photoBlob, {
-                upsert: true,
-                contentType: photoBlob?.type || getImageContentType(fileExtension),
-              })
-
-            if (uploadPhotoError) {
-              setMoveModelError(uploadPhotoError.message || 'Failed to move the variant photo into the target model folder.')
-              setSaving(false)
-              return
-            }
-
-            const { data: movedPublicUrlData } = supabase.storage
-              .from(PRODUCT_PHOTOS_BUCKET)
-              .getPublicUrl(targetPhotoPath)
-
-            movedVariantPhotoUrl = movedPublicUrlData.publicUrl || sourcePhotoUrl
-          }
-        }
-      }
-
-      const movedAt = new Date().toISOString()
-      const { data: updatedVariant, error: updateVariantError } = await supabase
-        .from('dir_product_model_variants')
-        .update({
-          product_model_id: targetModel.id,
-          variant_photo_url: movedVariantPhotoUrl || null,
-          updated_at: movedAt,
-          updated_by: displayName,
-        })
-        .eq('id', sourceVariant.id)
-        .select('*')
-        .single()
-
-      if (updateVariantError) {
-        setMoveModelError(updateVariantError.message)
-        setSaving(false)
-        return
-      }
-
-      const movedVariantCode = getVariantProductId(updatedVariant)
-      const movedVariantName = getVariantDisplayName(updatedVariant)
-      const unloadSnapshotPatch = {
-        ...(supportsUnloadProductModel ? { product_model_id: targetModel.id } : {}),
-        ...(supportsUnloadProductModelVariant ? { product_model_variant_id: updatedVariant.id } : {}),
-        model_name: targetModel.model_name,
-        ...(supportsUnloadVariant ? { variant_label: movedVariantCode } : {}),
-        ...(supportsUnloadVariantCode ? { variant_code: movedVariantCode } : {}),
-        ...(supportsUnloadVariantName ? { variant_name: movedVariantName } : {}),
-        photo_url: updatedVariant.variant_photo_url || null,
-      }
-      const returnSnapshotPatch = {
-        model_name: targetModel.model_name,
-        ...(supportsReturnVariant ? { variant_label: movedVariantCode } : {}),
-        ...(supportsReturnVariantCode ? { variant_code: movedVariantCode } : {}),
-        ...(supportsReturnVariantName ? { variant_name: movedVariantName } : {}),
-      }
-
-      if (selectedInbound?.id) {
-        const snapshotUpdates = []
-
-        if (supportsUnloadProductModelVariant) {
-          snapshotUpdates.push(
-            supabase
-              .from('inbound_unload')
-              .update(unloadSnapshotPatch)
-              .eq('inbound_id', selectedInbound.id)
-              .eq('product_model_variant_id', sourceVariant.id)
-          )
-          snapshotUpdates.push(
-            supabase
-              .from('inbound_sample_model_breakdowns')
-              .update({
-                product_model_id: targetModel.id,
-                product_model_variant_id: updatedVariant.id,
-                model_name: targetModel.model_name,
-                variant_name: movedVariantName,
-                photo_url: updatedVariant.variant_photo_url || null,
-              })
-              .eq('inbound_id', selectedInbound.id)
-              .eq('product_model_variant_id', sourceVariant.id)
-          )
-        }
-
-        if (previousVariantCode && supportsUnloadVariantCode) {
-          snapshotUpdates.push(
-            supabase
-              .from('inbound_unload')
-              .update(unloadSnapshotPatch)
-              .eq('inbound_id', selectedInbound.id)
-              .eq('variant_code', previousVariantCode)
-          )
-        }
-
-        if (previousVariantCode && supportsUnloadVariant) {
-          snapshotUpdates.push(
-            supabase
-              .from('inbound_unload')
-              .update(unloadSnapshotPatch)
-              .eq('inbound_id', selectedInbound.id)
-              .eq('variant_label', previousVariantCode)
-          )
-        }
-
-        if (previousVariantCode && supportsReturnVariantCode) {
-          snapshotUpdates.push(
-            supabase
-              .from('warehouse_returns')
-              .update(returnSnapshotPatch)
-              .eq('inbound_id', selectedInbound.id)
-              .eq('source_phase', 'inbound')
-              .eq('variant_code', previousVariantCode)
-          )
-        }
-
-        if (previousVariantCode && supportsReturnVariant) {
-          snapshotUpdates.push(
-            supabase
-              .from('warehouse_returns')
-              .update(returnSnapshotPatch)
-              .eq('inbound_id', selectedInbound.id)
-              .eq('source_phase', 'inbound')
-              .eq('variant_label', previousVariantCode)
-          )
-        }
-
-        const snapshotResults = await Promise.all(snapshotUpdates)
-        const snapshotError = snapshotResults.find((result) => result.error)?.error
-
-        if (snapshotError) {
-          setMoveModelError(snapshotError.message)
-          setSaving(false)
-          return
-        }
-
-        await refreshUnloadData(selectedInbound.id)
-      }
-
-      setProductModelVariants((prev) =>
-        prev.map((variant) => (Number(variant.id) === Number(updatedVariant.id) ? updatedVariant : variant))
-      )
-      setCurrentKoliItems((prev) =>
-        prev.map((item) => {
-          const itemMatchesVariant =
-            Number(item.product_model_variant_id || 0) === Number(sourceVariant.id || 0) ||
-            (previousVariantCode && getRowVariantIdentifier(item) === previousVariantCode)
-
-          return itemMatchesVariant
-            ? {
-                ...item,
-                product_model_id: targetModel.id,
-                product_model_variant_id: updatedVariant.id,
-                model_name: targetModel.model_name,
-                variant_label: movedVariantCode,
-                variant_code: movedVariantCode,
-                variant_name: movedVariantName,
-                photo_url: updatedVariant.variant_photo_url || item.photo_url || null,
-              }
-            : item
-        })
-      )
-
-      if (Number(selectedVariant?.id || 0) === Number(updatedVariant.id || 0)) {
-        setSelectedModel({
-          ...targetModel,
-          photo_url: updatedVariant.variant_photo_url || '',
-        })
-        setSelectedVariantLabel(movedVariantCode)
-      }
-
-      setMovingVariantContext(null)
-      setMoveModelDraft({ model_id: '', model_name: '', model_notes: '', is_new_model: false })
-      setShowMoveModelModal(false)
-      setMoveModelError('')
-      setError('')
-      setSuccess(`Variant moved to ${targetModel.model_name}. SKU ${movedVariantCode} remains unchanged.`)
-      setSaving(false)
     }
 
     moveVariant()
@@ -5493,9 +5243,23 @@ export default function UnloadPage() {
         setProductModels((prev) => [...prev, insertedModel])
       }
 
-      const siblingVariants = productModelVariants.filter(
-        (variant) => Number(variant.product_model_id || 0) === Number(savedModel.id || 0)
-      )
+      let siblingVariants = []
+      if (!isEditingVariant) {
+        const { data: registeredCodes, error: codesError } = await fetchAllQueryRows((from, to) =>
+          supabase
+            .from('dir_product_model_variants')
+            .select('variant_code')
+            .ilike('variant_code', `${savedModel.model_code}-%`)
+            .order('variant_code')
+            .range(from, to)
+        )
+        if (codesError) {
+          setModelModalError(codesError.message)
+          setSaving(false)
+          return
+        }
+        siblingVariants = registeredCodes || []
+      }
       let resolvedVariantStorageCode = ''
 
       try {
@@ -5527,7 +5291,7 @@ export default function UnloadPage() {
 
         const { error: uploadError } = await supabase.storage
           .from(PRODUCT_PHOTOS_BUCKET)
-          .upload(filePath, variantPhotoFile, { upsert: true })
+          .upload(filePath, variantPhotoFile, { upsert: isEditingVariant })
 
         if (uploadError) {
           setModelModalError(uploadError.message)
@@ -5915,6 +5679,18 @@ export default function UnloadPage() {
 
     setSaving(true)
 
+    const { data: authData, error: authError } = await supabase.auth.getUser()
+    if (authError) {
+      setError('Could not verify your login. Please check your connection and retry Post. Your Koli items are still here.')
+      setSaving(false)
+      return
+    }
+    if (!authData?.user) {
+      setError('Your login session has expired. Sign in again in another tab, then retry Post. Your Koli items are still here.')
+      setSaving(false)
+      return
+    }
+
     if (isSampleResolveBuilder) {
       if (!supportsSampleBreakdowns) {
         setError('Run the sample breakdown SQL first before resolving sample model/variant.')
@@ -6048,7 +5824,14 @@ export default function UnloadPage() {
     const { error: insertError } = await supabase.from('inbound_unload').insert(payload)
 
     if (insertError) {
-      setError(insertError.message)
+      if (insertError.code === '42501' && insertError.message?.includes('row-level security')) {
+        const { data: currentAuth } = await supabase.auth.getUser()
+        setError(currentAuth?.user
+          ? 'Posting was denied despite an active login. Please contact an administrator; your Koli items are still here.'
+          : 'Your login session has expired. Sign in again in another tab, then retry Post. Your Koli items are still here.')
+      } else {
+        setError(insertError.message)
+      }
       setSaving(false)
       return
     }
@@ -7670,7 +7453,7 @@ export default function UnloadPage() {
               <div style={styles.helperBox}>
                 <p style={styles.emptyText}>
                   {movingVariantContext?.variant
-                    ? `${getVariantDisplayName(movingVariantContext.variant)} will move to the target model. SKU ${getVariantProductId(movingVariantContext.variant)} will remain unchanged.`
+                    ? `${getVariantDisplayName(movingVariantContext.variant)} | Current SKU ${getVariantProductId(movingVariantContext.variant)}. Moving may change the SKU; check printed labels first.`
                     : 'Choose a variant to move.'}
                 </p>
               </div>

@@ -6072,7 +6072,7 @@ export default function PackingListSizeBreakdownPage() {
         y += 6
         drawInlineField(
           'Print Date',
-          `${formatPdfPrintDate(printedAt)} | ${options.chooseModels ? 'Selected Model' : 'All'}`,
+          `${formatPdfPrintDate(printedAt)} | ${options.chooseModels ? 'Selected Model' : 'All Models'}`,
           margin,
           y
         )
