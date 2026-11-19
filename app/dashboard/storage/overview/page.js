@@ -6414,7 +6414,7 @@ export default function StorageOverviewPage() {
             onStockChanged={() => refreshInventoryData({ forceStorage: true })}
           />
         ) : visibleListMode === 'packaging-supplies' ? (
-          <PackagingSuppliesClient canManage={Boolean(storageAccess.locationEdit)} />
+          <PackagingSuppliesClient canManage={Boolean(storageAccess.locationEdit)} qrItemId={searchParams.get('packaging_item')} />
         ) : visibleListMode === 'reject-storage' && rejectStorageSource === 'arkline' ? (
           <ArklineRejectionStoragePanel userEmail={storageAccess.currentUserEmail} canAdd={canAddRejectStorage} canRelease={canEditRejectStorage} storageViewMode={arklineRejectViewMode} />
         ) : (
@@ -6445,7 +6445,7 @@ export default function StorageOverviewPage() {
                 : styles.temporarySalesToolbar}
             >
               <div style={styles.field}>
-                <label style={styles.label}>Item Search</label>
+                <label style={styles.label}>Search</label>
                 <input
                   value={temporarySalesSearch}
                   onChange={(event) => setTemporarySalesSearch(event.target.value.toUpperCase())}
@@ -6575,7 +6575,7 @@ export default function StorageOverviewPage() {
         >
           <div style={visibleListMode === 'stock' && isCompactLayout ? styles.mobileProductSearchField : ['queue', 'putaway-queue'].includes(visibleListMode) && isCompactLayout ? styles.queueAreaMobileSearchField : styles.field}>
             <div style={styles.searchLabelRow}>
-              <label style={styles.label}>{['queue', 'putaway-queue', 'reject-storage'].includes(visibleListMode) ? 'Search' : 'Product Search'}</label>
+              <label style={styles.label}>Search</label>
               {visibleListMode === 'stock' ? (
                 <div style={styles.searchLabelActions}>
                   <label style={styles.inlineUncategorizedControl}>
@@ -7162,6 +7162,11 @@ export default function StorageOverviewPage() {
           <div style={styles.temporarySalesTables}>
             <div style={styles.tableWrap}>
               <table style={styles.temporarySalesTable}>
+              <colgroup>
+                {['4%', '19%', '7%', '9%', '14%', '12%', '9%', '14%', '12%'].map((width, index) => (
+                  <col key={index} style={{ width }} />
+                ))}
+              </colgroup>
               <thead>
                 <tr>
                   <th style={{ ...styles.th, ...styles.temporarySalesTh, ...styles.selectTh }}>
@@ -7175,12 +7180,12 @@ export default function StorageOverviewPage() {
                   </th>
                   <th style={{ ...styles.th, ...styles.temporarySalesTh }}>Item</th>
                   <th style={{ ...styles.th, ...styles.temporarySalesTh }}>Size</th>
-                  <th style={{ ...styles.th, ...styles.temporarySalesTh }}>Qty in Area</th>
+                  <th style={{ ...styles.th, ...styles.temporarySalesTh }}>Qty</th>
                   <th style={{ ...styles.th, ...styles.temporarySalesTh }}>Source Location</th>
                   <th style={{ ...styles.th, ...styles.temporarySalesTh }}>Entered</th>
                   <th style={{ ...styles.th, ...styles.temporarySalesTh }}>Age</th>
                   <th style={{ ...styles.th, ...styles.temporarySalesTh }}>Status</th>
-                  <th style={{ ...styles.th, ...styles.temporarySalesTh, ...styles.actionTh }}>Action</th>
+                  <th style={{ ...styles.th, ...styles.temporarySalesTh, ...styles.actionTh, width: '12%' }} aria-label="Actions" />
                 </tr>
               </thead>
               <tbody>
@@ -7215,7 +7220,7 @@ export default function StorageOverviewPage() {
                         {getTemporaryDisplayStatus(entry).replaceAll('_', ' ')}
                       </span>
                     </td>
-                    <td style={{ ...styles.td, ...styles.actionTd }}>
+                    <td style={{ ...styles.td, ...styles.actionTd, width: '12%' }}>
                       <div style={styles.temporarySalesActionGroup}>
                         {normalizeFilterValue(entry.status) === 'WAITING' ? (
                           <>
@@ -7451,7 +7456,7 @@ export default function StorageOverviewPage() {
                   <th style={styles.th}>SKU</th>
                   <th style={styles.th}>Item</th>
                   <th style={styles.th}>Size</th>
-                  <th style={styles.th}>Available Qty</th>
+                  <th style={styles.th}>Qty</th>
                   <th style={styles.th}>Type</th>
                 </tr>
               </thead>
@@ -10419,6 +10424,7 @@ const styles = {
     width: '100%',
     minWidth: '1040px',
     borderCollapse: 'collapse',
+    tableLayout: 'fixed',
   },
   temporarySalesValueCell: {
     padding: '8px 10px',
@@ -11790,9 +11796,10 @@ const styles = {
   temporarySalesActionGroup: {
     display: 'flex',
     alignItems: 'center',
-    justifyContent: 'center',
+    justifyContent: 'flex-end',
     gap: '8px',
-    minWidth: '88px',
+    minWidth: 0,
+    paddingRight: '8px',
   },
   temporaryMoveOutButton: {
     borderColor: '#bbf7d0',

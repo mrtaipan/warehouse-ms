@@ -319,7 +319,7 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
 
   const canView = access.financialManagementLiveReportingView
   const canSubmit = access.financialManagementLiveReportingAdd
-  const canDeleteSessions = profile?.email === ADMIN_EMAIL
+  const canDeleteSessions = profile?.email?.toLowerCase() === ADMIN_EMAIL || profile?.role === 'hrga'
 
   function updateProductDraft(fieldPrefix, value) {
     const matched = findProductByInput(products, value)

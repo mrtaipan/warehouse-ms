@@ -152,6 +152,7 @@ function LineChart({ values, series, selectedSeries, onSelectSeries }) {
           pointHoverRadius: 7,
           pointHoverBorderWidth: 3,
           pointHitRadius: 14,
+          clip: 8,
           tension: .36,
           cubicInterpolationMode: 'monotone',
           fill: 'origin',
@@ -164,33 +165,11 @@ function LineChart({ values, series, selectedSeries, onSelectSeries }) {
         layout: { padding: { top: 20, right: 20, bottom: 4 } },
         plugins: {
           legend: { display: false },
-          tooltip: {
-            enabled: false,
-            external({ chart, tooltip }) {
-              const points = tooltip.dataPoints || []
-              if (!points.length || tooltip.opacity === 0) {
-                setHover(null)
-                return
-              }
-              const bounds = chart.canvas.getBoundingClientRect()
-              const anchorX = bounds.left + tooltip.caretX * (bounds.width / chart.width)
-              const anchorY = bounds.top + tooltip.caretY * (bounds.height / chart.height)
-              const width = 230
-              const height = 44 + points.length * 28
-              setHover({
-                title: points[0].label,
-                rows: points.map((point) => ({
-                  name: point.dataset.label,
-                  value: formatCount(point.parsed.y),
-                })),
-                left: anchorX + width + 24 <= window.innerWidth ? anchorX + 12 : Math.max(12, anchorX - width - 12),
-                top: Math.max(12, Math.min(anchorY - height / 2, window.innerHeight - height - 12)),
-              })
-            },
-          },
+          tooltip: { enabled: false },
         },
         scales: {
           x: {
+            offset: false,
             border: { display: false },
             grid: { display: false },
             ticks: { color: '#64748b', maxRotation: 0, maxTicksLimit: 10, font: { size: 12 } },
@@ -202,6 +181,38 @@ function LineChart({ values, series, selectedSeries, onSelectSeries }) {
             title: { display: true, text: 'Order quantity', color: '#64748b' },
             ticks: { color: '#64748b', precision: 0, maxTicksLimit: 6, font: { size: 12 }, callback: (value) => new Intl.NumberFormat('en', { notation: 'compact' }).format(value) },
           },
+        },
+        onHover(event, activeElements) {
+          const nativeEvent = event.native
+          if (!nativeEvent || nativeEvent.clientX == null || nativeEvent.clientY == null) {
+            setHover(null)
+            return
+          }
+
+          // Reuse Chart.js's active category so the tooltip always matches the
+          // marker that is highlighted under the pointer, including at edges.
+          const activeIndex = activeElements?.[0]?.index
+          if (!Number.isInteger(activeIndex) || !values[activeIndex]) {
+            setHover(null)
+            return
+          }
+          const nearestIndex = activeIndex
+
+          const width = 250
+          const rows = series
+            .map((name) => ({ name, count: safeNumber(values[nearestIndex]?.[name]) }))
+            .filter((row) => row.count > 0)
+            .map((row) => ({ name: row.name, value: formatCount(row.count) }))
+          if (!rows.length) {
+            setHover(null)
+            return
+          }
+          const height = 56 + rows.length * 28
+          const left = Math.max(12, Math.min(nativeEvent.clientX + 14, window.innerWidth - width - 12))
+          const top = nativeEvent.clientY + height + 18 <= window.innerHeight
+            ? nativeEvent.clientY + 14
+            : Math.max(12, nativeEvent.clientY - height - 14)
+          setHover({ title: values[nearestIndex]?.label || '', rows, left, top })
         },
         onClick(event, _elements, chart) {
           const nearest = chart.getElementsAtEventForMode(event, 'nearest', { intersect: true }, true)
@@ -455,8 +466,8 @@ export default function DeliverySummary({ lockedGroup: lockedGroupProp = '', isA
   const chartSeries = chartView === 'TOTAL' ? TOTAL_SERIES : visibleGroups
 
   const chartValues = useMemo(
-    () => buildOrderTrend(categoryFilteredOrders, chartPeriod, visibleGroups),
-    [chartPeriod, categoryFilteredOrders, visibleGroups]
+    () => buildOrderTrend(categoryFilteredOrders, chartPeriod, visibleGroups, applied.from, applied.to),
+    [applied.from, applied.to, chartPeriod, categoryFilteredOrders, visibleGroups]
   )
 
   const categories = useMemo(() => {

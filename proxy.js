@@ -74,6 +74,13 @@ export async function proxy(request) {
   }
 
   if (!user && (isDashboardPath || isMobilePath)) {
+    if (pathname === '/dashboard/storage/overview'
+      && request.nextUrl.searchParams.get('mode') === 'packaging-supplies'
+      && request.nextUrl.searchParams.has('packaging_item')) {
+      const loginUrl = new URL('/login', request.url)
+      loginUrl.searchParams.set('next', `${pathname}${request.nextUrl.search}`)
+      return NextResponse.redirect(loginUrl)
+    }
     return NextResponse.redirect(new URL('/login', request.url))
   }
 
