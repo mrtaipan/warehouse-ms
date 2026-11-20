@@ -2,6 +2,7 @@
 
 import Link from 'next/link'
 import { useCallback, useEffect, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { createClient } from '@/utils/supabase/browser'
 import { getProfileByAuthenticatedUser } from '@/utils/user-profiles'
 import styles from './packaging-scan-client.module.css'
@@ -15,7 +16,7 @@ const actions = [
 
 export default function PackagingScanClient({ itemId }) {
   const [item, setItem] = useState(null)
-  const [canAdjust, setCanAdjust] = useState(false)
+  const [canManage, setCanManage] = useState(false)
   const [action, setAction] = useState('')
   const [area, setArea] = useState('INVENTORY')
   const [qty, setQty] = useState('')
@@ -26,8 +27,7 @@ export default function PackagingScanClient({ itemId }) {
   const [success, setSuccess] = useState('')
 
   const load = useCallback(async () => {
-    const { data, error: loadError } = await supabase.from('packaging_items')
-      .select('id,name,unit,qty,inventory_qty,display_qty,reorder_point_qty,active').eq('id', itemId).single()
+    const { data, error: loadError } = await supabase.rpc('get_packaging_scan_item', { p_item_id: Number(itemId) }).single()
     if (loadError || !data?.active) setError(loadError?.message || 'Item not found')
     else { setItem(data); setError('') }
     setLoading(false)
@@ -44,10 +44,24 @@ export default function PackagingScanClient({ itemId }) {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user || cancelled) return
       const { data: profile } = await getProfileByAuthenticatedUser(supabase, user, 'role')
-      if (!cancelled) setCanAdjust(['warehouse_leader', 'admin'].includes(String(profile?.role || '').toLowerCase()))
+      if (!cancelled) setCanManage(['warehouse_leader', 'admin'].includes(String(profile?.role || '').toLowerCase()))
     }, 0)
     return () => { cancelled = true; window.clearTimeout(timer) }
   }, [])
+
+  useEffect(() => {
+    if (!action) return
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    function onKeyDown(event) {
+      if (event.key === 'Escape' && !busy) { setAction(''); setError('') }
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.body.style.overflow = previousOverflow
+      document.removeEventListener('keydown', onKeyDown)
+    }
+  }, [action, busy])
 
   const source = action === 'OUT' ? 'Display' : area === 'DISPLAY' && action === 'ADJUSTMENT' ? 'Display' : 'Inventory'
   const available = source === 'Display' ? item?.display_qty : item?.inventory_qty
@@ -63,6 +77,7 @@ export default function PackagingScanClient({ itemId }) {
   async function submit(event) {
     event.preventDefault()
     if (busy || !item) return
+    if (action !== 'OUT' && !canManage) { setError('Only Warehouse Leader or admin can perform this action'); return }
     setBusy(true)
     setError('')
     setSuccess('')
@@ -92,17 +107,21 @@ export default function PackagingScanClient({ itemId }) {
           <div data-level={balanceState(item.inventory_qty)}><span>Inventory</span><small className={styles.qtyLabel}>Qty</small><strong>{item.inventory_qty.toLocaleString()} <small>{item.unit}</small></strong><em>{item.inventory_qty === 0 ? 'Out of stock' : balanceState(item.inventory_qty) === 'low' ? 'Low stock' : 'Available'}</em></div>
           <div data-level={balanceState(item.display_qty)}><span>Display</span><small className={styles.qtyLabel}>Qty</small><strong>{item.display_qty.toLocaleString()} <small>{item.unit}</small></strong><em>{item.display_qty === 0 ? 'Empty' : balanceState(item.display_qty) === 'low' ? 'Refill soon' : 'Available'}</em></div>
         </div>
-        {!action ? <div className={styles.choices}>{actions.map((option) => <button key={option.id} type="button" onClick={() => { setAction(option.id); setQty(''); setError(''); setSuccess('') }}><strong>{option.label}</strong><span>{option.detail}</span><b aria-hidden="true">→</b></button>)}{canAdjust ? <button type="button" onClick={() => { setAction('ADJUSTMENT'); setQty(''); setError(''); setSuccess('') }}><strong>Adjustment</strong><span>Correct Inventory or Display with a reason</span><b aria-hidden="true">→</b></button> : null}</div> : <form onSubmit={submit} className={styles.form}>
-          <div className={styles.formTitle}><h2>{action === 'OUT' ? 'Take' : action === 'IN' ? 'Input' : action === 'MOVE' ? 'Move' : 'Adjustment'}</h2><button type="button" onClick={() => { setAction(''); setError('') }} aria-label="Back to actions">×</button></div>
-          {action === 'ADJUSTMENT' ? <label className={styles.field}>Area<select value={area} onChange={(event) => setArea(event.target.value)}><option value="INVENTORY">Inventory</option><option value="DISPLAY">Display</option></select></label> : null}
-          <p className={styles.available}>Available in {source}: <strong>{Number(available || 0).toLocaleString()} {item.unit}</strong></p>
-          <label className={styles.field}>Qty {action === 'ADJUSTMENT' ? '(+/-)' : ''}<input autoFocus type="number" step="1" min={action === 'ADJUSTMENT' ? undefined : 1} max={action === 'MOVE' || action === 'OUT' ? available : undefined} required value={qty} onChange={(event) => setQty(event.target.value)} /></label>
-          {action === 'ADJUSTMENT' ? <label className={styles.field}>Reason<textarea required maxLength={300} value={reason} onChange={(event) => setReason(event.target.value)} /></label> : null}
-          {error ? <p className={styles.error} role="alert">{error}</p> : null}
-          <button className={styles.submit} type="submit" disabled={busy || !qty || (action === 'ADJUSTMENT' && !reason.trim())}>{busy ? 'Processing...' : 'Submit'}</button>
-        </form>}
+        <div className={styles.choices}>{actions.filter((option) => canManage || option.id === 'OUT').map((option) => <button key={option.id} type="button" onClick={() => { setAction(option.id); setQty(''); setError(''); setSuccess('') }}><strong>{option.label}</strong><span>{option.detail}</span><b aria-hidden="true">→</b></button>)}{canManage ? <button type="button" onClick={() => { setAction('ADJUSTMENT'); setQty(''); setError(''); setSuccess('') }}><strong>Adjustment</strong><span>Correct Inventory or Display with a reason</span><b aria-hidden="true">→</b></button> : null}</div>
         {success ? <p className={styles.success} role="status">{success}</p> : null}
       </> : null}
     </div>
+    {action && item ? createPortal(<div className={styles.modalBackdrop} onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) { setAction(''); setError('') } }}>
+      <form onSubmit={submit} className={styles.form} role="dialog" aria-modal="true" aria-labelledby="packaging-action-title">
+        <div className={styles.formTitle}><h2 id="packaging-action-title">{action === 'OUT' ? 'Take' : action === 'IN' ? 'Input' : action === 'MOVE' ? 'Move' : 'Adjustment'}</h2><button type="button" disabled={busy} onClick={() => { setAction(''); setError('') }} aria-label="Close">×</button></div>
+        <p className={styles.itemName}>{item.name}</p>
+        {action === 'ADJUSTMENT' ? <label className={styles.field}>Area<select value={area} onChange={(event) => setArea(event.target.value)}><option value="INVENTORY">Inventory</option><option value="DISPLAY">Display</option></select></label> : null}
+        <p className={styles.available}>Available in {source}: <strong>{Number(available || 0).toLocaleString()} {item.unit}</strong></p>
+        <label className={styles.field}>Qty {action === 'ADJUSTMENT' ? '(+/-)' : ''}<input autoFocus type="number" step="1" min={action === 'ADJUSTMENT' ? undefined : 1} max={action === 'MOVE' || action === 'OUT' ? available : undefined} required value={qty} onChange={(event) => setQty(event.target.value)} /></label>
+        {action === 'ADJUSTMENT' ? <label className={styles.field}>Reason<textarea required maxLength={300} value={reason} onChange={(event) => setReason(event.target.value)} /></label> : null}
+        {error ? <p className={styles.error} role="alert">{error}</p> : null}
+        <button className={styles.submit} type="submit" disabled={busy || !qty || (action === 'ADJUSTMENT' && !reason.trim())}>{busy ? 'Processing...' : 'Submit'}</button>
+      </form>
+    </div>, document.body) : null}
   </main>
 }

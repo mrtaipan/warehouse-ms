@@ -4,6 +4,9 @@ import { ADMIN_EMAIL, canAccessPath, getLandingPath, resolveRole } from '@/utils
 import { getProfileByAuthenticatedUser } from '@/utils/user-profiles'
 
 export async function proxy(request) {
+  if (request.nextUrl.pathname === '/api/inbound/wa-report/webhook') {
+    return NextResponse.next()
+  }
   let response = NextResponse.next({ request })
 
   const supabase = createServerClient(

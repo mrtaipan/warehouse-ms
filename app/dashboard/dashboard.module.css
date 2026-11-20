@@ -785,6 +785,24 @@
   gap: 6px;
 }
 
+.reorderInsight {
+  border-color: #d6aab2;
+  border-left: 4px solid #7d2035;
+  background: #fff9fa;
+}
+
+.insightLink {
+  align-self: flex-start;
+  margin-top: 4px;
+  color: #7d2035;
+  font-size: 13px;
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.insightLink:focus-visible { outline: 2px solid #7d2035; outline-offset: 3px; }
+
 .insightValue {
   color: #111827;
   font-size: 28px;

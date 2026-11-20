@@ -9,20 +9,11 @@ import { ADMIN_EMAIL, hasPermission, resolveRole } from '@/utils/permissions'
 import { getRolePermissionCodes } from '@/utils/role-permissions'
 import { useRealtimeRefresh } from '@/utils/supabase/use-realtime-refresh'
 import { nextAvailableVariantCode } from '@/utils/inbound-variant-codes.mjs'
-import { buildSampleQcRows, groupSampleQcByCategory, sampleQcGradePercentage } from '@/utils/inbound-sample-qc-report.mjs'
+import { buildSampleQcRows, groupSampleQcByCategory } from '@/utils/inbound-sample-qc-report.mjs'
+import { createInboundReportPdf } from '@/utils/inbound-report-pdf.mjs'
 
 const supabase = createClient()
 const PRODUCT_PHOTOS_BUCKET = 'product-photos'
-
-function escapePrintHtml(value) {
-  return String(value ?? '').replace(/[&<>"']/g, (character) => ({
-    '&': '&amp;',
-    '<': '&lt;',
-    '>': '&gt;',
-    '"': '&quot;',
-    "'": '&#39;',
-  })[character])
-}
 
 function formatDateDisplay(value) {
   if (!value) return '-'
@@ -2507,7 +2498,7 @@ export default function UnloadPage() {
   const [showVariantPhotoOptions, setShowVariantPhotoOptions] = useState(false)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
-  const [printPending, setPrintPending] = useState(false)
+  const [pdfPending, setPdfPending] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
   const [modelModalError, setModelModalError] = useState('')
@@ -4819,288 +4810,58 @@ export default function UnloadPage() {
     printWindow.document.close()
   }
 
-  async function handlePrintUnloadDocument() {
+  async function handleDownloadInboundReport() {
     if (!selectedInbound) {
       setError('Please choose a GRN number first.')
       return
     }
 
-    const printDocumentTitle = `Inbound Report - ${String(selectedInbound.grn_number || 'GRN').replace(/[\\/:*?"<>|]/g, '-').trim()}`
-    const printWindow = window.open('', '_blank', 'width=900,height=1200')
-
-    if (!printWindow) {
-      setError('Print window was blocked by the browser.')
-      return
-    }
-
-    setPrintPending(true)
+    setPdfPending(true)
     setError('')
-    printWindow.document.write('<!doctype html><html><head><title>Preparing Inbound Report</title></head><body>Preparing report...</body></html>')
-    printWindow.document.close()
 
     try {
-    const sampleQcRows = await loadSampleQcReportRows(selectedInbound.id)
-    const visibleSampleQcRows = sampleQcRows
-      .map((row) => {
-        const variant = productModelVariants.find((item) => Number(item.id) === Number(row.product_model_variant_id))
-        return { ...row, variant_code: variant ? getVariantProductId(variant) : '' }
+      const sampleQcRows = await loadSampleQcReportRows(selectedInbound.id)
+      const visibleSampleQcRows = sampleQcRows
+        .map((row) => {
+          const variant = productModelVariants.find((item) => Number(item.id) === Number(row.product_model_variant_id))
+          return { ...row, variant_code: variant ? getVariantProductId(variant) : '' }
+        })
+        .filter((row) => matchesBreakdownFilters(row, row.sampleQty))
+
+      if (filteredSummaryRows.length === 0 && visibleSampleQcRows.length === 0) {
+        setError('No model or sample QC rows match the selected filters.')
+        return
+      }
+
+      const sampleQcCategoryRows = groupSampleQcByCategory(visibleSampleQcRows.filter((row) => row.checkedQty > 0))
+        .map((row) => {
+          const brand = brands.find((item) => Number(item.id) === Number(row.brand_id))
+          const category = categoryMaps.byId.get(Number(row.category_id))
+          return {
+            ...row,
+            brandName: brand?.brand_name || '-',
+            categoryName: category?.full_name || category?.category_name || '-',
+          }
+        })
+        .sort((a, b) =>
+          `${a.brandName} ${a.categoryName}`.localeCompare(`${b.brandName} ${b.categoryName}`)
+        )
+      const { doc, filename } = await createInboundReportPdf({
+        grnNumber: selectedInbound.grn_number,
+        supplierName: selectedInbound.suppliers?.supplier_name || '-',
+        itemName: selectedInbound.item_name || '-',
+        sjQty: selectedInbound.total_claimed_qty,
+        receivingQty: selectedInbound.total_received_qty,
+        intakeQty: totalInboundQty,
+        sampleQcRows: sampleQcCategoryRows,
+        modelRows: filteredSummaryRows,
+        shownQty: filteredPrintTotalQty,
       })
-      .filter((row) => matchesBreakdownFilters(row, row.sampleQty))
-
-    if (filteredSummaryRows.length === 0 && visibleSampleQcRows.length === 0) {
-      printWindow.close()
-      setError('No model or sample QC rows match the selected filters.')
-      return
-    }
-
-    const sampleQcCategoryRows = groupSampleQcByCategory(visibleSampleQcRows.filter((row) => row.checkedQty > 0))
-      .map((row) => {
-        const brand = brands.find((item) => Number(item.id) === Number(row.brand_id))
-        const category = categoryMaps.byId.get(Number(row.category_id))
-        return {
-          ...row,
-          brandName: brand?.brand_name || '-',
-          categoryName: category?.full_name || category?.category_name || '-',
-        }
-      })
-      .sort((a, b) =>
-        `${a.brandName} ${a.categoryName}`.localeCompare(`${b.brandName} ${b.categoryName}`)
-      )
-    const sampleQcTotals = sampleQcCategoryRows.reduce((total, row) => ({
-      a: total.a + row.a,
-      b: total.b + row.b,
-      c: total.c + row.c,
-    }), { a: 0, b: 0, c: 0 })
-    const supplierName = selectedInbound.suppliers?.supplier_name || '-'
-
-    const summaryRowsHtml = filteredSummaryRows
-      .map(
-        (row) => `
-          <tr>
-            <td class="photoCell">
-              ${row.photoUrl ? `<img src="${escapePrintHtml(row.photoUrl)}" alt="${escapePrintHtml(row.modelLabel)}" class="modelPhoto" />` : '<div class="photoPlaceholder">NO PHOTO</div>'}
-            </td>
-            <td>${escapePrintHtml(row.brandName || '-')}</td>
-            <td>${escapePrintHtml(row.categoryLabel || '-')}</td>
-            <td>${escapePrintHtml(row.modelLabel)}</td>
-            <td class="qty">${formatNumber(row.modelQty)}</td>
-          </tr>`
-      )
-      .join('') || '<tr><td colspan="5">No model rows match the selected filters.</td></tr>'
-
-    const formatSampleQcGrade = (value, row) =>
-      `<strong>${formatNumber(value)}</strong> <span class="qcPercent">(${formatNumber(sampleQcGradePercentage(value, row))}%)</span>`
-    const sampleQcRowsHtml = sampleQcCategoryRows.map((row) => {
-      return `<tr>
-        <td class="qcProductCell"><strong>${escapePrintHtml(row.brandName)}</strong> / ${escapePrintHtml(row.categoryName)}</td>
-        <td class="qcNumber">${formatSampleQcGrade(row.a, row)}</td>
-        <td class="qcNumber">${formatSampleQcGrade(row.b, row)}</td>
-        <td class="qcNumber">${formatSampleQcGrade(row.c, row)}</td>
-      </tr>`
-    }).join('')
-
-    const sampleQcSectionHtml = sampleQcCategoryRows.length ? `
-      <h2>Sample QC Results</h2>
-      <table class="qcTable">
-        <thead><tr>
-          <th>Product</th>
-          <th class="qcNumber">Grade A</th><th class="qcNumber">Grade B</th><th class="qcNumber">Grade C</th>
-        </tr></thead>
-        <tbody>
-          ${sampleQcRowsHtml}
-          <tr class="totalRow">
-            <td><strong>Total</strong></td>
-            <td class="qcNumber">${formatSampleQcGrade(sampleQcTotals.a, sampleQcTotals)}</td>
-            <td class="qcNumber">${formatSampleQcGrade(sampleQcTotals.b, sampleQcTotals)}</td>
-            <td class="qcNumber">${formatSampleQcGrade(sampleQcTotals.c, sampleQcTotals)}</td>
-          </tr>
-        </tbody>
-      </table>` : ''
-
-    const printHtml = `<!doctype html>
-<html>
-  <head>
-    <meta charset="utf-8" />
-    <title>${escapePrintHtml(printDocumentTitle)}</title>
-    <style>
-      @page { size: A4 portrait; margin: 12mm; }
-      body { font-family: Arial, sans-serif; color: #111827; margin: 0; }
-      .sheet { width: 100%; box-sizing: border-box; }
-      h1 { margin: 0 0 20px; font-size: 28px; }
-      .meta {
-        display: grid;
-        grid-template-columns: 180px 1fr;
-        gap: 8px 14px;
-        margin-bottom: 24px;
-        align-items: center;
-      }
-      .label {
-        font-weight: 700;
-        font-size: 13px;
-      }
-      .value {
-        font-size: 13px;
-      }
-      .summary {
-        display: grid;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
-        gap: 12px;
-        margin: 24px 0;
-        align-items: stretch;
-      }
-      .summaryCard {
-        border: 1px solid #d1d5db;
-        border-radius: 12px;
-        padding: 14px;
-        display: flex;
-        flex-direction: column;
-        justify-content: center;
-      }
-      .summaryLabel {
-        font-size: 12px;
-        font-weight: 700;
-        text-transform: uppercase;
-        color: #6b7280;
-      }
-      .summaryValue {
-        margin-top: 6px;
-        font-size: 28px;
-        font-weight: 800;
-      }
-      h2 {
-        margin: 28px 0 12px;
-        font-size: 20px;
-      }
-      table {
-        width: 100%;
-        border-collapse: collapse;
-      }
-      th, td {
-        border: 1px solid #d1d5db;
-        padding: 10px 12px;
-        text-align: left;
-        font-size: 13px;
-        vertical-align: middle;
-      }
-      th {
-        background: #f9fafb;
-        font-weight: 700;
-      }
-      .qty {
-        width: 120px;
-        text-align: center;
-        font-weight: 700;
-      }
-      .photoCell {
-        width: 90px;
-        text-align: center;
-      }
-      .modelPhoto {
-        width: 64px;
-        height: 64px;
-        object-fit: cover;
-        border-radius: 8px;
-        border: 1px solid #d1d5db;
-        display: block;
-      }
-      .photoPlaceholder {
-        width: 64px;
-        height: 64px;
-        border-radius: 8px;
-        border: 1px solid #d1d5db;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-size: 10px;
-        font-weight: 700;
-        color: #9ca3af;
-        background: #f9fafb;
-      }
-      .totalRow td {
-        background: #f8fafc;
-        border-top: 2px solid #111827;
-      }
-      .totalLabel {
-        font-size: 16px;
-      }
-      .totalQty strong {
-        font-size: 22px;
-        line-height: 1;
-      }
-      .qcTable { table-layout: fixed; }
-      .qcTable th, .qcTable td { padding: 9px 10px; font-size: 12px; }
-      .qcTable th:first-child { width: 55%; }
-      .qcTable .qcNumber {
-        width: auto;
-        text-align: right;
-        font-variant-numeric: tabular-nums;
-        white-space: nowrap;
-      }
-      .qcProductCell { overflow-wrap: anywhere; }
-      .qcPercent { color: #64748b; font-size: 10px; font-weight: 400; }
-      thead { display: table-header-group; }
-      tr { break-inside: avoid; page-break-inside: avoid; }
-    </style>
-  </head>
-  <body>
-    <div class="sheet">
-      <h1>Inbound Report</h1>
-
-      <div class="meta">
-        <div class="label">No GRN</div><div class="value">${escapePrintHtml(selectedInbound.grn_number || '-')}</div>
-        <div class="label">Supplier</div><div class="value">${escapePrintHtml(supplierName)}</div>
-        <div class="label">Item Name</div><div class="value">${escapePrintHtml(selectedInbound.item_name || '-')}</div>
-      </div>
-
-      <div class="summary">
-        <div class="summaryCard">
-          <div class="summaryLabel">Total SJ Qty</div>
-          <div class="summaryValue">${selectedInbound.total_claimed_qty == null ? 'No data' : formatNumber(selectedInbound.total_claimed_qty)}</div>
-        </div>
-        <div class="summaryCard">
-          <div class="summaryLabel">Total Receiving Qty</div>
-          <div class="summaryValue">${formatNumber(selectedInbound.total_received_qty)}</div>
-        </div>
-        <div class="summaryCard">
-          <div class="summaryLabel">Total Intake Qty</div>
-          <div class="summaryValue">${formatNumber(totalInboundQty)}</div>
-        </div>
-      </div>
-
-      ${sampleQcSectionHtml}
-
-      <h2>Model Summary</h2>
-      <table>
-        <thead>
-          <tr>
-            <th>Photo</th>
-            <th>Brand Name</th>
-            <th>Categories</th>
-            <th>Model - Variant</th>
-            <th class="qty">Qty</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${summaryRowsHtml}
-          <tr class="totalRow">
-            <td colspan="4"><strong class="totalLabel">Shown Qty</strong></td>
-            <td class="qty totalQty"><strong>${formatNumber(filteredPrintTotalQty)}</strong></td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
-    <script>window.onload = function () { window.print(); };</script>
-  </body>
-</html>`
-
-    printWindow.document.open()
-    printWindow.document.write(printHtml)
-    printWindow.document.close()
-    } catch (printError) {
-      printWindow.close()
-      setError(printError.message || 'Failed to prepare the Inbound report.')
+      doc.save(filename)
+    } catch (pdfError) {
+      setError(pdfError.message || 'Failed to prepare the Inbound report PDF.')
     } finally {
-      setPrintPending(false)
+      setPdfPending(false)
     }
   }
 
@@ -5795,6 +5556,13 @@ export default function UnloadPage() {
       return
     }
 
+    void fetch('/api/inbound/wa-report/notify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ inboundId: selectedInbound.id }),
+      keepalive: true,
+    }).catch(() => {})
+
     try {
       await refreshUnloadData(selectedInbound.id)
     } catch (refreshError) {
@@ -6125,8 +5893,8 @@ export default function UnloadPage() {
               </button>
             ) : null}
             {breakdownMode === 'model' ? (
-              <button type="button" onClick={handlePrintUnloadDocument} style={styles.secondaryButton} disabled={printPending}>
-                {printPending ? 'Preparing...' : 'Print'}
+              <button type="button" onClick={handleDownloadInboundReport} style={styles.secondaryButton} disabled={pdfPending}>
+                {pdfPending ? 'Preparing PDF...' : 'Download PDF'}
               </button>
             ) : null}
             {canManageUnload ? (

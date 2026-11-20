@@ -6,6 +6,7 @@ import { canAccessOperationsCalendar, getAllowedMenus, getStorageFeatureAccess, 
 import { loadAccessContext } from '@/utils/access-control'
 import { getBirthdayClaimWindow, getJakartaTodayDateString, getUpcomingBirthdayOffset } from '@/utils/birthday-reminders.mjs'
 import { getGrnRejectionRemaining } from '@/utils/grn-rejection-remaining.mjs'
+import { getPackagingReorderAnnouncement } from '@/utils/packaging-reorder-alerts.mjs'
 import RestockShortcutButton from './restock-shortcut-client'
 import ItemSearchShortcutButton from './item-search-shortcut-client'
 import GrnSummaryCopyButton from './grn-summary-copy-button'
@@ -949,6 +950,19 @@ export default async function DashboardPage({ searchParams }) {
   const showBirthdayGiftRequestAnnouncements = isAdmin || role === 'leader' || role === 'warehouse_leader' || role === 'mob_cs'
 
   const adminSupabase = createAdminClient()
+  const packagingReorderResult = isAdmin || role === 'leader' || role === 'warehouse_leader'
+    ? await Promise.all([
+        adminSupabase.from('packaging_items').select('id,name,unit,qty,reorder_point_qty,coverage_days,active').eq('active', true),
+        supabase.rpc('packaging_outbound_30d'),
+      ])
+    : null
+  const packagingReorderAnnouncement = packagingReorderResult
+    && !packagingReorderResult[0].error && !packagingReorderResult[1].error
+    ? getPackagingReorderAnnouncement(packagingReorderResult[0].data, packagingReorderResult[1].data)
+    : null
+  if (packagingReorderAnnouncement && role === 'leader' && !storageAccess.location) {
+    packagingReorderAnnouncement.href = null
+  }
   const { data: announcementRows } = await adminSupabase
     .from('dir_user_profiles')
     .select('id, authenticated_id, display_name, email, birthdate, resign_date, "group", role')
@@ -1054,7 +1068,10 @@ export default async function DashboardPage({ searchParams }) {
         canClaimGift: true,
       }]
     : []
-  const newsAnnouncements = [...activeBroadcasts, ...birthdayClaimReminder, ...birthdayGiftAnnouncements, ...birthdayReminderAnnouncements]
+  const newsAnnouncements = [
+    ...(packagingReorderAnnouncement ? [packagingReorderAnnouncement] : []),
+    ...activeBroadcasts, ...birthdayClaimReminder, ...birthdayGiftAnnouncements, ...birthdayReminderAnnouncements,
+  ]
 
   const showMyArklifeButton = true
   const adminGrnSummary = isAdmin ? await loadAdminGrnSummary(supabase, selectedGrn) : null
@@ -1110,7 +1127,7 @@ export default async function DashboardPage({ searchParams }) {
           <div className={styles.insightStack}>
             {newsAnnouncements.length ? (
               newsAnnouncements.map((item) => (
-                <div key={item.id} className={styles.insightCard}>
+                <div key={item.id} className={`${styles.insightCard} ${item.id === 'packaging-reorder-alert' ? styles.reorderInsight : ''}`}>
                   <span className={styles.insightLabel}>{item.dateLabel}</span>
                   <strong
                     className={styles.insightValue}
@@ -1119,6 +1136,7 @@ export default async function DashboardPage({ searchParams }) {
                     {item.title}
                   </strong>
                   <p className={styles.insightNote}>{item.message || 'No Announcement'}</p>
+                  {item.href ? <Link href={item.href} className={styles.insightLink}>View Packaging Supplies</Link> : null}
                   {item.canClaimGift ? <BirthdayGiftClaimAction /> : null}
                 </div>
               ))
@@ -1188,7 +1206,7 @@ export default async function DashboardPage({ searchParams }) {
             <div className={styles.insightStack}>
               {newsAnnouncements.length ? (
                 newsAnnouncements.map((item) => (
-                  <div key={item.id} className={styles.insightCard}>
+                  <div key={item.id} className={`${styles.insightCard} ${item.id === 'packaging-reorder-alert' ? styles.reorderInsight : ''}`}>
                     <span className={styles.insightLabel}>{item.dateLabel}</span>
                     <strong
                       className={styles.insightValue}
@@ -1197,6 +1215,7 @@ export default async function DashboardPage({ searchParams }) {
                       {item.title}
                     </strong>
                     <p className={styles.insightNote}>{item.message || 'No Announcement'}</p>
+                    {item.href ? <Link href={item.href} className={styles.insightLink}>View Packaging Supplies</Link> : null}
                     {item.canClaimGift ? <BirthdayGiftClaimAction /> : null}
                   </div>
                 ))

@@ -5,7 +5,7 @@ import { PGlite } from '@electric-sql/pglite'
 
 const actor = '11111111-1111-4111-8111-111111111111'
 
-test('packaging Input, Move, Take and leader-only Adjustment keep both balances consistent', async () => {
+test('scan access allows all WMS users to Take but reserves other actions for warehouse leaders', async () => {
   const db = new PGlite()
   try {
     await db.exec(`
@@ -17,7 +17,8 @@ test('packaging Input, Move, Take and leader-only Adjustment keep both balances 
       create table public.dir_user_profiles(authenticated_id uuid primary key, role text);
       insert into public.dir_user_profiles values ('${actor}', 'storage_coordinator');
       create table public.packaging_items(
-        id bigint primary key, active boolean not null default true, qty integer not null,
+        id bigint primary key, name text not null default 'Tape', unit text not null default 'roll',
+        active boolean not null default true, qty integer not null,
         reorder_mode text not null default 'FIXED', reorder_point_qty integer,
         coverage_days integer not null default 14,
         updated_at timestamptz not null default now()
@@ -38,19 +39,26 @@ test('packaging Input, Move, Take and leader-only Adjustment keep both balances 
     `)
     await db.exec(await readFile(new URL('../supabase/packaging_inventory_display.sql', import.meta.url), 'utf8'))
     await db.exec(await readFile(new URL('../supabase/packaging_reorder_leader_access.sql', import.meta.url), 'utf8'))
+    await db.exec(await readFile(new URL('../supabase/packaging_scan_role_access.sql', import.meta.url), 'utf8'))
 
     async function action(kind, qty, area = null, reason = null) {
       return db.query('select * from public.apply_packaging_action($1,$2,$3,$4,$5)', [1, kind, qty, area, reason])
     }
-    await action('IN', 3)
-    await action('MOVE', 4)
-    await action('OUT', 2)
-    let { rows } = await db.query('select qty, inventory_qty, display_qty from public.packaging_items where id = 1')
-    assert.deepEqual(rows[0], { qty: 11, inventory_qty: 9, display_qty: 2 })
-    await assert.rejects(action('MOVE', 10), /Insufficient stock/)
+    const scanItem = await db.query('select id, name, inventory_qty, display_qty from public.get_packaging_scan_item(1)')
+    assert.deepEqual(scanItem.rows[0], { id: 1, name: 'Tape', inventory_qty: 10, display_qty: 0 })
+    await assert.rejects(action('IN', 3), /Warehouse Leader or admin/)
+    await assert.rejects(action('MOVE', 1), /Warehouse Leader or admin/)
     await assert.rejects(action('ADJUSTMENT', -1, 'INVENTORY', 'Count correction'), /Warehouse Leader or admin/)
     await assert.rejects(db.query("select * from public.set_packaging_reorder(1, 'FIXED', 5, 14)"), /Warehouse Leader or admin/)
     await db.exec("update public.dir_user_profiles set role = 'warehouse_leader'")
+    await action('IN', 3)
+    await action('MOVE', 4)
+    await db.exec("update public.dir_user_profiles set role = 'storage_coordinator'")
+    await action('OUT', 2)
+    let { rows } = await db.query('select qty, inventory_qty, display_qty from public.packaging_items where id = 1')
+    assert.deepEqual(rows[0], { qty: 11, inventory_qty: 9, display_qty: 2 })
+    await db.exec("update public.dir_user_profiles set role = 'warehouse_leader'")
+    await assert.rejects(action('MOVE', 10), /Insufficient stock/)
     await action('ADJUSTMENT', -1, 'DISPLAY', 'Count correction')
     await db.query("select * from public.set_packaging_reorder(1, 'FIXED', 5, 14)")
     ;({ rows } = await db.query('select qty, inventory_qty, display_qty from public.packaging_items where id = 1'))
