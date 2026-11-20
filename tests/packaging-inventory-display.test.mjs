@@ -18,6 +18,8 @@ test('packaging Input, Move, Take and leader-only Adjustment keep both balances 
       insert into public.dir_user_profiles values ('${actor}', 'storage_coordinator');
       create table public.packaging_items(
         id bigint primary key, active boolean not null default true, qty integer not null,
+        reorder_mode text not null default 'FIXED', reorder_point_qty integer,
+        coverage_days integer not null default 14,
         updated_at timestamptz not null default now()
       );
       insert into public.packaging_items(id, qty) values (1, 10);
@@ -31,8 +33,11 @@ test('packaging Input, Move, Take and leader-only Adjustment keep both balances 
       );
       create function public.record_packaging_movement(bigint,text,integer,text)
         returns integer language sql as $$ select 1 $$;
+      create function public.set_packaging_reorder(bigint,text,integer,integer)
+        returns public.packaging_items language sql as $$ select * from public.packaging_items limit 1 $$;
     `)
     await db.exec(await readFile(new URL('../supabase/packaging_inventory_display.sql', import.meta.url), 'utf8'))
+    await db.exec(await readFile(new URL('../supabase/packaging_reorder_leader_access.sql', import.meta.url), 'utf8'))
 
     async function action(kind, qty, area = null, reason = null) {
       return db.query('select * from public.apply_packaging_action($1,$2,$3,$4,$5)', [1, kind, qty, area, reason])
@@ -44,10 +49,14 @@ test('packaging Input, Move, Take and leader-only Adjustment keep both balances 
     assert.deepEqual(rows[0], { qty: 11, inventory_qty: 9, display_qty: 2 })
     await assert.rejects(action('MOVE', 10), /Insufficient stock/)
     await assert.rejects(action('ADJUSTMENT', -1, 'INVENTORY', 'Count correction'), /Warehouse Leader or admin/)
+    await assert.rejects(db.query("select * from public.set_packaging_reorder(1, 'FIXED', 5, 14)"), /Warehouse Leader or admin/)
     await db.exec("update public.dir_user_profiles set role = 'warehouse_leader'")
     await action('ADJUSTMENT', -1, 'DISPLAY', 'Count correction')
+    await db.query("select * from public.set_packaging_reorder(1, 'FIXED', 5, 14)")
     ;({ rows } = await db.query('select qty, inventory_qty, display_qty from public.packaging_items where id = 1'))
     assert.deepEqual(rows[0], { qty: 10, inventory_qty: 9, display_qty: 1 })
+    const reorder = await db.query('select reorder_point_qty from public.packaging_items where id = 1')
+    assert.equal(reorder.rows[0].reorder_point_qty, 5)
     const movements = await db.query('select movement_type, qty_change from public.packaging_movements order by id')
     assert.deepEqual(movements.rows.map((row) => [row.movement_type, row.qty_change]), [
       ['IN', 3], ['MOVE', 0], ['OUT', -2], ['ADJUSTMENT', -1],

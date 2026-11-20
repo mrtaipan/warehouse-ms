@@ -27,7 +27,7 @@ export default function PackagingScanClient({ itemId }) {
 
   const load = useCallback(async () => {
     const { data, error: loadError } = await supabase.from('packaging_items')
-      .select('id,name,unit,qty,inventory_qty,display_qty,active').eq('id', itemId).single()
+      .select('id,name,unit,qty,inventory_qty,display_qty,reorder_point_qty,active').eq('id', itemId).single()
     if (loadError || !data?.active) setError(loadError?.message || 'Item not found')
     else { setItem(data); setError('') }
     setLoading(false)
@@ -51,6 +51,14 @@ export default function PackagingScanClient({ itemId }) {
 
   const source = action === 'OUT' ? 'Display' : area === 'DISPLAY' && action === 'ADJUSTMENT' ? 'Display' : 'Inventory'
   const available = source === 'Display' ? item?.display_qty : item?.inventory_qty
+  const fixedPoint = item?.reorder_point_qty
+  const restockNeeded = fixedPoint !== null && fixedPoint !== undefined && item?.qty <= fixedPoint
+
+  function balanceState(value) {
+    if (value === 0) return 'empty'
+    if (fixedPoint !== null && fixedPoint !== undefined && value <= fixedPoint) return 'low'
+    return 'healthy'
+  }
 
   async function submit(event) {
     event.preventDefault()
@@ -76,10 +84,14 @@ export default function PackagingScanClient({ itemId }) {
 
   return <main className={styles.page}>
     <div className={styles.shell}>
-      <div className={styles.top}><Link href="/dashboard/storage/overview?mode=packaging-supplies" aria-label="Back to Packaging Supplies">←</Link><span>Packaging Supplies</span></div>
+      <div className={styles.top}><Link href="/dashboard/storage/overview?mode=packaging-supplies" aria-label="Back to Packaging Supplies">←</Link></div>
       {loading ? <p className={styles.message}>Loading item...</p> : error && !item ? <p className={styles.error}>{error}</p> : item ? <>
         <h1>{item.name}</h1>
-        <div className={styles.balances}><div><span>Inventory</span><strong>{item.inventory_qty.toLocaleString()} <small>{item.unit}</small></strong></div><div><span>Display</span><strong>{item.display_qty.toLocaleString()} <small>{item.unit}</small></strong></div></div>
+        {restockNeeded ? <p className={styles.restockNotice}>Restock needed · Total {item.qty.toLocaleString()} {item.unit} · Reorder at {fixedPoint.toLocaleString()} {item.unit}</p> : null}
+        <div className={styles.balances}>
+          <div data-level={balanceState(item.inventory_qty)}><span>Inventory</span><small className={styles.qtyLabel}>Qty</small><strong>{item.inventory_qty.toLocaleString()} <small>{item.unit}</small></strong><em>{item.inventory_qty === 0 ? 'Out of stock' : balanceState(item.inventory_qty) === 'low' ? 'Low stock' : 'Available'}</em></div>
+          <div data-level={balanceState(item.display_qty)}><span>Display</span><small className={styles.qtyLabel}>Qty</small><strong>{item.display_qty.toLocaleString()} <small>{item.unit}</small></strong><em>{item.display_qty === 0 ? 'Empty' : balanceState(item.display_qty) === 'low' ? 'Refill soon' : 'Available'}</em></div>
+        </div>
         {!action ? <div className={styles.choices}>{actions.map((option) => <button key={option.id} type="button" onClick={() => { setAction(option.id); setQty(''); setError(''); setSuccess('') }}><strong>{option.label}</strong><span>{option.detail}</span><b aria-hidden="true">→</b></button>)}{canAdjust ? <button type="button" onClick={() => { setAction('ADJUSTMENT'); setQty(''); setError(''); setSuccess('') }}><strong>Adjustment</strong><span>Correct Inventory or Display with a reason</span><b aria-hidden="true">→</b></button> : null}</div> : <form onSubmit={submit} className={styles.form}>
           <div className={styles.formTitle}><h2>{action === 'OUT' ? 'Take' : action === 'IN' ? 'Input' : action === 'MOVE' ? 'Move' : 'Adjustment'}</h2><button type="button" onClick={() => { setAction(''); setError('') }} aria-label="Back to actions">×</button></div>
           {action === 'ADJUSTMENT' ? <label className={styles.field}>Area<select value={area} onChange={(event) => setArea(event.target.value)}><option value="INVENTORY">Inventory</option><option value="DISPLAY">Display</option></select></label> : null}

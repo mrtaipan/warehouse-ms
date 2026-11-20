@@ -1119,6 +1119,7 @@ const EMPTY_STORAGE_ACCESS = {
   categoryManage: false,
   lockedGroup: '',
   isAdmin: false,
+  canReorderPackaging: false,
   currentUserId: '',
   currentUserEmail: '',
 }
@@ -1164,6 +1165,7 @@ async function fetchCurrentStorageAccess() {
     ),
     lockedGroup: getRoleLockedGroup(role),
     isAdmin,
+    canReorderPackaging: isAdmin || role === 'warehouse_leader',
     currentUserId: user.id || '',
     currentUserEmail: user.email || '',
   }
@@ -6414,7 +6416,7 @@ export default function StorageOverviewPage() {
             onStockChanged={() => refreshInventoryData({ forceStorage: true })}
           />
         ) : visibleListMode === 'packaging-supplies' ? (
-          <PackagingSuppliesClient canManage={Boolean(storageAccess.locationEdit)} qrItemId={searchParams.get('packaging_item')} />
+          <PackagingSuppliesClient canReorder={Boolean(storageAccess.canReorderPackaging)} qrItemId={searchParams.get('packaging_item')} />
         ) : visibleListMode === 'reject-storage' && rejectStorageSource === 'arkline' ? (
           <ArklineRejectionStoragePanel userEmail={storageAccess.currentUserEmail} canAdd={canAddRejectStorage} canRelease={canEditRejectStorage} storageViewMode={arklineRejectViewMode} />
         ) : (
@@ -7320,7 +7322,6 @@ export default function StorageOverviewPage() {
               <tbody>{visibleQuantityRows.map((row) => <tr key={row.key}>
                 <td style={{ ...styles.td, ...styles.stockQuantityItemCell }}>
                   <span>{row.sku ? `${row.sku} | ` : ''}{row.name}</span>
-                  <span style={styles.cellMeta}>{row.groupCode === 'ARKLINE' ? 'ARK' : row.groupCode}</span>
                 </td>
                 {visibleQuantitySizes.map((size) => <td key={size} style={{ ...styles.td, ...styles.stockQuantitySizeCell }}>{row.sizes.get(size) ? row.sizes.get(size).toLocaleString() : ''}</td>)}
                 <td style={{ ...styles.td, ...styles.stockQuantityTotalCell }}>{row.totalQty.toLocaleString()}</td>

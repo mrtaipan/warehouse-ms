@@ -24,7 +24,7 @@ function RefreshIcon() {
   </svg>
 }
 
-export default function PackagingSuppliesClient({ canManage, qrItemId }) {
+export default function PackagingSuppliesClient({ canReorder, qrItemId }) {
   const [categories, setCategories] = useState([])
   const [items, setItems] = useState([])
   const [movements, setMovements] = useState([])
@@ -202,7 +202,7 @@ export default function PackagingSuppliesClient({ canManage, qrItemId }) {
     {view === 'stock' ? <div className={styles.headingControls}>
       <label><span>Search</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search item" /></label>
       <label><span>Category</span><select value={categoryFilter} onChange={(event) => setCategoryFilter(event.target.value)}><option value="ALL">All categories</option>{categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}</select></label>
-      {canManage ? <div className={styles.toolbarActions}><button type="button" onClick={() => openAction('movement')}>± Stock</button><button type="button" onClick={() => openAction('reorder')}>Reorder</button></div> : null}
+      {canReorder ? <div className={styles.toolbarActions}><button type="button" onClick={() => openAction('reorder')}>Reorder</button></div> : null}
       <button type="button" className={styles.printButton} onClick={() => { setPrintCategoryId(''); setPrintItemIds([]); setPrintOpen(true) }}>Print QR</button>
       <button type="button" className={styles.refresh} onClick={load} disabled={loading || busy} aria-label="Refresh packaging supplies" title="Refresh"><RefreshIcon /></button>
     </div> : <div className={styles.movementToolbar}><button type="button" className={styles.refresh} onClick={load} disabled={loading || busy} aria-label="Refresh movements" title="Refresh"><RefreshIcon /></button></div>}
