@@ -30,6 +30,9 @@ function getTodayLocalDate() {
 }
 
 function getTaskSourceLabel(task) {
+  if (task?.source_type === 'arkline_material') {
+    return `Arkline Material ${String(task.material_po_number || '').trim().toUpperCase()}`
+  }
   if (task?.source_type === 'arkline') {
     if (task?.po_id) {
       return `Arkline ${String(task.po_id).trim().toUpperCase()}`
@@ -461,12 +464,16 @@ function normalizeRegularTask(item) {
   }
 }
 
+function isArklineQcTask(task) {
+  return task?.source_type === 'arkline' || task?.source_type === 'arkline_material'
+}
+
 function getTaskTableName(task) {
-  return task?.source_type === 'arkline' ? 'arkline_qc' : 'qc_items'
+  return task?.source_type === 'arkline_material' ? 'arkline_material_qc' : task?.source_type === 'arkline' ? 'arkline_qc' : 'qc_items'
 }
 
 function isRegularSampleTask(task) {
-  return task?.source_type !== 'arkline' && Boolean(task?.inbound_unload?.is_sample)
+  return !isArklineQcTask(task) && Boolean(task?.inbound_unload?.is_sample)
 }
 
 function shouldTrackTaskTime(task) {
@@ -684,24 +691,25 @@ async function closeOpenPauseLog({ taskId, sourceType, resumedBy, resumedAt }) {
 }
 
 async function findOtherRunningTask(task, normalizedEmail) {
-  const [{ data: regularRows, error: regularError }, { data: arklineRows, error: arklineError }] = await Promise.all([
+  const [{ data: regularRows, error: regularError }, { data: arklineRows, error: arklineError }, { data: materialRows, error: materialError }] = await Promise.all([
     supabase.from('qc_items').select('id, assigned_to, status').eq('status', 'in_progress'),
     supabase.from('arkline_qc').select('id, assigned_to, status').eq('status', 'in_progress'),
+    supabase.from('arkline_material_qc').select('id, assigned_to, status').eq('status', 'in_progress'),
   ])
 
-  if (regularError || arklineError) {
-    return { error: regularError || arklineError, task: null }
+  if (regularError || arklineError || materialError) {
+    return { error: regularError || arklineError || materialError, task: null }
   }
 
   const otherRegularTask = (regularRows || []).find(
-    (item) => normalizeEmail(item.assigned_to) === normalizedEmail && !(task.source_type !== 'arkline' && item.id === task.id)
+    (item) => normalizeEmail(item.assigned_to) === normalizedEmail && !(task.source_type !== 'arkline' && task.source_type !== 'arkline_material' && item.id === task.id)
   )
   if (otherRegularTask) {
     return { error: null, task: otherRegularTask }
   }
 
-  const otherArklineTask = (arklineRows || []).find(
-    (item) => normalizeEmail(item.assigned_to) === normalizedEmail && !(task.source_type === 'arkline' && item.id === task.id)
+  const otherArklineTask = [...(arklineRows || []), ...(materialRows || [])].find(
+    (item) => normalizeEmail(item.assigned_to) === normalizedEmail && !(isArklineQcTask(task) && item.id === task.id)
   )
   return { error: null, task: otherArklineTask || null }
 }
@@ -832,7 +840,7 @@ export default function QcInspectionTaskPage() {
         return
       }
 
-      const [regularTaskResult, arklineTaskResult, catalogResult] = await Promise.all([
+      const [regularTaskResult, arklineTaskResult, materialTaskResult, catalogResult] = await Promise.all([
         supabase
           .from('qc_items')
           .select(`
@@ -873,6 +881,12 @@ export default function QcInspectionTaskPage() {
           .eq('assigned_to', normalizedEmail)
           .in('status', ['queued', 'in_progress', 'paused'])
           .order('created_at', { ascending: true }),
+        supabase
+          .from('arkline_material_qc')
+          .select('*')
+          .eq('assigned_to', normalizedEmail)
+          .in('status', ['queued', 'in_progress', 'paused'])
+          .order('created_at', { ascending: true }),
         loadProductCatalog(supabase),
       ])
 
@@ -880,8 +894,8 @@ export default function QcInspectionTaskPage() {
         return
       }
 
-      if (regularTaskResult.error || arklineTaskResult.error || catalogResult.error) {
-        setError(regularTaskResult.error?.message || arklineTaskResult.error?.message || catalogResult.error?.message || 'Failed to load QC tasks.')
+      if (regularTaskResult.error || arklineTaskResult.error || materialTaskResult.error || catalogResult.error) {
+        setError(regularTaskResult.error?.message || arklineTaskResult.error?.message || materialTaskResult.error?.message || catalogResult.error?.message || 'Failed to load QC tasks.')
         setLoading(false)
         return
       }
@@ -897,7 +911,8 @@ export default function QcInspectionTaskPage() {
           ...item,
           source_type: 'arkline',
         }))
-      const loadedTasks = [...normalizedRegularTasks, ...normalizedArklineTasks].sort(
+      const normalizedMaterialTasks = (materialTaskResult.data || []).map((item) => ({ ...item, source_type: 'arkline_material' }))
+      const loadedTasks = [...normalizedRegularTasks, ...normalizedArklineTasks, ...normalizedMaterialTasks].sort(
         (a, b) => new Date(a.created_at || 0).getTime() - new Date(b.created_at || 0).getTime()
       )
       const completedActiveTasks = loadedTasks.filter(isTaskNumericallyComplete)
@@ -1280,7 +1295,7 @@ export default function QcInspectionTaskPage() {
       })
       .eq('id', task.id)
       .eq('assigned_to', normalizedEmail)
-      .select(task.source_type === 'arkline' ? '*' : `
+      .select(isArklineQcTask(task) ? '*' : `
         *,
         inbound:inbound_id (
           id,
@@ -1363,7 +1378,7 @@ export default function QcInspectionTaskPage() {
       .eq('id', task.id)
       .eq('assigned_to', normalizedEmail)
       .eq('status', 'in_progress')
-      .select(task.source_type === 'arkline' ? '*' : `
+      .select(isArklineQcTask(task) ? '*' : `
         *,
         inbound:inbound_id (
           id,
@@ -1534,7 +1549,7 @@ export default function QcInspectionTaskPage() {
         .eq('id', task.id)
         .eq('assigned_to', normalizedEmail)
         .eq('locked_qty', latestLockedQty)
-        .select(task.source_type === 'arkline' ? '*' : `
+        .select(isArklineQcTask(task) ? '*' : `
           *,
           inbound:inbound_id (
             id,
@@ -1674,7 +1689,7 @@ export default function QcInspectionTaskPage() {
             <span style={styles.badge}>{activeTask.assigned_to}</span>
           </div>
 
-          {activeTask.source_type !== 'arkline' ? (
+          {!isArklineQcTask(activeTask) ? (
             getTaskModelInfo(activeTask).photoUrl ? (
               <Image
                 src={getTaskModelInfo(activeTask).photoUrl}
@@ -1697,9 +1712,9 @@ export default function QcInspectionTaskPage() {
 
             <div style={styles.metaGrid}>
               <div style={styles.metaCard}>
-                <span style={styles.metaLabel}>{activeTask.source_type !== 'arkline' ? 'Model-Variant' : 'Model'}</span>
+                <span style={styles.metaLabel}>{!isArklineQcTask(activeTask) ? 'Model-Variant' : 'Model'}</span>
                 <span style={styles.metaValue}>
-                  {activeTask.source_type !== 'arkline' ? getTaskModelVariantLabel(activeTask) : getTaskModelInfo(activeTask).modelName}
+                  {isArklineQcTask(activeTask) ? getTaskModelInfo(activeTask).modelName : getTaskModelVariantLabel(activeTask)}
                 </span>
               </div>
               <div style={styles.metaCard}>
@@ -1856,8 +1871,8 @@ export default function QcInspectionTaskPage() {
                 <div key={task.id} style={styles.queueCard}>
                   <div style={styles.queueHeader}>
                     <div>
-                      <h2 style={styles.queueTitle}>{task.source_type !== 'arkline' ? getTaskModelVariantLabel(task) : taskModel.modelName}</h2>
-                      {task.source_type === 'arkline' && taskModel.modelColor ? (
+                      <h2 style={styles.queueTitle}>{isArklineQcTask(task) ? taskModel.modelName : getTaskModelVariantLabel(task)}</h2>
+                      {isArklineQcTask(task) && taskModel.modelColor ? (
                         <p style={styles.variantText}>{taskModel.modelColor}</p>
                       ) : null}
                       <p style={styles.subtitle}>
@@ -1870,7 +1885,7 @@ export default function QcInspectionTaskPage() {
                     
                   </div>
 
-                  {task.source_type !== 'arkline' ? (
+                  {!isArklineQcTask(task) ? (
                     taskModel.photoUrl ? (
                       <Image
                         src={taskModel.photoUrl}
@@ -2018,7 +2033,7 @@ export default function QcInspectionTaskPage() {
                     historyRows.map((row) => (
                       <tr key={`${row.source_type}-${row.id}`}>
                         <td style={styles.td}>
-                          <span style={styles.sourceBadge}>{row.source_type === 'arkline' ? 'Arkline' : 'Regular'}</span>
+                          <span style={styles.sourceBadge}>{row.source_type === 'arkline_material' ? 'Arkline Material' : row.source_type === 'arkline' ? 'Arkline' : 'Regular'}</span>
                         </td>
                         <td style={styles.td}>
                           {row.photoUrl ? (

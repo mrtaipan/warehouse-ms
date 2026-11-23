@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/utils/supabase/browser'
 import reportStyles from './retur-report.module.css'
@@ -203,6 +203,7 @@ export default function ReturReportClient({ rows, canAdd = false, canEdit = fals
   const [gradeFilter, setGradeFilter] = useState('')
   const [prepQtyById, setPrepQtyById] = useState({})
   const [selectedPreparationIds, setSelectedPreparationIds] = useState([])
+  const [expandedArrangementGroups, setExpandedArrangementGroups] = useState({})
   const [currentReturnKoliItems, setCurrentReturnKoliItems] = useState([])
   const [preparationError, setPreparationError] = useState('')
   const [preparationSuccess, setPreparationSuccess] = useState('')
@@ -362,6 +363,20 @@ export default function ReturReportClient({ rows, canAdd = false, canEdit = fals
     () => arrangementRows.filter((row) => matchesActiveFilters(row)),
     [arrangementRows, matchesActiveFilters]
   )
+  const arrangementGroups = useMemo(() => {
+    const groups = new Map()
+    filteredRows.forEach((row) => {
+      const key = `${row.inbound_id}::${row.koli_sequence}`
+      const group = groups.get(key) || { key, inbound: row.inbound, koliSequence: row.koli_sequence, items: [], totalQty: 0, phases: new Set(), statuses: new Set(), createdAt: row.created_at }
+      group.items.push(row)
+      group.totalQty += Number(row.qty || 0)
+      group.phases.add(getPhaseLabel(row.source_phase))
+      group.statuses.add(String(row.status || 'waiting').toLowerCase())
+      if (row.created_at && (!group.createdAt || row.created_at < group.createdAt)) group.createdAt = row.created_at
+      groups.set(key, group)
+    })
+    return Array.from(groups.values())
+  }, [filteredRows])
   const filteredPreparationRows = useMemo(
     () => preparationRows.filter((row) => matchesActiveFilters(row)),
     [matchesActiveFilters, preparationRows]
@@ -485,6 +500,16 @@ export default function ReturReportClient({ rows, canAdd = false, canEdit = fals
 
   function toggleRow(id) {
     setSelectedIds((current) => (current.includes(id) ? current.filter((item) => item !== id) : [...current, id]))
+  }
+
+  function toggleArrangementGroup(group) {
+    setSelectedIds((current) => {
+      const groupIds = group.items.map((item) => item.id)
+      const allSelected = groupIds.every((id) => current.includes(id))
+      return allSelected
+        ? current.filter((id) => !groupIds.includes(id))
+        : Array.from(new Set([...current, ...groupIds]))
+    })
   }
 
   function toggleAll() {
@@ -1623,35 +1648,69 @@ export default function ReturReportClient({ rows, canAdd = false, canEdit = fals
               <th>Phase</th>
               <th>Supplier</th>
               <th>Brand</th>
-              <th>Mode-Variant</th>
+              <th>Model-Variant</th>
               <th>Grade</th>
               <th className={reportStyles.centerNumberCell}>Qty</th>
               <th>Status</th>
             </tr>
           </thead>
           <tbody>
-            {filteredRows.map((row) => {
-              const isCompleted = String(row.status || 'waiting').toLowerCase() === 'completed'
-              const isChecked = selectedIds.includes(row.id)
+            {arrangementGroups.map((group) => {
+              const expanded = Boolean(expandedArrangementGroups[group.key])
+              const allSelected = group.items.every((row) => selectedIds.includes(row.id))
+              const someSelected = group.items.some((row) => selectedIds.includes(row.id))
+              const groupStatus = group.statuses.size === 1 ? Array.from(group.statuses)[0] : 'mixed'
 
               return (
-                <tr key={row.id}>
-                  <td>
-                    <input className={reportStyles.checkbox} type="checkbox" checked={isChecked} onChange={() => toggleRow(row.id)} />
-                  </td>
-                  <td>{row.koli_sequence ? `Koli ${row.koli_sequence}` : '-'}</td>
-                  <td>{formatDateDisplay(row.created_at || row.inbound?.inbound_date)}</td>
-                  <td>{row.inbound?.grn_number || '-'}</td>
-                  <td>{getPhaseLabel(row.source_phase)}</td>
-                  <td>{row.inbound?.suppliers?.supplier_name || '-'}</td>
-                  <td>{getBrandLabel(row)}</td>
-                  <td>{getModelLabel(row)}</td>
-                  <td>{row.grade || '-'}</td>
-                  <td className={`${reportStyles.centerNumberCell} ${reportStyles.strongQtyCell}`.trim()}>{row.qty || 0}</td>
-                  <td>
-                    <span className={`${reportStyles.badge} ${isCompleted ? reportStyles.badgeCompleted : ''}`}>{getStatusLabel(row.status)}</span>
-                  </td>
-                </tr>
+                <Fragment key={group.key}>
+                  <tr className={reportStyles.arrangementGroupRow}>
+                    <td>
+                      <input
+                        className={reportStyles.checkbox}
+                        type="checkbox"
+                        checked={allSelected}
+                        ref={(input) => { if (input) input.indeterminate = someSelected && !allSelected }}
+                        onChange={() => toggleArrangementGroup(group)}
+                        aria-label={`Select all items in ${group.inbound?.grn_number || 'GRN'} Koli ${group.koliSequence}`}
+                      />
+                    </td>
+                    <td>
+                      <button
+                        type="button"
+                        className={reportStyles.arrangementExpandButton}
+                        aria-expanded={expanded}
+                        aria-label={`${expanded ? 'Collapse' : 'Expand'} ${group.inbound?.grn_number || 'GRN'} Koli ${group.koliSequence}`}
+                        onClick={() => setExpandedArrangementGroups((current) => ({ ...current, [group.key]: !current[group.key] }))}
+                      >{expanded ? '-' : '+'}</button>
+                      <strong>Koli {group.koliSequence}</strong>
+                    </td>
+                    <td>{formatDateDisplay(group.createdAt || group.inbound?.inbound_date)}</td>
+                    <td><strong>{group.inbound?.grn_number || '-'}</strong></td>
+                    <td>{Array.from(group.phases).join(', ')}</td>
+                    <td>{group.inbound?.suppliers?.supplier_name || '-'}</td>
+                    <td colSpan={3}>{group.items.length} item{group.items.length === 1 ? '' : 's'}</td>
+                    <td className={`${reportStyles.centerNumberCell} ${reportStyles.strongQtyCell}`.trim()}>{group.totalQty}</td>
+                    <td><span className={`${reportStyles.badge} ${groupStatus === 'completed' ? reportStyles.badgeCompleted : ''}`}>{groupStatus === 'mixed' ? 'Mixed' : getStatusLabel(groupStatus)}</span></td>
+                  </tr>
+                  {expanded ? group.items.map((row) => {
+                    const isCompleted = String(row.status || 'waiting').toLowerCase() === 'completed'
+                    return (
+                      <tr key={row.id} className={reportStyles.arrangementDetailRow}>
+                        <td><input className={reportStyles.checkbox} type="checkbox" checked={selectedIds.includes(row.id)} onChange={() => toggleRow(row.id)} aria-label={`Select ${getModelLabel(row)}`} /></td>
+                        <td />
+                        <td />
+                        <td />
+                        <td>{getPhaseLabel(row.source_phase)}</td>
+                        <td />
+                        <td>{getBrandLabel(row)}</td>
+                        <td>{getModelLabel(row)}</td>
+                        <td>{row.grade || '-'}</td>
+                        <td className={`${reportStyles.centerNumberCell} ${reportStyles.strongQtyCell}`.trim()}>{row.qty || 0}</td>
+                        <td><span className={`${reportStyles.badge} ${isCompleted ? reportStyles.badgeCompleted : ''}`}>{getStatusLabel(row.status)}</span></td>
+                      </tr>
+                    )
+                  }) : null}
+                </Fragment>
               )
             })}
           </tbody>

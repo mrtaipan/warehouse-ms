@@ -13,6 +13,7 @@ const emptyDraft = {
   id: '',
   material_name: '',
   material_type: 'ACCESSORIES',
+  is_qc_required: false,
   unit: 'PCS',
   is_active: true,
 }
@@ -32,6 +33,7 @@ function normalizeMaterial(row) {
     id: String(row?.id || '').trim(),
     material_name: String(row?.material_name || '').trim().toUpperCase(),
     material_type: normalizeMaterialType(row?.material_type),
+    is_qc_required: row?.is_qc_required === true,
     unit: String(row?.unit || 'PCS').trim().toUpperCase(),
     is_active: row?.is_active !== false,
   }
@@ -40,13 +42,13 @@ function normalizeMaterial(row) {
 async function fetchMaterialRows() {
   let response = await supabase
     .from('arkline_dir_materials')
-    .select('id, material_name, material_type, unit, is_active')
+    .select('id, material_name, material_type, unit, is_active, is_qc_required')
     .order('material_name', { ascending: true })
 
   if (response.error && isMissingColumnError(response.error, 'material_type')) {
     response = await supabase
       .from('arkline_dir_materials')
-      .select('id, material_name, unit, is_active')
+      .select('id, material_name, unit, is_active, is_qc_required')
       .order('material_name', { ascending: true })
   }
 
@@ -160,11 +162,12 @@ export default function ArklineMaterialDirectoryPage() {
         .update({
           material_name: draft.material_name,
           material_type: normalizedMaterialType,
+          is_qc_required: normalizedMaterialType === 'ACCESSORIES' && draft.is_qc_required === true,
           unit: draft.unit || 'PCS',
           is_active: draft.is_active,
         })
         .eq('id', draft.id)
-        .select('id, material_name, material_type, unit, is_active')
+        .select('id, material_name, material_type, unit, is_active, is_qc_required')
         .single()
 
       if (updateError) {
@@ -193,10 +196,11 @@ export default function ArklineMaterialDirectoryPage() {
       .insert({
         material_name: draft.material_name,
         material_type: normalizedMaterialType,
+        is_qc_required: normalizedMaterialType === 'ACCESSORIES' && draft.is_qc_required === true,
         unit: draft.unit || 'PCS',
         is_active: draft.is_active,
       })
-      .select('id, material_name, material_type, unit, is_active')
+      .select('id, material_name, material_type, unit, is_active, is_qc_required')
       .single()
 
     if (insertError) {
@@ -400,6 +404,18 @@ export default function ArklineMaterialDirectoryPage() {
                   <span>Active material</span>
                 </label>
               </div>
+              {normalizeMaterialType(draft.material_type) === 'ACCESSORIES' ? (
+                <div className={styles.fieldCheckbox}>
+                  <label className={styles.checkboxLabel}>
+                    <input
+                      type="checkbox"
+                      checked={draft.is_qc_required === true}
+                      onChange={(event) => setDraft((prev) => ({ ...prev, is_qc_required: event.target.checked }))}
+                    />
+                    <span>Require QC</span>
+                  </label>
+                </div>
+              ) : null}
             </div>
 
             {error ? <p className={styles.errorText}>{error}</p> : null}

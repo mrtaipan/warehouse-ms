@@ -444,28 +444,6 @@ function getStorageKoliKey(row = {}) {
   return queueLabel
 }
 
-function GridIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <rect x="3" y="3" width="7" height="7" rx="1.5" />
-      <rect x="14" y="3" width="7" height="7" rx="1.5" />
-      <rect x="3" y="14" width="7" height="7" rx="1.5" />
-      <rect x="14" y="14" width="7" height="7" rx="1.5" />
-    </svg>
-  )
-}
-
-function TimelineIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M4 6h16" />
-      <path d="M4 12h10" />
-      <path d="M4 18h16" />
-      <circle cx="18" cy="12" r="2.5" />
-    </svg>
-  )
-}
-
 function createDivisionDayMap() {
   return new Map()
 }
@@ -590,22 +568,6 @@ function normalizeCalendarResult(result, sourceName = 'calendar source') {
 
   console.warn(`Operations Calendar skipped ${sourceName}: ${result.error.message}`)
   return { data: [], error: null }
-}
-
-function createDaySummaryMap(monthDays, timelineMap) {
-  return monthDays.reduce((result, day) => {
-    const divisions = DIVISIONS.map((division) => {
-      const entry = timelineMap.get(`${division.key}::${day.key}`)
-      return {
-        ...division,
-        items: entry?.items || [],
-        totals: entry?.totals || { activities: 0, qty: 0, count: 0 },
-      }
-    }).filter((division) => division.items.length > 0)
-
-    result.set(day.key, divisions)
-    return result
-  }, new Map())
 }
 
 async function loadInboundRowsForCalendar(supabase, start, end) {
@@ -1234,13 +1196,9 @@ async function loadRestockRowsForCalendar(supabase, start, end) {
   return normalizeCalendarResult(byCreatedAt, 'restock')
 }
 
-async function loadOperationsCalendarFormOptions(supabase) {
-  const [{ data: inboundRows }, { data: unloadRows }] = await Promise.all([
-    supabase
-      .from('inbound')
-      .select('id, grn_number')
-      .order('inbound_date', { ascending: false })
-      .limit(500),
+async function loadOperationsCalendarFormOptions(supabase, listRowsPromise) {
+  const [allListRows, { data: unloadRows }] = await Promise.all([
+    listRowsPromise || loadOperationsListRows(supabase),
     supabase
       .from('inbound_unload')
       .select(`
@@ -1252,11 +1210,13 @@ async function loadOperationsCalendarFormOptions(supabase) {
       .order('created_at', { ascending: false })
       .limit(1500),
   ])
-  const inboundById = new Map((inboundRows || []).map((row) => [String(row.id), String(row.grn_number || '').trim()]))
+  const activeRows = allListRows.filter((row) => !row.isCompleted)
+  const activeGrnNumbers = activeRows.map((row) => row.grnNumber).filter((value) => value && value !== '-')
+  const activeInboundById = new Map(activeRows.map((row) => [String(row.id), row.grnNumber]))
   const targetPairMap = new Map()
 
   ;(unloadRows || []).forEach((row) => {
-    const grnNumber = inboundById.get(String(row.inbound_id || '')) || ''
+    const grnNumber = activeInboundById.get(String(row.inbound_id || '')) || ''
     const brandName = String(row.brands?.brand_name || '').trim()
 
     if (!grnNumber || !brandName) return
@@ -1264,8 +1224,8 @@ async function loadOperationsCalendarFormOptions(supabase) {
   })
 
   return {
-    grnOptions: getDistinctOptions((inboundRows || []).map((row) => row.grn_number)),
-    brandOptions: getDistinctOptions((unloadRows || []).map((row) => row.brands?.brand_name)),
+    grnOptions: getDistinctOptions(activeGrnNumbers),
+    brandOptions: getDistinctOptions(Array.from(targetPairMap.values()).map((pair) => pair.brandName)),
     targetOptionPairs: Array.from(targetPairMap.values()).sort((left, right) => (
       left.grnNumber.localeCompare(right.grnNumber, undefined, { numeric: true }) ||
       left.brandName.localeCompare(right.brandName, undefined, { numeric: true })
@@ -1981,6 +1941,105 @@ async function loadOperationsCalendarData(supabase, monthValue, nonWorkingDateSe
   return timelineMap
 }
 
+async function loadInboundRelatedRows(supabase, tableName, columns, inboundIds, sourceName) {
+  if (!inboundIds.length) return []
+
+  const rows = []
+  const pageSize = 1000
+
+  for (let offset = 0; ; offset += pageSize) {
+    const result = await supabase
+      .from(tableName)
+      .select(columns)
+      .in('inbound_id', inboundIds)
+      .order('id', { ascending: true })
+      .range(offset, offset + pageSize - 1)
+
+    if (result.error) {
+      if (isNonBlockingCalendarError(result.error)) {
+        console.warn(`Operations List skipped ${sourceName}: ${result.error.message}`)
+        return []
+      }
+      throw result.error
+    }
+
+    rows.push(...(result.data || []))
+    if ((result.data || []).length < pageSize) break
+  }
+
+  return rows
+}
+
+function getLatestEventDate(rows, valueSelector) {
+  return rows
+    .map(valueSelector)
+    .filter(Boolean)
+    .map(extractDateKey)
+    .filter(Boolean)
+    .sort()
+    .at(-1) || ''
+}
+
+async function loadOperationsListRows(supabase) {
+  const { data: inboundRows, error: inboundError } = await supabase
+    .from('inbound')
+    .select('id, grn_number, inbound_date, item_name, supplier_id, total_claimed_qty, total_received_qty, suppliers:dir_suppliers!supplier_id(supplier_name)')
+    .order('inbound_date', { ascending: false })
+
+  if (inboundError) throw inboundError
+
+  const inboundIds = (inboundRows || []).map((row) => row.id).filter(Boolean)
+  if (!inboundIds.length) return []
+
+  const [unloadRows, qcRows, plReceivingRows, plBreakdownRows, returnRows] = await Promise.all([
+    loadInboundRelatedRows(supabase, 'inbound_unload', 'id, inbound_id, qty', inboundIds, 'inbound sorting'),
+    loadInboundRelatedRows(supabase, 'qc_items', 'id, inbound_id, started_at, finished_at, created_at, updated_at', inboundIds, 'QC dates'),
+    loadInboundRelatedRows(supabase, 'pl_receiving', 'id, inbound_id, received_qty, validated_at, created_at', inboundIds, 'packing receiving'),
+    loadInboundRelatedRows(supabase, 'pl_size_breakdown', 'id, inbound_id, qty, created_at, updated_at', inboundIds, 'packing breakdown'),
+    loadInboundRelatedRows(supabase, 'warehouse_returns', 'id, inbound_id, status, updated_at', inboundIds, 'return dates'),
+  ])
+
+  const unloadByInbound = groupRowsByValue(unloadRows, (row) => String(row.inbound_id || ''))
+  const qcByInbound = groupRowsByValue(qcRows, (row) => String(row.inbound_id || ''))
+  const plReceivingByInbound = groupRowsByValue(plReceivingRows, (row) => String(row.inbound_id || ''))
+  const plBreakdownByInbound = groupRowsByValue(plBreakdownRows, (row) => String(row.inbound_id || ''))
+  const returnsByInbound = groupRowsByValue(returnRows, (row) => String(row.inbound_id || ''))
+
+  return (inboundRows || []).map((inbound) => {
+    const inboundId = String(inbound.id)
+    const unloadForInbound = unloadByInbound.get(inboundId) || []
+    const qcForInbound = qcByInbound.get(inboundId) || []
+    const receivingForInbound = plReceivingByInbound.get(inboundId) || []
+    const breakdownForInbound = plBreakdownByInbound.get(inboundId) || []
+    const completedReturns = (returnsByInbound.get(inboundId) || []).filter(
+      (row) => String(row.status || '').trim().toLowerCase() === 'completed'
+    )
+    const sortedQty = sumBy(unloadForInbound, 'qty')
+    const targetQty = sortedQty || Number(inbound.total_claimed_qty || inbound.total_received_qty || 0)
+    const receivedPackingQty = sumBy(receivingForInbound, ['received_qty'])
+    const breakdownPackingQty = sumBy(breakdownForInbound, 'qty')
+    const packingQty = Math.max(receivedPackingQty, breakdownPackingQty)
+    const qcDate = getLatestEventDate(qcForInbound, (row) => row.finished_at || row.updated_at || row.created_at || row.started_at)
+    const packingDate = getLatestEventDate(
+      [...receivingForInbound, ...breakdownForInbound],
+      (row) => row.validated_at || row.updated_at || row.created_at
+    )
+    const returnDate = getLatestEventDate(completedReturns, (row) => row.updated_at)
+
+    return {
+      id: inbound.id,
+      grnNumber: inbound.grn_number || '-',
+      supplierName: inbound.suppliers?.supplier_name || '-',
+      itemName: inbound.item_name || '-',
+      inboundDate: extractDateKey(inbound.inbound_date),
+      qcDate,
+      packingDate,
+      returnDate,
+      isCompleted: Boolean(returnDate) || (targetQty > 0 && packingQty >= targetQty),
+    }
+  })
+}
+
 function TimelineView({ monthDays, timelineMap, currentDateKey }) {
   return (
     <div className={styles.timelineCard}>
@@ -2056,73 +2115,6 @@ function FragmentTimelineRow({ division, monthDays, timelineMap, currentDateKey 
   )
 }
 
-function CalendarView({ monthDays, daySummaryMap, currentDateKey }) {
-  const firstDayDate = new Date(`${monthDays[0].key}T00:00:00Z`)
-  const leadingEmptyCells = (firstDayDate.getUTCDay() + 6) % 7
-  const calendarCells = [
-    ...Array.from({ length: leadingEmptyCells }, (_, index) => ({ type: 'empty', key: `empty-${index}` })),
-    ...monthDays.map((day) => ({ type: 'day', key: day.key, day })),
-  ]
-
-  return (
-    <div className={styles.calendarCard}>
-      <div className={styles.calendarWeekdays}>
-        {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((label) => (
-          <div key={label} className={`${styles.calendarWeekdayCell} ${label === 'Sun' ? styles.sundayText : ''}`}>{label}</div>
-        ))}
-      </div>
-
-      <div className={styles.calendarGrid}>
-        {calendarCells.map((cell) => {
-          if (cell.type === 'empty') {
-            return <div key={cell.key} className={styles.calendarEmptyCell} />
-          }
-
-          const divisions = daySummaryMap.get(cell.day.key) || []
-
-          return (
-            <section
-              key={cell.key}
-              className={`${styles.calendarDayCell} ${cell.day.key === currentDateKey ? styles.calendarToday : ''}`}
-            >
-              <div className={styles.calendarDayHeader}>
-                <strong className={cell.day.weekday === 'Sun' ? styles.sundayText : ''}>{cell.day.dayNumber}</strong>
-                <span className={cell.day.weekday === 'Sun' ? styles.sundayText : ''}>{cell.day.weekday}</span>
-              </div>
-
-              {divisions.length ? (
-                <div className={styles.calendarDivisionStack}>
-                  {divisions.map((division) => (
-                    <article key={`${cell.day.key}-${division.key}`} className={styles.calendarDivisionCard}>
-                      <div className={styles.calendarDivisionHead}>
-                        <span className={`${styles.divisionPill} ${styles[`divisionPill${division.accent}`]}`}>{division.label}</span>
-                        <small>{division.totals.activities} item</small>
-                      </div>
-                      <div className={styles.calendarDivisionItems}>
-                        {division.items.slice(0, 3).map((item, index) => (
-                          <div key={`${item.label}-${index}`} className={styles.calendarDivisionItem}>
-                            <strong>{item.label}</strong>
-                            <span>{item.note}</span>
-                          </div>
-                        ))}
-                        {division.items.length > 3 ? (
-                          <div className={styles.calendarMore}>+{division.items.length - 3} more activity</div>
-                        ) : null}
-                      </div>
-                    </article>
-                  ))}
-                </div>
-              ) : (
-                <div className={styles.calendarEmptyState}>No activity recorded.</div>
-              )}
-            </section>
-          )
-        })}
-      </div>
-    </div>
-  )
-}
-
 export const metadata = {
   title: 'Operations Calendar | Warehouse MS',
 }
@@ -2145,24 +2137,25 @@ export default async function OperationsCalendarPage({ searchParams }) {
 
   const params = await searchParams
   const month = normalizeMonthValue(params?.month)
-  const view = String(params?.view || 'timeline').toLowerCase() === 'calendar' ? 'calendar' : 'timeline'
-  const warehouseHolidayDateSet = await loadWarehouseHolidayDateSet(supabase, month)
-  const monthDays = getMonthDays(month).map((day) => ({
-    ...day,
-    isWarehouseHoliday: warehouseHolidayDateSet.has(day.key),
-  }))
+  const view = String(params?.view || 'timeline').toLowerCase() === 'list' ? 'list' : 'timeline'
+  const warehouseHolidayDateSet = view === 'timeline' ? await loadWarehouseHolidayDateSet(supabase, month) : new Set()
+  const monthDays = view === 'timeline'
+    ? getMonthDays(month).map((day) => ({
+        ...day,
+        isWarehouseHoliday: warehouseHolidayDateSet.has(day.key),
+      }))
+    : []
   const currentDateKey = extractDateKey(new Date().toISOString())
-  const timelineMap = await loadOperationsCalendarData(supabase, month, warehouseHolidayDateSet)
-  const formOptions = await loadOperationsCalendarFormOptions(supabase)
+  const listRowsPromise = loadOperationsListRows(supabase)
+  const [timelineMap, listRows, formOptions] = await Promise.all([
+    view === 'timeline' ? loadOperationsCalendarData(supabase, month, warehouseHolidayDateSet) : Promise.resolve(new Map()),
+    view === 'list' ? listRowsPromise : Promise.resolve([]),
+    loadOperationsCalendarFormOptions(supabase, listRowsPromise),
+  ])
   const manualDivisionKey = getRoleDivision(isAdmin ? 'admin' : role)
-  const daySummaryMap = createDaySummaryMap(monthDays, timelineMap)
   const timelineEntries = Array.from(timelineMap.entries()).map(([key, value]) => ({
     key,
     ...value,
-  }))
-  const daySummaries = monthDays.map((day) => ({
-    dateKey: day.key,
-    divisions: daySummaryMap.get(day.key) || [],
   }))
 
   return (
@@ -2174,7 +2167,7 @@ export default async function OperationsCalendarPage({ searchParams }) {
         monthDays={monthDays}
         currentDateKey={currentDateKey}
         timelineEntries={timelineEntries}
-        daySummaries={daySummaries}
+        listRows={listRows}
         formOptions={formOptions}
         canAddTarget={canManageOperationsTargets(role, isAdmin)}
         manualDivisionKey={manualDivisionKey}

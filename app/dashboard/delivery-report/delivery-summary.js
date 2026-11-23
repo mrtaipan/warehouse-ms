@@ -1,9 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import { Chart as ChartJS, registerables } from 'chart.js'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 
 import { deliverySupabase } from '@/lib/delivery-supabase'
 import { EmptyState, Modal, StatusMessage } from './delivery-report-client'
@@ -18,8 +16,6 @@ import {
   todayIso,
 } from './delivery-report-helpers'
 import styles from './delivery-report.module.css'
-
-ChartJS.register(...registerables)
 
 const PROGRESS_COLORS = {
   danger: '#dc2626',
@@ -118,124 +114,164 @@ function CourierComposition({ values }) {
 }
 
 function LineChart({ values, series, selectedSeries, onSelectSeries }) {
-  const canvasRef = useRef(null)
-  const chartRef = useRef(null)
+  const chartId = useId().replaceAll(':', '')
+  const chartWrapRef = useRef(null)
+  const [chartWidth, setChartWidth] = useState(1000)
   const [hover, setHover] = useState(null)
-
   useEffect(() => {
-    const canvas = canvasRef.current
-    if (!canvas) return
-    chartRef.current?.destroy()
-    chartRef.current = new ChartJS(canvas, {
-      type: 'line',
-      data: {
-        labels: values.map((item) => item.label),
-        datasets: series.map((name) => ({
-          label: name,
-          data: values.map((item) => safeNumber(item[name])),
-          backgroundColor(context) {
-            const { chart } = context
-            const area = chart.chartArea
-            const muted = selectedSeries && selectedSeries !== name
-            if (!area) return `${SERIES_COLORS[name]}${muted ? '08' : '22'}`
-            const gradient = chart.ctx.createLinearGradient(0, area.top, 0, area.bottom)
-            gradient.addColorStop(0, `${SERIES_COLORS[name]}${muted ? '0d' : '40'}`)
-            gradient.addColorStop(1, `${SERIES_COLORS[name]}00`)
-            return gradient
-          },
-          borderColor: selectedSeries && selectedSeries !== name ? '#cbd5e1' : SERIES_COLORS[name],
-          borderWidth: selectedSeries && selectedSeries !== name ? 1.5 : 3,
-          pointBackgroundColor: '#ffffff',
-          pointBorderColor: selectedSeries && selectedSeries !== name ? '#cbd5e1' : SERIES_COLORS[name],
-          pointRadius: values.length > 60 ? 0 : (selectedSeries && selectedSeries !== name ? 2 : 4),
-          pointBorderWidth: 2.5,
-          pointHoverRadius: 7,
-          pointHoverBorderWidth: 3,
-          pointHitRadius: 14,
-          clip: 8,
-          tension: .36,
-          cubicInterpolationMode: 'monotone',
-          fill: 'origin',
-        })),
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        interaction: { mode: 'index', intersect: false, axis: 'x' },
-        layout: { padding: { top: 20, right: 20, bottom: 4 } },
-        plugins: {
-          legend: { display: false },
-          tooltip: { enabled: false },
-        },
-        scales: {
-          x: {
-            offset: false,
-            border: { display: false },
-            grid: { display: false },
-            ticks: { color: '#64748b', maxRotation: 0, maxTicksLimit: 10, font: { size: 12 } },
-          },
-          y: {
-            beginAtZero: true,
-            border: { display: false },
-            grid: { color: '#edf0f5' },
-            title: { display: true, text: 'Order quantity', color: '#64748b' },
-            ticks: { color: '#64748b', precision: 0, maxTicksLimit: 6, font: { size: 12 }, callback: (value) => new Intl.NumberFormat('en', { notation: 'compact' }).format(value) },
-          },
-        },
-        onHover(event, activeElements) {
-          const nativeEvent = event.native
-          if (!nativeEvent || nativeEvent.clientX == null || nativeEvent.clientY == null) {
-            setHover(null)
-            return
-          }
+    const element = chartWrapRef.current
+    if (!element) return
+    const measure = () => setChartWidth(Math.max(1, element.clientWidth))
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(element)
+    return () => observer.disconnect()
+  }, [])
 
-          // Reuse Chart.js's active category so the tooltip always matches the
-          // marker that is highlighted under the pointer, including at edges.
-          const activeIndex = activeElements?.[0]?.index
-          if (!Number.isInteger(activeIndex) || !values[activeIndex]) {
-            setHover(null)
-            return
-          }
-          const nearestIndex = activeIndex
+  const chartHeight = 350
+  const plot = { left: 62, right: 18, top: 22, bottom: 42 }
+  const plotWidth = Math.max(1, chartWidth - plot.left - plot.right)
+  const plotHeight = chartHeight - plot.top - plot.bottom
+  const maxValue = values.reduce(
+    (maximum, item) => series.reduce((lineMaximum, name) => Math.max(lineMaximum, safeNumber(item[name])), maximum),
+    0
+  )
+  const rawStep = Math.max(maxValue / 4, 1)
+  const magnitude = 10 ** Math.floor(Math.log10(rawStep))
+  const normalizedStep = rawStep / magnitude
+  const stepFactor = normalizedStep <= 1 ? 1 : normalizedStep <= 2 ? 2 : normalizedStep <= 2.5 ? 2.5 : normalizedStep <= 5 ? 5 : 10
+  const step = stepFactor * magnitude
+  const yMax = Math.max(step * 4, Math.ceil(maxValue / step) * step)
+  const xFor = (index) => plot.left + (values.length > 1 ? (index / (values.length - 1)) * plotWidth : plotWidth / 2)
+  const yFor = (value) => plot.top + (1 - safeNumber(value) / yMax) * plotHeight
+  const pathFor = (name) => {
+    if (!values.length) return ''
+    const points = values.map((item, index) => ({ x: xFor(index), y: yFor(item[name]) }))
+    if (points.length === 1) return `M ${points[0].x} ${points[0].y}`
+    return points.reduce((path, point, index) => {
+      if (index === 0) return `M ${point.x} ${point.y}`
+      const previous = points[index - 1]
+      const middle = (previous.x + point.x) / 2
+      return `${path} C ${middle} ${previous.y}, ${middle} ${point.y}, ${point.x} ${point.y}`
+    }, '')
+  }
+  const areaFor = (name) => {
+    const path = pathFor(name)
+    if (!path) return ''
+    return `${path} L ${xFor(values.length - 1)} ${plot.top + plotHeight} L ${xFor(0)} ${plot.top + plotHeight} Z`
+  }
+  const visibleTicks = values.length <= 8
+    ? values.map((_item, index) => index)
+    : Array.from({ length: 8 }, (_item, index) => Math.round(index * (values.length - 1) / 7))
+  const chartNumber = new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 })
+  const tooltipRows = hover ? series
+    .map((name) => ({ name, count: safeNumber(values[hover.index]?.[name]) }))
+    .filter((row) => row.count > 0) : []
 
-          const width = 250
-          const rows = series
-            .map((name) => ({ name, count: safeNumber(values[nearestIndex]?.[name]) }))
-            .filter((row) => row.count > 0)
-            .map((row) => ({ name: row.name, value: formatCount(row.count) }))
-          if (!rows.length) {
-            setHover(null)
-            return
-          }
-          const height = 56 + rows.length * 28
-          const left = Math.max(12, Math.min(nativeEvent.clientX + 14, window.innerWidth - width - 12))
-          const top = nativeEvent.clientY + height + 18 <= window.innerHeight
-            ? nativeEvent.clientY + 14
-            : Math.max(12, nativeEvent.clientY - height - 14)
-          setHover({ title: values[nearestIndex]?.label || '', rows, left, top })
-        },
-        onClick(event, _elements, chart) {
-          const nearest = chart.getElementsAtEventForMode(event, 'nearest', { intersect: true }, true)
-          const index = nearest?.[0]?.datasetIndex
-          if (Number.isInteger(index)) onSelectSeries(series[index])
-        },
-      },
-    })
+  const handlePointerMove = (event) => {
+    const bounds = event.currentTarget.getBoundingClientRect()
+    if (!bounds.width || !values.length) return
+    const layoutWidth = chartWrapRef.current?.clientWidth || chartWidth
+    const layoutHeight = chartWrapRef.current?.clientHeight || chartHeight
+    const x = ((event.clientX - bounds.left) / bounds.width) * chartWidth
+    const y = ((event.clientY - bounds.top) / bounds.height) * chartHeight
+    if (x < plot.left || x > chartWidth - plot.right || y < plot.top || y > plot.top + plotHeight) {
+      setHover(null)
+      return
+    }
+    const index = values.length > 1
+      ? Math.max(0, Math.min(values.length - 1, Math.round(((x - plot.left) / plotWidth) * (values.length - 1))))
+      : 0
+    const rows = series.filter((name) => safeNumber(values[index]?.[name]) > 0)
+    if (!rows.length) {
+      setHover(null)
+      return
+    }
+    const tipWidth = Math.min(250, layoutWidth - 24)
+    const tipHeight = 56 + rows.length * 28
+    const pointerX = ((event.clientX - bounds.left) / bounds.width) * layoutWidth
+    const pointerY = ((event.clientY - bounds.top) / bounds.height) * layoutHeight
+    const left = Math.max(12, Math.min(pointerX + 14, layoutWidth - tipWidth - 12))
+    const top = pointerY + tipHeight + 18 <= layoutHeight
+      ? pointerY + 14
+      : Math.max(12, pointerY - tipHeight - 14)
+    setHover({ index, left, top })
+  }
 
-    return () => chartRef.current?.destroy()
-  }, [onSelectSeries, selectedSeries, series, values])
+  const handleChartClick = (event) => {
+    if (!hover) return
+    const bounds = event.currentTarget.getBoundingClientRect()
+    const pointerY = ((event.clientY - bounds.top) / bounds.height) * chartHeight
+    const nearestSeries = series
+      .filter((name) => safeNumber(values[hover.index]?.[name]) > 0)
+      .map((name) => ({ name, distance: Math.abs(yFor(values[hover.index]?.[name]) - pointerY) }))
+      .sort((a, b) => a.distance - b.distance)[0]
+    if (nearestSeries) onSelectSeries(nearestSeries.name)
+  }
 
   return (
-    <div className={styles.barChart} onMouseLeave={() => setHover(null)}>
-      <canvas ref={canvasRef} role="img" aria-label={`Order quantity trend by ${series.join(', ')}. Total ${formatCount(values.reduce((sum, item) => sum + item.TOTAL, 0))} orders.`} />
-      {hover && typeof document !== 'undefined' ? createPortal(
-        <div className={`${styles.returnChartTooltip} ${styles.summaryChartTooltip}`} style={{ left: hover.left, top: hover.top }} role="tooltip">
-          <strong>{hover.title}</strong>
-          {hover.rows.map((row) => <div className={styles.summaryChartTooltipRow} key={row.name}>
-            <span><i style={{ backgroundColor: SERIES_COLORS[row.name] }} />{row.name === 'TOTAL' ? 'Total orders' : row.name}</span>
-            <b>{row.value}</b>
-          </div>)}
-        </div>, document.body) : null}
+    <div ref={chartWrapRef} className={`${styles.barChart} ${styles.orderChart}`} onPointerLeave={() => setHover(null)}>
+      <svg
+        className={styles.orderChartSvg}
+        viewBox={`0 0 ${chartWidth} ${chartHeight}`}
+        role="img"
+        aria-label={`Order quantity trend by ${series.join(', ')}. Total ${formatCount(values.reduce((sum, item) => sum + safeNumber(item.TOTAL), 0))} orders.`}
+        onPointerMove={handlePointerMove}
+        onClick={handleChartClick}
+      >
+        <defs>
+          {series.map((name) => <linearGradient key={name} id={`${chartId}-${name}-area`} x1="0" x2="0" y1="0" y2="1">
+            <stop offset="0%" stopColor={SERIES_COLORS[name]} stopOpacity={selectedSeries && selectedSeries !== name ? .05 : .20} />
+            <stop offset="100%" stopColor={SERIES_COLORS[name]} stopOpacity="0" />
+          </linearGradient>)}
+        </defs>
+        {[0, 1, 2, 3, 4].map((tick) => {
+          const value = yMax * tick / 4
+          const y = yFor(value)
+          return <g key={tick}>
+            <line x1={plot.left} x2={chartWidth - plot.right} y1={y} y2={y} className={styles.orderChartGrid} />
+            <text x={plot.left - 12} y={y + 4} textAnchor="end" className={styles.orderChartAxis}>{chartNumber.format(value)}</text>
+          </g>
+        })}
+        <text transform={`translate(16 ${plot.top + plotHeight / 2}) rotate(-90)`} textAnchor="middle" className={styles.orderChartAxisTitle}>Order quantity</text>
+        {series.map((name) => {
+          const muted = selectedSeries && selectedSeries !== name
+          const opacity = muted ? .20 : 1
+          return <g key={name} opacity={opacity}>
+            <path d={areaFor(name)} fill={`url(#${chartId}-${name}-area)`} />
+            <path d={pathFor(name)} fill="none" stroke={SERIES_COLORS[name]} strokeWidth="8" strokeLinecap="round" strokeLinejoin="round" className={styles.orderChartLineShadow} />
+            <path d={pathFor(name)} fill="none" stroke={SERIES_COLORS[name]} strokeWidth={selectedSeries === name ? 3.5 : 2.75} strokeLinecap="round" strokeLinejoin="round" />
+            {values.map((item, index) => {
+              const count = safeNumber(item[name])
+              if (count <= 0) return null
+              const markerEvery = Math.max(1, Math.ceil(values.length / 90))
+              if (values.length > 90 && index !== values.length - 1 && index % markerEvery !== 0 && hover?.index !== index) return null
+              const active = hover?.index === index
+              return <g key={`${name}-${index}`}>
+                {active ? <circle cx={xFor(index)} cy={yFor(count)} r="10" fill={SERIES_COLORS[name]} opacity=".14" /> : null}
+                <circle cx={xFor(index)} cy={yFor(count)} r={active ? 5.5 : values.length > 90 ? 2 : 3.5} fill="#ffffff" stroke={SERIES_COLORS[name]} strokeWidth={active ? 3 : 2.25} />
+              </g>
+            })}
+          </g>
+        })}
+        {hover ? <line x1={xFor(hover.index)} x2={xFor(hover.index)} y1={plot.top} y2={plot.top + plotHeight} className={styles.orderChartCrosshair} /> : null}
+        {hover ? series.map((name) => {
+          const count = safeNumber(values[hover.index]?.[name])
+          if (!count) return null
+          return <g key={`active-${name}`}>
+            <circle cx={xFor(hover.index)} cy={yFor(count)} r="10" fill={SERIES_COLORS[name]} opacity=".14" />
+            <circle cx={xFor(hover.index)} cy={yFor(count)} r="5.5" fill="#ffffff" stroke={SERIES_COLORS[name]} strokeWidth="3" />
+          </g>
+        }) : null}
+        {visibleTicks.map((index) => <text key={`tick-${index}`} x={xFor(index)} y={chartHeight - 10} textAnchor="middle" className={styles.orderChartAxis}>{values[index]?.label}</text>)}
+      </svg>
+      {hover && tooltipRows.length ? <div className={`${styles.returnChartTooltip} ${styles.summaryChartTooltip} ${styles.orderChartTooltip}`} style={{ left: hover.left, top: hover.top }} role="tooltip">
+        <strong>{values[hover.index]?.label}</strong>
+        {tooltipRows.map((row) => <div className={styles.summaryChartTooltipRow} key={row.name}>
+          <span><i style={{ backgroundColor: SERIES_COLORS[row.name] }} />{row.name === 'TOTAL' ? 'Total orders' : row.name}</span>
+          <b>{formatCount(row.count)}</b>
+        </div>)}
+      </div> : null}
     </div>
   )
 }

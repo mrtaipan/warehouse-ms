@@ -539,12 +539,14 @@ async function loadAdminGrnSummary(supabase, selectedGrn = '') {
         qty_a,
         qty_b,
         qty_c,
+        product_model_variant_id,
         model_name,
         variant_name,
         inbound_unload:inbound_unload_id (
           id,
           brand_id,
           category_id,
+          product_model_variant_id,
           model_name,
           variant_name,
           is_sample,
@@ -558,7 +560,7 @@ async function loadAdminGrnSummary(supabase, selectedGrn = '') {
       .eq('inbound_id', selectedInbound.id)),
     fetchAllRows(() => supabase
       .from('qc_confirm')
-      .select('id, qty, grade, source_grade, adjustment_type, is_adjustment, brand_id, category_id, model_name, variant_name')
+      .select('id, qty, grade, source_grade, adjustment_type, is_adjustment, brand_id, category_id, product_model_variant_id, source_variant_code, model_name, variant_name')
       .eq('inbound_id', selectedInbound.id)),
     fetchAllRows(() => supabase
       .from('pl_receiving')
@@ -593,6 +595,7 @@ async function loadAdminGrnSummary(supabase, selectedGrn = '') {
         adjustment_type,
         brand_id,
         category_id,
+        product_model_variant_id,
         model_name,
         variant_name,
         source_variant_code,
@@ -613,7 +616,7 @@ async function loadAdminGrnSummary(supabase, selectedGrn = '') {
       .eq('inbound_id', selectedInbound.id)),
     fetchAllRows(() => supabase
       .from('inbound_sample_model_breakdowns')
-      .select('id, inbound_unload_id, resolution_status, brand_id, category_id, model_name, variant_name')
+      .select('id, inbound_unload_id, resolution_status, brand_id, category_id, product_model_variant_id, model_name, variant_name')
       .eq('inbound_id', selectedInbound.id)),
     fetchAllRows(() => supabase
       .from('qc_sample_breakdowns')
@@ -790,7 +793,7 @@ function AdminGrnSummaryCard({
                 Reject QC {formatNumber(summary.returQcQty)}
                 {summary.rejectionRemainingQty > 0 ? (
                   <>
-                    <br />Rejection Grade Remaining {formatNumber(summary.rejectionRemainingQty)}
+                    <br /><span className={styles.grnPendingText}>Rejection Grade Remaining {formatNumber(summary.rejectionRemainingQty)}</span>
                   </>
                 ) : null}
               </small>
@@ -803,7 +806,7 @@ function AdminGrnSummaryCard({
                 PL Breakdown {formatNumber(summary.plBreakdownQty)}
               </small>
             </div>
-            <div className={styles.grnMetricCard}>
+            <div className={`${styles.grnMetricCard} ${summary.rejectionRemainingQty > 0 ? styles.grnMetricCardPending : ''}`}>
               <span>Retur</span>
               <strong>{formatNumber(summary.totalReturQty)}</strong>
               <small>
@@ -812,7 +815,7 @@ function AdminGrnSummaryCard({
                 Retur Packing List {formatNumber(summary.returPlQty)}
                 {summary.rejectionRemainingQty > 0 ? (
                   <>
-                    <br />Pending Rejection Grade {formatNumber(summary.rejectionRemainingQty)}
+                    <br /><span className={styles.grnPendingText}>Pending Rejection Grade {formatNumber(summary.rejectionRemainingQty)}</span>
                   </>
                 ) : null}
               </small>
@@ -855,7 +858,7 @@ function AdminGrnSummaryCard({
                   {summary.rejectionRemainingGrades.length ? (
                     <div className={styles.grnSummarySubLines}>
                       {summary.rejectionRemainingGrades.map((item) => (
-                        <p key={item.grade}>- Grade {item.grade}: {formatNumber(item.qty)} pcs remaining.</p>
+                        <p key={item.grade} className={styles.grnPendingText}>- Grade {item.grade}: {formatNumber(item.qty)} pcs remaining.</p>
                       ))}
                     </div>
                   ) : null}

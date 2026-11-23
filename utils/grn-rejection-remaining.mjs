@@ -1,6 +1,12 @@
 const REJECTION_GRADES = ['A', 'B', 'C']
 
 function sourceKey(row, grade) {
+  const variantId = Number(row.product_model_variant_id || 0)
+  if (variantId) return `variant:${variantId}::${grade}`
+
+  const variantCode = String(row.source_variant_code || '').trim().toUpperCase()
+  if (variantCode) return `sku:${variantCode}::${grade}`
+
   return [
     Number(row.brand_id || 0),
     Number(row.category_id || 0),
@@ -72,6 +78,7 @@ export function getGrnRejectionRemaining({
     const source = {
       brand_id: row.product_model?.brand_id || row.inbound_unload?.brand_id,
       category_id: row.product_model?.category_id || row.inbound_unload?.category_id,
+      product_model_variant_id: row.product_model_variant_id || row.inbound_unload?.product_model_variant_id,
       model_name: row.model_name,
       variant_name: row.variant_name,
     }

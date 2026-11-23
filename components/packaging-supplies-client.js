@@ -26,8 +26,13 @@ function RefreshIcon() {
 
 export default function PackagingSuppliesClient({ canReorder, qrItemId }) {
   const [categories, setCategories] = useState([])
-  const [items, setItems] = useState([])
-  const [movements, setMovements] = useState([])
+  const [catalog, setCatalog] = useState([])
+  const items = useMemo(() => catalog.filter((item) => item.active), [catalog])
+  const [movementType, setMovementType] = useState('')
+  const [movementCategory, setMovementCategory] = useState('')
+  const [movementItem, setMovementItem] = useState('')
+  const [movementRefresh, setMovementRefresh] = useState(0)
+  const [movementResult, setMovementResult] = useState(null)
   const [consumption, setConsumption] = useState(new Map())
   const [actors, setActors] = useState(new Map())
   const [loading, setLoading] = useState(true)
@@ -48,19 +53,17 @@ export default function PackagingSuppliesClient({ canReorder, qrItemId }) {
   const load = useCallback(async () => {
     setLoading(true)
     setError('')
-    const [categoryResult, itemResult, movementResult, consumptionResult, profileResult] = await Promise.all([
+    const [categoryResult, itemResult, consumptionResult, profileResult] = await Promise.all([
       supabase.from('packaging_categories').select('id,name,sort_order').order('sort_order'),
-      supabase.from('packaging_items').select('id,category_id,name,unit,pieces_per_unit,qty,inventory_qty,display_qty,reorder_point_qty,coverage_days,sort_order').eq('active', true).order('sort_order'),
-      supabase.from('packaging_movements').select('id,item_id,movement_type,qty_change,qty_after,inventory_delta,display_delta,note,created_by,created_at').order('created_at', { ascending: false }).limit(50),
+      supabase.from('packaging_items').select('id,category_id,name,unit,pieces_per_unit,qty,inventory_qty,display_qty,reorder_point_qty,coverage_days,sort_order,active').order('sort_order'),
       supabase.rpc('packaging_outbound_30d'),
       supabase.from('dir_user_profiles').select('authenticated_id,display_name'),
     ])
-    const failure = categoryResult.error || itemResult.error || movementResult.error || consumptionResult.error
+    const failure = categoryResult.error || itemResult.error || consumptionResult.error
     if (failure) setError(`${failure.message}. Run supabase/packaging_supplies.sql if the tables are not installed.`)
     else {
       setCategories(categoryResult.data || [])
-      setItems(itemResult.data || [])
-      setMovements(movementResult.data || [])
+      setCatalog(itemResult.data || [])
       setConsumption(new Map((consumptionResult.data || []).map((row) => [row.item_id, Number(row.out_qty)])))
       setActors(new Map((profileResult.data || []).filter((row) => row.authenticated_id).map((row) => [row.authenticated_id, row.display_name])))
     }
@@ -71,6 +74,26 @@ export default function PackagingSuppliesClient({ canReorder, qrItemId }) {
     const timer = window.setTimeout(() => { void load() }, 0)
     return () => window.clearTimeout(timer)
   }, [load])
+
+  const movementKey = [view, movementType, movementCategory, movementItem, movementRefresh].join(':')
+  useEffect(() => {
+    if (view !== 'movement') return
+    const controller = new AbortController()
+    async function fetchMovements() {
+      let query = supabase.from('packaging_movements')
+        .select('id,movement_type,qty_after,inventory_delta,display_delta,note,created_by,created_at,packaging_items!inner(name,category_id)')
+      if (movementType) query = query.eq('movement_type', movementType)
+      if (movementCategory) query = query.eq('packaging_items.category_id', movementCategory)
+      if (movementItem) query = query.eq('item_id', movementItem)
+      const { data, error } = await query.order('created_at', { ascending: false })
+        .order('id', { ascending: false }).limit(50).abortSignal(controller.signal)
+      if (!controller.signal.aborted) setMovementResult({ key: movementKey, rows: data || [], error: error?.message })
+    }
+    void fetchMovements()
+    return () => controller.abort()
+  }, [view, movementType, movementCategory, movementItem, movementKey])
+  const movementLoading = movementResult?.key !== movementKey
+  const movements = movementLoading ? [] : movementResult.rows
 
   useEffect(() => {
     if (!dialog && !printOpen) return undefined
@@ -205,7 +228,18 @@ export default function PackagingSuppliesClient({ canReorder, qrItemId }) {
       {canReorder ? <div className={styles.toolbarActions}><button type="button" onClick={() => openAction('reorder')}>Reorder</button></div> : null}
       <button type="button" className={styles.printButton} onClick={() => { setPrintCategoryId(''); setPrintItemIds([]); setPrintOpen(true) }}>Print QR</button>
       <button type="button" className={styles.refresh} onClick={load} disabled={loading || busy} aria-label="Refresh packaging supplies" title="Refresh"><RefreshIcon /></button>
-    </div> : <div className={styles.movementToolbar}><button type="button" className={styles.refresh} onClick={load} disabled={loading || busy} aria-label="Refresh movements" title="Refresh"><RefreshIcon /></button></div>}
+    </div> : <div className={`${styles.headingControls} ${styles.movementToolbar}`}>
+      <label><span>Movement</span><select value={movementType} onChange={(event) => setMovementType(event.target.value)}>
+        <option value="">All movements</option><option value="IN">Stock In</option><option value="OUT">Stock Out</option>
+      </select></label>
+      <label><span>Category</span><select value={movementCategory} onChange={(event) => { setMovementCategory(event.target.value); setMovementItem('') }}>
+        <option value="">All categories</option>{categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
+      </select></label>
+      <label><span>Item</span><select value={movementItem} onChange={(event) => setMovementItem(event.target.value)}>
+        <option value="">All items</option>{catalog.filter((item) => !movementCategory || String(item.category_id) === movementCategory).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+      </select></label>
+      <button type="button" className={styles.refresh} onClick={() => { setMovementRefresh((n) => n + 1); void load() }} disabled={loading || movementLoading || busy} aria-label="Refresh movements" title="Refresh"><RefreshIcon /></button>
+    </div>}
     {error && !dialog ? <p className={styles.error} role="alert">{error}</p> : null}
     {view === 'stock' ? <div className={styles.chart} aria-label="Stock level by item">
       {groupedItems.map((category) => <section key={category.id} className={styles.chartGroup}>
@@ -219,7 +253,7 @@ export default function PackagingSuppliesClient({ canReorder, qrItemId }) {
       {!loading && chart.length === 0 ? <p className={styles.muted}>No packaging items found.</p> : null}
     </div> : null}
     {loading ? <p className={styles.muted}>Loading packaging supplies...</p> : null}
-    {view === 'movement' ? <div className={styles.tableScroll}><table className={styles.table}><thead><tr><th>Date</th><th>Item</th><th>Movement</th><th className={styles.numeric}>Inventory</th><th className={styles.numeric}>Display</th><th className={styles.numeric}>Total</th><th>By</th><th>Note</th></tr></thead><tbody>{movements.map((row) => <tr key={row.id}><td>{new Date(row.created_at).toLocaleString('id-ID')}</td><td>{items.find((item) => item.id === row.item_id)?.name || '—'}</td><td>{({ OPENING: 'Opening', IN: 'Stock In', OUT: 'Stock Out', MOVE: 'Move', ADJUSTMENT: 'Adjustment' })[row.movement_type] || row.movement_type}</td><td className={styles.numeric}>{row.inventory_delta > 0 ? '+' : ''}{row.inventory_delta ?? '—'}</td><td className={styles.numeric}>{row.display_delta > 0 ? '+' : ''}{row.display_delta ?? '—'}</td><td className={styles.numeric}>{row.qty_after}</td><td>{actors.get(row.created_by) || row.created_by?.slice(0, 8) || '—'}</td><td>{row.note}</td></tr>)}{!movements.length ? <tr><td colSpan="8" className={styles.empty}>No movements yet.</td></tr> : null}</tbody></table></div> : null}
+{view === 'movement' ? <div className={styles.tableScroll}><table className={styles.table}><thead><tr><th>Date</th><th>Item</th><th>Movement</th><th className={styles.numeric}>Inventory</th><th className={styles.numeric}>Display</th><th className={styles.numeric}>Total</th><th>By</th><th>Note</th></tr></thead><tbody>{movements.map((row) => <tr key={row.id}><td>{new Date(row.created_at).toLocaleString('id-ID')}</td><td>{row.packaging_items?.name || '—'}</td><td>{({ OPENING: 'Opening', IN: 'Stock In', OUT: 'Stock Out', MOVE: 'Move', ADJUSTMENT: 'Adjustment' })[row.movement_type] || row.movement_type}</td><td className={styles.numeric}>{row.inventory_delta > 0 ? '+' : ''}{row.inventory_delta ?? '—'}</td><td className={styles.numeric}>{row.display_delta > 0 ? '+' : ''}{row.display_delta ?? '—'}</td><td className={styles.numeric}>{row.qty_after}</td><td>{actors.get(row.created_by) || row.created_by?.slice(0, 8) || '—'}</td><td>{row.note}</td></tr>)}{!movements.length ? <tr><td colSpan="8" className={styles.empty}>{movementLoading ? 'Loading movements...' : movementResult.error || 'No matching movements.'}</td></tr> : null}</tbody></table></div> : null}
     {printOpen ? createPortal(<div className={styles.overlay} role="presentation"><div className={styles.modal} role="dialog" aria-modal="true" aria-label="Print packaging QR labels"><div className={styles.modalHeading}><h3>Print QR Labels</h3><button type="button" onClick={() => setPrintOpen(false)} aria-label="Close">×</button></div><label className={styles.field}><span>Category</span><select value={printCategoryId} onChange={(event) => setPrintCategoryId(event.target.value)}><option value="">Select category</option>{categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}</select></label>{printCategoryId ? <><label className={styles.printSelectAll}><input type="checkbox" checked={items.filter((item) => String(item.category_id) === printCategoryId).every((item) => printItemIds.includes(item.id))} onChange={(event) => { const categoryIds = items.filter((item) => String(item.category_id) === printCategoryId).map((item) => item.id); setPrintItemIds((current) => event.target.checked ? [...new Set([...current, ...categoryIds])] : current.filter((id) => !categoryIds.includes(id))) }} /> Select all in category</label><div className={styles.printItemList}>{items.filter((item) => String(item.category_id) === printCategoryId).map((item) => <label key={item.id}><input type="checkbox" checked={printItemIds.includes(item.id)} onChange={() => togglePrintItem(item.id)} />{item.name}</label>)}</div></> : null}<div className={styles.modalActions}><button type="button" onClick={() => setPrintOpen(false)}>Cancel</button><button type="button" disabled={!printItemIds.length} onClick={() => void printLabels()}>Print {printItemIds.length || ''} label{printItemIds.length === 1 ? '' : 's'}</button></div></div></div>, document.body) : null}
     {dialog ? createPortal(<div className={styles.overlay} role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) setDialog('') }}><form className={styles.modal} onSubmit={save} role="dialog" aria-modal="true" aria-label={dialog === 'reorder' ? 'Set reorder point' : 'Record stock movement'}>
       <div className={styles.modalHeading}><div><h3>{dialog === 'reorder' ? 'Reorder Point' : 'Stock Movement'}</h3></div><button type="button" onClick={() => setDialog('')} disabled={busy} aria-label="Close">×</button></div>

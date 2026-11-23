@@ -5,7 +5,9 @@
 .toolbarActions { display: flex; align-items: center; gap: 8px; margin-left: auto; }
 .toolbarActions button, .printButton { min-height: 40px; padding: 0 12px; border: 1px solid #cdd5df; border-radius: 6px; background: #fff; color: #172033; font: inherit; font-size: 13px; font-weight: 700; cursor: pointer; }
 .toolbarActions button:hover { background: #edf1f5; }
-.movementToolbar { display: flex; justify-content: flex-end; margin-bottom: 16px; }
+.movementToolbar button { margin-left: auto; }
+.movementToolbar label { min-width: 0; max-width: 100%; }
+.movementToolbar select { max-width: 100%; }
 .headingControls label { display: grid; gap: 6px; color: #526176; font-size: 12px; font-weight: 650; }
 .headingControls input, .headingControls select { height: 40px; padding: 8px 11px; border: 1px solid #cdd5df; border-radius: 6px; background: #fff; color: #172033; font: inherit; }
 .headingControls input { width: 220px; }
@@ -77,3 +79,7 @@
 .printItemList { display: grid; gap: 12px; max-height: min(45vh, 340px); overflow-y: auto; padding: 12px; border: 1px solid #dce3e9; border-radius: 6px; }
 .printSelectAll input, .printItemList input { width: 17px; height: 17px; accent-color: #111827; flex: none; }
 @media (max-width: 640px) { .headingControls { width: 100%; } .headingControls label:first-child { flex: 1 1 100%; } .headingControls label:nth-child(2) { flex: 1; } .headingControls input, .headingControls select { width: 100%; } .toolbarActions { margin-left: 0; } .chartRow { grid-template-columns: minmax(0, 1fr) 42px; gap: 8px 10px; } .chartName { grid-column: 1 / -1; } .chartRow .barTrack { grid-column: 1; } .chartRow .percent { grid-column: 2; } .table { min-width: 640px; } }
+@media (max-width: 640px) {
+  .headingControls.movementToolbar label { flex: 1 1 100%; }
+  .headingControls.movementToolbar select { min-width: 0; }
+}

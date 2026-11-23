@@ -700,6 +700,43 @@
   vertical-align: middle;
 }
 
+.arrangementGroupRow td {
+  background: #f8fafc;
+  border-top-color: #cbd5e1;
+}
+
+.arrangementGroupRow td:nth-child(2) {
+  white-space: nowrap;
+}
+
+.arrangementExpandButton {
+  width: 28px;
+  height: 28px;
+  margin-right: 8px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  background: #fff;
+  color: #111827;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  vertical-align: middle;
+}
+
+.arrangementExpandButton:hover {
+  background: #eef2f7;
+}
+
+.arrangementExpandButton:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 2px;
+}
+
+.arrangementDetailRow td {
+  background: #fff;
+  color: #475569;
+}
+
 .numberCell {
   text-align: right !important;
   font-variant-numeric: tabular-nums;

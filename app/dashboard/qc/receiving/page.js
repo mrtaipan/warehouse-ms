@@ -1656,6 +1656,11 @@ export default function QcReceivingPage() {
   const [arklinePurchaseOrders, setArklinePurchaseOrders] = useState([])
   const [arklinePoItems, setArklinePoItems] = useState([])
   const [arklineQcItems, setArklineQcItems] = useState([])
+  const [arklineMaterialQcItems, setArklineMaterialQcItems] = useState([])
+  const [arklineMaterialHeaders, setArklineMaterialHeaders] = useState([])
+  const [arklineMaterialLines, setArklineMaterialLines] = useState([])
+  const [arklineMaterialReceipts, setArklineMaterialReceipts] = useState([])
+  const [arklineMaterialsDirectory, setArklineMaterialsDirectory] = useState([])
   const [arklineReworkReceipts, setArklineReworkReceipts] = useState([])
   const [arklineReturnBatches, setArklineReturnBatches] = useState([])
   const [qcItems, setQcItems] = useState([])
@@ -1663,6 +1668,9 @@ export default function QcReceivingPage() {
   const [qcMode, setQcMode] = useState('regular')
   const [reQcSource, setReQcSource] = useState('arkline')
   const [arklinePlannerMode, setArklinePlannerMode] = useState('product')
+  const [arklineQcTarget, setArklineQcTarget] = useState('garment')
+  const [selectedMaterialPoId, setSelectedMaterialPoId] = useState('')
+  const [selectedMaterialPoItemId, setSelectedMaterialPoItemId] = useState('')
   const [grnSearch, setGrnSearch] = useState('')
   const [showGrnOptions, setShowGrnOptions] = useState(false)
   const [selectedInboundId, setSelectedInboundId] = useState('')
@@ -1710,6 +1718,31 @@ export default function QcReceivingPage() {
     window.addEventListener('resize', updateViewport)
 
     return () => window.removeEventListener('resize', updateViewport)
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    async function loadArklineMaterialQcSources() {
+      const [headers, lines, receipts, materials, tasks] = await Promise.all([
+        supabase.from('arkline_po_material_ordered').select('id, material_po_number, status, created_at'),
+        supabase.from('arkline_po_material_ordered_items').select('id, material_po_ordered_id, material_po_number, material_id, material_name_snapshot, size_variant, color_variant, unit, qty'),
+        supabase.from('arkline_po_material_receipts').select('id, material_po_ordered_item_id, received_qty, receive_date, supplier_sj, created_at').order('receive_date', { ascending: true }),
+        supabase.from('arkline_dir_materials').select('id, material_name, material_type, is_qc_required'),
+        supabase.from('arkline_material_qc').select('*').order('created_at', { ascending: true }),
+      ])
+      if (cancelled) return
+      if (headers.error || lines.error || receipts.error || materials.error || tasks.error) {
+        setError(headers.error?.message || lines.error?.message || receipts.error?.message || materials.error?.message || tasks.error?.message || 'Failed to load material QC sources.')
+        return
+      }
+      setArklineMaterialHeaders(headers.data || [])
+      setArklineMaterialLines(lines.data || [])
+      setArklineMaterialReceipts(receipts.data || [])
+      setArklineMaterialsDirectory(materials.data || [])
+      setArklineMaterialQcItems(tasks.data || [])
+    }
+    void loadArklineMaterialQcSources()
+    return () => { cancelled = true }
   }, [])
 
   useEffect(() => {
@@ -2115,6 +2148,31 @@ export default function QcReceivingPage() {
   }, [arklinePoItems, arklineProductsById, qcMode, reworkPoItemIds, selectedArklinePo])
   const selectedArklinePoItem =
     arklinePoItemOptions.find((item) => item.key === selectedArklinePoItemKey) || null
+  const isMaterialQcMode = qcMode === 'arkline' && arklinePlannerMode === 'po' && arklineQcTarget === 'material'
+  const eligibleMaterialQcIds = useMemo(
+    () => new Set(arklineMaterialsDirectory
+      .filter((item) => item.is_qc_required === true && String(item.material_type || '').toUpperCase() === 'ACCESSORIES')
+      .map((item) => String(item.id))),
+    [arklineMaterialsDirectory]
+  )
+  const materialQcReceivedByItem = useMemo(() => {
+    const totals = new Map()
+    arklineMaterialReceipts.forEach((receipt) => {
+      const itemId = String(receipt.material_po_ordered_item_id || '')
+      totals.set(itemId, Number(totals.get(itemId) || 0) + Number(receipt.received_qty || 0))
+    })
+    return totals
+  }, [arklineMaterialReceipts])
+  const materialQcEligibleLines = useMemo(() => arklineMaterialLines
+    .filter((line) => eligibleMaterialQcIds.has(String(line.material_id || '')) && Number(materialQcReceivedByItem.get(String(line.id)) || 0) > 0),
+  [arklineMaterialLines, eligibleMaterialQcIds, materialQcReceivedByItem])
+  const materialQcPoOptions = useMemo(() => arklineMaterialHeaders
+    .filter((header) => materialQcEligibleLines.some((line) => String(line.material_po_ordered_id) === String(header.id)))
+    .sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || ''))),
+  [arklineMaterialHeaders, materialQcEligibleLines])
+  const selectedMaterialPo = materialQcPoOptions.find((po) => String(po.id) === String(selectedMaterialPoId)) || null
+  const materialQcLineOptions = materialQcEligibleLines.filter((line) => String(line.material_po_ordered_id) === String(selectedMaterialPoId))
+  const selectedMaterialPoItem = materialQcLineOptions.find((line) => String(line.id) === String(selectedMaterialPoItemId)) || null
   const arklineReturnBatchById = useMemo(
     () => new Map(arklineReturnBatches.map((batch) => [String(batch.id), batch])),
     [arklineReturnBatches]
@@ -2248,7 +2306,9 @@ export default function QcReceivingPage() {
       return metaLabel.toUpperCase().includes(modelSearch.trim().toUpperCase())
     })
   const currentPlanRows = isArklineMode
-    ? !isReQcMode && arklinePlannerMode === 'product' && selectedArklineProduct
+    ? isMaterialQcMode && selectedMaterialPoItem
+      ? arklineMaterialQcItems.filter((task) => String(task.material_po_ordered_item_id) === String(selectedMaterialPoItem.id))
+      : !isReQcMode && arklinePlannerMode === 'product' && selectedArklineProduct
       ? arklineQcItems.filter(
           (item) =>
             !item.po_id &&
@@ -2386,6 +2446,7 @@ export default function QcReceivingPage() {
 
   function handleArklinePlannerModeChange(nextMode) {
     setArklinePlannerMode(nextMode)
+    setArklineQcTarget('garment')
     setError('')
     setSuccess('')
     setModelRows([])
@@ -2395,6 +2456,54 @@ export default function QcReceivingPage() {
     setShowArklineProductOptions(false)
     setSelectedArklinePoId('')
     setSelectedArklinePoItemKey('')
+    setSelectedMaterialPoId('')
+    setSelectedMaterialPoItemId('')
+  }
+
+  function handleArklineQcTargetChange(nextTarget) {
+    setArklineQcTarget(nextTarget)
+    setSelectedMaterialPoId('')
+    setSelectedMaterialPoItemId('')
+    setSelectedArklinePoId('')
+    setSelectedArklinePoItemKey('')
+    setModelRows([])
+    setError('')
+    setSuccess('')
+  }
+
+  function handleMaterialQcPoChange(nextPoId) {
+    setSelectedMaterialPoId(nextPoId)
+    setSelectedMaterialPoItemId('')
+    setModelRows([])
+    setError('')
+    setSuccess('')
+  }
+
+  function handleMaterialQcItemChange(nextItemId) {
+    setSelectedMaterialPoItemId(nextItemId)
+    setError('')
+    setSuccess('')
+    const line = materialQcEligibleLines.find((item) => String(item.id) === String(nextItemId))
+    if (!line) {
+      setModelRows([])
+      return
+    }
+    const material = arklineMaterialsDirectory.find((item) => String(item.id) === String(line.material_id))
+    const variant = [line.size_variant, line.color_variant].filter(Boolean).join(' / ')
+    const receivedQty = Number(materialQcReceivedByItem.get(String(line.id)) || 0)
+    const existingTasks = arklineMaterialQcItems.filter((task) => String(task.material_po_ordered_item_id) === String(line.id))
+    setModelRows(buildModelRowsFromPersisted([{
+      id: `material-qc-${line.id}`,
+      source_id: line.id,
+      model_id: line.material_id || '',
+      model_name: line.material_name_snapshot || material?.material_name || 'MATERIAL',
+      model_color: variant,
+      qty_in: Number(line.qty || 0),
+      qty_qc: String(receivedQty),
+      photo_url: '',
+      allocations: [],
+      startedAllocations: [],
+    }], existingTasks))
   }
 
   function handleArklineCategoryChange(nextCategory) {
@@ -3192,6 +3301,61 @@ export default function QcReceivingPage() {
         return
       }
 
+      if (isMaterialQcMode) {
+        if (!selectedMaterialPo || !selectedMaterialPoItem) {
+          setError('Choose a received Material PO and material first.')
+          return
+        }
+        if (!qcMembers.length) {
+          setError('No active QC user found')
+          return
+        }
+        setSaving(true)
+        const updates = []
+        const inserts = []
+        let materialError = ''
+        modelRows.forEach((row) => {
+          ;(row.allocations || []).forEach((split) => {
+            if (!split.member_email || Number(split.qty || 0) <= 0) return
+            const persisted = split.task_id ? currentPlanRows.find((task) => task.id === split.task_id) : null
+            const payload = {
+              material_po_ordered_item_id: selectedMaterialPoItem.id,
+              material_po_receipt_id: arklineMaterialReceipts.find((receipt) => String(receipt.material_po_ordered_item_id) === String(selectedMaterialPoItem.id))?.id || null,
+              material_po_number: selectedMaterialPo.material_po_number,
+              material_name: row.model_name,
+              material_variant: row.model_color || null,
+              assigned_to: String(split.member_email).trim().toLowerCase(),
+              allocated_qty: Number(split.qty || 0),
+              locked_qty: Number(persisted?.locked_qty ?? split.locked_qty ?? 0),
+            }
+            if (persisted) {
+              updates.push({ id: persisted.id, ...payload, status: persisted.status, finished_at: persisted.finished_at })
+            } else {
+              inserts.push({ ...payload, status: 'queued', qty_a: 0, qty_b: 0, qty_c: 0, stopwatch_seconds: 0 })
+            }
+          })
+        })
+        for (const update of updates) {
+          const { error: updateError } = await supabase.from('arkline_material_qc').update(update).eq('id', update.id)
+          if (updateError) { materialError = updateError.message; break }
+        }
+        if (!materialError && inserts.length) {
+          const { error: insertError } = await supabase.from('arkline_material_qc').insert(inserts)
+          if (insertError) materialError = insertError.message
+        }
+        if (!materialError) {
+          const { data, error: refreshError } = await supabase.from('arkline_material_qc').select('*').order('created_at', { ascending: true })
+          if (refreshError) materialError = refreshError.message
+          else {
+            setArklineMaterialQcItems(data || [])
+            setSuccess('Material QC allocation saved.')
+          }
+        }
+        if (materialError) setError(materialError)
+        setSaving(false)
+        return
+      }
+
       if (selectedArklineReworkSource) {
         const committedQty = arklineQcItems
           .filter(
@@ -3671,6 +3835,23 @@ export default function QcReceivingPage() {
                     QC PO Based
                   </button>
                 </div>
+                {arklinePlannerMode === 'po' ? (
+                  <div style={{ ...styles.modeRow, width: isMobileLayout ? '100%' : 'auto' }}>
+                    {[
+                      ['garment', 'Garment'],
+                      ['material', 'Material'],
+                    ].map(([target, label]) => (
+                      <button
+                        key={target}
+                        type="button"
+                        onClick={() => handleArklineQcTargetChange(target)}
+                        style={{ ...styles.modeButton, ...(arklineQcTarget === target ? styles.modeButtonActive : {}), ...(isMobileLayout ? { flex: 1 } : {}) }}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
               </>
             ) : (
               <p style={styles.infoText}>Allocate only returned repair goods that are ready for another QC round.</p>
@@ -3736,6 +3917,32 @@ export default function QcReceivingPage() {
                   <span style={styles.helperText}>
                     {selectedArklineCategory ? `Filtered by ${selectedArklineCategory}` : 'Type nama_produk untuk memilih produk.'}
                   </span>
+                </div>
+              </div>
+            ) : isMaterialQcMode ? (
+              <div style={arklineChoiceGridStyle}>
+                <div style={styles.field}>
+                  <label style={styles.label}>Material PO</label>
+                  <select value={selectedMaterialPoId} onChange={(event) => handleMaterialQcPoChange(event.target.value)} style={styles.select}>
+                    <option value="">{materialQcPoOptions.length ? 'Choose received Material PO' : 'No received Accessories PO requiring QC'}</option>
+                    {materialQcPoOptions.map((item) => <option key={item.id} value={item.id}>{item.material_po_number}</option>)}
+                  </select>
+                </div>
+                <div style={styles.field}>
+                  <label style={styles.label}>Material in PO</label>
+                  <select
+                    value={selectedMaterialPoItemId}
+                    onChange={(event) => handleMaterialQcItemChange(event.target.value)}
+                    style={{ ...styles.select, ...(!selectedMaterialPoId ? styles.selectDisabled : {}) }}
+                    disabled={!selectedMaterialPoId}
+                  >
+                    <option value="">{selectedMaterialPoId ? 'Choose received material' : 'Choose PO first'}</option>
+                    {materialQcLineOptions.map((line) => (
+                      <option key={line.id} value={line.id}>
+                        {line.material_name_snapshot || 'Material'}{line.color_variant ? ` / ${line.color_variant}` : ''} · Received {Number(materialQcReceivedByItem.get(String(line.id)) || 0).toLocaleString()}
+                      </option>
+                    ))}
+                  </select>
                 </div>
               </div>
             ) : (

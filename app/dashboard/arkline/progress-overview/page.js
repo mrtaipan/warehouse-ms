@@ -3057,6 +3057,8 @@ export default function ArklineProgressOverviewPage() {
       updates: [],
       payments: [],
       qcRows: [],
+      materialQcRows: [],
+      materialQcRejectRows: [],
       qcRejectRows: [],
       qcRejectAdjustments: [],
       returnQcRows: [],
@@ -3080,6 +3082,8 @@ export default function ArklineProgressOverviewPage() {
           { data: materialReceipts, error: materialReceiptError },
           { data: materialUpdates, error: materialUpdateError },
           { data: materialInspections, error: materialInspectionError },
+          { data: materialQcRows, error: materialQcError },
+          { data: materialQcRejectRows, error: materialQcRejectError },
         ] = await Promise.all([
           supabase.from('arkline_po_material_receipts')
             .select('id, received_qty, receive_date, supplier_sj, notes, is_final, created_at')
@@ -3093,15 +3097,27 @@ export default function ArklineProgressOverviewPage() {
             .select('id, material_po_ordered_item_id, lot, nominal_width_in, nominal_gsm, remarks, total_points, scored_points, points_per_100_sq_yd, grade, inspected_by, inspected_at')
             .eq('material_po_ordered_item_id', entry.materialOrderedItemId)
             .order('inspected_at', { ascending: false }),
+          supabase.from('arkline_material_qc')
+            .select('id, material_po_ordered_item_id, material_po_receipt_id, material_po_number, material_name, material_variant, assigned_to, allocated_qty, qty_a, qty_b, qty_c, locked_qty, status, created_at, finished_at')
+            .eq('material_po_ordered_item_id', entry.materialOrderedItemId)
+            .order('created_at', { ascending: false }),
+          supabase.from('arkline_material_qc_reject_details')
+            .select('id, arkline_material_qc_id, material_po_ordered_item_id, material_po_number, material_name, grade, size_variant, color_variant, reject_reason_id, qty, reason:reject_reason_id(id, reason_name, is_repairable)')
+            .eq('material_po_ordered_item_id', entry.materialOrderedItemId)
+            .order('created_at', { ascending: false }),
         ])
         if (materialReceiptError) throw new Error(materialReceiptError.message)
         if (materialUpdateError) throw new Error(materialUpdateError.message)
         if (materialInspectionError) throw new Error(materialInspectionError.message)
+        if (materialQcError) throw new Error(materialQcError.message)
+        if (materialQcRejectError) throw new Error(materialQcRejectError.message)
         setSelectedProductDetail((current) => current?.id === entry.id ? {
           ...current,
           receipts: (materialReceipts || []).map((row) => ({ ...row, size: '', receipt_group_id: row.id })),
           updates: materialUpdates || [],
           materialInspections: materialInspections || [],
+          materialQcRows: materialQcRows || [],
+          materialQcRejectRows: materialQcRejectRows || [],
         } : current)
       } catch (error) {
         setProductActionError(error.message || 'Failed to load material receipts.')
@@ -6526,6 +6542,64 @@ export default function ArklineProgressOverviewPage() {
                 </div>
                 ) : null}
               </div>
+
+              {selectedProductDetail.isMaterialProduct ? (() => {
+                const qcRows = selectedProductDetail.materialQcRows || []
+                const rejectRows = selectedProductDetail.materialQcRejectRows || []
+                const qtyA = qcRows.reduce((sum, row) => sum + Number(row.qty_a || 0), 0)
+                const qtyB = qcRows.reduce((sum, row) => sum + Number(row.qty_b || 0), 0)
+                const qtyC = qcRows.reduce((sum, row) => sum + Number(row.qty_c || 0), 0)
+                const checkedQty = qtyA + qtyB + qtyC
+                return (
+                  <div className={styles.productDetailSection}>
+                    <div className={styles.productDetailSectionHead}>
+                      <div className={styles.productSectionHeadLeft}>
+                        <h4 className={styles.modalSectionTitle}>QC Sample Report</h4>
+                      </div>
+                      <button type="button" className={styles.productDetailSectionToggle} onClick={() => toggleProductDetailSection('qcSampleReport')}>
+                        <span className={styles.productDetailHint}>{formatNumber(checkedQty)} checked</span>
+                        <ChevronIcon expanded={productDetailSections.qcSampleReport} />
+                      </button>
+                    </div>
+                    {productDetailSections.qcSampleReport ? (
+                      <div className={styles.productDetailRows}>
+                        {qcRows.length ? (
+                          <>
+                            <div className={`${styles.modalGrid} ${styles.compactModalGrid}`.trim()}>
+                              <div className={styles.modalMetric}><span>Grade A</span><strong>{formatNumber(qtyA)}</strong></div>
+                              <div className={styles.modalMetric}><span>Grade B</span><strong>{formatNumber(qtyB)}</strong></div>
+                              <div className={styles.modalMetric}><span>Grade C</span><strong>{formatNumber(qtyC)}</strong></div>
+                              <div className={styles.modalMetric}><span>Total Inspected</span><strong>{formatNumber(checkedQty)}</strong></div>
+                            </div>
+                            <div className={styles.receivingHistoryTableWrap}>
+                              <table className={styles.receivingHistoryTable}>
+                                <thead><tr><th>QC Date</th><th>Receipt</th><th>Allocated</th><th>A</th><th>B</th><th>C</th><th>Reject Reason</th></tr></thead>
+                                <tbody>
+                                  {qcRows.map((row) => {
+                                    const reasons = rejectRows.filter((detail) => String(detail.arkline_material_qc_id) === String(row.id))
+                                    const reasonLabels = Array.from(new Set(reasons.map((detail) => detail.reason?.reason_name).filter(Boolean)))
+                                    return (
+                                      <tr key={row.id}>
+                                        <td>{formatDateLabel(row.finished_at || row.created_at)}</td>
+                                        <td>{(selectedProductDetail.receipts || []).find((receipt) => String(receipt.id) === String(row.material_po_receipt_id))?.supplier_sj || '-'}</td>
+                                        <td>{formatNumber(row.allocated_qty)}</td>
+                                        <td>{formatNumber(row.qty_a)}</td>
+                                        <td>{formatNumber(row.qty_b)}</td>
+                                        <td>{formatNumber(row.qty_c)}</td>
+                                        <td>{reasonLabels.length ? reasonLabels.join(', ') : (Number(row.qty_b || 0) + Number(row.qty_c || 0) ? 'Belum dikategorikan' : '-')}</td>
+                                      </tr>
+                                    )
+                                  })}
+                                </tbody>
+                              </table>
+                            </div>
+                          </>
+                        ) : <div className={styles.emptyMini}>No QC sample results for this material yet.</div>}
+                      </div>
+                    ) : null}
+                  </div>
+                )
+              })() : null}
 
               {!selectedProductDetail.isMaterialProduct ? (
               <div className={styles.productDetailSection}>

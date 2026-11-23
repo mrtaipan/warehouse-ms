@@ -1526,6 +1526,17 @@
   line-height: 1.4;
 }
 
+.grnMetricCardPending {
+  border-color: #fcd9a7;
+  background: #fffbf5;
+}
+
+.grnMetricCardPending strong,
+.grnMetricCard small .grnPendingText,
+.grnSummarySubLines .grnPendingText {
+  color: #9a3412;
+}
+
 .grnSummaryDetailCard {
   margin-top: 12px;
   border: 1px solid #e5e7eb;

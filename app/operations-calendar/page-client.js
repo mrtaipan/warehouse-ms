@@ -22,13 +22,13 @@ function getDivisionLabel(key) {
   return DIVISIONS.find((division) => division.key === key)?.label || 'Operations'
 }
 
-function GridIcon() {
+function ListIcon() {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <rect x="3" y="3" width="7" height="7" rx="1.5" />
-      <rect x="14" y="3" width="7" height="7" rx="1.5" />
-      <rect x="3" y="14" width="7" height="7" rx="1.5" />
-      <rect x="14" y="14" width="7" height="7" rx="1.5" />
+      <path d="M8 6h13M8 12h13M8 18h13" />
+      <circle cx="3.5" cy="6" r=".5" />
+      <circle cx="3.5" cy="12" r=".5" />
+      <circle cx="3.5" cy="18" r=".5" />
     </svg>
   )
 }
@@ -41,6 +41,118 @@ function TimelineIcon() {
       <path d="M4 18h16" />
       <circle cx="18" cy="12" r="2.5" />
     </svg>
+  )
+}
+
+function formatListDate(value) {
+  if (!value) return '-'
+  const date = new Date(`${value}T00:00:00Z`)
+  if (Number.isNaN(date.getTime())) return '-'
+  return new Intl.DateTimeFormat('en-GB', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    timeZone: 'UTC',
+  }).format(date)
+}
+
+function getCalendarDayDifference(start, end) {
+  if (!start || !end) return null
+  const startTime = Date.parse(`${start}T00:00:00Z`)
+  const endTime = Date.parse(`${end}T00:00:00Z`)
+  if (!Number.isFinite(startTime) || !Number.isFinite(endTime)) return null
+  return Math.max(0, Math.round((endTime - startTime) / 86400000))
+}
+
+function formatProcessDate(value, inboundDate) {
+  const formattedDate = formatListDate(value)
+  const duration = getCalendarDayDifference(inboundDate, value)
+  if (formattedDate === '-' || duration == null) return formattedDate
+  return (
+    <span className={styles.processDateValue}>
+      <time dateTime={value}>{formattedDate}</time>
+      <span>{duration} {duration === 1 ? 'day' : 'days'}</span>
+    </span>
+  )
+}
+
+function getAverageDuration(rows, dateKey) {
+  const durations = rows
+    .map((row) => getCalendarDayDifference(row.inboundDate, row[dateKey]))
+    .filter((value) => value != null)
+  if (!durations.length) return '-'
+  const average = durations.reduce((total, value) => total + value, 0) / durations.length
+  return `${new Intl.NumberFormat('en-US', { maximumFractionDigits: 1 }).format(average)} days`
+}
+
+function HistoryToggle({ rows, showHistory, onViewChange }) {
+  const activeCount = rows.filter((row) => !row.isCompleted).length
+
+  return (
+    <div className={styles.historyToggle} role="group" aria-label="Processing records">
+      <button type="button" className={!showHistory ? styles.historyToggleActive : ''} onClick={() => onViewChange(false)}>
+        Active <span>{activeCount}</span>
+      </button>
+      <button type="button" className={showHistory ? styles.historyToggleActive : ''} onClick={() => onViewChange(true)}>
+        All History <span>{rows.length}</span>
+      </button>
+    </div>
+  )
+}
+
+function OperationsListView({ rows, showHistory }) {
+  const visibleRows = showHistory ? rows : rows.filter((row) => !row.isCompleted)
+
+  return (
+    <div className={styles.operationsList}>
+      {showHistory ? (
+        <div className={styles.processingAverages} aria-label="Average processing time">
+          <div className={styles.processingAverage}>
+            <span>Inbound to QC</span>
+            <strong>{getAverageDuration(rows, 'qcDate')}</strong>
+          </div>
+          <div className={styles.processingAverage}>
+            <span>Inbound to Packing List</span>
+            <strong>{getAverageDuration(rows, 'packingDate')}</strong>
+          </div>
+        </div>
+      ) : null}
+
+      {visibleRows.length ? (
+        <div className={styles.operationsTableScroller}>
+          <table className={styles.operationsTable}>
+            <thead>
+              <tr>
+                <th scope="col">GRN</th>
+                <th scope="col">Supplier Name</th>
+                <th scope="col">Item Name</th>
+                <th scope="col">Inbound Date</th>
+                <th scope="col">QC Date <small>from inbound</small></th>
+                <th scope="col">Packing List Date <small>from inbound</small></th>
+                <th scope="col">Return Date</th>
+              </tr>
+            </thead>
+            <tbody>
+              {visibleRows.map((row) => (
+                <tr key={row.id}>
+                  <th scope="row">{row.grnNumber}</th>
+                  <td>{row.supplierName}</td>
+                  <td>{row.itemName}</td>
+                  <td><time dateTime={row.inboundDate || undefined}>{formatListDate(row.inboundDate)}</time></td>
+                  <td>{formatProcessDate(row.qcDate, row.inboundDate)}</td>
+                  <td>{formatProcessDate(row.packingDate, row.inboundDate)}</td>
+                  <td><time dateTime={row.returnDate || undefined}>{formatListDate(row.returnDate)}</time></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <div className={styles.listEmptyState}>
+          {showHistory ? 'No inbound processing history is available.' : 'There are no active inbound processes.'}
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -116,65 +228,6 @@ function buildFilteredTimelineEntries(entries = [], filters) {
 
     return { ...entry, items, totals }
   }).filter((entry) => entry.items.length > 0)
-}
-
-function buildDaySummaryMapFromTimeline(monthDays = [], timelineMap) {
-  return new Map(monthDays.map((day) => [
-    day.key,
-    DIVISIONS.map((division) => {
-      const entry = timelineMap.get(`${division.key}::${day.key}`)
-      return {
-        ...division,
-        items: entry?.items || [],
-        totals: entry?.totals || { activities: 0, qty: 0, count: 0 },
-      }
-    }).filter((division) => division.items.length > 0),
-  ]))
-}
-
-function sumItemQty(items) {
-  return items.reduce((total, item) => total + Number(item.qty || 0), 0)
-}
-
-function getCompactDivisionValue(division) {
-  const items = division?.items || []
-
-  if (division.key === 'inbound') {
-    const sortedItems = items.filter((item) => item.label === 'Sorting Process')
-    const sortedQty = sumItemQty(sortedItems)
-    if (sortedQty > 0) return `${sortedQty} qty`
-
-    const arklineItems = items.filter((item) => item.label === 'Arkline Inbound')
-    const arklineQty = sumItemQty(arklineItems)
-    if (arklineQty > 0) return `${arklineQty} qty`
-
-    const grnItems = items.filter((item) => item.label === 'GRN Received')
-    return grnItems.map((item) => item.detail || item.note).filter(Boolean).join(', ')
-  }
-
-  if (division.key === 'qc') {
-    const completedItems = items.filter((item) => item.label === 'Reguler Grading' || item.label === 'Arkline Grading')
-    const completedQty = sumItemQty(completedItems)
-    if (completedQty > 0) return `${completedQty} qty`
-
-    const returnItems = items.filter((item) => item.label === 'Reguler Return' || item.label === 'Arkline Return' || item.label === 'Arkline Return Back')
-    const returnQty = sumItemQty(returnItems)
-    return returnQty > 0 ? `${returnQty} return qty` : ''
-  }
-
-  if (division.key === 'packing') {
-    const breakdownItems = items.filter((item) => item.label === 'PL Breakdown')
-    const breakdownQty = sumItemQty(breakdownItems)
-    return breakdownQty > 0 ? `${breakdownQty} qty` : ''
-  }
-
-  if (division.key === 'storage') {
-    const storedItems = items.filter((item) => item.label === 'Stored to Rack')
-    const storedQty = sumItemQty(storedItems)
-    return storedQty > 0 ? `${storedQty} qty` : ''
-  }
-
-  return ''
 }
 
 function getOptionsWithCurrent(options = [], currentValue = '') {
@@ -269,7 +322,7 @@ function getTimelineDayDivisions(day, timelineMap) {
   }).filter((division) => division.items.length > 0)
 }
 
-function MobileAgendaView({ monthDays, currentDateKey, timelineMap, daySummaryMap, canEditItem, onEditItem, onOpenItemDetail, focusTodaySignal = 0 }) {
+function MobileAgendaView({ monthDays, currentDateKey, timelineMap, canEditItem, onEditItem, onOpenItemDetail, focusTodaySignal = 0 }) {
   const todayRef = useRef(null)
 
   useEffect(() => {
@@ -284,9 +337,7 @@ function MobileAgendaView({ monthDays, currentDateKey, timelineMap, daySummaryMa
   return (
     <div className={styles.mobileAgenda}>
       {monthDays.map((day) => {
-        const divisions = daySummaryMap
-          ? daySummaryMap.get(day.key) || []
-          : getTimelineDayDivisions(day, timelineMap)
+        const divisions = getTimelineDayDivisions(day, timelineMap)
         const isToday = day.key === currentDateKey
         const isHoliday = day.weekday === 'Sun' || day.isWarehouseHoliday
 
@@ -450,91 +501,6 @@ function FragmentTimelineRow({ division, monthDays, timelineMap, currentDateKey,
         )
       })}
     </>
-  )
-}
-
-function CalendarView({ monthDays, daySummaryMap, currentDateKey, onOpenDetail, canEditItem, onEditItem, onOpenItemDetail, focusTodaySignal = 0 }) {
-  const calendarRef = useRef(null)
-  const firstDayDate = new Date(`${monthDays[0].key}T00:00:00Z`)
-  const leadingEmptyCells = (firstDayDate.getUTCDay() + 6) % 7
-  const calendarCells = [
-    ...Array.from({ length: leadingEmptyCells }, (_, index) => ({ type: 'empty', key: `empty-${index}` })),
-    ...monthDays.map((day) => ({ type: 'day', key: day.key, day })),
-  ]
-
-  useEffect(() => {
-    if (!monthDays.some((day) => day.key === currentDateKey)) return
-
-    window.requestAnimationFrame(() => {
-      const todayCell = calendarRef.current?.querySelector(`[data-date-key="${currentDateKey}"]`)
-      todayCell?.scrollIntoView({ block: 'center', inline: 'center' })
-    })
-  }, [currentDateKey, focusTodaySignal, monthDays])
-
-  return (
-    <div className={styles.calendarCard}>
-      <div className={styles.calendarWeekdays}>
-        {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((label) => (
-          <div key={label} className={`${styles.calendarWeekdayCell} ${label === 'Sun' ? styles.sundayBlock : ''}`}>{label}</div>
-        ))}
-      </div>
-
-      <div className={styles.calendarGrid} ref={calendarRef}>
-        {calendarCells.map((cell) => {
-          if (cell.type === 'empty') {
-            return <div key={cell.key} className={styles.calendarEmptyCell} />
-          }
-
-          const divisions = daySummaryMap.get(cell.day.key) || []
-
-          const isHoliday = cell.day.weekday === 'Sun' || cell.day.isWarehouseHoliday
-
-          return (
-            <section
-              key={cell.key}
-              data-date-key={cell.day.key}
-              className={`${styles.calendarDayCell} ${cell.day.key === currentDateKey ? styles.calendarToday : ''} ${isHoliday ? styles.sundayBlockSoft : ''}`}
-            >
-              <div className={styles.calendarDayHeader}>
-                <strong className={isHoliday ? styles.sundayText : ''}>{cell.day.dayNumber}</strong>
-                <span className={isHoliday ? styles.sundayText : ''}>{cell.day.weekday}</span>
-              </div>
-
-              <div className={styles.calendarDivisionCompactList}>
-                {divisions.length ? (
-                  divisions.slice(0, 4).map((division) => {
-                    const compactValue = getCompactDivisionValue(division)
-
-                    return (
-                      <button
-                        key={`${cell.day.key}-${division.key}`}
-                        type="button"
-                        className={`${styles.calendarCompactDivision} ${styles[`calendarCompactDivision${division.accent}`]}`}
-                        onClick={() => onOpenDetail(cell.day, division)}
-                      >
-                        <span>{division.label}</span>
-                        <strong>{compactValue}</strong>
-                      </button>
-                    )
-                  })
-                ) : (
-                  <div className={styles.calendarEmptyState}>-</div>
-                )}
-              </div>
-            </section>
-          )
-        })}
-      </div>
-      <MobileAgendaView
-        monthDays={monthDays}
-        daySummaryMap={daySummaryMap}
-        currentDateKey={currentDateKey}
-        canEditItem={canEditItem}
-        onEditItem={onEditItem}
-        onOpenItemDetail={onOpenItemDetail}
-        focusTodaySignal={focusTodaySignal}
-      />
-    </div>
   )
 }
 
@@ -787,6 +753,7 @@ export default function OperationsCalendarClient({
   monthDays,
   currentDateKey,
   timelineEntries,
+  listRows = [],
   formOptions,
   canAddTarget,
   manualDivisionKey,
@@ -800,6 +767,7 @@ export default function OperationsCalendarClient({
   const [editingItem, setEditingItem] = useState(null)
   const [focusTodaySignal, setFocusTodaySignal] = useState(0)
   const [timelineFilters, setTimelineFilters] = useState({ movement: true, operations: true })
+  const [showListHistory, setShowListHistory] = useState(false)
   const monthInputRef = useRef(null)
 
   const filteredTimelineEntries = useMemo(
@@ -807,9 +775,8 @@ export default function OperationsCalendarClient({
     [timelineEntries, timelineFilters]
   )
   const timelineMap = useMemo(() => buildTimelineMap(filteredTimelineEntries), [filteredTimelineEntries])
-  const daySummaryMap = useMemo(() => buildDaySummaryMapFromTimeline(monthDays, timelineMap), [monthDays, timelineMap])
   const todayMonth = currentDateKey.slice(0, 7)
-  const pageTitle = initialView === 'calendar' ? 'Operations Calendar' : 'Operations Timeline'
+  const pageTitle = 'Operations Calendar'
 
   function updateQuery(nextMonth, nextView) {
     const params = new URLSearchParams(searchParams.toString())
@@ -908,17 +875,20 @@ export default function OperationsCalendarClient({
               </button>
               <button
                 type="button"
-                className={initialView === 'calendar' ? styles.viewToggleActive : ''}
-                onClick={() => handleViewChange('calendar')}
+                className={initialView === 'list' ? styles.viewToggleActive : ''}
+                onClick={() => handleViewChange('list')}
               >
-                <GridIcon />
-                <span>Calendar</span>
+                <ListIcon />
+                <span>List</span>
               </button>
             </div>
           </div>
 
           <div className={styles.panelHeaderRight}>
             <div className={styles.headerActions}>
+              {initialView === 'list' ? (
+                <HistoryToggle rows={listRows} showHistory={showListHistory} onViewChange={setShowListHistory} />
+              ) : null}
               {canAddTarget ? (
                 <button type="button" className={styles.headerTargetButton} onClick={() => handleOpenEntryModal('target')} aria-label="Add Target" title="Add Target">
                   <TargetIcon />
@@ -930,31 +900,35 @@ export default function OperationsCalendarClient({
                 </button>
               ) : null}
             </div>
-            <div className={styles.quickFilterStack} aria-label="Timeline filters">
-              <label className={styles.quickFilterOption}>
-                <input
-                  type="checkbox"
-                  checked={timelineFilters.movement}
-                  onChange={() => handleFilterChange('movement')}
-                />
-                <span>Inbound / Outbound</span>
-              </label>
-              <label className={styles.quickFilterOption}>
-                <input
-                  type="checkbox"
-                  checked={timelineFilters.operations}
-                  onChange={() => handleFilterChange('operations')}
-                />
-                <span>Operational Work</span>
-              </label>
-            </div>
-            <button type="button" className={styles.todayButton} onClick={handleTodayClick}>
-              Today
-            </button>
-            <button type="button" className={styles.monthPickerWrap} onClick={handleOpenMonthPicker}>
-              <span className={styles.monthPickerLabel}>{monthLabel}</span>
-              <input ref={monthInputRef} type="month" value={initialMonth} onChange={handleMonthChange} className={styles.monthPicker} />
-            </button>
+            {initialView === 'timeline' ? (
+              <>
+                <div className={styles.quickFilterStack} aria-label="Timeline filters">
+                  <label className={styles.quickFilterOption}>
+                    <input
+                      type="checkbox"
+                      checked={timelineFilters.movement}
+                      onChange={() => handleFilterChange('movement')}
+                    />
+                    <span>Inbound / Outbound</span>
+                  </label>
+                  <label className={styles.quickFilterOption}>
+                    <input
+                      type="checkbox"
+                      checked={timelineFilters.operations}
+                      onChange={() => handleFilterChange('operations')}
+                    />
+                    <span>Operational Work</span>
+                  </label>
+                </div>
+                <button type="button" className={styles.todayButton} onClick={handleTodayClick}>
+                  Today
+                </button>
+                <button type="button" className={styles.monthPickerWrap} onClick={handleOpenMonthPicker}>
+                  <span className={styles.monthPickerLabel}>{monthLabel}</span>
+                  <input ref={monthInputRef} type="month" value={initialMonth} onChange={handleMonthChange} className={styles.monthPicker} />
+                </button>
+              </>
+            ) : null}
           </div>
         </div>
 
@@ -975,16 +949,7 @@ export default function OperationsCalendarClient({
               focusTodaySignal={focusTodaySignal}
             />
           ) : (
-            <CalendarView
-              monthDays={monthDays}
-              daySummaryMap={daySummaryMap}
-              currentDateKey={currentDateKey}
-              onOpenDetail={(day, division) => setDetail({ day, division })}
-              canEditItem={canEditItem}
-              onEditItem={handleEditItem}
-              onOpenItemDetail={(day, division, item) => setDetail({ day, division, item })}
-              focusTodaySignal={focusTodaySignal}
-            />
+            <OperationsListView rows={listRows} showHistory={showListHistory} />
           )}
         </div>
       </section>
