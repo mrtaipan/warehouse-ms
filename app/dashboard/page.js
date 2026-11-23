@@ -175,6 +175,12 @@ function filterVisibleBirthdayGiftRows(rows) {
   })
 }
 
+function getBirthdayGiftAnnouncementFilter(now = new Date()) {
+  const cutoff = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+  cutoff.setDate(cutoff.getDate() - 3)
+  return `status.eq.SUBMITTED,and(status.eq.APPROVED,approved_at.gte.${cutoff.toISOString()})`
+}
+
 function sortRowsByRecent(rows) {
   return [...(rows || [])].sort((left, right) => {
     const leftValue = new Date(left?.created_at || 0).getTime()
@@ -471,44 +477,30 @@ async function fetchAllRows(buildQuery, pageSize = 1000) {
   return { data: rows, error: null }
 }
 
+function buildDashboardGrnQuery(supabase) {
+  return supabase
+    .from('inbound')
+    .select('id, grn_number, inbound_date, item_name, total_received_qty, total_claimed_qty, suppliers:dir_suppliers!supplier_id (supplier_name), waiting_returns:warehouse_returns!returns_inbound_id_fkey!inner()')
+    .eq('waiting_returns.status', 'waiting')
+    .order('created_at', { ascending: false })
+    .order('id', { ascending: false })
+}
+
 async function loadAdminGrnSummary(supabase, selectedGrn = '') {
-  const { data: inboundRows, error: inboundError } = await fetchAllRows(() =>
-    supabase
-      .from('inbound')
-      .select('id, grn_number, inbound_date, item_name, total_received_qty, total_claimed_qty, suppliers:dir_suppliers!supplier_id (supplier_name)')
-      .order('created_at', { ascending: false })
-  )
+  const { data: inboundRows, error: inboundError } = await fetchAllRows(() => buildDashboardGrnQuery(supabase))
 
   if (inboundError) {
     return { grnOptions: [], selectedGrn, selectedInbound: null, summary: null, error: inboundError.message }
   }
 
   let grnOptions = (inboundRows || []).filter((item) => item.grn_number)
-  const optionInboundIds = grnOptions.map((item) => item.id).filter(Boolean)
-
-  if (optionInboundIds.length) {
-    const { data: waitingReturnRows, error: waitingReturnError } = await supabase
-      .from('warehouse_returns')
-      .select('inbound_id, status')
-      .in('inbound_id', optionInboundIds)
-      .eq('status', 'waiting')
-
-    if (waitingReturnError) {
-      return { grnOptions: [], selectedGrn, selectedInbound: null, summary: null, error: waitingReturnError.message }
-    }
-
-    const waitingReturnInboundIds = new Set((waitingReturnRows || []).map((item) => String(item.inbound_id || '')))
-    grnOptions = grnOptions.filter((item) => waitingReturnInboundIds.has(String(item.id || '')))
-  }
 
   let selectedInbound = selectedGrn
     ? grnOptions.find((item) => item.grn_number === selectedGrn) || null
     : null
 
   if (selectedGrn && !selectedInbound) {
-    const { data: exactInbound, error: exactInboundError } = await supabase
-      .from('inbound')
-      .select('id, grn_number, inbound_date, item_name, total_received_qty, total_claimed_qty, suppliers:dir_suppliers!supplier_id (supplier_name)')
+    const { data: exactInbound, error: exactInboundError } = await buildDashboardGrnQuery(supabase)
       .eq('grn_number', selectedGrn)
       .maybeSingle()
 
@@ -517,21 +509,8 @@ async function loadAdminGrnSummary(supabase, selectedGrn = '') {
     }
 
     if (exactInbound?.grn_number) {
-      const { data: exactReturnRows, error: exactReturnError } = await supabase
-        .from('warehouse_returns')
-        .select('id')
-        .eq('inbound_id', exactInbound.id)
-        .eq('status', 'waiting')
-        .limit(1)
-
-      if (exactReturnError) {
-        return { grnOptions, selectedGrn, selectedInbound: null, summary: null, error: exactReturnError.message }
-      }
-
-      if (exactReturnRows?.length) {
-        selectedInbound = exactInbound
-        grnOptions = [exactInbound, ...grnOptions.filter((item) => item.id !== exactInbound.id)]
-      }
+      selectedInbound = exactInbound
+      grnOptions = [exactInbound, ...grnOptions.filter((item) => item.id !== exactInbound.id)]
     }
   }
 
@@ -553,7 +532,15 @@ async function loadAdminGrnSummary(supabase, selectedGrn = '') {
     fetchAllRows(() => supabase
       .from('qc_items')
       .select(`
-        *,
+        id,
+        inbound_unload_id,
+        allocated_qty,
+        status,
+        qty_a,
+        qty_b,
+        qty_c,
+        model_name,
+        variant_name,
         inbound_unload:inbound_unload_id (
           id,
           brand_id,
@@ -561,30 +548,11 @@ async function loadAdminGrnSummary(supabase, selectedGrn = '') {
           model_name,
           variant_name,
           is_sample,
-          is_product_temporary,
-          brands:dir_brands!brand_id (
-            id,
-            brand_name
-          ),
-          categories:dir_categories!category_id (
-            id,
-            category_name,
-            full_name
-          )
+          is_product_temporary
         ),
         product_model:product_model_id (
-          id,
           brand_id,
-          category_id,
-          brands:dir_brands!brand_id (
-            id,
-            brand_name
-          ),
-          categories:dir_categories!category_id (
-            id,
-            category_name,
-            full_name
-          )
+          category_id
         )
       `)
       .eq('inbound_id', selectedInbound.id)),
@@ -599,7 +567,11 @@ async function loadAdminGrnSummary(supabase, selectedGrn = '') {
     fetchAllRows(() => supabase
       .from('pl_size_breakdown')
       .select(`
-        *,
+        qty,
+        pl_name,
+        model_name,
+        variant_name,
+        source_variant_code,
         product_model:product_model_id (
           id,
           categories:dir_categories!category_id (
@@ -985,6 +957,7 @@ export default async function DashboardPage({ searchParams }) {
       const { data } = await adminSupabase
         .from('hrga_birthday_gift')
         .select('id, status, approved_at, request_date, created_at, employee_authenticated_id, employee_name_snapshot, employee_email_snapshot, item_name, size')
+        .or(getBirthdayGiftAnnouncementFilter())
       birthdayGiftRequestRows = data || []
     } catch {
       birthdayGiftRequestRows = []
