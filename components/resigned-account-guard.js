@@ -4,7 +4,7 @@ import { useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/utils/supabase/browser'
 
-const STATUS_CHECK_INTERVAL_MS = 120_000
+const STATUS_CHECK_INTERVAL_MS = 600_000
 
 export default function ResignedAccountGuard() {
   const router = useRouter()

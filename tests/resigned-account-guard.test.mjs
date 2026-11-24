@@ -49,14 +49,14 @@ function mountGuard(response = { status: 200 }) {
   return { state, document }
 }
 
-test('polls every two minutes, skips hidden tabs, checks on return, and cleans up', async () => {
+test('polls every ten minutes, skips hidden tabs, checks on return, and cleans up', async () => {
   const { state, document } = mountGuard()
   await state.runTimer()
   assert.equal(state.calls, 0)
   state.authChange('SIGNED_IN', { user: { id: 'user' } })
   await state.runTimer()
   assert.equal(state.calls, 1)
-  assert.equal([...state.timers.values()][0].delay, 120_000)
+  assert.equal([...state.timers.values()][0].delay, 600_000)
   document.visibilityState = 'hidden'
   await state.listeners.get('visibilitychange')()
   await state.runTimer()
@@ -87,7 +87,7 @@ test('still signs out and redirects when the server reports a resigned account',
   state.cleanup()
 })
 
-test('returning to a tab replaces the old timer with a full two-minute delay', async () => {
+test('returning to a tab replaces the old timer with a full ten-minute delay', async () => {
   const { state, document } = mountGuard()
   state.authChange('INITIAL_SESSION', { user: { id: 'user' } })
   await state.runTimer()
@@ -102,7 +102,7 @@ test('returning to a tab replaces the old timer with a full two-minute delay', a
   assert.equal(state.calls, 2)
   assert.equal(state.timers.size, 1)
   assert.equal(state.timers.has(oldId), false)
-  assert.equal([...state.timers.values()][0].delay, 120_000)
+  assert.equal([...state.timers.values()][0].delay, 600_000)
   state.cleanup()
 })
 
@@ -125,11 +125,11 @@ test('same-user auth events do not add checks, but sign-out stops polling', asyn
   state.cleanup()
 })
 
-test('transient failures retry after two minutes without logging out', async () => {
+test('transient failures retry after ten minutes without logging out', async () => {
   const { state } = mountGuard({ status: 503 })
   state.authChange('SIGNED_IN', { user: { id: 'user' } })
   await state.runTimer()
   assert.equal(state.signedOut, undefined)
-  assert.equal([...state.timers.values()][0].delay, 120_000)
+  assert.equal([...state.timers.values()][0].delay, 600_000)
   state.cleanup()
 })
