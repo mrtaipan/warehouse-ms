@@ -99,7 +99,7 @@ function toProperCase(value) {
     .join(' ')
 }
 
-export default function PenaltyPointsShortcutButton({ people = [], currentRows = [], detailRows = [], canAdd = false }) {
+export default function PenaltyPointsShortcutButton({ people = [], canAdd = false }) {
   const [open, setOpen] = useState(false)
   const [criteriaOpen, setCriteriaOpen] = useState(false)
   const [expandedProfileIds, setExpandedProfileIds] = useState([])
@@ -110,8 +110,9 @@ export default function PenaltyPointsShortcutButton({ people = [], currentRows =
   const [penaltyDate, setPenaltyDate] = useState(getTodayInputValue())
   const [points, setPoints] = useState('')
   const [reason, setReason] = useState('')
-  const [rows, setRows] = useState(currentRows)
-  const [details, setDetails] = useState(detailRows)
+  const [rows, setRows] = useState([])
+  const [details, setDetails] = useState([])
+  const [loading, setLoading] = useState(false)
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
   const [isPending, startTransition] = useTransition()
@@ -232,6 +233,21 @@ export default function PenaltyPointsShortcutButton({ people = [], currentRows =
     setDetails(data || [])
   }
 
+  async function handleOpen() {
+    setOpen(true)
+    setError('')
+    setLoading(true)
+    setRows([])
+    setDetails([])
+    try {
+      await Promise.all([refreshCurrentRows(), refreshCurrentDetails()])
+    } catch (fetchError) {
+      setError(fetchError.message || 'Failed to load penalty points.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
   function toggleExpandedProfile(profileId) {
     setExpandedProfileIds((current) =>
       current.includes(profileId) ? current.filter((item) => item !== profileId) : [...current, profileId]
@@ -278,7 +294,7 @@ export default function PenaltyPointsShortcutButton({ people = [], currentRows =
 
   return (
     <>
-      <button type="button" className={styles.heroProfileLink} onClick={() => setOpen(true)} aria-label="Open Penalty Points" title="Penalty Points">
+      <button type="button" className={styles.heroProfileLink} onClick={handleOpen} aria-label="Open Penalty Points" title="Penalty Points">
         <AwardIcon />
       </button>
 
@@ -299,7 +315,10 @@ export default function PenaltyPointsShortcutButton({ people = [], currentRows =
               </div>
             </div>
 
-            <div className={styles.penaltyContentGrid}>
+            {loading ? <p role="status">Loading penalty points...</p> : null}
+            {error ? <p className={styles.penaltyError} role="alert">{error}</p> : null}
+
+            {!loading ? <div className={styles.penaltyContentGrid}>
               <section className={styles.penaltyPanel}>
                 <div className={styles.penaltyPanelHeader}>
                   <h3>Current Period</h3>
@@ -424,11 +443,10 @@ export default function PenaltyPointsShortcutButton({ people = [], currentRows =
                     <span>Reason</span>
                     <textarea value={reason} onChange={(event) => setReason(event.target.value)} rows={4} required />
                   </label>
-                  {error ? <p className={styles.penaltyError}>{error}</p> : null}
                   {message ? <p className={styles.penaltySuccess}>{message}</p> : null}
                 </form>
               ) : null}
-            </div>
+            </div> : null}
           </div>
           {criteriaOpen ? (
             <div className={styles.penaltyCriteriaOverlay} onClick={() => setCriteriaOpen(false)}>

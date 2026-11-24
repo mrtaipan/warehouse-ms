@@ -189,20 +189,6 @@ function sortRowsByRecent(rows) {
   })
 }
 
-function getPenaltyPeriodRange() {
-  const now = new Date()
-  const startMonth = Math.floor(now.getMonth() / 3) * 3
-  const start = new Date(now.getFullYear(), startMonth, 1)
-  const end = new Date(now.getFullYear(), startMonth + 3, 1)
-  const toIsoDate = (value) =>
-    `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`
-
-  return {
-    start: toIsoDate(start),
-    end: toIsoDate(end),
-  }
-}
-
 function formatNumber(value) {
   return new Intl.NumberFormat('id-ID', { maximumFractionDigits: 0 }).format(Number(value || 0))
 }
@@ -941,19 +927,6 @@ export default async function DashboardPage({ searchParams }) {
   const { data: announcementRows } = await adminSupabase
     .from('dir_user_profiles')
     .select('id, authenticated_id, display_name, email, birthdate, resign_date, "group", role')
-  const { data: currentPenaltyRows } = showPenaltyPointsButton
-    ? await supabase.from('hrga_penalty_points_current').select('employee_profile_id, total_points, entry_count')
-    : { data: [] }
-  const penaltyPeriod = getPenaltyPeriodRange()
-  const { data: penaltyDetailRows } = showPenaltyPointsButton
-    ? await supabase
-        .from('hrga_penalty_points')
-        .select('id, employee_profile_id, penalty_date, points, reason, created_at')
-        .gte('penalty_date', penaltyPeriod.start)
-        .lt('penalty_date', penaltyPeriod.end)
-        .order('penalty_date', { ascending: false })
-        .order('created_at', { ascending: false })
-    : { data: [] }
   let birthdayGiftRequestRows = []
   if (showBirthdayGiftRequestAnnouncements) {
     try {
@@ -1065,8 +1038,6 @@ export default async function DashboardPage({ searchParams }) {
                 {showPenaltyPointsButton ? (
                   <PenaltyPointsShortcutButton
                     people={announcementRows || []}
-                    currentRows={currentPenaltyRows || []}
-                    detailRows={penaltyDetailRows || []}
                     canAdd={canAddPenaltyPoints}
                   />
                 ) : null}
@@ -1141,8 +1112,6 @@ export default async function DashboardPage({ searchParams }) {
               {showPenaltyPointsButton ? (
                 <PenaltyPointsShortcutButton
                   people={announcementRows || []}
-                  currentRows={currentPenaltyRows || []}
-                  detailRows={penaltyDetailRows || []}
                   canAdd={canAddPenaltyPoints}
                 />
               ) : null}

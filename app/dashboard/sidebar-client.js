@@ -132,7 +132,7 @@ export default function SidebarClient({ navItems, settingHref }) {
       className={`${styles.sidebar} ${isMobileExpanded ? styles.sidebarMobileExpanded : styles.sidebarMobileCollapsed}`.trim()}
     >
       <div className={styles.mobileSidebarHeader}>
-        <Link href="/dashboard" className={styles.brandLink} title="Dashboard" onClick={collapseMobileSidebarOnNavigate}>
+        <Link href="/dashboard" prefetch={false} className={styles.brandLink} title="Dashboard" onClick={collapseMobileSidebarOnNavigate}>
         <div className={styles.brand}>
           <div className={styles.brandMark}>
             <Image src="/mob-text-logo.png" alt="MOB" width={40} height={18} className={styles.brandLogo} priority />
@@ -172,6 +172,7 @@ export default function SidebarClient({ navItems, settingHref }) {
             <Link
               key={item.href}
               href={item.href}
+              prefetch={item.href === '/dashboard' ? false : undefined}
               className={styles.navLink}
               title={item.label}
               onClick={collapseMobileSidebarOnNavigate}
