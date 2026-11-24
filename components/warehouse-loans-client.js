@@ -56,7 +56,7 @@ async function loadLoanEvents(loanIds) {
   }
 }
 
-export default function WarehouseLoansClient({ currentUserId, canManage, isAdmin = false, userProfilesByEmail = {}, lockedGroup = '', storageRows = [], queueRows = [], locations = [], arklineProducts = [], onStockChanged }) {
+export default function WarehouseLoansClient({ currentUserId, canManage, isAdmin = false, userProfilesByEmail = {}, lockedGroup = '', storageRows = [], queueRows = [], locations = [], arklineProducts = [], onStockChanged, openNewRequestOnMount = false }) {
   const [cases, setCases] = useState([])
   const [events, setEvents] = useState([])
   const [loading, setLoading] = useState(true)
@@ -68,7 +68,7 @@ export default function WarehouseLoansClient({ currentUserId, canManage, isAdmin
   const [borrowerFilter, setBorrowerFilter] = useState('')
   const [page, setPage] = useState(1)
   const [activeCaseId, setActiveCaseId] = useState('')
-  const [showRequestModal, setShowRequestModal] = useState(false)
+  const [showRequestModal, setShowRequestModal] = useState(Boolean(openNewRequestOnMount))
   const [requestMode, setRequestMode] = useState('new')
   const [existingLoanId, setExistingLoanId] = useState('')
   const [eligibleLoans, setEligibleLoans] = useState([])
@@ -108,6 +108,12 @@ export default function WarehouseLoansClient({ currentUserId, canManage, isAdmin
   }, [])
 
   useEffect(() => { void reload() }, [reload])
+  useEffect(() => {
+    if (!openNewRequestOnMount) return
+    const url = new URL(window.location.href)
+    url.searchParams.delete('action')
+    window.history.replaceState(window.history.state, '', url)
+  }, [openNewRequestOnMount])
   const loadPurposes = useCallback(async () => {
     const { data, error: loadError } = await supabase.from('warehouse_loan_purposes')
       .select('id,name').eq('is_active', true).order('name')
@@ -410,7 +416,7 @@ export default function WarehouseLoansClient({ currentUserId, canManage, isAdmin
                 const cancelled = events.filter((row) => row.request_item_id === item.id && row.event_type === 'CANCEL_REQUEST').reduce((sum, row) => sum + qty(row.qty), 0)
                 const remainingIssue = qty(item.qty) - totals.issued - cancelled
                 const outstanding = totals.issued - totals.received - totals.closed
-                const receivedReturns = events.filter((row) => row.request_item_id === item.id && row.event_type === 'RECEIVE')
+                const resolvedEvents = events.filter((row) => row.request_item_id === item.id && ['RECEIVE', 'CLOSE'].includes(row.event_type))
                 const options = sourceOptions(item, loan.group_code)
                 const form = forms[item.id] || {}
                 const matchingStockLocationIds = new Set(storageRows.filter((stock) => (
@@ -472,13 +478,15 @@ export default function WarehouseLoansClient({ currentUserId, canManage, isAdmin
                           )}
                         </div>
                       ) : null}
-                  {receivedReturns.map((receipt) => {
-                    const location = locations.find((row) => Number(row.id) === Number(receipt.destination_rack_location_id))
-                    const destination = receipt.destination_type === 'STORAGE'
+                  {resolvedEvents.map((event) => {
+                    const location = locations.find((row) => Number(row.id) === Number(event.destination_rack_location_id))
+                    const destination = event.destination_type === 'STORAGE'
                       ? location ? formatSourceLocation(location) : 'Storage location unavailable'
-                      : DESTINATIONS.find(([type]) => type === receipt.destination_type)?.[1] || receipt.destination_type || '-'
-                    const actor = userProfilesByEmail[String(receipt.actor_email || '').toLowerCase()] || String(receipt.actor_email || '').split('@')[0]
-                    return <div className={styles.receivedInfo} key={receipt.id}><strong>Returned {receipt.qty} pcs</strong><span>{formatTime(receipt.created_at)} · {destination} · by {shortName(actor)}</span></div>
+                      : DESTINATIONS.find(([type]) => type === event.destination_type)?.[1] || event.destination_type || '-'
+                    const actor = userProfilesByEmail[String(event.actor_email || '').toLowerCase()] || String(event.actor_email || '').split('@')[0]
+                    return <div className={styles.receivedInfo} key={event.id}>
+                      {event.event_type === 'CLOSE' ? <><strong>Closed {event.qty} pcs · {event.disposition || 'Other'}</strong><span>{formatTime(event.created_at)} · by {shortName(actor)}</span><span>Reason: {event.notes || '-'}</span></> : <><strong>Returned {event.qty} pcs</strong><span>{formatTime(event.created_at)} · {destination} · by {shortName(actor)}</span></>}
+                    </div>
                   })}
                     </div>
                   </div>

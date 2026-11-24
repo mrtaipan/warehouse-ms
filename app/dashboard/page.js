@@ -84,7 +84,7 @@ function getRestockActions(storageAccess) {
   if (storageAccess.restockSubmit) {
     actions.push({
       href: '/restock-request',
-      label: 'Submit Request',
+      label: 'Restock Request',
       text: 'Create a new request for restock.',
       tone: 'primary',
     })
@@ -95,6 +95,15 @@ function getRestockActions(storageAccess) {
       href: '/take-requests',
       label: 'Stock Replenishment',
       text: 'Pick and complete restock requests.',
+      tone: 'secondary',
+    })
+  }
+
+  if (storageAccess.productLoans) {
+    actions.push({
+      href: '/dashboard/storage/overview?mode=loans&action=new-loan',
+      label: 'Product Loan Request',
+      text: 'Request a product loan from Storage.',
       tone: 'secondary',
     })
   }

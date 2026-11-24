@@ -6,6 +6,8 @@ import { createClient } from '@/utils/supabase/browser'
 import { ADMIN_EMAIL } from '@/utils/permissions'
 import { useRealtimeRefresh } from '@/utils/supabase/use-realtime-refresh'
 import RegularReQcWorkflow from '@/components/regular-reqc-workflow'
+import ArklineReQcSourceSwitch from '@/components/arkline-reqc-source-switch'
+import { loadArklineReQcLoanSources } from '@/utils/arkline-reqc-loan-sources.mjs'
 import { buildArklineRejectDetailUsage } from '@/utils/arkline-reject-detail-usage.mjs'
 import { getQcProductGroupKey } from '@/utils/qc-product-identity.mjs'
 import { loadProductCatalog, withCurrentProductLabels } from '@/utils/product-catalog-display.mjs'
@@ -1822,6 +1824,11 @@ export default function QcDashboardPage() {
   const [previewPhoto, setPreviewPhoto] = useState(null)
   const [qcMode, setQcMode] = useState('regular')
   const [reQcSource, setReQcSource] = useState('arkline')
+  const [loanSources, setLoanSources] = useState([])
+  const [selectedLoanId, setSelectedLoanId] = useState('')
+  const [loanFilterText, setLoanFilterText] = useState('')
+  const [loanProductOptions, setLoanProductOptions] = useState([])
+  const [loanSourceError, setLoanSourceError] = useState('')
   const [summaryTab, setSummaryTab] = useState('result-summary')
   const [qcItems, setQcItems] = useState([])
   const [arklineQcItems, setArklineQcItems] = useState([])
@@ -1881,6 +1888,21 @@ export default function QcDashboardPage() {
     inspector: false,
   })
   const [savingRejectDetail, setSavingRejectDetail] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    loadArklineReQcLoanSources(supabase).then(({ data, error: loadError }) => {
+      if (cancelled) return
+      setLoanSources(data)
+      setLoanSourceError(loadError?.message || '')
+    })
+    return () => { cancelled = true }
+  }, [])
+
+  const selectedLoanQueueIds = useMemo(
+    () => loanSources.find((loan) => loan.loan_id === selectedLoanId)?.queue_ids || [],
+    [loanSources, selectedLoanId]
+  )
 
   const loadDashboard = useCallback(async (silent = false) => {
     if (!silent) {
@@ -3579,6 +3601,7 @@ export default function QcDashboardPage() {
     .sort((a, b) => Number(a.secondsPerPcs || 0) - Number(b.secondsPerPcs || 0))
   const maxProductThroughputSeconds = rankedProductThroughputRows.reduce((max, item) => Math.max(max, Number(item.secondsPerPcs || 0)), 0)
   const isArklineMaterialSummary = qcMode === 'arkline' && arklineMaterialMode
+  const isLoanReQcSummary = qcMode === 're_qc' && reQcSource === 'arkline-loan'
   const activeSummaryLabel = qcMode === 'regular' ? 'Reguler' : qcMode === 're_qc' ? 'Arkline Re-QC' : isArklineMaterialSummary ? 'Arkline Material' : 'Arkline'
   const showRegularSplitColumn = qcMode === 'regular' && sampleFilter === 'yes'
   const selectedInspectorPerformance = inspectorPerformance.find((item) => item.inspectorKey === pauseDetailInspector)
@@ -4859,7 +4882,7 @@ export default function QcDashboardPage() {
     return <p style={styles.emptyText}>Loading QC summary...</p>
   }
 
-  if (qcMode === 're_qc' && (reQcSource === 'regular' || reQcSource === 'arkline-loan')) {
+  if (qcMode === 're_qc' && reQcSource === 'regular') {
     return (
       <div style={styles.wrapper}>
         <div style={{ ...styles.flatSection, ...styles.flatSectionLast }}>
@@ -4886,7 +4909,6 @@ export default function QcDashboardPage() {
                 </div>
                 <select aria-label="Re-QC source" value={reQcSource} onChange={(event) => setReQcSource(event.target.value)} style={styles.reQcSourceSelect}>
                   <option value="arkline">Re-QC Arkline</option>
-                  <option value="arkline-loan">Arkline · Peminjaman</option>
                   <option value="regular">Re-QC Reguler</option>
                 </select>
               </div>
@@ -4995,16 +5017,17 @@ export default function QcDashboardPage() {
                 </button>
               </div>
               {qcMode === 're_qc' ? (
-                <select
-                  aria-label="Re-QC source"
-                  value={reQcSource}
-                  onChange={(event) => setReQcSource(event.target.value)}
-                  style={styles.reQcSourceSelect}
-                >
-                  <option value="arkline">Re-QC Arkline</option>
-                  <option value="arkline-loan">Arkline · Peminjaman</option>
-                  <option value="regular">Re-QC Reguler</option>
-                </select>
+                <>
+                  <select
+                    aria-label="Re-QC source"
+                    value={reQcSource === 'arkline-loan' ? 'arkline' : reQcSource}
+                    onChange={(event) => setReQcSource(event.target.value)}
+                    style={styles.reQcSourceSelect}
+                  >
+                    <option value="arkline">Re-QC Arkline</option>
+                    <option value="regular">Re-QC Reguler</option>
+                  </select>
+                </>
               ) : null}
             </div>
           </div>
@@ -5012,29 +5035,29 @@ export default function QcDashboardPage() {
           <div style={styles.summaryMetricGrid}>
             <div style={styles.compactMetricCard}>
               <span style={styles.summaryLabel}>Allocation</span>
-              <strong style={{ ...styles.summaryValue, ...styles.compactMetricValue }}>{totalAllocated}</strong>
+              <strong style={{ ...styles.summaryValue, ...styles.compactMetricValue }}>{isLoanReQcSummary ? regularReQcMetrics.allocation : totalAllocated}</strong>
             </div>
             <div style={styles.compactMetricCard}>
               <span style={styles.summaryLabel}>
                 Graded Qty
                 <InfoHint text="Qty yang sudah di QC oleh Grader." />
               </span>
-              <strong style={{ ...styles.summaryValue, ...styles.compactMetricValue }}>{totalLocked}</strong>
+              <strong style={{ ...styles.summaryValue, ...styles.compactMetricValue }}>{isLoanReQcSummary ? regularReQcMetrics.graded : totalLocked}</strong>
             </div>
             <div style={styles.compactMetricCard}>
               <span style={styles.summaryLabel}>
                 Allocation Gap
-                <InfoHint text={allocationGapTooltipText} />
+                <InfoHint text={isLoanReQcSummary ? 'Graded Qty minus Allocation.' : allocationGapTooltipText} />
               </span>
               <strong
                 style={{
                   ...styles.summaryValue,
                   ...styles.compactMetricValue,
-                  color: totalRemaining > 0 ? '#16a34a' : totalRemaining < 0 ? '#dc2626' : '#111827',
+                  color: (isLoanReQcSummary ? regularReQcMetrics.gap : totalRemaining) > 0 ? '#16a34a' : (isLoanReQcSummary ? regularReQcMetrics.gap : totalRemaining) < 0 ? '#dc2626' : '#111827',
                 }}
               >
-                {totalRemaining > 0 ? '+' : ''}
-                {totalRemaining}
+                {(isLoanReQcSummary ? regularReQcMetrics.gap : totalRemaining) > 0 ? '+' : ''}
+                {isLoanReQcSummary ? regularReQcMetrics.gap : totalRemaining}
               </strong>
             </div>
           </div>
@@ -5084,13 +5107,13 @@ export default function QcDashboardPage() {
             <>
               <div style={styles.field}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, minHeight: 20 }}>
-                  <label style={styles.label}>PO ID</label>
+                  <label style={styles.label}>{isLoanReQcSummary ? 'Loan Number' : 'PO ID'}</label>
                   {qcMode === 'arkline' ? (
                     <button
                       type="button"
                       role="switch"
                       aria-checked={arklineMaterialMode}
-                      aria-label="Switch between Garment and Material QC summary"
+                      aria-label="Material PO"
                       onClick={() => {
                         setArklineMaterialMode((current) => !current)
                         setPoFilter('')
@@ -5098,11 +5121,17 @@ export default function QcDashboardPage() {
                       }}
                       style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: 0, border: 0, background: 'transparent', cursor: 'pointer', color: '#475569', font: 'inherit' }}
                     >
-                      {arklineMaterialMode ? <span style={{ fontSize: 12, fontWeight: 600 }}>Material PO</span> : null}
+                      <span style={{ fontSize: 12, fontWeight: 600 }}>Material</span>
                       <span style={{ width: 34, height: 19, padding: 2, borderRadius: 999, display: 'inline-flex', alignItems: 'center', justifyContent: arklineMaterialMode ? 'flex-end' : 'flex-start', background: arklineMaterialMode ? '#111827' : '#cbd5e1', transition: 'background 140ms ease' }}>
                         <span style={{ width: 15, height: 15, borderRadius: '50%', background: '#fff', boxShadow: '0 1px 2px #0002' }} />
                       </span>
                     </button>
+                  ) : qcMode === 're_qc' ? (
+                    <ArklineReQcSourceSwitch loanMode={isLoanReQcSummary} onChange={(source) => {
+                      setReQcSource(source)
+                      setPoFilter('')
+                      setArklineProductFilter('')
+                    }} />
                   ) : null}
                 </div>
                 {isArklineMaterialSummary ? (
@@ -5113,19 +5142,30 @@ export default function QcDashboardPage() {
                 ) : (
                   <>
                     <input
-                      list="qc-dashboard-po-options"
-                      value={poFilter}
+                      list={isLoanReQcSummary ? 'qc-dashboard-loan-options' : 'qc-dashboard-po-options'}
+                      value={isLoanReQcSummary ? loanFilterText : poFilter}
                       autoComplete="off"
                       onMouseDown={() => {
-                        if (poFilter) setPoFilter('')
+                        if (isLoanReQcSummary && loanFilterText) {
+                          setLoanFilterText('')
+                          setSelectedLoanId('')
+                        } else if (poFilter) setPoFilter('')
                       }}
-                      onChange={(event) => setPoFilter(event.target.value)}
+                      onChange={(event) => {
+                        if (isLoanReQcSummary) {
+                          setLoanFilterText(event.target.value)
+                          setSelectedLoanId(loanSources.find((loan) => loan.loan_number === event.target.value)?.loan_id || '')
+                        } else setPoFilter(event.target.value)
+                      }}
                       style={styles.input}
-                      placeholder="All PO"
+                      placeholder={isLoanReQcSummary ? 'Choose Loan Number' : 'All PO'}
                     />
-                    <datalist id="qc-dashboard-po-options">
-                      {poOptions.map((item) => <option key={item} value={item} />)}
+                    <datalist id={isLoanReQcSummary ? 'qc-dashboard-loan-options' : 'qc-dashboard-po-options'}>
+                      {isLoanReQcSummary
+                        ? loanSources.map((loan) => <option key={loan.loan_id} value={loan.loan_number} />)
+                        : poOptions.map((item) => <option key={item} value={item} />)}
                     </datalist>
+                    {isLoanReQcSummary && loanSourceError ? <span style={styles.errorText}>{loanSourceError}</span> : null}
                   </>
                 )}
               </div>
@@ -5141,10 +5181,10 @@ export default function QcDashboardPage() {
                   }}
                   onChange={(event) => setArklineProductFilter(event.target.value)}
                   style={styles.input}
-                  placeholder={isArklineMaterialSummary ? (poFilter ? 'Material in selected PO' : 'All material') : poFilter && poFilter !== 'NO PO' ? 'Product in selected PO' : 'All Arkline product'}
+                  placeholder={isLoanReQcSummary ? 'All Arkline product' : isArklineMaterialSummary ? (poFilter ? 'Material in selected PO' : 'All material') : poFilter && poFilter !== 'NO PO' ? 'Product in selected PO' : 'All Arkline product'}
                 />
                 <datalist id="qc-dashboard-arkline-product-options">
-                  {arklineProductOptions.map((item) => (
+                  {(isLoanReQcSummary ? loanProductOptions : arklineProductOptions).map((item) => (
                     <option key={item} value={item} />
                   ))}
                 </datalist>
@@ -5264,7 +5304,25 @@ export default function QcDashboardPage() {
 
       </div>
 
-      <div style={styles.summaryTabs}>
+      {qcMode === 're_qc' ? (
+        <div style={{ display: isLoanReQcSummary ? 'block' : 'none' }}>
+          <RegularReQcWorkflow
+            view="results"
+            source="arkline-loan"
+            queueIds={selectedLoanQueueIds}
+            summaryStyles={styles}
+            externalSearch={arklineProductFilter}
+            dateFrom={dateFrom}
+            dateTo={dateTo}
+            allTime={allTime}
+            hideFilters
+            onProductOptionsChange={setLoanProductOptions}
+            onSummaryMetricsChange={setRegularReQcMetrics}
+          />
+        </div>
+      ) : null}
+
+      <div style={{ ...styles.summaryTabs, display: isLoanReQcSummary ? 'none' : undefined }}>
         <div style={styles.summaryTabList}>
           <button
             type="button"

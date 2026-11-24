@@ -127,10 +127,17 @@ const BASE_PERMISSION_GROUPS = [
     key: 'storage',
     label: 'Storage',
     items: [
-      { key: 'location', label: 'Storage Location', description: 'Lihat stok per lokasi, registrasi item, edit detail, dan take out barang storage.', actions: ['view', 'add', 'edit'] },
+      { key: 'location.current_stock', label: 'Current Stock', codePrefix: 'storage.location.current_stock', description: 'Lihat dan kelola stok yang tersimpan di lokasi warehouse.', actions: ['view', 'add', 'edit'] },
+      { key: 'location.queue_area.storage_queue', label: 'Storage Queue', codePrefix: 'storage.location.queue_area.storage_queue', description: 'Lihat dan proses item pada storage queue.', actions: ['view', 'edit'] },
+      { key: 'location.queue_area.shelving_queue', label: 'Shelving Queue', codePrefix: 'storage.location.queue_area.shelving_queue', description: 'Lihat dan proses item pada shelving queue.', actions: ['view', 'edit'] },
+      { key: 'location.temp_area.temp_sales', label: 'Temp. Sales Area', codePrefix: 'storage.location.temp_area.temp_sales', description: 'Lihat dan kelola item pada temporary sales area.', actions: ['view', 'edit'] },
+      { key: 'location.temp_area.temp_retur_keeping', label: 'Temp. Retur Keeping', codePrefix: 'storage.location.temp_area.temp_retur_keeping', description: 'Lihat dan kelola item pada temporary retur keeping.', actions: ['view', 'edit'] },
+      { key: 'location.product_loans', label: 'Product Loans', codePrefix: 'storage.location.product_loans', description: 'Lihat dan kelola peminjaman produk.', actions: ['view', 'edit'] },
+      { key: 'location.packaging_supplier', label: 'Packaging Supplier', codePrefix: 'storage.location.packaging_supplier', description: 'Lihat daftar dan informasi packaging supplier.', actions: ['view'] },
+      { key: 'location.reject_storage', label: 'Reject Storage', codePrefix: 'storage.location.reject_storage', description: 'Lihat, kelola, dan cetak data reject storage.', actions: ['view', 'add', 'edit', 'print'] },
       { key: 'shelving_upload', label: 'Shelving Upload', description: 'Upload CSV penjualan harian untuk mengurangi stok shelving secara massal.', actions: ['view', 'add', 'edit'] },
-      { key: 'queue', label: 'Storage Queue', description: 'Lihat queue dari Packing List dan proses Store ke lokasi storage.', actions: ['view', 'edit'] },
-      { key: 'pick_history', label: 'Pick History', description: 'Lihat histori pengambilan barang dari storage.', actions: ['view'] },
+      { key: 'history.pick_history', label: 'Pick History', codePrefix: 'storage.history.pick_history', description: 'Lihat histori pengambilan barang dari storage.', actions: ['view'] },
+      { key: 'history.movement_history', label: 'Movement History', codePrefix: 'storage.history.movement_history', description: 'Lihat histori perpindahan barang antar area dan lokasi storage.', actions: ['view'] },
       { key: 'product_directory', label: 'Product Directory', description: 'Lihat dan kelola direktori produk, release, split, merge, dan photo workflow.', actions: ['view', 'add', 'edit'] },
     ],
   },
@@ -189,18 +196,38 @@ const INBOUND_ACCESS_CODES = [
   'inbound.unload.edit',
 ]
 const STORAGE_ACCESS_CODES = [
-  'storage.location.view',
-  'storage.location.add',
-  'storage.location.edit',
+  'storage.location.current_stock.view',
+  'storage.location.current_stock.add',
+  'storage.location.current_stock.edit',
+  'storage.location.queue_area.storage_queue.view',
+  'storage.location.queue_area.storage_queue.edit',
+  'storage.location.queue_area.shelving_queue.view',
+  'storage.location.queue_area.shelving_queue.edit',
+  'storage.location.temp_area.temp_sales.view',
+  'storage.location.temp_area.temp_sales.edit',
+  'storage.location.temp_area.temp_retur_keeping.view',
+  'storage.location.temp_area.temp_retur_keeping.edit',
+  'storage.location.product_loans.view',
+  'storage.location.product_loans.edit',
+  'storage.location.packaging_supplier.view',
+  'storage.location.reject_storage.view',
+  'storage.location.reject_storage.add',
+  'storage.location.reject_storage.edit',
+  'storage.location.reject_storage.print',
   'storage.shelving_upload.view',
   'storage.shelving_upload.add',
   'storage.shelving_upload.edit',
-  'storage.queue.view',
-  'storage.queue.edit',
-  'storage.pick_history.view',
+  'storage.history.pick_history.view',
+  'storage.history.movement_history.view',
   'storage.product_directory.view',
   'storage.product_directory.add',
   'storage.product_directory.edit',
+  'storage.location.view',
+  'storage.location.add',
+  'storage.location.edit',
+  'storage.queue.view',
+  'storage.queue.edit',
+  'storage.pick_history.view',
 ]
 const LEGACY_INBOUND_PERMISSION_MAP = {
   'inbound.overview.view': ['inbound.receiving.view', 'inbound.unload.view'],
@@ -212,12 +239,70 @@ const LEGACY_INBOUND_PERMISSION_MAP = {
   'inbound.qc.view': ['inbound.unload.view'],
 }
 const LEGACY_STORAGE_PERMISSION_MAP = {
-  'storage.overview.view': ['storage.location.view', 'storage.shelving_upload.view', 'storage.queue.view', 'storage.pick_history.view', 'storage.product_directory.view'],
-  'storage.search.view': ['storage.location.view'],
-  'storage.registry.view': ['storage.location.view', 'storage.queue.view'],
-  'storage.registry.add': ['storage.location.add', 'storage.queue.edit'],
-  'storage.registry.edit': ['storage.location.edit', 'storage.queue.edit'],
-  'storage.registry.delete': ['storage.location.edit'],
+  'storage.overview.view': [
+    'storage.location.current_stock.view',
+    'storage.location.queue_area.storage_queue.view',
+    'storage.location.queue_area.shelving_queue.view',
+    'storage.location.temp_area.temp_sales.view',
+    'storage.location.temp_area.temp_retur_keeping.view',
+    'storage.location.product_loans.view',
+    'storage.location.packaging_supplier.view',
+    'storage.location.reject_storage.view',
+    'storage.shelving_upload.view',
+    'storage.history.pick_history.view',
+    'storage.history.movement_history.view',
+    'storage.product_directory.view',
+  ],
+  'storage.search.view': ['storage.location.current_stock.view'],
+  'storage.registry.view': [
+    'storage.location.current_stock.view',
+    'storage.location.queue_area.storage_queue.view',
+    'storage.location.queue_area.shelving_queue.view',
+  ],
+  'storage.registry.add': [
+    'storage.location.current_stock.add',
+    'storage.location.queue_area.storage_queue.edit',
+    'storage.location.queue_area.shelving_queue.edit',
+  ],
+  'storage.registry.edit': [
+    'storage.location.current_stock.edit',
+    'storage.location.queue_area.storage_queue.edit',
+    'storage.location.queue_area.shelving_queue.edit',
+  ],
+  'storage.registry.delete': ['storage.location.current_stock.edit'],
+  'storage.location.view': [
+    'storage.location.current_stock.view',
+    'storage.location.product_loans.view',
+    'storage.location.packaging_supplier.view',
+    'storage.location.reject_storage.view',
+  ],
+  'storage.location.add': [
+    'storage.location.current_stock.add',
+    'storage.location.reject_storage.add',
+  ],
+  'storage.location.edit': [
+    'storage.location.current_stock.edit',
+    'storage.location.product_loans.edit',
+    'storage.location.temp_area.temp_sales.edit',
+    'storage.location.temp_area.temp_retur_keeping.edit',
+    'storage.location.reject_storage.edit',
+  ],
+  'storage.queue.view': [
+    'storage.location.queue_area.storage_queue.view',
+    'storage.location.queue_area.shelving_queue.view',
+    'storage.location.temp_area.temp_sales.view',
+    'storage.location.temp_area.temp_retur_keeping.view',
+  ],
+  'storage.queue.edit': [
+    'storage.location.queue_area.storage_queue.edit',
+    'storage.location.queue_area.shelving_queue.edit',
+    'storage.location.temp_area.temp_sales.edit',
+    'storage.location.temp_area.temp_retur_keeping.edit',
+  ],
+  'storage.pick_history.view': [
+    'storage.history.pick_history.view',
+    'storage.history.movement_history.view',
+  ],
 }
 
 function labelizeAction(action) {
@@ -281,11 +366,25 @@ export function getPermissionCatalog() {
 }
 
 export function getPermissionSeedRows() {
-  return PERMISSION_DEFINITIONS.map((item) => ({
+  const definitionRows = PERMISSION_DEFINITIONS.map((item) => ({
     code: item.code,
     label: `${labelizeAction(item.action)} ${item.itemLabel}`,
     description: `${labelizeAction(item.action)} access for ${item.itemLabel} in ${item.groupLabel}.`,
   }))
+  const legacyStorageRows = [
+    ['storage.location.view', 'View Storage Location'],
+    ['storage.location.add', 'Add Storage Location'],
+    ['storage.location.edit', 'Edit Storage Location'],
+    ['storage.queue.view', 'View Storage Queue'],
+    ['storage.queue.edit', 'Edit Storage Queue'],
+    ['storage.pick_history.view', 'View Pick History'],
+  ].map(([code, label]) => ({
+    code,
+    label,
+    description: `${label} compatibility permission for existing Storage database policies.`,
+  }))
+
+  return [...definitionRows, ...legacyStorageRows]
 }
 
 const DEFAULT_ROLE_BUNDLES = {
@@ -554,7 +653,10 @@ const DEFAULT_ROLE_BUNDLES = {
 const UNIVERSAL_DEFAULT_PERMISSIONS = ['delivery_report.view']
 
 export function getDefaultPermissionsForRole(role) {
-  return [...new Set([...(DEFAULT_ROLE_BUNDLES[role] || []), ...UNIVERSAL_DEFAULT_PERMISSIONS].filter((code) => PERMISSION_CODE_SET.has(code)))]
+  return [...new Set(
+    Array.from(expandImpliedPermissions([...(DEFAULT_ROLE_BUNDLES[role] || []), ...UNIVERSAL_DEFAULT_PERMISSIONS]))
+      .filter((code) => PERMISSION_CODE_SET.has(code))
+  )]
 }
 
 export function normalizeRole(role) {
@@ -627,10 +729,17 @@ export function expandImpliedPermissions(permissions = []) {
     mappedCodes.forEach((code) => expanded.add(code))
   }
 
-  for (const [legacyCode, mappedCodes] of Object.entries(LEGACY_STORAGE_PERMISSION_MAP)) {
-    if (!expanded.has(legacyCode)) continue
-    expanded.delete(legacyCode)
-    mappedCodes.forEach((code) => expanded.add(code))
+  const hasGranularStoragePermissions = Array.from(expanded).some((code) => (
+    (code.startsWith('storage.location.') && !['storage.location.view', 'storage.location.add', 'storage.location.edit'].includes(code)) ||
+    code.startsWith('storage.history.')
+  ))
+
+  if (!hasGranularStoragePermissions) {
+    for (const [legacyCode, mappedCodes] of Object.entries(LEGACY_STORAGE_PERMISSION_MAP)) {
+      if (!expanded.has(legacyCode)) continue
+      expanded.delete(legacyCode)
+      mappedCodes.forEach((code) => expanded.add(code))
+    }
   }
 
   for (const code of Array.from(expanded)) {
@@ -647,6 +756,42 @@ export function expandImpliedPermissions(permissions = []) {
   }
 
   return expanded
+}
+
+export function getStoragePermissionCompatibilityCodes(permissions = []) {
+  const codes = expandImpliedPermissions(permissions)
+  const compatibilityCodes = new Set()
+  const hasAny = (prefixes, action) => prefixes.some((prefix) => codes.has(`${prefix}.${action}`))
+
+  const currentStock = 'storage.location.current_stock'
+  const queuePrefixes = [
+    'storage.location.queue_area.storage_queue',
+    'storage.location.queue_area.shelving_queue',
+    'storage.location.temp_area.temp_sales',
+    'storage.location.temp_area.temp_retur_keeping',
+  ]
+  const locationPrefixes = [
+    currentStock,
+    'storage.location.product_loans',
+    'storage.location.packaging_supplier',
+    'storage.location.reject_storage',
+  ]
+
+  if (hasAny(locationPrefixes, 'view')) compatibilityCodes.add('storage.location.view')
+  if (hasAny([currentStock, 'storage.location.reject_storage'], 'add')) compatibilityCodes.add('storage.location.add')
+  if (hasAny([
+    currentStock,
+    'storage.location.product_loans',
+    'storage.location.reject_storage',
+    ...queuePrefixes.slice(2),
+  ], 'edit')) compatibilityCodes.add('storage.location.edit')
+  if (hasAny(queuePrefixes, 'view')) compatibilityCodes.add('storage.queue.view')
+  if (hasAny(queuePrefixes, 'edit')) compatibilityCodes.add('storage.queue.edit')
+  if (codes.has('storage.history.pick_history.view') || codes.has('storage.history.movement_history.view')) {
+    compatibilityCodes.add('storage.pick_history.view')
+  }
+
+  return Array.from(compatibilityCodes)
 }
 
 function buildFeatureAccess(codePrefix, permissions, isAdmin) {
@@ -927,11 +1072,28 @@ export function getStorageFeatureAccess(role, permissions = [], isAdmin = false)
       menu: true,
       menuHref: '/dashboard/storage/overview',
       location: true,
+      currentStock: true,
       locationAdd: true,
       locationEdit: true,
       queue: true,
+      storageQueue: true,
+      storageQueueEdit: true,
+      shelvingQueue: true,
+      shelvingQueueEdit: true,
       queueEdit: true,
+      tempSales: true,
+      tempSalesEdit: true,
+      tempReturKeeping: true,
+      tempReturKeepingEdit: true,
+      productLoans: true,
+      productLoansEdit: true,
+      packagingSupplier: true,
+      rejectStorageView: true,
+      rejectStorageAdd: true,
+      rejectStorageEdit: true,
+      rejectStoragePrint: true,
       pickHistory: true,
+      movementHistory: true,
       productDirectory: true,
       productDirectoryAdd: true,
       productDirectoryEdit: true,
@@ -946,12 +1108,29 @@ export function getStorageFeatureAccess(role, permissions = [], isAdmin = false)
   }
 
   const resolvedRole = String(role || '').trim().toLowerCase()
-  const location = hasPermission(permissions, 'storage.location.view', isAdmin)
-  const locationAdd = hasPermission(permissions, 'storage.location.add', isAdmin)
-  const locationEdit = hasPermission(permissions, 'storage.location.edit', isAdmin)
-  const queue = hasPermission(permissions, 'storage.queue.view', isAdmin)
-  const queueEdit = hasPermission(permissions, 'storage.queue.edit', isAdmin)
-  const pickHistory = hasPermission(permissions, 'storage.pick_history.view', isAdmin)
+  const currentStock = hasPermission(permissions, 'storage.location.current_stock.view', isAdmin)
+  const locationAdd = hasPermission(permissions, 'storage.location.current_stock.add', isAdmin)
+  const locationEdit = hasPermission(permissions, 'storage.location.current_stock.edit', isAdmin)
+  const storageQueue = hasPermission(permissions, 'storage.location.queue_area.storage_queue.view', isAdmin)
+  const storageQueueEdit = hasPermission(permissions, 'storage.location.queue_area.storage_queue.edit', isAdmin)
+  const shelvingQueue = hasPermission(permissions, 'storage.location.queue_area.shelving_queue.view', isAdmin)
+  const shelvingQueueEdit = hasPermission(permissions, 'storage.location.queue_area.shelving_queue.edit', isAdmin)
+  const tempSales = hasPermission(permissions, 'storage.location.temp_area.temp_sales.view', isAdmin)
+  const tempSalesEdit = hasPermission(permissions, 'storage.location.temp_area.temp_sales.edit', isAdmin)
+  const tempReturKeeping = hasPermission(permissions, 'storage.location.temp_area.temp_retur_keeping.view', isAdmin)
+  const tempReturKeepingEdit = hasPermission(permissions, 'storage.location.temp_area.temp_retur_keeping.edit', isAdmin)
+  const productLoans = hasPermission(permissions, 'storage.location.product_loans.view', isAdmin)
+  const productLoansEdit = hasPermission(permissions, 'storage.location.product_loans.edit', isAdmin)
+  const packagingSupplier = hasPermission(permissions, 'storage.location.packaging_supplier.view', isAdmin)
+  const rejectStorageView = hasPermission(permissions, 'storage.location.reject_storage.view', isAdmin)
+  const rejectStorageAdd = hasPermission(permissions, 'storage.location.reject_storage.add', isAdmin)
+  const rejectStorageEdit = hasPermission(permissions, 'storage.location.reject_storage.edit', isAdmin)
+  const rejectStoragePrint = hasPermission(permissions, 'storage.location.reject_storage.print', isAdmin)
+  const location = currentStock || storageQueue || shelvingQueue || tempSales || tempReturKeeping || productLoans || packagingSupplier || rejectStorageView
+  const queue = storageQueue || shelvingQueue || tempSales || tempReturKeeping
+  const queueEdit = storageQueueEdit || shelvingQueueEdit || tempSalesEdit || tempReturKeepingEdit
+  const pickHistory = hasPermission(permissions, 'storage.history.pick_history.view', isAdmin)
+  const movementHistory = hasPermission(permissions, 'storage.history.movement_history.view', isAdmin)
   const productDirectory = hasPermission(permissions, 'storage.product_directory.view', isAdmin)
   const productDirectoryAdd = hasPermission(permissions, 'storage.product_directory.add', isAdmin)
   const productDirectoryEdit = hasPermission(permissions, 'storage.product_directory.edit', isAdmin)
@@ -964,10 +1143,10 @@ export function getStorageFeatureAccess(role, permissions = [], isAdmin = false)
   if (resolvedRole === 'packing_staff' || resolvedRole === 'packing_coordinator') {
     restockPicker = false
   }
-  const menu = location || shelvingUpload || queue || pickHistory || productDirectory
+  const menu = location || shelvingUpload || queue || pickHistory || movementHistory || productDirectory
 
   let menuHref = '/dashboard'
-  if (location || shelvingUpload || queue || pickHistory || productDirectory) menuHref = '/dashboard/storage/overview'
+  if (menu) menuHref = '/dashboard/storage/overview'
 
   return {
     menu,
@@ -977,6 +1156,14 @@ export function getStorageFeatureAccess(role, permissions = [], isAdmin = false)
     locationEdit,
     queue,
     queueEdit,
+    storageQueue,
+    storageQueueEdit,
+    shelvingQueue,
+    shelvingQueueEdit,
+    tempSales,
+    tempSalesEdit,
+    tempReturKeeping,
+    tempReturKeepingEdit,
     pickHistory,
     productDirectory,
     productDirectoryAdd,
@@ -984,6 +1171,15 @@ export function getStorageFeatureAccess(role, permissions = [], isAdmin = false)
     shelvingUpload,
     shelvingUploadAdd,
     shelvingUploadEdit,
+    currentStock,
+    productLoans,
+    productLoansEdit,
+    packagingSupplier,
+    rejectStorageView,
+    rejectStorageAdd,
+    rejectStorageEdit,
+    rejectStoragePrint,
+    movementHistory,
     warehouseMap: menu && resolvedRole !== 'qc_coordinator',
     brandLookup: menu && resolvedRole !== 'qc_coordinator',
     restockInstruction,

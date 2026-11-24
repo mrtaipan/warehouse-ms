@@ -8,6 +8,8 @@ import { ADMIN_EMAIL } from '@/utils/permissions'
 import { getRolesForPermissionCode } from '@/utils/role-permissions'
 import { readFileAsDataUrl } from '../shared'
 import RegularReQcWorkflow from '@/components/regular-reqc-workflow'
+import ArklineReQcSourceSwitch from '@/components/arkline-reqc-source-switch'
+import { loadArklineReQcLoanSources } from '@/utils/arkline-reqc-loan-sources.mjs'
 import { loadProductCatalog, withCurrentProductLabels } from '@/utils/product-catalog-display.mjs'
 
 const supabase = createClient()
@@ -1607,13 +1609,12 @@ function ReceivingModePicker({ qcMode, reQcSource, isMobileLayout, onModeChange,
             onClick={() => setMenuOpen((open) => !open)}
             style={{ ...styles.modeButton, ...(qcMode === 're_qc' ? styles.modeButtonActive : {}), ...(isMobileLayout ? { width: '100%' } : {}) }}
           >
-            {qcMode === 're_qc' ? `Re-QC ${reQcSource === 'regular' ? 'Reguler' : reQcSource === 'arkline-loan' ? 'Peminjaman' : 'Arkline'}` : 'Re-QC'}
+            {qcMode === 're_qc' ? `Re-QC ${reQcSource === 'regular' ? 'Reguler' : 'Arkline'}` : 'Re-QC'}
           </button>
           {menuOpen ? (
             <div role="menu" aria-label="Re-QC mode" style={styles.reQcMenu}>
               {[
                 ['arkline', 'Re-QC Arkline'],
-                ['arkline-loan', 'Arkline · Peminjaman'],
                 ['regular', 'Re-QC Reguler'],
               ].map(([source, label]) => (
                 <button
@@ -1667,6 +1668,9 @@ export default function QcReceivingPage() {
   const [qcMembers, setQcMembers] = useState([])
   const [qcMode, setQcMode] = useState('regular')
   const [reQcSource, setReQcSource] = useState('arkline')
+  const [loanSources, setLoanSources] = useState([])
+  const [selectedLoanId, setSelectedLoanId] = useState('')
+  const [loanSourceError, setLoanSourceError] = useState('')
   const [arklinePlannerMode, setArklinePlannerMode] = useState('product')
   const [arklineQcTarget, setArklineQcTarget] = useState('garment')
   const [selectedMaterialPoId, setSelectedMaterialPoId] = useState('')
@@ -1719,6 +1723,21 @@ export default function QcReceivingPage() {
 
     return () => window.removeEventListener('resize', updateViewport)
   }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    loadArklineReQcLoanSources(supabase).then(({ data, error: loadError }) => {
+      if (cancelled) return
+      setLoanSources(data)
+      setLoanSourceError(loadError?.message || '')
+    })
+    return () => { cancelled = true }
+  }, [])
+
+  const selectedLoanQueueIds = useMemo(
+    () => loanSources.find((loan) => loan.loan_id === selectedLoanId)?.queue_ids || [],
+    [loanSources, selectedLoanId]
+  )
 
   useEffect(() => {
     let cancelled = false
@@ -3784,7 +3803,7 @@ export default function QcReceivingPage() {
     return <p style={styles.emptyText}>Loading QC receiving setup...</p>
   }
 
-  if (qcMode === 're_qc' && (reQcSource === 'regular' || reQcSource === 'arkline-loan')) {
+  if (qcMode === 're_qc' && reQcSource === 'regular') {
     return (
       <div style={styles.wrapper}>
         <div style={shellCardStyle}>
@@ -3805,6 +3824,39 @@ export default function QcReceivingPage() {
 
         {qcMode === 'arkline' || qcMode === 're_qc' ? (
           <>
+            {qcMode === 're_qc' ? (
+              <div style={arklineChoiceGridStyle}>
+                <div style={styles.field}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <label style={styles.label}>{reQcSource === 'arkline-loan' ? 'Loan Number' : 'PO ID'}</label>
+                    <ArklineReQcSourceSwitch loanMode={reQcSource === 'arkline-loan'} onChange={setReQcSource} />
+                  </div>
+                  <select
+                    value={reQcSource === 'arkline-loan' ? selectedLoanId : selectedArklinePoId}
+                    onChange={(event) => {
+                      if (reQcSource === 'arkline-loan') setSelectedLoanId(event.target.value)
+                      else handleArklinePoChange(event.target.value)
+                    }}
+                    style={styles.select}
+                  >
+                    {reQcSource === 'arkline-loan' ? (
+                      <>
+                        <option value="">Choose Loan Number</option>
+                        {loanSources.map((loan) => <option key={loan.loan_id} value={loan.loan_id}>{loan.loan_number}</option>)}
+                      </>
+                    ) : (
+                      <>
+                        <option value="">{visibleArklinePoOptions.length ? 'Choose PO' : 'No returned goods ready for Re-QC'}</option>
+                        {visibleArklinePoOptions.map((item) => <option key={item.id} value={item.id}>{item.po_number}</option>)}
+                      </>
+                    )}
+                  </select>
+                  {reQcSource === 'arkline-loan' && loanSourceError ? <span style={styles.helperText}>{loanSourceError}</span> : null}
+                </div>
+              </div>
+            ) : null}
+            {qcMode === 're_qc' && reQcSource === 'arkline-loan' ? null : (
+              <>
             {qcMode === 'arkline' ? (
               <>
                 <div style={styles.field}>
@@ -3947,8 +3999,10 @@ export default function QcReceivingPage() {
               </div>
             ) : (
               <div style={arklineChoiceGridStyle}>
-                <div style={styles.field}>
-                  <label style={styles.label}>PO</label>
+                {qcMode !== 're_qc' ? <div style={styles.field}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <label style={styles.label}>PO ID</label>
+                  </div>
                   <select value={selectedArklinePoId} onChange={(event) => handleArklinePoChange(event.target.value)} style={styles.select}>
                     <option value="">
                       {visibleArklinePoOptions.length
@@ -3963,7 +4017,7 @@ export default function QcReceivingPage() {
                       </option>
                     ))}
                   </select>
-                </div>
+                </div> : null}
 
                 <div style={styles.field}>
                   <label style={styles.label}>Product in PO</label>
@@ -4181,6 +4235,13 @@ export default function QcReceivingPage() {
                   : 'Choose PO and product in that PO first to start QC planning.'}
               </p>
             )}
+              </>
+            )}
+            {qcMode === 're_qc' ? (
+              <div style={{ display: reQcSource === 'arkline-loan' ? 'block' : 'none' }}>
+                <RegularReQcWorkflow view="queue" source="arkline-loan" queueIds={selectedLoanQueueIds} />
+              </div>
+            ) : null}
           </>
         ) : (
         <>

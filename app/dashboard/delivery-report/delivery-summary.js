@@ -113,7 +113,7 @@ function CourierComposition({ values }) {
   )
 }
 
-function LineChart({ values, series, selectedSeries, onSelectSeries }) {
+function LineChart({ values, series, selectedSeries, onSelectSeries, period }) {
   const chartId = useId().replaceAll(':', '')
   const chartWrapRef = useRef(null)
   const [chartWidth, setChartWidth] = useState(1000)
@@ -163,6 +163,12 @@ function LineChart({ values, series, selectedSeries, onSelectSeries }) {
   const visibleTicks = values.length <= 8
     ? values.map((_item, index) => index)
     : Array.from({ length: 8 }, (_item, index) => Math.round(index * (values.length - 1) / 7))
+  const weekBoundaryIndices = period === 'DAY'
+    ? values.reduce((indices, item, index) => {
+      if (item.dateKey && new Date(`${item.dateKey}T00:00:00Z`).getUTCDay() === 0) indices.push(index)
+      return indices
+    }, [])
+    : []
   const chartNumber = new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 })
   const tooltipRows = hover ? series
     .map((name) => ({ name, count: safeNumber(values[hover.index]?.[name]) }))
@@ -233,6 +239,14 @@ function LineChart({ values, series, selectedSeries, onSelectSeries }) {
             <text x={plot.left - 12} y={y + 4} textAnchor="end" className={styles.orderChartAxis}>{chartNumber.format(value)}</text>
           </g>
         })}
+        {weekBoundaryIndices.map((index) => <line
+          key={`week-boundary-${index}`}
+          x1={xFor(index)}
+          x2={xFor(index)}
+          y1={plot.top}
+          y2={plot.top + plotHeight}
+          className={styles.orderChartWeekBoundary}
+        />)}
         <text transform={`translate(16 ${plot.top + plotHeight / 2}) rotate(-90)`} textAnchor="middle" className={styles.orderChartAxisTitle}>Order quantity</text>
         {series.map((name) => {
           const muted = selectedSeries && selectedSeries !== name
@@ -505,6 +519,9 @@ export default function DeliverySummary({ lockedGroup: lockedGroupProp = '', isA
     () => buildOrderTrend(categoryFilteredOrders, chartPeriod, visibleGroups, applied.from, applied.to),
     [applied.from, applied.to, chartPeriod, categoryFilteredOrders, visibleGroups]
   )
+  const hasWeekBoundaries = chartPeriod === 'DAY' && chartValues.some(
+    (item) => item.dateKey && new Date(`${item.dateKey}T00:00:00Z`).getUTCDay() === 0
+  )
 
   const categories = useMemo(() => {
     const values = new Set(orders.map((row) => row.delivery_category).filter(Boolean))
@@ -723,8 +740,11 @@ export default function DeliverySummary({ lockedGroup: lockedGroupProp = '', isA
               </div>
             </div>
           </div>
-          {loading ? <div className={styles.summaryLoading}>Loading order chart...</div> : chartValues.length && chartSeries.length ? <LineChart values={chartValues} series={chartSeries} selectedSeries={highlightedSeries} onSelectSeries={selectChartSeries} /> : <EmptyState />}
-          <div className={styles.chartLegend} role="group" aria-label="Highlight chart series">{chartSeries.map((name) => <button type="button" key={name} aria-pressed={highlightedSeries === name} onClick={() => selectChartSeries(name)} className={highlightedSeries && highlightedSeries !== name ? styles.chartLegendMuted : ''}><i style={{ backgroundColor: SERIES_COLORS[name] }} />{name === 'TOTAL' ? 'Total orders' : name}</button>)}</div>
+          {loading ? <div className={styles.summaryLoading}>Loading order chart...</div> : chartValues.length && chartSeries.length ? <LineChart values={chartValues} series={chartSeries} selectedSeries={highlightedSeries} onSelectSeries={selectChartSeries} period={chartPeriod} /> : <EmptyState />}
+          <div className={styles.chartLegend} role="group" aria-label="Highlight chart series">
+            {chartSeries.map((name) => <button type="button" key={name} aria-pressed={highlightedSeries === name} onClick={() => selectChartSeries(name)} className={highlightedSeries && highlightedSeries !== name ? styles.chartLegendMuted : ''}><i style={{ backgroundColor: SERIES_COLORS[name] }} />{name === 'TOTAL' ? 'Total orders' : name}</button>)}
+            {hasWeekBoundaries ? <span className={styles.orderChartWeekLegend}><i aria-hidden="true" />Week boundary (Sunday)</span> : null}
+          </div>
         </article>
         </section>
 

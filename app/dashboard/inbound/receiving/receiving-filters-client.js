@@ -192,7 +192,7 @@ export default function ReceivingFiltersClient({
 
     let query = supabase
       .from('inbound')
-      .select('id, grn_number, inbound_date, supplier_id, item_name, total_claimed_qty, created_at, suppliers:dir_suppliers!supplier_id (supplier_name)', { count: 'exact' })
+      .select('id, grn_number, inbound_date, supplier_id, item_name, total_claimed_qty, total_received_qty, created_at, suppliers:dir_suppliers!supplier_id (supplier_name)', { count: 'exact' })
       .in('status', ['draft', 'inbound'])
       .order('inbound_date', { ascending: false })
       .order('created_at', { ascending: false })
@@ -226,7 +226,7 @@ export default function ReceivingFiltersClient({
     } else {
       let nextOrders = data || []
       try {
-        const statusMap = await fetchInboundOverviewStatusMap(supabase, nextOrders.map((order) => order.id))
+        const statusMap = await fetchInboundOverviewStatusMap(supabase, nextOrders.map((order) => order.id), nextOrders)
         nextOrders = attachInboundOverviewStatuses(nextOrders, statusMap)
       } catch {
         nextOrders = data || []

@@ -163,7 +163,7 @@ export default async function InboundReceivingPage({ searchParams }) {
 
   if (ordersWithStatus.length && !error) {
     try {
-      const statusMap = await fetchInboundOverviewStatusMap(supabase, ordersWithStatus.map((order) => order.id))
+      const statusMap = await fetchInboundOverviewStatusMap(supabase, ordersWithStatus.map((order) => order.id), ordersWithStatus)
       ordersWithStatus = attachInboundOverviewStatuses(ordersWithStatus, statusMap)
     } catch {
       ordersWithStatus = orders || []

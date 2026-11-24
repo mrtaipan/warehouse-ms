@@ -46,6 +46,7 @@ export function attachInboundOverviewStatuses(rows = [], statusMap = new Map()) 
 
 export function buildInboundOverviewStatusMap({
   inboundIds = [],
+  inboundRows = [],
   confirmRows = [],
   validationRows = [],
   breakdownRows = [],
@@ -63,11 +64,11 @@ export function buildInboundOverviewStatusMap({
   const inboundReturnQtyByInbound = new Map()
   const qcReturnQtyByInbound = new Map()
   const packingQtyByInbound = new Map()
-  const regularIntakeQtyByInbound = new Map()
   const totalIntakeQtyByInbound = new Map()
   const qcGradeAQtyByInbound = new Map()
   const qcRejectedQtyByInbound = new Map()
   const plStatsByInbound = new Map()
+  const inboundById = new Map(inboundRows.map((row) => [Number(row.id), row]))
 
   validationRows.forEach((row) => {
     const inboundId = Number(row.inbound_id || 0)
@@ -96,8 +97,6 @@ export function buildInboundOverviewStatusMap({
 
   unloadRows.forEach((row) => {
     addToMap(totalIntakeQtyByInbound, row.inbound_id, row.qty)
-    if (row.is_sample) return
-    addToMap(regularIntakeQtyByInbound, row.inbound_id, row.qty)
   })
 
   qcRows.forEach((row) => {
@@ -126,7 +125,6 @@ export function buildInboundOverviewStatusMap({
   ids.forEach((inboundId) => {
     const plStats = plStatsByInbound.get(inboundId)
     const inboundReturnQty = inboundReturnQtyByInbound.get(inboundId) || 0
-    const regularIntakeQty = regularIntakeQtyByInbound.get(inboundId) || 0
     const intakeQty = totalIntakeQtyByInbound.get(inboundId) || 0
     const qcRejectedQty = qcRejectedQtyByInbound.get(inboundId) || 0
     const qcReturnQty = qcReturnQtyByInbound.get(inboundId) || 0
@@ -164,7 +162,11 @@ export function buildInboundOverviewStatusMap({
       return
     }
 
-    if (inboundReturnQty > 0 && regularIntakeQty <= 0) {
+    const inbound = inboundById.get(inboundId)
+    const expectedQty = asNumber(inbound?.total_claimed_qty == null
+      ? inbound?.total_received_qty
+      : inbound.total_claimed_qty)
+    if (expectedQty > 0 && intakeQty <= 0 && inboundReturnQty >= expectedQty) {
       statusMap.set(inboundId, INBOUND_OVERVIEW_STATUS.FULL_RETURN)
     }
   })
@@ -172,7 +174,7 @@ export function buildInboundOverviewStatusMap({
   return statusMap
 }
 
-export async function fetchInboundOverviewStatusMap(supabase, inboundIds = []) {
+export async function fetchInboundOverviewStatusMap(supabase, inboundIds = [], inboundRows = []) {
   const ids = Array.from(new Set(inboundIds.map((id) => Number(id || 0)).filter(Boolean)))
 
   if (!ids.length) {
@@ -201,6 +203,7 @@ export async function fetchInboundOverviewStatusMap(supabase, inboundIds = []) {
 
   return buildInboundOverviewStatusMap({
     inboundIds: ids,
+    inboundRows,
     confirmRows: confirmResult.data || [],
     validationRows: validationResult.data || [],
     breakdownRows: breakdownResult.data || [],

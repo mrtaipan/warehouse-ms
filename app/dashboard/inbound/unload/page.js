@@ -1,6 +1,7 @@
 'use client'
 
 import Image from 'next/image'
+import { Printer } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import { createClient } from '@/utils/supabase/browser'
@@ -1038,6 +1039,15 @@ const styles = {
     height: '40px',
     padding: 0,
     borderRadius: '10px',
+  },
+  pdfIconButton: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  pdfIconButtonDisabled: {
+    cursor: 'wait',
+    opacity: 0.55,
   },
   closeIconButton: {
     width: '40px',
@@ -5893,8 +5903,21 @@ export default function UnloadPage() {
               </button>
             ) : null}
             {breakdownMode === 'model' ? (
-              <button type="button" onClick={handleDownloadInboundReport} style={styles.secondaryButton} disabled={pdfPending}>
-                {pdfPending ? 'Preparing PDF...' : 'Download PDF'}
+              <button
+                type="button"
+                onClick={handleDownloadInboundReport}
+                style={{
+                  ...styles.secondaryButton,
+                  ...styles.iconOnlyButton,
+                  ...styles.pdfIconButton,
+                  ...(pdfPending ? styles.pdfIconButtonDisabled : {}),
+                }}
+                disabled={pdfPending}
+                aria-label="Download Inbound Report PDF"
+                aria-busy={pdfPending}
+                title={pdfPending ? 'Preparing PDF...' : 'Download Inbound Report PDF'}
+              >
+                <Printer size={18} strokeWidth={2} aria-hidden="true" />
               </button>
             ) : null}
             {canManageUnload ? (

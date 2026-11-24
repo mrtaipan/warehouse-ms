@@ -29,3 +29,27 @@ test('Grade A or packed goods prevent a full-return status', () => {
   assert.notEqual(statusFor({ qtyA: 1 }), INBOUND_OVERVIEW_STATUS.FULL_RETURN)
   assert.notEqual(statusFor({ packed: 1 }), INBOUND_OVERVIEW_STATUS.FULL_RETURN)
 })
+
+test('inbound returns do not hide sample intake and QC Grade A', () => {
+  const status = buildInboundOverviewStatusMap({
+    inboundIds: [37],
+    inboundRows: [{ id: 37, total_claimed_qty: 14000, total_received_qty: 7005 }],
+    unloadRows: [{ inbound_id: 37, qty: 200, is_sample: true }],
+    returnRows: [{ inbound_id: 37, qty: 8000, source_phase: 'inbound' }],
+    qcRows: [{ inbound_id: 37, qty_a: 190, qty_b: 0, qty_c: 10 }],
+  }).get(37)
+  assert.notEqual(status, INBOUND_OVERVIEW_STATUS.FULL_RETURN)
+})
+
+test('inbound-only return is red only when the full expected quantity was returned', () => {
+  const status = (returned, intakeQty = 0) => buildInboundOverviewStatusMap({
+    inboundIds: [38],
+    inboundRows: [{ id: 38, total_claimed_qty: null, total_received_qty: 100 }],
+    unloadRows: intakeQty ? [{ inbound_id: 38, qty: intakeQty, is_sample: true }] : [],
+    returnRows: [{ inbound_id: 38, qty: returned, source_phase: 'inbound' }],
+  }).get(38)
+
+  assert.notEqual(status(40), INBOUND_OVERVIEW_STATUS.FULL_RETURN)
+  assert.equal(status(100), INBOUND_OVERVIEW_STATUS.FULL_RETURN)
+  assert.notEqual(status(100, 1), INBOUND_OVERVIEW_STATUS.FULL_RETURN)
+})

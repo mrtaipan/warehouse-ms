@@ -73,6 +73,8 @@
 .issueControls { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 .issueControls select { flex: 0 1 260px; width: 260px; max-width: 100%; }
 .issueControls input:not(.issueQty) { flex: 0 1 180px; width: 180px; }
+.issueControls input[aria-label="Other source location"] { flex: 0 1 160px; width: 160px; }
+.issueControls:has(input[aria-label="Other source location"]) select { flex-basis: 180px; width: 180px; }
 .issueControls .issueQty { flex: 0 0 76px; width: 76px; }
 .issueControls .primary { flex: none; }
 .editItemButton { display: grid; place-items: center; flex: none; width: 40px; height: 40px; border: 1px solid #cbd5e1; border-radius: 6px; background: #fff; color: #111827; font: inherit; font-size: 21px; cursor: pointer; }

@@ -17,7 +17,7 @@ export function buildOrderTrend(orders, period, groups, fromDate, toDate) {
     while (cursor <= end) {
       const date = cursor.toISOString().slice(0, 10)
       const key = date.slice(0, period === 'YEAR' ? 4 : period === 'MONTH' ? 7 : 10)
-      buckets.set(key, { label: formatter.format(cursor), TOTAL: 0, ...Object.fromEntries(groups.map((group) => [group, 0])) })
+      buckets.set(key, { dateKey: key, label: formatter.format(cursor), TOTAL: 0, ...Object.fromEntries(groups.map((group) => [group, 0])) })
       if (period === 'YEAR') cursor = new Date(Date.UTC(cursor.getUTCFullYear() + 1, 0, 1))
       else if (period === 'MONTH') cursor = new Date(Date.UTC(cursor.getUTCFullYear(), cursor.getUTCMonth() + 1, 1))
       else cursor = new Date(Date.UTC(cursor.getUTCFullYear(), cursor.getUTCMonth(), cursor.getUTCDate() + 1))
@@ -31,7 +31,7 @@ export function buildOrderTrend(orders, period, groups, fromDate, toDate) {
     if (!Number.isFinite(date.getTime())) continue
     const key = isoDate.slice(0, period === 'YEAR' ? 4 : period === 'MONTH' ? 7 : 10)
     if (!buckets.has(key)) {
-      buckets.set(key, { label: formatter.format(date), TOTAL: 0, ...Object.fromEntries(groups.map((group) => [group, 0])) })
+      buckets.set(key, { dateKey: key, label: formatter.format(date), TOTAL: 0, ...Object.fromEntries(groups.map((group) => [group, 0])) })
     }
     const bucket = buckets.get(key)
     const quantity = Number(row.quantity) || 0

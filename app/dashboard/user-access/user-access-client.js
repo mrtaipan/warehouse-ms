@@ -13,6 +13,14 @@ function buildRolePermissionState(rolePermissionMap, knownPermissionCodes) {
 }
 
 function titleizeSegment(value) {
+  const labels = {
+    location: 'Storage Location',
+    queue_area: 'Queue Area',
+    temp_area: 'Temp Area',
+    history: 'Storage History',
+  }
+  if (labels[value]) return labels[value]
+
   return String(value || '')
     .split('_')
     .filter(Boolean)

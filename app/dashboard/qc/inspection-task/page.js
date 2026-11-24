@@ -446,8 +446,8 @@ const styles = {
 
 function getTaskModelInfo(task) {
   return {
-    modelName: task.model_name || task.inbound_unload?.model_name || 'UNKNOWN MODEL',
-    modelColor: task.variant_name || task.model_color || task.inbound_unload?.variant_name || task.inbound_unload?.model_color || '',
+    modelName: task.material_name || task.model_name || task.inbound_unload?.model_name || 'UNKNOWN MODEL',
+    modelColor: task.material_variant || task.variant_name || task.model_color || task.inbound_unload?.variant_name || task.inbound_unload?.model_color || '',
     photoUrl: task.photo_url || task.inbound_unload?.photo_url || '',
   }
 }
@@ -625,6 +625,9 @@ function getDateOnly(value) {
 }
 
 async function createPauseLog({ taskId, sourceType, pausedBy, pauseReason, pausedAt }) {
+  // Material tasks use UUID IDs; qc_pause_logs only supports numeric task references.
+  if (sourceType === 'arkline_material') return { error: null, skipped: true }
+
   const { error } = await supabase.from('qc_pause_logs').insert([
     {
       qc_item_id: sourceType === 'arkline' ? null : taskId,
@@ -646,6 +649,9 @@ async function createPauseLog({ taskId, sourceType, pausedBy, pauseReason, pause
 }
 
 async function closeOpenPauseLog({ taskId, sourceType, resumedBy, resumedAt }) {
+  // Avoid querying qc_item_id (bigint) with a material task UUID.
+  if (sourceType === 'arkline_material') return { error: null, skipped: true }
+
   let openLogQuery = supabase
     .from('qc_pause_logs')
     .select('id, paused_at')
@@ -1712,7 +1718,7 @@ export default function QcInspectionTaskPage() {
 
             <div style={styles.metaGrid}>
               <div style={styles.metaCard}>
-                <span style={styles.metaLabel}>{!isArklineQcTask(activeTask) ? 'Model-Variant' : 'Model'}</span>
+                <span style={styles.metaLabel}>{activeTask.source_type === 'arkline_material' ? 'Item' : !isArklineQcTask(activeTask) ? 'Model-Variant' : 'Model'}</span>
                 <span style={styles.metaValue}>
                   {isArklineQcTask(activeTask) ? getTaskModelInfo(activeTask).modelName : getTaskModelVariantLabel(activeTask)}
                 </span>

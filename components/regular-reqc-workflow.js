@@ -49,7 +49,7 @@ async function loadAllRows(buildQuery) {
   }
 }
 
-export default function RegularReQcWorkflow({ view = 'queue', source = 'regular', summaryStyles = {}, onSummaryMetricsChange }) {
+export default function RegularReQcWorkflow({ view = 'queue', source = 'regular', queueIds = null, summaryStyles = {}, externalSearch = null, dateFrom = '', dateTo = '', allTime = true, hideFilters = false, onProductOptionsChange, onSummaryMetricsChange }) {
   const isArklineLoan = source === 'arkline-loan'
   const [categoryRows, setCategoryRows] = useState([])
   const [queueRows, setQueueRows] = useState([])
@@ -72,7 +72,7 @@ export default function RegularReQcWorkflow({ view = 'queue', source = 'regular'
   const [rejectKoli, setRejectKoli] = useState('')
   const [rejectNote, setRejectNote] = useState('')
   const [selectedPrintKeys, setSelectedPrintKeys] = useState([])
-  const [resultTab, setResultTab] = useState('arrangement')
+  const [resultTab, setResultTab] = useState(isArklineLoan && view === 'results' ? 'summary' : 'arrangement')
   const [search, setSearch] = useState('')
   const [sizeFilter, setSizeFilter] = useState('')
   const [detailKey, setDetailKey] = useState('')
@@ -88,11 +88,11 @@ export default function RegularReQcWorkflow({ view = 'queue', source = 'regular'
       loadAllRows(() => {
         const query = supabase.from('reqc_queue').select('*').order('created_at', { ascending: false }).order('id')
         const scoped = isArklineLoan
-          ? query.eq('group_code', 'ARKLINE').not('source_loan_receive_id', 'is', null)
+          ? (queueIds?.length ? query.in('id', queueIds) : query.eq('id', '00000000-0000-0000-0000-000000000000')).eq('group_code', 'ARKLINE').not('source_loan_receive_id', 'is', null)
           : query.neq('group_code', 'ARKLINE')
         return view === 'queue' ? scoped.neq('status', 'CANCELLED') : scoped
       }),
-      loadAllRows(() => supabase.from('qc_items').select('id, reqc_queue_id, assigned_to, allocated_qty, status, qty_a, qty_b, qty_c').not('reqc_queue_id', 'is', null).order('id')),
+      loadAllRows(() => supabase.from('qc_items').select('id, reqc_queue_id, assigned_to, allocated_qty, status, qty_a, qty_b, qty_c, created_at, finished_at').not('reqc_queue_id', 'is', null).order('id')),
       view === 'results' ? loadAllRows(() => supabase.from('reqc_results').select('*').order('created_at', { ascending: false }).order('id')) : Promise.resolve({ data: [], error: null }),
       loadAllRows(() => supabase.from('dir_user_profiles').select('id, email, display_name, role, is_qc_active, qc_active_date').order('id')),
       view === 'queue' ? getRolesForPermissionCode(supabase, 'qc.grading_task.view') : Promise.resolve({ data: [], error: null }),
@@ -128,7 +128,7 @@ export default function RegularReQcWorkflow({ view = 'queue', source = 'regular'
     ))
     setDraftKolis(Array.from(new Set((rejectResult.data || []).map((row) => row.koli_number).filter(Boolean))))
     setLoading(false)
-  }, [isArklineLoan, view])
+  }, [isArklineLoan, queueIds, view])
 
   useEffect(() => {
     const timer = window.setTimeout(() => { loadData() }, 0)
@@ -148,19 +148,39 @@ export default function RegularReQcWorkflow({ view = 'queue', source = 'regular'
     return allocatedByQueue
   }, [tasks])
 
+  const matchesDate = useCallback((value) => {
+    if (allTime || (!dateFrom && !dateTo)) return true
+    if (!value) return false
+    const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Jakarta', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date(value))
+    const byType = Object.fromEntries(parts.map((part) => [part.type, part.value]))
+    const workDate = `${byType.year}-${byType.month}-${byType.day}`
+    return (!dateFrom || workDate >= dateFrom) && (!dateTo || workDate <= dateTo)
+  }, [allTime, dateFrom, dateTo])
+
   const summaryMetrics = useMemo(() => {
-    const allocation = tasks.reduce((sum, task) => sum + Number(task.allocated_qty || 0), 0)
-    const graded = tasks.reduce((sum, task) => task.status === 'done'
+    const queueLookup = new Map(queueRows.map((row) => [row.id, row]))
+    const keyword = String(externalSearch ?? '').trim().toLowerCase()
+    const visibleTasks = tasks.filter((task) => {
+      const queue = queueLookup.get(task.reqc_queue_id)
+      return matchesDate(task.finished_at || task.created_at) && (!keyword || [queue?.sku_id, queue?.source_variant_code, queue?.item_name].some((value) => String(value || '').toLowerCase().includes(keyword)))
+    })
+    const allocation = visibleTasks.reduce((sum, task) => sum + Number(task.allocated_qty || 0), 0)
+    const graded = visibleTasks.reduce((sum, task) => task.status === 'done'
       ? sum + Number(task.qty_a || 0) + Number(task.qty_b || 0) + Number(task.qty_c || 0)
       : sum, 0)
     return { allocation, graded, gap: graded - allocation }
-  }, [tasks])
+  }, [externalSearch, matchesDate, queueRows, tasks])
 
   useEffect(() => {
     if (view === 'results' && !loading) onSummaryMetricsChange?.(summaryMetrics)
   }, [loading, onSummaryMetricsChange, summaryMetrics, view])
 
   const queueById = useMemo(() => new Map(queueRows.map((row) => [row.id, row])), [queueRows])
+  useEffect(() => {
+    if (isArklineLoan && view === 'results') {
+      onProductOptionsChange?.(Array.from(new Set(queueRows.map((row) => row.item_name).filter(Boolean))).sort((a, b) => a.localeCompare(b, undefined, { numeric: true })))
+    }
+  }, [isArklineLoan, onProductOptionsChange, queueRows, view])
   const categoryById = useMemo(() => new Map(categoryRows.map((row) => [Number(row.id), row])), [categoryRows])
   const openQueueRows = useMemo(
     () => queueRows.filter((row) => Number(row.qty || 0) > (queueStats.get(row.id)?.allocated || 0)),
@@ -295,12 +315,27 @@ export default function RegularReQcWorkflow({ view = 'queue', source = 'regular'
   const matchesResultFilters = (result) => {
     const queue = queueById.get(result.reqc_queue_id)
     if (!queue) return false
-    const keyword = search.trim().toLowerCase()
+    const keyword = String(externalSearch ?? search).trim().toLowerCase()
     return (!keyword || [queue.sku_id, queue.source_variant_code, queue.item_name].some((value) => String(value || '').toLowerCase().includes(keyword))) &&
       (!sizeFilter || String(queue.size || '').toUpperCase() === sizeFilter)
   }
-  const filteredPendingResults = pendingResults.filter(matchesResultFilters)
-  const filteredResults = resultRows.filter(matchesResultFilters)
+  const filteredPendingResults = pendingResults.filter((row) => matchesResultFilters(row) && matchesDate(row.created_at))
+  const filteredResults = resultRows.filter((row) => matchesResultFilters(row) && matchesDate(row.created_at))
+  const inspectorPerformance = Array.from(tasks.reduce((groups, task) => {
+    const queue = queueById.get(task.reqc_queue_id)
+    const keyword = String(externalSearch ?? search).trim().toLowerCase()
+    if (!matchesDate(task.finished_at || task.created_at) || (keyword && ![queue?.sku_id, queue?.source_variant_code, queue?.item_name].some((value) => String(value || '').toLowerCase().includes(keyword)))) return groups
+    const key = String(task.assigned_to || '').trim().toLowerCase()
+    const row = groups.get(key) || { key, name: inspectorName(task.assigned_to), allocated: 0, qtyA: 0, qtyB: 0, qtyC: 0 }
+    row.allocated += Number(task.allocated_qty || 0)
+    if (task.status === 'done') {
+      row.qtyA += Number(task.qty_a || 0)
+      row.qtyB += Number(task.qty_b || 0)
+      row.qtyC += Number(task.qty_c || 0)
+    }
+    groups.set(key, row)
+    return groups
+  }, new Map()).values()).sort((a, b) => b.qtyA + b.qtyB + b.qtyC - a.qtyA - a.qtyB - a.qtyC)
   const summaryGroups = Array.from(filteredResults.reduce((groups, result) => {
     const queue = queueById.get(result.reqc_queue_id)
     const sku = String(queue?.sku_id || queue?.source_variant_code || '').trim()
@@ -459,13 +494,13 @@ export default function RegularReQcWorkflow({ view = 'queue', source = 'regular'
 
       {!loading && view === 'results' ? (
         <section className={styles.resultsSection}>
-          <div className={styles.resultFilters}>
+          {!hideFilters ? <div className={styles.resultFilters}>
             <label style={summaryStyles.field}><span style={summaryStyles.label}>SKU / Item</span><input style={summaryStyles.input} type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search SKU or item name" /></label>
             <label style={summaryStyles.field}><span style={summaryStyles.label}>Size</span><select style={summaryStyles.select} value={sizeFilter} onChange={(event) => setSizeFilter(event.target.value)}><option value="">All sizes</option>{sizeOptionsForResults.map((size) => <option key={size} value={size.toUpperCase()}>{size}</option>)}</select></label>
-          </div>
+          </div> : null}
           <div style={summaryStyles.summaryTabs} className={styles.resultTabs}>
-            <div style={summaryStyles.summaryTabList} className={styles.resultTabList} role="tablist" aria-label="Re-QC Reguler views">
-              {[['arrangement', 'Arrangement'], ['summary', 'Result Summary']].map(([key, label]) => (
+            <div style={summaryStyles.summaryTabList} className={styles.resultTabList} role="tablist" aria-label={isArklineLoan ? 'Arkline loan Re-QC views' : 'Re-QC Reguler views'}>
+              {(isArklineLoan ? [['summary', 'Result Summary'], ['arrangement', 'Arrangement']] : [['arrangement', 'Arrangement'], ['summary', 'Result Summary']]).map(([key, label]) => (
                 <button key={key} id={`reqc-tab-${key}`} type="button" role="tab" aria-controls="reqc-result-panel" aria-selected={resultTab === key} className={styles.resultTabButton} style={{ ...summaryStyles.summaryTabButton, ...(resultTab === key ? summaryStyles.summaryTabButtonActive : {}) }} onClick={() => setResultTab(key)}>
                   <span style={summaryStyles.summaryTabLabel}>{label}</span>
                   {resultTab === key ? <span style={summaryStyles.summaryTabUnderline} /> : null}

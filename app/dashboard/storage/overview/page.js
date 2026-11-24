@@ -1101,11 +1101,26 @@ async function fetchUserProfilesByEmail() {
 const EMPTY_STORAGE_ACCESS = {
   menu: false,
   location: false,
+  currentStock: false,
   locationAdd: false,
   locationEdit: false,
   queue: false,
+  storageQueue: false,
+  storageQueueEdit: false,
+  shelvingQueue: false,
+  shelvingQueueEdit: false,
   queueEdit: false,
+  tempSales: false,
+  tempSalesEdit: false,
+  tempReturKeeping: false,
+  tempReturKeepingEdit: false,
+  productLoans: false,
+  productLoansEdit: false,
+  packagingSupplier: false,
+  rejectStorageView: false,
+  rejectStoragePrint: false,
   pickHistory: false,
+  movementHistory: false,
   productDirectory: false,
   productDirectoryAdd: false,
   productDirectoryEdit: false,
@@ -1141,19 +1156,9 @@ async function fetchCurrentStorageAccess() {
     : await getRolePermissionCodes(supabase, role)
 
   const storageFeatureAccess = getStorageFeatureAccess(role, rolePermissions || [], isAdmin)
-  const rejectStorageManage = Boolean(
-    isAdmin ||
-      role === 'admin' ||
-      role === 'qc_coordinator' ||
-      role === 'storage_coordinator' ||
-      storageFeatureAccess.locationAdd ||
-      storageFeatureAccess.locationEdit
-  )
 
   return {
     ...storageFeatureAccess,
-    rejectStorageAdd: rejectStorageManage,
-    rejectStorageEdit: rejectStorageManage,
     categoryManage: Boolean(
       isAdmin ||
         role === 'admin' ||
@@ -1234,6 +1239,7 @@ export default function StorageOverviewPage() {
     : initialMode === 'temporary-area' ? 'temporary-sales'
       : ['history', 'movement-history', 'queue', 'temporary-sales', 'temporary-retur', 'putaway-queue', 'product-directory', 'reject-storage', 'loans', 'packaging-supplies'].includes(initialMode) ? initialMode : 'stock'
   const initialRegisterOpen = searchParams.get('register') === '1'
+  const initialLoanRequestOpen = searchParams.get('action') === 'new-loan'
   const initialProductSearch = String(searchParams.get('q') || searchParams.get('search') || '').trim().toUpperCase()
   const [rackLocations, setRackLocations] = useState([])
   const [storageEntries, setStorageEntries] = useState([])
@@ -1664,15 +1670,14 @@ export default function StorageOverviewPage() {
   const canMoveStorageItem = Boolean(storageAccess.locationEdit)
   const canCategorizeStorageItem = Boolean(storageAccess.categoryManage)
   const canSelectCurrentStockRows = canTakeStorageItem || canCategorizeStorageItem || canMoveStorageItem
-  const canStoreQueueItem = Boolean(storageAccess.queueEdit)
   const canManageProductDirectory = Boolean(storageAccess.productDirectoryAdd || storageAccess.productDirectoryEdit)
   const canViewShelvingUpload = Boolean(storageAccess.shelvingUpload)
   const canAddShelvingUpload = Boolean(storageAccess.shelvingUploadAdd)
   const canManageShelvingUpload = Boolean(storageAccess.shelvingUploadEdit)
   const canShowStorageLocationActions = canEditStorageItem || canTakeStorageItem || canMoveStorageItem
-  const canViewRejectStorage = Boolean(storageAccess.location)
-  const canAddRejectStorage = Boolean(storageAccess.rejectStorageAdd || storageAccess.locationAdd)
-  const canEditRejectStorage = Boolean(storageAccess.rejectStorageEdit || storageAccess.locationEdit || storageAccess.locationAdd)
+  const canViewRejectStorage = Boolean(storageAccess.rejectStorageView)
+  const canAddRejectStorage = Boolean(storageAccess.rejectStorageAdd)
+  const canEditRejectStorage = Boolean(storageAccess.rejectStorageEdit)
   const canDeleteRejectStorageEntry = useCallback((entry) => {
     if (!entry || entry.delivery_return_item_id || !canEditRejectStorage || normalizeRejectStatus(entry.status) !== 'DRAFT') return false
     if (storageAccess.isAdmin) return true
@@ -1699,40 +1704,70 @@ export default function StorageOverviewPage() {
   }, { sales: 0, retur: 0 }), [temporarySalesRows])
   const storageLocationTabItems = useMemo(
     () => [
-      storageAccess.location ? ['stock', 'Current Stock'] : null,
-      storageAccess.queue ? ['queueing-area', 'Que. Area'] : null,
-      storageAccess.queue ? ['temporary-area', 'Temp. Area'] : null,
-      storageAccess.menu ? ['loans', 'Product Loans'] : null,
-      storageAccess.location ? ['packaging-supplies', 'Packaging Supplies'] : null,
+      storageAccess.currentStock ? ['stock', 'Current Stock'] : null,
+      storageAccess.storageQueue || storageAccess.shelvingQueue ? ['queueing-area', 'Queue Area'] : null,
+      storageAccess.tempSales || storageAccess.tempReturKeeping ? ['temporary-area', 'Temp Area'] : null,
+      storageAccess.productLoans ? ['loans', 'Product Loans'] : null,
+      storageAccess.packagingSupplier ? ['packaging-supplies', 'Packaging Supplier'] : null,
       canViewRejectStorage ? ['reject-storage', 'Reject Storage'] : null,
     ].filter(Boolean),
-    [canViewRejectStorage, storageAccess.location, storageAccess.menu, storageAccess.queue]
+    [
+      canViewRejectStorage,
+      storageAccess.currentStock,
+      storageAccess.packagingSupplier,
+      storageAccess.productLoans,
+      storageAccess.shelvingQueue,
+      storageAccess.storageQueue,
+      storageAccess.tempReturKeeping,
+      storageAccess.tempSales,
+    ]
+  )
+  const storageHistoryTabItems = useMemo(
+    () => [
+      storageAccess.pickHistory ? ['history', 'Pick History'] : null,
+      storageAccess.movementHistory ? ['movement-history', 'Movement History'] : null,
+    ].filter(Boolean),
+    [storageAccess.movementHistory, storageAccess.pickHistory]
   )
   const storageTabItems = useMemo(
     () => [
       ...storageLocationTabItems.flatMap(([mode, label]) => mode === 'queueing-area'
-        ? [['queue', 'Storage Queue'], ['putaway-queue', 'Shelving Queue']]
+        ? [
+            storageAccess.storageQueue ? ['queue', 'Storage Queue'] : null,
+            storageAccess.shelvingQueue ? ['putaway-queue', 'Shelving Queue'] : null,
+          ].filter(Boolean)
         : mode === 'temporary-area'
-          ? [['temporary-sales', 'Temp. Sales Area'], ['temporary-retur', 'Temp. Retur Keeping']]
+          ? [
+              storageAccess.tempSales ? ['temporary-sales', 'Temp. Sales Area'] : null,
+              storageAccess.tempReturKeeping ? ['temporary-retur', 'Temp. Retur Keeping'] : null,
+            ].filter(Boolean)
           : [[mode, label]]),
-      storageAccess.pickHistory ? ['history', 'Pick History'] : null,
-      storageAccess.pickHistory ? ['movement-history', 'Movement History'] : null,
+      ...storageHistoryTabItems,
       storageAccess.productDirectory ? ['product-directory', 'Product Directory'] : null,
     ].filter(Boolean),
-    [storageAccess.pickHistory, storageAccess.productDirectory, storageLocationTabItems]
+    [storageAccess.productDirectory, storageAccess.shelvingQueue, storageAccess.storageQueue, storageAccess.tempReturKeeping, storageAccess.tempSales, storageHistoryTabItems, storageLocationTabItems]
   )
   const storagePrimaryTabItems = useMemo(
     () => [
       storageLocationTabItems.length > 0 ? ['storage-location', 'Storage Location'] : null,
-      storageAccess.pickHistory ? ['storage-history', 'Storage History'] : null,
+      storageHistoryTabItems.length > 0 ? ['storage-history', 'Storage History'] : null,
       storageAccess.productDirectory ? ['product-directory', 'Product Directory'] : null,
     ].filter(Boolean),
-    [storageAccess.pickHistory, storageAccess.productDirectory, storageLocationTabItems.length]
+    [storageAccess.productDirectory, storageHistoryTabItems.length, storageLocationTabItems.length]
   )
 
   const visibleListMode = storageTabItems.some(([mode]) => mode === activeListMode)
     ? activeListMode
     : storageTabItems[0]?.[0] || activeListMode
+  const canStoreQueueItem = visibleListMode === 'queue'
+    ? Boolean(storageAccess.storageQueueEdit)
+    : visibleListMode === 'putaway-queue'
+      ? Boolean(storageAccess.shelvingQueueEdit)
+      : visibleListMode === 'temporary-sales'
+        ? Boolean(storageAccess.tempSalesEdit)
+        : visibleListMode === 'temporary-retur'
+          ? Boolean(storageAccess.tempReturKeepingEdit)
+          : false
   const isTemporaryAreaMode = ['temporary-sales', 'temporary-retur'].includes(visibleListMode)
   const temporaryAreaType = visibleListMode === 'temporary-retur' ? 'RETUR_KEEPING' : 'SALES'
   const visibleStorageLocationTabMode = ['queue', 'putaway-queue'].includes(visibleListMode) ? 'queueing-area'
@@ -2737,6 +2772,7 @@ export default function StorageOverviewPage() {
     selectedRejectKoliGroups.length > 0 &&
     selectedRejectKoliGroups.every((group) => group.status === 'DRAFT')
   const canPrintSelectedRejectKoli =
+    storageAccess.rejectStoragePrint &&
     selectedRejectKoliGroups.length > 0 &&
     selectedRejectKoliGroups.every((group) => group.status === 'POSTED')
   const draftRejectKoliOptions = Array.from(
@@ -4039,7 +4075,7 @@ export default function StorageOverviewPage() {
   }
 
   function openSelectedPutawayModal() {
-    if (!selectedPutawayEntries.length || !storageAccess.queueEdit) return
+    if (!selectedPutawayEntries.length || !storageAccess.shelvingQueueEdit) return
     const group = normalizeFilterValue(selectedPutawayEntries[0].group_code)
     if (selectedPutawayEntries.some((entry) => normalizeFilterValue(entry.group_code) !== group)) {
       setError('Only items from the same group can be stored together.')
@@ -4068,7 +4104,7 @@ export default function StorageOverviewPage() {
 
   async function handlePutawaySubmit(event) {
     event.preventDefault()
-    if (!putawayModalEntries.length || !storageAccess.queueEdit || storingPutaway) return
+    if (!putawayModalEntries.length || !storageAccess.shelvingQueueEdit || storingPutaway) return
     const selectedLocation = putawayLocationOptions.selectedLocation
     if (!selectedLocation) {
       setPutawayError('Choose a complete shelving location for the selected items.')
@@ -6280,8 +6316,19 @@ export default function StorageOverviewPage() {
                   key={mode}
                   type="button"
                   onClick={() => {
-                    setActiveListMode(mode === 'queueing-area' ? queueingAreaMode
-                      : mode === 'temporary-area' ? temporaryAreaMode : mode)
+                    setActiveListMode(mode === 'queueing-area'
+                      ? (storageAccess.storageQueue && queueingAreaMode === 'queue'
+                          ? 'queue'
+                          : storageAccess.shelvingQueue && queueingAreaMode === 'putaway-queue'
+                            ? 'putaway-queue'
+                          : storageAccess.storageQueue ? 'queue' : 'putaway-queue')
+                      : mode === 'temporary-area'
+                        ? (storageAccess.tempSales && temporaryAreaMode === 'temporary-sales'
+                            ? 'temporary-sales'
+                            : storageAccess.tempReturKeeping && temporaryAreaMode === 'temporary-retur'
+                              ? 'temporary-retur'
+                            : storageAccess.tempSales ? 'temporary-sales' : 'temporary-retur')
+                        : mode)
                     setStockPage(1)
                     setQueuePage(1)
                     setRejectPage(1)
@@ -6324,7 +6371,7 @@ export default function StorageOverviewPage() {
         ) : null}
         {visibleStorageLocationTabMode === 'queueing-area' ? (
           <div className={rejectReleaseStyles.sourceHeading}>
-            <button type="button" role="switch" aria-label="Use Shelving Queue" aria-checked={visibleListMode === 'putaway-queue'} className={rejectReleaseStyles.sourceSwitch} onClick={() => {
+            {storageAccess.storageQueue && storageAccess.shelvingQueue ? <button type="button" role="switch" aria-label="Use Shelving Queue" aria-checked={visibleListMode === 'putaway-queue'} className={rejectReleaseStyles.sourceSwitch} onClick={() => {
               const nextMode = visibleListMode === 'queue' ? 'putaway-queue' : 'queue'
               setQueueingAreaMode(nextMode)
               setActiveListMode(nextMode)
@@ -6333,9 +6380,9 @@ export default function StorageOverviewPage() {
               <span data-active={visibleListMode === 'queue'}>Storage Que.</span>
               <i aria-hidden="true" />
               <span data-active={visibleListMode === 'putaway-queue'}>Shelving Que.</span>
-            </button>
+            </button> : null}
             <div className={rejectReleaseStyles.headingTitleRow}>
-              <h2 className={arklineReportStyles.sectionTitle}>Queueing Area</h2>
+              <h2 className={arklineReportStyles.sectionTitle}>{visibleListMode === 'putaway-queue' ? 'Shelving Queue' : 'Storage Queue'}</h2>
             </div>
           </div>
         ) : null}
@@ -6360,7 +6407,7 @@ export default function StorageOverviewPage() {
         ) : null}
         {isTemporaryAreaMode ? (
           <div className={rejectReleaseStyles.sourceHeading}>
-            <button type="button" role="switch" aria-label="Use Temp. Retur Keeping" aria-checked={visibleListMode === 'temporary-retur'} className={rejectReleaseStyles.sourceSwitch} onClick={() => {
+            {storageAccess.tempSales && storageAccess.tempReturKeeping ? <button type="button" role="switch" aria-label="Use Temp. Retur Keeping" aria-checked={visibleListMode === 'temporary-retur'} className={rejectReleaseStyles.sourceSwitch} onClick={() => {
               const nextMode = visibleListMode === 'temporary-sales' ? 'temporary-retur' : 'temporary-sales'
               setTemporaryAreaMode(nextMode)
               setActiveListMode(nextMode)
@@ -6370,9 +6417,9 @@ export default function StorageOverviewPage() {
               <span data-active={visibleListMode === 'temporary-sales'}>Temp. Sales Area <b style={styles.temporaryModeBadge}>{temporaryAreaBadgeCounts.sales}</b></span>
               <i aria-hidden="true" />
               <span data-active={visibleListMode === 'temporary-retur'}>Temp. Retur Keeping <b style={styles.temporaryModeBadge}>{temporaryAreaBadgeCounts.retur}</b></span>
-            </button>
+            </button> : null}
             <div className={rejectReleaseStyles.headingTitleRow}>
-              <h2 className={arklineReportStyles.sectionTitle}>Temporary Area</h2>
+              <h2 className={arklineReportStyles.sectionTitle}>{visibleListMode === 'temporary-retur' ? 'Temp. Retur Keeping' : 'Temp. Sales Area'}</h2>
             </div>
           </div>
         ) : null}
@@ -6407,7 +6454,8 @@ export default function StorageOverviewPage() {
             currentUserId={storageAccess.currentUserId}
             isAdmin={Boolean(storageAccess.isAdmin)}
             userProfilesByEmail={userProfilesByEmail}
-            canManage={Boolean(storageAccess.locationEdit || storageAccess.queueEdit)}
+            canManage={Boolean(storageAccess.productLoansEdit)}
+            openNewRequestOnMount={initialLoanRequestOpen}
             lockedGroup={lockedStorageGroup}
             storageRows={storageRows}
             queueRows={storageQueueRows}
@@ -8401,7 +8449,7 @@ export default function StorageOverviewPage() {
         </div>
       ) : null}
 
-      {putawayModalEntries.length > 0 && storageAccess.queueEdit ? (
+      {putawayModalEntries.length > 0 && storageAccess.shelvingQueueEdit ? (
         <div style={styles.modalOverlay}>
           <div style={styles.modalCardWide}>
             <div style={styles.modalHeader}>

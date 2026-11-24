@@ -10,6 +10,7 @@ import {
   ADMIN_EMAIL,
   OFFICIAL_ROLE_VALUES,
   expandImpliedPermissions,
+  getStoragePermissionCompatibilityCodes,
   getPermissionSeedRows,
   normalizeRole,
 } from '@/utils/permissions'
@@ -104,6 +105,10 @@ export async function updateRolePermissions(formData) {
       .map((item) => String(item || '').trim())
       .filter(Boolean)
     const normalizedPermissionCodes = Array.from(expandImpliedPermissions(permissionCodes))
+    const persistedPermissionCodes = Array.from(new Set([
+      ...normalizedPermissionCodes,
+      ...getStoragePermissionCompatibilityCodes(normalizedPermissionCodes),
+    ]))
     const permissionSeedRows = getPermissionSeedRows()
     const permissionSeedMap = new Map(permissionSeedRows.map((item) => [item.code, item]))
 
@@ -117,11 +122,11 @@ export async function updateRolePermissions(formData) {
       redirectUserAccessWithStatus('error', `Unknown permission code: ${unknownPermissionCodes[0]}`)
     }
 
-    if (normalizedPermissionCodes.length) {
+    if (persistedPermissionCodes.length) {
       const { data: existingPermissionRows, error: permissionLookupError } = await supabase
         .from('dir_user_permissions')
         .select('code')
-        .in('code', normalizedPermissionCodes)
+        .in('code', persistedPermissionCodes)
 
       if (permissionLookupError) {
         redirectUserAccessWithStatus('error', permissionLookupError.message)
@@ -129,6 +134,7 @@ export async function updateRolePermissions(formData) {
 
       const existingPermissionSet = new Set((existingPermissionRows || []).map((item) => item.code))
       const missingPermissionRows = normalizedPermissionCodes
+        .concat(persistedPermissionCodes.filter((code) => !normalizedPermissionCodes.includes(code)))
         .filter((code) => !existingPermissionSet.has(code))
         .map((code) => permissionSeedMap.get(code))
         .filter(Boolean)
@@ -150,9 +156,9 @@ export async function updateRolePermissions(formData) {
       redirectUserAccessWithStatus('error', deleteError.message)
     }
 
-    if (normalizedPermissionCodes.length) {
+    if (persistedPermissionCodes.length) {
       const { error: insertError } = await supabase.from('dir_user_roles').insert(
-        normalizedPermissionCodes.map((permissionCode) => ({
+        persistedPermissionCodes.map((permissionCode) => ({
           role,
           permission_code: permissionCode,
         }))
