@@ -1833,7 +1833,6 @@ export default function QcDashboardPage() {
   const [qcItems, setQcItems] = useState([])
   const [arklineQcItems, setArklineQcItems] = useState([])
   const [arklineMaterialQcItems, setArklineMaterialQcItems] = useState([])
-  const [arklineMaterialQcRejectDetails, setArklineMaterialQcRejectDetails] = useState([])
   const [arklineMaterialMode, setArklineMaterialMode] = useState(false)
   const [qcConfirmRows, setQcConfirmRows] = useState([])
   const [returnRows, setReturnRows] = useState([])
@@ -1914,7 +1913,6 @@ export default function QcDashboardPage() {
       { data: qcRows, error: qcError },
       { data: arklineRows, error: arklineError },
       { data: arklineMaterialRows, error: arklineMaterialError },
-      { data: arklineMaterialRejectRows, error: arklineMaterialRejectError },
       { data: confirmRows, error: confirmError },
       { data: returnData, error: returnError },
       { data: memberRows, error: memberError },
@@ -1984,10 +1982,6 @@ export default function QcDashboardPage() {
       fetchAllSupabaseRows(() => supabase
         .from('arkline_material_qc')
         .select('*')
-        .order('created_at', { ascending: false })),
-      fetchAllSupabaseRows(() => supabase
-        .from('arkline_material_qc_reject_details')
-        .select('id, arkline_material_qc_id, material_po_ordered_item_id, material_po_number, material_name, grade, size_variant, color_variant, reject_reason_id, qty, reason:reject_reason_id(id, reason_name, is_repairable)')
         .order('created_at', { ascending: false })),
       fetchAllSupabaseRows(() => supabase
         .from('qc_confirm')
@@ -2193,7 +2187,6 @@ export default function QcDashboardPage() {
       qcError ||
       arklineError ||
       arklineMaterialError ||
-      arklineMaterialRejectError ||
       confirmError ||
       returnError ||
       memberError ||
@@ -2210,7 +2203,6 @@ export default function QcDashboardPage() {
         qcError?.message ||
           arklineError?.message ||
           arklineMaterialError?.message ||
-          arklineMaterialRejectError?.message ||
           confirmError?.message ||
           returnError?.message ||
           memberError?.message ||
@@ -2253,13 +2245,6 @@ export default function QcDashboardPage() {
       sku_induk: row.material_name,
       model_name: row.material_variant || '',
       qc_type: 'INITIAL',
-    })))
-    setArklineMaterialQcRejectDetails((arklineMaterialRejectRows || []).map((row) => ({
-      ...row,
-      arkline_qc_id: row.arkline_material_qc_id,
-      po_id: row.material_po_number,
-      sku_induk: row.material_name,
-      model_name: [row.size_variant, row.color_variant].filter(Boolean).join(' / '),
     })))
     setQcConfirmRows((confirmRows || []).map(currentLabels))
     setReturnRows((returnData || []).map(currentLabels))
@@ -2519,9 +2504,10 @@ export default function QcDashboardPage() {
     () => (qcMode !== 'regular' ? filteredArklineItems : filteredItems),
     [filteredArklineItems, filteredItems, qcMode]
   )
-  const activeArklineRejectDetails = arklineMaterialMode && qcMode === 'arkline'
-    ? arklineMaterialQcRejectDetails
-    : arklineRejectDetails
+  const activeArklineRejectDetails = useMemo(
+    () => (arklineMaterialMode && qcMode === 'arkline' ? [] : arklineRejectDetails),
+    [arklineMaterialMode, arklineRejectDetails, qcMode]
+  )
   const activePauseLogs = useMemo(
     () => (qcMode === 'arkline' && arklineMaterialMode ? [] : qcMode !== 'regular' ? filteredArklinePauseLogs : filteredRegularPauseLogs),
     [arklineMaterialMode, filteredArklinePauseLogs, filteredRegularPauseLogs, qcMode]
@@ -5387,8 +5373,7 @@ export default function QcDashboardPage() {
                 {qcMode !== 'regular' ? null : <th style={styles.th}>Photo</th>}
                 <th style={styles.th}>{qcMode !== 'regular' ? 'PO' : 'Brand'}</th>
                 <th style={styles.th}>{qcMode !== 'regular' ? (isArklineMaterialSummary ? 'Material' : 'SKU') : 'Category'}</th>
-                {isArklineMaterialSummary ? <th style={styles.th}>Variant</th> : <th style={styles.th}>Model</th>}
-                {isArklineMaterialSummary ? <th style={styles.th}>Reject Reason</th> : null}
+                {!isArklineMaterialSummary ? <th style={styles.th}>Model</th> : null}
                 {qcMode === 'regular' ? <th style={styles.th}>Variant</th> : null}
                 {qcMode === 're_qc' ? <th style={{ ...styles.th, ...styles.thCenter }}>Round</th> : null}
                 <th style={{ ...styles.th, ...styles.thCenter }}>Qty A</th>
@@ -5403,18 +5388,6 @@ export default function QcDashboardPage() {
               {qcResultSummary.length ? (
                 qcResultSummary.map((item) => {
                   const rejectTargetQty = Number(item.rejectTargetQty ?? getRejectQty(item))
-                  const materialTaskIds = new Set((item.taskRows || []).map((task) => String(task.id)))
-                  const materialReasonTotals = new Map()
-                  if (isArklineMaterialSummary) {
-                    activeArklineRejectDetails
-                      .filter((detail) => materialTaskIds.has(String(detail.arkline_qc_id)))
-                      .forEach((detail) => {
-                        const reason = detail.reason?.reason_name || 'Belum dikategorikan'
-                        materialReasonTotals.set(reason, Number(materialReasonTotals.get(reason) || 0) + Number(detail.qty || 0))
-                      })
-                    if (!materialReasonTotals.size && rejectTargetQty > 0) materialReasonTotals.set('Belum dikategorikan', rejectTargetQty)
-                  }
-                  const materialReasonText = Array.from(materialReasonTotals, ([reason, qty]) => `${reason} · ${formatNumber(qty)}`).join(', ')
                   return (
                   <tr key={item.key}>
                     {qcMode !== 'regular' ? null : <td style={styles.td}>
@@ -5429,8 +5402,7 @@ export default function QcDashboardPage() {
                     </td>}
                     <td style={styles.td}>{qcMode !== 'regular' && String(item.brand || '').trim().toUpperCase() === 'NO PO' ? '-' : item.brand}</td>
                     <td style={styles.td}>{item.category}</td>
-                    <td style={styles.td}>{isArklineMaterialSummary && item.model === 'UNKNOWN MODEL' ? '-' : item.model}<ProductVariantCode code={item.source_variant_code} /></td>
-                    {isArklineMaterialSummary ? <td style={styles.td}>{materialReasonText || '-'}</td> : null}
+                    {!isArklineMaterialSummary ? <td style={styles.td}>{item.model}<ProductVariantCode code={item.source_variant_code} /></td> : null}
                     {qcMode === 'regular' ? <td style={styles.td}>{item.variant || '-'}</td> : null}
                     {qcMode === 're_qc' ? <td style={{ ...styles.td, ...styles.tdCenter }}>{item.roundNumber}</td> : null}
                     <td style={{ ...styles.td, ...styles.tdCenter }}>{item.qtyA}</td>
@@ -5495,7 +5467,7 @@ export default function QcDashboardPage() {
                 })
               ) : (
                 <tr>
-                  <td style={styles.td} colSpan={isArklineMaterialSummary ? 8 : qcMode === 're_qc' ? 9 : qcMode === 'arkline' ? 8 : showRegularSplitColumn ? 10 : 9}>
+                  <td style={styles.td} colSpan={isArklineMaterialSummary ? 6 : qcMode === 're_qc' ? 9 : qcMode === 'arkline' ? 8 : showRegularSplitColumn ? 10 : 9}>
                     No QC result found for this filter.
                   </td>
                 </tr>
