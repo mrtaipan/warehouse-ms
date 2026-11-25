@@ -2508,14 +2508,17 @@ export default function QcReceivingPage() {
       return
     }
     const material = arklineMaterialsDirectory.find((item) => String(item.id) === String(line.material_id))
+    const materialName = line.material_name_snapshot || material?.material_name || 'MATERIAL'
     const variant = [line.size_variant, line.color_variant].filter(Boolean).join(' / ')
     const receivedQty = Number(materialQcReceivedByItem.get(String(line.id)) || 0)
-    const existingTasks = arklineMaterialQcItems.filter((task) => String(task.material_po_ordered_item_id) === String(line.id))
+    const existingTasks = arklineMaterialQcItems
+      .filter((task) => String(task.material_po_ordered_item_id) === String(line.id))
+      .map((task) => ({ ...task, model_name: materialName, model_color: variant }))
     setModelRows(buildModelRowsFromPersisted([{
       id: `material-qc-${line.id}`,
       source_id: line.id,
       model_id: line.material_id || '',
-      model_name: line.material_name_snapshot || material?.material_name || 'MATERIAL',
+      model_name: materialName,
       model_color: variant,
       qty_in: Number(line.qty || 0),
       qty_qc: String(receivedQty),

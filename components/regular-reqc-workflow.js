@@ -500,25 +500,29 @@ export default function RegularReQcWorkflow({ view = 'queue', source = 'regular'
           </div> : null}
           <div style={summaryStyles.summaryTabs} className={styles.resultTabs}>
             <div style={summaryStyles.summaryTabList} className={styles.resultTabList} role="tablist" aria-label={isArklineLoan ? 'Arkline loan Re-QC views' : 'Re-QC Reguler views'}>
-              {(isArklineLoan ? [['summary', 'Result Summary'], ['arrangement', 'Arrangement']] : [['arrangement', 'Arrangement'], ['summary', 'Result Summary']]).map(([key, label]) => (
-                <button key={key} id={`reqc-tab-${key}`} type="button" role="tab" aria-controls="reqc-result-panel" aria-selected={resultTab === key} className={styles.resultTabButton} style={{ ...summaryStyles.summaryTabButton, ...(resultTab === key ? summaryStyles.summaryTabButtonActive : {}) }} onClick={() => setResultTab(key)}>
+              {(isArklineLoan ? [['summary', 'Result Summary'], ['performance', 'Performance Breakdown']] : [['arrangement', 'Arrangement'], ['summary', 'Result Summary']]).map(([key, label]) => (
+                <button key={key} id={`reqc-tab-${key}`} type="button" role="tab" aria-controls="reqc-result-panel" aria-selected={resultTab === key || (isArklineLoan && key === 'summary' && resultTab === 'arrangement')} className={styles.resultTabButton} style={{ ...summaryStyles.summaryTabButton, ...(resultTab === key || (isArklineLoan && key === 'summary' && resultTab === 'arrangement') ? summaryStyles.summaryTabButtonActive : {}) }} onClick={() => setResultTab(key)}>
                   <span style={summaryStyles.summaryTabLabel}>{label}</span>
-                  {resultTab === key ? <span style={summaryStyles.summaryTabUnderline} /> : null}
+                  {resultTab === key || (isArklineLoan && key === 'summary' && resultTab === 'arrangement') ? <span style={summaryStyles.summaryTabUnderline} /> : null}
                 </button>
               ))}
             </div>
-            <div id="reqc-result-panel" role="tabpanel" aria-labelledby={`reqc-tab-${resultTab}`} style={summaryStyles.summaryTabPanel} className={styles.resultPanel}>
+            <div id="reqc-result-panel" role="tabpanel" aria-labelledby={`reqc-tab-${resultTab === 'arrangement' && isArklineLoan ? 'summary' : resultTab}`} style={summaryStyles.summaryTabPanel} className={styles.resultPanel}>
               <div style={summaryStyles.panelHeader} className={styles.resultPanelHeader}>
                 <div>
-                  <p style={{ ...summaryStyles.panelEyebrow, letterSpacing: 0 }}>{isArklineLoan ? 'Arkline Re-QC · Peminjaman' : 'Reguler Re-QC'}</p>
-                  <h2 style={summaryStyles.sectionTitle}>{resultTab === 'arrangement' ? 'Arrangement' : 'Result Summary'}</h2>
+                  <p style={{ ...summaryStyles.panelEyebrow, letterSpacing: 0 }}>{isArklineLoan ? 'Arkline Re-QC' : 'Reguler Re-QC'}</p>
+                  <h2 style={summaryStyles.sectionTitle}>{resultTab === 'arrangement' ? 'Arrangement' : resultTab === 'performance' ? 'Performance Breakdown' : 'Result Summary'}</h2>
                 </div>
-                {resultTab === 'summary' ? <button className={styles.primaryButton} type="button" onClick={printSelectedResults} disabled={!printableGroups.length} title="Print selected results">Print Selected</button> : (
+                {resultTab === 'summary' ? <div className={styles.reviewActions}>
+                  {isArklineLoan ? <button className={styles.backLink} type="button" onClick={() => setResultTab('arrangement')}>Review Results</button> : null}
+                  <button className={styles.primaryButton} type="button" onClick={printSelectedResults} disabled={!printableGroups.length} title="Print selected results">Print Selected</button>
+                </div> : resultTab === 'arrangement' ? (
                   <div className={styles.reviewActions}>
+                    {isArklineLoan ? <button className={styles.backLink} type="button" onClick={() => setResultTab('summary')}>Back to Summary</button> : null}
                     <button className={styles.primaryButton} type="button" disabled={Boolean(busyKey) || !selectedReviewIds.length || selectedReviewIds.some((id) => pendingResults.find((row) => row.id === id)?.grade !== 'A')} onClick={() => { setError(''); setConfirmAModalOpen(true) }}>Confirm A</button>
                     <button className={styles.primaryButton} type="button" disabled={Boolean(busyKey) || !selectedReviewIds.length || selectedReviewIds.some((id) => pendingResults.find((row) => row.id === id)?.grade === 'A')} onClick={() => { setRejectModalId('selected'); setRejectKoli(''); setRejectNote(''); setError('') }}>Store Reject</button>
                   </div>
-                )}
+                ) : null}
               </div>
           {resultTab === 'arrangement' ? (
             <div className={styles.tableWrap}>
@@ -537,6 +541,13 @@ export default function RegularReQcWorkflow({ view = 'queue', source = 'regular'
                     {adjustmentReady ? <td><button className={styles.backLink} type="button" disabled={Boolean(busyKey)} onClick={() => { setAdjustResultId(row.id); setAdjustGrade(''); setAdjustQty(''); setAdjustNote(''); setError('') }}>Adjust</button></td> : null}
                   </tr>
                 })}{!filteredPendingResults.length ? <tr><td colSpan={adjustmentReady ? 8 : 7} className={styles.empty}>No Re-QC results are waiting for review.</td></tr> : null}</tbody>
+              </table>
+            </div>
+          ) : resultTab === 'performance' ? (
+            <div className={styles.tableWrap}>
+              <table className={styles.table}>
+                <thead><tr><th>Inspector</th><th className={styles.numeric}>Allocated</th><th className={styles.numeric}>Grade A</th><th className={styles.numeric}>Grade B</th><th className={styles.numeric}>Grade C</th><th className={styles.numeric}>Checked</th></tr></thead>
+                <tbody>{inspectorPerformance.map((row) => <tr key={row.key}><td>{row.name}</td><td className={styles.numeric}>{formatQty(row.allocated)}</td><td className={styles.numeric}>{formatQty(row.qtyA)}</td><td className={styles.numeric}>{formatQty(row.qtyB)}</td><td className={styles.numeric}>{formatQty(row.qtyC)}</td><td className={styles.numeric}>{formatQty(row.qtyA + row.qtyB + row.qtyC)}</td></tr>)}{!inspectorPerformance.length ? <tr><td colSpan={6} className={styles.empty}>No inspector performance for this filter.</td></tr> : null}</tbody>
               </table>
             </div>
           ) : (
