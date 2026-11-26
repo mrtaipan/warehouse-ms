@@ -16,6 +16,7 @@ import {
   normalizeArklineSupplierInitial,
 } from '@/utils/arkline-po-number'
 import { buildArklinePoPrintStyles } from '@/utils/arkline-po-print'
+import { buildProductionCode } from '@/app/dashboard/arkline/directory/po-directory-utils'
 import { createClient } from '@/utils/supabase/browser'
 
 import shellStyles from '../arkline.module.css'
@@ -123,6 +124,7 @@ function normalizeProduct(row) {
 function normalizeSupplier(row, source) {
   return {
     id: String(row?.id || '').trim(),
+    supplierCode: String(row?.supplier_code || '').trim().toUpperCase(),
     supplierName: String(row?.supplier_name || row?.nama_supplier || '').trim().toUpperCase(),
     initial: normalizeArklineSupplierInitial(row?.initial),
     supplierGroup: String(row?.group || '').trim().toUpperCase(),
@@ -407,6 +409,7 @@ async function createPurchaseOrderPreviewHtml(bundle) {
       maximumFractionDigits: 0,
     }).format(Number(value || 0))
 
+  const productionCode = buildProductionCode(bundle.supplierCode, bundle.poId, bundle.poCreatedAt)
   const printableItems = bundle.items.map((item) => {
     const qty = getLineTotalQty(item)
     const price = toNumber(item.price)
@@ -421,6 +424,7 @@ async function createPurchaseOrderPreviewHtml(bundle) {
       price,
       amount,
       sizeBreakdown,
+      productionCode,
     }
   })
 
@@ -443,6 +447,7 @@ async function createPurchaseOrderPreviewHtml(bundle) {
                 ? `<div class="mt-1 text-[8pt] text-gray-500">${escapeHtml(item.sizeBreakdown)}</div>`
                 : ''
             }
+            ${item.productionCode ? `<div class="mt-1 text-[7pt] font-semibold tracking-wide text-gray-600">Production Code: ${escapeHtml(item.productionCode)}</div>` : ''}
           </td>
           <td class="py-2 px-1 text-center text-gray-600">${escapeHtml(formatQuantity(item.qty))}</td>
           <td class="py-2 px-1 text-right text-gray-600">${escapeHtml(formatIdr(item.price))}</td>
@@ -1874,6 +1879,7 @@ export default function ArklineProductionPlanningPage() {
         poId: bundle.po.po_id,
         method: bundle.po.method,
         poCreatedAt: bundle.po.created_at,
+        supplierCode: bundle.supplier?.supplierCode || '',
         header: {
           requestDeliveryDate: bundle.po.request_delivery_date || '',
           paymentTerms: String(bundle.po.payment_terms || ''),

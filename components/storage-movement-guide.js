@@ -13,6 +13,8 @@ const MOVEMENTS = [
   ['TEMPORARY_ADJUSTMENT_IN', 'Jumlah di Temp. Sales Area bertambah setelah penyesuaian fisik.'],
   ['TEMPORARY_ADJUSTMENT_OUT', 'Jumlah di Temp. Sales Area berkurang setelah penyesuaian fisik.'],
   ['PUTAWAY_IN', 'Barang dari Shelving Queue ditempatkan ke shelving.'],
+  ['RESTOCK_OUT', 'Barang diambil dari lokasi penyimpanan untuk restock picker.'],
+  ['RESTOCK_REVERSE_IN', 'Pengambilan restock dibatalkan dan stok dikembalikan ke lokasi asal.'],
   ['CUSTOMER_RETURN_IN', 'Barang retur pelanggan diterima kembali ke stok.'],
   ['CUSTOMER_REPLACEMENT_OUT', 'Barang pengganti untuk pelanggan dikeluarkan dari stok.'],
   ['QC_RECHECK_OUT', 'Barang dikeluarkan dari penyimpanan untuk pemeriksaan ulang QC.'],

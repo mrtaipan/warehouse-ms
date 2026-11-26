@@ -95,6 +95,7 @@ function buildMultilineHtml(value) {
 export function normalizeSupplier(row) {
   return {
     id: String(row?.id || '').trim(),
+    supplierCode: String(row?.supplier_code || '').trim().toUpperCase(),
     supplierName: String(row?.supplier_name || '').trim().toUpperCase(),
     contactPerson: String(row?.contact_person || '').trim().toUpperCase(),
     phone: String(row?.phone || '').trim(),
@@ -113,6 +114,15 @@ export function buildSizeBreakdown(qtyBySize) {
   return SIZE_OPTIONS.filter((size) => toNumber(qtyBySize?.[size]) > 0)
     .map((size) => `${size} ${formatQuantity(qtyBySize[size])}`)
     .join(' • ')
+}
+
+export function buildProductionCode(supplierCode, poId, poCreatedAt) {
+  const supplierNumber = String(supplierCode || '').trim().toUpperCase().match(/^SUPP-(\d{3})$/)?.[1]
+  const poNumber = String(poId || '').trim().toUpperCase().match(/^PO-(\d+)/)?.[1]
+  const poYear = String(poCreatedAt || '').match(/^(\d{4})/)?.[1]
+  if (!supplierNumber || !poNumber || !poYear) return ''
+
+  return `${supplierNumber}.${poNumber.padStart(3, '0')}.${poYear.slice(-3).padStart(3, '0')}`
 }
 
 export function normalizeStatusLabel(value) {
@@ -137,7 +147,7 @@ export async function fetchSupplierById(supabase, supplierId) {
 
   const { data, error } = await supabase
     .from('dir_suppliers')
-    .select('id, supplier_name, contact_person, phone, address')
+    .select('id, supplier_code, supplier_name, contact_person, phone, address')
     .eq('id', supplierId)
     .maybeSingle()
 
@@ -353,6 +363,7 @@ function buildFooter() {
 }
 
 export async function createGarmentPurchaseOrderPreviewHtml(bundle) {
+  const productionCode = buildProductionCode(bundle.supplierCode || bundle.supplier?.supplierCode, bundle.poId, bundle.poCreatedAt)
   const printableItems = bundle.items.map((item) => {
     const qty = getLineTotalQty(item)
     const price = toNumber(item.price)
@@ -362,6 +373,7 @@ export async function createGarmentPurchaseOrderPreviewHtml(bundle) {
       price,
       amount: qty * price,
       sizeBreakdown: buildSizeBreakdown(item.qtyBySize),
+      productionCode,
     }
   })
 
@@ -378,6 +390,7 @@ export async function createGarmentPurchaseOrderPreviewHtml(bundle) {
           <td class="py-2 px-1 text-left font-medium">
             <div>${escapeHtml(item.name)}</div>
             ${item.sizeBreakdown ? `<div class="mt-1 text-[8pt] text-gray-500">${escapeHtml(item.sizeBreakdown)}</div>` : ''}
+            ${item.productionCode ? `<div class="mt-1 text-[7pt] font-semibold tracking-wide text-gray-600">Production Code: ${escapeHtml(item.productionCode)}</div>` : ''}
           </td>
           <td class="py-2 px-1 text-center text-gray-600">${escapeHtml(formatQuantity(item.qty))}</td>
           <td class="py-2 px-1 text-right text-gray-600">${escapeHtml(formatCurrency(item.price))}</td>

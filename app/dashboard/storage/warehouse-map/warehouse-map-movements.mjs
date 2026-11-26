@@ -4,6 +4,8 @@ const MOVEMENT_LABELS = {
   TEMPORARY_IN: 'To temporary area',
   TEMPORARY_RETURN: 'Returned from temporary',
   PUTAWAY_IN: 'Stored to shelving',
+  RESTOCK_OUT: 'Restock pick',
+  RESTOCK_REVERSE_IN: 'Restock reversed',
   CUSTOMER_RETURN_IN: 'Customer return',
   CUSTOMER_REPLACEMENT_OUT: 'Replacement out',
   QC_RECHECK_OUT: 'Re-QC',

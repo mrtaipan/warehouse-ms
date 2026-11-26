@@ -1373,6 +1373,7 @@ function buildGarmentPrintBundle(rawBundle) {
     poId: String(po.po_id || '').trim().toUpperCase(),
     method: String(po.method || '').trim().toUpperCase(),
     poCreatedAt: po.created_at,
+    supplierCode: supplier.supplierCode || '',
     header: {
       supplierName: supplier.supplierName || String(po.supplier_name || '').trim().toUpperCase() || '-',
       supplierAddress: supplier.address || '',

@@ -478,6 +478,7 @@ export default function TakeRequestsMobile() {
       .update({
         take_from: selectedSourceLabel,
         storage_id: selectedSourceStorageId,
+        fulfilled_qty: fulfilledQty,
         request_status: 'completed',
         completed_at: new Date().toISOString(),
         completed_by: pickerEmail,

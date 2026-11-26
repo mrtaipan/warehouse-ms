@@ -443,6 +443,7 @@ function buildGarmentPrintBundle(bundle) {
     poId: String(bundle.po?.po_id || '').trim().toUpperCase(),
     method: String(bundle.po?.method || '').trim().toUpperCase(),
     poCreatedAt: bundle.po?.created_at,
+    supplierCode: bundle.supplier?.supplierCode || '',
     header: {
       supplierName: bundle.supplier?.supplierName || String(bundle.po?.supplier_name || '').trim().toUpperCase() || '-',
       supplierAddress: bundle.supplier?.address || '',

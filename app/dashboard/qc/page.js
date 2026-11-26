@@ -8,7 +8,7 @@ import { useRealtimeRefresh } from '@/utils/supabase/use-realtime-refresh'
 import RegularReQcWorkflow from '@/components/regular-reqc-workflow'
 import ArklineReQcSourceSwitch from '@/components/arkline-reqc-source-switch'
 import { loadArklineReQcLoanSources } from '@/utils/arkline-reqc-loan-sources.mjs'
-import { buildArklineRejectDetailUsage } from '@/utils/arkline-reject-detail-usage.mjs'
+import { buildArklineRejectDetailUsage, clampArklineRejectDraftQty, getArklineRejectUsageBreakdown, mergeArklineRejectDraftRows } from '@/utils/arkline-reject-detail-usage.mjs'
 import { getQcProductGroupKey } from '@/utils/qc-product-identity.mjs'
 import { loadProductCatalog, withCurrentProductLabels } from '@/utils/product-catalog-display.mjs'
 import ProductVariantCode from '@/components/product-variant-code'
@@ -1665,8 +1665,14 @@ function buildReadOnlyRejectReasonSummaryRows(
     const reasonId = String(row?.rejectReasonId || row?.reject_reason_id || '').trim()
     const reason = getRejectReasonDisplayName(row, reasonNameById)
     const isRepairable = getRejectReasonRepairability(row, repairableById)
-    const flowQtyByRejectDetailId = isRepairable ? returnedQtyByRejectDetailId : storedQtyByRejectDetailId
-    const returnedQty = Math.min(qty, Number(flowQtyByRejectDetailId.get(String(row?.id || '')) || 0))
+    const detailId = String(row?.id || '')
+    const usage = getArklineRejectUsageBreakdown(
+      qty,
+      returnedQtyByRejectDetailId.get(detailId),
+      storedQtyByRejectDetailId.get(detailId)
+    )
+    const primaryFlowQty = isRepairable ? usage.sentQty : usage.storedQty
+    const otherFlowQty = isRepairable ? usage.storedQty : usage.sentQty
     const groupKey = `${isRepairable ? 'repairable' : 'unrepairable'}|||${reasonId || reason}`
     const current = grouped.get(groupKey) || {
       key: groupKey,
@@ -1675,14 +1681,18 @@ function buildReadOnlyRejectReasonSummaryRows(
       qtyB: 0,
       qtyC: 0,
       totalQty: 0,
-      returnedQty: 0,
+      primaryFlowQty: 0,
+      otherFlowQty: 0,
+      processedQty: 0,
       sizes: new Map(),
     }
     const grade = String(row?.grade || '').trim().toUpperCase()
     if (grade === 'B') current.qtyB += qty
     if (grade === 'C') current.qtyC += qty
     current.totalQty += qty
-    current.returnedQty += returnedQty
+    current.primaryFlowQty += primaryFlowQty
+    current.otherFlowQty += otherFlowQty
+    current.processedQty += usage.processedQty
 
     const size = String(row?.size || '-').trim().toUpperCase() || '-'
     const sizeRow = current.sizes.get(size) || {
@@ -1690,13 +1700,17 @@ function buildReadOnlyRejectReasonSummaryRows(
       qtyB: 0,
       qtyC: 0,
       totalQty: 0,
-      returnedQty: 0,
+      primaryFlowQty: 0,
+      otherFlowQty: 0,
+      processedQty: 0,
       dates: new Set(),
     }
     if (grade === 'B') sizeRow.qtyB += qty
     if (grade === 'C') sizeRow.qtyC += qty
     sizeRow.totalQty += qty
-    sizeRow.returnedQty += returnedQty
+    sizeRow.primaryFlowQty += primaryFlowQty
+    sizeRow.otherFlowQty += otherFlowQty
+    sizeRow.processedQty += usage.processedQty
     const dateValue = getRejectDetailDateValue(row, taskById)
     if (dateValue) sizeRow.dates.add(dateValue)
     current.sizes.set(size, sizeRow)
@@ -1706,13 +1720,13 @@ function buildReadOnlyRejectReasonSummaryRows(
   return Array.from(grouped.values())
     .map((row) => ({
       ...row,
-      availableQty: Math.max(0, Number(row.totalQty || 0) - Number(row.returnedQty || 0)),
-      repairStatus: getRepairFlowStatus(row.totalQty, row.returnedQty),
+      availableQty: Math.max(0, Number(row.totalQty || 0) - Number(row.processedQty || 0)),
+      repairStatus: getRepairFlowStatus(row.totalQty, row.processedQty),
       sizes: Array.from(row.sizes.values())
         .map((sizeRow) => ({
           ...sizeRow,
-          availableQty: Math.max(0, Number(sizeRow.totalQty || 0) - Number(sizeRow.returnedQty || 0)),
-          repairStatus: getRepairFlowStatus(sizeRow.totalQty, sizeRow.returnedQty),
+          availableQty: Math.max(0, Number(sizeRow.totalQty || 0) - Number(sizeRow.processedQty || 0)),
+          repairStatus: getRepairFlowStatus(sizeRow.totalQty, sizeRow.processedQty),
         }))
         .sort((a, b) => compareApparelSize(a.size, b.size)),
     }))
@@ -1819,6 +1833,7 @@ export default function QcDashboardPage() {
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
   const [rejectDetailError, setRejectDetailError] = useState('')
+  const [rejectDetailNotice, setRejectDetailNotice] = useState('')
   const [pausingAll, setPausingAll] = useState(false)
   const [showPauseConfirm, setShowPauseConfirm] = useState(false)
   const [regularReQcMetrics, setRegularReQcMetrics] = useState({ allocation: 0, graded: 0, gap: 0 })
@@ -3099,6 +3114,27 @@ export default function QcDashboardPage() {
       }),
     [arklineRejectDetails, dateFrom, dateTo, hasInvalidDateRange, selectedRejectSummaryKey, selectedRejectTaskIds]
   )
+  const selectedRejectUsage = useMemo(
+    () => buildArklineRejectDetailUsage(selectedRejectExistingDetails, arklineReturnBatchLines, arklineRejectionStorageLines),
+    [selectedRejectExistingDetails, arklineReturnBatchLines, arklineRejectionStorageLines]
+  )
+  const selectedRejectLockedQtyByKey = selectedRejectUsage.usedQtyByKey
+  const selectedRejectSavedQtyByKey = useMemo(() => {
+    const result = new Map()
+    selectedRejectExistingDetails.forEach((item) => {
+      const key = getRejectDraftKey(item)
+      result.set(key, Number(result.get(key) || 0) + Number(item.qty || 0))
+    })
+    return result
+  }, [selectedRejectExistingDetails])
+  const selectedRejectLockedRowIdByKey = useMemo(() => {
+    const result = new Map()
+    rejectDraftRows.forEach((row) => {
+      const key = getRejectDraftKey(row)
+      if (!result.has(key)) result.set(key, row.id)
+    })
+    return result
+  }, [rejectDraftRows])
   const selectedRejectExistingAdjustments = useMemo(() => {
     if (!rejectDetailSummary) return []
 
@@ -4123,6 +4159,7 @@ export default function QcDashboardPage() {
 
     setRejectDetailSummary(summary)
     setRejectDetailError('')
+    setRejectDetailNotice('')
     setRejectDraftRows(initialRows.length ? initialRows : [createRejectDraftRow()])
     setExpandedRejectReasonRows({})
     setReadOnlyRejectSections({
@@ -4163,6 +4200,7 @@ export default function QcDashboardPage() {
   }
 
   function updateRejectDraftRow(rowId, field, value) {
+    setRejectDetailNotice('')
     setRejectDraftRows((rows) =>
       rows.map((row) => {
         if (row.id !== rowId) return row
@@ -4176,8 +4214,29 @@ export default function QcDashboardPage() {
     )
   }
 
+  function getRejectUsageSourceText(key) {
+    const sentQty = Number(selectedRejectUsage.sentQtyByKey.get(key) || 0)
+    const storedQty = Number(selectedRejectUsage.storedQtyByKey.get(key) || 0)
+    return [
+      sentQty > 0 ? `${sentQty} pcs in a return batch` : '',
+      storedQty > 0 ? `${storedQty} pcs in reject storage` : '',
+    ].filter(Boolean).join(', ')
+  }
+
   function removeRejectDraftRow(rowId) {
-    setRejectDraftRows((rows) => (rows.length > 1 ? rows.filter((row) => row.id !== rowId) : [createRejectDraftRow()]))
+    const row = rejectDraftRows.find((item) => item.id === rowId)
+    const key = getRejectDraftKey(row)
+    const firstRow = rejectDraftRows.find((item) => getRejectDraftKey(item) === key)
+    const lockedQty = firstRow?.id === rowId ? Number(selectedRejectLockedQtyByKey.get(key) || 0) : 0
+    setRejectDetailNotice(lockedQty > 0 ? `${lockedQty} pcs kept: ${getRejectUsageSourceText(key)}.` : '')
+    setRejectDraftRows((rows) => {
+      const row = rows.find((item) => item.id === rowId)
+      const key = getRejectDraftKey(row)
+      const firstRow = rows.find((item) => getRejectDraftKey(item) === key)
+      const lockedQty = firstRow?.id === rowId ? Number(selectedRejectLockedQtyByKey.get(key) || 0) : 0
+      if (lockedQty > 0) return rows.map((item) => item.id === rowId ? { ...item, qty: String(lockedQty) } : item)
+      return rows.length > 1 ? rows.filter((item) => item.id !== rowId) : [createRejectDraftRow()]
+    })
   }
 
   async function resolveRejectReasonId(row) {
@@ -4360,6 +4419,7 @@ export default function QcDashboardPage() {
     if (!rejectDetailSummary) return
 
     setRejectDetailError('')
+    setRejectDetailNotice('')
     setSuccess('')
 
     if (!canEditArklineRejectDetail) {
@@ -4370,11 +4430,23 @@ export default function QcDashboardPage() {
     setSavingRejectDetail(true)
 
     try {
-      if (!rejectDraftRows.length) {
+      const normalizedDraftRows = rejectDraftRows.map((row) => {
+        const key = getRejectDraftKey(row)
+        const lockedQty = selectedRejectLockedRowIdByKey.get(key) === row.id
+          ? Number(selectedRejectLockedQtyByKey.get(key) || 0)
+          : 0
+        const qty = clampArklineRejectDraftQty(row.qty, lockedQty)
+        return qty === row.qty ? row : { ...row, qty }
+      })
+      if (normalizedDraftRows.some((row, index) => row !== rejectDraftRows[index])) {
+        setRejectDraftRows(normalizedDraftRows)
+      }
+
+      if (!normalizedDraftRows.length) {
         throw new Error('Tambahkan minimal satu baris reject detail.')
       }
 
-      const validRows = rejectDraftRows.filter((row) => Number(row.qty || 0) > 0)
+      const validRows = normalizedDraftRows.filter((row) => Number(row.qty || 0) > 0)
 
       if (!validRows.length && selectedRejectExpectedRejectQty > 0) {
         throw new Error('Tambahkan minimal satu baris reject detail.')
@@ -4395,7 +4467,11 @@ export default function QcDashboardPage() {
         }
       })
 
-      if (selectedRejectExpectedRejectQty > 0 && selectedRejectGap !== 0) {
+      const detailQty = normalizedDraftRows.reduce(
+        (sum, row) => sum + (hasResolvableRejectDraftReason(row) ? Number(row.qty || 0) : 0),
+        0
+      )
+      if (selectedRejectExpectedRejectQty > 0 && selectedRejectExpectedRejectQty !== detailQty) {
         throw new Error('Total detail + adjustment harus sama dengan total Grade B/C awal.')
       }
 
@@ -4403,6 +4479,7 @@ export default function QcDashboardPage() {
       for (const row of validRows) {
         rowsWithReasons.push({ ...row, rejectReasonId: await resolveRejectReasonId(row) })
       }
+      const groupedRowsWithReasons = mergeArklineRejectDraftRows(rowsWithReasons)
 
       const existingDetailIds = selectedRejectExistingDetails.map((item) => item.id).filter(Boolean)
       const { data: returnLineRows, error: returnLineError } = existingDetailIds.length
@@ -4433,7 +4510,7 @@ export default function QcDashboardPage() {
         .filter(Boolean)
 
       const desiredQtyByKey = new Map()
-      rowsWithReasons.forEach((row) => {
+      groupedRowsWithReasons.forEach((row) => {
         const key = getRejectDraftKey(row)
         desiredQtyByKey.set(key, Number(desiredQtyByKey.get(key) || 0) + Number(row.qty || 0))
       })
@@ -4441,7 +4518,9 @@ export default function QcDashboardPage() {
       for (const [key, lockedQty] of lockedQtyByKey.entries()) {
         const desiredQty = Number(desiredQtyByKey.get(key) || 0)
         if (desiredQty < Number(lockedQty || 0)) {
-          throw new Error('Qty Reject Detail tidak boleh kurang dari qty yang sudah dikirim untuk return atau disimpan.')
+          const [grade, reasonId, size] = key.split('|||')
+          const reason = selectedRejectReasonNameById.get(reasonId) || 'Unknown reason'
+          throw new Error(`Grade ${grade}, ${reason}, size ${size}: minimum ${lockedQty} pcs already sent or stored. Current detail is ${desiredQty} pcs.`)
         }
       }
 
@@ -4457,7 +4536,7 @@ export default function QcDashboardPage() {
       }
       const detailPayload = []
 
-      rowsWithReasons.forEach((row) => {
+      groupedRowsWithReasons.forEach((row) => {
         const key = getRejectDraftKey(row)
         const lockedQty = Number(lockedQtyByKey.get(key) || 0)
         let remaining = Number(row.qty || 0) - lockedQty
@@ -4596,8 +4675,10 @@ export default function QcDashboardPage() {
 
   function renderReadOnlyRejectSummarySectionRows(title, rows, tone = 'neutral') {
     const totalQty = rows.reduce((sum, item) => sum + Number(item.totalQty || 0), 0)
-    const sentQty = rows.reduce((sum, item) => sum + Number(item.returnedQty || 0), 0)
+    const primaryFlowQty = rows.reduce((sum, item) => sum + Number(item.primaryFlowQty || 0), 0)
+    const otherFlowQty = rows.reduce((sum, item) => sum + Number(item.otherFlowQty || 0), 0)
     const flowLabel = tone === 'unrepairable' ? 'Stored' : 'Sent'
+    const otherFlowLabel = tone === 'unrepairable' ? 'Returned' : 'Stored'
     const flowLabelLower = flowLabel.toLowerCase()
     const sectionStyle = {
       ...styles.rejectSummarySectionRow,
@@ -4612,7 +4693,8 @@ export default function QcDashboardPage() {
             <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
               <span>{title}</span>
               <span>
-                {formatNumber(sentQty)} / {formatNumber(totalQty)} {flowLabelLower}
+                {formatNumber(primaryFlowQty)} / {formatNumber(totalQty)} {flowLabelLower}
+                {otherFlowQty > 0 ? `, ${formatNumber(otherFlowQty)} ${otherFlowLabel.toLowerCase()}` : ''}
               </span>
             </span>
           </td>
@@ -4627,9 +4709,10 @@ export default function QcDashboardPage() {
                   <td style={{ ...styles.td, ...styles.tdCenter }}>{formatNumber(item.qtyB)}</td>
                   <td style={{ ...styles.td, ...styles.tdCenter }}>{formatNumber(item.qtyC)}</td>
                   <td style={{ ...styles.td, ...styles.tdCenter }}>{formatNumber(item.totalQty)}</td>
-                  <td style={{ ...styles.td, ...styles.tdCenter }}>{formatNumber(item.returnedQty)}</td>
+                  <td style={{ ...styles.td, ...styles.tdCenter }}>{formatNumber(item.processedQty)}</td>
                   <td style={{ ...styles.td, ...styles.tdCenter }}>
-                    {renderRepairFlowStatus(item.totalQty, item.returnedQty, item.repairStatus, flowLabel)}
+                    {renderRepairFlowStatus(item.totalQty, item.processedQty, item.repairStatus, item.primaryFlowQty ? flowLabel : otherFlowLabel)}
+                    {item.otherFlowQty > 0 ? <div style={styles.smallNote}>{formatNumber(item.otherFlowQty)} {otherFlowLabel.toLowerCase()}</div> : null}
                   </td>
                   <td style={{ ...styles.td, ...styles.tdCenter }}>
                     <button
@@ -4666,10 +4749,11 @@ export default function QcDashboardPage() {
                               <td style={{ ...styles.td, ...styles.tdCenter }}>{formatNumber(sizeRow.qtyB)}</td>
                               <td style={{ ...styles.td, ...styles.tdCenter }}>{formatNumber(sizeRow.qtyC)}</td>
                               <td style={{ ...styles.td, ...styles.tdCenter }}>{formatNumber(sizeRow.totalQty)}</td>
-                              <td style={{ ...styles.td, ...styles.tdCenter }}>{formatNumber(sizeRow.returnedQty)}</td>
+                              <td style={{ ...styles.td, ...styles.tdCenter }}>{formatNumber(sizeRow.primaryFlowQty)}</td>
                               <td style={{ ...styles.td, ...styles.tdCenter }}>{formatNumber(sizeRow.availableQty)}</td>
                               <td style={{ ...styles.td, ...styles.tdCenter }}>
-                                {renderRepairFlowStatus(sizeRow.totalQty, sizeRow.returnedQty, sizeRow.repairStatus, flowLabel)}
+                                {renderRepairFlowStatus(sizeRow.totalQty, sizeRow.processedQty, sizeRow.repairStatus, sizeRow.primaryFlowQty ? flowLabel : otherFlowLabel)}
+                                {sizeRow.otherFlowQty > 0 ? <div style={styles.smallNote}>{formatNumber(sizeRow.otherFlowQty)} {otherFlowLabel.toLowerCase()}</div> : null}
                               </td>
                               <td style={styles.td}>{Array.from(sizeRow.dates || []).sort().join(', ') || '-'}</td>
                             </tr>
@@ -6028,6 +6112,7 @@ export default function QcDashboardPage() {
 
             {!canEditArklineRejectDetail ? <div style={styles.warningBox}>{rejectDetailReadOnlyReason}</div> : null}
             {rejectDetailError ? <p style={{ color: '#dc2626', margin: 0 }}>{rejectDetailError}</p> : null}
+            {rejectDetailNotice ? <p style={{ color: '#475569', margin: 0, fontSize: '13px' }}>{rejectDetailNotice}</p> : null}
             {success ? <p style={{ color: '#16a34a', margin: 0 }}>{success}</p> : null}
 
             <div style={styles.rejectDetailGrid}>
@@ -6118,14 +6203,20 @@ export default function QcDashboardPage() {
                 <span style={{ ...styles.label, textAlign: 'right' }}>Action</span>
               </div>
 
-              {displayRejectDraftRows.map((row, index) => (
+              {displayRejectDraftRows.map((row) => {
+                const key = getRejectDraftKey(row)
+                const lockedQty = selectedRejectLockedRowIdByKey.get(key) === row.id
+                  ? Number(selectedRejectLockedQtyByKey.get(key) || 0)
+                  : 0
+                const fullyUsed = lockedQty > 0 && Number(selectedRejectSavedQtyByKey.get(key) || 0) <= lockedQty
+                return (
                 <div key={row.id} style={styles.rejectRowGrid}>
                   <div style={styles.field}>
                     <select
                       value={row.grade}
                       onChange={(event) => updateRejectDraftRow(row.id, 'grade', event.target.value)}
-                      style={{ ...styles.select, ...(!canEditArklineRejectDetail ? styles.disabledInput : {}) }}
-                      disabled={!canEditArklineRejectDetail}
+                      style={{ ...styles.select, ...(!canEditArklineRejectDetail || lockedQty > 0 ? styles.disabledInput : {}) }}
+                      disabled={!canEditArklineRejectDetail || lockedQty > 0}
                     >
                       <option value="B">B</option>
                       <option value="C">C</option>
@@ -6135,8 +6226,8 @@ export default function QcDashboardPage() {
                     <select
                       value={row.rejectReasonId}
                       onChange={(event) => updateRejectDraftRow(row.id, 'rejectReasonId', event.target.value)}
-                      style={{ ...styles.select, ...(!canEditArklineRejectDetail ? styles.disabledInput : {}) }}
-                      disabled={!canEditArklineRejectDetail}
+                      style={{ ...styles.select, ...(!canEditArklineRejectDetail || lockedQty > 0 ? styles.disabledInput : {}) }}
+                      disabled={!canEditArklineRejectDetail || lockedQty > 0}
                     >
                       <option value="">Choose reason</option>
                       {selectedRejectReasonOptions.map((reason) => (
@@ -6159,19 +6250,26 @@ export default function QcDashboardPage() {
                   <div style={styles.field}>
                     <input
                       type="number"
-                      min="0"
+                      min={lockedQty}
                       value={row.qty}
                       onChange={(event) => updateRejectDraftRow(row.id, 'qty', event.target.value)}
-                      style={{ ...styles.input, ...(!canEditArklineRejectDetail ? styles.disabledInput : {}) }}
-                      disabled={!canEditArklineRejectDetail}
+                      onBlur={() => {
+                        const nextQty = clampArklineRejectDraftQty(row.qty, lockedQty)
+                        if (nextQty !== row.qty) {
+                          updateRejectDraftRow(row.id, 'qty', nextQty)
+                          if (lockedQty > 0) setRejectDetailNotice(`${lockedQty} pcs kept: ${getRejectUsageSourceText(key)}.`)
+                        }
+                      }}
+                      style={{ ...styles.input, ...(!canEditArklineRejectDetail || fullyUsed ? styles.disabledInput : {}) }}
+                      disabled={!canEditArklineRejectDetail || fullyUsed}
                     />
                   </div>
                   <div style={styles.field}>
                     <input
                       value={row.size}
                       onChange={(event) => updateRejectDraftRow(row.id, 'size', event.target.value)}
-                      style={{ ...styles.input, ...(!canEditArklineRejectDetail ? styles.disabledInput : {}) }}
-                      disabled={!canEditArklineRejectDetail}
+                      style={{ ...styles.input, ...(!canEditArklineRejectDetail || lockedQty > 0 ? styles.disabledInput : {}) }}
+                      disabled={!canEditArklineRejectDetail || lockedQty > 0}
                       list="arkline-reject-size-options"
                       placeholder={selectedRejectSizeOptions.length ? 'Choose size' : 'Size'}
                     />
@@ -6188,16 +6286,18 @@ export default function QcDashboardPage() {
                     </button>
                     <button
                       type="button"
-                      style={styles.iconSmallButton}
+                      style={{ ...styles.iconSmallButton, ...(!canEditArklineRejectDetail || fullyUsed ? styles.disabledInput : {}) }}
                       onClick={() => removeRejectDraftRow(row.id)}
-                      title={displayRejectDraftRows.length > 1 ? 'Remove row' : 'Clear row'}
-                      aria-label={displayRejectDraftRows.length > 1 ? 'Remove row' : 'Clear row'}
+                      disabled={!canEditArklineRejectDetail || fullyUsed}
+                      title={fullyUsed ? `Already processed: ${getRejectUsageSourceText(key)}` : lockedQty > 0 ? `Keep ${lockedQty} pcs (${getRejectUsageSourceText(key)})` : displayRejectDraftRows.length > 1 ? 'Remove row' : 'Clear row'}
+                      aria-label={fullyUsed ? 'Already processed' : lockedQty > 0 ? 'Clear unused qty' : displayRejectDraftRows.length > 1 ? 'Remove row' : 'Clear row'}
                     >
                       X
                     </button>
                   </div>
                 </div>
-              ))}
+                )
+              })}
             </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>

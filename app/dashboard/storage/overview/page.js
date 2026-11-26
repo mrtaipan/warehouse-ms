@@ -3,6 +3,7 @@
 import Link from 'next/link'
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
+import { RotateCcw, Trash2 } from 'lucide-react'
 import { createClient } from '@/utils/supabase/browser'
 import { ADMIN_EMAIL, getRoleLockedGroup, getStorageFeatureAccess, resolveRole } from '@/utils/permissions'
 import { getRolePermissionCodes } from '@/utils/role-permissions'
@@ -850,8 +851,7 @@ async function fetchCategoryDirectory() {
 async function fetchAllRestockHistory() {
   const { data, error } = await supabase
     .from('restock_request')
-    .select('id, requester_name, item_name, size, qty, take_from, search_term, request_status, completed_by, created_at, completed_at')
-    .order('completed_at', { ascending: false })
+    .select('id, requester_name, item_name, size, qty, fulfilled_qty, take_from, search_term, request_status, destination_area, return_case_id, completed_by, created_at, completed_at')
     .order('created_at', { ascending: false })
     .limit(500)
 
@@ -1120,6 +1120,7 @@ const EMPTY_STORAGE_ACCESS = {
   rejectStorageView: false,
   rejectStoragePrint: false,
   pickHistory: false,
+  canReverseRestock: false,
   movementHistory: false,
   productDirectory: false,
   productDirectoryAdd: false,
@@ -1170,6 +1171,7 @@ async function fetchCurrentStorageAccess() {
     ),
     lockedGroup: getRoleLockedGroup(role),
     isAdmin,
+    canReverseRestock: isAdmin || role === 'warehouse_leader',
     canReorderPackaging: isAdmin || role === 'warehouse_leader',
     currentUserId: user.id || '',
     currentUserEmail: user.email || '',
@@ -1251,6 +1253,10 @@ export default function StorageOverviewPage() {
   const [rejectStorageSource, setRejectStorageSource] = useState(initialRejectStorageSource)
   const [arklineRejectViewMode, setArklineRejectViewMode] = useState('koli')
   const [restockHistoryRows, setRestockHistoryRows] = useState([])
+  const [reversingRestockId, setReversingRestockId] = useState('')
+  const [pickHistoryAction, setPickHistoryAction] = useState(null)
+  const [pickHistoryActionError, setPickHistoryActionError] = useState('')
+  const [legacyPickedQty, setLegacyPickedQty] = useState('')
   const [storageQueueRows, setStorageQueueRows] = useState([])
   const [temporarySalesRows, setTemporarySalesRows] = useState([])
   const [storageBundles, setStorageBundles] = useState([])
@@ -1521,6 +1527,33 @@ export default function StorageOverviewPage() {
       setStorageAccess(EMPTY_STORAGE_ACCESS)
     }
   }, [])
+
+  async function confirmPickHistoryAction() {
+    if (!pickHistoryAction || reversingRestockId || !storageAccess.canReverseRestock) return
+
+    setReversingRestockId(pickHistoryAction.id)
+    setPickHistoryActionError('')
+    setError('')
+    setSuccess('')
+    const isCancelled = pickHistoryAction.request_status === 'cancelled'
+    try {
+      const { error: actionError } = await supabase.rpc(
+        isCancelled ? 'delete_cancelled_restock_pick' : 'reverse_restock_pick',
+        isCancelled
+          ? { p_request_id: pickHistoryAction.id }
+          : { p_request_id: pickHistoryAction.id, p_actual_qty: pickHistoryAction.fulfilled_qty == null ? Number(legacyPickedQty) || null : null }
+      )
+      if (actionError) throw actionError
+
+      setPickHistoryAction(null)
+      setSuccess(isCancelled ? 'Cancelled pick deleted.' : 'Pick reversed and stock returned to its source.')
+      await refreshInventoryData({ forceStorage: true })
+    } catch (actionError) {
+      setPickHistoryActionError(actionError.message || 'Could not update pick history.')
+    } finally {
+      setReversingRestockId('')
+    }
+  }
 
   useEffect(() => {
     const initialRefreshId = window.setTimeout(() => {
@@ -2865,6 +2898,9 @@ export default function StorageOverviewPage() {
     visibleRejectKoliNumbers.length > 0 &&
     visibleRejectKoliNumbers.every((koliNumber) => selectedRejectKoliSet.has(koliNumber))
   const visibleHistoryRows = filteredHistoryRows.slice(0, 25)
+  const pickHistoryQtyInvalid = pickHistoryAction?.request_status === 'completed'
+    && pickHistoryAction.fulfilled_qty == null
+    && (!Number.isInteger(Number(legacyPickedQty)) || Number(legacyPickedQty) <= 0)
   const filteredQty = filteredRows.reduce((sum, entry) => sum + Number(entry.qty || 0), 0)
 
   const topTakenItems = Array.from(
@@ -7782,6 +7818,7 @@ export default function StorageOverviewPage() {
                   <th style={styles.th}>Taken From</th>
                   <th style={styles.th}>Picked By</th>
                   <th style={styles.th}>Status</th>
+                  {storageAccess.canReverseRestock ? <th style={styles.th}>Action</th> : null}
                 </tr>
               </thead>
               <tbody>
@@ -7799,6 +7836,22 @@ export default function StorageOverviewPage() {
                         <span style={styles.cellMeta}>{formatDateTime(entry.completed_at || entry.created_at)}</span>
                       </div>
                     </td>
+                    {storageAccess.canReverseRestock ? (
+                      <td style={styles.td}>
+                        {entry.destination_area === 'PICKER' && !entry.return_case_id && (entry.request_status === 'completed' || entry.request_status === 'cancelled') ? (
+                          <button
+                            type="button"
+                            title={entry.request_status === 'cancelled' ? 'Delete cancelled pick' : 'Reverse pick and restore stock'}
+                            aria-label={entry.request_status === 'cancelled' ? 'Delete cancelled pick' : 'Reverse pick and restore stock'}
+                            onClick={() => { setPickHistoryAction(entry); setLegacyPickedQty(String(entry.qty || '')); setPickHistoryActionError('') }}
+                            disabled={Boolean(reversingRestockId)}
+                            style={reversingRestockId ? { ...styles.tableIconButton, ...styles.tableIconButtonDisabled } : { ...styles.tableIconButton, ...styles.tableIconButtonDanger }}
+                          >
+                            {entry.request_status === 'cancelled' ? <Trash2 size={17} strokeWidth={2.2} /> : <RotateCcw size={17} strokeWidth={2.2} />}
+                          </button>
+                        ) : null}
+                      </td>
+                    ) : null}
                   </tr>
                 ))}
               </tbody>
@@ -7850,6 +7903,34 @@ export default function StorageOverviewPage() {
 
       {showStorageLocationGuide ? <StorageLocationGuide onClose={() => setShowStorageLocationGuide(false)} /> : null}
       {showStorageMovementGuide ? <StorageMovementGuide onClose={() => setShowStorageMovementGuide(false)} /> : null}
+      {pickHistoryAction ? (
+        <div style={{ ...styles.modalOverlay, zIndex: 70 }}>
+          <div style={styles.confirmationModalCard} role="dialog" aria-modal="true" aria-labelledby="pick-history-action-title">
+            <p style={styles.modalEyebrow}>Pick History</p>
+            <h2 id="pick-history-action-title" style={styles.modalTitle}>
+              {pickHistoryAction.request_status === 'cancelled' ? 'Delete Cancelled Pick?' : 'Reverse This Pick?'}
+            </h2>
+            <p style={styles.confirmationModalText}>
+              {pickHistoryAction.request_status === 'cancelled'
+                ? <>Remove <strong>{getStorageItemDisplayName(pickHistoryAction)}</strong> from Pick History?</>
+                : <>Return the picked stock for <strong>{getStorageItemDisplayName(pickHistoryAction)}</strong> to its original location and remove this pick? If the stock has already been used elsewhere, the reverse will be blocked.</>}
+            </p>
+            {pickHistoryAction.request_status === 'completed' && pickHistoryAction.fulfilled_qty == null ? (
+              <label style={{ display: 'grid', gap: '8px', marginBottom: '16px', fontWeight: 600 }}>
+                Actual Picked Qty
+                <input type="number" min="1" step="1" value={legacyPickedQty} onChange={(event) => { setLegacyPickedQty(event.target.value); setPickHistoryActionError('') }} style={{ width: '100%', minHeight: '42px', padding: '8px 12px', border: '1px solid #cbd5e1', borderRadius: '6px', fontSize: '16px' }} />
+              </label>
+            ) : null}
+            {pickHistoryActionError ? <p style={{ ...styles.modalInlineError, marginBottom: '16px' }}>{pickHistoryActionError}</p> : null}
+            <div style={styles.modalHeaderActions}>
+              <button type="button" style={styles.modalCloseButton} disabled={Boolean(reversingRestockId)} onClick={() => setPickHistoryAction(null)}>Cancel</button>
+              <button type="button" style={reversingRestockId || pickHistoryQtyInvalid ? { ...styles.modalDeleteButton, opacity: 0.6, cursor: 'not-allowed' } : styles.modalDeleteButton} disabled={Boolean(reversingRestockId) || pickHistoryQtyInvalid} onClick={confirmPickHistoryAction}>
+                {reversingRestockId ? 'Processing...' : pickHistoryAction.request_status === 'cancelled' ? 'Delete' : 'Reverse'}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
       {rejectDeleteEntry ? (
         <div style={{ ...styles.modalOverlay, zIndex: 70 }}>
           <div style={styles.confirmationModalCard} role="dialog" aria-modal="true" aria-labelledby="reject-delete-title">
