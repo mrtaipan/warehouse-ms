@@ -3058,6 +3058,7 @@ export default function ArklineProgressOverviewPage() {
       payments: [],
       qcRows: [],
       materialQcRows: [],
+      materialQcAdjustments: [],
       qcRejectRows: [],
       qcRejectAdjustments: [],
       returnQcRows: [],
@@ -3104,12 +3105,21 @@ export default function ArklineProgressOverviewPage() {
         if (materialUpdateError) throw new Error(materialUpdateError.message)
         if (materialInspectionError) throw new Error(materialInspectionError.message)
         if (materialQcError) throw new Error(materialQcError.message)
+        const materialQcIds = (materialQcRows || []).map((row) => row.id)
+        const { data: materialQcAdjustments, error: materialAdjustmentError } = materialQcIds.length
+          ? await supabase.from('arkline_material_qc_adjustments').select('*')
+            .in('arkline_material_qc_id', materialQcIds)
+            .order('created_at', { ascending: true })
+            .order('id', { ascending: true })
+          : { data: [], error: null }
+        if (materialAdjustmentError) throw new Error(materialAdjustmentError.message)
         setSelectedProductDetail((current) => current?.id === entry.id ? {
           ...current,
           receipts: (materialReceipts || []).map((row) => ({ ...row, size: '', receipt_group_id: row.id })),
           updates: materialUpdates || [],
           materialInspections: materialInspections || [],
           materialQcRows: materialQcRows || [],
+          materialQcAdjustments: materialQcAdjustments || [],
         } : current)
       } catch (error) {
         setProductActionError(error.message || 'Failed to load material receipts.')
@@ -6537,10 +6547,19 @@ export default function ArklineProgressOverviewPage() {
 
               {selectedProductDetail.isMaterialProduct ? (() => {
                 const qcRows = selectedProductDetail.materialQcRows || []
-                const qtyA = qcRows.reduce((sum, row) => sum + Number(row.qty_a || 0), 0)
-                const qtyB = qcRows.reduce((sum, row) => sum + Number(row.qty_b || 0), 0)
-                const qtyC = qcRows.reduce((sum, row) => sum + Number(row.qty_c || 0), 0)
+                const adjustments = selectedProductDetail.materialQcAdjustments || []
+                const adjustedRows = qcRows.map((row) => ({
+                  ...row,
+                  adjusted: applyArklineAdjustmentsToGradeTotals(
+                    row.qty_a, row.qty_b, row.qty_c,
+                    adjustments.filter((item) => String(item.arkline_material_qc_id) === String(row.id))
+                  ),
+                }))
+                const qtyA = adjustedRows.reduce((sum, row) => sum + row.adjusted.qtyA, 0)
+                const qtyB = adjustedRows.reduce((sum, row) => sum + row.adjusted.qtyB, 0)
+                const qtyC = adjustedRows.reduce((sum, row) => sum + row.adjusted.qtyC, 0)
                 const checkedQty = qtyA + qtyB + qtyC
+                const receivedQty = (selectedProductDetail.receipts || []).reduce((sum, row) => sum + Number(row.received_qty || 0), 0)
                 return (
                   <div className={styles.productDetailSection}>
                     <div className={styles.productDetailSectionHead}>
@@ -6556,25 +6575,41 @@ export default function ArklineProgressOverviewPage() {
                       <div className={styles.productDetailRows}>
                         {qcRows.length ? (
                           <>
-                            <div className={`${styles.modalGrid} ${styles.compactModalGrid}`.trim()}>
-                              <div className={styles.modalMetric}><span>Grade A</span><strong>{formatNumber(qtyA)}</strong></div>
-                              <div className={styles.modalMetric}><span>Grade B</span><strong>{formatNumber(qtyB)}</strong></div>
-                              <div className={styles.modalMetric}><span>Grade C</span><strong>{formatNumber(qtyC)}</strong></div>
-                              <div className={styles.modalMetric}><span>Total Inspected</span><strong>{formatNumber(checkedQty)}</strong></div>
+                            <div className={`${styles.modalGrid} ${styles.compactModalGrid}`.trim()} style={{ gridTemplateColumns: 'repeat(4, minmax(0, 1fr))' }}>
+                              <div className={`${styles.modalMetric} ${styles.qcGradeAMetric}`.trim()}>
+                                <span>Grade A</span>
+                                <strong>{formatNumber(qtyA)}</strong>
+                                <small className={styles.metricNote}>{formatPercent(qtyA, checkedQty)} of total QC sample</small>
+                              </div>
+                              <div className={`${styles.modalMetric} ${styles.qcGradeBMetric}`.trim()}>
+                                <span>Grade B</span>
+                                <strong>{formatNumber(qtyB)}</strong>
+                                <small className={styles.metricNote}>{formatPercent(qtyB, checkedQty)} of total QC sample</small>
+                              </div>
+                              <div className={`${styles.modalMetric} ${styles.qcGradeCMetric}`.trim()}>
+                                <span>Grade C</span>
+                                <strong>{formatNumber(qtyC)}</strong>
+                                <small className={styles.metricNote}>{formatPercent(qtyC, checkedQty)} of total QC sample</small>
+                              </div>
+                              <div className={`${styles.modalMetric} ${styles.qcTotalMetric}`.trim()}>
+                                <span>Total QC</span>
+                                <strong>{formatNumber(checkedQty)}</strong>
+                                <small className={styles.metricNote}>{formatPercent(checkedQty, receivedQty)} of receiving qty</small>
+                              </div>
                             </div>
                             <div className={styles.receivingHistoryTableWrap}>
                               <table className={styles.receivingHistoryTable}>
                                 <thead><tr><th>QC Date</th><th>Receipt</th><th>Allocated</th><th>A</th><th>B</th><th>C</th></tr></thead>
                                 <tbody>
-                                  {qcRows.map((row) => {
+                                  {adjustedRows.map((row) => {
                                     return (
                                       <tr key={row.id}>
                                         <td>{formatDateLabel(row.finished_at || row.created_at)}</td>
                                         <td>{(selectedProductDetail.receipts || []).find((receipt) => String(receipt.id) === String(row.material_po_receipt_id))?.supplier_sj || '-'}</td>
                                         <td>{formatNumber(row.allocated_qty)}</td>
-                                        <td>{formatNumber(row.qty_a)}</td>
-                                        <td>{formatNumber(row.qty_b)}</td>
-                                        <td>{formatNumber(row.qty_c)}</td>
+                                        <td>{formatNumber(row.adjusted.qtyA)}</td>
+                                        <td>{formatNumber(row.adjusted.qtyB)}</td>
+                                        <td>{formatNumber(row.adjusted.qtyC)}</td>
                                       </tr>
                                     )
                                   })}

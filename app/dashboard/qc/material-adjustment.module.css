@@ -1,0 +1,28 @@
+.formGrid {
+  display: grid;
+  grid-template-columns: minmax(150px, 0.9fr) 88px 88px 100px minmax(200px, 1.5fr) auto;
+  gap: 10px;
+  align-items: end;
+  min-width: 0;
+}
+
+.formGrid > * {
+  min-width: 0;
+}
+
+.submit {
+  display: flex;
+  justify-content: flex-start;
+  white-space: nowrap;
+}
+
+@media (max-width: 900px) {
+  .formGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .submit {
+    grid-column: 1 / -1;
+    justify-content: flex-end;
+  }
+}

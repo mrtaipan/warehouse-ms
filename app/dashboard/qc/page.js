@@ -12,6 +12,7 @@ import { buildArklineRejectDetailUsage } from '@/utils/arkline-reject-detail-usa
 import { getQcProductGroupKey } from '@/utils/qc-product-identity.mjs'
 import { loadProductCatalog, withCurrentProductLabels } from '@/utils/product-catalog-display.mjs'
 import ProductVariantCode from '@/components/product-variant-code'
+import materialAdjustmentStyles from './material-adjustment.module.css'
 
 const supabase = createClient()
 const QC_GRADE_OPTIONS = ['A', 'B', 'C']
@@ -1833,6 +1834,15 @@ export default function QcDashboardPage() {
   const [qcItems, setQcItems] = useState([])
   const [arklineQcItems, setArklineQcItems] = useState([])
   const [arklineMaterialQcItems, setArklineMaterialQcItems] = useState([])
+  const [materialAdjustments, setMaterialAdjustments] = useState([])
+  const [canAdjustMaterial, setCanAdjustMaterial] = useState(false)
+  const [materialDetail, setMaterialDetail] = useState(null)
+  const [materialTaskId, setMaterialTaskId] = useState('')
+  const [materialAdjustmentDraft, setMaterialAdjustmentDraft] = useState({
+    adjustmentType: 'transfer', fromGrade: '', toGrade: '', affectedGrade: '', qty: '', notes: '',
+  })
+  const [materialAdjustmentError, setMaterialAdjustmentError] = useState('')
+  const [savingMaterialAdjustment, setSavingMaterialAdjustment] = useState(false)
   const [arklineMaterialMode, setArklineMaterialMode] = useState(false)
   const [qcConfirmRows, setQcConfirmRows] = useState([])
   const [returnRows, setReturnRows] = useState([])
@@ -1913,6 +1923,8 @@ export default function QcDashboardPage() {
       { data: qcRows, error: qcError },
       { data: arklineRows, error: arklineError },
       { data: arklineMaterialRows, error: arklineMaterialError },
+      { data: materialAdjustmentRows, error: materialAdjustmentLoadError },
+      { data: materialAdjustmentAllowed, error: materialPermissionError },
       { data: confirmRows, error: confirmError },
       { data: returnData, error: returnError },
       { data: memberRows, error: memberError },
@@ -1984,6 +1996,11 @@ export default function QcDashboardPage() {
         .select('*')
         .order('created_at', { ascending: false })),
       fetchAllSupabaseRows(() => supabase
+        .from('arkline_material_qc_adjustments')
+        .select('*')
+        .order('created_at', { ascending: false })),
+      supabase.rpc('reqc_has_permission', { p_code: 'qc.confirmation.edit' }),
+      fetchAllSupabaseRows(() => supabase
         .from('qc_confirm')
         .select(`
           id,
@@ -2049,7 +2066,7 @@ export default function QcDashboardPage() {
         .order('created_at', { ascending: false })),
       supabase
         .from('dir_user_profiles')
-        .select('id, email, display_name, role, is_qc_active, qc_active_date')
+        .select('id, authenticated_id, email, display_name, role, is_qc_active, qc_active_date')
         .order('display_name', { ascending: true }),
       supabase.from('dir_user_roles').select('role, permission_code').eq('permission_code', 'qc.grading_task.view'),
       fetchAllSupabaseRows(() => supabase
@@ -2187,6 +2204,8 @@ export default function QcDashboardPage() {
       qcError ||
       arklineError ||
       arklineMaterialError ||
+      materialAdjustmentLoadError ||
+      materialPermissionError ||
       confirmError ||
       returnError ||
       memberError ||
@@ -2203,6 +2222,8 @@ export default function QcDashboardPage() {
         qcError?.message ||
           arklineError?.message ||
           arklineMaterialError?.message ||
+          materialAdjustmentLoadError?.message ||
+          materialPermissionError?.message ||
           confirmError?.message ||
           returnError?.message ||
           memberError?.message ||
@@ -2246,6 +2267,8 @@ export default function QcDashboardPage() {
       model_name: row.material_variant || '',
       qc_type: 'INITIAL',
     })))
+    setMaterialAdjustments(materialAdjustmentRows || [])
+    setCanAdjustMaterial(Boolean(materialAdjustmentAllowed))
     setQcConfirmRows((confirmRows || []).map(currentLabels))
     setReturnRows((returnData || []).map(currentLabels))
     setQcMembers(eligibleMembers)
@@ -2279,7 +2302,7 @@ export default function QcDashboardPage() {
     supabase,
     topic: 'qc:summary',
     onRefresh: () => loadDashboard(true),
-    paused: Boolean(showPauseConfirm || previewPhoto || rejectDetailSummary || pauseDetailInspector || savingRejectDetail),
+    paused: Boolean(showPauseConfirm || previewPhoto || rejectDetailSummary || materialDetail || pauseDetailInspector || savingRejectDetail),
   })
 
   const hasInvalidDateRange = Boolean(dateFrom && dateTo && dateFrom > dateTo)
@@ -2576,6 +2599,15 @@ export default function QcDashboardPage() {
 
   const qcResultSummary = useMemo(() => {
     const grouped = new Map()
+    const materialAdjustmentsByTask = new Map()
+    if (qcMode === 'arkline' && arklineMaterialMode) {
+      materialAdjustments.forEach((row) => {
+        const taskId = String(row.arkline_material_qc_id)
+        const rows = materialAdjustmentsByTask.get(taskId) || []
+        rows.push(row)
+        materialAdjustmentsByTask.set(taskId, rows)
+      })
+    }
     const arklineDetailBySummaryKey = new Map()
     const arklineAdjustmentBySummaryKey = new Map()
     const activeArklineTaskIds = new Set(activeItems.map((item) => String(item.id)))
@@ -2779,11 +2811,18 @@ export default function QcDashboardPage() {
           sampleSourceId: isSampleTask && shouldSeparateSampleSummary ? sampleSourceId : null,
         }
 
-      current.qtyA += Number(item.qty_a || 0)
-      current.qtyB += Number(item.qty_b || 0)
-      current.qtyC += Number(item.qty_c || 0)
+      const materialTotals = qcMode === 'arkline' && arklineMaterialMode
+        ? applyArklineAdjustmentsToGradeTotals(
+            item.qty_a, item.qty_b, item.qty_c, materialAdjustmentsByTask.get(String(item.id)) || []
+          )
+        : null
+      current.qtyA += materialTotals ? materialTotals.qtyA : Number(item.qty_a || 0)
+      current.qtyB += materialTotals ? materialTotals.qtyB : Number(item.qty_b || 0)
+      current.qtyC += materialTotals ? materialTotals.qtyC : Number(item.qty_c || 0)
       current.rejectTargetQty += getRejectQty(item)
-      current.checked += getCheckedQty(item)
+      current.checked += materialTotals
+        ? materialTotals.qtyA + materialTotals.qtyB + materialTotals.qtyC
+        : getCheckedQty(item)
       current.photoUrl = current.photoUrl || taskModel.photoUrl
       if (qcMode !== 'regular' || isSampleTask) current.taskRows.push(item)
       grouped.set(key, current)
@@ -3011,6 +3050,7 @@ export default function QcDashboardPage() {
   }, [
     activeItems,
     arklineRejectAdjustments,
+    materialAdjustments,
     activeArklineRejectDetails,
     arklineMaterialMode,
     dateFrom,
@@ -3574,6 +3614,21 @@ export default function QcDashboardPage() {
       }
     })
   }, [activeItems, qcMode])
+
+  const selectedMaterialSummary = qcResultSummary.find((item) => item.key === materialDetail)
+  const selectedMaterialTasks = selectedMaterialSummary?.taskRows || []
+  const selectedMaterialTask = selectedMaterialTasks.find((item) => String(item.id) === materialTaskId)
+  const selectedMaterialAdjustments = materialAdjustments
+    .filter((row) => selectedMaterialTasks.some((task) => String(task.id) === String(row.arkline_material_qc_id)))
+    .sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime())
+  const selectedMaterialTaskAdjustments = selectedMaterialAdjustments.filter(
+    (row) => String(row.arkline_material_qc_id) === materialTaskId
+  )
+  const selectedMaterialTaskTotals = selectedMaterialTask
+    ? applyArklineAdjustmentsToGradeTotals(
+        selectedMaterialTask.qty_a, selectedMaterialTask.qty_b, selectedMaterialTask.qty_c, selectedMaterialTaskAdjustments
+      )
+    : { qtyA: 0, qtyB: 0, qtyC: 0 }
 
   const totalAllocated = activeItems.reduce((sum, item) => sum + Number(item.allocated_qty || 0), 0)
   const totalLocked = activeItems.reduce((sum, item) => sum + Number(item.locked_qty || 0), 0)
@@ -4162,6 +4217,59 @@ export default function QcDashboardPage() {
 
     setArklineRejectReasons((items) => [...items, data].sort((a, b) => a.reason_name.localeCompare(b.reason_name)))
     return data.id
+  }
+
+  async function handleSubmitMaterialAdjustment() {
+    setMaterialAdjustmentError('')
+    if (!canAdjustMaterial || !selectedMaterialTask || selectedMaterialTask.status !== 'done') {
+      setMaterialAdjustmentError('Choose a completed Material QC task first.')
+      return
+    }
+
+    const { adjustmentType, fromGrade, toGrade, affectedGrade, notes } = materialAdjustmentDraft
+    const qty = Number(materialAdjustmentDraft.qty)
+    if (!Number.isSafeInteger(qty) || qty < 1) {
+      setMaterialAdjustmentError('Enter a valid adjustment qty.')
+      return
+    }
+    if (adjustmentType === 'transfer' && (!fromGrade || !toGrade || fromGrade === toGrade)) {
+      setMaterialAdjustmentError('Choose different From and To grades.')
+      return
+    }
+    if (adjustmentType === 'inspector_data_error' && !affectedGrade) {
+      setMaterialAdjustmentError('Choose the grade to reduce.')
+      return
+    }
+    const sourceGrade = adjustmentType === 'transfer' ? fromGrade : affectedGrade
+    const available = selectedMaterialTaskTotals[`qty${sourceGrade}`]
+    if (qty > available) {
+      setMaterialAdjustmentError(`Only ${available} pcs remain in Grade ${sourceGrade} for this QC task.`)
+      return
+    }
+
+    setSavingMaterialAdjustment(true)
+    const { data, error: insertError } = await supabase
+      .from('arkline_material_qc_adjustments')
+      .insert({
+        arkline_material_qc_id: selectedMaterialTask.id,
+        adjustment_type: adjustmentType,
+        from_grade: adjustmentType === 'transfer' ? fromGrade : null,
+        to_grade: adjustmentType === 'transfer' ? toGrade : null,
+        affected_grade: adjustmentType === 'inspector_data_error' ? affectedGrade : null,
+        qty,
+        notes: notes.trim() || null,
+        source_qc_date: getDateOnly(selectedMaterialTask.finished_at || selectedMaterialTask.created_at),
+      })
+      .select('*')
+      .single()
+
+    if (insertError) {
+      setMaterialAdjustmentError(insertError.message)
+    } else {
+      setMaterialAdjustments((rows) => [data, ...rows])
+      setMaterialAdjustmentDraft({ adjustmentType: 'transfer', fromGrade: '', toGrade: '', affectedGrade: '', qty: '', notes: '' })
+    }
+    setSavingMaterialAdjustment(false)
   }
 
   async function handleSubmitRejectAdjustment() {
@@ -5381,7 +5489,7 @@ export default function QcDashboardPage() {
                 <th style={{ ...styles.th, ...styles.thCenter }}>Qty C</th>
                 <th style={{ ...styles.th, ...styles.thCenter }}>Total Inspected</th>
                 {showRegularSplitColumn ? <th style={{ ...styles.th, ...styles.thCenter }}>Action</th> : null}
-                {qcMode !== 'regular' && !isArklineMaterialSummary ? <th style={{ ...styles.th, ...styles.thCenter }}>Detail</th> : null}
+                {qcMode !== 'regular' ? <th style={{ ...styles.th, ...styles.thCenter }}>Detail</th> : null}
               </tr>
             </thead>
             <tbody>
@@ -5444,9 +5552,22 @@ export default function QcDashboardPage() {
                         )}
                       </td>
                     ) : null}
-                    {qcMode !== 'regular' && !isArklineMaterialSummary ? (
+                    {qcMode !== 'regular' ? (
                       <td style={{ ...styles.td, ...styles.tdCenter }}>
-                        <button
+                        {isArklineMaterialSummary ? (
+                          <button
+                            type="button"
+                            style={styles.detailButton}
+                            onClick={() => {
+                              setMaterialDetail(item.key)
+                              setMaterialTaskId(String(item.taskRows?.find((task) => task.status === 'done')?.id || ''))
+                              setMaterialAdjustmentError('')
+                            }}
+                            title="View Material QC and adjustment history"
+                          >
+                            Detail
+                          </button>
+                        ) : <button
                           type="button"
                           style={styles.detailButton}
                           onClick={() => openRejectDetailModal(item)}
@@ -5459,7 +5580,7 @@ export default function QcDashboardPage() {
                           }
                         >
                           Detail
-                        </button>
+                        </button>}
                       </td>
                     ) : null}
                   </tr>
@@ -5467,7 +5588,7 @@ export default function QcDashboardPage() {
                 })
               ) : (
                 <tr>
-                  <td style={styles.td} colSpan={isArklineMaterialSummary ? 6 : qcMode === 're_qc' ? 9 : qcMode === 'arkline' ? 8 : showRegularSplitColumn ? 10 : 9}>
+                  <td style={styles.td} colSpan={isArklineMaterialSummary ? 7 : qcMode === 're_qc' ? 9 : qcMode === 'arkline' ? 8 : showRegularSplitColumn ? 10 : 9}>
                     No QC result found for this filter.
                   </td>
                 </tr>
@@ -5734,6 +5855,141 @@ export default function QcDashboardPage() {
                   )}
                 </tbody>
               </table>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {selectedMaterialSummary ? (
+        <div style={styles.overlay}>
+          <div style={{ ...styles.modal, ...styles.wideModal, boxSizing: 'border-box', maxHeight: 'calc(100dvh - 32px)', overflowX: 'hidden', overflowY: 'auto' }}>
+            <div style={styles.headerRow}>
+              <div>
+                <p style={styles.panelEyebrow}>Arkline Material</p>
+                <h2 style={styles.sectionTitle}>Detail</h2>
+                <p style={styles.subtitle}>{selectedMaterialSummary.brand} / {selectedMaterialSummary.category}</p>
+              </div>
+              <button type="button" onClick={() => setMaterialDetail(null)} style={styles.secondaryButton}>Close</button>
+            </div>
+
+            <div style={{ ...styles.grid, gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 120px), 1fr))', minWidth: 0 }}>
+              {QC_GRADE_OPTIONS.map((grade) => (
+                <div key={grade} style={styles.summaryCard}>
+                  <span style={styles.summaryLabel}>Grade {grade}</span>
+                  <strong style={styles.summaryValue}>{selectedMaterialSummary[`qty${grade}`]}</strong>
+                </div>
+              ))}
+              <div style={styles.summaryCard}>
+                <span style={styles.summaryLabel}>Total Inspected</span>
+                <strong style={styles.summaryValue}>{selectedMaterialSummary.checked}</strong>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12, minWidth: 0 }}>
+              <h3 style={{ ...styles.sectionTitle, fontSize: 16 }}>Adjustment</h3>
+              <div style={{ ...styles.summaryCard, gap: 12, minWidth: 0 }}>
+              <div style={styles.field}>
+                <label style={styles.label} htmlFor="material-qc-task">QC Source</label>
+                <select id="material-qc-task" style={styles.select} value={materialTaskId}
+                  onChange={(event) => { setMaterialTaskId(event.target.value); setMaterialAdjustmentError('') }}>
+                  <option value="">Choose completed QC task</option>
+                  {selectedMaterialTasks.filter((task) => task.status === 'done').map((task) => (
+                    <option key={task.id} value={task.id}>
+                      {getDateOnly(task.finished_at || task.created_at)} / {memberNameMap[String(task.assigned_to || '').toLowerCase()] || task.assigned_to} / A {task.qty_a} B {task.qty_b} C {task.qty_c}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {selectedMaterialTask ? (
+                <p style={{ ...styles.smallNote, margin: 0 }}>
+                  Available for this task: A {selectedMaterialTaskTotals.qtyA}, B {selectedMaterialTaskTotals.qtyB}, C {selectedMaterialTaskTotals.qtyC}.
+                  {' '}The original inspector result stays unchanged.
+                </p>
+              ) : null}
+
+              {canAdjustMaterial && selectedMaterialTask ? (
+                <div className={materialAdjustmentStyles.formGrid}>
+                  <div style={styles.field}>
+                    <label style={styles.label}>Adjustment Type</label>
+                    <select style={styles.select} value={materialAdjustmentDraft.adjustmentType}
+                      onChange={(event) => setMaterialAdjustmentDraft((draft) => ({ ...draft, adjustmentType: event.target.value, fromGrade: '', toGrade: '', affectedGrade: '' }))}>
+                      <option value="transfer">Transfer</option>
+                      <option value="inspector_data_error">QC Inspector Error</option>
+                    </select>
+                  </div>
+                  <div style={styles.field}>
+                    <label style={styles.label}>{materialAdjustmentDraft.adjustmentType === 'transfer' ? 'From' : 'Grade'}</label>
+                    <select style={styles.select}
+                      value={materialAdjustmentDraft.adjustmentType === 'transfer' ? materialAdjustmentDraft.fromGrade : materialAdjustmentDraft.affectedGrade}
+                      onChange={(event) => setMaterialAdjustmentDraft((draft) => draft.adjustmentType === 'transfer'
+                        ? { ...draft, fromGrade: event.target.value, toGrade: draft.toGrade === event.target.value ? '' : draft.toGrade }
+                        : { ...draft, affectedGrade: event.target.value })}>
+                      <option value="">Choose</option>
+                      {QC_GRADE_OPTIONS.map((grade) => <option key={grade} value={grade}
+                        disabled={selectedMaterialTaskTotals[`qty${grade}`] <= 0}>{grade}</option>)}
+                    </select>
+                  </div>
+                  {materialAdjustmentDraft.adjustmentType === 'transfer' ? (
+                    <div style={styles.field}>
+                      <label style={styles.label}>To</label>
+                      <select style={styles.select} value={materialAdjustmentDraft.toGrade}
+                        disabled={!materialAdjustmentDraft.fromGrade}
+                        onChange={(event) => setMaterialAdjustmentDraft((draft) => ({ ...draft, toGrade: event.target.value }))}>
+                        <option value="">Choose</option>
+                        {QC_GRADE_OPTIONS.filter((grade) => grade !== materialAdjustmentDraft.fromGrade)
+                          .map((grade) => <option key={grade} value={grade}>{grade}</option>)}
+                      </select>
+                    </div>
+                  ) : null}
+                  <div style={styles.field}>
+                    <label style={styles.label}>Qty</label>
+                    <input type="number" min="1" step="1" style={styles.input} value={materialAdjustmentDraft.qty}
+                      onChange={(event) => setMaterialAdjustmentDraft((draft) => ({ ...draft, qty: event.target.value }))} placeholder="Qty" />
+                  </div>
+                  <div style={styles.field}>
+                    <label style={styles.label}>Notes</label>
+                    <input style={styles.input} value={materialAdjustmentDraft.notes}
+                      onChange={(event) => setMaterialAdjustmentDraft((draft) => ({ ...draft, notes: event.target.value }))} placeholder="Reason for adjustment" />
+                  </div>
+                  <div className={materialAdjustmentStyles.submit}>
+                    <button type="button" style={styles.primaryButton} disabled={savingMaterialAdjustment}
+                      onClick={handleSubmitMaterialAdjustment}>
+                      {savingMaterialAdjustment ? 'Saving...' : 'Submit Adjustment'}
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+              {materialAdjustmentError ? <p style={styles.errorText}>{materialAdjustmentError}</p> : null}
+              </div>
+
+              <div style={{ minWidth: 0 }}>
+                <h3 style={{ ...styles.sectionTitle, fontSize: 18 }}>Adjustment History</h3>
+                <div style={{ ...styles.tableWrap, maxWidth: '100%' }}>
+                  <table style={styles.table}>
+                    <thead><tr>
+                      <th style={styles.th}>Created</th><th style={styles.th}>QC Source Date</th>
+                      <th style={styles.th}>Inspector</th><th style={styles.th}>Adjusted By</th><th style={styles.th}>Adjustment</th>
+                      <th style={{ ...styles.th, ...styles.thCenter }}>Qty</th><th style={styles.th}>Notes</th>
+                    </tr></thead>
+                    <tbody>
+                      {selectedMaterialAdjustments.length ? selectedMaterialAdjustments.map((row) => {
+                        const task = selectedMaterialTasks.find((item) => String(item.id) === String(row.arkline_material_qc_id))
+                        return <tr key={row.id}>
+                          <td style={styles.td}>{new Date(row.created_at).toLocaleString('en-GB')}</td>
+                          <td style={styles.td}>{row.source_qc_date}</td>
+                          <td style={styles.td}>{memberNameMap[String(task?.assigned_to || '').toLowerCase()] || task?.assigned_to || '-'}</td>
+                          <td style={styles.td}>{qcProfiles.find((profile) => String(profile.authenticated_id) === String(row.created_by))?.display_name || '-'}</td>
+                          <td style={styles.td}>{row.adjustment_type === 'transfer'
+                            ? `${row.from_grade} to ${row.to_grade}` : `QC Inspector Error / ${row.affected_grade}`}</td>
+                          <td style={{ ...styles.td, ...styles.tdCenter }}>{row.qty}</td>
+                          <td style={styles.td}>{row.notes || '-'}</td>
+                        </tr>
+                      }) : <tr><td style={styles.td} colSpan={7}>No adjustments yet.</td></tr>}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
             </div>
           </div>
         </div>

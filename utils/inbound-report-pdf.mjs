@@ -107,10 +107,11 @@ export function drawInboundReportPdf(doc, report, photos = new Map(), font = 'he
   }
   const sectionTitle = (label, firstRowHeight) => {
     ensureSpace(15 + 10 + firstRowHeight)
-    y += 9
-    setFont(12, 'bold')
+    y += 12
+    setFont(15, 'bold')
+    doc.setFont('helvetica', 'bold')
     doc.text(label, MARGIN, y)
-    y += 6
+    y += 1
   }
 
   setFont(20, 'bold')
@@ -136,28 +137,31 @@ export function drawInboundReportPdf(doc, report, photos = new Map(), font = 'he
   const itemLines = linesOf(report.itemName, CONTENT_WIDTH - 2, 9)
   setFont(9)
   doc.text(itemLines, MARGIN, y)
-  y += itemLines.length * 4.2 + 8
+  y += itemLines.length * 4.2 + 3
 
   const cards = [
     ['Total SJ Qty', report.sjQty == null ? 'No data' : formatQty(report.sjQty)],
-    ['Total Receiving Qty', formatQty(report.receivingQty)],
     ['Total Intake Qty', formatQty(report.intakeQty)],
+    ['Total Inbound Retur Qty', formatQty(report.inboundReturnQty)],
+    ['Total Receiving Qty', formatQty(Number(report.intakeQty || 0) + Number(report.inboundReturnQty || 0))],
   ]
   const cardGap = 3
-  const cardWidth = (CONTENT_WIDTH - cardGap * 2) / 3
+  const cardWidth = (CONTENT_WIDTH - cardGap * 3) / 4
+  ensureSpace(24)
   cards.forEach(([label, value], index) => {
     const x = MARGIN + index * (cardWidth + cardGap)
     doc.setFillColor(...PALE)
     doc.setDrawColor(...BORDER)
-    doc.roundedRect(x, y, cardWidth, 20, 1.5, 1.5, 'FD')
-    setFont(6.8, 'bold', MUTED)
-    doc.text(label.toUpperCase(), x + 4, y + 6)
-    setFont(value === 'No data' ? 11 : 16, 'bold')
-    doc.text(value, x + 4, y + 15)
+    doc.roundedRect(x, y, cardWidth, 24, 1.5, 1.5, 'FD')
+    setFont(7, 'bold', MUTED)
+    const labelLines = doc.splitTextToSize(label.toUpperCase(), cardWidth - 8)
+    doc.text(labelLines, x + 4, y + 6)
+    setFont(value === 'No data' ? 10 : 15, 'bold')
+    doc.text(value, x + 4, y + 19)
   })
-  y += 20
+  y += 24
 
-  const drawTable = ({ columns, rows, emptyText, minHeight = 11, photoColumn = -1 }) => {
+  const drawTable = ({ columns, rows, emptyText, minHeight = 11, photoColumn = -1, headingRule = true }) => {
     const drawHeading = () => {
       doc.setFillColor(...PALE)
       doc.rect(MARGIN, y, CONTENT_WIDTH, 10, 'F')
@@ -168,7 +172,7 @@ export function drawInboundReportPdf(doc, report, photos = new Map(), font = 'he
           column.align === 'right' ? { align: 'right' } : undefined)
         x += column.width
       })
-      rule(MARGIN, y + 10, PAGE_WIDTH - MARGIN, INK, 0.5)
+      if (headingRule) rule(MARGIN, y + 10, PAGE_WIDTH - MARGIN, INK, 0.5)
       y += 10
     }
     const drawRow = (row, isTotal = false) => {
@@ -223,6 +227,21 @@ export function drawInboundReportPdf(doc, report, photos = new Map(), font = 'he
     else drawRow({ [columns[0].key]: emptyText })
   }
 
+  ensureSpace(28)
+  y += 8
+  setFont(10, 'bold')
+  doc.text('Inbound Return Reasons', MARGIN, y)
+  y += 2.5
+  drawTable({
+    columns: [
+      { key: 'reason', label: 'Reason', width: 154 },
+      { key: 'qty', label: 'Qty', width: 28, align: 'right' },
+    ],
+    rows: (report.returnReasons || []).map((row) => ({ reason: row.reason, qty: formatQty(row.qty) })),
+    emptyText: 'No inbound returns.',
+    minHeight: 9,
+  })
+
   if (report.sampleQcRows.length) {
     sectionTitle('Sample QC Results', 12)
     const grade = (qty, row) => `${formatQty(qty)} (${formatQty(sampleQcGradePercentage(qty, row))}%)`
@@ -245,6 +264,7 @@ export function drawInboundReportPdf(doc, report, photos = new Map(), font = 'he
       ],
       rows: qcRows,
       minHeight: 12,
+      headingRule: false,
     })
   }
 
@@ -268,6 +288,7 @@ export function drawInboundReportPdf(doc, report, photos = new Map(), font = 'he
     rows: modelRows,
     minHeight: 21,
     photoColumn: 0,
+    headingRule: false,
   })
 
   for (let index = 1; index <= page; index += 1) {

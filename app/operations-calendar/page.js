@@ -1197,25 +1197,22 @@ async function loadRestockRowsForCalendar(supabase, start, end) {
 }
 
 async function loadOperationsCalendarFormOptions(supabase, listRowsPromise) {
-  const [allListRows, { data: unloadRows }] = await Promise.all([
-    listRowsPromise || loadOperationsListRows(supabase),
-    supabase
-      .from('inbound_unload')
-      .select(`
-        inbound_id,
-        brands:dir_brands!brand_id (
-          brand_name
-        )
-      `)
-      .order('created_at', { ascending: false })
-      .limit(1500),
-  ])
+  const allListRows = await (listRowsPromise || loadOperationsListRows(supabase))
   const activeRows = allListRows.filter((row) => !row.isCompleted)
   const activeGrnNumbers = activeRows.map((row) => row.grnNumber).filter((value) => value && value !== '-')
-  const activeInboundById = new Map(activeRows.map((row) => [String(row.id), row.grnNumber]))
+  const activeInboundIds = activeRows.map((row) => row.id).filter(Boolean)
   const targetPairMap = new Map()
 
-  ;(unloadRows || []).forEach((row) => {
+  const unloadRows = await loadInboundRelatedRows(
+    supabase,
+    'inbound_unload',
+    'id, inbound_id, brands:dir_brands!brand_id(brand_name)',
+    activeInboundIds,
+    'target options'
+  )
+  const activeInboundById = new Map(activeRows.map((row) => [String(row.id), row.grnNumber]))
+
+  unloadRows.forEach((row) => {
     const grnNumber = activeInboundById.get(String(row.inbound_id || '')) || ''
     const brandName = String(row.brands?.brand_name || '').trim()
 
@@ -1996,7 +1993,7 @@ async function loadOperationsListRows(supabase) {
     loadInboundRelatedRows(supabase, 'qc_items', 'id, inbound_id, started_at, finished_at, created_at, updated_at', inboundIds, 'QC dates'),
     loadInboundRelatedRows(supabase, 'pl_receiving', 'id, inbound_id, received_qty, validated_at, created_at', inboundIds, 'packing receiving'),
     loadInboundRelatedRows(supabase, 'pl_size_breakdown', 'id, inbound_id, qty, created_at, updated_at', inboundIds, 'packing breakdown'),
-    loadInboundRelatedRows(supabase, 'warehouse_returns', 'id, inbound_id, status, updated_at', inboundIds, 'return dates'),
+    loadInboundRelatedRows(supabase, 'warehouse_returns', 'id, inbound_id, qty, status, updated_at', inboundIds, 'return dates'),
   ])
 
   const unloadByInbound = groupRowsByValue(unloadRows, (row) => String(row.inbound_id || ''))
@@ -2014,11 +2011,8 @@ async function loadOperationsListRows(supabase) {
     const completedReturns = (returnsByInbound.get(inboundId) || []).filter(
       (row) => String(row.status || '').trim().toLowerCase() === 'completed'
     )
-    const sortedQty = sumBy(unloadForInbound, 'qty')
-    const targetQty = sortedQty || Number(inbound.total_claimed_qty || inbound.total_received_qty || 0)
-    const receivedPackingQty = sumBy(receivingForInbound, ['received_qty'])
-    const breakdownPackingQty = sumBy(breakdownForInbound, 'qty')
-    const packingQty = Math.max(receivedPackingQty, breakdownPackingQty)
+    const targetQty = sumBy(unloadForInbound, 'qty') || Number(inbound.total_claimed_qty || inbound.total_received_qty || 0)
+    const returnedQty = sumBy(completedReturns, 'qty')
     const qcDate = getLatestEventDate(qcForInbound, (row) => row.finished_at || row.updated_at || row.created_at || row.started_at)
     const packingDate = getLatestEventDate(
       [...receivingForInbound, ...breakdownForInbound],
@@ -2035,7 +2029,7 @@ async function loadOperationsListRows(supabase) {
       qcDate,
       packingDate,
       returnDate,
-      isCompleted: Boolean(returnDate) || (targetQty > 0 && packingQty >= targetQty),
+      isCompleted: Boolean(returnDate) && (targetQty <= 0 || returnedQty >= targetQty),
     }
   })
 }

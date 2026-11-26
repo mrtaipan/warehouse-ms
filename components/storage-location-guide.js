@@ -6,8 +6,14 @@ import styles from './storage-location-guide.module.css'
 
 const SECTIONS = [
   ['Current Stock', 'Melihat stok yang sudah tersimpan di pallet atau shelving. Dari sini barang dapat dipindahkan, dikeluarkan, atau dikirim ke area sementara.'],
-  ['Queueing Area', 'Storage Queue memuat barang dari packing list yang belum ditempatkan. Shelving Queue memuat barang yang menunggu lokasi shelving, misalnya kelebihan restock atau barang retur. Pilih mode untuk melihat antrean dan aksinya masing-masing.'],
-  ['Temporary Area', 'Temp. Sales Area menyiapkan barang bagi penjualan dan dapat berkurang melalui upload. Temp. Retur Keeping menyisihkan barang untuk retur atau penggantian dan tidak berkurang melalui upload. Pilih mode untuk melihat stok masing-masing.'],
+  ['Queue Area', [
+    ['Storage Queue', 'Barang dari packing list yang belum ditempatkan di lokasi penyimpanan.'],
+    ['Shelving Queue', 'Barang yang menunggu penempatan di shelving, misalnya kelebihan restock atau barang retur.'],
+  ]],
+  ['Temporary Area', [
+    ['Temp. Sales Area', 'Barang sementara untuk penjualan. Stok di sini dapat berkurang melalui upload penjualan.'],
+    ['Temp. Retur Keeping', 'Barang yang disisihkan untuk retur atau penggantian. Stok di sini tidak berkurang melalui upload penjualan.'],
+  ]],
   ['Product Loans', 'Mencatat peminjaman barang untuk keperluan seperti foto atau konten, mulai dari permintaan, pengambilan, pengembalian, hingga penyelesaian pinjaman.'],
   ['Packaging Supplies', 'Melihat persediaan perlengkapan kemasan, mencatat barang masuk dan keluar, serta menentukan batas kapan stok perlu dipesan ulang.'],
   ['Reject Storage', 'Mencatat barang reject di koli Reguler atau Arkline. Barang yang keluar dari koli juga dicatat agar jumlah dan alasannya tetap terlacak.'],
@@ -41,7 +47,9 @@ export default function StorageLocationGuide({ onClose }) {
             <div className={styles.row} key={title}>
               <span className={styles.index}>{String(index + 1).padStart(2, '0')}</span>
               <h3>{title}</h3>
-              <p>{description}</p>
+              {Array.isArray(description) ? <ul className={styles.points}>
+                {description.map(([label, detail]) => <li key={label}><strong>{label}:</strong> {detail}</li>)}
+              </ul> : <p>{description}</p>}
             </div>
           ))}
         </div>

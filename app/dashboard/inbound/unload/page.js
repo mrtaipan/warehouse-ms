@@ -12,6 +12,7 @@ import { useRealtimeRefresh } from '@/utils/supabase/use-realtime-refresh'
 import { nextAvailableVariantCode } from '@/utils/inbound-variant-codes.mjs'
 import { buildSampleQcRows, groupSampleQcByCategory } from '@/utils/inbound-sample-qc-report.mjs'
 import { createInboundReportPdf } from '@/utils/inbound-report-pdf.mjs'
+import { loadInboundReturnSummary } from '@/utils/inbound-report-returns.mjs'
 
 const supabase = createClient()
 const PRODUCT_PHOTOS_BUCKET = 'product-photos'
@@ -2481,6 +2482,7 @@ export default function UnloadPage() {
   const [selectedModel, setSelectedModel] = useState(null)
   const [selectedVariantLabel, setSelectedVariantLabel] = useState('')
   const [qty, setQty] = useState('')
+  const [returnReason, setReturnReason] = useState('')
   const [isSample, setIsSample] = useState(false)
   const [isReturn, setIsReturn] = useState(false)
   const [currentKoliItems, setCurrentKoliItems] = useState([])
@@ -4437,6 +4439,7 @@ export default function UnloadPage() {
     setShowModelModal(false)
     setShowMoveModelModal(false)
     setQty('')
+    setReturnReason('')
 
     if (mode === 'return') {
       setLevel0Id('')
@@ -4476,6 +4479,7 @@ export default function UnloadPage() {
     setSelectedModel(null)
     setSelectedVariantLabel('')
     setQty('')
+    setReturnReason('')
   }
 
   async function handleVariantPhotoChange(event) {
@@ -4856,13 +4860,14 @@ export default function UnloadPage() {
         .sort((a, b) =>
           `${a.brandName} ${a.categoryName}`.localeCompare(`${b.brandName} ${b.categoryName}`)
         )
+      const returnSummary = await loadInboundReturnSummary(supabase, selectedInbound.id)
       const { doc, filename } = await createInboundReportPdf({
         grnNumber: selectedInbound.grn_number,
         supplierName: selectedInbound.suppliers?.supplier_name || '-',
         itemName: selectedInbound.item_name || '-',
         sjQty: selectedInbound.total_claimed_qty,
-        receivingQty: selectedInbound.total_received_qty,
         intakeQty: totalInboundQty,
+        ...returnSummary,
         sampleQcRows: sampleQcCategoryRows,
         modelRows: filteredSummaryRows,
         shownQty: filteredPrintTotalQty,
@@ -5450,6 +5455,11 @@ export default function UnloadPage() {
       return
     }
 
+    if (isReturn && !returnReason.trim()) {
+      setError('Please enter Alasan Retur.')
+      return
+    }
+
     setSaving(true)
 
     if (isSampleResolveBuilder && !builderSampleResolveSource?.id) {
@@ -5552,6 +5562,7 @@ export default function UnloadPage() {
           ...(supportsReturnVariantName ? { variant_name: payload.variant_name } : {}),
           qty: payload.qty,
           pic_name: payload.pic_name,
+          return_reason: returnReason.trim(),
           source_phase: 'inbound',
           koli_sequence: null,
         },
@@ -6642,6 +6653,22 @@ export default function UnloadPage() {
             />
           </div>
         </div>
+
+        {isReturn ? (
+          <div style={styles.field}>
+            <label htmlFor="inbound-return-reason" style={styles.label}>
+              Alasan Retur <span style={styles.requiredMark}>*</span>
+            </label>
+            <textarea
+              id="inbound-return-reason"
+              value={returnReason}
+              onChange={(event) => setReturnReason(event.target.value)}
+              style={{ ...styles.textarea, width: '100%', boxSizing: 'border-box' }}
+              placeholder="Tuliskan alasan retur"
+              required
+            />
+          </div>
+        ) : null}
 
         <div style={styles.buttonRow}>
           {error ? <p style={styles.errorText}>{error}</p> : null}

@@ -3,6 +3,7 @@ import path from 'node:path'
 import { jsPDF } from 'jspdf'
 import { buildSampleQcRows, groupSampleQcByCategory } from './inbound-sample-qc-report.mjs'
 import { drawInboundReportPdf, inboundReportPdfFilename } from './inbound-report-pdf.mjs'
+import { loadInboundReturnSummary } from './inbound-report-returns.mjs'
 
 async function allRows(query, pageSize = 1000) {
   const rows = []
@@ -38,7 +39,7 @@ export async function loadInboundReportData(client, inboundId) {
     .single()
   if (error || !inbound) throw new Error(error?.message || 'GRN not found.')
 
-  const [unloadRows, breakdownRows, qcItems] = await Promise.all([
+  const [unloadRows, breakdownRows, qcItems, returnSummary] = await Promise.all([
     allRows(client.from('inbound_unload')
       .select('id, inbound_id, brand_id, category_id, product_model_id, product_model_variant_id, model_name, variant_name, photo_url, qty, is_sample, is_product_temporary, koli_sequence')
       .eq('inbound_id', inboundId).order('id')),
@@ -48,6 +49,7 @@ export async function loadInboundReportData(client, inboundId) {
     allRows(client.from('qc_items')
       .select('id, inbound_unload_id, qc_type, qty_a, qty_b, qty_c')
       .eq('inbound_id', inboundId).order('id')),
+    loadInboundReturnSummary(client, inboundId),
   ])
 
   const brandIds = [...unloadRows, ...breakdownRows].map((row) => row.brand_id)
@@ -113,8 +115,8 @@ export async function loadInboundReportData(client, inboundId) {
     supplierName: inbound.suppliers?.supplier_name || '-',
     itemName: inbound.item_name || '-',
     sjQty: inbound.total_claimed_qty,
-    receivingQty: inbound.total_received_qty,
     intakeQty: unloadRows.reduce((sum, row) => sum + Number(row.qty || 0), 0),
+    ...returnSummary,
     sampleQcRows,
     modelRows,
     shownQty: modelRows.reduce((sum, row) => sum + row.modelQty, 0),

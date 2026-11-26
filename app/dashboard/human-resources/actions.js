@@ -81,32 +81,6 @@ function isAdminProfile(profile = {}) {
   return String(profile?.role || '').trim().toLowerCase() === 'admin'
 }
 
-async function getLeaveProfileByRequest(supabase, requestRow = {}) {
-  const authenticatedId = String(requestRow?.employee_authenticated_id || '').trim()
-  const email = String(requestRow?.employee_email_snapshot || '').trim().toLowerCase()
-
-  let query = supabase
-    .from('dir_user_profiles')
-    .select('id, authenticated_id, email, role, leave_allocation, leave_used')
-    .limit(1)
-
-  if (authenticatedId) {
-    query = query.eq('authenticated_id', authenticatedId)
-  } else if (email) {
-    query = query.ilike('email', email)
-  } else {
-    return null
-  }
-
-  const { data, error } = await query.maybeSingle()
-
-  if (error) {
-    throw new Error(error.message)
-  }
-
-  return data || null
-}
-
 function refreshHrgaPages() {
   revalidatePath('/dashboard/human-resources')
   revalidatePath('/dashboard/myarklife')
@@ -575,7 +549,7 @@ export async function submitBirthdayGiftRequest(formData) {
 }
 
 export async function approveLeaveRequest(formData) {
-  const { supabase, user, isApprover } = await getActorContext()
+  const { supabase, isApprover } = await getActorContext()
 
   if (!isApprover) {
     throw new Error('Only HRGA approver can update leave requests.')
@@ -588,50 +562,15 @@ export async function approveLeaveRequest(formData) {
     throw new Error('Valid request id and status are required.')
   }
 
-  const { data: requestRow, error: requestError } = await supabase
-    .from('hrga_leave_requests')
-    .select('id, employee_authenticated_id, employee_email_snapshot, start_date, end_date, status')
-    .eq('id', requestId)
-    .maybeSingle()
-
-  if (requestError) {
-    throw new Error(requestError.message)
-  }
-
-  if (!requestRow) {
-    throw new Error('Leave request not found.')
-  }
-
-  if (nextStatus === 'APPROVED' && String(requestRow.status || '').toUpperCase() !== 'APPROVED') {
-    const targetProfile = await getLeaveProfileByRequest(supabase, requestRow)
-
-    if (targetProfile && !isAdminProfile(targetProfile)) {
-      const workingDays = await calculateLeaveWorkingDays(supabase, requestRow.start_date, requestRow.end_date)
-
-      if (workingDays == null) {
-        throw new Error('Unable to calculate leave days for approval.')
-      }
-
-      const nextLeaveUsed = Number(targetProfile.leave_used || 0) + workingDays
-      const { error: leaveUsedError } = await supabase.from('dir_user_profiles').update({ leave_used: nextLeaveUsed }).eq('id', targetProfile.id)
-
-      if (leaveUsedError) {
-        throw new Error(leaveUsedError.message)
-      }
-    }
-  }
-
-  const { error } = await supabase
-    .from('hrga_leave_requests')
-    .update({
-      status: nextStatus,
-      approved_at: new Date().toISOString(),
-      approved_by: user.id,
-    })
-    .eq('id', requestId)
-
+  const { data: updated, error } = await supabase.rpc('hrga_set_leave_request_status', {
+    p_request_id: requestId,
+    p_next_status: nextStatus,
+  })
   if (error) {
     throw new Error(error.message)
+  }
+  if (!updated) {
+    throw new Error('This leave request has already been processed.')
   }
 
   refreshHrgaPages()

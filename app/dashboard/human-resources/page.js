@@ -438,7 +438,7 @@ export default async function HumanResourcesPage() {
                       { label: 'End Date', value: formatDateValue(item.end_date) },
                       { label: 'Submitted At', value: formatDateValue(item.submitted_at) },
                       { label: 'Approved At', value: formatDateValue(item.approved_at) },
-                      { label: 'Approved By', value: item.approved_by || '-' },
+                      { label: 'Approved By', value: item.approved_by === 'AUTO' ? 'Automatic approval' : item.approved_by || '-' },
                     ]}
                     actions={
                       item.status === 'SUBMITTED' ? (
