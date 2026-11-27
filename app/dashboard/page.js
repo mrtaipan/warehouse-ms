@@ -2,7 +2,14 @@ import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { createClient } from '@/utils/supabase/server'
 import { createAdminClient } from '@/utils/supabase/admin'
-import { canAccessOperationsCalendar, getAllowedMenus, getStorageFeatureAccess, hasPermission } from '@/utils/permissions'
+import {
+  canAccessOperationsCalendar,
+  DASHBOARD_SHORTCUT_CODES,
+  getAllowedMenus,
+  getDashboardShortcutVisibilityCodes,
+  getStorageFeatureAccess,
+  hasPermission,
+} from '@/utils/permissions'
 import { loadAccessContext } from '@/utils/access-control'
 import { getBirthdayClaimWindow, getJakartaTodayDateString, getUpcomingBirthdayOffset } from '@/utils/birthday-reminders.mjs'
 import { getGrnRejectionRemaining } from '@/utils/grn-rejection-remaining.mjs'
@@ -78,10 +85,10 @@ function getDailyQuote(email = '') {
   return DAILY_QUOTES[(dateSeed + emailSeed) % DAILY_QUOTES.length]
 }
 
-function getRestockActions(storageAccess) {
+function getRestockActions(storageAccess, shortcutVisibility) {
   const actions = []
 
-  if (storageAccess.restockSubmit) {
+  if (storageAccess.restockSubmit && shortcutVisibility.has(DASHBOARD_SHORTCUT_CODES.restockRequest)) {
     actions.push({
       href: '/restock-request',
       label: 'Restock Request',
@@ -90,7 +97,7 @@ function getRestockActions(storageAccess) {
     })
   }
 
-  if (storageAccess.restockPicker) {
+  if (storageAccess.restockPicker && shortcutVisibility.has(DASHBOARD_SHORTCUT_CODES.stockReplenishment)) {
     actions.push({
       href: '/take-requests',
       label: 'Stock Replenishment',
@@ -99,7 +106,7 @@ function getRestockActions(storageAccess) {
     })
   }
 
-  if (storageAccess.productLoans) {
+  if (storageAccess.productLoans && shortcutVisibility.has(DASHBOARD_SHORTCUT_CODES.productLoanRequest)) {
     actions.push({
       href: '/dashboard/storage/overview?mode=loans&action=new-loan',
       label: 'Product Loan Request',
@@ -903,7 +910,8 @@ export default async function DashboardPage({ searchParams }) {
 
   const menus = getAllowedMenus(role, permissions, isAdmin)
   const storageAccess = getStorageFeatureAccess(role, permissions, isAdmin)
-  const restockActions = getRestockActions(storageAccess)
+  const dashboardShortcutVisibility = new Set(getDashboardShortcutVisibilityCodes(role, permissions, isAdmin))
+  const restockActions = getRestockActions(storageAccess, dashboardShortcutVisibility)
 
   const rawUserLabel =
     profile?.display_name || user.user_metadata?.full_name || user.user_metadata?.name || user.email?.split('@')[0] || 'Team'
@@ -913,9 +921,15 @@ export default async function DashboardPage({ searchParams }) {
   const params = await searchParams
   const selectedGrn = String(params?.grn || '').trim()
   const useGradeACategorySummary = String(params?.gradeASummary || '').trim().toLowerCase() === 'category'
-  const showOperationsCalendarButton = canAccessOperationsCalendar(role, permissions, isAdmin)
-  const showDeliveryReportButton = hasPermission(permissions, 'delivery_report.view', isAdmin)
-  const showPenaltyPointsButton = hasPermission(permissions, 'hrga.penalty_points.view', isAdmin)
+  const showOperationsCalendarButton =
+    canAccessOperationsCalendar(role, permissions, isAdmin)
+    && dashboardShortcutVisibility.has(DASHBOARD_SHORTCUT_CODES.operationsCalendar)
+  const showDeliveryReportButton =
+    hasPermission(permissions, 'delivery_report.view', isAdmin)
+    && dashboardShortcutVisibility.has(DASHBOARD_SHORTCUT_CODES.deliveryReport)
+  const showPenaltyPointsButton =
+    hasPermission(permissions, 'hrga.penalty_points.view', isAdmin)
+    && dashboardShortcutVisibility.has(DASHBOARD_SHORTCUT_CODES.penaltyPoints)
   const canAddPenaltyPoints = hasPermission(permissions, 'hrga.penalty_points.add', isAdmin)
   const showBirthdayGiftRequestAnnouncements = isAdmin || role === 'leader' || role === 'warehouse_leader' || role === 'mob_cs'
 
@@ -1031,7 +1045,8 @@ export default async function DashboardPage({ searchParams }) {
     ...activeBroadcasts, ...birthdayClaimReminder, ...birthdayGiftAnnouncements, ...birthdayReminderAnnouncements,
   ]
 
-  const showMyArklifeButton = true
+  const showMyArklifeButton =
+    menus.myArklife && dashboardShortcutVisibility.has(DASHBOARD_SHORTCUT_CODES.myArklife)
   const adminGrnSummary = isAdmin ? await loadAdminGrnSummary(supabase, selectedGrn) : null
 
   if (!isAdmin) {
@@ -1042,7 +1057,7 @@ export default async function DashboardPage({ searchParams }) {
             <div className={styles.heroTopBar}>
               <span className={styles.heroKicker}>{formatToday()}</span>
               <div className={styles.heroQuickActions}>
-                <ItemSearchShortcutButton />
+                {dashboardShortcutVisibility.has(DASHBOARD_SHORTCUT_CODES.search) ? <ItemSearchShortcutButton /> : null}
                 <RestockShortcutButton actions={restockActions} />
                 {showPenaltyPointsButton ? (
                   <PenaltyPointsShortcutButton
@@ -1116,7 +1131,7 @@ export default async function DashboardPage({ searchParams }) {
           <div className={styles.heroTopBar}>
             <span className={styles.heroKicker}>{formatToday()}</span>
             <div className={styles.heroQuickActions}>
-              <ItemSearchShortcutButton />
+              {dashboardShortcutVisibility.has(DASHBOARD_SHORTCUT_CODES.search) ? <ItemSearchShortcutButton /> : null}
               <RestockShortcutButton actions={restockActions} />
               {showPenaltyPointsButton ? (
                 <PenaltyPointsShortcutButton

@@ -54,7 +54,9 @@ const modules = [
   },
 ]
 
-function Home() {
+const moduleAccessKeys = { summary: 'summary', 'delivery-order': 'orders', barcode: 'scanner', resolution: 'resolution', waybill: 'waybill' }
+
+function Home({ access }) {
   return (
     <div className={styles.homeWrap}>
       <div className={styles.homeShell}>
@@ -70,8 +72,9 @@ function Home() {
         </header>
 
         <div className={styles.moduleBoard}>
+          {!modules.some((module) => access[moduleAccessKeys[module.id]]) ? <EmptyState label="No Delivery Report modules are enabled for your role." /> : null}
           <div className={styles.moduleGrid}>
-            {modules.map((module) => (
+            {modules.filter((module) => access[moduleAccessKeys[module.id]]).map((module) => (
               <Link
                 key={module.id}
                 href={`/dashboard/delivery-report?module=${module.id}`}
@@ -152,28 +155,29 @@ export function Modal({ open, title, description, children, actions, onClose, hi
   return portal && typeof document !== 'undefined' ? createPortal(modal, document.body) : modal
 }
 
-export default function DeliveryReportClient({ lockedGroup = '', isAdmin = false }) {
+export default function DeliveryReportClient({ lockedGroup = '', isAdmin = false, access = {} }) {
   const searchParams = useSearchParams()
   const moduleId = searchParams.get('module')
   const isKnownModule = modules.some((module) => module.id === moduleId)
-  const showHome = !moduleId || !isKnownModule
+  const allowed = Boolean(access[moduleAccessKeys[moduleId]])
+  const showHome = !moduleId || !isKnownModule || !allowed
 
   return (
     <div
-      className={`${styles.deliveryApp} ${moduleId === 'summary' ? styles.summaryApp : ''} ${moduleId === 'delivery-order' ? styles.orderApp : ''} ${moduleId === 'barcode' ? styles.scannerApp : ''} ${moduleId === 'resolution' ? styles.resolutionApp : ''} ${moduleId === 'waybill' ? styles.waybillApp : ''} ${showHome ? styles.homeApp : ''}`}
+      className={`${styles.deliveryApp} ${allowed && moduleId === 'summary' ? styles.summaryApp : ''} ${allowed && moduleId === 'delivery-order' ? styles.orderApp : ''} ${allowed && moduleId === 'barcode' ? styles.scannerApp : ''} ${allowed && moduleId === 'resolution' ? styles.resolutionApp : ''} ${allowed && moduleId === 'waybill' ? styles.waybillApp : ''} ${showHome ? styles.homeApp : ''}`}
       data-delivery-report
       data-delivery-home={showHome ? '' : undefined}
-      data-delivery-summary={moduleId === 'summary' ? '' : undefined}
-      data-delivery-order={moduleId === 'delivery-order' ? '' : undefined}
-      data-delivery-scanner={moduleId === 'barcode' ? '' : undefined}
-      data-delivery-resolution={moduleId === 'resolution' ? '' : undefined}
+      data-delivery-summary={allowed && moduleId === 'summary' ? '' : undefined}
+      data-delivery-order={allowed && moduleId === 'delivery-order' ? '' : undefined}
+      data-delivery-scanner={allowed && moduleId === 'barcode' ? '' : undefined}
+      data-delivery-resolution={allowed && moduleId === 'resolution' ? '' : undefined}
     >
-      {showHome ? <Home /> : null}
-      {moduleId === 'summary' ? <DeliverySummary lockedGroup={lockedGroup} isAdmin={isAdmin} /> : null}
-      {moduleId === 'delivery-order' ? <DeliveryOrder lockedGroup={lockedGroup} /> : null}
-      {moduleId === 'barcode' ? <BarcodeScanner lockedGroup={lockedGroup} /> : null}
-      {moduleId === 'resolution' ? <ResolutionCenter lockedGroup={lockedGroup} /> : null}
-      {moduleId === 'waybill' ? <ManualWaybill lockedGroup={lockedGroup} /> : null}
+      {showHome ? <Home access={access} /> : null}
+      {allowed && moduleId === 'summary' ? <DeliverySummary lockedGroup={lockedGroup} isAdmin={isAdmin} access={access} /> : null}
+      {allowed && moduleId === 'delivery-order' ? <DeliveryOrder lockedGroup={lockedGroup} /> : null}
+      {allowed && moduleId === 'barcode' ? <BarcodeScanner lockedGroup={lockedGroup} /> : null}
+      {allowed && moduleId === 'resolution' ? <ResolutionCenter lockedGroup={lockedGroup} /> : null}
+      {allowed && moduleId === 'waybill' ? <ManualWaybill lockedGroup={lockedGroup} /> : null}
     </div>
   )
 }

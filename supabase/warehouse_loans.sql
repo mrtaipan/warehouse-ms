@@ -4,6 +4,7 @@ create table if not exists public.warehouse_loans (
   id uuid primary key default gen_random_uuid(),
   group_code text not null check (group_code in ('ARKLINE', 'MOB', 'OI')),
   purpose text not null check (length(btrim(purpose)) > 0),
+  request_note text,
   requester_id uuid not null,
   requester_email text not null,
   status text not null default 'REQUESTED'

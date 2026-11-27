@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { createClient } from '@/utils/supabase/browser'
 import { getRolesForPermissionCode } from '@/utils/role-permissions'
-import { buildRegularReQcSizeBreakdown } from '@/utils/regular-reqc-print-summary.mjs'
+import { buildRegularReQcSizeBreakdown, getPopulatedReQcGrades } from '@/utils/regular-reqc-print-summary.mjs'
 import styles from './regular-reqc-workflow.module.css'
 
 const supabase = createClient()
@@ -51,7 +51,9 @@ async function loadAllRows(buildQuery) {
 
 export default function RegularReQcWorkflow({ view = 'queue', source = 'regular', queueIds = null, summaryStyles = {}, externalSearch = null, dateFrom = '', dateTo = '', allTime = true, hideFilters = false, onProductOptionsChange, onSummaryMetricsChange }) {
   const isArklineLoan = source === 'arkline-loan'
+  const resultEyebrow = isArklineLoan ? 'Arkline Re-QC' : 'Reguler Re-QC'
   const [categoryRows, setCategoryRows] = useState([])
+  const [brandRows, setBrandRows] = useState([])
   const [queueRows, setQueueRows] = useState([])
   const [tasks, setTasks] = useState([])
   const [resultRows, setResultRows] = useState([])
@@ -84,7 +86,7 @@ export default function RegularReQcWorkflow({ view = 'queue', source = 'regular'
   const [success, setSuccess] = useState('')
 
   const loadData = useCallback(async () => {
-    const [queueResult, taskResult, resultResult, profileResult, roleResult, rejectResult, categoryResult, rejectStorageResult, adjustmentResult] = await Promise.all([
+    const [queueResult, taskResult, resultResult, profileResult, roleResult, rejectResult, categoryResult, brandResult, rejectStorageResult, adjustmentResult] = await Promise.all([
       loadAllRows(() => {
         const query = supabase.from('reqc_queue').select('*').order('created_at', { ascending: false }).order('id')
         const scoped = isArklineLoan
@@ -98,10 +100,11 @@ export default function RegularReQcWorkflow({ view = 'queue', source = 'regular'
       view === 'queue' ? getRolesForPermissionCode(supabase, 'qc.grading_task.view') : Promise.resolve({ data: [], error: null }),
       view === 'results' ? loadAllRows(() => supabase.from('warehouse_reject_storage').select('id, koli_number').eq('status', 'DRAFT').like('koli_number', 'R-%').order('id')) : Promise.resolve({ data: [], error: null }),
       view === 'results' ? supabase.from('dir_categories').select('id, category_name, full_name') : Promise.resolve({ data: [], error: null }),
+      view === 'results' && !isArklineLoan ? loadAllRows(() => supabase.from('dir_brands').select('brand_code, brand_name').order('id')) : Promise.resolve({ data: [], error: null }),
       view === 'results' ? loadAllRows(() => supabase.from('warehouse_reject_storage').select('id, reqc_result_id, koli_number, status').not('reqc_result_id', 'is', null).order('id')) : Promise.resolve({ data: [], error: null }),
       view === 'results' ? loadAllRows(() => supabase.from('reqc_adjustments').select('*').order('created_at', { ascending: false }).order('id')) : Promise.resolve({ data: [], error: null }),
     ])
-    const failure = queueResult.error || taskResult.error || resultResult.error || profileResult.error || roleResult.error || rejectResult.error || categoryResult.error || rejectStorageResult.error
+    const failure = queueResult.error || taskResult.error || resultResult.error || profileResult.error || roleResult.error || rejectResult.error || categoryResult.error || brandResult.error || rejectStorageResult.error
     if (failure) {
       setError(failure.message || 'Unable to load Re-QC data.')
       setLoading(false)
@@ -112,6 +115,7 @@ export default function RegularReQcWorkflow({ view = 'queue', source = 'regular'
     const roles = new Set((roleResult.data || []).map((row) => row.role))
     const today = getTodayJakarta()
     setCategoryRows(categoryResult.data || [])
+    setBrandRows(brandResult.data || [])
     const scopedQueueIds = new Set((queueResult.data || []).map((row) => row.id))
     const scopedTasks = (taskResult.data || []).filter((row) => scopedQueueIds.has(row.reqc_queue_id))
     const scopedResults = (resultResult.data || []).filter((row) => scopedQueueIds.has(row.reqc_queue_id))
@@ -312,6 +316,7 @@ export default function RegularReQcWorkflow({ view = 'queue', source = 'regular'
   const inspectorName = (email) => profileByEmail.get(String(email || '').trim().toLowerCase()) || 'Inspector not found'
   const rejectKoliByResult = new Map(rejectStorageRows.map((row) => [row.reqc_result_id, row.koli_number]))
   const sizeOptionsForResults = Array.from(new Set(resultRows.map((row) => queueById.get(row.reqc_queue_id)?.size).filter(Boolean))).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
+  const brandNameByCode = new Map(brandRows.map((row) => [String(row.brand_code || '').trim().toUpperCase(), String(row.brand_name || '').trim()]))
   const matchesResultFilters = (result) => {
     const queue = queueById.get(result.reqc_queue_id)
     if (!queue) return false
@@ -340,7 +345,7 @@ export default function RegularReQcWorkflow({ view = 'queue', source = 'regular'
     const queue = queueById.get(result.reqc_queue_id)
     const sku = String(queue?.sku_id || queue?.source_variant_code || '').trim()
     const key = sku.toUpperCase() || getQueueProductKey(queue)
-    const group = groups.get(key) || { key, sku: sku || 'No SKU', name: queue?.item_name || 'Product', brand: queue?.brand_code || '', qtyA: 0, qtyB: 0, qtyC: 0, rows: [] }
+    const group = groups.get(key) || { key, sku: sku || 'No SKU', name: queue?.item_name || 'Product', brand: queue?.brand_code || '', brandName: brandNameByCode.get(String(queue?.brand_code || '').trim().toUpperCase()) || '', qtyA: 0, qtyB: 0, qtyC: 0, rows: [] }
     group[`qty${result.grade}`] += Number(result.qty || 0)
     group.rows.push(result)
     groups.set(key, group)
@@ -351,7 +356,10 @@ export default function RegularReQcWorkflow({ view = 'queue', source = 'regular'
   const selectedGradeAResults = pendingResults.filter((result) => selectedReviewIds.includes(result.id) && result.grade === 'A')
   const selectedReviewKind = selectedGradeAResults.length ? 'A' : selectedRejectResults.length ? 'REJECT' : ''
   const selectedAdjustResult = pendingResults.find((result) => result.id === adjustResultId)
-  const printableGroups = summaryGroups.filter((group) => selectedPrintKeys.includes(group.key))
+  const printableGroups = summaryGroups.filter((group) => selectedPrintKeys.includes(group.key)).map((group) => isArklineLoan ? group : ({
+    ...group,
+    name: [group.brandName, group.name].filter(Boolean).join(' '),
+  }))
   const allVisibleSelected = summaryGroups.length > 0 && summaryGroups.every((group) => selectedPrintKeys.includes(group.key))
 
   function printSelectedResults() {
@@ -371,13 +379,11 @@ export default function RegularReQcWorkflow({ view = 'queue', source = 'regular'
       <td class="qty">${formatQty(group.qtyC)}</td><td class="qty">${formatQty(group.qtyA + group.qtyB + group.qtyC)}</td>
     </tr>`).join('')
     const sizeBreakdown = buildRegularReQcSizeBreakdown(printableGroups, queueById)
-    const sizeSections = ['A', 'B', 'C'].map((grade) => {
-      const gradeRows = sizeBreakdown[grade]
+    const sizeSections = getPopulatedReQcGrades(sizeBreakdown).map(({ grade, rows: gradeRows, total: gradeTotal }) => {
       const detailRows = gradeRows.map((row) => `<tr><td>${escapePrintHtml(row.sku)}</td><td>${escapePrintHtml(row.name)}</td><td>${escapePrintHtml(row.size)}</td><td class="qty">${formatQty(row.qty)}</td></tr>`).join('')
-      const gradeTotal = gradeRows.reduce((sum, row) => sum + row.qty, 0)
       return `<section class="size-section"><h2>Grade ${grade}</h2>
         <table><thead><tr><th>SKU</th><th>Item</th><th>Size</th><th class="qty">Qty</th></tr></thead>
-        <tbody>${detailRows || '<tr><td colspan="4">No items in this grade.</td></tr>'}</tbody>
+        <tbody>${detailRows}</tbody>
         <tfoot><tr><td colspan="3">Grade ${grade} Total</td><td class="qty">${formatQty(gradeTotal)}</td></tr></tfoot></table></section>`
     }).join('')
     printWindow.document.write(`<!doctype html><html><head><title>Reguler Re-QC Result Summary</title><style>
@@ -396,14 +402,14 @@ export default function RegularReQcWorkflow({ view = 'queue', source = 'regular'
       tfoot td { border-top: 2px solid #172033; font-weight: bold; }
       tr { break-inside: avoid; }
       .size-breakdown { margin-top: 28px; }
-      .size-breakdown > h2 { font-size: 17px; margin-bottom: 16px; }
+      .size-breakdown > h2 { font-size: 22px; font-weight: 900; margin-bottom: 16px; }
       .size-section { margin-top: 18px; }
-      .size-section h2 { break-after: avoid; }
+      .size-section h2 { break-after: avoid; background: #e8eef4; border-left: 4px solid #41546a; padding: 9px 12px; font-size: 15px; font-weight: 800; print-color-adjust: exact; -webkit-print-color-adjust: exact; }
     </style></head><body><header><div class="eyebrow">Quality Control</div><h1>Reguler Re-QC Result Summary</h1>
       <div class="meta">Printed ${escapePrintHtml(printedAt)} WIB · ${printableGroups.length} SKU selected</div></header>
       <table><thead><tr><th>SKU</th><th>Item</th><th class="qty">Grade A</th><th class="qty">Grade B</th><th class="qty">Grade C</th><th class="qty">Total</th></tr></thead>
       <tbody>${rows}</tbody><tfoot><tr><td colspan="2">Total</td><td class="qty">${formatQty(totals.a)}</td><td class="qty">${formatQty(totals.b)}</td><td class="qty">${formatQty(totals.c)}</td><td class="qty">${formatQty(totals.a + totals.b + totals.c)}</td></tr></tfoot></table>
-      <div class="size-breakdown"><h2>Size Breakdown</h2>${sizeSections}</div>
+      ${sizeSections ? `<div class="size-breakdown"><h2>Size Breakdown</h2>${sizeSections}</div>` : ''}
     </body></html>`)
     printWindow.document.close()
     printWindow.focus()
@@ -510,7 +516,7 @@ export default function RegularReQcWorkflow({ view = 'queue', source = 'regular'
             <div id="reqc-result-panel" role="tabpanel" aria-labelledby={`reqc-tab-${resultTab === 'arrangement' && isArklineLoan ? 'summary' : resultTab}`} style={summaryStyles.summaryTabPanel} className={styles.resultPanel}>
               <div style={summaryStyles.panelHeader} className={styles.resultPanelHeader}>
                 <div>
-                  <p style={{ ...summaryStyles.panelEyebrow, letterSpacing: 0 }}>{isArklineLoan ? 'Arkline Re-QC' : 'Reguler Re-QC'}</p>
+                  <p style={{ ...summaryStyles.panelEyebrow, letterSpacing: 0 }}>{resultEyebrow}</p>
                   <h2 style={summaryStyles.sectionTitle}>{resultTab === 'arrangement' ? 'Arrangement' : resultTab === 'performance' ? 'Performance Breakdown' : 'Result Summary'}</h2>
                 </div>
                 {resultTab === 'summary' ? <div className={styles.reviewActions}>
@@ -563,7 +569,7 @@ export default function RegularReQcWorkflow({ view = 'queue', source = 'regular'
                     : current.filter((key) => !summaryGroups.some((group) => group.key === key)))} /></th><th>SKU</th><th>Item</th><th className={styles.numeric}>Grade A</th><th className={styles.numeric}>Grade B</th><th className={styles.numeric}>Grade C</th><th className={styles.numeric}>Total</th><th>Action</th></tr></thead>
                   <tbody>{summaryGroups.map((group) => <tr key={group.key}>
                     <td className={styles.checkboxCell}><input type="checkbox" aria-label={`Select ${group.sku} for printing`} checked={selectedPrintKeys.includes(group.key)} onChange={(event) => setSelectedPrintKeys((current) => event.target.checked ? [...current, group.key] : current.filter((key) => key !== group.key))} /></td>
-                    <td>{group.sku}</td><td><strong>{group.name}</strong><small>{group.brand || '—'}</small></td>
+                     <td>{group.sku}</td><td>{isArklineLoan ? <><strong>{group.name}</strong><small>{group.brand || '—'}</small></> : <strong className={styles.summaryItemName}>{[group.brandName, group.name].filter(Boolean).join(' ')}</strong>}</td>
                     <td className={styles.numeric}>{formatQty(group.qtyA)}</td><td className={styles.numeric}>{formatQty(group.qtyB)}</td><td className={styles.numeric}>{formatQty(group.qtyC)}</td><td className={styles.numeric}>{formatQty(group.qtyA + group.qtyB + group.qtyC)}</td>
                     <td><button className={styles.backLink} type="button" onClick={() => setDetailKey(group.key)}>Detail</button></td>
                   </tr>)}{!summaryGroups.length ? <tr><td colSpan={8} className={styles.empty}>No Re-QC results match these filters.</td></tr> : null}</tbody>
@@ -579,7 +585,7 @@ export default function RegularReQcWorkflow({ view = 'queue', source = 'regular'
         <div className={styles.modalOverlay} onMouseDown={(event) => { if (event.target === event.currentTarget && !busyKey) setRejectModalId('') }}>
           <form className={`${styles.detailModal} ${styles.rejectModal} ${styles.reviewModal}`} role="dialog" aria-modal="true" aria-labelledby="reqc-reject-title" onSubmit={(event) => { event.preventDefault(); reviewSelected('STORE_REJECT') }}>
             <div className={styles.modalHeader}>
-              <div><p className={styles.eyebrow}>{isArklineLoan ? 'Arkline Re-QC · Peminjaman' : 'Reguler Re-QC'}</p><h2 id="reqc-reject-title">Store Reject</h2></div>
+              <div><p className={styles.eyebrow}>{resultEyebrow}</p><h2 id="reqc-reject-title">Store Reject</h2></div>
               <button className={styles.closeButton} type="button" onClick={() => setRejectModalId('')} disabled={Boolean(busyKey)} aria-label="Close reject form">×</button>
             </div>
             <p className={styles.rejectContext}>{selectedRejectResults.length} result(s) · {formatQty(selectedRejectResults.reduce((sum, row) => sum + Number(row.qty || 0), 0))} pcs</p>
@@ -597,7 +603,7 @@ export default function RegularReQcWorkflow({ view = 'queue', source = 'regular'
       {confirmAModalOpen && selectedGradeAResults.length > 0 && typeof document !== 'undefined' ? createPortal(
         <div className={styles.modalOverlay} onMouseDown={(event) => { if (event.target === event.currentTarget && !busyKey) setConfirmAModalOpen(false) }}>
           <div className={`${styles.detailModal} ${styles.reviewModal}`} role="dialog" aria-modal="true" aria-labelledby="reqc-confirm-a-title">
-            <div className={styles.modalHeader}><div><p className={styles.eyebrow}>Reguler Re-QC</p><h2 id="reqc-confirm-a-title">Confirm Grade A</h2></div><button className={styles.closeButton} type="button" onClick={() => setConfirmAModalOpen(false)} disabled={Boolean(busyKey)} aria-label="Close Grade A confirmation">×</button></div>
+            <div className={styles.modalHeader}><div><p className={styles.eyebrow}>{resultEyebrow}</p><h2 id="reqc-confirm-a-title">Confirm Grade A</h2></div><button className={styles.closeButton} type="button" onClick={() => setConfirmAModalOpen(false)} disabled={Boolean(busyKey)} aria-label="Close Grade A confirmation">×</button></div>
             <p className={styles.rejectContext}>{selectedGradeAResults.length} result(s) · {formatQty(selectedGradeAResults.reduce((sum, row) => sum + Number(row.qty || 0), 0))} pcs to Storage Queue</p>
             {error ? <p className={styles.messageError} role="alert">{error}</p> : null}
             <div className={styles.tableWrap}><table className={styles.table}><thead><tr><th>SKU</th><th>Item</th><th>Size</th><th>Group</th><th className={styles.numeric}>Qty</th></tr></thead><tbody>{selectedGradeAResults.map((row) => {
@@ -611,7 +617,7 @@ export default function RegularReQcWorkflow({ view = 'queue', source = 'regular'
       {adjustmentReady && selectedAdjustResult && typeof document !== 'undefined' ? createPortal(
         <div className={styles.modalOverlay} onMouseDown={(event) => { if (event.target === event.currentTarget && !busyKey) setAdjustResultId('') }}>
           <form className={`${styles.detailModal} ${styles.rejectModal}`} role="dialog" aria-modal="true" aria-labelledby="reqc-adjust-title" onSubmit={submitAdjustment}>
-            <div className={styles.modalHeader}><div><p className={styles.eyebrow}>Reguler Re-QC</p><h2 id="reqc-adjust-title">Adjust Grade</h2></div><button className={styles.closeButton} type="button" onClick={() => setAdjustResultId('')} disabled={Boolean(busyKey)} aria-label="Close adjustment">×</button></div>
+            <div className={styles.modalHeader}><div><p className={styles.eyebrow}>{resultEyebrow}</p><h2 id="reqc-adjust-title">Adjust Grade</h2></div><button className={styles.closeButton} type="button" onClick={() => setAdjustResultId('')} disabled={Boolean(busyKey)} aria-label="Close adjustment">×</button></div>
             <p className={styles.rejectContext}>Grade {selectedAdjustResult.grade} · {formatQty(selectedAdjustResult.qty)} pcs available</p>
             {error ? <p className={styles.messageError} role="alert">{error}</p> : null}
             <label className={styles.queueField}><span>Move to Grade</span><select className={styles.queueSelect} value={adjustGrade} onChange={(event) => setAdjustGrade(event.target.value)} required><option value="">Choose grade</option>{['A', 'B', 'C'].filter((grade) => grade !== selectedAdjustResult.grade).map((grade) => <option key={grade} value={grade}>Grade {grade}</option>)}</select></label>
@@ -624,7 +630,7 @@ export default function RegularReQcWorkflow({ view = 'queue', source = 'regular'
       {selectedDetail && typeof document !== 'undefined' ? createPortal(
         <div className={styles.modalOverlay} onMouseDown={(event) => { if (event.target === event.currentTarget) setDetailKey('') }}>
           <div className={styles.detailModal} role="dialog" aria-modal="true" aria-labelledby="reqc-detail-title">
-            <div className={styles.modalHeader}><div><p className={styles.eyebrow}>Reguler Re-QC</p><h2 id="reqc-detail-title">{selectedDetail.name}</h2><span>{selectedDetail.sku} · {selectedDetail.brand || 'No brand'}</span></div><button className={styles.closeButton} type="button" onClick={() => setDetailKey('')} aria-label="Close detail">×</button></div>
+            <div className={styles.modalHeader}><div><p className={styles.eyebrow}>{resultEyebrow}</p><h2 id="reqc-detail-title">{selectedDetail.name}</h2><span>{selectedDetail.sku} · {selectedDetail.brand || 'No brand'}</span></div><button className={styles.closeButton} type="button" onClick={() => setDetailKey('')} aria-label="Close detail">×</button></div>
             <div className={styles.tableWrap}><table className={styles.table}><thead><tr><th>Size</th><th>Inspector</th><th>Grade</th><th className={styles.numeric}>Qty</th><th>Status</th><th>Destination</th><th>Koli</th></tr></thead><tbody>{selectedDetail.rows.map((row) => {
               const queue = queueById.get(row.reqc_queue_id)
               const task = tasks.find((item) => item.id === row.qc_item_id)

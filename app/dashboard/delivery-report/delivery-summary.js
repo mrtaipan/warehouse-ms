@@ -290,7 +290,8 @@ function LineChart({ values, series, selectedSeries, onSelectSeries, period }) {
   )
 }
 
-export default function DeliverySummary({ lockedGroup: lockedGroupProp = '', isAdmin = false }) {
+export default function DeliverySummary({ lockedGroup: lockedGroupProp = '', isAdmin = false, access = {} }) {
+  const hasSummarySections = ['metrics', 'matrix', 'courier', 'order_chart'].some((key) => access[`summary.${key}`])
   const today = useMemo(() => todayIso(), [])
   const lockedGroup = useMemo(() => normalizeLockedGroup(lockedGroupProp), [lockedGroupProp])
   const visibleGroups = useMemo(() => (lockedGroup ? [lockedGroup] : GROUPS), [lockedGroup])
@@ -364,6 +365,10 @@ export default function DeliverySummary({ lockedGroup: lockedGroupProp = '', isA
     setOrders([])
     setPackingRows([])
     setDeliveryRows([])
+    if (!hasSummarySections) {
+      setLoading(false)
+      return
+    }
     if (!applied.from || !applied.to || applied.from > applied.to) {
       setStatus({ type: 'error', message: 'Choose a valid date range. Date From must be on or before Date To.' })
       setLoading(false)
@@ -431,7 +436,7 @@ export default function DeliverySummary({ lockedGroup: lockedGroupProp = '', isA
       setStatus({ type: 'error', message: `Failed to load summary: ${error.message}` })
       setLoading(false)
     }
-  }, [applied.from, applied.to, applied.group])
+  }, [applied.from, applied.to, applied.group, hasSummarySections])
 
   useEffect(() => {
     const controller = new AbortController()
@@ -598,6 +603,10 @@ export default function DeliverySummary({ lockedGroup: lockedGroupProp = '', isA
           </div>
 
           <section className={styles.filterBar}>
+            {!access['summary.order_chart'] ? ['from', 'to'].map((edge) => <label key={edge}>
+              <span>DATE {edge.toUpperCase()}</span>
+              <input type="date" value={filters[edge]} onChange={(event) => changeChartRange(edge, event.target.value)} />
+            </label>) : null}
             <label>
               <span>CATEGORY</span>
               <select value={filters.category} onChange={(event) => setFilters({ ...filters, category: event.target.value })}>
@@ -617,8 +626,9 @@ export default function DeliverySummary({ lockedGroup: lockedGroupProp = '', isA
         {loading ? <div className={styles.summaryLoading} role="status" aria-live="polite">Loading summary...</div> : null}
 
         <StatusMessage status={status} />
+        {!hasSummarySections ? <EmptyState label="No summary sections are enabled for your role." /> : null}
 
-        <section className={styles.metricGrid} aria-busy={loading}>
+        {access['summary.metrics'] ? <section className={styles.metricGrid} aria-busy={loading}>
         {visibleGroups.map((group) => {
           const target = targetByGroup[group]
           const current = scanPhase === 'DELIVERY' ? deliveryByGroup[group] : null
@@ -654,10 +664,10 @@ export default function DeliverySummary({ lockedGroup: lockedGroupProp = '', isA
             <span style={{ width: `${Math.min(100, totalProgress)}%`, backgroundColor: getProgressColor(totalProgress) }} />
           </div>
         </article>
-        </section>
+        </section> : null}
 
         <section className={styles.summaryGrid}>
-        <article className={`${styles.dataCard} ${styles.summaryMatrix}`}>
+        {access['summary.matrix'] ? <article className={`${styles.dataCard} ${styles.summaryMatrix}`}>
           <div className={styles.cardTitleRow}>
             <h2>{matrixMode} MATRIX</h2>
             <div className={styles.cardToolbar}>
@@ -714,14 +724,14 @@ export default function DeliverySummary({ lockedGroup: lockedGroupProp = '', isA
               ) : null}
             </table>
           </div>
-        </article>
+        </article> : null}
 
-        <article className={`${styles.dataCard} ${styles.compositionCard}`}>
+        {access['summary.courier'] ? <article className={`${styles.dataCard} ${styles.compositionCard}`}>
           <div className={styles.cardTitleRow}><h2>COURIER COMPOSITION</h2><span className={styles.infoPill}>By Courier</span></div>
           {loading ? <div className={styles.summaryLoading}>Loading courier composition...</div> : couriers.length ? <CourierComposition values={couriers} /> : <EmptyState />}
-        </article>
+        </article> : null}
 
-        <article className={`${styles.dataCard} ${styles.fullWidth}`}>
+        {access['summary.order_chart'] ? <article className={`${styles.dataCard} ${styles.fullWidth}`}>
           <div className={`${styles.cardTitleRow} ${styles.summaryChartHeader}`}>
             <h2>Order Chart</h2>
             <div className={styles.summaryChartControls}>
@@ -745,7 +755,7 @@ export default function DeliverySummary({ lockedGroup: lockedGroupProp = '', isA
             {chartSeries.map((name) => <button type="button" key={name} aria-pressed={highlightedSeries === name} onClick={() => selectChartSeries(name)} className={highlightedSeries && highlightedSeries !== name ? styles.chartLegendMuted : ''}><i style={{ backgroundColor: SERIES_COLORS[name] }} />{name === 'TOTAL' ? 'Total orders' : name}</button>)}
             {hasWeekBoundaries ? <span className={styles.orderChartWeekLegend}><i aria-hidden="true" />Week boundary (Sunday)</span> : null}
           </div>
-        </article>
+        </article> : null}
         </section>
 
         <Modal

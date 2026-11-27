@@ -8,6 +8,7 @@ import { createAdminClient } from '@/utils/supabase/admin'
 import { clearAccessContextCache } from '@/utils/access-control'
 import {
   ADMIN_EMAIL,
+  DASHBOARD_SHORTCUT_REQUIRED_PERMISSIONS,
   OFFICIAL_ROLE_VALUES,
   expandImpliedPermissions,
   getStoragePermissionCompatibilityCodes,
@@ -104,7 +105,13 @@ export async function updateRolePermissions(formData) {
       .getAll('permission_code')
       .map((item) => String(item || '').trim())
       .filter(Boolean)
-    const normalizedPermissionCodes = Array.from(expandImpliedPermissions(permissionCodes))
+    const shortcutAccessCodes = permissionCodes.flatMap(
+      (code) => DASHBOARD_SHORTCUT_REQUIRED_PERMISSIONS[code] || []
+    )
+    const normalizedPermissionCodes = Array.from(expandImpliedPermissions([
+      ...permissionCodes,
+      ...shortcutAccessCodes,
+    ]))
     const persistedPermissionCodes = Array.from(new Set([
       ...normalizedPermissionCodes,
       ...getStoragePermissionCompatibilityCodes(normalizedPermissionCodes),

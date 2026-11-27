@@ -1,7 +1,8 @@
 'use client'
 
 import Link from 'next/link'
-import { useEffect, useMemo, useState } from 'react'
+import { ChevronDown } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 
 import { createClient } from '@/utils/supabase/browser'
 import { ADMIN_EMAIL } from '@/utils/permissions'
@@ -44,6 +45,10 @@ function AddIcon() {
 
 function getTodayDateValue() {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Jakarta', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
+}
+
+function getCurrentYearValue() {
+  return new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Jakarta', year: 'numeric' }).format(new Date())
 }
 
 function getCurrentTimeValue() {
@@ -306,6 +311,9 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
   const [credits, setCredits] = useState([])
   const [monthFilter, setMonthFilter] = useState('all')
   const [yearFilter, setYearFilter] = useState('all')
+  const [periodMenuOpen, setPeriodMenuOpen] = useState(false)
+  const [expandedPeriodYear, setExpandedPeriodYear] = useState(getCurrentYearValue)
+  const periodPickerRef = useRef(null)
   const [trendGroup, setTrendGroup] = useState('MONTH')
   const [leaderboardChannel, setLeaderboardChannel] = useState('ALL')
   const [leaderboardMetric, setLeaderboardMetric] = useState('GMV')
@@ -502,6 +510,32 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
   }, [])
 
   const periodFilter = monthFilter !== 'all' && yearFilter !== 'all' ? `${yearFilter}-${monthFilter}` : ''
+  const periodYears = useMemo(() => {
+    const years = new Set([getCurrentYearValue()])
+    for (const item of [...sessions, ...credits]) {
+      if (item.session_date) years.add(String(item.session_date).slice(0, 4))
+    }
+    return [...years].sort((left, right) => right.localeCompare(left))
+  }, [sessions, credits])
+
+  useEffect(() => {
+    if (!periodMenuOpen) return
+    function handleOutsideClick(event) {
+      if (!periodPickerRef.current?.contains(event.target)) setPeriodMenuOpen(false)
+    }
+    function handleEscape(event) {
+      if (event.key === 'Escape') {
+        setPeriodMenuOpen(false)
+        periodPickerRef.current?.querySelector('button')?.focus()
+      }
+    }
+    document.addEventListener('pointerdown', handleOutsideClick)
+    document.addEventListener('keydown', handleEscape)
+    return () => {
+      document.removeEventListener('pointerdown', handleOutsideClick)
+      document.removeEventListener('keydown', handleEscape)
+    }
+  }, [periodMenuOpen])
 
   const filteredSessions = useMemo(() => {
     return sessions.filter((item) => {
@@ -905,23 +939,71 @@ export default function LiveReportingClient({ mobile = false, mobileView = 'entr
               <h1 className={styles.title}>Live Reporting</h1>
             </div>
             <div className={styles.headerActions}>
-              <input
-                type="month"
-                className={styles.periodInput}
-                value={periodFilter}
-                onChange={(event) => {
-                  const value = event.target.value
-                  if (!value) {
-                    setMonthFilter('all')
-                    setYearFilter('all')
-                    return
-                  }
-                  const [year, month] = value.split('-')
-                  setYearFilter(year || 'all')
-                  setMonthFilter(month || 'all')
-                }}
-                aria-label="Filter live reporting period"
-              />
+              <div className={styles.periodPicker} ref={periodPickerRef}>
+                <button
+                  type="button"
+                  className={styles.periodInput}
+                  onClick={() => {
+                    if (!periodMenuOpen) setExpandedPeriodYear(periodFilter ? yearFilter : periodYears[0])
+                    setPeriodMenuOpen((open) => !open)
+                  }}
+                  aria-label="Filter live reporting period"
+                  aria-expanded={periodMenuOpen}
+                  aria-controls="live-reporting-period-options"
+                >
+                  <span>{periodFilter ? formatMonthLabel(yearFilter, monthFilter) : 'All months'}</span>
+                  <ChevronDown size={16} aria-hidden="true" />
+                </button>
+                {periodMenuOpen ? (
+                  <div className={styles.periodMenu} id="live-reporting-period-options" aria-label="Reporting period">
+                    <button
+                      type="button"
+                      className={`${styles.periodAllOption} ${!periodFilter ? styles.periodOptionActive : ''}`.trim()}
+                      onClick={() => {
+                        setMonthFilter('all')
+                        setYearFilter('all')
+                        setPeriodMenuOpen(false)
+                      }}
+                      aria-pressed={!periodFilter}
+                    >All months</button>
+                    {periodYears.map((year) => (
+                      <div className={styles.periodYearGroup} key={year}>
+                        <button
+                          type="button"
+                          className={styles.periodYearButton}
+                          onClick={() => setExpandedPeriodYear((current) => current === year ? '' : year)}
+                          aria-expanded={expandedPeriodYear === year}
+                          aria-controls={`live-reporting-months-${year}`}
+                        >
+                          <span>{year}</span>
+                          <ChevronDown size={16} aria-hidden="true" className={expandedPeriodYear === year ? '' : styles.periodYearCollapsed} />
+                        </button>
+                        {expandedPeriodYear === year ? (
+                          <div className={styles.periodMonthGrid} id={`live-reporting-months-${year}`}>
+                            {Array.from({ length: 12 }, (_, index) => {
+                              const month = String(index + 1).padStart(2, '0')
+                              const selected = periodFilter === `${year}-${month}`
+                              return (
+                                <button
+                                  type="button"
+                                  key={month}
+                                  className={`${styles.periodMonthButton} ${selected ? styles.periodOptionActive : ''}`.trim()}
+                                  onClick={() => {
+                                    setYearFilter(year)
+                                    setMonthFilter(month)
+                                    setPeriodMenuOpen(false)
+                                  }}
+                                  aria-pressed={selected}
+                                >{new Intl.DateTimeFormat('en-GB', { month: 'long' }).format(new Date(Number(year), index, 1))}</button>
+                              )
+                            })}
+                          </div>
+                        ) : null}
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
               <Link href="/mobile/arkline/live-reporting" className={styles.iconLinkButton} aria-label="Open live entry">
                 <AddIcon />
               </Link>

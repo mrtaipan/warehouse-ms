@@ -1,254 +1,7 @@
 'use client'
 
-import { useMemo, useState } from 'react'
-
-function buildRolePermissionState(rolePermissionMap, knownPermissionCodes) {
-  const knownCodeSet = new Set(knownPermissionCodes || [])
-  return Object.fromEntries(
-    Object.entries(rolePermissionMap || {}).map(([role, codes]) => [
-      role,
-      new Set((codes || []).filter((code) => knownCodeSet.has(code))),
-    ])
-  )
-}
-
-function titleizeSegment(value) {
-  const labels = {
-    location: 'Storage Location',
-    queue_area: 'Queue Area',
-    temp_area: 'Temp Area',
-    history: 'Storage History',
-  }
-  if (labels[value]) return labels[value]
-
-  return String(value || '')
-    .split('_')
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(' ')
-}
-
-function buildTreeItems(items) {
-  const root = []
-
-  for (const [itemIndex, item] of (items || []).entries()) {
-    const segments = String(item.key || '')
-      .split('.')
-      .filter(Boolean)
-
-    if (!segments.length) continue
-
-    let level = root
-    let prefix = ''
-
-    segments.forEach((segment, index) => {
-      const isLast = index === segments.length - 1
-      prefix = prefix ? `${prefix}.${segment}` : segment
-
-      let node = level.find((candidate) => candidate.segment === segment)
-
-      if (!node) {
-        node = {
-          id: isLast ? `leaf:${prefix}` : `branch:${prefix}`,
-          segment,
-          label: isLast ? item.label : titleizeSegment(segment),
-          kind: isLast ? 'leaf' : 'branch',
-          children: [],
-          item: null,
-          order: itemIndex,
-        }
-        level.push(node)
-      }
-
-      if (isLast) {
-        node.item = item
-        node.label = item.label
-        node.kind = node.children.length ? 'branch' : 'leaf'
-        node.id = `${node.kind}:${prefix}`
-        node.order = Math.min(node.order ?? itemIndex, itemIndex)
-      } else {
-        if (node.kind === 'leaf') {
-          node.kind = 'branch'
-          node.id = `branch:${prefix}`
-        }
-        node.order = Math.min(node.order ?? itemIndex, itemIndex)
-        level = node.children
-      }
-    })
-  }
-
-  return root
-}
-
-function normalizeActionLabel(value) {
-  if (value === 'view') return 'View'
-  if (value === 'add') return 'Add'
-  if (value === 'edit') return 'Edit'
-  if (value === 'delete') return 'Delete'
-  if (value === 'print') return 'Print'
-  if (value === 'export') return 'Export'
-  if (value === 'submit') return 'Submit'
-  if (value === 'assign') return 'Assign'
-  return value
-}
-
-function getPermissionPrefix(code) {
-  return String(code || '').replace(/\.[^.]+$/, '')
-}
-
-function hasIndependentActions(code) {
-  return ['inbound.receiving', 'inbound.unload'].includes(getPermissionPrefix(code))
-}
-
-function sortTreeNodes(nodes) {
-  return [...(nodes || [])].sort((left, right) => {
-    const leftOrder = Number.isFinite(left.order) ? left.order : Number.MAX_SAFE_INTEGER
-    const rightOrder = Number.isFinite(right.order) ? right.order : Number.MAX_SAFE_INTEGER
-
-    if (leftOrder !== rightOrder) {
-      return leftOrder - rightOrder
-    }
-
-    if (left.kind !== right.kind) {
-      return left.kind === 'branch' ? -1 : 1
-    }
-    return left.label.localeCompare(right.label)
-  })
-}
-
-function collectExpandableIds(nodes, bucket = []) {
-  for (const node of nodes || []) {
-    if (node.kind === 'branch') {
-      bucket.push(node.id)
-      collectExpandableIds(node.children, bucket)
-    }
-  }
-
-  return bucket
-}
-
-function PermissionActions({
-  item,
-  paddingLeft,
-  selectedPermissions,
-  onPermissionToggle,
-  hideLabel = false,
-  compact = false,
-}) {
-  const actionsByKey = Object.fromEntries((item?.actions || []).map((action) => [action.key, action]))
-  const standardActions = ['view', 'add', 'edit', 'delete']
-  const specialActions = (item?.actions || []).filter((action) => !standardActions.includes(action.key))
-
-  return (
-    <div style={compact ? styles.branchPermissionRow : styles.treeLeaf}>
-      <div style={styles.treeLeafMain}>
-        <div style={{ ...styles.permissionText, paddingLeft }}>
-          {!hideLabel ? <span style={styles.permissionLabel}>{item?.label}</span> : null}
-          <span style={styles.permissionMeta}>{item?.description || 'No description yet.'}</span>
-        </div>
-        <div style={styles.actionGrid}>
-          {standardActions.map((actionKey) => {
-            const action = actionsByKey[actionKey]
-            if (!action) {
-              return (
-                <label key={actionKey} style={{ ...styles.actionCheckbox, ...styles.actionCheckboxDisabled }}>
-                  <input type="checkbox" disabled />
-                  <span>{normalizeActionLabel(actionKey)}</span>
-                </label>
-              )
-            }
-
-            return (
-              <label key={action.code} style={styles.actionCheckbox}>
-                <input
-                  type="checkbox"
-                  checked={selectedPermissions.has(action.code)}
-                  onChange={(event) => onPermissionToggle(action.code, actionKey, event.target.checked)}
-                />
-                <span>{normalizeActionLabel(actionKey)}</span>
-              </label>
-            )
-          })}
-        </div>
-      </div>
-
-      {specialActions.length ? (
-        <div style={{ ...styles.specialActionStack, paddingLeft: paddingLeft + 10 }}>
-          {specialActions.map((action) => (
-            <label key={action.code} style={styles.specialActionLabel}>
-              <input
-                type="checkbox"
-                checked={selectedPermissions.has(action.code)}
-                onChange={(event) => onPermissionToggle(action.code, action.key, event.target.checked)}
-              />
-              <span>{action.label}</span>
-            </label>
-          ))}
-        </div>
-      ) : null}
-    </div>
-  )
-}
-
-function TreeNode({
-  node,
-  depth,
-  expandedMap,
-  onToggle,
-  selectedPermissions,
-  onPermissionToggle,
-}) {
-  const paddingLeft = 8 + depth * 14
-  const isBranch = node.kind === 'branch'
-  const isExpanded = expandedMap[node.id] ?? false
-
-  if (isBranch) {
-    return (
-      <div style={styles.treeBlock}>
-        <button type="button" style={{ ...styles.treeBranchButton, paddingLeft }} onClick={() => onToggle(node.id)}>
-          <span style={styles.treeChevron}>{isExpanded ? '-' : '+'}</span>
-          <span>{node.label}</span>
-        </button>
-
-        {node.item ? (
-          <PermissionActions
-            item={node.item}
-            paddingLeft={paddingLeft + 20}
-            selectedPermissions={selectedPermissions}
-            onPermissionToggle={onPermissionToggle}
-            hideLabel
-            compact
-          />
-        ) : null}
-
-        {isExpanded ? (
-          <div style={styles.treeChildren}>
-            {sortTreeNodes(node.children).map((child) => (
-              <TreeNode
-                key={child.id}
-                node={child}
-                depth={depth + 1}
-                expandedMap={expandedMap}
-                onToggle={onToggle}
-                selectedPermissions={selectedPermissions}
-                onPermissionToggle={onPermissionToggle}
-              />
-            ))}
-          </div>
-        ) : null}
-      </div>
-    )
-  }
-
-  return (
-    <PermissionActions
-      item={node.item}
-      paddingLeft={paddingLeft}
-      selectedPermissions={selectedPermissions}
-      onPermissionToggle={onPermissionToggle}
-    />
-  )
-}
+import { useState } from 'react'
+import RolePermissionEditor from './role-permission-editor'
 
 export default function UserAccessClient({
   profiles,
@@ -262,88 +15,15 @@ export default function UserAccessClient({
   updateRolePermissions,
   sendUserInvite,
 }) {
-  const editableRoles = roleOptions.filter((role) => role.value !== 'admin')
-  const knownPermissionCodes = useMemo(
-    () =>
-      (permissionCatalog || []).flatMap((group) =>
-        (group.items || []).flatMap((item) => (item.actions || []).map((action) => action.code))
-      ),
-    [permissionCatalog]
-  )
-  const [activeTab, setActiveTab] = useState('users')
-  const [selectedRole, setSelectedRole] = useState(editableRoles[0]?.value || 'guest')
-  const [roleSelections, setRoleSelections] = useState(() => buildRolePermissionState(rolePermissionMap, knownPermissionCodes))
-  const [expandedMap, setExpandedMap] = useState({})
-
-  const selectedPermissions = roleSelections[selectedRole] || new Set()
-  const selectedRoleLabel = editableRoles.find((role) => role.value === selectedRole)?.label || selectedRole
-
-  const treeGroups = useMemo(
-    () =>
-      (permissionCatalog || []).map((group) => ({
-        ...group,
-        treeItems: buildTreeItems(group.items),
-      })),
-    [permissionCatalog]
-  )
-
-  function toggleBranch(id) {
-    setExpandedMap((current) => ({
-      ...current,
-      [id]: !(current[id] ?? false),
-    }))
-  }
-
-  function expandAllForCurrentRole() {
-    const nextExpanded = {}
-
-    for (const group of treeGroups) {
-      nextExpanded[`group:${group.key}`] = true
-      collectExpandableIds(group.treeItems).forEach((id) => {
-        nextExpanded[id] = true
-      })
-    }
-
-    setExpandedMap(nextExpanded)
-  }
-
-  function collapseAllForCurrentRole() {
-    setExpandedMap({})
-  }
-
-  function togglePermission(code, actionKey, checked) {
-    setRoleSelections((current) => {
-      const nextSet = new Set(current[selectedRole] || [])
-
-      if (checked) {
-        nextSet.add(code)
-        if (['add', 'edit', 'delete', 'print', 'export', 'submit', 'assign'].includes(actionKey) && !hasIndependentActions(code)) {
-          nextSet.add(code.replace(/\.[^.]+$/, '.view'))
-        }
-      } else {
-        nextSet.delete(code)
-        if (actionKey === 'view' && !hasIndependentActions(code)) {
-          const prefix = code.replace(/\.view$/, '')
-          for (const existingCode of Array.from(nextSet)) {
-            if (existingCode.startsWith(`${prefix}.`) && existingCode !== code) {
-              nextSet.delete(existingCode)
-            }
-          }
-        }
-      }
-
-      return {
-        ...current,
-        [selectedRole]: nextSet,
-      }
-    })
-  }
+  const [activeTab, setActiveTab] = useState('role-permissions')
+  const [userSearch, setUserSearch] = useState('')
+  const filteredProfiles = (profiles || []).filter((profile) => `${profile.email || ''} ${profile.display_name || ''} ${profile.role || ''}`.toLowerCase().includes(userSearch.trim().toLowerCase()))
 
   return (
     <div style={styles.wrapper}>
       <div>
         <h1 style={styles.title}>User Access</h1>
-        <p style={styles.subtitle}>Kelola role user dan matrix permission dari satu tempat.</p>
+        <p style={styles.subtitle}>Kelola pengguna, akses modul, dan shortcut dashboard.</p>
       </div>
 
       {inviteStatus === 'sent' ? (
@@ -382,6 +62,7 @@ export default function UserAccessClient({
             <p style={styles.sectionSubtitle}>Edit display name, assign role, dan kirim invite dari tab ini.</p>
           </div>
 
+          <input type="search" aria-label="Search users" placeholder="Search name, email, or role..." value={userSearch} onChange={(event) => setUserSearch(event.target.value)} style={{ ...styles.input, maxWidth: 400 }} />
           <div style={styles.tableWrap}>
             <table style={styles.table}>
               <thead>
@@ -394,7 +75,7 @@ export default function UserAccessClient({
                 </tr>
               </thead>
               <tbody>
-                {(profiles || []).map((profile) => (
+                {filteredProfiles.map((profile) => (
                   <tr key={profile.id || profile.email} style={styles.bodyRow}>
                     <td style={styles.td}>{profile.email || '-'}</td>
                     <td style={styles.td}>
@@ -457,82 +138,13 @@ export default function UserAccessClient({
                     </td>
                   </tr>
                 ))}
+                {!filteredProfiles.length ? <tr><td colSpan={5} style={styles.td}>No matching users.</td></tr> : null}
               </tbody>
             </table>
           </div>
         </section>
       ) : (
-        <section style={styles.section}>
-          <div style={styles.rolePermissionHeader}>
-            <div>
-              <h2 style={styles.sectionTitle}>Role Permission</h2>
-              <p style={styles.sectionSubtitle}>Pilih satu role dulu, lalu edit hak aksesnya dengan tampilan tree.</p>
-            </div>
-
-            <div style={styles.rolePickerWrap}>
-              <label style={styles.pickerLabel}>Role</label>
-              <select value={selectedRole} onChange={(event) => setSelectedRole(event.target.value)} style={styles.select}>
-                {editableRoles.map((role) => (
-                  <option key={role.value} value={role.value}>
-                    {role.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
-
-          <form action={updateRolePermissions} style={styles.rolePermissionCard}>
-            <input type="hidden" name="role" value={selectedRole} />
-            {Array.from(selectedPermissions).map((code) => (
-              <input key={code} type="hidden" name="permission_code" value={code} />
-            ))}
-
-            <div style={styles.roleHeader}>
-              <div>
-                <h3 style={styles.roleTitle}>{selectedRoleLabel}</h3>
-                <p style={styles.roleSubtitle}>{selectedRole}</p>
-              </div>
-              <div style={styles.roleHeaderActions}>
-                <span style={styles.roleCountBadge}>{selectedPermissions.size} active</span>
-                <button type="button" style={styles.microButton} onClick={expandAllForCurrentRole}>
-                  Expand all
-                </button>
-                <button type="button" style={styles.microButton} onClick={collapseAllForCurrentRole}>
-                  Collapse all
-                </button>
-                <button type="submit" style={styles.primaryButton}>
-                  Save Permission
-                </button>
-              </div>
-            </div>
-
-            {treeGroups.map((group) => (
-              <div key={group.key} style={styles.permissionGroup}>
-                <button type="button" style={styles.groupHeaderButton} onClick={() => toggleBranch(`group:${group.key}`)}>
-                  <span style={styles.treeChevron}>{expandedMap[`group:${group.key}`] ?? false ? '-' : '+'}</span>
-                  <strong style={styles.permissionGroupTitle}>{group.label}</strong>
-                  <span style={styles.permissionGroupCount}>{group.items.length} items</span>
-                </button>
-
-                {expandedMap[`group:${group.key}`] ?? false ? (
-                  <div style={styles.groupBody}>
-                    {sortTreeNodes(group.treeItems).map((node) => (
-                      <TreeNode
-                        key={node.id}
-                        node={node}
-                        depth={0}
-                        expandedMap={expandedMap}
-                        onToggle={toggleBranch}
-                        selectedPermissions={selectedPermissions}
-                        onPermissionToggle={togglePermission}
-                      />
-                    ))}
-                  </div>
-                ) : null}
-              </div>
-            ))}
-          </form>
-        </section>
+        <RolePermissionEditor key={JSON.stringify(rolePermissionMap)} roleOptions={roleOptions} permissionCatalog={permissionCatalog} rolePermissionMap={rolePermissionMap} action={updateRolePermissions} />
       )}
     </div>
   )
@@ -591,7 +203,7 @@ const styles = {
     background: '#fff',
     border: '1px solid #e5e7eb',
     borderRadius: '12px',
-    overflow: 'hidden',
+    overflowX: 'auto',
   },
   table: {
     width: '100%',
@@ -844,6 +456,9 @@ const styles = {
     gridTemplateColumns: 'minmax(220px, 1fr) minmax(360px, 1.1fr)',
     gap: '12px',
     alignItems: 'start',
+  },
+  visibilityOnlyLeafMain: {
+    gridTemplateColumns: 'minmax(220px, 1fr)',
   },
   permissionText: {
     display: 'flex',

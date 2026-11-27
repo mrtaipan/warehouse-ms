@@ -1,3 +1,4 @@
+import { DELIVERY_ACCESS_CONFIGURED, DELIVERY_PERMISSION_ITEMS } from './delivery-access.mjs'
 export const ADMIN_EMAIL = 'mr.peneliti@gmail.com'
 
 export const ROLE_OPTIONS = [
@@ -37,6 +38,28 @@ export const ROLE_LOCKED_GROUPS = {
   oi_cs: 'OI',
 }
 
+export const DASHBOARD_SHORTCUT_CODES = {
+  search: 'dashboard.shortcuts.search.visible',
+  restockRequest: 'dashboard.shortcuts.restock_request.visible',
+  stockReplenishment: 'dashboard.shortcuts.stock_replenishment.visible',
+  productLoanRequest: 'dashboard.shortcuts.product_loan_request.visible',
+  penaltyPoints: 'dashboard.shortcuts.penalty_points.visible',
+  deliveryReport: 'dashboard.shortcuts.delivery_report.visible',
+  operationsCalendar: 'dashboard.shortcuts.operations_calendar.visible',
+  myArklife: 'dashboard.shortcuts.myarklife.visible',
+}
+export const DASHBOARD_SHORTCUT_CONFIGURED_CODE = 'dashboard.shortcuts.configured.visible'
+export const DASHBOARD_SHORTCUT_REQUIRED_PERMISSIONS = {
+  [DASHBOARD_SHORTCUT_CODES.search]: ['storage.location.current_stock.view'],
+  [DASHBOARD_SHORTCUT_CODES.restockRequest]: ['storage.restock_submit.view', 'storage.restock_submit.add'],
+  [DASHBOARD_SHORTCUT_CODES.stockReplenishment]: ['storage.restock_picker.view', 'storage.restock_picker.edit'],
+  [DASHBOARD_SHORTCUT_CODES.productLoanRequest]: ['storage.location.product_loans.view', 'storage.location.product_loans.edit'],
+  [DASHBOARD_SHORTCUT_CODES.penaltyPoints]: ['hrga.penalty_points.view'],
+  [DASHBOARD_SHORTCUT_CODES.deliveryReport]: ['delivery_report.view'],
+  [DASHBOARD_SHORTCUT_CODES.operationsCalendar]: ['dashboard.operations_calendar.view'],
+  [DASHBOARD_SHORTCUT_CODES.myArklife]: ['myarklife.view'],
+}
+
 export function getRoleLockedGroup(role) {
   return ROLE_LOCKED_GROUPS[String(role || '').trim().toLowerCase()] || ''
 }
@@ -68,6 +91,15 @@ const BASE_PERMISSION_GROUPS = [
       { key: 'restock_instruction', label: 'Restock Instruction', codePrefix: 'storage.restock_instruction', description: 'Pintu masuk cepat untuk restock submit dan restock picker.', actions: ['view'] },
       { key: 'restock_instruction.submit', label: 'Restock Submit', codePrefix: 'storage.restock_submit', description: 'Buat dan ubah permintaan restock internal.', actions: ['view', 'add', 'edit'] },
       { key: 'restock_instruction.picker', label: 'Restock Picker', codePrefix: 'storage.restock_picker', description: 'Proses pengambilan barang untuk restock instruction.', actions: ['view', 'edit'] },
+      { key: 'shortcuts.search', label: 'Search', codePrefix: 'dashboard.shortcuts.search', actions: ['visible'], visibilityOnly: true },
+      { key: 'shortcuts.restock_instruction.restock_request', label: 'Restock Request', codePrefix: 'dashboard.shortcuts.restock_request', actions: ['visible'], visibilityOnly: true },
+      { key: 'shortcuts.restock_instruction.stock_replenishment', label: 'Stock Replenishment', codePrefix: 'dashboard.shortcuts.stock_replenishment', actions: ['visible'], visibilityOnly: true },
+      { key: 'shortcuts.restock_instruction.product_loan_request', label: 'Product Loan Request', codePrefix: 'dashboard.shortcuts.product_loan_request', actions: ['visible'], visibilityOnly: true },
+      { key: 'shortcuts.penalty_points', label: 'Penalty Points', codePrefix: 'dashboard.shortcuts.penalty_points', actions: ['visible'], visibilityOnly: true },
+      { key: 'shortcuts.delivery_report', label: 'Delivery Report', codePrefix: 'dashboard.shortcuts.delivery_report', actions: ['visible'], visibilityOnly: true },
+      { key: 'shortcuts.operations_calendar', label: 'Operations Calendar', codePrefix: 'dashboard.shortcuts.operations_calendar', actions: ['visible'], visibilityOnly: true },
+      { key: 'shortcuts.myarklife', label: 'MyARKLIFE', codePrefix: 'dashboard.shortcuts.myarklife', actions: ['visible'], visibilityOnly: true },
+      { key: 'shortcuts.configured', label: 'Dashboard shortcut preferences configured', codePrefix: 'dashboard.shortcuts.configured', actions: ['visible'], hidden: true },
     ],
   },
   {
@@ -76,11 +108,13 @@ const BASE_PERMISSION_GROUPS = [
     items: [
       {
         key: 'home',
-        label: 'Delivery Report',
+        label: 'Module Access',
         codePrefix: 'delivery_report',
         description: 'Akses halaman Delivery Report System dari dashboard WMS.',
         actions: ['view'],
       },
+      ...DELIVERY_PERMISSION_ITEMS.map(({ key, label }) => ({ key, label, actions: ['view'] })),
+      { key: 'configured', label: 'Delivery preferences configured', codePrefix: DELIVERY_ACCESS_CONFIGURED.replace(/\.visible$/, ''), actions: ['visible'], hidden: true },
     ],
   },
   {
@@ -314,6 +348,7 @@ function labelizeAction(action) {
   if (action === 'export') return 'Export'
   if (action === 'submit') return 'Submit'
   if (action === 'assign') return 'Assign'
+  if (action === 'visible') return 'Show shortcut'
   return action.replaceAll('_', ' ')
 }
 
@@ -331,20 +366,21 @@ export function getPermissionCatalog() {
     label: group.label,
     items: [
       ...group.items
-        .filter((item) => !(group.key === 'arkline' && item.key === 'financial_management.live_reporting'))
+        .filter((item) => !item.hidden && !(group.key === 'arkline' && item.key === 'financial_management.live_reporting'))
         .map((item) => {
           const codePrefix = item.codePrefix || `${group.key}.${item.key}`
           return {
             key: item.key,
             label: item.label,
             description: item.description || '',
-          codePrefix,
-          actions: item.actions.map((action) => ({
-            key: action,
-            label: labelizeAction(action),
-            code: `${codePrefix}.${action}`,
-          })),
-        }
+            visibilityOnly: Boolean(item.visibilityOnly),
+            codePrefix,
+            actions: item.actions.map((action) => ({
+              key: action,
+              label: labelizeAction(action),
+              code: `${codePrefix}.${action}`,
+            })),
+          }
         }),
       ...(group.key === 'arkline'
         ? [
@@ -1140,7 +1176,8 @@ export function getStorageFeatureAccess(role, permissions = [], isAdmin = false)
   const restockInstruction = hasPermission(permissions, 'storage.restock_instruction.view', isAdmin)
   const restockSubmit = hasPermission(permissions, 'storage.restock_submit.view', isAdmin)
   let restockPicker = hasPermission(permissions, 'storage.restock_picker.view', isAdmin)
-  if (resolvedRole === 'packing_staff' || resolvedRole === 'packing_coordinator') {
+  if ((resolvedRole === 'packing_staff' || resolvedRole === 'packing_coordinator') &&
+    !hasPermission(permissions, DASHBOARD_SHORTCUT_CODES.stockReplenishment, isAdmin)) {
     restockPicker = false
   }
   const menu = location || shelvingUpload || queue || pickHistory || movementHistory || productDirectory
@@ -1194,6 +1231,36 @@ export function canAccessOperationsCalendar(role, permissions = [], isAdmin = fa
   if (hasPermission(permissions, 'dashboard.operations_calendar.view', false)) return true
   if (resolvedRole === 'warehouse_leader') return true
   return String(resolvedRole || '').endsWith('_coordinator')
+}
+
+export function getDashboardShortcutAccessCodes(role, permissions = [], isAdmin = false) {
+  if (isAdmin || resolveRole(role, isAdmin) === 'admin') return Object.values(DASHBOARD_SHORTCUT_CODES)
+
+  const available = new Set()
+  const storageAccess = getStorageFeatureAccess(role, permissions, isAdmin)
+
+  if (hasAnyPermission(permissions, ['storage.location.current_stock.view', 'arkline.directory.products.view'])) {
+    available.add(DASHBOARD_SHORTCUT_CODES.search)
+  }
+  if (storageAccess.restockSubmit) available.add(DASHBOARD_SHORTCUT_CODES.restockRequest)
+  if (storageAccess.restockPicker) available.add(DASHBOARD_SHORTCUT_CODES.stockReplenishment)
+  if (storageAccess.productLoans) available.add(DASHBOARD_SHORTCUT_CODES.productLoanRequest)
+  if (hasPermission(permissions, 'hrga.penalty_points.view')) available.add(DASHBOARD_SHORTCUT_CODES.penaltyPoints)
+  if (hasPermission(permissions, 'delivery_report.view')) available.add(DASHBOARD_SHORTCUT_CODES.deliveryReport)
+  if (canAccessOperationsCalendar(role, permissions)) available.add(DASHBOARD_SHORTCUT_CODES.operationsCalendar)
+  if (hasPermission(permissions, 'myarklife.view')) available.add(DASHBOARD_SHORTCUT_CODES.myArklife)
+
+  return Array.from(available)
+}
+
+export function getDashboardShortcutVisibilityCodes(role, permissions = [], isAdmin = false) {
+  const availableCodes = getDashboardShortcutAccessCodes(role, permissions, isAdmin)
+  if (isAdmin || resolveRole(role, isAdmin) === 'admin') return availableCodes
+
+  const expandedPermissions = expandImpliedPermissions(permissions)
+  if (!expandedPermissions.has(DASHBOARD_SHORTCUT_CONFIGURED_CODE)) return availableCodes
+
+  return availableCodes.filter((code) => expandedPermissions.has(code))
 }
 
 export function getLandingPath(role, permissions = [], isAdmin = false) {
@@ -1362,6 +1429,7 @@ export function canAccessPath(pathname, role, permissions = [], isAdmin = false)
 
   if (
     (resolvedRole === 'packing_staff' || resolvedRole === 'packing_coordinator') &&
+    !hasPermission(permissions, DASHBOARD_SHORTCUT_CODES.stockReplenishment, false) &&
     (normalizedPathname === '/take-requests' || normalizedPathname.startsWith('/take-requests?'))
   ) {
     return false

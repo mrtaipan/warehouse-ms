@@ -9,7 +9,8 @@
 .detailButton { width: 32px; height: 32px; font-size: 22px; }
 .modalClose { border: 0; background: #fff1f2; color: #be123c; font-size: 26px; }
 .shell input, .shell select, .modal input, .modal select { min-width: 0; height: 40px; padding: 0 10px; border: 1px solid #cbd5e1; border-radius: 6px; background: #fff; color: #111827; font: inherit; font-size: 14px; }
-.shell button:focus-visible, .shell input:focus-visible, .shell select:focus-visible, .modal button:focus-visible, .modal input:focus-visible, .modal select:focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; }
+.modal textarea { box-sizing: border-box; width: 100%; min-height: 88px; padding: 10px; border: 1px solid #cbd5e1; border-radius: 6px; background: #fff; color: #111827; font: inherit; font-size: 14px; line-height: 1.45; resize: vertical; }
+.shell button:focus-visible, .shell input:focus-visible, .shell select:focus-visible, .modal button:focus-visible, .modal input:focus-visible, .modal select:focus-visible, .modal textarea:focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; }
 .shell button:disabled, .modal button:disabled { cursor: not-allowed; opacity: .48; }
 .primary, .secondary { min-height: 40px; padding: 0 14px; border-radius: 6px; font: inherit; font-size: 13px; font-weight: 700; cursor: pointer; white-space: nowrap; }
 .primary { border: 1px solid #111827; background: #111827; color: #fff; }
@@ -64,6 +65,9 @@
 .returnButton { min-height: 32px; padding: 0 8px; border: 1px solid #cbd5e1; border-radius: 6px; background: #fff; color: #111827; font: inherit; font-size: 12px; font-weight: 700; cursor: pointer; }
 .detailsRow > td { padding: 0; background: #f3f6fa; }
 .caseBody { display: grid; gap: 12px; padding: 16px 20px; }
+.requestNote, .existingLoanNote { display: grid; gap: 4px; margin: 0; color: #475569; font-size: 13px; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; }
+.requestNote strong, .existingLoanNote strong { color: #111827; font-weight: 700; }
+.requestNote { padding-bottom: 12px; border-bottom: 1px solid #e5e7eb; }
 .item { display: grid; gap: 10px; padding: 12px 0; border-top: 1px solid #e5e7eb; }
 .itemTop { display: grid; grid-template-columns: minmax(220px, 300px) minmax(0, 1fr); align-items: start; gap: 16px; }
 .itemIdentity { display: grid; gap: 2px; min-width: 0; font-size: 13px; }

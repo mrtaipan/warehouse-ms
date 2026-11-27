@@ -1220,6 +1220,38 @@
   font-size: 15px;
 }
 
+.batchHeaderActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.secondaryButton.deleteBatchButton {
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-color: #e8cbd2;
+  color: #7f1d3a;
+}
+
+.secondaryButton.deleteBatchButton:hover:not(:disabled) {
+  border-color: #7f1d3a;
+  background: #fff7f9;
+}
+
+.primaryButton.deleteBatchConfirmButton {
+  border-color: #7f1d3a;
+  background: #7f1d3a;
+}
+
+.primaryButton.deleteBatchConfirmButton:hover:not(:disabled) {
+  border-color: #68152e;
+  background: #68152e;
+}
+
 .batchToggleButton {
   width: 34px;
   height: 34px;

@@ -79,6 +79,7 @@ export default function WarehouseLoansClient({ currentUserId, canManage, isAdmin
   const [formError, setFormError] = useState('')
   const [group, setGroup] = useState(lockedGroup || 'MOB')
   const [purpose, setPurpose] = useState('')
+  const [requestNote, setRequestNote] = useState('')
   const [arklineQuery, setArklineQuery] = useState('')
   const [arklineMenuOpen, setArklineMenuOpen] = useState(false)
   const arklineInputRef = useRef(null)
@@ -130,7 +131,7 @@ export default function WarehouseLoansClient({ currentUserId, canManage, isAdmin
       setEligibleLoansLoading(true)
       setEligibleLoansError('')
       let query = supabase.from('warehouse_loans')
-        .select('id,loan_number,purpose,group_code,requester_id,requester_email')
+        .select('id,loan_number,purpose,request_note,group_code,requester_id,requester_email')
         .eq('status', 'REQUESTED')
         .order('created_at', { ascending: false })
         .limit(500)
@@ -174,7 +175,7 @@ export default function WarehouseLoansClient({ currentUserId, canManage, isAdmin
     if (borrowerFilter && row.requester_id !== borrowerFilter) return false
     const items = requestsByLoan.get(row.id) || []
     const displayName = userProfilesByEmail[String(row.requester_email || '').toLowerCase()] || String(row.requester_email || '').split('@')[0]
-    const text = `${row.id} ${row.purpose} ${displayName} ${row.group_code} ${items.map((item) => `${item.sku_id} ${item.item_name} ${item.size}`).join(' ')}`.toLowerCase()
+    const text = `${row.id} ${row.purpose} ${row.request_note || ''} ${displayName} ${row.group_code} ${items.map((item) => `${item.sku_id} ${item.item_name} ${item.size}`).join(' ')}`.toLowerCase()
     return text.includes(search.toLowerCase())
   })
   const borrowerOptions = Array.from(new Map(cases.filter((row) => !lockedGroup || row.group_code === lockedGroup).map((row) => [row.requester_id, userProfilesByEmail[String(row.requester_email || '').toLowerCase()] || String(row.requester_email || '').split('@')[0]])).entries()).sort((a, b) => a[1].localeCompare(b[1]))
@@ -189,6 +190,7 @@ export default function WarehouseLoansClient({ currentUserId, canManage, isAdmin
     setEligibleLoansError('')
     setGroup(lockedGroup || 'MOB')
     setPurpose('')
+    setRequestNote('')
     setArklineQuery('')
     setArklineMenuOpen(false)
     setNewPurposeName('')
@@ -203,6 +205,7 @@ export default function WarehouseLoansClient({ currentUserId, canManage, isAdmin
     setExistingLoanId('')
     setGroup(lockedGroup || 'MOB')
     setPurpose('')
+    setRequestNote('')
     setNewPurposeName('')
     setDraft({ sku: '', name: '', size: '', qty: '' })
     setDraftItems([])
@@ -286,7 +289,7 @@ export default function WarehouseLoansClient({ currentUserId, canManage, isAdmin
           }
         }
         if (!purposeName) throw new Error('Choose a valid purpose.')
-        const { data, error: createError } = await supabase.rpc('create_warehouse_loan', { p_group: group, p_purpose: purposeName, p_items: draftItems })
+        const { data, error: createError } = await supabase.rpc('create_warehouse_loan', { p_group: group, p_purpose: purposeName, p_items: draftItems, p_request_note: requestNote })
         if (createError) throw createError
         loanId = data
       }
@@ -368,7 +371,7 @@ export default function WarehouseLoansClient({ currentUserId, canManage, isAdmin
     const popup = window.open('', '_blank')
     if (!popup) { setError('Allow pop-ups to print the loan slip.'); return }
     popup.opener = null
-    popup.document.write(`<!doctype html><html><head><title>Loan ${escapeHtml(loan.loan_number || loan.id.slice(0, 8))}</title><style>body{font:14px Arial,sans-serif;margin:32px;color:#111827}h1{font-size:22px}table{width:100%;border-collapse:collapse;margin-top:24px}th,td{border:1px solid #d1d5db;padding:9px;text-align:left}.sign{display:flex;justify-content:space-between;margin-top:64px}.sign span{width:40%;border-top:1px solid #111;padding-top:8px}</style></head><body><h1>Product Loan Slip</h1><p>No. ${escapeHtml(loan.loan_number || loan.id)}</p><p>Group: ${escapeHtml(loan.group_code)} | Purpose: ${escapeHtml(loan.purpose)}</p><p>Borrower: ${escapeHtml(loan.requester_email)} | ${escapeHtml(formatTime(loan.created_at))}</p><table><thead><tr><th>SKU / Product</th><th>Size</th><th>Qty</th><th>Source</th></tr></thead><tbody>${items.map((item) => `<tr><td>${escapeHtml(item.sku_id)} / ${escapeHtml(item.item_name)}</td><td>${escapeHtml(item.size || '-')}</td><td>${eventTotals(issues, item.id).issued}</td><td>${escapeHtml(issues.filter((row) => row.request_item_id === item.id).map((row) => row.source_label).join(', '))}</td></tr>`).join('')}</tbody></table><div class="sign"><span>Issued by</span><span>Received by</span></div><script>window.print()<\/script></body></html>`)
+    popup.document.write(`<!doctype html><html><head><title>Loan ${escapeHtml(loan.loan_number || loan.id.slice(0, 8))}</title><style>body{font:14px Arial,sans-serif;margin:32px;color:#111827}h1{font-size:22px}table{width:100%;border-collapse:collapse;margin-top:24px}th,td{border:1px solid #d1d5db;padding:9px;text-align:left}.sign{display:flex;justify-content:space-between;margin-top:64px}.sign span{width:40%;border-top:1px solid #111;padding-top:8px}.note{white-space:pre-wrap;overflow-wrap:anywhere}</style></head><body><h1>Product Loan Slip</h1><p>No. ${escapeHtml(loan.loan_number || loan.id)}</p><p>Group: ${escapeHtml(loan.group_code)} | Purpose: ${escapeHtml(loan.purpose)}</p><p>Borrower: ${escapeHtml(loan.requester_email)} | ${escapeHtml(formatTime(loan.created_at))}</p>${loan.request_note ? `<p class="note"><strong>Special Notes:</strong> ${escapeHtml(loan.request_note)}</p>` : ''}<table><thead><tr><th>SKU / Product</th><th>Size</th><th>Qty</th><th>Source</th></tr></thead><tbody>${items.map((item) => `<tr><td>${escapeHtml(item.sku_id)} / ${escapeHtml(item.item_name)}</td><td>${escapeHtml(item.size || '-')}</td><td>${eventTotals(issues, item.id).issued}</td><td>${escapeHtml(issues.filter((row) => row.request_item_id === item.id).map((row) => row.source_label).join(', '))}</td></tr>`).join('')}</tbody></table><div class="sign"><span>Issued by</span><span>Received by</span></div><script>window.print()<\/script></body></html>`)
     popup.document.close()
   }
 
@@ -411,6 +414,7 @@ export default function WarehouseLoansClient({ currentUserId, canManage, isAdmin
               <td><div className={styles.statusActions}><span className={styles.status} data-status={loan.status}>{loan.status.replaceAll('_', ' ')}</span>{canManage && events.some((row) => row.loan_id === loan.id && row.event_type === 'ISSUE') ? <button type="button" className={styles.printButton} onClick={() => printCase(loan)} aria-label={`Print loan slip for ${loan.loan_number || loan.id}`} title="Print loan slip"><svg viewBox="0 0 24 24" className={styles.printIcon} aria-hidden="true"><path d="M6 9V2h12v7" /><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2" /><path d="M6 14h12v8H6z" /></svg></button> : (loan.requester_id === currentUserId || isAdmin) && totals.issued === 0 && ['REQUESTED', 'CANCELLED'].includes(loan.status) ? <button type="button" className={styles.deleteButton} onClick={() => void deleteCase(loan)} disabled={busy} aria-label={`Delete loan for ${loan.purpose}`} title="Delete unissued loan"><svg viewBox="0 0 24 24" className={styles.deleteIcon} aria-hidden="true"><path d="M3 6h18" /><path d="M8 6V4h8v2" /><path d="M5 6l1 15h12l1-15" /><path d="M10 10v7" /><path d="M14 10v7" /></svg></button> : null}</div></td>
             </tr>
             {isOpen ? <tr className={styles.detailsRow}><td colSpan={9}><div className={styles.caseBody}>
+              {loan.request_note ? <p className={styles.requestNote}><strong>Special Notes</strong><span>{loan.request_note}</span></p> : null}
               {requestItems.map((item) => {
                 const totals = eventTotals(events, item.id)
                 const cancelled = events.filter((row) => row.request_item_id === item.id && row.event_type === 'CANCEL_REQUEST').reduce((sum, row) => sum + qty(row.qty), 0)
@@ -515,6 +519,7 @@ export default function WarehouseLoansClient({ currentUserId, canManage, isAdmin
           <div className={styles.modalBody}>
             <div className={styles.requestModeToggle} role="group" aria-label="Loan request mode">{[['new', 'New Loan'], ['existing', 'Add to Existing Loan']].map(([mode, label]) => <button type="button" key={mode} data-active={requestMode === mode} aria-pressed={requestMode === mode} onClick={() => changeRequestMode(mode)} disabled={busy}>{label}</button>)}</div>
             {requestMode === 'new' ? <div className={styles.row}><label>Group<select value={group} onChange={(event) => { setGroup(event.target.value); setDraftItems([]); setDraft({ sku: '', name: '', size: '', qty: '' }); setArklineQuery('') }} disabled={Boolean(lockedGroup)}>{(lockedGroup ? [lockedGroup] : GROUPS).map((value) => <option key={value}>{value}</option>)}</select></label><label>Purpose{purpose === '__new__' ? <span className={styles.inlineInput}><input value={newPurposeName} onChange={(event) => setNewPurposeName(event.target.value)} placeholder="New purpose" maxLength={80} required autoFocus /><button type="button" onClick={() => { setPurpose(''); setNewPurposeName('') }} aria-label="Cancel new purpose" title="Cancel new purpose">×</button></span> : <select value={purpose} onChange={(event) => { setPurpose(event.target.value); setFormError('') }} required><option value="">Select purpose</option>{purposeOptions.map((option) => <option key={option.id} value={option.id}>{option.name}</option>)}<option value="__new__">Add new purpose</option></select>}</label></div> : <><label>Loan Number<select value={existingLoanId} onChange={(event) => { const loan = eligibleLoans.find((row) => row.id === event.target.value); setExistingLoanId(event.target.value); setGroup(loan?.group_code || lockedGroup || 'MOB'); setDraft({ sku: '', name: '', size: '', qty: '' }); setDraftItems([]); setArklineQuery(''); setFormError('') }} required disabled={eligibleLoansLoading}><option value="">{eligibleLoansLoading ? 'Loading loans...' : 'Select loan number'}</option>{eligibleLoans.map((loan) => <option key={loan.id} value={loan.id}>{loan.loan_number || loan.id.slice(0, 8)} · {loan.group_code} · {loan.purpose}{isAdmin ? ` · ${shortName(userProfilesByEmail[String(loan.requester_email || '').toLowerCase()] || String(loan.requester_email || '').split('@')[0])}` : ''}</option>)}</select></label>{existingLoan ? <div className={styles.existingLoanMeta}><span>Group: <strong>{existingLoan.group_code}</strong></span><span>Purpose: <strong>{existingLoan.purpose}</strong></span></div> : null}{!eligibleLoansLoading && !eligibleLoansError && !eligibleLoans.length ? <p className={styles.emptyLoanHint}>No Requested loans available to add items to.</p> : null}{eligibleLoansError ? <p className={styles.error} role="alert">{eligibleLoansError}</p> : null}</>}
+            {requestMode === 'new' ? <label>Special Notes (optional)<textarea value={requestNote} onChange={(event) => setRequestNote(event.target.value)} maxLength={2000} rows={3} placeholder="Add details for the stockkeeping team" /></label> : existingLoan?.request_note ? <p className={styles.existingLoanNote}><strong>Special Notes</strong><span>{existingLoan.request_note}</span></p> : null}
             {requestMode === 'new' && purposeLoadError ? <p className={styles.error} role="alert">Unable to load purposes: {purposeLoadError}</p> : null}
             {requestMode === 'new' || existingLoan ? <>
             {group === 'ARKLINE' ? <div className={styles.productPicker}><label>Arkline Product{draft.name ? <button type="button" className={styles.selectedProduct} onClick={() => { setDraft((current) => ({ ...current, sku: '', name: '', size: '' })); setArklineQuery(''); setArklineMenuOpen(true); window.setTimeout(() => arklineInputRef.current?.focus(), 0) }}><strong>{draft.sku}</strong><small>{draft.name}</small></button> : <input ref={arklineInputRef} value={arklineQuery} onFocus={() => setArklineMenuOpen(true)} onChange={(event) => { setArklineQuery(event.target.value); setArklineMenuOpen(true) }} onBlur={() => window.setTimeout(() => setArklineMenuOpen(false), 120)} placeholder="Search SKU or product" autoComplete="off" />}</label>{arklineMenuOpen && !draft.name ? <div className={styles.productMenu}>{filteredArklineProducts.map((product) => <button type="button" key={product.sku} onMouseDown={(event) => event.preventDefault()} onClick={() => { setDraft((current) => ({ ...current, sku: product.sku, name: product.productName, size: '' })); setArklineMenuOpen(false) }}><strong>{product.sku}</strong><small>{product.productName}</small></button>)}{filteredArklineProducts.length === 0 ? <span>No matching product</span> : null}</div> : null}</div> : <div className={styles.row}><label>SKU<input value={draft.sku} onChange={(event) => { const sku = event.target.value; const match = storageRows.find((row) => [row.sku_id, row.source_variant_code].some((value) => cleanSku(value) === cleanSku(sku))); setDraft((current) => ({ ...current, sku, name: match?.item_name || current.name })) }} /></label><label>Product Name<input value={draft.name} onChange={(event) => setDraft((current) => ({ ...current, name: event.target.value }))} /></label></div>}

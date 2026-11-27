@@ -388,6 +388,11 @@
   font-weight: 650;
 }
 
+.table td strong.summaryItemName {
+  display: inline;
+  font-size: inherit;
+}
+
 .table td small {
   display: block;
   margin-top: 4px;

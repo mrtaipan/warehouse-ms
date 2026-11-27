@@ -721,6 +721,45 @@ async function fetchAllWarehouseStorage({ force = false } = {}) {
   }
 }
 
+async function fetchArklineCurrentStock() {
+  const rackResult = await supabase
+    .from('dir_rack_locations')
+    .select('id, location_type, location_id, location_code, sub_location, location_name, group_code, is_picking_shelf')
+    .eq('group_code', 'ARKLINE')
+  if (rackResult.error) throw rackResult.error
+
+  async function loadRows(selectColumns) {
+    const rows = []
+    for (let from = 0; ; from += BATCH_SIZE) {
+      const { data, error } = await supabase
+        .from('warehouse_storage')
+        .select(`${selectColumns}, rack:dir_rack_locations!inner(group_code)`)
+        .eq('rack.group_code', 'ARKLINE')
+        .order('created_at', { ascending: false })
+        .range(from, from + BATCH_SIZE - 1)
+      if (error) throw error
+      rows.push(...(data || []))
+      if (!data || data.length < BATCH_SIZE) break
+    }
+    return sortStorageEntries(rows)
+  }
+
+  let storageRows
+  try {
+    storageRows = await loadRows(WAREHOUSE_STORAGE_SELECT_COLUMNS)
+  } catch (error) {
+    if (!isSchemaColumnError(error)) throw error
+    try {
+      storageRows = await loadRows(WAREHOUSE_STORAGE_CATEGORY_SELECT_COLUMNS)
+    } catch (categoryError) {
+      if (!isSchemaColumnError(categoryError)) throw categoryError
+      storageRows = await loadRows(WAREHOUSE_STORAGE_BASE_SELECT_COLUMNS)
+    }
+  }
+
+  return { rackRows: rackResult.data || [], storageRows }
+}
+
 async function fetchAllRejectStorageRows() {
   const rows = []
   let from = 0
@@ -1169,7 +1208,8 @@ async function fetchCurrentStorageAccess() {
         role === 'mob_cs' ||
         role === 'oi_cs'
     ),
-    lockedGroup: getRoleLockedGroup(role),
+    lockedGroup: ['arkline_merchandiser', 'arkline_staff'].includes(role) ? 'ARKLINE' : getRoleLockedGroup(role),
+    arklineStockOnly: ['arkline_merchandiser', 'arkline_staff'].includes(role) && storageFeatureAccess.currentStock,
     isAdmin,
     canReverseRestock: isAdmin || role === 'warehouse_leader',
     canReorderPackaging: isAdmin || role === 'warehouse_leader',
@@ -1289,6 +1329,7 @@ export default function StorageOverviewPage() {
   const [rejectModalError, setRejectModalError] = useState('')
   const [queueModalError, setQueueModalError] = useState('')
   const [storageAccess, setStorageAccess] = useState(EMPTY_STORAGE_ACCESS)
+  const storageAccessRef = useRef(EMPTY_STORAGE_ACCESS)
   const [takeModalEntry, setTakeModalEntry] = useState(null)
   const [editModalEntry, setEditModalEntry] = useState(null)
   const [moveModalEntry, setMoveModalEntry] = useState(null)
@@ -1439,6 +1480,20 @@ export default function StorageOverviewPage() {
     }
 
     try {
+      if (storageAccessRef.current.arklineStockOnly) {
+        const [{ rackRows, storageRows }, brandData, categoryData] = await Promise.all([
+          fetchArklineCurrentStock(),
+          fetchBrandDirectory().catch(() => []),
+          fetchCategoryDirectory().catch(() => []),
+        ])
+        setRackLocations(rackRows)
+        setStorageEntries(storageRows)
+        setBrandRows(brandData)
+        setCategoryRows(categoryData)
+        setLoading(false)
+        return
+      }
+
       if (forceStorage) staticStorageCache.delete('rack-locations')
       const [rackData, storageData, rejectRows, restockRows, queueRows, temporaryRows, movementRows, putawayRows, breakdownRows, variantRows, inboundData, arklineProductRows, brandData, categoryData, profileRows, storageBundleData] = await Promise.all([
         fetchAllRackLocations(),
@@ -1522,8 +1577,10 @@ export default function StorageOverviewPage() {
   const refreshStorageAccess = useCallback(async () => {
     try {
       const access = await fetchCurrentStorageAccess()
-      setStorageAccess(access || EMPTY_STORAGE_ACCESS)
+      storageAccessRef.current = access || EMPTY_STORAGE_ACCESS
+      setStorageAccess(storageAccessRef.current)
     } catch {
+      storageAccessRef.current = EMPTY_STORAGE_ACCESS
       setStorageAccess(EMPTY_STORAGE_ACCESS)
     }
   }, [])
@@ -1557,8 +1614,7 @@ export default function StorageOverviewPage() {
 
   useEffect(() => {
     const initialRefreshId = window.setTimeout(() => {
-      refreshStorageAccess()
-      refreshInventoryData({ showLoading: true })
+      void refreshStorageAccess().then(() => refreshInventoryData({ showLoading: true }))
     }, 0)
 
     return () => window.clearTimeout(initialRefreshId)

@@ -155,6 +155,7 @@ from (values
   ('Packaging','Sack Bag','pcs',null,10),
   ('Packaging','MOB Polybag','pcs',null,11),
   ('Packaging','OI Polybag','pcs',null,12),
+  ('Packaging','Arkline Packaging Box','pcs',null,13),
   ('Storage Plastic','30 x 50 Plastic Bag','pcs',null,1),
   ('Storage Plastic','40 x 65 Plastic Bag','pcs',null,2),
   ('Storage Plastic','50 x 75 Plastic Bag','pcs',null,3),
@@ -170,7 +171,12 @@ from (values
   ('Sticker','MOB Logo Sticker','sheet',40,1),
   ('Sticker','OI Logo Sticker','sheet',40,2),
   ('Sticker','Fragile Label','pcs',null,3),
-  ('Sticker','Size Sticker Label','sheet',421,4)
+  ('Sticker','Size Sticker Label XS','sheet',421,4),
+  ('Sticker','Size Sticker Label S','sheet',421,5),
+  ('Sticker','Size Sticker Label M','sheet',421,6),
+  ('Sticker','Size Sticker Label L','sheet',421,7),
+  ('Sticker','Size Sticker Label XL','sheet',421,8),
+  ('Sticker','Size Sticker Label XXL','sheet',421,9)
 ) as v(category, name, unit, pieces_per_unit, sort_order)
 join public.packaging_categories c on c.name = v.category
 on conflict (name) do nothing;

@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { buildRegularReQcSizeBreakdown } from '../utils/regular-reqc-print-summary.mjs'
+import { buildRegularReQcSizeBreakdown, getPopulatedReQcGrades } from '../utils/regular-reqc-print-summary.mjs'
 
 test('print breakdown groups selected Re-QC results by grade, product, and size', () => {
   const queues = new Map([
@@ -41,4 +41,13 @@ test('print breakdown handles missing size and empty grades', () => {
   assert.deepEqual(breakdown.A, [{ sku: 'SKU-1', name: 'Shirt', size: 'NO SIZE', qty: 2 }])
   assert.deepEqual(breakdown.B, [])
   assert.deepEqual(breakdown.C, [])
+  assert.deepEqual(getPopulatedReQcGrades(breakdown).map(({ grade, total }) => ({ grade, total })), [
+    { grade: 'A', total: 2 },
+  ])
+})
+
+test('print sections exclude grades whose total qty is zero', () => {
+  assert.deepEqual(getPopulatedReQcGrades({
+    A: [{ qty: 3 }], B: [{ qty: 2 }], C: [{ qty: 0 }],
+  }).map(({ grade }) => grade), ['A', 'B'])
 })

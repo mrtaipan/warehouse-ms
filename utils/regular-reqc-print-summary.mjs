@@ -32,3 +32,11 @@ export function buildRegularReQcSizeBreakdown(groups, queueById) {
     ),
   ]))
 }
+
+export function getPopulatedReQcGrades(sizeBreakdown) {
+  return ['A', 'B', 'C'].map((grade) => {
+    const rows = sizeBreakdown[grade] || []
+    const total = rows.reduce((sum, row) => sum + Number(row.qty || 0), 0)
+    return { grade, rows, total }
+  }).filter((section) => section.total > 0)
+}

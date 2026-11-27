@@ -1,6 +1,14 @@
+import { getDeliveryAccessCodes } from '@/utils/delivery-access.mjs'
 import { redirect } from 'next/navigation'
 import { createClient } from '@/utils/supabase/server'
-import { ADMIN_EMAIL, ROLE_OPTIONS, canAccessOperationsCalendar, expandImpliedPermissions, getPermissionCatalog } from '@/utils/permissions'
+import {
+  ADMIN_EMAIL,
+  ROLE_OPTIONS,
+  canAccessOperationsCalendar,
+  expandImpliedPermissions,
+  getDashboardShortcutVisibilityCodes,
+  getPermissionCatalog,
+} from '@/utils/permissions'
 import { sendUserInvite, updateRolePermissions, updateUserRole } from './actions'
 import UserAccessClient from './user-access-client'
 
@@ -42,6 +50,16 @@ export default async function UserAccessPage({ searchParams }) {
     if (role.value === 'admin') continue
     if (!canAccessOperationsCalendar(role.value, rolePermissionMap[role.value] || [], false)) continue
     rolePermissionMap[role.value] = Array.from(new Set([...(rolePermissionMap[role.value] || []), 'dashboard.operations_calendar.view']))
+  }
+
+  for (const role of ROLE_OPTIONS) {
+    if (role.value === 'admin') continue
+    const permissionCodes = rolePermissionMap[role.value] || []
+    rolePermissionMap[role.value] = Array.from(new Set([
+      ...permissionCodes,
+      ...getDashboardShortcutVisibilityCodes(role.value, permissionCodes),
+      ...getDeliveryAccessCodes(permissionCodes),
+    ]))
   }
 
   const inviteStatus = String(resolvedSearchParams?.invite || '').trim().toLowerCase()

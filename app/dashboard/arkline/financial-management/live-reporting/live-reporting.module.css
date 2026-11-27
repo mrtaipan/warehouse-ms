@@ -72,9 +72,19 @@
   gap: 10px;
 }
 
+.periodPicker {
+  position: relative;
+  width: 184px;
+  flex: none;
+}
+
 .periodInput {
   box-sizing: border-box;
-  width: 176px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
   min-height: 42px;
   padding: 0 12px;
   border-radius: 14px;
@@ -82,12 +92,96 @@
   background: #ffffff;
   color: #0f172a;
   font-size: 12px;
+  cursor: pointer;
   outline: none;
+  text-align: left;
 }
 
-.periodInput:focus {
+.periodInput:focus-visible {
   border-color: #94a3b8;
   box-shadow: 0 0 0 4px rgba(148, 163, 184, 0.12);
+}
+
+.periodMenu {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 8px);
+  right: 0;
+  box-sizing: border-box;
+  width: min(264px, calc(100vw - 32px));
+  max-height: 360px;
+  overflow-y: auto;
+  padding: 8px;
+  border: 1px solid #dbe4f0;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.12);
+}
+
+.periodAllOption,
+.periodYearButton,
+.periodMonthButton {
+  border: 0;
+  background: transparent;
+  color: #334155;
+  font: inherit;
+  cursor: pointer;
+}
+
+.periodAllOption,
+.periodYearButton {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  min-height: 40px;
+  padding: 0 10px;
+  border-radius: 6px;
+  text-align: left;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.periodYearGroup + .periodYearGroup {
+  border-top: 1px solid #e8edf4;
+}
+
+.periodYearCollapsed {
+  transform: rotate(-90deg);
+}
+
+.periodMonthGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+  padding: 0 2px 8px;
+}
+
+.periodMonthButton {
+  min-height: 36px;
+  padding: 0 8px;
+  border-radius: 6px;
+  text-align: left;
+  font-size: 12px;
+}
+
+.periodAllOption:hover,
+.periodYearButton:hover,
+.periodMonthButton:hover {
+  background: #f1f5f9;
+}
+
+.periodOptionActive,
+.periodOptionActive:hover {
+  background: #eaf1ff;
+  color: #1d4ed8;
+}
+
+.periodAllOption:focus-visible,
+.periodYearButton:focus-visible,
+.periodMonthButton:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: -2px;
 }
 
 .dashboardTop {
@@ -1202,8 +1296,13 @@
     justify-content: flex-start;
   }
 
-  .periodInput {
+  .periodPicker {
     width: min(100%, 220px);
+  }
+
+  .periodMenu {
+    right: auto;
+    left: 0;
   }
 
   .dateTimeRow {

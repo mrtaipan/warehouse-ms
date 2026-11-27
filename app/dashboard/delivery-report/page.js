@@ -1,3 +1,5 @@
+import { getDeliveryAccess } from '@/utils/delivery-access.mjs'
+import { getRolePermissionCodes } from '@/utils/role-permissions'
 import { redirect } from 'next/navigation'
 
 import { createClient } from '@/utils/supabase/server'
@@ -24,5 +26,8 @@ export default async function DeliveryReportPage() {
   const { data: profile } = await getProfileByAuthenticatedUser(supabase, user, 'role')
   const role = resolveRole(profile?.role, isAdmin)
 
-  return <DeliveryReportClient lockedGroup={getRoleLockedGroup(role)} isAdmin={role === 'admin'} />
+  const { data: permissions, error } = await getRolePermissionCodes(supabase, role)
+  if (error) throw new Error('Unable to load Delivery Report access.')
+  const access = getDeliveryAccess(permissions || [], role === 'admin')
+  return <DeliveryReportClient access={access} lockedGroup={getRoleLockedGroup(role)} isAdmin={role === 'admin'} />
 }

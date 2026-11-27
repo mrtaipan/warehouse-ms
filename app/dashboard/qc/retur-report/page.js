@@ -386,6 +386,7 @@ export default async function QcReturReportPage({ searchParams }) {
               userEmail={user.email || ''}
               canAdd={canAdd}
               canEdit={canEdit}
+              isAdmin={isAdmin}
             />
           )}
         </ReturnReportShell>

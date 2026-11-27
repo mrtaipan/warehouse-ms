@@ -3,6 +3,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useRouter } from 'next/navigation'
+import { Trash2 } from 'lucide-react'
 import { createClient } from '@/utils/supabase/browser'
 import { canRegisterUntrackedShelving, getEligibleRejectSources, getJakartaDayRange, requiresRejectSourceChoice, resolveRejectSource } from '@/utils/arkline-reject-registration.mjs'
 import styles from './retur-report.module.css'
@@ -358,7 +359,7 @@ function buildStorageProductGroups(lines = []) {
     })
     .sort((a, b) => String(a.productName || '').localeCompare(String(b.productName || ''), undefined, { numeric: true }))
 }
-export default function ArklineReturReportClient({ eligibleRows, batches, storages = [], registrationProducts = [], rejectReasons = [], userEmail, canAdd = false, canEdit = false, storageOnly = false, onStorageChanged, releaseAction = null, storageViewMode = 'koli' }) {
+export default function ArklineReturReportClient({ eligibleRows, batches, storages = [], registrationProducts = [], rejectReasons = [], userEmail, canAdd = false, canEdit = false, isAdmin = false, storageOnly = false, onStorageChanged, releaseAction = null, storageViewMode = 'koli' }) {
   const router = useRouter()
   const supabase = useMemo(() => createClient(), [])
   const [selectedIds, setSelectedIds] = useState([])
@@ -386,6 +387,7 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
   const [storageModalOpen, setStorageModalOpen] = useState(false)
   const [registrationModalOpen, setRegistrationModalOpen] = useState(false)
   const [receiptBatch, setReceiptBatch] = useState(null)
+  const [deleteBatch, setDeleteBatch] = useState(null)
   const [returnDate, setReturnDate] = useState(todayValue())
   const [shippingMethod, setShippingMethod] = useState('')
   const [notes, setNotes] = useState('')
@@ -1272,6 +1274,33 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
     router.refresh()
   }
 
+  function openDeleteBatch(batch) {
+    setDeleteBatch(batch)
+    setError('')
+  }
+
+  function closeDeleteBatch() {
+    if (saving) return
+    setDeleteBatch(null)
+    setError('')
+  }
+
+  async function confirmDeleteBatch() {
+    if (!isAdmin || !deleteBatch || saving) return
+    setSaving(true)
+    setError('')
+    const { error: deleteError } = await supabase.rpc('delete_unreceived_arkline_qc_return_batch', {
+      p_return_batch_id: deleteBatch.id,
+    })
+    setSaving(false)
+    if (deleteError) {
+      setError(deleteError.message)
+      return
+    }
+    setDeleteBatch(null)
+    router.refresh()
+  }
+
   async function saveStorageBatch() {
     const trimmedStorageNumber = storageNumber.trim()
     if (!trimmedStorageNumber) {
@@ -1737,7 +1766,7 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
           </div>
         </div>
 
-        {error && !returnModalOpen && !storageModalOpen && !registrationModalOpen && !receiptBatch ? <p className={styles.error}>{error}</p> : null}
+        {error && !returnModalOpen && !storageModalOpen && !registrationModalOpen && !receiptBatch && !deleteBatch ? <p className={styles.error}>{error}</p> : null}
 
         {!filteredEligibleRows.length ? (
           <div className={styles.empty}>No Arkline reject qty matches the selected filters.</div>
@@ -1900,14 +1929,28 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
                       <strong>{batch.returnNumber}</strong>
                       <span className={`${styles.badge} ${getStatusBadgeClass(batch.status)}`.trim()}>{formatStatus(batch.status)}</span>
                     </div>
-                    <button
-                      type="button"
-                      className={styles.secondaryButton}
-                      onClick={() => openReceiptModal(batch)}
-                      disabled={!canEdit || !canReceive}
-                    >
-                      Record Returned Goods
-                    </button>
+                    <div className={styles.batchHeaderActions}>
+                      {isAdmin && batch.status === 'SENT' && batch.returnedQty === 0 && batch.shortQty === 0 ? (
+                        <button
+                          type="button"
+                          className={`${styles.secondaryButton} ${styles.deleteBatchButton}`}
+                          onClick={() => openDeleteBatch(batch)}
+                          disabled={saving}
+                          aria-label={`Delete return batch ${batch.returnNumber}`}
+                          title="Delete unreceived return batch"
+                        >
+                          <Trash2 size={17} aria-hidden="true" />
+                        </button>
+                      ) : null}
+                      <button
+                        type="button"
+                        className={styles.secondaryButton}
+                        onClick={() => openReceiptModal(batch)}
+                        disabled={!canEdit || !canReceive}
+                      >
+                        Record Returned Goods
+                      </button>
+                    </div>
                   </div>
                   <div className={styles.batchMeta}>
                     <div className={styles.metric}><span>PO</span><strong>{batch.poId}</strong></div>
@@ -2678,6 +2721,30 @@ export default function ArklineReturReportClient({ eligibleRows, batches, storag
             <div className={styles.modalActions}>
               <button type="button" className={styles.secondaryButton} onClick={closeReceiptModal} disabled={saving}>Cancel</button>
               <button type="button" className={styles.primaryButton} onClick={saveReworkReceipt} disabled={saving}>{saving ? 'Saving...' : 'Save Returned Goods'}</button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {deleteBatch ? (
+        <div className={styles.overlay} role="presentation">
+          <div className={`${styles.modal} ${styles.sizeCorrectionModal}`} role="dialog" aria-modal="true" aria-labelledby="delete-return-batch-title">
+            <div className={styles.modalHeader}>
+              <div>
+                <h2 id="delete-return-batch-title">Delete Return Batch</h2>
+                <p>{deleteBatch.returnNumber} · {deleteBatch.modelName}</p>
+              </div>
+              <button type="button" className={styles.closeButton} onClick={closeDeleteBatch} disabled={saving} aria-label="Close">X</button>
+            </div>
+            <p className={styles.notice}>
+              Delete this sent batch of {deleteBatch.sentQty} pcs? Its reject qty will be available again in Return Arrangement. This cannot be undone.
+            </p>
+            {error ? <p className={styles.error}>{error}</p> : null}
+            <div className={styles.modalActions}>
+              <button type="button" className={styles.secondaryButton} onClick={closeDeleteBatch} disabled={saving}>Cancel</button>
+              <button type="button" className={`${styles.primaryButton} ${styles.deleteBatchConfirmButton}`} onClick={confirmDeleteBatch} disabled={saving}>
+                {saving ? 'Deleting...' : 'Delete Batch'}
+              </button>
             </div>
           </div>
         </div>
